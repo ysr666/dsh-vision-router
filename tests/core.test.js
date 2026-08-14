@@ -1456,8 +1456,22 @@ test('apply falls back to the visible wrapper when the stock route is still acti
   assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
   assert.deepEqual(listed[0].inputModalities, ['text'])
 
-  // the wrapper route mirrors the stock models AND exposes every
-  // adapter-backed vision-chain pair as a selectable per-route entry
+  // the wrapper route mirrors the stock models; in the default tools-first
+  // mode (routing off) the vision-chain pairs stay out of this group — they
+  // are legacy whole-turn routing markers, not DeepSeek entries
+  const wrapper = adapters.get('deepseek-vision')
+  const wrapped = await wrapper.listModels('deepseek-vision')
+  assert.deepEqual(wrapped.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+  assert.deepEqual(wrapped[0].inputModalities, ['text', 'image'])
+})
+
+test('wrapper lists the vision-chain pairs only when whole-turn routing is on', async () => {
+  const { ctx, adapters } = mockHarnessCtx({ stockRoute: true, config0: { routing: true } })
+  apply(ctx, Config({
+    provider: 'openrouter',
+    providers: [{ provider: 'openrouter', model: 'qwen/qwen3-vl-235b-a22b-instruct' }],
+    routing: true,
+  }))
   const wrapper = adapters.get('deepseek-vision')
   const wrapped = await wrapper.listModels('deepseek-vision')
   assert.deepEqual(wrapped.map((m) => m.id), [
@@ -1465,7 +1479,6 @@ test('apply falls back to the visible wrapper when the stock route is still acti
     'deepseek-v4-pro',
     'vision-http/ovh/Qwen2.5-VL-72B-Instruct',
   ])
-  assert.deepEqual(wrapped[0].inputModalities, ['text', 'image'])
   const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
   assert.ok(visionEntry)
   assert.deepEqual(visionEntry.inputModalities, ['text', 'image'])
@@ -1473,6 +1486,7 @@ test('apply falls back to the visible wrapper when the stock route is still acti
   // resolving a vision-pair entry still returns image-capable metadata
   const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+  assert.equal(resolved.id, 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
 })
 test('floodFillBackground clears border-connected background pixels', () => {
   // 4x4: white background, black 2x2 square in the middle

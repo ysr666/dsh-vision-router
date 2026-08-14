@@ -1856,17 +1856,21 @@ export function apply(ctx, config = {}) {
             /* keep the vision entries below */
           }
         }
-        // Per-route wrapping: every adapter-backed pair of the vision chain
-        // is also exposed as a picker entry under the wrapper route, so the
-        // chain models are visible and selectable without touching config.
-        for (const pair of pairs()) {
-          if (!adapterAvailable(ctx.llm, pair.provider)) continue
-          entries.push({
-            provider: wrapperRoute(),
-            id: `${pair.provider}/${pair.model}`,
-            name: `${pair.provider}/${pair.model}（视觉）`,
-            inputModalities: ['text', 'image'],
-          })
+        // Legacy routing markers: with whole-turn routing on, the vision-chain
+        // pairs must exist as picker entries declaring image input (admission
+        // runs before any plugin can switch the route). In the default
+        // tools-first mode they are noise — vision happens through tool calls,
+        // so the wrapper group only lists the DeepSeek text mirrors.
+        if (routingEnabled()) {
+          for (const pair of pairs()) {
+            if (!adapterAvailable(ctx.llm, pair.provider)) continue
+            entries.push({
+              provider: wrapperRoute(),
+              id: `${pair.provider}/${pair.model}`,
+              name: `${pair.provider}/${pair.model}（视觉）`,
+              inputModalities: ['text', 'image'],
+            })
+          }
         }
         return entries
       },
