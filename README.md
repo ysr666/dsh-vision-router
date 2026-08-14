@@ -4,9 +4,9 @@
 
 <h1 align="center">dsh-vision-router</h1>
 
-<p align="center"><strong>Eyes for text-only agents on DeepSeek Harness — free out of the box, no Python, one command to install.</strong></p>
+<p align="center"><strong>Paste an image and it just works — eyes for text-only agents on DeepSeek Harness. Free out of the box, no key, no Python, one command.</strong></p>
 
-<p align="center">Send an image and it just works: DeepSeek stays the brain while the built-in vision chain and pixel-level tools provide the eyes.</p>
+<p align="center">DeepSeek keeps thinking; the built-in free vision chain and ten pixel-level tools do the seeing. Image turns behave like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
@@ -34,6 +34,23 @@ Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — los
 - **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
 - **DeepSeek stays the brain.** Text turns are untouched in model, cost and context. The vision model is only the eyes, called on demand; answers are cached by image content.
 - **Transparent to the user.** Uploaded images keep rendering as images in the conversation UI; the rewrite that points the model at the vision tools happens only inside the model call, never in the session log.
+
+## How it compares
+
+The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) (Anionex), a native DSH bundle of the well-known `agent-vision-toolkit` lineage. Both packages ship a `vision-tools` skill and a family of pixel-level tools; they differ in philosophy — **zero-config paste-and-go** versus **agent-driven visual engineering**:
+
+| | dsh-vision-router | @anionex/dsh-vision-toolkit |
+|---|---|---|
+| Image Q&A out of the box | ✅ Built-in free chain (anonymous OVHcloud endpoint) — no account, no key | Requires your own vision API key (local pixel tools work without one) |
+| Runtime | ✅ Node only — no Python | Python 3.11+ managed runtime |
+| Getting an image in | ✅ Paste it — the turn auto-routes to the vision chain and auto-mounts the tools | Workspace path + `/vision-tools` command, then explicit tool calls |
+| Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — stealth takeover, the model picker looks stock | Tool-driven; no whole-turn auto-routing |
+| Profiles | Web | Web + Headless |
+| Playbooks | The pixel loop: ground → crop → diff → fix → screenshot again | Richer case library (long-screenshot OCR, UI restoration, GUI automation) |
+| Tests | 86 | 162 |
+| Install | One command | One command (npm) |
+
+Both are MIT-licensed and one command away. Pick this plugin when you want images to *just work* with zero setup; pick theirs when you need headless profiles or the extended playbook library. (Feature comparison reflects their README as of 2026-08.)
 
 ## Quick start
 
