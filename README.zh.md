@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-5B4CF0?style=flat-square" alt="Release v0.2.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/release-v1.0.0-5B4CF0?style=flat-square" alt="Release v1.0.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-86%20tests-2EA44F?style=flat-square" alt="Verified: 86 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
