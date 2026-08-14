@@ -172,7 +172,9 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 - 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式；
 - 视觉请求超时、包装/链路由名；
 - **视觉模型链**（每行一个 `provider/model`，自上而下降级）与文本模型；
-- 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存。
+- 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存；
+- 「测试连接」按钮探测第一个视觉提供方并内联显示延迟/失败原因；
+- 产出制品的工具在对话里渲染专用调用卡（关键字段 + 打开文件按钮）。
 
 <p align="center">
   <img src="assets/vision-settings.png" width="72%" alt="设置 → 插件 → 插件配置 里的视觉路由卡片。" />
@@ -190,6 +192,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `fallbacks` | `[]` | 简写供应商的备用模型 |
 | `providers` | `[]` | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
+| `wrappedProviders` | `[]` | 额外识图包装：`{ provider, models[] }`，设置卡片每行一个 `provider` 或 `provider/model1,model2`，给第三方文本路由注册可发图的孪生条目 |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |

@@ -172,7 +172,9 @@ The Web profile registers a **视觉路由（自动识图）** card under **Sett
 - switches: whole-turn legacy routing, vision tools, image-block rewriting, stealth;
 - vision request timeout, wrapper/chain route names;
 - the **vision chain** (one `provider/model` per line, top-down fallback) and the text model;
-- every field shows an "overridden" badge with a one-click reset to the composition default, plus discard/save.
+- every field shows an "overridden" badge with a one-click reset to the composition default, plus discard/save;
+- a **Test connection** button probes the first vision provider and reports latency inline;
+- artifact-producing tools render dedicated call cards with result facts and open-file buttons.
 
 <p align="center">
   <img src="assets/vision-settings.png" width="72%" alt="The vision-router card in Settings > Plugins > Plugin config." />
@@ -190,6 +192,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `fallbacks` | `[]` | backup models for the shorthand provider |
 | `providers` | `[]` | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
+| `wrappedProviders` | `[]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — one `provider` per line in the settings card, or `provider/model1,model2` |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |
