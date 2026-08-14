@@ -5,11 +5,12 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -20,6 +21,20 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      - run: npm publish --access public
+      - name: Publish to npm (skip when the version already exists)
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "dsh-vision-router@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $VERSION — skipping publish"
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Create GitHub Release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
