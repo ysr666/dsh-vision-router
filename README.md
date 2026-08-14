@@ -121,20 +121,21 @@
 
 ### 🕶️ 隐身模式（stealth）
 
-**默认安装（什么都不改）完全安全。** 官方 `llm-deepseek` 行在场时，接管注册必然抛出
-`DUPLICATE_ADAPTER`，插件捕获后自动回退为"DeepSeek + 自动识图"包装路由的可见行为，
-文本轮次与安装本插件之前逐字节相同。stealth 只有在用户**主动禁用官方行**时才生效。
-
-若想要"模型选择器看起来和原来一模一样"（官方 `DeepSeek` 组、同样的模型名，只是条目背后
-变成自动识图包装），在 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）加入：
+**默认安装即开启。** 插件自带的 bundle 补丁（`cordis.patch.yml`，由 `dsh.bundle.patch` 声明）
+在安装时自动禁用官方 `llm-deepseek` 行并挂载插件行——选择器里的 DeepSeek 条目看起来和
+原来一模一样，只是背后变成了自动识图包装。**想保留官方行**：在你的 profile 补丁层
+（`~/.dsh/profiles/<profile>/cordis.patch.yml`）覆写即可：
 
 ```yaml
+# 恢复官方 llm-deepseek 行（关闭隐身模式）
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
-  disabled: true
 ```
 
-效果：
+官方行在场时，插件接管注册会抛出 `DUPLICATE_ADAPTER` 并自动回退为"DeepSeek + 自动识图"
+包装路由的可见行为（选择器里多一个「自动识图」入口），文本轮次与安装前逐字节相同。
+
+效果（隐身模式开启时）：
 
 - `deepseek-official` 路由改由本插件提供：目录与原版完全一致（`deepseek-v4-flash` /
   `deepseek-v4-pro`，名称不变），但声明 `inputModalities: [text, image]`，图片消息通过准入；
@@ -142,8 +143,7 @@
 - `deepseek-vision` 路由保留注册但不出现在选择器里，老会话无缝兼容。
 
 风险与恢复：禁用官方行后，如果本插件行启动失败（例如依赖未装上），选择器里将没有
-DeepSeek。**删除补丁层里上面 3 行即可立即恢复官方路由。** 插件本身永远不会替你禁用
-官方行，也不会在官方行在场时覆盖它。
+DeepSeek。**在你的 profile 补丁层恢复官方行（见上）即可立即恢复官方路由。**
 
 ## 工作原理
 
@@ -152,44 +152,32 @@ flowchart TD
     U[用户轮次] --> PS{agent/pre-step<br/>消息里含图片?}
     PS -- 是 --> AUTO[自动挂载深看工具<br/>+ 一次性使用提示]
     PS -- 否 --> TEXT[会话模型<br/>DeepSeek 文字轮]
-    AUTO --> R{agent/request 路由}
-    R --> W[wrapper / stealth 路由<br/>deepseek-vision 或 deepseek-official]
-    W --> DES[视觉链: 图片 + 用户问题<br/>逐供应商降级]
-    DES --> MEM[图片记忆: 描述缓存]
-    MEM --> SUB[图片块替换为识图结果文字]
-    SUB --> DS[DeepSeek 完整 agent 轮<br/>思考/工具/回答]
-    DS --> T2[工具轮次后续请求<br/>回包装路由, 复用记忆]
+    AUTO --> WRAP[wrapper / stealth 路由<br/>deepseek-official 自动识图包装]
+    WRAP --> MARK[模型输入层改写图片块<br/>视觉记录或工具提示标记<br/>会话日志保留原图]
+    MARK --> DS[DeepSeek 完整 agent 轮<br/>思考/工具/回答]
+    DS --> TOOL[按需调用 vision_describe<br/>免费视觉链逐供应商降级<br/>可连续多步看图]
+    TOOL --> DS
 ```
 
-关键点：**视觉模型只当眼睛（每次约 1.5k token），DeepSeek 始终当大脑**。这同时解决三件事——准入检查（包装路由声明图片输入）、质量（主力模型干活）、token 经济（视觉模型不看整段历史）。
+关键点：**DeepSeek 始终当大脑，视觉模型只当眼睛**——图片轮与文字轮是同一个 agent 轮，
+模型像调用任何工具一样调用 `vision_describe`（可连续多步），视觉调用按需发生、结果走缓存。
 
 ## 安装
 
 ```sh
-# 从 GitHub 安装（本仓库）
+# 从 GitHub 安装（一条命令）
 dsh plugin --profile web add github:ysr666/dsh-vision-router
 ```
 
-重启 `dsh web`。**零配置即可用**：默认视觉模型是内置免费端点（免注册、免 Key）。
+重启 `dsh web`。**零配置即可用**，无需手动改任何文件：
 
-> **⚠️ 重要（宿主准入，先于插件）**：harness 发送消息前检查**当前会话模型**声明的
-> `inputModalities`——DeepSeek 官方模型硬编码声明为仅文本，因此**会话模型选普通 DeepSeek 时拖图会被直接拒绝**。解决办法二选一：
->
-> 1. **推荐**：把会话模型切到「**DeepSeek + 自动识图**」（`deepseek-vision` 包装路由）——
->    它声明了图片输入（通过准入），选择器/右下角显示"DeepSeek-V4-Pro（自动识图）"，正是你的主力模型；
-> 2. 或开启**隐身模式**（见上）：禁用官方 `llm-deepseek` 行后，选择器里的 DeepSeek 条目本身就是
->    自动识图包装，看起来和原来一模一样。
->
-> 两种方式下插件都会接管：图片轮由视觉链描述，文字轮留在 DeepSeek。
+- 插件自带 bundle 补丁（`dsh.bundle.patch`），安装时自动：挂载插件行、开启隐身模式
+  （接管官方 DeepSeek 路由）、放宽附件图片限制（20MB / 1 亿像素）；
+- 默认视觉模型是内置免费端点（免注册、免 Key），发图即可用；
+- 全部配置可在 Web **设置 > 插件 > 插件配置** 的「视觉路由」卡片里实时修改。
 
-可选：把默认模型设为包装路由（新会话不用手动切）：
-
-```yaml
-# $DSH_HOME/settings.yaml
-agent-default-model:
-  provider: deepseek-vision
-  model: deepseek-v4-pro
-```
+> 不需要隐身模式？在你的 profile 补丁层恢复官方行（见「隐身模式」一节），并把会话模型
+> 切到「DeepSeek + 自动识图」包装路由即可。
 
 ## 配置项
 
