@@ -33,6 +33,15 @@ jobs:
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # The yellow sticky-note announcement at the top of both READMEs must be
+      # updated together with every release; tagging a version that the banner
+      # does not mention fails the run.
+      - name: Verify the README announcement banner matches the version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for f in README.md README.zh.md; do
+            grep -q "v$VERSION" "$f" || { echo "$f: the announcement banner must mention v$VERSION — update it before tagging." >&2; exit 1; }
+          done
       # Release notes must be bilingual (zh + en): the workflow requires a
       # hand-written CHANGELOG.md section for the tagged version and appends
       # the commit list as a supplement. Tagging a version without a section

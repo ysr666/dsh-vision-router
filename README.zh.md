@@ -20,6 +20,13 @@
 
 <p align="center"><a href="README.md">English</a> · 中文</p>
 
+> [!WARNING]
+> 📌 **公告 · Announcement（v1.0.2）**
+>
+> 现已支持「**额外识图包装**」：opencode 等任意自定义文本路由开箱即可发图；另含长截图 OCR、设置卡片「测试连接」与视觉产物预览卡。隐身模式默认关闭，官方 DeepSeek 行不再被默认接管。
+>
+> Now supports **Extra vision wrappers**: any custom text route (e.g. opencode) sends images out of the box — plus long-screenshot OCR, a "Test connection" button and artifact preview cards in the settings panel. Stealth mode is off by default and the official DeepSeek row is no longer taken over implicitly.
+
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
 </p>
