@@ -28,7 +28,7 @@
 
 大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**原图像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
 
-- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装、隐身接管与附件限制放宽——不用手改任何文件。
+- **一条命令安装，纯增量。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 只挂载插件行，不禁用、不覆写任何核心行（issue #34）。
 - **默认免费。** 视觉链内置 OVHcloud 匿名端点（`Qwen2.5-VL-72B-Instruct`，免注册、免 Key，每 IP 2 次/分钟）。付费链路（OpenRouter、Pi-AI 供应商、任意 OpenAI 兼容直连端点）是可选升级。
 - **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
 - **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
@@ -59,7 +59,7 @@ dsh plugin --profile web add dsh-vision-router
 
 重启 `dsh web`——完成，零配置：
 
-- 插件的 bundle 补丁自动挂载插件行、接管官方 DeepSeek 路由（隐身模式——模型选择器看起来和原版一模一样）、放宽附件限制到 20MB / 1 亿像素；
+- 插件的 bundle 补丁只挂载插件行：官方 DeepSeek 路由保持原样，图片入口使用选择器里的「自动识图」包装条目（或你在设置里配置的额外包装）；
 - 默认视觉链就是内置免费端点；
 - 全部配置可在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）** 实时修改。
 
@@ -151,16 +151,15 @@ vision_html_screenshot source="page.html" width=1200 height=720
 
 ## 隐身模式
 
-默认安装即接管官方 `deepseek-official` 路由：模型选择器看起来和原版完全一样（同一个 DeepSeek 组、同样的模型名），但每个条目背后都是声明了图片输入的自动识图包装；文字轮交给插件重建的原生 DeepSeek 适配器（读取同一个 `llm-deepseek` 设置段与凭据）。老会话通过隐藏的 `deepseek-vision` 别名继续工作。
-
-想保留官方行，在你的 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）覆写即可：
+**隐身模式改为显式可选。** 插件永远不会自己禁用官方 `llm-deepseek` 行（issue #34）。想接管官方 `deepseek-official` 路由——模型选择器看起来和原版完全一样，但每个条目背后都是声明了图片输入的自动识图包装，文字轮交给插件重建的原生 DeepSeek 适配器——在你自己的 profile 补丁层加上：
 
 ```yaml
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
+  disabled: true
 ```
 
-官方行在场时，插件回退为选择器里可见的「DeepSeek + 自动识图」包装入口——发图前选它即可。安装出问题时同样用这一行恢复。
+不接管时，插件注册选择器里可见的「DeepSeek + 自动识图」（`deepseek-vision`）包装入口——发图前选它即可；第三方文本路由则在设置卡片的「额外识图包装」里添加。安装出问题时删掉 `disabled` 行即可恢复。
 
 ## Web 设置
 

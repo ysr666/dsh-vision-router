@@ -28,7 +28,7 @@
 
 Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — lossy, one-shot, and blind to pixels. This plugin keeps the **original pixels on the vision model's side** and DeepSeek on the reasoning side, and makes looking at an image an **ordinary tool call**:
 
-- **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper, the stealth takeover and the attachment limits automatically — zero manual file edits.
+- **One command install, purely additive.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` mounts the plugin row and nothing else — no core row is disabled or overridden (issue #34).
 - **Free by default.** The vision chain starts with a built-in OVHcloud anonymous endpoint (`Qwen2.5-VL-72B-Instruct`, no account, no key, 2 req/min per IP). Paid chains (OpenRouter, Pi-AI providers, direct OpenAI-compatible endpoints) are optional upgrades.
 - **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
 - **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
@@ -59,7 +59,7 @@ dsh plugin --profile web add dsh-vision-router
 
 Restart `dsh web` — done. Zero configuration:
 
-- the plugin's bundle patch mounts the row, takes over the official DeepSeek route (stealth mode — the model picker looks exactly like stock), and relaxes attachment limits to 20 MB / 100 MP;
+- the plugin's bundle patch mounts the row only: the official DeepSeek route stays untouched, and image turns use the "自动识图" wrapper entry in the picker (or the extra wrappers you configure);
 - the default vision chain is the built-in free endpoint;
 - every setting is editable live in **Settings → Plugins → Plugin config → 视觉路由（自动识图）**.
 
@@ -151,16 +151,15 @@ Failures are classified (region / tos / quota / rate-limit / context / network) 
 
 ## Stealth mode
 
-A default install takes over the official `deepseek-official` route: the model picker looks exactly like stock (same DeepSeek group, same model names), but each entry is the auto-vision wrapper that declares image input and delegates text turns to a rebuilt native DeepSeek adapter (same `llm-deepseek` settings section and credentials). Old sessions keep working through the hidden `deepseek-vision` alias.
-
-To keep the stock row instead, override it in your profile patch layer (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
+**Stealth mode is opt-in.** The plugin never disables the official `llm-deepseek` row by itself (issue #34). To take over the official `deepseek-official` route — the model picker looks exactly like stock, but each entry is the auto-vision wrapper that declares image input and delegates text turns to a rebuilt native DeepSeek adapter — add the disable to YOUR profile patch layer:
 
 ```yaml
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
+  disabled: true
 ```
 
-With the stock row present, the plugin falls back to the visible "DeepSeek + 自动识图" wrapper entry — pick it in the model picker for image turns. Recovery from a broken install is the same one-line override.
+Without the takeover, the plugin registers the visible "DeepSeek + 自动识图" (`deepseek-vision`) wrapper entry — pick it in the model picker for image turns; for third-party text routes, add them to the settings card's **extra vision wrappers**. Recovery from a broken install is the same one-line override (delete the `disabled` line).
 
 ## Web settings
 
