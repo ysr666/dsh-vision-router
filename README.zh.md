@@ -199,7 +199,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 |---|---|---|
 | `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | 简写链路（有适配器的供应商 + 模型） |
 | `fallbacks` | `[]` | 简写供应商的备用模型 |
-| `providers` | `[]` | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式 |
+| `providers` | 内置免费 `vision-http` 条目 | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式。第一行开箱预置内置免费模型 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
 | `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 额外识图包装：`{ provider, models[] }`，给 opencode 等任意第三方/自定义文本路由注册可发图的孪生条目（卡片里 provider + 模型双下拉；模型留空 = 包装全部）。预置的 deepseek-official 条目标记内置包装、无副作用；改动即时生效 |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |

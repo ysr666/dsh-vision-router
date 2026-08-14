@@ -1177,6 +1177,12 @@ test('wrappedProviders pre-fills the stock deepseek-official row out of the box'
   assert.deepEqual(Config({}).wrappedProviders, [{ provider: 'deepseek-official', models: [] }])
 })
 
+test('the vision chain ships with the built-in free model as its first row', () => {
+  assert.deepEqual(Config({}).providers, [
+    { provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] },
+  ])
+})
+
 test('keep-alive fallback: stealth off + dead stock route still serves deepseek-official', async () => {
   // No stockRoute in the mock = the official llm-deepseek row is disabled at
   // the composition layer (adapterAvailable throws). With stealth off the

@@ -50,6 +50,9 @@ export const Config = z.object({
   provider: z.string().default('vision-http'),
   model: z.string().default('ovh/Qwen2.5-VL-72B-Instruct'),
   fallbacks: z.array(z.string()).default([]),
+  // 默认预置内置免费端点为第一行（与运行时兜底一致）：新用户在卡片里
+  // 直接看到「vision-http / ovh/Qwen2.5-VL-72B-Instruct（内置免费模型）」
+  // 这一行，往下加行即降级链。
   providers: z
     .array(
       z.object({
@@ -58,7 +61,7 @@ export const Config = z.object({
         fallbacks: z.array(z.string()).default([]),
       }),
     )
-    .default([]),
+    .default([{ provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] }]),
   // 默认关闭：图片轮不整轮切到视觉模型，而是像普通文本轮一样由会话模型
   // 调用视觉工具看图（可连续多步操作）。开启后恢复旧的整轮自动路由行为。
   routing: z.boolean().default(false),

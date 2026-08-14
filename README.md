@@ -199,7 +199,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 |---|---|---|
 | `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | shorthand chain (adapter-backed provider + model) |
 | `fallbacks` | `[]` | backup models for the shorthand provider |
-| `providers` | `[]` | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand |
+| `providers` | built-in free `vision-http` pair | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand. The first row ships as the built-in free model |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
 | `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — registers an auto-vision twin for any custom/third-party route (e.g. opencode); in the card, provider + model dropdowns, empty model = wrap all. The pre-filled deepseek-official row marks the built-in wrapper and is a no-op; changes apply live |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
