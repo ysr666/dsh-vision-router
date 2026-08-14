@@ -3301,6 +3301,82 @@ export function apply(ctx, config = {}) {
     })
   })
 
+
+  // ── test-connection probe: a GET-only diagnostics route the settings card
+  // uses to verify the first vision provider without sending a real image.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => {
+      const probe = async () => {
+        const started = Date.now()
+        const first = pairs().find((pair) => adapterAvailable(ctx.llm, pair.provider))
+        const probeModels = async (baseURL) => {
+          try {
+            const response = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(8000),
+            })
+            const latencyMs = Date.now() - started
+            if (!response.ok) {
+              return { ok: false, latencyMs, status: response.status, error: `HTTP ${response.status}` }
+            }
+            const data = await response.json().catch(() => undefined)
+            const count = data && Array.isArray(data.data) ? data.data.length : undefined
+            return { ok: true, latencyMs, status: response.status, models: count, endpoint: baseURL }
+          } catch (error) {
+            return {
+              ok: false,
+              latencyMs: Date.now() - started,
+              error: error && error.message ? error.message : String(error),
+            }
+          }
+        }
+        if (first !== undefined && first.provider === HTTP_ROUTE) {
+          const entry = httpRouteProviders().find((p) => `${p.name}/${p.model}` === first.model)
+          if (entry !== undefined) return probeModels(entry.baseURL)
+        }
+        if (first !== undefined) {
+          try {
+            await ctx.llm.resolveModelInfo(first.provider, first.model)
+            return {
+              ok: true,
+              latencyMs: Date.now() - started,
+              detail: `${first.provider}/${first.model} metadata resolved (no network call)`,
+            }
+          } catch (error) {
+            return {
+              ok: false,
+              latencyMs: Date.now() - started,
+              error: error && error.message ? error.message : String(error),
+            }
+          }
+        }
+        const httpFirst = httpRouteProviders()[0]
+        if (httpFirst !== undefined) return probeModels(httpFirst.baseURL)
+        return { ok: false, error: 'no usable vision provider configured' }
+      }
+      return webCtx.webServer.register({
+        kind: 'exact',
+        path: '/_dsh/vision-router/test-connection',
+        handler: async (req, res) => {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET')
+            res.writeHead(405)
+            res.end()
+            return
+          }
+          try {
+            const result = await probe()
+            res.writeHead(result.ok ? 200 : 502, { 'content-type': 'application/json' })
+            res.end(JSON.stringify(result))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ ok: false, error: error && error.message ? error.message : String(error) }))
+          }
+        },
+      })
+    }, 'vision-router: test-connection route')
+  })
+
   // Expose the namespace to the web configuration boundary. The API proxy
   // serves settings describe/mutate ONLY for configurable-provider namespaces
   // (plus a fixed product allowlist) — without this directory entry the Web
