@@ -732,6 +732,53 @@ test('stealth stream delegates text turns to the native route with memory substi
   assert.equal(chunks[0].type, 'finish')
 })
 
+test('stealth stream keeps the log intact and hands the model a tool-hint marker', async () => {
+  let streamCalls = 0
+  let delegateCall
+  const ctx = {
+    logger: { warn() {} },
+    llm: {
+      async *stream(options) {
+        streamCalls += 1
+        delegateCall = options
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }
+  const adapter = createStealthAdapter(ctx, {
+    native: {
+      providerInfo: () => ({ id: 'x', name: 'DeepSeek' }),
+      providerRetryPolicy: () => undefined,
+      listModels: async () => [],
+      resolveModel: async (p, m) => ({ provider: p, id: m, name: m }),
+    },
+    imageMemory: new Map(),
+    delegateProvider: 'deepseek-official-native',
+  })
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'img-9', name: 'b.png' } },
+        { type: 'text', text: '看看这张图' },
+      ],
+    },
+  ]
+  for await (const _chunk of adapter.stream({ provider: 'deepseek-official', model: 'deepseek-v4-pro', messages })) {
+    /* drain */
+  }
+  // exactly one llm call: the delegate. No automatic vision pass burns quota.
+  assert.equal(streamCalls, 1)
+  // the logged messages keep the image block (the Web UI still shows it)
+  assert.equal(messages[0].content[0].type, 'image')
+  // the model's input carries a compact marker pointing at the vision tools
+  const head = delegateCall.messages[0].content[0]
+  assert.equal(head.type, 'text')
+  assert.ok(head.text.includes('img-9'))
+  assert.ok(head.text.includes('vision_describe'))
+  assert.equal(delegateCall.messages[0].content.filter((b) => b.type === 'image').length, 0)
+})
+
 // ── apply() end-to-end: the harness-shaped mock ────────────────────────────
 //
 // Regression guard: apply() once crashed with "Cannot access 'chainRoute'
