@@ -23,6 +23,7 @@ import {
   createCache,
   downscaleImage,
   toOpenAIContent,
+  toRealPath,
   callOpenAICompatible,
   cacheKeyFor,
   adapterAvailable,
@@ -1438,4 +1439,16 @@ test('posterizeSvgColor rejects on timeout', async () => {
     () => posterizeSvgColor(raw, { width: 64, height: 64 }, [{ hex: '#ffffff', count: 1, share: 1 }], 0),
     /timed out/,
   )
+})
+
+test('toRealPath converts fs resolve results to real paths', () => {
+  assert.equal(toRealPath(null, '/abs/page.html'), '/abs/page.html')
+  assert.equal(toRealPath(null, 'rel/page.html'), 'rel/page.html')
+  assert.equal(
+    toRealPath({ processPath: (t) => String(t.targetKey) }, { targetKey: '/abs/page.html', displayPath: '/abs/page.html' }),
+    '/abs/page.html',
+  )
+  assert.equal(toRealPath({}, { targetKey: '/abs/page.html' }), '/abs/page.html')
+  assert.equal(toRealPath(null, { targetKey: '/abs/page.html' }), '/abs/page.html')
+  assert.equal(toRealPath({}, { targetKey: '' }), '[object Object]')
 })
