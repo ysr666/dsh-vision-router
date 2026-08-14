@@ -55,7 +55,7 @@ Both are MIT-licensed and one command away. Pick this plugin when you want image
 ## Quick start
 
 ```sh
-dsh plugin --profile web add github:ysr666/dsh-vision-router
+dsh plugin --profile web add dsh-vision-router
 ```
 
 Restart `dsh web` — done. Zero configuration:
@@ -214,7 +214,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 ### Install
 
 ```sh
-dsh plugin --profile web add github:ysr666/dsh-vision-router
+dsh plugin --profile web add dsh-vision-router
 dsh --profile web --dump-config | grep vision-router   # one row, mounted by the bundle patch
 ```
 

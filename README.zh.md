@@ -55,7 +55,7 @@
 ## 快速开始
 
 ```sh
-dsh plugin --profile web add github:ysr666/dsh-vision-router
+dsh plugin --profile web add dsh-vision-router
 ```
 
 重启 `dsh web`——完成，零配置：
@@ -214,7 +214,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 ### 安装
 
 ```sh
-dsh plugin --profile web add github:ysr666/dsh-vision-router
+dsh plugin --profile web add dsh-vision-router
 dsh --profile web --dump-config | grep vision-router   # 一行，由 bundle 补丁挂载
 ```
 
