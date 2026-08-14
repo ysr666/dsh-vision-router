@@ -64,7 +64,7 @@ export const Config = z.object({
   artifactsDir: z.string().default('.dsh-vision-router/artifacts'),
   rewriteImages: z.boolean().default(true),
   downscale: z.boolean().default(true),
-  downscaleMaxPixels: z.number().step(1).min(1000).default(8000000),
+  downscaleMaxPixels: z.number().step(1).min(1000).default(4000000),
   cache: z.boolean().default(true),
   cacheTtlSeconds: z.number().step(1).min(0).default(3600),
   cacheMaxEntries: z.number().step(1).min(1).default(200),
@@ -1124,7 +1124,7 @@ export function apply(ctx, config = {}) {
   const downscaleEnabled = () => current().downscale !== false
   const downscaleMaxPixels = () => {
     const value = current().downscaleMaxPixels
-    return Number.isFinite(value) && value > 0 ? value : 8000000
+    return Number.isFinite(value) && value > 0 ? value : 4000000
   }
   const cacheEnabled = () => current().cache !== false
   const cache = createCache(
@@ -1281,7 +1281,14 @@ export function apply(ctx, config = {}) {
               if (attachments === undefined) continue
               try {
                 const stored = await attachments.readImage(block.attachment)
-                content.push(...toOpenAIContent([block], () => stored.data))
+                // Last-mile guard: never send oversized images to the vision
+                // endpoint — encoder cost scales with pixels and dominates
+                // tool-call latency on retina screenshots.
+                let bytes = stored.data
+                if (downscaleEnabled() && bytes && bytes.length > 0) {
+                  bytes = await downscaleImage(bytes, downscaleMaxPixels())
+                }
+                content.push(...toOpenAIContent([block], () => bytes))
               } catch (error) {
                 ctx.logger?.warn(
                   'vision-http: failed to read image attachment: %s',
@@ -1876,6 +1883,27 @@ export function apply(ctx, config = {}) {
             throw new Error(
               `vision_describe: failed to read attachment ${id} (${error && error.message ? error.message : String(error)})`,
             )
+          }
+          // Downscale oversized uploads before the vision call: retina
+          // screenshots easily reach 10MP+ and the vision encoder's cost
+          // scales with pixels — a full-size upload is the dominant part of
+          // the tool-call latency. Re-save a resized attachment so the
+          // adapter reads the small one.
+          if (downscaleEnabled() && stored.data && stored.data.length > 0) {
+            const resized = await downscaleImage(stored.data, downscaleMaxPixels())
+            if (resized !== stored.data) {
+              try {
+                const resizedRef = await attachments.saveImage({
+                  data: resized,
+                  mediaType: stored.ref && stored.ref.mediaType ? stored.ref.mediaType : 'image/png',
+                  ...(stored.ref && stored.ref.name ? { name: stored.ref.name } : {}),
+                })
+                stored = { ref: resizedRef, data: resized }
+                ctx.logger?.info('vision-router: downscaled attachment %s for the vision call', id)
+              } catch {
+                stored = { ...stored, data: resized }
+              }
+            }
           }
           contentIds.push(String(ref.attachmentId))
           blocks.push({ type: 'image', attachment: stored.ref })
