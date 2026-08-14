@@ -1114,6 +1114,7 @@ test('apply registers the stealth deepseek-official route with the stock catalog
     provider: 'openrouter',
     providers: [{ provider: 'openrouter', model: 'qwen/qwen3-vl-235b-a22b-instruct' }],
     routing: true,
+    stealth: true,
   }))
 
   // all four routes came up: hidden native, public deepseek-official, the
@@ -1142,7 +1143,10 @@ test('apply skips the chain route by default: image turns go through the vision 
   // vision-http backend for vision_describe stays mounted
   assert.equal(adapters.has('vision-chain'), false)
   assert.ok(adapters.has('vision-http'))
-  assert.ok(adapters.has('deepseek-official-native'))
+  // stealth is opt-in now: no hidden native route by default, but the
+  // visible deepseek-vision wrapper is always registered for admission
+  assert.equal(adapters.has('deepseek-official-native'), false)
+  assert.ok(adapters.has('deepseek-vision'))
 })
 
 // ── legacy routing fallback (routing: true, chainRoute: '') ────────────────
