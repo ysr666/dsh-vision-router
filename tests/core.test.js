@@ -1107,7 +1107,10 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false } = {
           adapters.set(provider, adapter)
           registrations.set(provider, { adapter, retryPolicy: adapter.providerRetryPolicy(provider) })
         }
-        return { replace: () => {} }
+        // mirror the real handle: callable disposer with a replace() sidecar
+        const handle = () => {}
+        handle.replace = () => {}
+        return handle
       },
       registration(provider) {
         const hit = registrations.get(provider)
@@ -1403,6 +1406,36 @@ test('twin route registers before its source adapter appears (live provider regi
   for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
   const resolved = await twin.resolveModel('opencode-go-vision', 'deepseek-v4-flash')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+})
+
+test('twin sync is idempotent across llm/adapters-updated events', async () => {
+  const { ctx, adapters, captured } = mockHarnessCtx()
+  apply(ctx, Config({ wrappedProviders: [{ provider: 'opencode-go', models: [] }] }))
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire, 'expected the adapters-updated listener to be registered')
+  const thirdParty = {
+    providerInfo: (p) => ({ id: p, name: 'Opencode' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
+      { provider: p, id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
+  // every adapter change re-runs the sync; repeated runs must neither
+  // duplicate the route nor throw DUPLICATE_ADAPTER
+  fire()
+  fire()
+  fire()
+  assert.ok(adapters.has('opencode-go-vision'))
+  const listed = await adapters.get('opencode-go-vision').listModels('opencode-go-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
 })
 
 test('apply falls back to the visible wrapper when the stock route is still active', async () => {

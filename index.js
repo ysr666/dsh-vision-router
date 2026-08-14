@@ -1874,6 +1874,10 @@ export function apply(ctx, config = {}) {
             const base = await ctx.llm.resolveModelInfo(pair.provider, pair.model)
             return {
               ...base,
+              // The picker entry id is the composite "provider/model" string;
+              // the llm service refuses metadata whose `id` does not equal the
+              // requested model exactly (INVALID_MODEL_INFO).
+              id: model,
               provider: wrapperRoute(),
               name: `${pair.provider}/${pair.model}（视觉）`,
               inputModalities: ['text', 'image'],
@@ -1926,16 +1930,16 @@ export function apply(ctx, config = {}) {
         (route) => route !== undefined && route !== null && route !== '',
       ),
     )
-  for (const entry of wrappedProviders()) {
-    const provider = entry.provider
-    const models = Array.isArray(entry.models)
-      ? entry.models.filter((model) => typeof model === 'string' && model !== '')
-      : []
-    if (ownRoutes().has(provider)) continue
-    // The twin must NOT resolve its source adapter eagerly: providers backed
-    // by user settings (llm-pi-ai's openrouter/deepseek) register their routes
-    // LIVE once the settings document loads, i.e. AFTER this plugin's apply.
-    // Register the twin route up front and delegate lazily per call instead.
+  // The twin must NOT resolve its source adapter eagerly: providers backed by
+  // user settings (llm-pi-ai's openrouter/deepseek) register their routes LIVE
+  // once the settings document loads, i.e. AFTER this plugin's apply. Same for
+  // wrappedProviders itself: the settings document loads asynchronously, so at
+  // apply time the scope may only contain composition defaults. The twins are
+  // therefore synced reactively — on settings changes and on every
+  // `llm/adapters-updated` event — and each twin delegates lazily per call.
+  const twinHandles = new Map() // provider -> { handle, modelsKey }
+  const twinModelsKey = (models) => models.slice().sort().join('\u0000')
+  const makeTwinAdapter = (provider, models) => {
     const twinRoute = `${provider}-vision`
     const originalAdapter = () => {
       try {
@@ -1944,7 +1948,7 @@ export function apply(ctx, config = {}) {
         return undefined
       }
     }
-    const twinAdapter = {
+    return {
       providerInfo() {
         const original = originalAdapter()
         let info
@@ -1990,9 +1994,47 @@ export function apply(ctx, config = {}) {
         delegateProvider: provider,
       }),
     }
-    const twinHandle = ctx.llm.registerAdapter([twinRoute], twinAdapter)
-    ctx.effect(() => twinHandle, `vision-router: twin route ${twinRoute}`)
   }
+  const syncTwins = () => {
+    const wanted = new Map()
+    for (const entry of wrappedProviders()) {
+      const provider = entry.provider
+      if (ownRoutes().has(provider)) continue
+      const models = Array.isArray(entry.models)
+        ? entry.models.filter((model) => typeof model === 'string' && model !== '')
+        : []
+      wanted.set(provider, models)
+    }
+    // Drop twins that are no longer wanted, and rebuild ones whose model
+    // selection changed (the adapter closure captures the model filter).
+    for (const [provider, held] of [...twinHandles.entries()]) {
+      const models = wanted.get(provider)
+      if (models === undefined || twinModelsKey(models) !== held.key) {
+        held.handle()
+        twinHandles.delete(provider)
+      } else {
+        wanted.delete(provider) // already current
+      }
+    }
+    // Register the missing twins. Runs idempotently: our own registration
+    // emits llm/adapters-updated, and the second pass finds nothing to do.
+    for (const [provider, models] of wanted) {
+      const twinRoute = `${provider}-vision`
+      try {
+        const handle = ctx.llm.registerAdapter([twinRoute], makeTwinAdapter(provider, models))
+        ctx.effect(() => handle, `vision-router: twin route ${twinRoute}`)
+        twinHandles.set(provider, { handle, key: twinModelsKey(models) })
+      } catch (error) {
+        ctx.logger?.warn(
+          'vision-router: twin route %s registration failed: %s',
+          twinRoute,
+          error && error.message ? error.message : String(error),
+        )
+      }
+    }
+  }
+  syncTwins()
+  ctx.on('llm/adapters-updated', syncTwins)
 
   // ── vision chain route: fallback under our own control ─────────────────────
   //
@@ -3468,7 +3510,10 @@ export function apply(ctx, config = {}) {
       'vision-router: settings fallback',
     )
     scope.watch(() => {
-      // Every consumer reads current() per call; nothing to re-register.
+      // Most consumers read current() per call, but the wrappedProviders
+      // twins are registered eagerly: re-sync them whenever the settings
+      // document loads or the user edits the wrappers section.
+      syncTwins()
     })
   })
 
