@@ -11,14 +11,18 @@
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
   <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-5B4CF0?style=flat-square" alt="Release v0.2.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-76%20tests-2EA44F?style=flat-square" alt="Verified: 61 tests" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-0B7285?style=flat-square" alt="License: LGPL-3.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-86%20tests-2EA44F?style=flat-square" alt="Verified: 86 tests" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
   <a href="cordis.patch.yml"><img src="https://img.shields.io/badge/DSH-Web%20profile-5B4CF0?style=flat-square" alt="DSH Web profile" /></a>
 </p>
 
 <p align="center">English · <a href="README.zh.md">中文</a></p>
+
+<p align="center">
+  <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
+</p>
 
 ## Why this exists
 
@@ -234,7 +238,7 @@ This removes the dependency and the bundle layer. If you disabled the stock Deep
 
 ## License
 
-[LGPL-3.0](LICENSE)
+[MIT](LICENSE)
 
 <!-- star-history-chart -->
 ## Star History
