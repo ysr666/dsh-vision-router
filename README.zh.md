@@ -120,6 +120,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome） | PNG |
+| `vision_long_screenshot_ocr` | 长截图转写：重叠分片，tesseract 优先 / 视觉模型回退，按序拼接 Markdown | 分片 PNG + Markdown + manifest |
 
 图片格式按**魔数识别**，无扩展名的内容寻址附件文件也能直接用（不用再复制成 `.png`）。
 
@@ -136,6 +137,7 @@ vision_colors image="ref.png" top=8
 vision_trace image="icon.png" steps=4
 vision_extract_foreground image="logo.png"
 vision_html_screenshot source="page.html" width=1200 height=720
+vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
 
 ## 供应商降级链
