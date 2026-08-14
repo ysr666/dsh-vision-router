@@ -46,6 +46,7 @@ import {
   estimateMessages,
   trimMessagesToBudget,
   parseBox,
+  longOcrWindows,
   computePixelDiff,
   renderDiffHeatmap,
   quantizeColors,
@@ -798,6 +799,23 @@ test('lastUserText returns the current user question', () => {
   ]
   assert.equal(lastUserText(messages), '新问题')
   assert.equal(lastUserText([{ role: 'assistant', content: [] }]), '')
+})
+
+test('longOcrWindows slices with overlap and covers the full height', () => {
+  // 3000px tall, 1200px chunks, 120px overlap -> tops 0, 1080, 2160 (last clamps to 3000)
+  const windows = longOcrWindows(3000, 1200, 120)
+  assert.deepEqual(windows, [
+    { top: 0, bottom: 1200 },
+    { top: 1080, bottom: 2280 },
+    { top: 2160, bottom: 3000 },
+  ])
+  // single short image -> one window
+  assert.deepEqual(longOcrWindows(600, 1200, 120), [{ top: 0, bottom: 600 }])
+  // exact multiple with overlap lands the last chunk clamped at height
+  assert.deepEqual(longOcrWindows(2400, 1200, 0), [
+    { top: 0, bottom: 1200 },
+    { top: 1200, bottom: 2400 },
+  ])
 })
 
 test('parseBox validates string and object forms', () => {

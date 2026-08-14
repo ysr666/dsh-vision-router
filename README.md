@@ -120,6 +120,7 @@ All ten deep tools mount automatically on image turns (`autoActivateOnImage`); t
 | `vision_trace` | SVG vectorization (potrace posterization; icons/logos) | SVG |
 | `vision_extract_foreground` | Cutout via border flood fill (uniform backgrounds) | transparent PNG |
 | `vision_html_screenshot` | Screenshot a local HTML file (headless system Chrome) | PNG |
+| `vision_long_screenshot_ocr` | Long-screenshot transcription: overlapping chunks, tesseract first / vision model fallback, stitched Markdown | chunk PNGs + Markdown + manifest |
 
 Formats are sniffed from magic bytes, so extensionless content-addressed attachment files work everywhere (no `.png` renaming needed).
 
@@ -136,6 +137,7 @@ vision_colors image="ref.png" top=8
 vision_trace image="icon.png" steps=4
 vision_extract_foreground image="logo.png"
 vision_html_screenshot source="page.html" width=1200 height=720
+vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
 
 ## Provider fallback chain
