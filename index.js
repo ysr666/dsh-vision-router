@@ -2611,7 +2611,14 @@ export function apply(ctx, config = {}) {
               title: '视觉深看工具',
               description:
                 '像素级视觉操作：定位元素坐标、裁剪放大、像素对比验证、取色、OCR、SVG 矢量化、抠图、页面截图、看图问答（产物写入工作区）',
-              instructions:
+              whenToUse:
+                '任务需要像素级视觉操作（看图问答、定位、裁剪、像素对比、取色、OCR、矢量化、抠图、页面截图）时使用。',
+              // The skill registry validates the LOADED definition against
+              // source/provider/content — `instructions` is not a field, and
+              // a registration without `content` fails to load with
+              // "loaded skill ... source must be a string".
+              source: 'dsh-vision-router',
+              content:
                 '# 视觉深看工具（vision-tools）\n\n' +
                 '当任务需要像素级视觉操作——照着图写 UI、定位元素、裁剪放大细看、像素对比验证还原结果、' +
                 '提取配色、识别图中文字、矢量化图标、抠图或给页面截图——时使用本套工具。' +

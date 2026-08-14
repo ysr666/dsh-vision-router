@@ -815,9 +815,10 @@ test('stealth stream keeps the log intact and hands the model a tool-hint marker
 // plugin). These tests apply the full plugin against a harness-shaped mock
 // ctx, so ordering bugs inside apply() fail loudly here instead of at boot.
 
-function mockHarnessCtx({ stockRoute = false, config0 = {} } = {}) {
+function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false } = {}) {
   const adapters = new Map() // provider -> adapter
   const registrations = new Map() // provider -> { adapter, retryPolicy }
+  const captured = { skills: [] }
   if (stockRoute) {
     const stock = {
       providerInfo: (p) => ({ id: p, name: 'DeepSeek' }),
@@ -840,6 +841,14 @@ function mockHarnessCtx({ stockRoute = false, config0 = {} } = {}) {
     get(name) {
       if (name === 'settings') return { get: () => undefined }
       if (name === 'credentials') return { resolve: async () => ({ value: 'sk-test' }) }
+      if (name === 'skills' && skills) {
+        return {
+          register: (skill) => {
+            captured.skills.push(skill)
+            return () => {}
+          },
+        }
+      }
       return undefined
     },
     logger: { warn() {}, info() {}, error() {} },
@@ -888,7 +897,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {} } = {}) {
       },
     },
   }
-  return { ctx, adapters }
+  return { ctx, adapters, captured }
 }
 
 test('apply registers the stealth deepseek-official route with the stock catalog', async () => {
@@ -981,6 +990,18 @@ test('vision-http stream emits the indexed block protocol the assemblers need', 
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('apply registers the vision-tools skill with source and content', () => {
+  const { ctx, captured } = mockHarnessCtx({ skills: true })
+  apply(ctx, Config({}))
+  const skill = captured.skills.find((s) => s.name === 'vision-tools')
+  assert.ok(skill, 'expected the vision-tools skill registration')
+  // the skill registry validates the LOADED definition against these fields
+  assert.equal(typeof skill.source, 'string')
+  assert.ok(skill.source.length > 0)
+  assert.equal(typeof skill.content, 'string')
+  assert.ok(skill.content.includes('vision_describe') || skill.content.includes('vision_ground'))
 })
 
 test('apply falls back to the visible wrapper when the stock route is still active', async () => {
