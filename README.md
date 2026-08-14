@@ -203,7 +203,7 @@ dsh plugin --profile web add github:ysr666/dsh-vision-router
 | `downscale` / `downscaleMaxPixels` | `true` / `8000000` | 大图自动缩放与像素预算。 |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存。 |
 | `timeoutMs` | `120000` | 单次视觉调用超时。 |
-| `proxy` / `proxyHosts` | `""` / openrouter 域名 | 可选代理（仅指定域名走代理）。 |
+| `proxy` / `proxyHosts` | `""` / openrouter、openai、anthropic、groq、mistral、together、gemini、xai 等常见国外 API 域名 | 可选代理（仅指定域名走代理；未设 `proxy` 时列表不生效）。 |
 | `httpProviders` | 内置 OVHcloud 匿名端点 | 直连 HTTP 供应商列表（OpenAI 兼容、`apiKeyEnv` 留空即匿名）。 |
 | `freeFallback` | `true` | 未显式配置 `httpProviders` 时启用内置免费端点；`false` 关闭。 |
 

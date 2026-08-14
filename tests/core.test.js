@@ -29,6 +29,7 @@ import {
   lastUserText,
   switchRoute,
   hostMatchesAny,
+  DEFAULT_PROXY_HOSTS,
   launchEnvironmentLike,
   createNativeDeepSeekAdapter,
   createStealthAdapter,
@@ -1064,4 +1065,11 @@ test('hostMatchesAny matches exact hosts and subdomains only', () => {
   assert.equal(hostMatchesAny('api.deepseek.com', hosts), false)
   assert.equal(hostMatchesAny('openrouter.ai', []), false)
   assert.equal(hostMatchesAny('openrouter.ai', undefined), false)
+})
+
+test('DEFAULT_PROXY_HOSTS covers the common foreign AI API domains', () => {
+  for (const host of ['api.openrouter.ai', 'openrouter.ai', 'api.openai.com', 'api.anthropic.com', 'api.mistral.ai', 'api.together.xyz']) {
+    assert.ok(DEFAULT_PROXY_HOSTS.includes(host), `missing ${host}`)
+  }
+  assert.ok(!DEFAULT_PROXY_HOSTS.includes('api.deepseek.com'), 'DeepSeek stays direct')
 })

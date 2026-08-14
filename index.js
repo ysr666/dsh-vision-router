@@ -32,6 +32,19 @@ import potrace from 'potrace'
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
 
+/** Default proxy host list: common foreign AI API domains; inert unless `proxy` is set. */
+export const DEFAULT_PROXY_HOSTS = [
+  'api.openrouter.ai',
+  'openrouter.ai',
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.groq.com',
+  'api.mistral.ai',
+  'api.together.xyz',
+  'generativelanguage.googleapis.com',
+  'api.x.ai',
+]
+
 export const Config = z.object({
   provider: z.string().default('vision-http'),
   model: z.string().default('ovh/Qwen2.5-VL-72B-Instruct'),
@@ -70,7 +83,7 @@ export const Config = z.object({
   cacheMaxEntries: z.number().step(1).min(1).default(200),
   timeoutMs: z.number().step(1).min(1000).max(600000).default(120000),
   proxy: z.string().default(''),
-  proxyHosts: z.array(z.string()).default(['api.openrouter.ai', 'openrouter.ai']),
+  proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
   freeFallback: z.boolean().default(true),
   httpProviders: z
     .array(
