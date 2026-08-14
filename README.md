@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
   <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-5B4CF0?style=flat-square" alt="Release v0.2.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-61%20tests-2EA44F?style=flat-square" alt="Verified: 61 tests" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-76%20tests-2EA44F?style=flat-square" alt="Verified: 61 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-0B7285?style=flat-square" alt="License: LGPL-3.0" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -60,7 +60,7 @@ Then just paste an image into a conversation. The agent mounts the vision tools 
 - **Automatic failover with classified errors.** Region blocks, ToS filtering, 402 quota, 429 rate limits (with Retry-After backoff), context overflow, network failures — the chain walks providers one by one and only reports after all of them failed, with actionable advice.
 - **Image memory.** Vision answers are cached by attachment content hash; later text turns substitute the recorded description (marked as untrusted evidence), so DeepSeek genuinely remembers earlier images without re-spending vision calls.
 - **A verifiable pixel loop.** Reference → `vision_html_screenshot` → `vision_pixel_diff` (ratio + red heatmap + worst-region ranking) → fix → repeat until the diff reaches zero. UI restoration becomes measurable instead of eyeballed.
-- **Progressive schema exposure.** Only a zero-arg `vision_activate` bootstrap is always visible; image turns auto-mount all nine deep tools with a one-time usage note, and a `vision-tools` skill is registered for text-only turns.
+- **Progressive schema exposure.** Only a zero-arg `vision_activate` bootstrap is always visible; image turns auto-mount all ten deep tools with a one-time usage note, and a `vision-tools` skill is registered for text-only turns.
 - **Selective proxy.** Only the configured vision provider hosts go through your local proxy; DeepSeek stays direct.
 
 ## How it works
@@ -73,7 +73,7 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 
 ## Tools
 
-All nine deep tools mount automatically on image turns (`autoActivateOnImage`); text turns can mount them via `vision_activate` or the `/vision-tools` skill. Built on sharp / potrace / tesseract / system Chrome — no Python:
+All ten deep tools mount automatically on image turns (`autoActivateOnImage`); text turns can mount them via `vision_activate` or the `/vision-tools` skill. Built on sharp / potrace / tesseract / system Chrome — no Python:
 
 <p align="center">
   <img src="assets/vision-tools.svg" width="100%" alt="Nine vision tools available in DSH Vision Router." />
@@ -81,8 +81,9 @@ All nine deep tools mount automatically on image turns (`autoActivateOnImage`); 
 
 | Tool | What it does | Artifact |
 |---|---|---|
-| `vision_describe` | Image Q&A / multi-image compare / strict-JSON mode | — |
+| `vision_describe` | Image Q&A / multi-image compare / structured-evidence JSON mode (summary + layout regions + entity inventory + verbatim transcription) | — |
 | `vision_ground` | Locate a target → **original-pixel box x1/y1/x2/y2** | annotated PNG (optional) |
+| `vision_detect` | Numbered inventory of every element of a kind (buttons/inputs/links…) with original-pixel boxes | annotated PNG with numbered boxes |
 | `vision_crop` | Crop and zoom into a pixel box | PNG |
 | `vision_pixel_diff` | Per-pixel comparison: diff ratio + worst 8×8-grid regions | red heatmap PNG + JSON report |
 | `vision_colors` | Dominant colors (hex + share) | — |
@@ -97,6 +98,7 @@ Formats are sniffed from magic bytes, so extensionless content-addressed attachm
 
 ```text
 vision_ground image="ref.png" target="the send button"
+vision_detect image="page.png" target="input fields"
 vision_crop   image="ref.png" region="1067,841,1108,881"
 vision_describe paths=["ref.png","impl.png"] question="list the differences" json=true
 vision_pixel_diff original="ref.png" rebuilt="screenshot.png"

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
   <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v0.2.0"><img src="https://img.shields.io/badge/release-v0.2.0-5B4CF0?style=flat-square" alt="Release v0.2.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-61%20tests-2EA44F?style=flat-square" alt="Verified: 61 tests" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-76%20tests-2EA44F?style=flat-square" alt="Verified: 61 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-LGPL--3.0-0B7285?style=flat-square" alt="License: LGPL-3.0" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -60,7 +60,7 @@ dsh plugin --profile web add github:ysr666/dsh-vision-router
 - **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流（尊重 Retry-After 退避重试）、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。
 - **图片记忆。** 视觉答案按附件内容哈希缓存；后续文字轮用记录的描述替换历史图片（标注为不可信证据），DeepSeek 真正“记得”之前发过的图，且不重复消耗视觉调用。
 - **可验证的像素闭环。** 参照图 → `vision_html_screenshot` → `vision_pixel_diff`（差异率 + 红色热力图 + 最差区域排行）→ 修复 → 再对比，直到差异归零。UI 还原从“目测”变成“实测”。
-- **渐进式 schema 暴露。** 平时只有一个零参引导工具 `vision_activate`；图片轮自动挂载全部 9 个深看工具（附一次性使用提示），并为纯文字轮注册 `vision-tools` 技能。
+- **渐进式 schema 暴露。** 平时只有一个零参引导工具 `vision_activate`；图片轮自动挂载全部 10 个深看工具（附一次性使用提示），并为纯文字轮注册 `vision-tools` 技能。
 - **选择性代理。** 只有配置的视觉供应商域名走本地代理；DeepSeek 保持直连。
 
 ## 工作原理
@@ -73,16 +73,17 @@ dsh plugin --profile web add github:ysr666/dsh-vision-router
 
 ## 工具
 
-9 个深看工具在图片轮自动挂载（`autoActivateOnImage`）；文字轮可通过 `vision_activate` 或 `/vision-tools` 技能挂载。全部基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
+10 个深看工具在图片轮自动挂载（`autoActivateOnImage`）；文字轮可通过 `vision_activate` 或 `/vision-tools` 技能挂载。全部基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
-  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 9 个视觉工具。" />
+  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 10 个视觉工具。" />
 </p>
 
 | 工具 | 作用 | 产物 |
 |---|---|---|
-| `vision_describe` | 看图问答 / 多图对比 / 严格 JSON 模式 | — |
+| `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |
 | `vision_ground` | 定位目标 → **原图像素框 x1/y1/x2/y2** | 标注 PNG（可选） |
+| `vision_detect` | 盘点某类元素（按钮/输入框/链接…）→ 编号清单 + 原图像素框 | 编号标注 PNG |
 | `vision_crop` | 按像素框裁剪放大 | PNG |
 | `vision_pixel_diff` | 逐像素对比：差异率 + 最差 8×8 网格区域 | 红色热力图 PNG + JSON 报告 |
 | `vision_colors` | 主色提取（十六进制 + 占比） | — |
@@ -97,6 +98,7 @@ dsh plugin --profile web add github:ysr666/dsh-vision-router
 
 ```text
 vision_ground image="ref.png" target="发送按钮"
+vision_detect image="page.png" target="输入框"
 vision_crop   image="ref.png" region="1067,841,1108,881"
 vision_describe paths=["ref.png","impl.png"] question="列出两图的差异" json=true
 vision_pixel_diff original="ref.png" rebuilt="screenshot.png"

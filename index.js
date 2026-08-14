@@ -598,6 +598,131 @@ export async function annotateBoxBuffer(bytes, box) {
 }
 
 /**
+ * Draw NUMBERED boxes for a detected-element inventory: each box gets a red
+ * rect plus a numbered red circle label at its top-left corner, so the model
+ * and the user can refer to "element #3" in follow-up steps.
+ */
+export function boxesToSvg(boxes, width, height) {
+  const stroke = Math.max(2, Math.round(Math.max(width, height) / 400))
+  const labelR = Math.max(10, stroke * 4)
+  const parts = [`<svg width="${width}" height="${height}">`]
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i]
+    parts.push(
+      `<rect x="${box.x1}" y="${box.y1}" width="${box.x2 - box.x1}" height="${box.y2 - box.y1}" ` +
+        `fill="none" stroke="#ff2d55" stroke-width="${stroke}"/>`,
+    )
+    const cx = Math.max(labelR, Math.min(box.x1, width - labelR))
+    const cy = Math.max(labelR, Math.min(box.y1, height - labelR))
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${labelR}" fill="#ff2d55"/>` +
+        `<text x="${cx}" y="${cy + labelR * 0.36}" text-anchor="middle" ` +
+        `font-family="sans-serif" font-size="${Math.round(labelR * 1.2)}" fill="#ffffff" ` +
+        `font-weight="bold">${i + 1}</text>`,
+    )
+  }
+  parts.push('</svg>')
+  return Buffer.from(parts.join(''))
+}
+
+/** Draw numbered boxes for a detected-element inventory onto an image buffer. */
+export async function annotateBoxesBuffer(bytes, boxes) {
+  const image = sharp(bytes, { failOn: 'none' })
+  const meta = await image.metadata()
+  const width = meta.width ?? 0
+  const height = meta.height ?? 0
+  if (width <= 0 || height <= 0 || boxes.length === 0) return bytes
+  return image.composite([{ input: boxesToSvg(boxes, width, height), top: 0, left: 0 }]).png().toBuffer()
+}
+
+/**
+ * Fixed JSON contract the model must answer for vision_detect: a numbered
+ * inventory of the requested element kind with original-pixel boxes.
+ */
+export function visionDetectInstruction(target, width, height) {
+  return (
+    `The image is ${width}x${height} pixels. Find every "${String(target).slice(0, 300)}" in it. ` +
+    'Return ONE JSON object and nothing else, shaped EXACTLY as:\n' +
+    '{"elements":[{"label":"<short element name>","box":{"x1":0,"y1":0,"x2":0,"y2":0}},...]}\n' +
+    '- "elements" is a numbered list (array order = element number) of every match, from top-left to bottom-right in reading order;\n' +
+    '- every box is the tight bounding box in ORIGINAL image pixels, integers, 0 <= x1 < x2 <= ' +
+    `${width}, 0 <= y1 < y2 <= ${height}` +
+    ';\n- if nothing matches, return {"elements":[]}.'
+  )
+}
+
+/**
+ * Fixed JSON contract for vision_describe's structured mode: reading-order
+ * layout regions, an entity inventory, and a faithful full transcription —
+ * grounded evidence instead of a single prose blob.
+ */
+export function describeStructuredInstruction(question) {
+  return (
+    `Look at the image and answer the question: 「${String(question).slice(0, 1500)}」. ` +
+    'Return ONE JSON object and nothing else, shaped EXACTLY as:\n' +
+    '{"summary":"<1-2 sentence answer to the question>",' +
+    '"layout":[{"region":"<e.g. top-left / header / center>","content":"<what is there>"}],' +
+    '"entities":[{"type":"<button|input|text|image|link|icon|other>","label":"<name or text>"}],' +
+    '"text":"<the full text visible in the image, transcribed in reading order, as faithful as possible>"}\n' +
+    '- "layout" lists the main regions in reading order (top-to-bottom, left-to-right);\n' +
+    '- "entities" lists notable elements; use only the listed type values;\n' +
+    '- "text" is the verbatim transcription; write "" when the image contains no text.'
+  )
+}
+
+/**
+ * Normalize a vision_detect model answer into the canonical shape, clamping
+ * every box into the image bounds. Returns undefined when the JSON is not a
+ * usable inventory.
+ */
+export function normalizeDetectResult(parsed, width, height) {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.elements)) return undefined
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, max))
+  const elements = []
+  for (const item of parsed.elements) {
+    if (!item || typeof item !== 'object' || !item.box || typeof item.box !== 'object') continue
+    const x1 = Math.round(Number(item.box.x1))
+    const y1 = Math.round(Number(item.box.y1))
+    const x2 = Math.round(Number(item.box.x2))
+    const y2 = Math.round(Number(item.box.y2))
+    if (![x1, y1, x2, y2].every(Number.isFinite)) continue
+    const box = {
+      x1: clamp(x1, 0, width - 1),
+      y1: clamp(y1, 0, height - 1),
+      x2: clamp(x2, 1, width),
+      y2: clamp(y2, 1, height),
+    }
+    if (box.x2 <= box.x1 || box.y2 <= box.y1) continue
+    elements.push({
+      number: elements.length + 1,
+      label: typeof item.label === 'string' && item.label.trim() !== '' ? item.label.trim() : `element ${elements.length + 1}`,
+      box,
+    })
+  }
+  return { width, height, elements }
+}
+
+/**
+ * Normalize a structured vision_describe answer: fill missing fields with
+ * sensible defaults so callers always see the documented keys.
+ */
+export function normalizeDescribeResult(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const layout = Array.isArray(parsed.layout) ? parsed.layout.filter((r) => r && typeof r === 'object' && typeof r.region === 'string' && typeof r.content === 'string') : []
+  const entities = Array.isArray(parsed.entities)
+    ? parsed.entities
+        .filter((e) => e && typeof e === 'object' && typeof e.type === 'string' && typeof e.label === 'string')
+        .map((e) => ({ type: e.type, label: e.label }))
+    : []
+  return {
+    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+    layout,
+    entities,
+    text: typeof parsed.text === 'string' ? parsed.text : '',
+  }
+}
+
+/**
  * Remove a solid-ish background by border flood fill: pixels connected to the
  * image border and within `tolerance` (max channel delta) of the average corner
  * color get alpha 0. Good for logos on uniform backgrounds.
@@ -1783,7 +1908,7 @@ export function apply(ctx, config = {}) {
                 type: 'text',
                 text:
                   '本轮消息包含图片，像素级视觉工具已自动挂载：vision_describe（看图问答）、' +
-                  'vision_ground（像素定位）、vision_crop（裁剪放大）、vision_pixel_diff（像素对比）、' +
+                  'vision_ground（像素定位）、vision_detect（元素清单）、vision_crop（裁剪放大）、vision_pixel_diff（像素对比）、' +
                   'vision_colors（取色）、vision_ocr（文字识别）、vision_trace（SVG 矢量化）、' +
                   'vision_extract_foreground（抠图）、vision_html_screenshot（页面截图）。' +
                   '任务需要定位、裁剪、对比、取色、OCR、矢量化、抠图或截图时直接调用对应工具，' +
@@ -2031,8 +2156,11 @@ export function apply(ctx, config = {}) {
 
         const question = String(args.question ?? '')
         const wantJson = args.json === true
+        // Structured JSON mode: a fixed evidence contract (summary + reading-
+        // order layout regions + entity inventory + verbatim transcription)
+        // instead of a free-form JSON the model invents on the fly.
         const jsonInstruction = wantJson
-          ? '\n\nAnswer with a SINGLE valid JSON object and nothing else (no markdown fences, no prose).'
+          ? '\n\n' + describeStructuredInstruction(question)
           : ''
         const usablePairs = pairs().filter((pair) => adapterAvailable(ctx.llm, pair.provider))
         const key = cacheKeyFor({
@@ -2071,7 +2199,7 @@ export function apply(ctx, config = {}) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
                 if (parsed !== undefined) {
-                  const compact = JSON.stringify(parsed)
+                  const compact = JSON.stringify(normalizeDescribeResult(parsed) ?? parsed)
                   if (cacheEnabled()) cache.set(key, compact)
                   return compact
                 }
@@ -2150,7 +2278,7 @@ export function apply(ctx, config = {}) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
                 if (parsed !== undefined) {
-                  const compact = JSON.stringify(parsed)
+                  const compact = JSON.stringify(normalizeDescribeResult(parsed) ?? parsed)
                   if (cacheEnabled()) cache.set(key, compact)
                   return compact
                 }
@@ -2331,6 +2459,66 @@ export function apply(ctx, config = {}) {
           result.annotatedPath = await saveArtifact(
             exec,
             `${artifactStem(args.image, 'ground')}.png`,
+            annotated,
+          )
+        }
+        return JSON.stringify(result)
+      },
+    })
+
+    deepToolDefs.push({
+      name: 'vision_detect',
+      description:
+        'Find every element of a kind in an image (buttons, inputs, links, icons…) and return a ' +
+        'numbered inventory with ORIGINAL-pixel boxes, optionally annotated on the image. The model ' +
+        'can then reference "element #3" in follow-up vision_crop / vision_describe calls.',
+      parameters: {
+        type: 'object',
+        properties: {
+          image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif)' },
+          target: {
+            type: 'string',
+            description: 'What kind of elements to list, e.g. "buttons", "input fields", "navigation links" (default: interactive elements)',
+          },
+          annotate: {
+            type: 'boolean',
+            description: 'Also write an annotated PNG with numbered boxes (default true)',
+          },
+        },
+        required: ['image'],
+        additionalProperties: false,
+      },
+      output: stringOutput,
+      async execute(args, exec) {
+        const { bytes, mediaType } = await readImageBytes(args.image)
+        const { width, height } = await imageDims(bytes)
+        if (width <= 0 || height <= 0) throw new Error('vision_detect: could not read image dimensions')
+        const target = typeof args.target === 'string' && args.target.trim() !== '' ? args.target : 'interactive elements'
+        let { text } = await answerVision(bytes, mediaType, visionDetectInstruction(target, width, height))
+        let parsed = extractJson(text)
+        if (parsed === undefined) {
+          // One stricter retry: keep the schema, demand bare JSON.
+          const retry = await answerVision(
+            bytes,
+            mediaType,
+            visionDetectInstruction(target, width, height) +
+              '\nYour previous answer was not valid JSON. Respond with ONLY the JSON object, no prose, no fences.',
+          )
+          parsed = extractJson(retry.text)
+          text = retry.text
+        }
+        const result = normalizeDetectResult(parsed, width, height)
+        if (result === undefined) {
+          throw new Error(`vision_detect: the vision model did not return a valid inventory. Raw output: ${text.slice(0, 500)}`)
+        }
+        if (args.annotate !== false && result.elements.length > 0) {
+          const annotated = await annotateBoxesBuffer(
+            bytes,
+            result.elements.map((e) => e.box),
+          )
+          result.annotatedPath = await saveArtifact(
+            exec,
+            `${artifactStem(args.image, 'detect')}.png`,
             annotated,
           )
         }
@@ -2667,7 +2855,7 @@ export function apply(ctx, config = {}) {
       deepActive = true
       for (const def of deepToolDefs) deepDisposers.push(ctx.tools.register(def))
       return (
-        '视觉深看工具已挂载：vision_describe（看图问答）、vision_ground（像素定位）、' +
+        '视觉深看工具已挂载：vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
         'vision_crop（裁剪放大）、vision_pixel_diff（像素对比验证）、vision_colors（取色）、' +
         'vision_ocr（文字识别）、vision_trace（SVG 矢量化）、vision_extract_foreground（抠图）、' +
         'vision_html_screenshot（页面截图）。现在可以直接调用它们。'
@@ -2677,7 +2865,7 @@ export function apply(ctx, config = {}) {
       ctx.tools.register({
         name: 'vision_activate',
         description:
-          'Mount the deep vision tools (vision_describe / vision_ground / vision_crop / ' +
+          'Mount the deep vision tools (vision_describe / vision_ground / vision_detect / vision_crop / ' +
           'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
           'vision_extract_foreground / vision_html_screenshot) for this session. They mount ' +
           'automatically on image turns; call this only when you need them on a text-only turn.',
@@ -2709,6 +2897,7 @@ export function apply(ctx, config = {}) {
                 '提取配色、识别图中文字、矢量化图标、抠图或给页面截图——时使用本套工具。' +
                 '图片消息会自动挂载它们；纯文字任务需要时可调用 `vision_activate`（只需一次）。\n\n' +
                 '1. 常用工作流：`vision_ground` 定位 → `vision_crop` 裁剪放大 → `vision_describe` 细看；' +
+'盘点页面元素用 `vision_detect`（编号清单+框，可引用“元素 #n”）；' +
                 '还原类任务用 `vision_pixel_diff` 验证，配色用 `vision_colors`，文字用 `vision_ocr`，' +
                 '图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，' +
                 '本地 HTML 用 `vision_html_screenshot` 截图；\n' +

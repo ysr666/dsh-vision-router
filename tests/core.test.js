@@ -4,6 +4,12 @@ import sharp from 'sharp'
 import {
   mediaTypeOf,
   sniffMediaType,
+  boxesToSvg,
+  annotateBoxesBuffer,
+  visionDetectInstruction,
+  describeStructuredInstruction,
+  normalizeDetectResult,
+  normalizeDescribeResult,
   basenameOf,
   blocksHaveImage,
   eventHasImage,
@@ -1286,4 +1292,81 @@ test('DEFAULT_PROXY_HOSTS covers the common foreign AI API domains', () => {
     assert.ok(DEFAULT_PROXY_HOSTS.includes(host), `missing ${host}`)
   }
   assert.ok(!DEFAULT_PROXY_HOSTS.includes('api.deepseek.com'), 'DeepSeek stays direct')
+})
+
+// ── batch 1: vision_detect + structured describe ────────────────────────────
+
+test('boxesToSvg draws a numbered box per inventory element', () => {
+  const svg = boxesToSvg(
+    [{ x1: 10, y1: 20, x2: 60, y2: 80 }, { x1: 100, y1: 100, x2: 200, y2: 180 }],
+    640,
+    480,
+  ).toString()
+  assert.ok(svg.includes('<svg'))
+  assert.equal((svg.match(/<rect /g) || []).length, 2)
+  assert.equal((svg.match(/<circle /g) || []).length, 2)
+  assert.ok(svg.includes('>1</text>'))
+  assert.ok(svg.includes('>2</text>'))
+})
+
+test('annotateBoxesBuffer composites numbered boxes onto the image', async () => {
+  const png = await sharp({
+    create: { width: 64, height: 48, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  }).png().toBuffer()
+  const annotated = await annotateBoxesBuffer(png, [{ x1: 2, y1: 2, x2: 30, y2: 30 }])
+  assert.ok(annotated.length > 0)
+  const meta = await sharp(annotated).metadata()
+  assert.equal(meta.width, 64)
+  assert.equal(meta.height, 48)
+  const passthrough = await annotateBoxesBuffer(png, [])
+  assert.deepEqual(passthrough, png)
+})
+
+test('visionDetectInstruction demands the fixed inventory schema', () => {
+  const text = visionDetectInstruction('buttons', 640, 480)
+  assert.ok(text.includes('640x480'))
+  assert.ok(text.includes('buttons'))
+  assert.ok(text.includes('{"elements":'))
+  assert.ok(text.includes('x1'))
+  assert.ok(text.includes('ORIGINAL image pixels'))
+})
+
+test('describeStructuredInstruction demands the evidence contract', () => {
+  const text = describeStructuredInstruction('what is wrong')
+  assert.ok(text.includes('what is wrong'))
+  assert.ok(text.includes('summary'))
+  assert.ok(text.includes('layout'))
+  assert.ok(text.includes('entities'))
+  assert.ok(text.includes('text'))
+})
+
+test('normalizeDetectResult clamps boxes and numbers elements', () => {
+  const parsed = {
+    elements: [
+      { label: '发送按钮', box: { x1: -5, y1: 2, x2: 30, y2: 40 } },
+      { label: 'bad box', box: { x1: 50, y1: 50, x2: 10, y2: 10 } },
+      { label: '', box: { x1: 100, y1: 100, x2: 300, y2: 200 } },
+    ],
+  }
+  const out = normalizeDetectResult(parsed, 640, 480)
+  assert.equal(out.elements.length, 2)
+  assert.equal(out.elements[0].number, 1)
+  assert.deepEqual(out.elements[0].box, { x1: 0, y1: 2, x2: 30, y2: 40 })
+  assert.equal(out.elements[1].label, 'element 2')
+  assert.equal(normalizeDetectResult({}, 640, 480), undefined)
+  assert.equal(normalizeDetectResult({ elements: 'nope' }, 640, 480), undefined)
+})
+
+test('normalizeDescribeResult fills the documented keys', () => {
+  const out = normalizeDescribeResult({
+    summary: 'a lake',
+    layout: [{ region: 'top', content: 'title' }, { bad: true }],
+    entities: [{ type: 'button', label: 'Go' }, { type: 'nope' }],
+  })
+  assert.equal(out.summary, 'a lake')
+  assert.equal(out.layout.length, 1)
+  assert.equal(out.entities.length, 1)
+  assert.equal(out.text, '')
+  assert.equal(normalizeDescribeResult('nope'), undefined)
+  assert.equal(normalizeDescribeResult([1, 2]), undefined)
 })
