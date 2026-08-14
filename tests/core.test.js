@@ -1287,3 +1287,36 @@ test('DEFAULT_PROXY_HOSTS covers the common foreign AI API domains', () => {
   }
   assert.ok(!DEFAULT_PROXY_HOSTS.includes('api.deepseek.com'), 'DeepSeek stays direct')
 })
+
+test('posterizeSvg rejects on timeout instead of hanging forever', async () => {
+  const png = await sharp({
+    create: { width: 64, height: 64, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  }).png().toBuffer()
+  await assert.rejects(() => posterizeSvg(png, 4, 'dominant', 0), /timed out/)
+})
+
+test('posterizeSvg resolves normally when potrace finishes in time', async () => {
+  const png = await sharp({
+    create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
+  })
+    .composite([{ input: Buffer.from('<svg width="8" height="8"><rect x="2" y="2" width="4" height="4" fill="black"/></svg>') }])
+    .png()
+    .toBuffer()
+  const svg = await posterizeSvg(png, 2, 'dominant', 30000)
+  assert.ok(svg.includes('<svg'))
+})
+
+test('posterizeSvg keeps the main thread responsive while potrace computes', async () => {
+  const noise = Buffer.alloc(1024 * 1024 * 3)
+  for (let i = 0; i < noise.length; i++) noise[i] = (i * 31 + 17) % 256
+  const png = await sharp(noise, { raw: { width: 1024, height: 1024, channels: 3 } }).png().toBuffer()
+  let ticks = 0
+  const timer = setInterval(() => { ticks += 1 }, 50)
+  await assert.rejects(
+    () => posterizeSvg(png, 16, 'dominant', 1000),
+    /timed out/,
+  )
+  clearInterval(timer)
+  // the main loop must keep ticking while the worker computes
+  assert.ok(ticks > 5, `expected main-thread ticks during the compute, got ${ticks}`)
+})

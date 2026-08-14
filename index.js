@@ -25,6 +25,8 @@ import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-dee
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
+import { Worker } from 'node:worker_threads'
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import potrace from 'potrace'
@@ -666,14 +668,66 @@ export function bitmapOfGray(raw, width, height, threshold = 128) {
 }
 
 /** Vectorize an image buffer into an SVG string via potrace posterization. */
-export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant') {
+export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant', timeoutMs = 60000) {
+  // potrace is CPU-bound and runs its computation in long synchronous
+  // chunks: on the main thread it blocks the whole dsh process (other
+  // sessions time out) and a setTimeout-based timeout can NEVER fire while
+  // the loop is blocked. Run it in a worker thread instead — the main loop
+  // stays responsive, and a timeout hard-terminates the worker.
   return new Promise((resolve, reject) => {
-    try {
-      potrace.posterize(bytes, { steps, fillStrategy }, (error, svg) =>
-        error ? reject(error) : resolve(svg),
+    let settled = false
+    let worker
+    const finish = (error, svg) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      void worker?.terminate()
+      if (error) reject(error)
+      else resolve(svg)
+    }
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      void worker?.terminate()
+      reject(
+        new Error(
+          'potrace timed out — the image is too large or too complex; crop it to the target region first',
+        ),
       )
+    }, timeoutMs)
+    try {
+      // Resolve potrace's entry to an absolute file URL the worker can import
+      // regardless of the dsh process cwd or the worker's module mode.
+      const potraceUrl = pathToFileURL(createRequire(import.meta.url).resolve('potrace')).href
+      const source = `
+        import('node:worker_threads').then(({ parentPort, workerData }) => {
+          import(workerData.potraceUrl).then((mod) => {
+            const potrace = mod.default ?? mod
+            potrace.posterize(Buffer.from(workerData.bytes), {
+              steps: workerData.steps,
+              fillStrategy: workerData.fillStrategy,
+            }, (error, svg) => {
+              parentPort.postMessage(error ? { error: String((error && error.message) || error) } : { svg })
+            })
+          }).catch((error) => {
+            parentPort.postMessage({ error: String((error && error.message) || error) })
+          })
+        })
+      `
+      worker = new Worker(source, {
+        eval: true,
+        workerData: { potraceUrl, bytes, steps, fillStrategy },
+      })
+      worker.once('message', (message) => {
+        if (message && message.error) finish(new Error(message.error))
+        else finish(undefined, message && message.svg)
+      })
+      worker.once('error', (error) => finish(error))
+      worker.once('exit', (code) => {
+        if (code !== 0 && !settled) finish(new Error(`potrace worker exited with code ${code}`))
+      })
     } catch (error) {
-      reject(error)
+      finish(error)
     }
   })
 }
@@ -2542,9 +2596,17 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const steps = Number.isInteger(args.steps) && args.steps > 0 ? Math.min(args.steps, 16) : 4
+        // Trace-specific pixel budget: vectorization gains nothing beyond
+        // ~1MP (a 1MP bitmap already yields smooth paths), and potrace's cost
+        // grows steeply with pixels — 4MP at 16 levels exceeds 60s on a busy
+        // machine, so cap the trace input harder than the general budget.
+        let traceBytes = bytes
+        if (downscaleEnabled() && bytes && bytes.length > 0) {
+          traceBytes = await downscaleImage(bytes, Math.min(downscaleMaxPixels(), 1000000))
+        }
         let svg
         try {
-          svg = await posterizeSvg(bytes, steps)
+          svg = await posterizeSvg(traceBytes, steps)
         } catch (error) {
           throw new Error(
             `vision_trace: potrace failed (${error && error.message ? error.message : String(error)})`,
@@ -2576,8 +2638,14 @@ export function apply(ctx, config = {}) {
       output: stringOutput,
       async execute(args, exec) {
         const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        // Same CPU guard as vision_trace: the flood fill is a synchronous
+        // pixel walk — cap oversized inputs before it runs.
+        let fgBytes = bytes
+        if (downscaleEnabled() && bytes && bytes.length > 0) {
+          fgBytes = await downscaleImage(bytes, downscaleMaxPixels())
+        }
         const tolerance = Number.isFinite(args.tolerance) && args.tolerance >= 0 ? Math.round(args.tolerance) : 40
-        const { data, info } = await sharp(bytes, { failOn: 'none' })
+        const { data, info } = await sharp(fgBytes, { failOn: 'none' })
           .ensureAlpha()
           .raw()
           .toBuffer({ resolveWithObject: true })
