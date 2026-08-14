@@ -44,7 +44,7 @@
     "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6"
   },
   "scripts": {
-    "test": "node --test tests/core.test.js"
+    "test": "node --test tests/core.test.js tests/client.test.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
