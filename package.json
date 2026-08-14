@@ -8,16 +8,18 @@
   "exports": {
     ".": "./index.js",
     "./client": "./lib/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
+    "LICENSE",
+    "README.en.md",
+    "README.md",
+    "cordis.patch.yml",
+    "docs",
     "index.js",
     "lib",
-    "README.md",
-    "README.en.md",
-    "LICENSE",
-    "presets",
-    "docs"
+    "presets"
   ],
   "engines": {
     "node": ">=22"
@@ -56,6 +58,9 @@
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-runtime"
       ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   }
 }
