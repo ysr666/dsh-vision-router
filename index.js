@@ -29,7 +29,6 @@ import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import potrace from 'potrace'
 
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
@@ -2187,8 +2186,8 @@ export function apply(ctx, config = {}) {
         return switchRoute(config0, chainRoute(), `${pairs()[0].provider}/${pairs()[0].model}`)
       }
       const first = pairs()[0]
-      if (config0.provider === current.provider) return config0
-      return switchRoute(config0, current.provider, current.model)
+      if (first === undefined || config0.provider === first.provider) return config0
+      return switchRoute(config0, first.provider, first.model)
     })
   }
 
@@ -2731,7 +2730,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        const { bytes } = await readImageBytes(args.image)
         const { width, height } = await imageDims(bytes)
         const box = parseBox(args.region)
         if (box === undefined) {
@@ -2841,7 +2840,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args) {
-        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        const { bytes } = await readImageBytes(args.image)
         const top = Number.isInteger(args.top) && args.top > 0 ? args.top : 8
         const raw = await sharp(bytes, { failOn: 'none' })
           .resize(64, 64, { fit: 'inside' })
@@ -2873,7 +2872,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args) {
-        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        const { bytes, mediaType } = await readImageBytes(args.image)
         const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
         if (engine !== 'vision') {
           try {
@@ -2891,7 +2890,7 @@ export function apply(ctx, config = {}) {
         }
         const { text } = await answerVision(
           bytes,
-          sniffedType,
+          mediaType,
           '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。',
         )
         return JSON.stringify({ engine: 'vision', text })
@@ -2918,7 +2917,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        const { bytes } = await readImageBytes(args.image)
         const steps = Number.isInteger(args.steps) && args.steps > 0 ? Math.min(args.steps, 16) : 4
         const colorMode = args.color !== false
         // Trace-specific pixel budget: vectorization gains nothing beyond
@@ -2939,7 +2938,7 @@ export function apply(ctx, config = {}) {
             colorCount = palette.length
             svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs())
           } else {
-            svg = await posterizeSvg(traceBytes, steps)
+            svg = await posterizeSvg(traceBytes, steps, 'dominant', timeoutMs())
           }
         } catch (error) {
           throw new Error(
@@ -2971,7 +2970,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
+        const { bytes } = await readImageBytes(args.image)
         // Same CPU guard as vision_trace: the flood fill is a synchronous
         // pixel walk — cap oversized inputs before it runs.
         let fgBytes = bytes
