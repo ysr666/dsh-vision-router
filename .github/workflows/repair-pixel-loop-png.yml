@@ -1,0 +1,90 @@
+name: Repair Pixel Loop PNGs
+
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-pixel-loop-png.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pixel-loop-png
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Re-encode and verify PNGs
+        shell: bash
+        run: |
+          python -m pip install --quiet pillow
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageFile
+          import struct, zlib
+
+          paths = [
+              Path('assets/pixel-loop.png'),
+              Path('assets/pixel-loop-zh.png'),
+          ]
+
+          # The existing Git blobs contain intact pixels but malformed PNG
+          # chunk framing. Decode tolerantly once, then write fresh PNGs.
+          ImageFile.LOAD_TRUNCATED_IMAGES = True
+          for path in paths:
+              with Image.open(path) as im:
+                  im.load()
+                  rebuilt = im.convert('RGB')
+              tmp = path.with_suffix('.reencoded.png')
+              rebuilt.save(tmp, format='PNG', optimize=True)
+              tmp.replace(path)
+
+          # Verify with normal Pillow decoding and explicit CRC checks.
+          ImageFile.LOAD_TRUNCATED_IMAGES = False
+          for path in paths:
+              with Image.open(path) as im:
+                  im.verify()
+              with Image.open(path) as im:
+                  im.load()
+                  assert im.size == (1600, 720), (path, im.size)
+
+              data = path.read_bytes()
+              assert data[:8] == b'\x89PNG\r\n\x1a\n'
+              off = 8
+              saw_iend = False
+              while off < len(data):
+                  assert off + 12 <= len(data), f'truncated chunk header: {path}'
+                  length = struct.unpack('>I', data[off:off+4])[0]
+                  chunk_type = data[off+4:off+8]
+                  chunk_data = data[off+8:off+8+length]
+                  crc_raw = data[off+8+length:off+12+length]
+                  assert len(chunk_data) == length and len(crc_raw) == 4, f'truncated chunk: {path}'
+                  expected = struct.unpack('>I', crc_raw)[0]
+                  actual = zlib.crc32(chunk_type)
+                  actual = zlib.crc32(chunk_data, actual) & 0xffffffff
+                  assert actual == expected, f'CRC mismatch {chunk_type!r}: {path}'
+                  off += 12 + length
+                  if chunk_type == b'IEND':
+                      saw_iend = True
+                      assert off == len(data), f'extra bytes after IEND: {path}'
+                      break
+              assert saw_iend, f'missing IEND: {path}'
+              print(f'validated {path} ({len(data)} bytes)')
+          PY
+
+      - name: Commit only repaired images
+        shell: bash
+        run: |
+          rm .github/workflows/repair-pixel-loop-png.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A assets/pixel-loop.png assets/pixel-loop-zh.png .github/workflows/repair-pixel-loop-png.yml
+          git commit -m 'fix: re-encode pixel-loop PNG assets'
+          git push origin HEAD:fix/pixel-loop-png
