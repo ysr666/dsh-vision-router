@@ -28,7 +28,7 @@
 
 大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**原图像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
 
-- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装、隐身接管与附件限制放宽——不用手改任何文件。
+- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
 - **默认免费。** 视觉链内置 OVHcloud 匿名端点（`Qwen2.5-VL-72B-Instruct`，免注册、免 Key，每 IP 2 次/分钟）。付费链路（OpenRouter、Pi-AI 供应商、任意 OpenAI 兼容直连端点）是可选升级。
 - **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
 - **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
@@ -44,7 +44,7 @@
 | 开箱图片问答 | ✅ 内置免费视觉链（OVHcloud 匿名端点），免注册免 Key | 远程工具需自备视觉 API Key（本地像素工具免 Key） |
 | 运行时 | ✅ 纯 Node，无需 Python | 需要 Python 3.11+ 受管运行时 |
 | 图片怎么进来 | ✅ 直接粘贴——轮次自动切视觉链并自动挂载工具 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
-| 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
+| 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——可选隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
 | 支持 profile | Web | Web + Headless |
 | 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
 | 测试 | 86 | 162 |
@@ -60,8 +60,9 @@ dsh plugin --profile web add dsh-vision-router
 
 重启 `dsh web`——完成，零配置：
 
-- 插件的 bundle 补丁自动挂载插件行、接管官方 DeepSeek 路由（隐身模式——模型选择器看起来和原版一模一样）、放宽附件限制到 20MB / 1 亿像素；
+- 插件的 bundle 补丁自动挂载插件行、挂上准入包装并放宽附件限制到 20MB / 1 亿像素——纯增量、不碰核心行；是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）；
 - 默认视觉链就是内置免费端点；
+- opencode 等自定义/第三方路由用「额外识图包装」获得发图能力；
 - 全部配置可在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）** 实时修改。
 
 然后直接往对话里贴一张图。Agent 自动挂载视觉工具，通过 `vision_describe`（以及其余 8 个工具）看图，需要时连续多步。
@@ -154,22 +155,30 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 ## 隐身模式
 
-默认安装即接管官方 `deepseek-official` 路由：模型选择器看起来和原版完全一样（同一个 DeepSeek 组、同样的模型名），但每个条目背后都是声明了图片输入的自动识图包装；文字轮交给插件重建的原生 DeepSeek 适配器（读取同一个 `llm-deepseek` 设置段与凭据）。老会话通过隐藏的 `deepseek-vision` 别名继续工作。
+隐身模式默认**关闭**（issue #34 起显式 opt-in）：关闭时官方 `deepseek-official` 路由原样保留，发图走选择器里可见的「DeepSeek + 自动识图」包装入口。
 
-想保留官方行，在你的 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）覆写即可：
+开启隐身模式后，插件接管官方 `deepseek-official` 路由：模型选择器看起来和原版完全一样（同一个 DeepSeek 组、同样的模型名），但每个条目背后都是声明了图片输入的自动识图包装；文字轮交给插件重建的原生 DeepSeek 适配器（读取同一个 `llm-deepseek` 设置段与凭据）。老会话通过隐藏的 `deepseek-vision` 别名继续工作。接管的前提是官方行不在场——在你的 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）禁用即可：
 
 ```yaml
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
+  disabled: true
 ```
 
-官方行在场时，插件回退为选择器里可见的「DeepSeek + 自动识图」包装入口——发图前选它即可。安装出问题时同样用这一行恢复。
+官方行在场时，插件自动回退为可见包装入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置卡片会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
+
+> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——用「额外识图包装」让它们支持发图。
+
+## 额外识图包装
+
+`wrappedProviders` 给任意第三方/自定义文本路由注册「自动识图」孪生条目：模型选择器里选中它就能发图，文字轮原样交给原路由处理。典型用法是 opencode 等接入的自定义接口——它们默认只声明文本输入，加一行包装即可直接发图。设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要包装多个模型就添加多行。
 
 ## Web 设置
 
 Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，样式与内置卡片一致，可实时修改：
 
-- 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式；
+- 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式（仅官方 DeepSeek 路由）；
+- **额外识图包装**：provider + 模型双下拉，给 opencode 等自定义路由注册可发图的孪生条目；
 - 视觉请求超时、包装/链路由名；
 - **视觉模型链**（每行一个 `provider/model`，自上而下降级）与文本模型；
 - 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存；
@@ -192,11 +201,11 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `fallbacks` | `[]` | 简写供应商的备用模型 |
 | `providers` | `[]` | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[]` | 额外识图包装：`{ provider, models[] }`，设置卡片每行一个 `provider` 或 `provider/model1,model2`，给第三方文本路由注册可发图的孪生条目 |
+| `wrappedProviders` | `[]` | 额外识图包装：`{ provider, models[] }`，给 opencode 等任意第三方/自定义文本路由注册可发图的孪生条目（卡片里 provider + 模型双下拉；模型留空 = 包装全部） |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
-| `stealth` | `true` | 接管官方 `deepseek-official` 路由 |
+| `stealth` | `false` | 接管官方 `deepseek-official` 路由（仅官方行；自定义路由用 `wrappedProviders`） |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` ×3 | 视觉工具开关 / 渐进式挂载 / 图片轮自动挂载 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |

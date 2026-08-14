@@ -28,7 +28,7 @@
 
 Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — lossy, one-shot, and blind to pixels. This plugin keeps the **original pixels on the vision model's side** and DeepSeek on the reasoning side, and makes looking at an image an **ordinary tool call**:
 
-- **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper, the stealth takeover and the attachment limits automatically — zero manual file edits.
+- **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper and the attachment limits automatically — zero manual file edits. Taking over the official DeepSeek route is an optional setting (stealth mode, off by default).
 - **Free by default.** The vision chain starts with a built-in OVHcloud anonymous endpoint (`Qwen2.5-VL-72B-Instruct`, no account, no key, 2 req/min per IP). Paid chains (OpenRouter, Pi-AI providers, direct OpenAI-compatible endpoints) are optional upgrades.
 - **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
 - **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
@@ -44,7 +44,7 @@ The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anio
 | Image Q&A out of the box | ✅ Built-in free chain (anonymous OVHcloud endpoint) — no account, no key | Requires your own vision API key (local pixel tools work without one) |
 | Runtime | ✅ Node only — no Python | Python 3.11+ managed runtime |
 | Getting an image in | ✅ Paste it — the turn auto-routes to the vision chain and auto-mounts the tools | Workspace path + `/vision-tools` command, then explicit tool calls |
-| Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — stealth takeover, the model picker looks stock | Tool-driven; no whole-turn auto-routing |
+| Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — optional stealth takeover keeps the model picker looking stock | Tool-driven; no whole-turn auto-routing |
 | Profiles | Web | Web + Headless |
 | Playbooks | The pixel loop: ground → crop → diff → fix → screenshot again | Richer case library (long-screenshot OCR, UI restoration, GUI automation) |
 | Tests | 86 | 162 |
@@ -60,8 +60,9 @@ dsh plugin --profile web add dsh-vision-router
 
 Restart `dsh web` — done. Zero configuration:
 
-- the plugin's bundle patch mounts the row, takes over the official DeepSeek route (stealth mode — the model picker looks exactly like stock), and relaxes attachment limits to 20 MB / 100 MP;
+- the plugin's bundle patch mounts the row, adds the admission wrapper and relaxes attachment limits to 20 MB / 100 MP — pure-additive, it never touches the core rows; whether the official DeepSeek route is taken over is decided by the optional stealth setting (off by default);
 - the default vision chain is the built-in free endpoint;
+- custom/third-party routes (e.g. opencode) gain image input through **Extra vision wrappers**;
 - every setting is editable live in **Settings → Plugins → Plugin config → 视觉路由（自动识图）**.
 
 Then just paste an image into a conversation. The agent mounts the vision tools automatically and looks at it through `vision_describe` (and friends) — multi-step if needed.
@@ -154,22 +155,30 @@ Failures are classified (region / tos / quota / rate-limit / context / network) 
 
 ## Stealth mode
 
-A default install takes over the official `deepseek-official` route: the model picker looks exactly like stock (same DeepSeek group, same model names), but each entry is the auto-vision wrapper that declares image input and delegates text turns to a rebuilt native DeepSeek adapter (same `llm-deepseek` settings section and credentials). Old sessions keep working through the hidden `deepseek-vision` alias.
+Stealth mode is **off by default** (explicit opt-in since issue #34): with it off, the official `deepseek-official` route stays untouched and image turns go through the visible "DeepSeek + 自动识图" wrapper entry in the picker.
 
-To keep the stock row instead, override it in your profile patch layer (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
+With stealth on, the plugin takes over the official `deepseek-official` route: the model picker looks exactly like stock (same DeepSeek group, same model names), but each entry is the auto-vision wrapper that declares image input and delegates text turns to a rebuilt native DeepSeek adapter (same `llm-deepseek` settings section and credentials). Old sessions keep working through the hidden `deepseek-vision` alias. The takeover requires the stock row to be absent — disable it in your profile patch layer (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
 
 ```yaml
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
+  disabled: true
 ```
 
-With the stock row present, the plugin falls back to the visible "DeepSeek + 自动识图" wrapper entry — pick it in the model picker for image turns. Recovery from a broken install is the same one-line override.
+With the stock row present, the plugin falls back to the visible wrapper entry. Conversely, with stealth off but the stock row still disabled, the plugin performs a keep-alive takeover so the DeepSeek models don't vanish (the settings card explains this); to restore the fully official route, flip the `disabled` above back to `false` and restart.
+
+> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes like opencode are unrelated — use **Extra vision wrappers** below to give them image input.
+
+## Extra vision wrappers
+
+`wrappedProviders` registers an auto-vision twin for any third-party/custom text route: pick the twin in the model selector and send images; text turns delegate to the original route unchanged. The typical use case is a custom interface such as opencode — it only declares text input, and one wrapper row makes it image-ready. In the settings card, configure it with two dropdowns (provider + model); leaving the model empty wraps every model of that route.
 
 ## Web settings
 
 The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**, styled like the built-in cards. It live-edits:
 
-- switches: whole-turn legacy routing, vision tools, image-block rewriting, stealth;
+- switches: whole-turn legacy routing, vision tools, image-block rewriting, stealth (official DeepSeek route only);
+- **extra vision wrappers**: provider + model dropdowns that register image-capable twin entries for custom routes such as opencode;
 - vision request timeout, wrapper/chain route names;
 - the **vision chain** (one `provider/model` per line, top-down fallback) and the text model;
 - every field shows an "overridden" badge with a one-click reset to the composition default, plus discard/save;
@@ -192,11 +201,11 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `fallbacks` | `[]` | backup models for the shorthand provider |
 | `providers` | `[]` | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — one `provider` per line in the settings card, or `provider/model1,model2` |
+| `wrappedProviders` | `[]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — registers an auto-vision twin for any custom/third-party route (e.g. opencode); in the card, provider + model dropdowns, empty model = wrap all |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |
-| `stealth` | `true` | take over the official `deepseek-official` route |
+| `stealth` | `false` | take over the official `deepseek-official` route (official row only; custom routes use `wrappedProviders`) |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | the model that reasons (your daily model) |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` ×3 | vision tools on / progressive mounting / auto-mount on image turns |
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
