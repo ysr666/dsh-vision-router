@@ -2,3 +2,8 @@ node_modules/
 .claude-flow/
 .deepflow/
 .DS_Store
+
+# 调试产物与日志
+.debug/
+debug/
+*.log

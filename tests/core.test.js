@@ -1135,6 +1135,7 @@ test('apply registers the stealth deepseek-official route with the stock catalog
     provider: 'openrouter',
     providers: [{ provider: 'openrouter', model: 'qwen/qwen3-vl-235b-a22b-instruct' }],
     routing: true,
+    stealth: true,
   }))
 
   // all four routes came up: hidden native, public deepseek-official, the
@@ -1163,7 +1164,11 @@ test('apply skips the chain route by default: image turns go through the vision 
   // vision-http backend for vision_describe stays mounted
   assert.equal(adapters.has('vision-chain'), false)
   assert.ok(adapters.has('vision-http'))
+  // keep-alive: the stock route is dead in this mock (no stockRoute), so the
+  // plugin still takes over deepseek-official via the hidden native route —
+  // otherwise the DeepSeek models would vanish entirely
   assert.ok(adapters.has('deepseek-official-native'))
+  assert.ok(adapters.has('deepseek-vision'))
 })
 
 test('stealth defaults to false (issue #34: explicit opt-in, no stealth takeover by default)', () => {
