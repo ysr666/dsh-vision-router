@@ -1932,36 +1932,42 @@ export function apply(ctx, config = {}) {
       ? entry.models.filter((model) => typeof model === 'string' && model !== '')
       : []
     if (ownRoutes().has(provider)) continue
-    if (!adapterAvailable(ctx.llm, provider)) {
-      ctx.logger?.warn('vision-router: wrappedProviders skips %s (no adapter registered)', provider)
-      continue
-    }
-    let original
-    try {
-      original = ctx.llm.registration(provider).adapter
-    } catch {
-      continue
-    }
+    // The twin must NOT resolve its source adapter eagerly: providers backed
+    // by user settings (llm-pi-ai's openrouter/deepseek) register their routes
+    // LIVE once the settings document loads, i.e. AFTER this plugin's apply.
+    // Register the twin route up front and delegate lazily per call instead.
     const twinRoute = `${provider}-vision`
+    const originalAdapter = () => {
+      try {
+        return ctx.llm.registration(provider).adapter
+      } catch {
+        return undefined
+      }
+    }
     const twinAdapter = {
       providerInfo() {
+        const original = originalAdapter()
         let info
         try {
-          info = original.providerInfo ? original.providerInfo(provider) : undefined
+          info = original && typeof original.providerInfo === 'function' ? original.providerInfo(provider) : undefined
         } catch {
           info = undefined
         }
         return { id: twinRoute, name: `${info && info.name ? info.name : provider} + 自动识图` }
       },
       providerRetryPolicy() {
+        const original = originalAdapter()
         try {
-          return original.providerRetryPolicy ? original.providerRetryPolicy(provider) : undefined
+          return original && typeof original.providerRetryPolicy === 'function'
+            ? original.providerRetryPolicy(provider)
+            : undefined
         } catch {
           return undefined
         }
       },
       async listModels() {
-        if (typeof original.listModels !== 'function') return []
+        const original = originalAdapter()
+        if (original === undefined || typeof original.listModels !== 'function') return []
         try {
           const listed = await original.listModels(provider)
           return listed
@@ -1972,6 +1978,10 @@ export function apply(ctx, config = {}) {
         }
       },
       async resolveModel(_provider, model) {
+        const original = originalAdapter()
+        if (original === undefined || typeof original.resolveModel !== 'function') {
+          throw new Error(`vision-router: wrapped provider "${provider}" has no adapter registered yet`)
+        }
         const base = await original.resolveModel(provider, model)
         return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
       },

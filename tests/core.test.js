@@ -1369,6 +1369,42 @@ test('apply registers an image-capable twin route for wrappedProviders', async (
   assert.ok(delegateCall.messages[0].content[0].text.includes('img-1'))
 })
 
+test('twin route registers before its source adapter appears (live provider registration)', async () => {
+  // llm-pi-ai mounts dormant: its routes (openrouter/deepseek) register LIVE
+  // once the settings document loads, i.e. AFTER other plugins' apply().
+  // wrappedProviders must therefore register the twin up front and resolve
+  // the source adapter lazily per call.
+  const { ctx, adapters } = mockHarnessCtx()
+  apply(ctx, Config({
+    wrappedProviders: [{ provider: 'opencode-go', models: [] }],
+  }))
+  assert.ok(adapters.has('opencode-go-vision'), 'expected the twin route before the source adapter exists')
+  const twin = adapters.get('opencode-go-vision')
+  // before the source appears: empty catalog, no crash
+  assert.deepEqual(await twin.listModels('opencode-go-vision'), [])
+  const thirdParty = {
+    providerInfo: (p) => ({ id: p, name: 'Opencode' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
+      { provider: p, id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
+  // after the source appears: mirrored catalog with image input declared
+  const listed = await twin.listModels('opencode-go-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
+  const resolved = await twin.resolveModel('opencode-go-vision', 'deepseek-v4-flash')
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+})
+
 test('apply falls back to the visible wrapper when the stock route is still active', async () => {
   const { ctx, adapters } = mockHarnessCtx({ stockRoute: true })
   apply(ctx, Config({

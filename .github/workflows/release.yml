@@ -5,13 +5,16 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
@@ -20,6 +23,47 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      - run: npm publish --access public
+      - name: Publish to npm (skip when the version already exists)
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "dsh-vision-router@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $VERSION — skipping publish"
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Release notes must be bilingual (zh + en): the workflow requires a
+      # hand-written CHANGELOG.md section for the tagged version and appends
+      # the commit list as a supplement. Tagging a version without a section
+      # fails the run instead of publishing English-only notes.
+      - name: Compose bilingual release notes from CHANGELOG.md
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if ! awk -v v="v$VERSION" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
+            echo "CHANGELOG.md has no section for v$VERSION — add a bilingual entry before tagging." >&2
+            exit 1
+          fi
+          {
+            echo "# v$VERSION"
+            echo
+          } > release-notes.md
+          awk -v v="v$VERSION" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md >> release-notes.md
+          {
+            echo
+            echo "## Commits"
+            echo
+          } >> release-notes.md
+          PREV_TAG=$(git describe --tags --abbrev=0 "v$VERSION"^ 2>/dev/null || true)
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:'- %s' "$PREV_TAG..HEAD" >> release-notes.md
+          else
+            git log --pretty=format:'- %s' >> release-notes.md
+          fi
+      - name: Create GitHub Release
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

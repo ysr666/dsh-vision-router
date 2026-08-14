@@ -4,12 +4,9 @@
 # without any manual cordis.patch.yml edits. Later layers (the profile's own
 # cordis.patch.yml, --patch overlays) override these rows by id.
 
-# 隐身模式：接管官方 deepseek-official 路由。禁用官方行后插件自己重建原生
-# DeepSeek 适配器（读取同一个 llm-deepseek 设置段与凭据），选择器里的
-# DeepSeek 条目本身就是「图片自动识图」包装，发图即用。
-# 想恢复官方行：在你的 profile cordis.patch.yml 里删掉/覆写本条即可。
-- id: llm-deepseek
-  disabled: true
+# 纯增量补丁（issue #34）：不碰核心行。官方 llm-deepseek 行保持原样，插件
+# 挂载后是否接管官方 deepseek-official 路由由设置里的「隐身模式」开关决定
+# （默认关；开启后需自行在 profile 补丁层禁用 llm-deepseek 行）。
 
 # 挂载插件行。配置全部可选（默认即内置免费视觉端点 + 工具优先的图片流程），
 # 可在 Web 设置 > 插件 > 插件配置 的「视觉路由」卡片里实时修改。
