@@ -857,6 +857,138 @@ export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant', timeou
   })
 }
 
+/**
+ * Color-preserving vectorization: quantize the image into its top colors
+ * (the caller supplies the palette), build one 1-bit mask per color, trace
+ * each mask with potrace, and emit a real colored SVG — one <path> per color
+ * with fill="#rrggbb" — instead of potrace posterize's grayscale
+ * black + fill-opacity layers. Runs in a worker with the same hard timeout
+ * and termination semantics as posterizeSvg.
+ *
+ * @param data - raw RGBA pixel buffer the tool decoded (already downscaled
+ *   to the trace budget).
+ * @param info - { width, height } of that buffer.
+ * @param palette - [{ hex, count, share }] from quantizeColors, ordered by
+ *   share descending.
+ */
+export function posterizeSvgColor(data, info, palette, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let worker
+    const finish = (error, svg) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      void worker?.terminate()
+      if (error) reject(error)
+      else resolve(svg)
+    }
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      void worker?.terminate()
+      reject(
+        new Error(
+          'color trace timed out — the image is too large or too complex; crop it to the target region first',
+        ),
+      )
+    }, timeoutMs)
+    try {
+      const sharpUrl = pathToFileURL(createRequire(import.meta.url).resolve('sharp')).href
+      const potraceUrl = pathToFileURL(createRequire(import.meta.url).resolve('potrace')).href
+      const source = `
+        import('node:worker_threads').then(({ parentPort, workerData }) => {
+          Promise.all([import(workerData.sharpUrl), import(workerData.potraceUrl)]).then(([sharpMod, potraceMod]) => {
+            const sharp = sharpMod.default ?? sharpMod
+            const potrace = potraceMod.default ?? potraceMod
+            const { width, height, palette } = workerData
+            const raw = Buffer.from(workerData.raw)
+            const hexRgb = (hex) => {
+              const n = parseInt(hex.slice(1), 16)
+              return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+            }
+            const paletteRgb = palette.map((p) => hexRgb(p.hex))
+            const pixels = width * height
+            const masks = palette.map(() => Buffer.alloc(pixels))
+            for (let p = 0; p < pixels; p++) {
+              const o = p * 4
+              if (raw[o + 3] < 128) continue
+              let best = 0
+              let bestD = Infinity
+              for (let c = 0; c < paletteRgb.length; c++) {
+                const dr = raw[o] - paletteRgb[c][0]
+                const dg = raw[o + 1] - paletteRgb[c][1]
+                const db = raw[o + 2] - paletteRgb[c][2]
+                const d = dr * dr + dg * dg + db * db
+                if (d < bestD) { bestD = d; best = c }
+              }
+              masks[best][p] = 1
+            }
+            const paths = []
+            let pending = palette.length
+            const maybeDone = () => {
+              if (pending > 0) return
+              const pathSvg = paths.map((p) => '<path fill="' + p.hex + '" d="' + p.d + '"/>').join('')
+              parentPort.postMessage({
+                ok: true,
+                svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height +
+                  '" viewBox="0 0 ' + width + ' ' + height + '"><rect width="' + width + '" height="' + height +
+                  '" fill="#ffffff"/>' + pathSvg + '</svg>',
+              })
+            }
+            if (pending === 0) { maybeDone(); return }
+            palette.forEach((entry, index) => {
+              const gray = Buffer.alloc(pixels)
+              const mask = masks[index]
+              for (let p = 0; p < pixels; p++) gray[p] = mask[p] ? 0 : 255
+              sharp(gray, { raw: { width, height, channels: 1 } })
+                .png()
+                .toBuffer()
+                .then((pngBuf) => {
+                  potrace.trace(pngBuf, (err, svg) => {
+                    pending -= 1
+                    if (!err && svg) {
+                      const found = [...svg.matchAll(/d="([^"]+)"/g)].map((m) => m[1])
+                      for (const d of found) paths.push({ hex: entry.hex, d })
+                    }
+                    maybeDone()
+                  })
+                })
+                .catch(() => {
+                  pending -= 1
+                  maybeDone()
+                })
+            })
+          }).catch((error) => {
+            parentPort.postMessage({ error: String((error && error.message) || error) })
+          })
+        })
+      `
+      worker = new Worker(source, {
+        eval: true,
+        workerData: {
+          sharpUrl,
+          potraceUrl,
+          width: info.width,
+          height: info.height,
+          palette,
+          raw: data,
+        },
+      })
+      worker.once('message', (message) => {
+        if (message && message.error) finish(new Error(message.error))
+        else finish(undefined, message && message.svg)
+      })
+      worker.once('error', (error) => finish(error))
+      worker.once('exit', (code) => {
+        if (code !== 0 && !settled) finish(new Error(`color-trace worker exited with code ${code}`))
+      })
+    } catch (error) {
+      finish(error)
+    }
+  })
+}
+
 /** OCR image bytes with a local tesseract binary (chi_sim+eng) when available. */
 export async function ocrWithTesseract(bytes, timeoutMs = 60000) {
   const exec = promisify(execFile)
@@ -2769,13 +2901,17 @@ export function apply(ctx, config = {}) {
     deepToolDefs.push({
       name: 'vision_trace',
       description:
-        'Vectorize an image (icon/logo) into an SVG via a local potrace posterization pipeline ' +
-        '(no Python). `steps` controls color levels (default 4). Writes the SVG as an artifact.',
+        'Vectorize an image (icon/logo) into an SVG via a local potrace pipeline (no Python). ' +
+        'Default: COLOR-preserving vectorization — one path per dominant color with fill="#rrggbb". ' +
+        'Set color=false for the layered grayscale posterization, where `steps` (1-16, default 4) ' +
+        'controls levels. Writes the SVG as an artifact.',
       parameters: {
         type: 'object',
         properties: {
           image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif)' },
-          steps: { type: 'number', description: 'Posterization steps, 1-16, default 4' },
+          steps: { type: 'number', description: 'Posterization steps, 1-16, default 4 (only when color=false)' },
+          color: { type: 'boolean', description: 'Preserve original colors (default true)' },
+          colors: { type: 'number', description: 'Number of dominant colors in color mode, 1-16, default 8' },
         },
         required: ['image'],
         additionalProperties: false,
@@ -2784,6 +2920,7 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const steps = Number.isInteger(args.steps) && args.steps > 0 ? Math.min(args.steps, 16) : 4
+        const colorMode = args.color !== false
         // Trace-specific pixel budget: vectorization gains nothing beyond
         // ~1MP (a 1MP bitmap already yields smooth paths), and potrace's cost
         // grows steeply with pixels — 4MP at 16 levels exceeds 60s on a busy
@@ -2793,8 +2930,17 @@ export function apply(ctx, config = {}) {
           traceBytes = await downscaleImage(bytes, Math.min(downscaleMaxPixels(), 1000000))
         }
         let svg
+        let colorCount = 0
         try {
-          svg = await posterizeSvg(traceBytes, steps)
+          if (colorMode) {
+            const colors = Number.isInteger(args.colors) && args.colors > 0 ? Math.min(args.colors, 16) : 8
+            const raw = await sharp(traceBytes, { failOn: 'none' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+            const palette = quantizeColors(raw.data, colors)
+            colorCount = palette.length
+            svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs())
+          } else {
+            svg = await posterizeSvg(traceBytes, steps)
+          }
         } catch (error) {
           throw new Error(
             `vision_trace: potrace failed (${error && error.message ? error.message : String(error)})`,
@@ -2802,10 +2948,10 @@ export function apply(ctx, config = {}) {
         }
         const target = await saveArtifact(
           exec,
-          `${artifactStem(args.image, `trace-${steps}`)}.svg`,
+          `${artifactStem(args.image, colorMode ? 'trace-color' : `trace-${steps}`)}.svg`,
           Buffer.from(svg),
         )
-        return JSON.stringify({ path: target, bytes: Buffer.byteLength(svg) })
+        return JSON.stringify({ path: target, bytes: Buffer.byteLength(svg), ...(colorMode ? { colors: colorCount } : {}) })
       },
     })
 

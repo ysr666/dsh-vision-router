@@ -10,6 +10,7 @@ import {
   describeStructuredInstruction,
   normalizeDetectResult,
   normalizeDescribeResult,
+  posterizeSvgColor,
   basenameOf,
   blocksHaveImage,
   eventHasImage,
@@ -1402,4 +1403,39 @@ test('posterizeSvg keeps the main thread responsive while potrace computes', asy
   clearInterval(timer)
   // the main loop must keep ticking while the worker computes
   assert.ok(ticks > 5, `expected main-thread ticks during the compute, got ${ticks}`)
+})
+
+// ── color-preserving trace ──────────────────────────────────────────────────
+
+test('posterizeSvgColor emits one colored path per dominant color', async () => {
+  // 64x48: white background with a red square
+  const raw = Buffer.alloc(64 * 48 * 4)
+  for (let i = 0; i < 64 * 48; i++) {
+    const o = i * 4
+    raw[o] = 255; raw[o + 1] = 255; raw[o + 2] = 255; raw[o + 3] = 255
+  }
+  for (let y = 10; y < 30; y++) {
+    for (let x = 20; x < 40; x++) {
+      const o = (y * 64 + x) * 4
+      raw[o] = 220; raw[o + 1] = 30; raw[o + 2] = 30
+    }
+  }
+  const palette = quantizeColors(raw, 2)
+  assert.ok(palette.length >= 2)
+  const svg = await posterizeSvgColor(raw, { width: 64, height: 48 }, palette, 30000)
+  assert.ok(svg.includes('<svg'))
+  assert.ok(svg.includes('fill="#'))
+  assert.ok(svg.includes('<path '))
+  // the red square color is in the palette and must appear as a fill
+  const red = palette.find((p) => p.hex !== '#ffffff')
+  assert.ok(red, 'expected a non-white palette entry')
+  assert.ok(svg.includes(red.hex))
+})
+
+test('posterizeSvgColor rejects on timeout', async () => {
+  const raw = Buffer.alloc(64 * 64 * 4, 255)
+  await assert.rejects(
+    () => posterizeSvgColor(raw, { width: 64, height: 64 }, [{ hex: '#ffffff', count: 1, share: 1 }], 0),
+    /timed out/,
+  )
 })
