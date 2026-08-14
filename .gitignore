@@ -1,3 +1,4 @@
 node_modules/
 .claude-flow/
 .deepflow/
+.DS_Store
