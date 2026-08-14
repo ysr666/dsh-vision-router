@@ -37,20 +37,19 @@
 
 ## 对比同类插件
 
-最接近的同类是 [@anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)（Anionex），它是知名 `agent-vision-toolkit` 系列的 DSH 原生版。两者都提供 `vision-tools` 技能和一组像素级工具，区别在理念：**零配置粘贴即用** vs **Agent 主导的视觉工程**：
+大多数 DSH 视觉插件是把图片转成**文字描述**再喂给 DeepSeek。本插件让视觉模型**直接读原图像素**，内置**免费视觉链**，并把看图变成一次**普通工具调用**——粘贴图片即可用，可连续多步做到完成为止。
 
-| | dsh-vision-router | @anionex/dsh-vision-toolkit |
-|---|---|---|
-| 开箱图片问答 | ✅ 内置免费视觉链（OVHcloud 匿名端点），免注册免 Key | 远程工具需自备视觉 API Key（本地像素工具免 Key） |
-| 运行时 | ✅ 纯 Node，无需 Python | 需要 Python 3.11+ 受管运行时 |
-| 图片怎么进来 | ✅ 直接粘贴——轮次自动切视觉链并自动挂载工具 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
-| 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
-| 支持 profile | Web | Web + Headless |
-| 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
-| 测试 | 86 | 162 |
-| 安装 | 一条命令 | 一条命令（npm） |
+| | 手动切换模型 | 描述桥（dsh-vision-sidecar · dsh-vision-proxy · dsh-vision · dsh-tool-vision） | @anionex/dsh-vision-toolkit | modlens | dsh-vision-router |
+|---|---|---|---|---|---|
+| 开箱即用、免 Key | ❌ | 部分 | ❌ 远程工具需自备 Key | ❌ 需自备 Key | ✅ 内置免 Key 视觉链 |
+| 原图像素保真 | ✅ 切换后 | ❌ 只有文字描述 | ✅ | ✅ 结构化证据 | ✅ 原图像素 + 像素工具 |
+| 免手动逐轮切换 | ❌ | ✅ | ✅ | ✅ | ✅ 自动挂载工具 + 隐身路由 |
+| 日常模型不受影响 | ❌ 整会话切换 | ✅ | ✅ | ✅ | ✅ DeepSeek 始终是大脑 |
+| 多供应商降级 + 分类报错 | ❌ | ❌ | 部分 | — | ✅ 降级链 + 429 退避 + 自动压缩 |
+| 无需 Python | ✅ | ✅ | ❌ Python 3.11+ | ✅ | ✅ 纯 Node |
+| 一条命令安装 | — | — | ✅ | ✅ | ✅ bundle 补丁零手改 |
 
-两者都是 MIT 许可、一条命令安装。想要图片**粘贴即用**、零配置就选本插件；需要 Headless 部署或更丰富的案例库，可以看 @anionex/dsh-vision-toolkit。（功能对比以其 README 2026-08 状态为准。）
+想要像素闭环？五条路线最终都落在同一套 `vision_*` 工具族上——定位、裁剪、像素对比、取色、OCR、矢量化、抠图、截图——按需混用即可。
 
 ## 快速开始
 

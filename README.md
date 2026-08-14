@@ -37,20 +37,19 @@ Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — los
 
 ## How it compares
 
-The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) (Anionex), a native DSH bundle of the well-known `agent-vision-toolkit` lineage. Both packages ship a `vision-tools` skill and a family of pixel-level tools; they differ in philosophy — **zero-config paste-and-go** versus **agent-driven visual engineering**:
+Most DSH vision plugins feed DeepSeek a *text description* of the image. This plugin keeps the **original pixels on the vision model's side**, ships a **built-in free chain**, and treats looking at an image as an **ordinary tool call** — paste it and it just works, multi-step until done.
 
-| | dsh-vision-router | @anionex/dsh-vision-toolkit |
-|---|---|---|
-| Image Q&A out of the box | ✅ Built-in free chain (anonymous OVHcloud endpoint) — no account, no key | Requires your own vision API key (local pixel tools work without one) |
-| Runtime | ✅ Node only — no Python | Python 3.11+ managed runtime |
-| Getting an image in | ✅ Paste it — the turn auto-routes to the vision chain and auto-mounts the tools | Workspace path + `/vision-tools` command, then explicit tool calls |
-| Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — stealth takeover, the model picker looks stock | Tool-driven; no whole-turn auto-routing |
-| Profiles | Web | Web + Headless |
-| Playbooks | The pixel loop: ground → crop → diff → fix → screenshot again | Richer case library (long-screenshot OCR, UI restoration, GUI automation) |
-| Tests | 86 | 162 |
-| Install | One command | One command (npm) |
+| | Manual model switching | Description bridges (dsh-vision-sidecar · dsh-vision-proxy · dsh-vision · dsh-tool-vision) | @anionex/dsh-vision-toolkit | modlens | dsh-vision-router |
+|---|---|---|---|---|---|
+| Works out of the box, no key | ❌ | partial | ❌ remote tools need your own key | ❌ needs your own key | ✅ built-in keyless vision chain |
+| Original-pixel fidelity | ✅ after manual switching | ❌ text description only | ✅ | ✅ structured evidence | ✅ original pixels + pixel tools |
+| No per-turn manual switching | ❌ | ✅ | ✅ | ✅ | ✅ auto tool mounting + stealth routing |
+| Daily model untouched | ❌ session swapped | ✅ | ✅ | ✅ | ✅ DeepSeek stays the brain |
+| Multi-provider fallback with classified errors | ❌ | ❌ | partial | — | ✅ chain + 429 backoff + downscale |
+| No Python runtime | ✅ | ✅ | ❌ Python 3.11+ | ✅ | ✅ Node only |
+| One-command install | — | — | ✅ | ✅ | ✅ bundle patch, zero file edits |
 
-Both are MIT-licensed and one command away. Pick this plugin when you want images to *just work* with zero setup; pick theirs when you need headless profiles or the extended playbook library. (Feature comparison reflects their README as of 2026-08.)
+Want the pixel loop instead? All five routes converge on the same `vision_*` tool family — grounding, crop, pixel diff, colors, OCR, SVG trace, cutout, screenshots — so you can mix and match as you like.
 
 ## Quick start
 
