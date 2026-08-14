@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/release-v1.0.2-5B4CF0?style=flat-square" alt="Release v1.0.2" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/release-v1.1.0-5B4CF0?style=flat-square" alt="Release v1.1.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-94%20tests-2EA44F?style=flat-square" alt="Verified: 94 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -21,7 +21,7 @@
 <p align="center">English · <a href="README.zh.md">中文</a></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.0.2)**
+> 📌 **Announcement (v1.1.0)**
 >
 > Now supports **Extra vision wrappers**: any custom text route (e.g. opencode) sends images out of the box — plus long-screenshot OCR, a "Test connection" button and artifact preview cards in the settings panel. Stealth mode is off by default and the official DeepSeek row is no longer taken over implicitly.
 
