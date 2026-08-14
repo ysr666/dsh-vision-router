@@ -1021,7 +1021,7 @@ test('stealth stream keeps the log intact and hands the model a tool-hint marker
 function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false } = {}) {
   const adapters = new Map() // provider -> adapter
   const registrations = new Map() // provider -> { adapter, retryPolicy }
-  const captured = { skills: [] }
+  const captured = { skills: [], on: new Map() }
   if (stockRoute) {
     const stock = {
       providerInfo: (p) => ({ id: p, name: 'DeepSeek' }),
@@ -1059,7 +1059,9 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false } = {
       if (typeof fn === 'function') fn()
       return () => {}
     },
-    on() {},
+    on(event, handler) {
+      captured.on.set(event, handler)
+    },
     inject(_deps, callback) {
       // settings seam: run synchronously against a mock settings service that
       // resolves the composition entry through the Config schema defaults.
@@ -1141,6 +1143,74 @@ test('apply skips the chain route by default: image turns go through the vision 
   assert.equal(adapters.has('vision-chain'), false)
   assert.ok(adapters.has('vision-http'))
   assert.ok(adapters.has('deepseek-official-native'))
+})
+
+// ── legacy routing fallback (routing: true, chainRoute: '') ────────────────
+//
+// Regression guard: the agent/request fallback used to read current.provider /
+// current.model, but `current` is a function — so every image turn in legacy
+// routing mode was switched to provider/model undefined. It must route to the
+// first chain pair instead, and leave the config alone when it is already on
+// that pair.
+
+function legacyRoutingHarness(configOverrides = {}) {
+  const config = {
+    provider: 'openrouter',
+    providers: [{ provider: 'openrouter', model: 'qwen/qwen3-vl-235b-a22b-instruct' }],
+    routing: true,
+    chainRoute: '',
+    autoActivateOnImage: false,
+    ...configOverrides,
+  }
+  const { ctx, captured } = mockHarnessCtx({ config0: config })
+  apply(ctx, Config(config))
+  const session = { events: [] }
+  const payload = {
+    agent: { session },
+    turn: 7,
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'image', attachment: { attachmentId: 'img-1', name: 'a.png' } }],
+      },
+    ],
+  }
+  return {
+    ctx,
+    captured,
+    session,
+    payload,
+    preStep: captured.on.get('agent/pre-step'),
+    request: captured.on.get('agent/request'),
+  }
+}
+
+test('agent/request legacy routing sends image turns to the first chain pair', async () => {
+  const { payload, preStep, request } = legacyRoutingHarness()
+  assert.equal(typeof preStep, 'function')
+  assert.equal(typeof request, 'function')
+  await preStep(payload, async () => ({ messages: payload.messages }))
+  const routed = await request(payload, async () => ({
+    provider: 'deepseek-official',
+    model: 'deepseek-v4-pro',
+    reasoningEffort: 'high',
+  }))
+  assert.equal(routed.provider, 'openrouter')
+  assert.equal(routed.model, 'qwen/qwen3-vl-235b-a22b-instruct')
+  // the effort belongs to the previous provider and must be dropped on switch
+  assert.equal(routed.reasoningEffort, undefined)
+})
+
+test('agent/request legacy routing keeps the config when already on the first pair', async () => {
+  const { payload, preStep, request } = legacyRoutingHarness()
+  await preStep(payload, async () => ({ messages: payload.messages }))
+  const config0 = {
+    provider: 'openrouter',
+    model: 'deepseek-v4-pro',
+    reasoningEffort: 'high',
+  }
+  const routed = await request(payload, async () => ({ ...config0 }))
+  assert.deepEqual(routed, config0)
 })
 
 test('vision-http resolveModel returns exact id metadata (llm service contract)', async () => {
