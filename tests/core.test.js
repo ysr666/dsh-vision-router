@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import sharp from 'sharp'
 import {
   mediaTypeOf,
+  sniffMediaType,
   basenameOf,
   blocksHaveImage,
   eventHasImage,
@@ -44,6 +45,19 @@ import {
   apply,
   Config,
 } from '../index.js'
+
+test('sniffMediaType detects formats from magic bytes', () => {
+  const png = Buffer.from('89504e470d0a1a0a0000000000000000', 'hex')
+  assert.equal(sniffMediaType(png), 'image/png')
+  const jpeg = Buffer.from('ffd8ffe000104a464946000101000001', 'hex')
+  assert.equal(sniffMediaType(jpeg), 'image/jpeg')
+  const webp = Buffer.from('524946461200000057454250565038', 'hex')
+  assert.equal(sniffMediaType(webp), 'image/webp')
+  const gif = Buffer.from('474946383961000000000000000000', 'hex')
+  assert.equal(sniffMediaType(gif), 'image/gif')
+  assert.equal(sniffMediaType(Buffer.from('000102030405060708090a0b', 'hex')), undefined)
+  assert.equal(sniffMediaType(Buffer.alloc(4)), undefined)
+})
 
 test('mediaTypeOf maps extensions', () => {
   assert.equal(mediaTypeOf('/a/b.PNG'), 'image/png')
@@ -365,6 +379,20 @@ test('httpProvidersOf falls back to the built-in default unless disabled', () =>
   const custom = [{ name: 'x', baseURL: 'https://x/v1', model: 'm' }]
   assert.deepEqual(httpProvidersOf({ httpProviders: custom }), custom)
   assert.deepEqual(httpProvidersOf({ httpProviders: custom }, false), custom)
+})
+
+test('dedupeHttpProviders also drops entries duplicating a chain provider name', () => {
+  const http = [{ name: 'zhipu', baseURL: 'https://x/v1', model: 'glm-4v-flash' }]
+  // a pair already covers provider zhipu through the adapter
+  assert.deepEqual(
+    dedupeHttpProviders([{ provider: 'zhipu', model: 'glm-4.6v-flash' }], http),
+    [],
+  )
+  // an unrelated provider name keeps the http entry
+  assert.equal(
+    dedupeHttpProviders([{ provider: 'openrouter', model: 'qwen' }], http).length,
+    1,
+  )
 })
 
 test('dedupeHttpProviders drops only entries the vision-http chain covers', () => {

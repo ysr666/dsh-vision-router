@@ -98,6 +98,27 @@ export function mediaTypeOf(path) {
   return match ? IMAGE_EXTENSIONS[match[1]] : undefined
 }
 
+/**
+ * Detect the image format from magic bytes instead of the file extension.
+ * Attachments are stored as content-addressed files WITHOUT an extension,
+ * so extension-based detection rejects them; the pixel tools must sniff.
+ */
+export function sniffMediaType(bytes) {
+  if (!bytes || bytes.length < 12) return undefined
+  const head = (offset, count) => {
+    const parts = []
+    for (let i = offset; i < offset + count; i++) parts.push(bytes[i].toString(16).padStart(2, '0'))
+    return parts.join('')
+  }
+  if (head(0, 8) === '89504e470d0a1a0a') return 'image/png'
+  if (head(0, 3) === 'ffd8ff') return 'image/jpeg'
+  const riff = head(0, 4)
+  const webp = head(8, 4)
+  if (riff === '52494646' && webp === '57454250') return 'image/webp'
+  if (riff === '47494638') return 'image/gif' // GIF87a / GIF89a
+  return undefined
+}
+
 export function basenameOf(path) {
   const parts = String(path).split('/')
   return parts[parts.length - 1] || undefined
@@ -761,7 +782,14 @@ export function dedupeHttpProviders(pairs, httpProviders) {
       .filter((pair) => pair && pair.provider === 'vision-http')
       .map((pair) => pair.model),
   )
-  return (httpProviders ?? []).filter((p) => p && !covered.has(`${p.name}/${p.model}`))
+  // Also drop http entries whose `name` duplicates a chain pair's provider:
+  // a config like provider: zhipu + an httpProviders entry named zhipu would
+  // otherwise call the same model twice (once through the adapter, once
+  // through the direct HTTP path).
+  const providers = new Set((pairs ?? []).map((pair) => pair && pair.provider))
+  return (httpProviders ?? []).filter(
+    (p) => p && !covered.has(`${p.name}/${p.model}`) && !providers.has(p.name),
+  )
 }
 
 /** Convert harness image/text blocks plus resolved image bytes into OpenAI wire content. */
@@ -1548,7 +1576,11 @@ export function apply(ctx, config = {}) {
           reason: {
             kind: 'error',
             failure: {
-              message: `all vision models failed: ${failures.join(' | ')}`,
+              message:
+                `all vision models failed: ${failures.join(' | ')}` +
+                (httpProviders().length > 0
+                  ? ' note: httpProviders (including the free fallback) are skipped while routing=true — set routing=false for the tools-first flow that uses them'
+                  : ''),
               code: 'VISION_CHAIN_EXHAUSTED',
             },
           },
@@ -1830,12 +1862,6 @@ export function apply(ctx, config = {}) {
           if (fs === undefined) {
             throw new Error('vision_describe: the fs service is not available in this deployment')
           }
-          const mediaType = mediaTypeOf(path)
-          if (mediaType === undefined) {
-            throw new Error(
-              `vision_describe: unsupported image format ${path} (png/jpeg/webp/gif only)`,
-            )
-          }
           let bytes
           try {
             const target = await fs.resolve(path)
@@ -1843,6 +1869,15 @@ export function apply(ctx, config = {}) {
           } catch (error) {
             throw new Error(
               `vision_describe: failed to read ${path} (${error && error.message ? error.message : String(error)})`,
+            )
+          }
+          // Sniff the format from the bytes (attachments are stored as
+          // extensionless content-addressed files); fall back to the file
+          // extension only when sniffing cannot decide.
+          const mediaType = sniffMediaType(bytes) ?? mediaTypeOf(path)
+          if (mediaType === undefined) {
+            throw new Error(
+              `vision_describe: unsupported image format ${path} (png/jpeg/webp/gif only)`,
             )
           }
           if (downscaleEnabled()) {
@@ -2073,12 +2108,16 @@ export function apply(ctx, config = {}) {
     const readImageBytes = async (imagePath) => {
       const fs = ctx.get('fs')
       if (fs === undefined) throw new Error('vision-router: the fs service is not available')
-      const mediaType = mediaTypeOf(imagePath)
+      const target = await fs.resolve(imagePath)
+      const bytes = await fs.readBytes(target, undefined, 20 * 1024 * 1024)
+      // Attachments are stored as content-addressed files without an
+      // extension: sniff the format from the bytes, and fall back to the
+      // extension only when sniffing cannot decide.
+      const mediaType = sniffMediaType(bytes) ?? mediaTypeOf(imagePath)
       if (mediaType === undefined) {
         throw new Error(`unsupported image format ${imagePath} (png/jpeg/webp/gif only)`)
       }
-      const target = await fs.resolve(imagePath)
-      return fs.readBytes(target, undefined, 20 * 1024 * 1024)
+      return { bytes, mediaType }
     }
 
     const imageDims = async (bytes) => {
@@ -2180,10 +2219,9 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType } = await readImageBytes(args.image)
         const { width, height } = await imageDims(bytes)
         if (width <= 0 || height <= 0) throw new Error('vision_ground: could not read image dimensions')
-        const mediaType = mediaTypeOf(args.image)
         const instruction =
           `Target to locate: "${String(args.target).slice(0, 500)}". ` +
           `The image is ${width}x${height} pixels. Return ONE JSON object with integer fields ` +
@@ -2234,7 +2272,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const { width, height } = await imageDims(bytes)
         const box = parseBox(args.region)
         if (box === undefined) {
@@ -2280,8 +2318,8 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const originalBytes = await readImageBytes(args.original)
-        const rebuiltBytes = await readImageBytes(args.rebuilt)
+        const { bytes: originalBytes } = await readImageBytes(args.original)
+        const { bytes: rebuiltBytes } = await readImageBytes(args.rebuilt)
         const meta = await sharp(originalBytes, { failOn: 'none' }).metadata()
         const width = meta.width ?? 0
         const height = meta.height ?? 0
@@ -2344,7 +2382,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const top = Number.isInteger(args.top) && args.top > 0 ? args.top : 8
         const raw = await sharp(bytes, { failOn: 'none' })
           .resize(64, 64, { fit: 'inside' })
@@ -2376,7 +2414,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
         if (engine !== 'vision') {
           try {
@@ -2394,7 +2432,7 @@ export function apply(ctx, config = {}) {
         }
         const { text } = await answerVision(
           bytes,
-          mediaTypeOf(args.image),
+          sniffedType,
           '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。',
         )
         return JSON.stringify({ engine: 'vision', text })
@@ -2417,7 +2455,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const steps = Number.isInteger(args.steps) && args.steps > 0 ? Math.min(args.steps, 16) : 4
         let svg
         try {
@@ -2452,7 +2490,7 @@ export function apply(ctx, config = {}) {
       },
       output: stringOutput,
       async execute(args, exec) {
-        const bytes = await readImageBytes(args.image)
+        const { bytes, mediaType: sniffedType } = await readImageBytes(args.image)
         const tolerance = Number.isFinite(args.tolerance) && args.tolerance >= 0 ? Math.round(args.tolerance) : 40
         const { data, info } = await sharp(bytes, { failOn: 'none' })
           .ensureAlpha()

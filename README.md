@@ -189,7 +189,7 @@ dsh plugin --profile web add github:ysr666/dsh-vision-router
 | `model` | `ovh/Qwen2.5-VL-72B-Instruct` | 主视觉模型（简写形式；**默认即内置免费端点**）。 |
 | `fallbacks` | `[]` | 同一供应商的备用模型（简写形式）。 |
 | `providers` | `[]` | **多供应商形式**：`{ provider, model, fallbacks[] }` 列表，逐条尝试；优先于简写形式。 |
-| `routing` | `false` | 图片轮整轮自动路由到视觉链（一次性整轮回答）。**默认关闭**：图片轮像普通文本轮一样由会话模型调用视觉工具看图，可连续多步操作；`true` = 恢复旧行为。 |
+| `routing` | `false` | 图片轮整轮自动路由到视觉链（一次性整轮回答）。**默认关闭**：图片轮像普通文本轮一样由会话模型调用视觉工具看图，可连续多步操作；`true` = 恢复旧行为。⚠️ `routing: true` 时降级链只含 `provider + fallbacks`，`httpProviders`（含免费兜底端点）不参与；工具模式下两者都会尝试。 |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮反向路由回 `textProvider`。 |
 | `wrapperRoute` | `deepseek-vision` | 包装路由名（选择器显示"DeepSeek + 自动识图"）；置空关闭。 |
 | `chainRoute` | `vision-chain` | 视觉降级链路由名（仅 `routing: true` 时挂载；识图工具直接走真实 provider）。 |
