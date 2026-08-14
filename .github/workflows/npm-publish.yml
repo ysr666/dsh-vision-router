@@ -38,16 +38,20 @@ jobs:
             exit 1
           fi
 
-      - name: Skip if this version is already on npm
+      - name: Check whether this version is already on npm
+        id: already-published
         shell: bash
         run: |
           PKG_VERSION="$(node -p "require('./package.json').version")"
           if npm view "dsh-vision-router@${PKG_VERSION}" version >/dev/null 2>&1; then
             echo "dsh-vision-router@${PKG_VERSION} is already published — nothing to do."
-            exit 0
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish to npm
+        if: steps.already-published.outputs.published == 'false'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
