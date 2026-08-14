@@ -91,6 +91,10 @@ export const Config = z.object({
   // Text-provider routes the user wants wrapped as image-capable twins
   // (e.g. opencode-go): each entry registers a "<provider>-vision" route
   // whose catalog mirrors the original models but declares image input.
+  // 开箱预置一条 deepseek-official（与视觉模型链预置 vision-http 内置免费
+  // 端点同理）：新用户在卡片里第一眼就能看到官方 DeepSeek 行可发图。该路由
+  // 由插件内置包装（deepseek-vision）服务，syncTwins 跳过 ownRoutes，这条
+  // 默认条目只是声明/说明，不会重复注册。
   wrappedProviders: z
     .array(
       z.object({
@@ -98,7 +102,7 @@ export const Config = z.object({
         models: z.array(z.string()).default([]),
       }),
     )
-    .default([]),
+    .default([{ provider: 'deepseek-official', models: [] }]),
   httpProviders: z
     .array(
       z.object({

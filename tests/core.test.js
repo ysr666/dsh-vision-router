@@ -1171,6 +1171,12 @@ test('stealth defaults to false (issue #34: explicit opt-in, no stealth takeover
   assert.equal(Config({ stealth: undefined }).stealth, false)
 })
 
+test('wrappedProviders pre-fills the stock deepseek-official row out of the box', () => {
+  // like the vision chain pre-fills vision-http, the wrappers section ships
+  // one visible default row so users see the built-in wrapper at first glance
+  assert.deepEqual(Config({}).wrappedProviders, [{ provider: 'deepseek-official', models: [] }])
+})
+
 test('keep-alive fallback: stealth off + dead stock route still serves deepseek-official', async () => {
   // No stockRoute in the mock = the official llm-deepseek row is disabled at
   // the composition layer (adapterAvailable throws). With stealth off the

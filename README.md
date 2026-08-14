@@ -201,7 +201,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `fallbacks` | `[]` | backup models for the shorthand provider |
 | `providers` | `[]` | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — registers an auto-vision twin for any custom/third-party route (e.g. opencode); in the card, provider + model dropdowns, empty model = wrap all |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — registers an auto-vision twin for any custom/third-party route (e.g. opencode); in the card, provider + model dropdowns, empty model = wrap all. The pre-filled deepseek-official row marks the built-in wrapper and is a no-op; changes apply live |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |

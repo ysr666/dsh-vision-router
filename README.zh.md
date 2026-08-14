@@ -201,7 +201,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `fallbacks` | `[]` | 简写供应商的备用模型 |
 | `providers` | `[]` | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[]` | 额外识图包装：`{ provider, models[] }`，给 opencode 等任意第三方/自定义文本路由注册可发图的孪生条目（卡片里 provider + 模型双下拉；模型留空 = 包装全部） |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 额外识图包装：`{ provider, models[] }`，给 opencode 等任意第三方/自定义文本路由注册可发图的孪生条目（卡片里 provider + 模型双下拉；模型留空 = 包装全部）。预置的 deepseek-official 条目标记内置包装、无副作用；改动即时生效 |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
