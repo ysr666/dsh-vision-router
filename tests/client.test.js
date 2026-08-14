@@ -38,6 +38,6 @@ test('unwrapModelsResult reads the catalog from the RPC envelope', () => {
 
 test('the client bundle still loads and registers with the proven injects', () => {
   const bundle = loadClientBundle()
-  assert.deepEqual(bundle.inject, ['settingsScope', 'slots'])
+  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale'])
   assert.equal(typeof bundle.apply, 'function')
 })
