@@ -730,6 +730,11 @@ export function switchRoute(config, provider, model) {
   return { ...rest, provider, model }
 }
 
+/** Host filter: `hostname` matches a list entry exactly or as a subdomain. */
+export function hostMatchesAny(hostname, hosts) {
+  return (hosts ?? []).some((host) => hostname === host || hostname.endsWith(`.${host}`))
+}
+
 /** Downscale bytes whose intrinsic pixel count exceeds maxPixels; returns original bytes on failure. */
 export async function downscaleImage(bytes, maxPixels) {
   try {
@@ -1596,19 +1601,35 @@ export function apply(ctx, config = {}) {
   const sessionAttachmentsById = new Map()
 
   // ── optional fetch proxy for the vision provider hosts ─────────────────────
+  //
+  // Resolved per request from the live settings section (`current()`), so the
+  // Web settings panel can change the proxy URL and host list without a
+  // restart. The fetch patcher itself is installed once for the plugin fiber.
 
-  const proxyUrl =
-    typeof config.proxy === 'string' && config.proxy !== '' ? config.proxy : undefined
-  const proxyHosts = Array.isArray(config.proxyHosts)
-    ? config.proxyHosts.filter((host) => typeof host === 'string' && host !== '')
-    : ['api.openrouter.ai', 'openrouter.ai']
+  const currentProxyUrl = () => {
+    const value = current().proxy
+    return typeof value === 'string' && value !== '' ? value : undefined
+  }
+  const currentProxyHosts = () => {
+    const value = current().proxyHosts
+    return Array.isArray(value)
+      ? value.filter((host) => typeof host === 'string' && host !== '')
+      : []
+  }
 
-  if (proxyUrl !== undefined && proxyHosts.length > 0) {
-    const proxyAgent = new ProxyAgent(proxyUrl)
+  {
     const originalFetch = globalThis.fetch
-    const shouldProxy = (hostname) =>
-      proxyHosts.some((host) => hostname === host || hostname.endsWith(`.${host}`))
+    let cachedAgentUrl
+    let cachedAgent
+    const agentFor = (url) => {
+      if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent
+      cachedAgentUrl = url
+      cachedAgent = new ProxyAgent(url)
+      return cachedAgent
+    }
     const patchedFetch = (input, init) => {
+      const proxyUrl = currentProxyUrl()
+      if (proxyUrl === undefined) return originalFetch(input, init)
       let url
       try {
         url = new URL(
@@ -1617,8 +1638,8 @@ export function apply(ctx, config = {}) {
       } catch {
         return originalFetch(input, init)
       }
-      if (!shouldProxy(url.hostname)) return originalFetch(input, init)
-      return originalFetch(input, { ...(init ?? {}), dispatcher: proxyAgent })
+      if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
+      return originalFetch(input, { ...(init ?? {}), dispatcher: agentFor(proxyUrl) })
     }
     ctx.effect(() => {
       globalThis.fetch = patchedFetch

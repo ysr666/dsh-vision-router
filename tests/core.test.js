@@ -28,6 +28,7 @@ import {
   collectImageBlocks,
   lastUserText,
   switchRoute,
+  hostMatchesAny,
   launchEnvironmentLike,
   createNativeDeepSeekAdapter,
   createStealthAdapter,
@@ -1052,4 +1053,15 @@ test('dedupeHttpProviders drops endpoints already covered by vision-http pairs',
     dedupeHttpProviders([{ provider: 'openrouter', model: 'qwen' }], http),
     http,
   )
+})
+
+
+test('hostMatchesAny matches exact hosts and subdomains only', () => {
+  const hosts = ['api.openrouter.ai', 'openrouter.ai']
+  assert.equal(hostMatchesAny('api.openrouter.ai', hosts), true)
+  assert.equal(hostMatchesAny('openrouter.ai', hosts), true)
+  assert.equal(hostMatchesAny('api.openrouter.ai.evil.com', hosts), false)
+  assert.equal(hostMatchesAny('api.deepseek.com', hosts), false)
+  assert.equal(hostMatchesAny('openrouter.ai', []), false)
+  assert.equal(hostMatchesAny('openrouter.ai', undefined), false)
 })
