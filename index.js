@@ -1088,6 +1088,21 @@ export function hostMatchesAny(hostname, hosts) {
   return (hosts ?? []).some((host) => hostname === host || hostname.endsWith(`.${host}`))
 }
 
+/**
+ * Turn the fs service's resolve() result into a real filesystem path.
+ * resolve() may return a plain string or a target object ({ targetKey, ... });
+ * existsSync / pathToFileURL need an actual path string.
+ */
+export function toRealPath(fsService, resolved) {
+  if (typeof resolved === 'string') return resolved
+  if (typeof fsService?.processPath === 'function') {
+    const p = fsService.processPath(resolved)
+    if (typeof p === 'string' && p !== '') return p
+  }
+  const key = resolved?.targetKey
+  return typeof key === 'string' && key !== '' ? key : String(resolved ?? '')
+}
+
 /** Downscale bytes whose intrinsic pixel count exceeds maxPixels; returns original bytes on failure. */
 export async function downscaleImage(bytes, maxPixels) {
   try {
@@ -3020,7 +3035,11 @@ export function apply(ctx, config = {}) {
         if (fsService === undefined) {
           throw new Error('vision_html_screenshot: the fs service is not available')
         }
-        const targetPath = await fsService.resolve(source)
+        const resolved = await fsService.resolve(source)
+        // The fs service may return a target object ({ targetKey, displayPath })
+        // instead of a plain path string; convert it before touching the real
+        // filesystem (existsSync / pathToFileURL need an actual path).
+        const targetPath = toRealPath(fsService, resolved)
         if (!existsSync(targetPath)) {
           throw new Error(`vision_html_screenshot: file not found: ${source}`)
         }
