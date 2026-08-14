@@ -28,7 +28,7 @@
 
 大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**原图像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
 
-- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装、隐身接管与附件限制放宽——不用手改任何文件。
+- **一条命令安装，纯增量。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 只挂载插件行，不禁用、不覆写任何核心行（issue #34）。
 - **默认免费。** 视觉链内置 OVHcloud 匿名端点（`Qwen2.5-VL-72B-Instruct`，免注册、免 Key，每 IP 2 次/分钟）。付费链路（OpenRouter、Pi-AI 供应商、任意 OpenAI 兼容直连端点）是可选升级。
 - **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
 - **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
@@ -37,20 +37,19 @@
 
 ## 对比同类插件
 
-最接近的同类是 [@anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)（Anionex），它是知名 `agent-vision-toolkit` 系列的 DSH 原生版。两者都提供 `vision-tools` 技能和一组像素级工具，区别在理念：**零配置粘贴即用** vs **Agent 主导的视觉工程**：
+大多数 DSH 视觉插件是把图片转成**文字描述**再喂给 DeepSeek。本插件让视觉模型**直接读原图像素**，内置**免费视觉链**，并把看图变成一次**普通工具调用**——粘贴图片即可用，可连续多步做到完成为止。
 
-| | dsh-vision-router | @anionex/dsh-vision-toolkit |
-|---|---|---|
-| 开箱图片问答 | ✅ 内置免费视觉链（OVHcloud 匿名端点），免注册免 Key | 远程工具需自备视觉 API Key（本地像素工具免 Key） |
-| 运行时 | ✅ 纯 Node，无需 Python | 需要 Python 3.11+ 受管运行时 |
-| 图片怎么进来 | ✅ 直接粘贴——轮次自动切视觉链并自动挂载工具 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
-| 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
-| 支持 profile | Web | Web + Headless |
-| 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
-| 测试 | 86 | 162 |
-| 安装 | 一条命令 | 一条命令（npm） |
+| | 手动切换模型 | 描述桥（dsh-vision-sidecar · dsh-vision-proxy · dsh-vision · dsh-tool-vision） | @anionex/dsh-vision-toolkit | modlens | dsh-vision-router |
+|---|---|---|---|---|---|
+| 开箱即用、免 Key | ❌ | 部分 | ❌ 远程工具需自备 Key | ❌ 需自备 Key | ✅ 内置免 Key 视觉链 |
+| 原图像素保真 | ✅ 切换后 | ❌ 只有文字描述 | ✅ | ✅ 结构化证据 | ✅ 原图像素 + 像素工具 |
+| 免手动逐轮切换 | ❌ | ✅ | ✅ | ✅ | ✅ 自动挂载工具 + 隐身路由 |
+| 日常模型不受影响 | ❌ 整会话切换 | ✅ | ✅ | ✅ | ✅ DeepSeek 始终是大脑 |
+| 多供应商降级 + 分类报错 | ❌ | ❌ | 部分 | — | ✅ 降级链 + 429 退避 + 自动压缩 |
+| 无需 Python | ✅ | ✅ | ❌ Python 3.11+ | ✅ | ✅ 纯 Node |
+| 一条命令安装 | — | — | ✅ | ✅ | ✅ bundle 补丁零手改 |
 
-两者都是 MIT 许可、一条命令安装。想要图片**粘贴即用**、零配置就选本插件；需要 Headless 部署或更丰富的案例库，可以看 @anionex/dsh-vision-toolkit。（功能对比以其 README 2026-08 状态为准。）
+想要像素闭环？五条路线最终都落在同一套 `vision_*` 工具族上——定位、裁剪、像素对比、取色、OCR、矢量化、抠图、截图——按需混用即可。
 
 ## 快速开始
 
@@ -60,7 +59,7 @@ dsh plugin --profile web add dsh-vision-router
 
 重启 `dsh web`——完成，零配置：
 
-- 插件的 bundle 补丁自动挂载插件行、接管官方 DeepSeek 路由（隐身模式——模型选择器看起来和原版一模一样）、放宽附件限制到 20MB / 1 亿像素；
+- 插件的 bundle 补丁只挂载插件行：官方 DeepSeek 路由保持原样，图片入口使用选择器里的「自动识图」包装条目（或你在设置里配置的额外包装）；
 - 默认视觉链就是内置免费端点；
 - 全部配置可在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）** 实时修改。
 
@@ -154,16 +153,15 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 ## 隐身模式
 
-默认安装即接管官方 `deepseek-official` 路由：模型选择器看起来和原版完全一样（同一个 DeepSeek 组、同样的模型名），但每个条目背后都是声明了图片输入的自动识图包装；文字轮交给插件重建的原生 DeepSeek 适配器（读取同一个 `llm-deepseek` 设置段与凭据）。老会话通过隐藏的 `deepseek-vision` 别名继续工作。
-
-想保留官方行，在你的 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）覆写即可：
+**隐身模式改为显式可选。** 插件永远不会自己禁用官方 `llm-deepseek` 行（issue #34）。想接管官方 `deepseek-official` 路由——模型选择器看起来和原版完全一样，但每个条目背后都是声明了图片输入的自动识图包装，文字轮交给插件重建的原生 DeepSeek 适配器——在你自己的 profile 补丁层加上：
 
 ```yaml
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
+  disabled: true
 ```
 
-官方行在场时，插件回退为选择器里可见的「DeepSeek + 自动识图」包装入口——发图前选它即可。安装出问题时同样用这一行恢复。
+不接管时，插件注册选择器里可见的「DeepSeek + 自动识图」（`deepseek-vision`）包装入口——发图前选它即可；第三方文本路由则在设置卡片的「额外识图包装」里添加。安装出问题时删掉 `disabled` 行即可恢复。
 
 ## Web 设置
 

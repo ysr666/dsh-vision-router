@@ -4,22 +4,13 @@
 # without any manual cordis.patch.yml edits. Later layers (the profile's own
 # cordis.patch.yml, --patch overlays) override these rows by id.
 
-# 隐身模式：接管官方 deepseek-official 路由。禁用官方行后插件自己重建原生
-# DeepSeek 适配器（读取同一个 llm-deepseek 设置段与凭据），选择器里的
-# DeepSeek 条目本身就是「图片自动识图」包装，发图即用。
-# 想恢复官方行：在你的 profile cordis.patch.yml 里删掉/覆写本条即可。
-- id: llm-deepseek
-  disabled: true
-
-# 挂载插件行。配置全部可选（默认即内置免费视觉端点 + 工具优先的图片流程），
-# 可在 Web 设置 > 插件 > 插件配置 的「视觉路由」卡片里实时修改。
+# 纯增量安装：只挂载插件行，不改动任何核心行。
+# 官方 llm-deepseek 行保持原样（安装即安全，无隐式接管）；
+# 图片入口使用选择器里插件注册的「自动识图」包装条目（deepseek-vision），
+# 或把第三方文本路由写入设置卡片的「额外识图包装」。
+# 想要隐身模式（接管 deepseek-official、选择器看起来和原来一模一样）时，
+# 由用户在自己的 profile cordis.patch.yml 里显式禁用官方行——插件永不
+# 自动替用户禁用核心行（issue #34）。
 - insert:
     - id: vision-router
       name: dsh-vision-router
-
-# 放宽附件图片限制（部署默认 5MB / 4000 万像素 → 20MB / 1 亿像素），
-# 大尺寸设计稿/扫描图可过审。字段可选，不需要可在 profile 补丁层覆写。
-- id: attachment-local
-  config:
-    maxImageBytes: 20971520
-    maxImagePixels: 100000000

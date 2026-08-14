@@ -65,7 +65,9 @@ export const Config = z.object({
   reverseRouting: z.boolean().default(true),
   wrapperRoute: z.string().default('deepseek-vision'),
   chainRoute: z.string().default('vision-chain'),
-  stealth: z.boolean().default(true),
+  // 显式 opt-in（issue #34）：默认不尝试接管官方路由；开启后还需在
+  // profile 补丁层禁用官方 llm-deepseek 行才真正生效。
+  stealth: z.boolean().default(false),
   textProvider: z
     .object({
       provider: z.string().default('deepseek-official'),
