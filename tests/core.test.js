@@ -1163,6 +1163,36 @@ test('apply skips the chain route by default: image turns go through the vision 
   assert.ok(adapters.has('deepseek-official-native'))
 })
 
+test('stealth defaults to false (issue #34: explicit opt-in, no stealth takeover by default)', () => {
+  assert.equal(Config({}).stealth, false)
+  assert.equal(Config({ stealth: undefined }).stealth, false)
+})
+
+test('keep-alive fallback: stealth off + dead stock route still serves deepseek-official', async () => {
+  // No stockRoute in the mock = the official llm-deepseek row is disabled at
+  // the composition layer (adapterAvailable throws). With stealth off the
+  // plugin must STILL take over, or the DeepSeek models vanish entirely.
+  const { ctx, adapters } = mockHarnessCtx()
+  apply(ctx, Config({ stealth: false }))
+  assert.ok(adapters.has('deepseek-official'), 'expected the keep-alive deepseek-official route')
+  assert.ok(adapters.has('deepseek-official-native'), 'expected the hidden native route')
+  const official = adapters.get('deepseek-official')
+  const listed = await official.listModels('deepseek-official')
+  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+})
+
+test('stealth off + alive stock route performs no takeover at all', async () => {
+  const { ctx, adapters } = mockHarnessCtx({ stockRoute: true })
+  apply(ctx, Config({ stealth: false }))
+  // the stock adapter keeps owning deepseek-official; the plugin registers no
+  // hidden native route and no public takeover — only the visible wrapper
+  assert.equal(adapters.has('deepseek-official-native'), false)
+  const stock = adapters.get('deepseek-official')
+  const listed = await stock.listModels('deepseek-official')
+  assert.deepEqual(listed[0].inputModalities, ['text'])
+  assert.ok(adapters.has('deepseek-vision'), 'expected the visible wrapper route')
+})
+
 // ── legacy routing fallback (routing: true, chainRoute: '') ────────────────
 //
 // Regression guard: the agent/request fallback used to read current.provider /
