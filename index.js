@@ -86,6 +86,17 @@ export const Config = z.object({
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
   freeFallback: z.boolean().default(true),
+  // Text-provider routes the user wants wrapped as image-capable twins
+  // (e.g. opencode-go): each entry registers a "<provider>-vision" route
+  // whose catalog mirrors the original models but declares image input.
+  wrappedProviders: z
+    .array(
+      z.object({
+        provider: z.string(),
+        models: z.array(z.string()).default([]),
+      }),
+    )
+    .default([]),
   httpProviders: z
     .array(
       z.object({
@@ -1797,23 +1808,55 @@ export function apply(ctx, config = {}) {
         // In stealth mode this route is only a hidden alias for old sessions:
         // the public deepseek-official route already shows the stock catalog.
         if (stealthActive) return []
+        const entries = []
         const real = delegateAdapter()
-        if (real === undefined) return []
-        try {
-          const listed = await real.listModels(textProviderRoute())
-          return listed
-            .filter((model) => WRAPPER_MODEL_IDS.includes(model.id))
-            .map((model) => ({
-              ...model,
-              provider: wrapperRoute(),
-              name: wrapName(model.name),
-              inputModalities: ['text', 'image'],
-            }))
-        } catch {
-          return []
+        if (real !== undefined) {
+          try {
+            const listed = await real.listModels(textProviderRoute())
+            entries.push(
+              ...listed
+                .filter((model) => WRAPPER_MODEL_IDS.includes(model.id))
+                .map((model) => ({
+                  ...model,
+                  provider: wrapperRoute(),
+                  name: wrapName(model.name),
+                  inputModalities: ['text', 'image'],
+                })),
+            )
+          } catch {
+            /* keep the vision entries below */
+          }
         }
+        // Per-route wrapping: every adapter-backed pair of the vision chain
+        // is also exposed as a picker entry under the wrapper route, so the
+        // chain models are visible and selectable without touching config.
+        for (const pair of pairs()) {
+          if (!adapterAvailable(ctx.llm, pair.provider)) continue
+          entries.push({
+            provider: wrapperRoute(),
+            id: `${pair.provider}/${pair.model}`,
+            name: `${pair.provider}/${pair.model}（视觉）`,
+            inputModalities: ['text', 'image'],
+          })
+        }
+        return entries
       },
       async resolveModel(provider, model) {
+        // Vision-pair entries resolve against the pair's own adapter metadata.
+        const pair = pairs().find((candidate) => `${candidate.provider}/${candidate.model}` === model)
+        if (pair !== undefined && adapterAvailable(ctx.llm, pair.provider)) {
+          try {
+            const base = await ctx.llm.resolveModelInfo(pair.provider, pair.model)
+            return {
+              ...base,
+              provider: wrapperRoute(),
+              name: `${pair.provider}/${pair.model}（视觉）`,
+              inputModalities: ['text', 'image'],
+            }
+          } catch {
+            /* fall through to the text-provider path */
+          }
+        }
         const real = delegateAdapter()
         if (real === undefined) {
           throw new Error('vision-router: the text provider adapter is not available')
@@ -1834,6 +1877,86 @@ export function apply(ctx, config = {}) {
     const handle = ctx.llm.registerAdapter([wrapperRoute()], wrapperAdapter)
     wrapperRegistered = true
     ctx.effect(() => handle, 'vision-router: wrapper route')
+  }
+
+
+  // ── opt-in image-capable twins for other text-provider routes ─────────────
+  //
+  // A session model on a third-party text-only route (e.g. opencode-go) is
+  // rejected by the host admission once the session contains images, because
+  // that route's catalog declares input:[text] and the admission runs before
+  // any plugin can rewrite the turn. `wrappedProviders` registers a twin
+  // route "<provider>-vision" that mirrors the original models but declares
+  // image input, so the user gets an image-capable entry for exactly the
+  // routes they use. Text turns delegate byte-for-byte to the original
+  // adapter; image blocks are handled by the shared wrapper body (cached
+  // descriptions or compact tool-hint markers — the UI log keeps images).
+  const wrappedProviders = () =>
+    (current().wrappedProviders ?? []).filter(
+      (entry) => entry && typeof entry.provider === 'string' && entry.provider !== '',
+    )
+  const ownRoutes = () =>
+    new Set(
+      [wrapperRoute(), chainRoute(), HTTP_ROUTE, nativeRoute, 'deepseek-official'].filter(
+        (route) => route !== undefined && route !== null && route !== '',
+      ),
+    )
+  for (const entry of wrappedProviders()) {
+    const provider = entry.provider
+    const models = Array.isArray(entry.models)
+      ? entry.models.filter((model) => typeof model === 'string' && model !== '')
+      : []
+    if (ownRoutes().has(provider)) continue
+    if (!adapterAvailable(ctx.llm, provider)) {
+      ctx.logger?.warn('vision-router: wrappedProviders skips %s (no adapter registered)', provider)
+      continue
+    }
+    let original
+    try {
+      original = ctx.llm.registration(provider).adapter
+    } catch {
+      continue
+    }
+    const twinRoute = `${provider}-vision`
+    const twinAdapter = {
+      providerInfo() {
+        let info
+        try {
+          info = original.providerInfo ? original.providerInfo(provider) : undefined
+        } catch {
+          info = undefined
+        }
+        return { id: twinRoute, name: `${info && info.name ? info.name : provider} + 自动识图` }
+      },
+      providerRetryPolicy() {
+        try {
+          return original.providerRetryPolicy ? original.providerRetryPolicy(provider) : undefined
+        } catch {
+          return undefined
+        }
+      },
+      async listModels() {
+        if (typeof original.listModels !== 'function') return []
+        try {
+          const listed = await original.listModels(provider)
+          return listed
+            .filter((model) => models.length === 0 || models.includes(model.id))
+            .map((model) => ({ ...model, provider: twinRoute, inputModalities: ['text', 'image'] }))
+        } catch {
+          return []
+        }
+      },
+      async resolveModel(_provider, model) {
+        const base = await original.resolveModel(provider, model)
+        return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
+      },
+      ...createWrapperStreamBody(ctx, {
+        imageMemory,
+        delegateProvider: provider,
+      }),
+    }
+    const twinHandle = ctx.llm.registerAdapter([twinRoute], twinAdapter)
+    ctx.effect(() => twinHandle, `vision-router: twin route ${twinRoute}`)
   }
 
   // ── vision chain route: fallback under our own control ─────────────────────

@@ -1277,6 +1277,50 @@ test('apply registers the vision-tools skill with source and content', () => {
   assert.ok(skill.content.includes('vision_describe') || skill.content.includes('vision_ground'))
 })
 
+test('apply registers an image-capable twin route for wrappedProviders', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  // register a third-party text-only provider in the mock before apply
+  const thirdParty = {
+    providerInfo: (p) => ({ id: p, name: 'Opencode' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
+  apply(ctx, Config({
+    wrappedProviders: [{ provider: 'opencode-go', models: ['deepseek-v4-flash'] }],
+  }))
+  const twin = adapters.get('opencode-go-vision')
+  assert.ok(twin, 'expected the opencode-go-vision twin route')
+  const listed = await twin.listModels('opencode-go-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash'])
+  assert.deepEqual(listed[0].inputModalities, ['text', 'image'])
+  const resolved = await twin.resolveModel('opencode-go-vision', 'deepseek-v4-flash')
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+  // text turns delegate to the original provider with image-free messages
+  let delegateCall
+  ctx.llm.stream = async function* (options) {
+    delegateCall = options
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const messages = [
+    { role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'img-1', name: 'a.png' } }, { type: 'text', text: '看这张图' }] },
+  ]
+  for await (const _c of twin.stream({ provider: 'opencode-go-vision', model: 'deepseek-v4-flash', messages })) {
+    /* drain */
+  }
+  assert.equal(delegateCall.provider, 'opencode-go')
+  assert.equal(delegateCall.messages[0].content.filter((b) => b.type === 'image').length, 0)
+  assert.ok(delegateCall.messages[0].content[0].text.includes('img-1'))
+})
+
 test('apply falls back to the visible wrapper when the stock route is still active', async () => {
   const { ctx, adapters } = mockHarnessCtx({ stockRoute: true })
   apply(ctx, Config({
@@ -1289,11 +1333,23 @@ test('apply falls back to the visible wrapper when the stock route is still acti
   assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
   assert.deepEqual(listed[0].inputModalities, ['text'])
 
-  // the wrapper route is visible and mirrors the stock models with image input
+  // the wrapper route mirrors the stock models AND exposes every
+  // adapter-backed vision-chain pair as a selectable per-route entry
   const wrapper = adapters.get('deepseek-vision')
   const wrapped = await wrapper.listModels('deepseek-vision')
-  assert.deepEqual(wrapped.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+  assert.deepEqual(wrapped.map((m) => m.id), [
+    'deepseek-v4-flash',
+    'deepseek-v4-pro',
+    'vision-http/ovh/Qwen2.5-VL-72B-Instruct',
+  ])
   assert.deepEqual(wrapped[0].inputModalities, ['text', 'image'])
+  const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  assert.ok(visionEntry)
+  assert.deepEqual(visionEntry.inputModalities, ['text', 'image'])
+  assert.ok(String(visionEntry.name).includes('视觉'))
+  // resolving a vision-pair entry still returns image-capable metadata
+  const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
 })
 test('floodFillBackground clears border-connected background pixels', () => {
   // 4x4: white background, black 2x2 square in the middle
