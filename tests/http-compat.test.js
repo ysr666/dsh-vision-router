@@ -69,6 +69,16 @@ test('structured vision_describe HTTP prompt preserves the JSON evidence contrac
   assert.match(prompt, /Read this UI/)
 })
 
+test('blank vision_describe questions fall back to a non-empty strict-endpoint-safe prompt', () => {
+  const textPrompt = visionDescribePrompt('   ', false)
+  assert.match(textPrompt, /Describe the image accurately/)
+  assert.ok(textPrompt.trim().length > 0)
+
+  const jsonPrompt = visionDescribePrompt('', true)
+  assert.match(jsonPrompt, /^Describe the image accurately/)
+  assert.match(jsonPrompt, /Return ONE JSON object/)
+})
+
 test('max-token limit parser recognizes Zhipu and common English errors', () => {
   assert.equal(
     parseMaxTokensLimit('max_tokens参数非法：限制数值范围[1,1024]'),
