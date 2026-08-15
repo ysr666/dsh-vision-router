@@ -388,11 +388,13 @@ test('cacheKeyFor covers chains, content, mode and question', () => {
   assert.equal(cacheKeyFor({ ...base, contentIds: ['b'] }), 'p:m,http:ovh/qwen|b|text|q')
 })
 
-test('httpProvidersOf falls back to the built-in default unless disabled', () => {
+test('httpProvidersOf keeps built-in OVH as final fallback unless disabled', () => {
   assert.equal(httpProvidersOf({}), DEFAULT_HTTP_PROVIDERS)
   assert.deepEqual(httpProvidersOf({}, false), [])
   const custom = [{ name: 'x', baseURL: 'https://x/v1', model: 'm' }]
-  assert.deepEqual(httpProvidersOf({ httpProviders: custom }), custom)
+  const withFallback = httpProvidersOf({ httpProviders: custom })
+  assert.equal(withFallback[0], custom[0])
+  assert.deepEqual(withFallback.slice(1), DEFAULT_HTTP_PROVIDERS)
   assert.deepEqual(httpProvidersOf({ httpProviders: custom }, false), custom)
 })
 
@@ -2017,4 +2019,14 @@ test('anonymous OVH 429 surfaces immediately so the next model can run', async (
   } finally {
     globalThis.fetch = original
   }
+})
+
+
+test('httpProvidersOf appends built-in OVH fallback after configured HTTP providers', () => {
+  const custom = { name: 'custom', baseURL: 'https://example.test/v1', model: 'vision-x', apiKeyEnv: '' }
+  const withFallback = httpProvidersOf({ httpProviders: [custom] }, true)
+  assert.equal(withFallback[0], custom)
+  assert.equal(withFallback.length, 1 + DEFAULT_HTTP_PROVIDERS.length)
+  assert.equal(withFallback[1].model, DEFAULT_HTTP_PROVIDERS[0].model)
+  assert.deepEqual(httpProvidersOf({ httpProviders: [custom] }, false), [custom])
 })

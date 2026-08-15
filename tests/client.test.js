@@ -39,7 +39,7 @@ test('unwrapModelsResult reads the catalog from the RPC envelope', () => {
   )
 })
 
-test('filterVisionBackendGroups hides text-only models and keeps built-in vision-http', () => {
+test('filterVisionBackendGroups hides text-only models and the internal vision-http route', () => {
   const bundle = loadClientBundle()
   const groups = [
     { id: 'vision-http', name: 'Vision HTTP', models: [{ id: 'free', name: 'free' }] },
@@ -55,10 +55,9 @@ test('filterVisionBackendGroups hides text-only models and keeps built-in vision
     },
   })
   assert.deepEqual(filtered.map((group) => [group.id, group.models.map((model) => model.id)]), [
-    ['vision-http', ['free']],
     ['opencode-go', ['qwen-vl']],
   ])
-  assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['vision-http'])
+  assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), [])
 })
 
 test('the client bundle still loads and registers with the proven injects', () => {

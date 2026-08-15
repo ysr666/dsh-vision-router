@@ -101,7 +101,7 @@ The auto-vision group follows the live DSH model catalog. Adding models or chang
 
 After choosing the “+ Auto Vision” group, paste or upload an image normally. The agent auto-mounts the vision tools and can use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
 
-The built-in free vision backend is already configured, so normal image use needs no API key or extra setup. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**.
+The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row selects one image-capable user model already configured under **Settings → Models**. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
 ### See it in action
 
@@ -179,14 +179,14 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 ## Provider fallback chain
 
-The vision chain walks providers in order and only surfaces an error after every one failed:
+The vision tools try backends in order and surface an error only after all of them fail:
 
-1. the **built-in free endpoint** (`vision-http` → `ovh/Qwen2.5-VL-72B-Instruct`) — no key, best-effort, 2 req/min per IP;
-2. configured `httpProviders` (direct OpenAI-compatible endpoints with optional `apiKeyEnv`);
-3. configured `providers` / `provider` + `fallbacks` (any adapter-backed provider, e.g. a Pi-AI profile like OpenRouter or Zhipu).
+1. **User vision models**: one per settings row, top to bottom; only models under **Settings → Models** that explicitly declare image input are shown;
+2. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the user models;
+3. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The five models have independent buckets, so spreading requests across them is about **10 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required.
 
 > [!IMPORTANT]
-> This “vision chain” is the **vision backend** called by Vision Router. The settings UI reads exact DSH model metadata and **only shows models that explicitly declare image input**; text-only DeepSeek/opencode models are filtered out. Legacy configs that still contain a text-only vision backend are skipped at runtime as well. This is separate from the “+ Auto Vision” conversation model group in the lower-right selector.
+> This “vision chain” is the **eyes** used by Vision Router: each settings row selects one user vision model, while the lower-right chat picker selects the **brain/conversation model**. The two are deliberately separate. Text-only DeepSeek/opencode models are filtered out of the vision-backend dropdown, and the internal `Vision HTTP` transport route is no longer exposed to users.
 
 > In the legacy `routing: true` mode, the whole-turn chain walks only `provider + fallbacks` — `httpProviders` (including the free fallback) do not participate there. The default `routing: false` (tools-first) tries everything.
 

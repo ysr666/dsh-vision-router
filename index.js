@@ -1318,12 +1318,18 @@ export const DEFAULT_HTTP_PROVIDERS = [
 ]
 
 export function httpProvidersOf(config, allowDefault = true) {
-  if (Array.isArray(config.httpProviders) && config.httpProviders.length > 0) {
-    return config.httpProviders.filter(
-      (p) => p && typeof p.baseURL === 'string' && typeof p.model === 'string',
-    )
-  }
-  return allowDefault ? DEFAULT_HTTP_PROVIDERS : []
+  const configured = Array.isArray(config.httpProviders)
+    ? config.httpProviders.filter(
+        (p) => p && typeof p.baseURL === 'string' && typeof p.model === 'string',
+      )
+    : []
+  if (!allowDefault) return configured
+  if (configured.length === 0) return DEFAULT_HTTP_PROVIDERS
+  const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))
+  return [
+    ...configured,
+    ...DEFAULT_HTTP_PROVIDERS.filter((p) => !seen.has(`${p.name}/${p.model}`)),
+  ]
 }
 
 /**
@@ -1747,27 +1753,9 @@ export function apply(ctx, config = {}) {
   )
   const httpProviders = () => {
     const raw = httpProvidersOf(current(), current().freeFallback !== false)
-    // A vision-http config row picks the preferred direct HTTP model. Keep the
-    // other built-in OVH models behind it instead of deleting the selected
-    // model from the direct fallback chain.
-    const preferredIds = pairs()
-      .filter((pair) => pair && pair.provider === 'vision-http')
-      .map((pair) => pair.model)
-    const preferred = []
-    const rest = []
-    for (const provider of raw) {
-      const id = `${provider.name}/${provider.model}`
-      if (preferredIds.includes(id)) preferred.push(provider)
-      else rest.push(provider)
-    }
-    preferred.sort(
-      (a, b) =>
-        preferredIds.indexOf(`${a.name}/${a.model}`) -
-        preferredIds.indexOf(`${b.name}/${b.model}`),
-    )
     return dedupeHttpProviders(
       pairs().filter((pair) => pair && pair.provider !== 'vision-http'),
-      [...preferred, ...rest],
+      raw,
     )
   }
   const resolveCredential = async (ref) => {
@@ -1918,12 +1906,7 @@ export function apply(ctx, config = {}) {
         return undefined
       },
       async listModels() {
-        return httpEntries.map((entry) => ({
-          provider: HTTP_ROUTE,
-          id: entry.id,
-          name: entry.name,
-          inputModalities: ['text', 'image'],
-        }))
+        return []
       },
       async resolveModel(_provider, model) {
         const entry = httpEntries.find((candidate) => candidate.id === model)
@@ -4273,8 +4256,12 @@ export function apply(ctx, config = {}) {
             }
             try {
               const capabilities = await collectVisionBackendCapabilities()
+              const builtinFallback = DEFAULT_HTTP_PROVIDERS.map((provider) => ({
+                id: `${provider.name}/${provider.model}`,
+                model: provider.model,
+              }))
               res.writeHead(200, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ capabilities }))
+              res.end(JSON.stringify({ capabilities, builtinFallback, anonymousRpmPerModel: 2 }))
             } catch (error) {
               res.writeHead(500, { 'content-type': 'application/json' })
               res.end(
