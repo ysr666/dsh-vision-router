@@ -236,6 +236,52 @@ test('compat fetch can migrate max_tokens when a server explicitly asks for max_
   assert.equal(bodies[1].max_completion_tokens, 2048)
 })
 
+test('compat fetch resolves sequential parameter migration and token-cap errors without looping', async () => {
+  const bodies = []
+  const fakeFetch = async (_input, init) => {
+    const body = JSON.parse(init.body)
+    bodies.push(body)
+    if (bodies.length === 1) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            message: "Unsupported parameter: 'max_tokens'. Use 'max_completion_tokens' instead.",
+          },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    if (bodies.length === 2) {
+      return new Response(
+        JSON.stringify({ error: { message: 'max_completion_tokens must be at most 1024 tokens' } }),
+        { status: 422, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    return new Response('{}', { status: 200 })
+  }
+
+  const response = await fetchWithOpenAICompatibility(
+    fakeFetch,
+    'https://example.test/v1/chat/completions',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'future-combined-quirks-vl',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+        max_tokens: 4096,
+        stream: false,
+      }),
+    },
+    { active: true },
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(bodies.length, 3)
+  assert.equal(bodies[1].max_tokens, undefined)
+  assert.equal(bodies[1].max_completion_tokens, 4096)
+  assert.equal(bodies[2].max_completion_tokens, 1024)
+})
+
 test('compat fetch is inert when explicitly disabled', async () => {
   let body
   const fakeFetch = async (_input, init) => {
