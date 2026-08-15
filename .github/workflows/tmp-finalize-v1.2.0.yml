@@ -1,0 +1,40 @@
+name: Temporary finalize v1.2.0
+
+on:
+  push:
+    branches:
+      - fix/update-check-fallback-copy
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/update-check-fallback-copy
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Apply final v1.2.0 patch
+        run: node .github/scripts/finalize-v1.2.0.mjs
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: node --check index.js
+      - run: node --check lib/client.js
+      - run: git diff --check
+      - name: Commit the verified release tree
+        run: |
+          rm .github/scripts/finalize-v1.2.0.mjs .github/workflows/tmp-finalize-v1.2.0.yml
+          git diff --check
+          git config user.name "Shirui"
+          git config user.email "77105194+ysr666@users.noreply.github.com"
+          git add -A
+          git commit -m "release: prepare v1.2.0"
+          git push
