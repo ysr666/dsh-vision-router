@@ -149,7 +149,7 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 All eleven deep tools mount automatically on image turns (`autoActivateOnImage`); text turns can mount them via `vision_activate` or the `/vision-tools` skill. Built on sharp / potrace / tesseract / system Chrome — no Python:
 
 <p align="center">
-  <img src="assets/vision-tools.svg" width="100%" alt="Nine vision tools available in DSH Vision Router." />
+  <img src="assets/vision-tools.svg" width="100%" alt="Eleven vision tools available in DSH Vision Router." />
 </p>
 
 | Tool | What it does | Artifact |
