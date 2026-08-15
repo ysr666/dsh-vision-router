@@ -1,0 +1,36 @@
+name: Apply model selection guide
+
+on:
+  push:
+    branches: [agent/model-selection-guide]
+    paths:
+      - scripts/apply-model-selection-guide.mjs
+      - .github/workflows/apply-model-selection-guide.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply deterministic patch
+        run: node scripts/apply-model-selection-guide.mjs
+      - name: Validate
+        run: pnpm test
+      - name: Remove temporary patch machinery
+        run: rm scripts/apply-model-selection-guide.mjs .github/workflows/apply-model-selection-guide.yml
+      - name: Commit patched files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/client.js tests/client.test.js scripts/apply-model-selection-guide.mjs .github/workflows/apply-model-selection-guide.yml
+          git commit -m "feat: guide users to vision model settings"
+          git push
