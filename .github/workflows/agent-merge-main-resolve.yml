@@ -1,0 +1,62 @@
+name: agent-merge-main-resolve
+
+on:
+  push:
+    branches:
+      - agent/read-image-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/read-image-hardening
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Merge main and resolve the additive test conflict
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            unresolved="$(git diff --name-only --diff-filter=U)"
+            if [ "$unresolved" != "tests/core.test.js" ]; then
+              echo "Unexpected conflicts: $unresolved" >&2
+              exit 1
+            fi
+            git show :3:tests/core.test.js > /tmp/theirs-core.test.js
+            git checkout --ours tests/core.test.js
+            printf '\n\n' >> tests/core.test.js
+            awk "/^test\('built-in OVH anonymous fallback/{flag=1} flag" /tmp/theirs-core.test.js >> tests/core.test.js
+            git add tests/core.test.js
+          fi
+          test -z "$(git diff --name-only --diff-filter=U)"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate combined branch
+        run: |
+          pnpm test
+          node --check index.js
+          node --check lib/client.js
+          git diff --check
+      - name: Commit merged branch and remove temporary workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/agent-merge-main-debug.yml
+          rm -f .github/workflows/agent-merge-main-resolve.yml
+          git add -A
+          git commit -m 'merge: sync main into read-image hardening'
+          git push origin HEAD:agent/read-image-hardening
