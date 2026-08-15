@@ -16,14 +16,16 @@ jobs:
         with:
           node-version: '24'
       - name: Install dependencies
-        run: npm ci
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
       - name: Apply patch
         run: python .github/scripts/apply-vision-backend-ux.py
       - name: Sanity checks
         run: |
           node --check index.js
           node --check lib/client.js
-          npm test
+          pnpm test
           git diff --check
       - name: Commit patch
         run: |
