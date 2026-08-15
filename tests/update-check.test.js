@@ -44,8 +44,57 @@ test('checkPackageUpdate is install-method agnostic and reports a newer npm vers
   assert.equal(result.currentVersion, '1.1.1')
   assert.equal(result.latestVersion, '1.2.0')
   assert.equal(result.updateAvailable, true)
+  assert.equal(result.registry, 'https://registry.example.test')
+  assert.equal(result.registryFallbackFrom, undefined)
   assert.equal(result.installMethodAgnostic, true)
   assert.equal(result.packageSpec, 'dsh-vision-router@latest')
+})
+
+test('checkPackageUpdate falls back to npmjs when an inherited pnpm/npm registry fails', async () => {
+  const requests = []
+  const result = await checkPackageUpdate({
+    currentVersion: '1.1.1',
+    registry: 'https://slow-mirror.example.test/',
+    fetchImpl: async (url) => {
+      requests.push(url)
+      if (url.startsWith('https://slow-mirror.example.test/')) {
+        throw new Error('The operation was aborted due to timeout')
+      }
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { version: '1.2.0' }
+        },
+      }
+    },
+  })
+  assert.deepEqual(requests, [
+    'https://slow-mirror.example.test/dsh-vision-router/latest',
+    'https://registry.npmjs.org/dsh-vision-router/latest',
+  ])
+  assert.equal(result.ok, true)
+  assert.equal(result.latestVersion, '1.2.0')
+  assert.equal(result.registry, 'https://registry.npmjs.org')
+  assert.equal(result.registryFallbackFrom, 'https://slow-mirror.example.test')
+})
+
+test('checkPackageUpdate reports every attempted registry when all attempts fail', async () => {
+  await assert.rejects(
+    () =>
+      checkPackageUpdate({
+        registry: 'https://mirror.example.test',
+        fetchImpl: async (url) => {
+          if (url.startsWith('https://mirror.example.test/')) throw new Error('mirror timeout')
+          throw new Error('npmjs offline')
+        },
+      }),
+    (error) => {
+      assert.match(error.message, /https:\/\/mirror\.example\.test \(mirror timeout\)/)
+      assert.match(error.message, /https:\/\/registry\.npmjs\.org \(npmjs offline\)/)
+      return true
+    },
+  )
 })
 
 test('checkPackageUpdate treats a local/source version ahead of npm as not needing downgrade', async () => {
@@ -117,4 +166,5 @@ test('cached checker turns registry failures into non-fatal status objects', asy
   assert.equal(result.ok, false)
   assert.equal(result.currentVersion, '1.1.1')
   assert.match(result.error, /offline/)
+  assert.match(result.error, /registry\.npmjs\.org/)
 })
