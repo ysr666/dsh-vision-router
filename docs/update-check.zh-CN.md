@@ -5,7 +5,9 @@ Vision Router 会检查是否有新的已发布版本；当当前运行中的 DS
 - 插件随 DSH 启动时，会异步检查一次，不阻塞启动和识图功能。
 - 打开设置卡时复用本进程的检查结果；若启动检查尚未完成，则加入同一个请求，不重复访问 registry。
 - 点击“检查更新”可手动刷新；已有检查正在进行时不会并发发第二个请求。
-- 若 DSH 进程继承了 `npm_config_registry` / `NPM_CONFIG_REGISTRY`，会沿用该 registry；否则使用 npm 官方 registry。
+- 若 DSH 进程继承了 `npm_config_registry` / `NPM_CONFIG_REGISTRY`，会先沿用该 registry；否则使用 npm 官方 registry。
+- 如果继承的镜像/registry 超时、无法访问，或返回不可用的版本元数据，只读的版本检查会自动再试 npm 官方 registry；每次尝试都有独立的超时上限。
+- 若所有 registry 都失败，设置页会把实际尝试过的 registry 写进错误信息，方便判断是镜像、代理还是网络问题。
 - 网络或 registry 失败只显示检查失败，不影响插件运行。
 - 版本比较遵循 SemVer；源码/预发布构建若高于 registry 版本，不会提示用户降级。
 
@@ -21,4 +23,4 @@ dsh plugin --profile <当前 profile> update dsh-vision-router
 
 子进程通过 `execFile` 且 `shell: false` 启动，不会把浏览器输入拼成 shell 命令。更新接口还要求由同源更新检查接口返回的本进程临时 token，避免网页跨站请求直接触发更新。更新命令成功后，设置卡会提示用户重启 DSH，让新插件 bundle 真正加载。
 
-若无法可靠验证当前 CLI——例如直接运行需要 workspace 专用 loader 的 TypeScript 源码入口——就不会显示一键更新按钮。此时仍会显示当前/最新版本和 Release Notes，并提示用户沿用原来的 DSH 安装方式手动更新。
+若无法可靠验证当前 CLI——例如直接运行需要 workspace 专用 loader 的 TypeScript 源码入口——就不会显示一键更新按钮。**源码仓库里通过 `pnpm dsh` 启动通常属于这种情况：版本检查仍然可以正常工作，只是一键更新继续交给源码工作区自己的 pnpm 流程。** 此时仍会显示当前/最新版本和 Release Notes，并提示用户沿用原来的 DSH 安装方式手动更新。
