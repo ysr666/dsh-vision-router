@@ -322,6 +322,25 @@ export function rewriteToolResultImages(content, replace) {
   return { content: changed ? result.content : content, changed }
 }
 
+export function renderVisionPresent(value) {
+  const attachment = value.attachment
+  return [
+    {
+      type: 'text',
+      text: JSON.stringify({
+        path: value.path,
+        label: value.label,
+        width: value.width,
+        height: value.height,
+        bytes: value.bytes,
+        safePresentation: true,
+        attachmentId: String(attachment.attachmentId),
+      }),
+    },
+    { type: 'image', attachment },
+  ]
+}
+
 export function sanitizeToolResultImages(messages) {
   let anyChanged = false
   const rewritten = (messages ?? []).map((message) => {
@@ -2953,6 +2972,36 @@ export function apply(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     }
 
+    const visionPresentOutput = {
+      schema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          label: { type: 'string' },
+          width: { type: 'number' },
+          height: { type: 'number' },
+          bytes: { type: 'number' },
+          safePresentation: { type: 'boolean' },
+          attachment: {
+            type: 'object',
+            properties: {
+              attachmentId: { type: 'string' },
+              mediaType: { type: 'string' },
+              bytes: { type: 'number' },
+              width: { type: 'number' },
+              height: { type: 'number' },
+              name: { type: 'string' },
+            },
+            required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],
+            additionalProperties: false,
+          },
+        },
+        required: ['path', 'label', 'width', 'height', 'bytes', 'safePresentation', 'attachment'],
+        additionalProperties: false,
+      },
+      render: (_args, value) => renderVisionPresent(value),
+    }
+
     const visionBlocksFromBytes = async (bytes, mediaType) => {
       const attachments = ctx.get('attachments')
       if (attachments === undefined) {
@@ -3164,9 +3213,10 @@ export function apply(ctx, config = {}) {
     deepToolDefs.push({
       name: 'vision_present',
       description:
-        'Present a generated local image to the user as a SAFE artifact without inserting image content into model history. ' +
+        'Present a generated local image directly to the user with the host-native image preview. ' +
         'Use this when you want to show a PNG/JPEG/WebP/GIF you created. Prefer this over read_image for presentation: ' +
-        'read_image is for model-side inspection, while vision_present is for user-facing delivery and returns text-only artifact metadata.',
+        'read_image is for model-side inspection, while vision_present creates a durable user-facing attachment. ' +
+        'The image is retained in the session UI but sanitized out of later text-only model requests.',
       parameters: {
         type: 'object',
         properties: {
@@ -3176,22 +3226,38 @@ export function apply(ctx, config = {}) {
         required: ['image'],
         additionalProperties: false,
       },
-      output: stringOutput,
+      output: visionPresentOutput,
       async execute(args, exec) {
+        const attachments = ctx.get('attachments')
+        if (attachments === undefined) {
+          throw new Error('vision_present: the durable attachment service is not available in this deployment')
+        }
         const { bytes } = await readImageBytes(args.image)
-        // Normalize the presentation artifact to PNG so every client can open
-        // it consistently. Crucially, the tool result stays JSON text only.
         const png = await sharp(bytes, { failOn: 'none' }).png().toBuffer()
+        const label =
+          typeof args.label === 'string' && args.label.trim() !== '' ? args.label.trim().slice(0, 200) : 'image'
         const target = await saveArtifact(exec, `${artifactStem(args.image, 'present')}.png`, png)
-        const meta = await sharp(png).metadata()
-        return JSON.stringify({
+        let attachment
+        try {
+          attachment = await attachments.saveImage({
+            data: png,
+            mediaType: 'image/png',
+            name: label,
+          })
+        } catch (error) {
+          throw new Error(
+            `vision_present: failed to publish the image attachment (${error && error.message ? error.message : String(error)})`,
+          )
+        }
+        return {
           path: target,
-          label: typeof args.label === 'string' && args.label.trim() !== '' ? args.label.trim() : 'image',
-          width: meta.width ?? null,
-          height: meta.height ?? null,
-          bytes: png.length,
+          label,
+          width: attachment.width,
+          height: attachment.height,
+          bytes: attachment.bytes,
           safePresentation: true,
-        })
+          attachment,
+        }
       },
     })
 

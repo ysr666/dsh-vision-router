@@ -20,6 +20,7 @@ import {
   rewriteImageBlocks,
   rewriteImagesDeep,
   sanitizeToolResultImages,
+  renderVisionPresent,
   extractJson,
   createCache,
   downscaleImage,
@@ -1890,6 +1891,39 @@ test('toRealPath converts fs resolve results to real paths', () => {
   assert.equal(toRealPath({}, { targetKey: '' }), '[object Object]')
 })
 
+
+test('vision_present renders a durable image for UI and sanitizer removes it from text-model input', () => {
+  const attachment = {
+    attachmentId: 'present-1',
+    mediaType: 'image/png',
+    bytes: 123,
+    width: 320,
+    height: 200,
+    name: 'Preview',
+  }
+  const rendered = renderVisionPresent({
+    path: '/workspace/present.png',
+    label: 'Preview',
+    width: 320,
+    height: 200,
+    bytes: 123,
+    safePresentation: true,
+    attachment,
+  })
+  assert.equal(rendered.length, 2)
+  assert.equal(rendered[1].type, 'image')
+  assert.equal(rendered[1].attachment, attachment)
+  assert.match(rendered[0].text, /present-1/)
+
+  const wrapped = [{
+    role: 'user',
+    content: [{ type: 'tool-result', toolCallId: 'call-1', content: rendered }],
+  }]
+  const sanitized = sanitizeToolResultImages(wrapped)
+  assert.equal(sanitized.changed, true)
+  assert.equal(sanitized.messages[0].content[0].content.some((block) => block.type === 'image'), false)
+  assert.match(sanitized.messages[0].content[0].content.at(-1).text, /present-1/)
+})
 
 test('sanitizeToolResultImages removes nested read_image-style images but preserves user images', () => {
   const userRef = { attachmentId: 'user-1', name: 'upload.png' }
