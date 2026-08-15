@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   star-history:
+    if: github.repository == 'ysr666/dsh-vision-router'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

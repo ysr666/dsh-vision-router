@@ -19,11 +19,14 @@ import {
   providersOf,
   rewriteImageBlocks,
   rewriteImagesDeep,
+  sanitizeToolResultImages,
+  renderVisionPresent,
   extractJson,
   createCache,
   downscaleImage,
   toOpenAIContent,
   toRealPath,
+  chromiumCandidates,
   callOpenAICompatible,
   cacheKeyFor,
   adapterAvailable,
@@ -180,7 +183,7 @@ test('providersOf flattens the single-provider shorthand', () => {
       { provider: 'openrouter', model: 'm2' },
     ],
   )
-  assert.deepEqual(providersOf({}), [{ provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct' }])
+  assert.deepEqual(providersOf({}), [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B' }])
 })
 
 test('providersOf flattens the multi-provider form and prefers it', () => {
@@ -385,11 +388,13 @@ test('cacheKeyFor covers chains, content, mode and question', () => {
   assert.equal(cacheKeyFor({ ...base, contentIds: ['b'] }), 'p:m,http:ovh/qwen|b|text|q')
 })
 
-test('httpProvidersOf falls back to the built-in default unless disabled', () => {
+test('httpProvidersOf keeps built-in OVH as final fallback unless disabled', () => {
   assert.equal(httpProvidersOf({}), DEFAULT_HTTP_PROVIDERS)
   assert.deepEqual(httpProvidersOf({}, false), [])
   const custom = [{ name: 'x', baseURL: 'https://x/v1', model: 'm' }]
-  assert.deepEqual(httpProvidersOf({ httpProviders: custom }), custom)
+  const withFallback = httpProvidersOf({ httpProviders: custom })
+  assert.equal(withFallback[0], custom[0])
+  assert.deepEqual(withFallback.slice(1), DEFAULT_HTTP_PROVIDERS)
   assert.deepEqual(httpProvidersOf({ httpProviders: custom }, false), custom)
 })
 
@@ -1118,6 +1123,22 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false } = {
         return hit
       },
       registerConfigurableProviders: () => ({ replace: () => {} }),
+      listProviders() {
+        return [...registrations.entries()].map(([provider, registration]) => {
+          let info
+          try {
+            info = registration.adapter.providerInfo ? registration.adapter.providerInfo(provider) : undefined
+          } catch {
+            info = undefined
+          }
+          return { id: provider, name: info && info.name ? info.name : provider }
+        })
+      },
+      async listModels(provider) {
+        const hit = registrations.get(provider)
+        if (hit === undefined || typeof hit.adapter.listModels !== 'function') return []
+        return hit.adapter.listModels(provider)
+      },
       stream: async function* () {
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
@@ -1182,9 +1203,14 @@ test('wrappedProviders pre-fills the stock deepseek-official row out of the box'
   assert.deepEqual(Config({}).wrappedProviders, [{ provider: 'deepseek-official', models: [] }])
 })
 
+
+test('autoWrapProviders defaults to true', () => {
+  assert.equal(Config({}).autoWrapProviders, true)
+  assert.equal(Config({ autoWrapProviders: false }).autoWrapProviders, false)
+})
 test('the vision chain ships with the built-in free model as its first row', () => {
   assert.deepEqual(Config({}).providers, [
-    { provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] },
+    { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] },
   ])
 })
 
@@ -1345,6 +1371,79 @@ test('apply registers the vision-tools skill with source and content', () => {
   assert.ok(skill.content.includes('vision_describe') || skill.content.includes('vision_ground'))
 })
 
+test('auto-wrap discovers existing providers including native vision models', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const mixed = {
+    providerInfo: (p) => ({ id: p, name: 'MiniMax' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'minimax-m2.7', name: 'MiniMax M2.7', inputModalities: ['text'] },
+      { provider: p, id: 'minimax-vision-native', name: 'MiniMax Vision', inputModalities: ['text', 'image'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p,
+      id: m,
+      name: m,
+      inputModalities: m === 'minimax-vision-native' ? ['text', 'image'] : ['text'],
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['minimax'], mixed)
+  apply(ctx, Config({}))
+  const twin = adapters.get('minimax-vision')
+  assert.ok(twin, 'expected an automatically discovered minimax-vision twin')
+  const listed = await twin.listModels('minimax-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['minimax-m2.7', 'minimax-vision-native'])
+  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
+})
+
+test('auto-wrap follows providers that become live after plugin apply', async () => {
+  const { ctx, adapters, captured } = mockHarnessCtx()
+  apply(ctx, Config({}))
+  assert.equal(adapters.has('opencode-go-vision'), false)
+  const thirdParty = {
+    providerInfo: (p) => ({ id: p, name: 'Opencode' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire)
+  fire()
+  assert.ok(adapters.has('opencode-go-vision'), 'expected the live provider to be auto-wrapped')
+  const listed = await adapters.get('opencode-go-vision').listModels('opencode-go-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash'])
+})
+
+test('auto-wrap can be disabled while explicit wrappedProviders still work', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const thirdParty = {
+    providerInfo: (p) => ({ id: p, name: p }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [{ provider: p, id: 'm1', name: 'm1', inputModalities: ['text'] }],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['minimax'], thirdParty)
+  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
+  apply(ctx, Config({
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'opencode-go', models: [] }],
+  }))
+  assert.equal(adapters.has('minimax-vision'), false)
+  assert.ok(adapters.has('opencode-go-vision'))
+})
+
 test('apply registers an image-capable twin route for wrappedProviders', async () => {
   const { ctx, adapters } = mockHarnessCtx()
   // register a third-party text-only provider in the mock before apply
@@ -1425,6 +1524,73 @@ test('twin route registers before its source adapter appears (live provider regi
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
 })
 
+test('auto-wrap also exposes a twin for an already image-capable GLM model', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const glm = {
+    providerInfo: (p) => ({ id: p, name: 'Zhipu GLM' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', inputModalities: ['text', 'image'] },
+      { provider: p, id: 'glm-4v-flash', name: 'GLM-4V-Flash', inputModalities: ['text', 'image'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text', 'image'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['zhipu'], glm)
+  apply(ctx, Config({ autoWrapProviders: true }))
+  assert.ok(adapters.has('zhipu-vision'), 'expected Zhipu GLM + auto-vision twin')
+  const listed = await adapters.get('zhipu-vision').listModels('zhipu-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['glm-4.6v-flash', 'glm-4v-flash'])
+  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
+})
+
+test('native multimodal twin preserves original image blocks instead of forcing tool conversion', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const glm = {
+    providerInfo: (p) => ({ id: p, name: 'Zhipu GLM' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', inputModalities: ['text', 'image'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text', 'image'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['zhipu'], glm)
+  apply(ctx, Config({ autoWrapProviders: true }))
+  const twin = adapters.get('zhipu-vision')
+  assert.ok(twin)
+
+  let delegateCall
+  ctx.llm.stream = async function* (options) {
+    delegateCall = options
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'glm-img', name: 'glm.png' } },
+        { type: 'text', text: '直接看看这张图' },
+      ],
+    },
+  ]
+  for await (const _c of twin.stream({ provider: 'zhipu-vision', model: 'glm-4.6v-flash', messages })) {
+    /* drain */
+  }
+  assert.equal(delegateCall.provider, 'zhipu')
+  assert.strictEqual(delegateCall.messages, messages)
+  assert.equal(delegateCall.messages[0].content.filter((b) => b.type === 'image').length, 1)
+  assert.equal(delegateCall.messages[0].content[0].attachment.attachmentId, 'glm-img')
+})
+
 test('twin sync is idempotent across llm/adapters-updated events', async () => {
   const { ctx, adapters, captured } = mockHarnessCtx()
   apply(ctx, Config({ wrappedProviders: [{ provider: 'opencode-go', models: [] }] }))
@@ -1488,16 +1654,16 @@ test('wrapper lists the vision-chain pairs only when whole-turn routing is on', 
   assert.deepEqual(wrapped.map((m) => m.id), [
     'deepseek-v4-flash',
     'deepseek-v4-pro',
-    'vision-http/ovh/Qwen2.5-VL-72B-Instruct',
+    'vision-http/ovh/Qwen3.5-397B-A17B',
   ])
-  const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen3.5-397B-A17B')
   assert.ok(visionEntry)
   assert.deepEqual(visionEntry.inputModalities, ['text', 'image'])
   assert.ok(String(visionEntry.name).includes('视觉'))
   // resolving a vision-pair entry still returns image-capable metadata
-  const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen3.5-397B-A17B')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
-  assert.equal(resolved.id, 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  assert.equal(resolved.id, 'vision-http/ovh/Qwen3.5-397B-A17B')
 })
 test('floodFillBackground clears border-connected background pixels', () => {
   // 4x4: white background, black 2x2 square in the middle
@@ -1725,4 +1891,142 @@ test('toRealPath converts fs resolve results to real paths', () => {
   assert.equal(toRealPath({}, { targetKey: '/abs/page.html' }), '/abs/page.html')
   assert.equal(toRealPath(null, { targetKey: '/abs/page.html' }), '/abs/page.html')
   assert.equal(toRealPath({}, { targetKey: '' }), '[object Object]')
+})
+
+
+test('vision_present renders a durable image for UI and sanitizer removes it from text-model input', () => {
+  const attachment = {
+    attachmentId: 'present-1',
+    mediaType: 'image/png',
+    bytes: 123,
+    width: 320,
+    height: 200,
+    name: 'Preview',
+  }
+  const rendered = renderVisionPresent({
+    path: '/workspace/present.png',
+    label: 'Preview',
+    width: 320,
+    height: 200,
+    bytes: 123,
+    safePresentation: true,
+    attachment,
+  })
+  assert.equal(rendered.length, 2)
+  assert.equal(rendered[1].type, 'image')
+  assert.equal(rendered[1].attachment, attachment)
+  assert.match(rendered[0].text, /present-1/)
+
+  const wrapped = [{
+    role: 'user',
+    content: [{ type: 'tool-result', toolCallId: 'call-1', content: rendered }],
+  }]
+  const sanitized = sanitizeToolResultImages(wrapped)
+  assert.equal(sanitized.changed, true)
+  assert.equal(sanitized.messages[0].content[0].content.some((block) => block.type === 'image'), false)
+  assert.match(sanitized.messages[0].content[0].content.at(-1).text, /present-1/)
+})
+
+test('sanitizeToolResultImages removes nested read_image-style images but preserves user images', () => {
+  const userRef = { attachmentId: 'user-1', name: 'upload.png' }
+  const toolRef = { attachmentId: 'tool-1', name: 'generated.png' }
+  const input = [{
+    role: 'user',
+    content: [
+      { type: 'image', attachment: userRef },
+      {
+        type: 'tool-result',
+        content: [
+          { type: 'text', text: 'preview' },
+          { type: 'image', attachment: toolRef },
+        ],
+      },
+    ],
+  }]
+  const out = sanitizeToolResultImages(input)
+  assert.equal(out.changed, true)
+  assert.equal(out.messages[0].content[0].type, 'image')
+  const nested = out.messages[0].content[1].content
+  assert.equal(nested.some((block) => block.type === 'image'), false)
+  assert.match(nested[1].text, /tool-1/)
+  assert.match(nested[1].text, /vision_present/)
+})
+
+test('sanitizeToolResultImages is identity-preserving when there is no nested image', () => {
+  const input = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]
+  const out = sanitizeToolResultImages(input)
+  assert.equal(out.changed, false)
+  assert.equal(out.messages, input)
+})
+
+test('chromiumCandidates covers Windows, macOS, Linux and explicit overrides', () => {
+  const win = chromiumCandidates({
+    CHROME_PATH: 'D:\\Portable\\chrome.exe',
+    PROGRAMFILES: 'C:\\Program Files',
+    'PROGRAMFILES(X86)': 'C:\\Program Files (x86)',
+    LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+  }, 'win32')
+  assert.equal(win[0], 'D:\\Portable\\chrome.exe')
+  assert.ok(win.some((value) => value.endsWith('Google\\Chrome\\Application\\chrome.exe')))
+  assert.ok(win.some((value) => value.endsWith('Microsoft\\Edge\\Application\\msedge.exe')))
+
+  const mac = chromiumCandidates({}, 'darwin')
+  assert.ok(mac.some((value) => value.includes('Google Chrome.app')))
+
+  const linux = chromiumCandidates({}, 'linux')
+  assert.ok(linux.includes('/usr/bin/google-chrome'))
+  assert.ok(linux.includes('/usr/bin/chromium'))
+})
+
+
+test('built-in OVH anonymous fallback is largest-first across independent model buckets', () => {
+  assert.deepEqual(DEFAULT_HTTP_PROVIDERS.map((provider) => provider.model), [
+    'Qwen3.5-397B-A17B',
+    'Qwen2.5-VL-72B-Instruct',
+    'Qwen3.6-27B',
+    'Mistral-Small-3.2-24B-Instruct-2506',
+    'Qwen3.5-9B',
+  ])
+  assert.ok(DEFAULT_HTTP_PROVIDERS.every((provider) => provider.apiKeyEnv === ''))
+})
+
+test('anonymous OVH 429 surfaces immediately so the next model can run', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    return new Response('{"message":"API rate limit exceeded"}', {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '60' },
+    })
+  }
+  const started = Date.now()
+  try {
+    await assert.rejects(
+      () => callOpenAICompatible(
+        {
+          name: 'ovh',
+          baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+          model: 'Qwen3.5-397B-A17B',
+          apiKeyEnv: '',
+        },
+        [{ role: 'user', content: [] }],
+      ),
+      /429/,
+    )
+    assert.equal(calls, 1)
+    assert.ok(Date.now() - started < 1000)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+
+test('httpProvidersOf appends built-in OVH fallback after configured HTTP providers', () => {
+  const custom = { name: 'custom', baseURL: 'https://example.test/v1', model: 'vision-x', apiKeyEnv: '' }
+  const withFallback = httpProvidersOf({ httpProviders: [custom] }, true)
+  assert.equal(withFallback[0], custom)
+  assert.equal(withFallback.length, 1 + DEFAULT_HTTP_PROVIDERS.length)
+  assert.equal(withFallback[1].model, DEFAULT_HTTP_PROVIDERS[0].model)
+  assert.deepEqual(httpProvidersOf({ httpProviders: [custom] }, false), [custom])
 })

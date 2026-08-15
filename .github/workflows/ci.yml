@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/auto-wrap-providers]
   pull_request:
 
 jobs:
@@ -20,3 +20,81 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  native-host-sharp:
+    name: host sharp / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare pack directory
+        shell: node {0}
+        run: |
+          require('node:fs').mkdirSync('tmp-pack', { recursive: true })
+      - name: Pack plugin
+        run: pnpm pack --pack-destination tmp-pack
+      - name: Install into a DSH-like host and verify one shared sharp
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const { createRequire } = require('node:module')
+          ;(async () => {
+            const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+            if (!tgz) throw new Error('packed plugin tarball not found')
+            const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+            const hostDir = path.join(process.env.RUNNER_TEMP, 'dsh-vision-router-host')
+            fs.rmSync(hostDir, { recursive: true, force: true })
+            fs.mkdirSync(hostDir, { recursive: true })
+            fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+              private: true,
+              packageManager: 'pnpm@11.20.0',
+              dependencies: {
+                sharp: '0.35.3',
+                'dsh-vision-router': `file:${tarball}`,
+              },
+            }, null, 2))
+            const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+            const installed = spawnSync(cmd, ['install'], {
+              cwd: hostDir,
+              stdio: 'inherit',
+              shell: process.platform === 'win32',
+            })
+            if (installed.status !== 0) process.exit(installed.status ?? 1)
+
+            const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
+            const pluginEntry = hostRequire.resolve('dsh-vision-router')
+            const pluginRequire = createRequire(pluginEntry)
+            const hostSharp = fs.realpathSync(hostRequire.resolve('sharp'))
+            const pluginSharp = fs.realpathSync(pluginRequire.resolve('sharp'))
+            console.log({ hostSharp, pluginSharp })
+            if (hostSharp !== pluginSharp) {
+              throw new Error('plugin installed/resolved a second sharp copy instead of using the host copy')
+            }
+            const sharp = hostRequire('sharp')
+            const out = await sharp({
+              create: {
+                width: 8,
+                height: 8,
+                channels: 4,
+                background: { r: 10, g: 20, b: 30, alpha: 1 },
+              },
+            }).resize(4, 4).png().toBuffer()
+            if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('sharp pixel smoke test failed')
+            console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
