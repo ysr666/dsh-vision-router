@@ -66,3 +66,19 @@ test('the client bundle still loads and registers with the proven injects', () =
   assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions'])
   assert.equal(typeof bundle.apply, 'function')
 })
+
+
+test('model-selection guide separates session and vision models and targets the vision chain', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("onboardingStep1Title: '1 · 会话 / 文字模型'"), true)
+  assert.equal(source.includes("onboardingStep2Body: '打开「设置 → 插件 → Vision Router」"), true)
+  assert.equal(source.includes("onboardingStep1Title: '1 · Session / text model'"), true)
+  assert.equal(source.includes('Settings → Plugins → Vision Router'), true)
+  assert.equal(source.includes("VISION_GUIDE_STORAGE_KEY = 'dsh-vision-router:guide:vision-backend-v1'"), true)
+  assert.equal(source.includes('visionGuideActiveMemory = false'), true)
+  assert.equal(source.includes('startVisionSettingsGuide(t)'), true)
+  assert.equal(source.includes("id: 'vr-vision-backend-chain'"), true)
+  assert.equal(source.includes("'data-vr-guide-target': 'vision-backend'"), true)
+  assert.equal(source.includes("target.scrollIntoView({ behavior: 'smooth', block: 'center' })"), true)
+  assert.equal(source.includes('if (!open) setOpen(true)'), true)
+})
