@@ -20,11 +20,11 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import textwrap
           src = Path('.github/workflows/tmp-apply-vision-backend-ux.yml').read_text()
           begin = src.index('        run: |\n', src.index('- name: Apply focused patch')) + len('        run: |\n')
           end = src.index('      - name: Sanity checks', begin)
-          block = textwrap.dedent(src[begin:end])
+          lines = src[begin:end].splitlines()
+          block = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
           exec(compile(block, 'vision-backend-ux-patch.py', 'exec'))
           PY
       - name: Sanity checks
