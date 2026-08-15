@@ -1,0 +1,46 @@
+name: tmp-run-vision-backend-ux
+on:
+  push:
+    branches:
+      - fix/vision-backend-ux
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vision-backend-ux
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Execute patch body
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          src = Path('.github/workflows/tmp-apply-vision-backend-ux.yml').read_text()
+          begin = src.index('        run: |\n', src.index('- name: Apply focused patch')) + len('        run: |\n')
+          end = src.index('      - name: Sanity checks', begin)
+          block = textwrap.dedent(src[begin:end])
+          exec(compile(block, 'vision-backend-ux-patch.py', 'exec'))
+          PY
+      - name: Sanity checks
+        shell: bash
+        run: |
+          node --check index.js
+          node --check lib/client.js
+          npm test
+          git diff --check
+      - name: Commit patch
+        shell: bash
+        run: |
+          rm .github/workflows/tmp-apply-vision-backend-ux.yml
+          rm .github/workflows/tmp-run-vision-backend-ux.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.js lib/client.js tests/core.test.js tests/client.test.js README.md README.zh.md .github/workflows/tmp-apply-vision-backend-ux.yml .github/workflows/tmp-run-vision-backend-ux.yml
+          git commit -m 'fix: clarify vision backend and OVH fallback UX'
+          git push origin HEAD:fix/vision-backend-ux
