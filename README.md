@@ -186,7 +186,7 @@ The vision chain walks providers in order and only surfaces an error after every
 3. configured `providers` / `provider` + `fallbacks` (any adapter-backed provider, e.g. a Pi-AI profile like OpenRouter or Zhipu).
 
 > [!IMPORTANT]
-> This “vision chain” is the **vision backend** called by Vision Router. Its models must genuinely accept image input. It is separate from the “+ Auto Vision” conversation model group in the lower-right selector; do not put a text-only DeepSeek/opencode model here as a vision fallback.
+> This “vision chain” is the **vision backend** called by Vision Router. The settings UI reads exact DSH model metadata and **only shows models that explicitly declare image input**; text-only DeepSeek/opencode models are filtered out. Legacy configs that still contain a text-only vision backend are skipped at runtime as well. This is separate from the “+ Auto Vision” conversation model group in the lower-right selector.
 
 > In the legacy `routing: true` mode, the whole-turn chain walks only `provider + fallbacks` — `httpProviders` (including the free fallback) do not participate there. The default `routing: false` (tools-first) tries everything.
 

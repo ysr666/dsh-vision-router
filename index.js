@@ -1534,6 +1534,11 @@ export function createStealthAdapter(ctx, { native, imageMemory, pairs, chainRou
   }
 }
 
+/** True only when exact model metadata explicitly declares image input. */
+export function modelInfoAcceptsImages(info) {
+  return Array.isArray(info && info.inputModalities) && info.inputModalities.includes('image')
+}
+
 export function apply(ctx, config = {}) {
   // Live configuration: composition entry at boot, then the resolved settings
   // section once the settings service mounts (installSettingsSection below).
@@ -2107,6 +2112,77 @@ export function apply(ctx, config = {}) {
   syncTwins()
   ctx.on('llm/adapters-updated', syncTwins)
 
+  // A generated + 自动识图 route is an admission/tool wrapper, not a real
+  // vision backend. Never offer it as an eye model or recurse into it from
+  // vision_describe. The built-in vision-http route is the deliberate
+  // exception: it is a real image-capable backend implemented by this plugin.
+  const isGeneratedVisionWrapperRoute = (provider) => {
+    if (provider === wrapperRoute() || provider === chainRoute()) return true
+    if (typeof provider !== 'string' || !provider.endsWith('-vision')) return false
+    return twinHandles.has(provider.slice(0, -'-vision'.length))
+  }
+
+  const resolveVisionBackendCapability = async (provider, model) => {
+    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
+      return { image: false, inputModalities: [], reason: 'missing provider/model' }
+    }
+    if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) {
+      return { image: false, inputModalities: [], reason: 'generated auto-vision wrapper, not a vision backend' }
+    }
+    if (!adapterAvailable(ctx.llm, provider)) {
+      return { image: false, inputModalities: [], reason: 'provider adapter is not registered' }
+    }
+    try {
+      const info = await ctx.llm.resolveModelInfo(provider, model)
+      const inputModalities = Array.isArray(info && info.inputModalities)
+        ? info.inputModalities.filter((item) => typeof item === 'string')
+        : []
+      return {
+        image: modelInfoAcceptsImages(info),
+        inputModalities,
+        reason: modelInfoAcceptsImages(info) ? undefined : 'model metadata does not declare image input',
+      }
+    } catch (error) {
+      return {
+        image: false,
+        inputModalities: [],
+        reason: error && error.message ? error.message : String(error),
+      }
+    }
+  }
+
+  const collectVisionBackendCapabilities = async () => {
+    const capabilities = {}
+    if (typeof ctx.llm.listProviders !== 'function') return capabilities
+    let providers = []
+    try {
+      providers = ctx.llm.listProviders()
+    } catch {
+      return capabilities
+    }
+    for (const entry of providers) {
+      const provider = entry && typeof entry.id === 'string' ? entry.id : ''
+      if (provider === '') continue
+      if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) continue
+      let listed = []
+      try {
+        const registration = ctx.llm.registration(provider)
+        const adapter = registration && registration.adapter
+        if (!adapter || typeof adapter.listModels !== 'function') continue
+        listed = await adapter.listModels(provider)
+      } catch {
+        continue
+      }
+      const rows = await Promise.all(
+        (Array.isArray(listed) ? listed : [])
+          .filter((model) => model && typeof model.id === 'string' && model.id !== '')
+          .map(async (model) => [model.id, await resolveVisionBackendCapability(provider, model.id)]),
+      )
+      if (rows.length > 0) capabilities[provider] = Object.fromEntries(rows)
+    }
+    return capabilities
+  }
+
   // ── vision chain route: fallback under our own control ─────────────────────
   //
   // The agent-loop's request-error retry is owned by dsh-llm-retry, which sits
@@ -2123,12 +2199,18 @@ export function apply(ctx, config = {}) {
         return undefined
       },
       async listModels() {
-        return pairs().map((pair) => ({
-          provider: chainRoute(),
-          id: `${pair.provider}/${pair.model}`,
-          name: `${pair.provider}/${pair.model}`,
-          inputModalities: ['text', 'image'],
-        }))
+        const entries = []
+        for (const pair of pairs()) {
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (!capability.image) continue
+          entries.push({
+            provider: chainRoute(),
+            id: `${pair.provider}/${pair.model}`,
+            name: `${pair.provider}/${pair.model}`,
+            inputModalities: ['text', 'image'],
+          })
+        }
+        return entries
       },
       async resolveModel(provider, model) {
         return {
@@ -2177,6 +2259,19 @@ export function apply(ctx, config = {}) {
               'vision-router: chain skips %s/%s (no adapter)',
               pair.provider,
               pair.model,
+            )
+            continue
+          }
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (!capability.image) {
+            failures.push(
+              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+            )
+            ctx.logger?.warn(
+              'vision-router: chain skips %s/%s (not image-capable: %s)',
+              pair.provider,
+              pair.model,
+              capability.reason ?? 'unknown capability',
             )
             continue
           }
@@ -2635,7 +2730,21 @@ export function apply(ctx, config = {}) {
         const jsonInstruction = wantJson
           ? '\n\n' + describeStructuredInstruction(question)
           : ''
-        const usablePairs = pairs().filter((pair) => adapterAvailable(ctx.llm, pair.provider))
+        const usablePairs = []
+        const rejectedPairs = []
+        for (const pair of pairs()) {
+          if (!adapterAvailable(ctx.llm, pair.provider)) {
+            rejectedPairs.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
+            continue
+          }
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (capability.image) usablePairs.push(pair)
+          else {
+            rejectedPairs.push(
+              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+            )
+          }
+        }
         const key = cacheKeyFor({
           pairs: pairs(),
           httpProviders: httpProviders(),
@@ -2656,7 +2765,7 @@ export function apply(ctx, config = {}) {
           },
         ]
         const signal = AbortSignal.timeout(timeoutMs())
-        const errors = []
+        const errors = [...rejectedPairs]
 
         for (const pair of usablePairs) {
           try {
@@ -2853,7 +2962,20 @@ export function apply(ctx, config = {}) {
       const errors = []
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
       const signal = AbortSignal.timeout(timeoutMs())
-      const usablePairs = pairs().filter((pair) => adapterAvailable(ctx.llm, pair.provider))
+      const usablePairs = []
+      for (const pair of pairs()) {
+        if (!adapterAvailable(ctx.llm, pair.provider)) {
+          errors.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
+          continue
+        }
+        const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+        if (capability.image) usablePairs.push(pair)
+        else {
+          errors.push(
+            `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+          )
+        }
+      }
       for (const pair of usablePairs) {
         try {
           const text = await visionAnswer(ctx.llm, {
@@ -3597,7 +3719,14 @@ export function apply(ctx, config = {}) {
     webCtx.effect(() => {
       const probe = async () => {
         const started = Date.now()
-        const first = pairs().find((pair) => adapterAvailable(ctx.llm, pair.provider))
+        let first
+        for (const pair of pairs()) {
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (capability.image) {
+            first = pair
+            break
+          }
+        }
         const probeModels = async (baseURL) => {
           try {
             const response = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
@@ -3672,6 +3801,41 @@ export function apply(ctx, config = {}) {
         },
       })
     }, 'vision-router: test-connection route')
+  })
+
+  // Exact capability metadata for the settings card. DSH's public llm.models
+  // wire intentionally omits inputModalities, so the plugin exposes a narrow
+  // read-only view backed by the same resolveModelInfo() check used at runtime.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(
+      () =>
+        webCtx.webServer.register({
+          kind: 'exact',
+          path: '/_dsh/vision-router/model-capabilities',
+          handler: async (req, res) => {
+            if (req.method !== 'GET') {
+              res.setHeader('Allow', 'GET')
+              res.writeHead(405)
+              res.end()
+              return
+            }
+            try {
+              const capabilities = await collectVisionBackendCapabilities()
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ capabilities }))
+            } catch (error) {
+              res.writeHead(500, { 'content-type': 'application/json' })
+              res.end(
+                JSON.stringify({
+                  capabilities: {},
+                  error: error && error.message ? error.message : String(error),
+                }),
+              )
+            }
+          },
+        }),
+      'vision-router: model capabilities route',
+    )
   })
 
   // Expose the namespace to the web configuration boundary. The API proxy

@@ -42,6 +42,7 @@ import {
   launchEnvironmentLike,
   createNativeDeepSeekAdapter,
   createStealthAdapter,
+  modelInfoAcceptsImages,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -69,6 +70,13 @@ test('sniffMediaType detects formats from magic bytes', () => {
   assert.equal(sniffMediaType(gif), 'image/gif')
   assert.equal(sniffMediaType(Buffer.from('000102030405060708090a0b', 'hex')), undefined)
   assert.equal(sniffMediaType(Buffer.alloc(4)), undefined)
+})
+
+test('modelInfoAcceptsImages requires an explicit image modality', () => {
+  assert.equal(modelInfoAcceptsImages({ inputModalities: ['text', 'image'] }), true)
+  assert.equal(modelInfoAcceptsImages({ inputModalities: ['text'] }), false)
+  assert.equal(modelInfoAcceptsImages({}), false)
+  assert.equal(modelInfoAcceptsImages(undefined), false)
 })
 
 test('mediaTypeOf maps extensions', () => {

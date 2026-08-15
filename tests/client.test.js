@@ -36,6 +36,28 @@ test('unwrapModelsResult reads the catalog from the RPC envelope', () => {
   )
 })
 
+test('filterVisionBackendGroups hides text-only models and keeps built-in vision-http', () => {
+  const bundle = loadClientBundle()
+  const groups = [
+    { id: 'vision-http', name: 'Vision HTTP', models: [{ id: 'free', name: 'free' }] },
+    { id: 'opencode-go', name: 'opencode-go', models: [
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
+      { id: 'qwen-vl', name: 'Qwen VL' },
+    ] },
+  ]
+  const filtered = bundle.filterVisionBackendGroups(groups, {
+    'opencode-go': {
+      'deepseek-v4-flash': { image: false },
+      'qwen-vl': { image: true },
+    },
+  })
+  assert.deepEqual(filtered.map((group) => [group.id, group.models.map((model) => model.id)]), [
+    ['vision-http', ['free']],
+    ['opencode-go', ['qwen-vl']],
+  ])
+  assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['vision-http'])
+})
+
 test('the client bundle still loads and registers with the proven injects', () => {
   const bundle = loadClientBundle()
   assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale'])
