@@ -24,12 +24,31 @@ jobs:
           python .github/scripts/apply-vision-backend-ux.py
           node <<'NODE'
           const fs = require('fs')
-          const path = 'index.js'
-          let text = fs.readFileSync(path, 'utf8')
+          let text = fs.readFileSync('index.js', 'utf8')
           const old = "  if (!allowDefault) return configured\n  const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))"
           const next = "  if (!allowDefault) return configured\n  if (configured.length === 0) return DEFAULT_HTTP_PROVIDERS\n  const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))"
           if (!text.includes(old)) throw new Error('httpProvidersOf compatibility insertion point missing')
-          fs.writeFileSync(path, text.replace(old, next))
+          fs.writeFileSync('index.js', text.replace(old, next))
+
+          text = fs.readFileSync('tests/core.test.js', 'utf8')
+          const oldTest = `test('httpProvidersOf falls back to the built-in default unless disabled', () => {
+  assert.equal(httpProvidersOf({}), DEFAULT_HTTP_PROVIDERS)
+  assert.deepEqual(httpProvidersOf({}, false), [])
+  const custom = [{ name: 'x', baseURL: 'https://x/v1', model: 'm' }]
+  assert.deepEqual(httpProvidersOf({ httpProviders: custom }), custom)
+  assert.deepEqual(httpProvidersOf({ httpProviders: custom }, false), custom)
+})`
+          const newTest = `test('httpProvidersOf keeps built-in OVH as final fallback unless disabled', () => {
+  assert.equal(httpProvidersOf({}), DEFAULT_HTTP_PROVIDERS)
+  assert.deepEqual(httpProvidersOf({}, false), [])
+  const custom = [{ name: 'x', baseURL: 'https://x/v1', model: 'm' }]
+  const withFallback = httpProvidersOf({ httpProviders: custom })
+  assert.equal(withFallback[0], custom[0])
+  assert.deepEqual(withFallback.slice(1), DEFAULT_HTTP_PROVIDERS)
+  assert.deepEqual(httpProvidersOf({ httpProviders: custom }, false), custom)
+})`
+          if (!text.includes(oldTest)) throw new Error('old httpProvidersOf contract test missing')
+          fs.writeFileSync('tests/core.test.js', text.replace(oldTest, newTest))
           NODE
       - name: Sanity checks
         run: |
