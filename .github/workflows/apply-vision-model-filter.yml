@@ -1,0 +1,38 @@
+name: Apply vision model filter patch
+
+on:
+  push:
+    branches:
+      - fix/filter-vision-model-dropdown
+    paths:
+      - scripts/apply-vision-model-filter.mjs
+      - .github/workflows/apply-vision-model-filter.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/filter-vision-model-dropdown
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/apply-vision-model-filter.mjs
+      - run: pnpm test
+      - run: git diff --check
+      - name: Commit generated patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.js lib/client.js tests/core.test.js tests/client.test.js README.md README.zh.md
+          git commit -m "fix: filter vision backends by image capability"
+          git push origin HEAD:fix/filter-vision-model-dropdown
