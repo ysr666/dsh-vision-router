@@ -18,8 +18,6 @@ jobs:
           ref: agent/read-image-hardening
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -67,8 +65,6 @@ jobs:
               raise SystemExit('zh locale anchor not found')
           c = c.replace(zh_anchor, zh_extra, 1)
 
-          en_anchor = "      textTextProviderHint: 'Format \\\"provider/model\\\".',\n    }\n\n    /**"
-          # The source contains ordinary quote characters, not backslash escapes.
           en_anchor = "      textTextProviderHint: 'Format \"provider/model\".',\n    }\n\n    /**"
           en_extra = "      textTextProviderHint: 'Format \"provider/model\".',\n      presentingImage: 'Preparing image…',\n      presentedImage: 'Image',\n      openPresentedImage: 'Open original image',\n      openNamedImage: 'Open original image: {name}',\n      loadingPresentedImage: 'Loading image…',\n      retryPresentedImage: 'Load failed, click to retry',\n      imagePreviewDialog: 'Image preview',\n      closeImagePreview: 'Close preview',\n    }\n\n    /**"
           if en_anchor not in c:
@@ -80,9 +76,7 @@ jobs:
           apply_anchor = "    function apply(ctx) {\n      const scope = ctx.settingsScope.bind({ namespace: 'vision-router' })\n"
           if apply_anchor not in c:
               raise SystemExit('apply anchor not found')
-          apply_replacement = '''    function apply(ctx) {\n      const scope = ctx.settingsScope.bind({ namespace: 'vision-router' })\n      const presentedImageUrls = new Map()\n      const createdImageUrls = new Set()\n      const loadPresentedImage = (sessionId, attachment) => {\n        const key = `${String(sessionId)}:${String(attachment.attachmentId)}`\n        const cached = presentedImageUrls.get(key)\n        if (cached !== undefined) return cached\n        const pending = (async () => {\n          const binding = ctx.sessions.binding(sessionId)\n          if (binding === undefined) throw new Error(`vision_present: unknown session ${String(sessionId)}`)\n          const result = await binding.session.readAttachment(attachment.attachmentId)\n          if (!result.ok) {\n            throw new Error(`vision_present: ${result.error.code}: ${result.error.message}`)\n          }\n          const ref = result.value.attachment\n          const data = result.value.data\n          if (typeof URL.createObjectURL === 'function') {\n            const url = URL.createObjectURL(new Blob([data], { type: ref.mediaType }))\n            createdImageUrls.add(url)\n            return url\n          }\n          let binary = ''\n          const chunk = 0x8000\n          for (let offset = 0; offset < data.length; offset += chunk) {\n            binary += String.fromCharCode(...data.subarray(offset, offset + chunk))\n          }\n          return `data:${ref.mediaType};base64,${btoa(binary)}`\n        })().catch((error) => {\n          presentedImageUrls.delete(key)\n          throw error\n        })\n        presentedImageUrls.set(key, pending)\n        return pending\n      }\n      const presentLabels = {\n        image: t => t('presentedImage'),\n      }\n'''
-          # keep only closure setup; labels are resolved in the component after t is bound below
-          apply_replacement = apply_replacement.replace("      const presentLabels = {\\n        image: t => t('presentedImage'),\\n      }\\n", "")
+          apply_replacement = '''    function apply(ctx) {\n      const scope = ctx.settingsScope.bind({ namespace: 'vision-router' })\n      const presentedImageUrls = new Map()\n      const createdImageUrls = new Set()\n      const loadPresentedImage = (sessionId, attachment) => {\n        const key = `${String(sessionId)}:${String(attachment.attachmentId)}`\n        const cached = presentedImageUrls.get(key)\n        if (cached !== undefined) return cached\n        const pending = (async () => {\n          const binding = ctx.sessions.binding(sessionId)\n          if (binding === undefined) throw new Error(`vision_present: unknown session ${String(sessionId)}`)\n          const result = await binding.session.readAttachment(attachment.attachmentId)\n          if (!result.ok) {\n            throw new Error(`vision_present: ${result.error.code}: ${result.error.message}`)\n          }\n          const ref = result.value.attachment\n          const data = result.value.data\n          if (typeof URL.createObjectURL === 'function') {\n            const url = URL.createObjectURL(new Blob([data], { type: ref.mediaType }))\n            createdImageUrls.add(url)\n            return url\n          }\n          let binary = ''\n          const chunk = 0x8000\n          for (let offset = 0; offset < data.length; offset += chunk) {\n            binary += String.fromCharCode(...data.subarray(offset, offset + chunk))\n          }\n          return `data:${ref.mediaType};base64,${btoa(binary)}`\n        })().catch((error) => {\n          presentedImageUrls.delete(key)\n          throw error\n        })\n        presentedImageUrls.set(key, pending)\n        return pending\n      }\n'''
           c = c.replace(apply_anchor, apply_replacement, 1)
 
           t_anchor = "      const t = ctx.locale.bind(NS)\n      // Lazily reach the client `connection` service for the model catalog.\n"
