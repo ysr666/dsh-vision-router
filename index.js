@@ -31,6 +31,8 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
 import { createCachedUpdateChecker } from './lib/update-check.js'
+import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './lib/self-update.js'
+import { randomBytes } from 'node:crypto'
 
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
@@ -1778,12 +1780,30 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  // Version checks never mutate the installation. They only compare this
-  // package's own version with the configured/inherited npm registry, so the
-  // behavior is identical for npx/global CLI/source-checkout/bun-style DSH
-  // launches. The process-local cache keeps card opens from spamming registry.
+  // Version checks are install-method agnostic. One-click update is stricter:
+  // it is exposed only when the exact CLI entry hosting this process can be
+  // traced back to @deepseek-ai/dsh, so we never guess npm/pnpm/npx/bun.
   const updateChecker = createCachedUpdateChecker({
     fetchImpl: (...args) => globalThis.fetch(...args),
+  })
+  const selfUpdatePlan = detectDshSelfUpdatePlan()
+  let selfUpdateToken = randomBytes(24).toString('base64url')
+  let selfUpdateInFlight
+  const updateResultForClient = (result) => ({
+    ...result,
+    autoUpdate: {
+      supported: selfUpdatePlan.available === true,
+      method: selfUpdatePlan.available === true ? selfUpdatePlan.method : undefined,
+      profile: selfUpdatePlan.available === true ? selfUpdatePlan.profile : undefined,
+      reason: selfUpdatePlan.available === true ? undefined : selfUpdatePlan.reason,
+      token:
+        selfUpdatePlan.available === true &&
+        result &&
+        result.ok === true &&
+        result.updateAvailable === true
+          ? selfUpdateToken
+          : undefined,
+    },
   })
   void updateChecker.check(false).then((result) => {
     if (result && result.ok === true && result.updateAvailable === true) {
@@ -4143,10 +4163,90 @@ export function apply(ctx, config = {}) {
               'content-type': 'application/json',
               'cache-control': 'no-store',
             })
-            res.end(JSON.stringify(result))
+            res.end(JSON.stringify(updateResultForClient(result)))
           },
         }),
       'vision-router: update-check route',
+    )
+  })
+
+  // Safe one-click updater. The browser cannot choose a command, package or
+  // target version: POST merely asks the server to refresh the registry and
+  // run DSH's own updater for this package through the verified current CLI.
+  // A process-local token plus a non-simple custom header prevents a random
+  // cross-origin page from submitting a blind update request to localhost.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(
+      () =>
+        webCtx.webServer.register({
+          kind: 'exact',
+          path: '/_dsh/vision-router/self-update',
+          handler: async (req, res) => {
+            if (req.method !== 'POST') {
+              res.setHeader('Allow', 'POST')
+              res.writeHead(405)
+              res.end()
+              return
+            }
+            const fetchSite = String(req.headers?.['sec-fetch-site'] ?? '')
+            if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+              res.writeHead(403, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ ok: false, error: 'cross-origin update request rejected' }))
+              return
+            }
+            const token = String(req.headers?.['x-dsh-vision-router-update-token'] ?? '')
+            if (!token || token !== selfUpdateToken) {
+              res.writeHead(403, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ ok: false, error: 'invalid update token' }))
+              return
+            }
+            if (selfUpdatePlan.available !== true) {
+              res.writeHead(409, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ ok: false, error: 'automatic update is not safe for this DSH launch' }))
+              return
+            }
+            try {
+              const fresh = await updateChecker.check(true)
+              if (!fresh || fresh.ok !== true) {
+                res.writeHead(502, { 'content-type': 'application/json' })
+                res.end(JSON.stringify({ ok: false, error: fresh?.error || 'could not refresh update metadata' }))
+                return
+              }
+              if (fresh.updateAvailable !== true) {
+                res.writeHead(409, { 'content-type': 'application/json' })
+                res.end(JSON.stringify({ ok: false, error: 'no newer version is currently available' }))
+                return
+              }
+              if (!selfUpdateInFlight) {
+                const pending = runDshPluginUpdate(selfUpdatePlan)
+                  .then((result) => ({ ...result, targetVersion: fresh.latestVersion }))
+                selfUpdateInFlight = pending
+                void pending.finally(() => {
+                  if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
+                })
+              }
+              const result = await selfUpdateInFlight
+              // Rotate the token after a successful mutation so a captured
+              // request cannot be replayed. The current card already moves to
+              // the restart-required state and no longer needs the old token.
+              selfUpdateToken = randomBytes(24).toString('base64url')
+              res.writeHead(200, {
+                'content-type': 'application/json',
+                'cache-control': 'no-store',
+              })
+              res.end(JSON.stringify(result))
+            } catch (error) {
+              res.writeHead(500, { 'content-type': 'application/json' })
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  error: error && error.message ? error.message : String(error),
+                }),
+              )
+            }
+          },
+        }),
+      'vision-router: self-update route',
     )
   })
 
