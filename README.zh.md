@@ -358,16 +358,21 @@ at readProfileManifest (packages/boot/app-boot/src/profile.ts)
 
 **原因**：`~/.dsh/profiles/<profile>/package.json` 被某些编辑器保存成了 **UTF-8 with BOM**。文件最前面多了一个不可见的 `\uFEFF` 字符，dsh 读取 manifest 时直接 `JSON.parse`，而 JSON 不允许在开头出现这个字符，于是解析失败。
 
-**解决**：把该文件重新保存为 **UTF-8（无 BOM）** 即可：
-
-- VS Code：右下角编码 → “通过编码保存” → 选择 `UTF-8`；
-- 或命令行去掉开头的 BOM（把 `web` 换成你的 profile 名，改完重启 `dsh web`）：
+**推荐修复**：直接运行 Vision Router 自带的独立修复命令。它不需要 DSH 先成功启动，会定位 profile、检测 UTF-8 BOM，只删除开头的三个 BOM 字节，然后重新验证 JSON：
 
 ```sh
-node -e "const fs=require('fs');const p=process.argv[1];const b=fs.readFileSync(p);if(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)fs.writeFileSync(p,b.subarray(3))" "$HOME/.dsh/profiles/web/package.json"
+npx dsh-vision-router repair --profile web
 ```
 
-> 提示：保存后如果不确定是否还带 BOM，可以用上面的命令自查；带 BOM 时它会帮你去掉。
+只想检查、不修改文件时：
+
+```sh
+npx dsh-vision-router doctor --profile web
+```
+
+如果你使用的不是 `web` profile，把 `web` 换成对应名称；也可以不传 `--profile`，让 doctor 扫描全部 profile。
+
+手动兜底方式：VS Code 右下角编码 → “通过编码保存” → 选择 `UTF-8`（无 BOM）。若 `repair` 去掉 BOM 后仍提示 JSON 非法，它不会猜测或重写其他 JSON 内容，请再手动检查文件。
 
 ## 安全说明
 

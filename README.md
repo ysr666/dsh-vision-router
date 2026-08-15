@@ -360,16 +360,21 @@ at readProfileManifest (packages/boot/app-boot/src/profile.ts)
 
 **Cause:** `~/.dsh/profiles/<profile>/package.json` was saved as **UTF-8 with BOM** by an editor. The invisible `\uFEFF` character at the start makes `JSON.parse` fail, because JSON does not allow it before the opening brace.
 
-**Fix:** re-save the file as **UTF-8 without BOM**:
-
-- VS Code: click the encoding label in the status bar → “Save with Encoding” → `UTF-8`;
-- or strip the leading BOM from the command line (replace `web` with your profile name, then restart `dsh web`):
+**Recommended fix:** run Vision Router's standalone repair command. It does not require DSH to boot first; it locates the profile, detects a UTF-8 BOM, removes only the three leading BOM bytes, and then validates the JSON again:
 
 ```sh
-node -e "const fs=require('fs');const p=process.argv[1];const b=fs.readFileSync(p);if(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)fs.writeFileSync(p,b.subarray(3))" "$HOME/.dsh/profiles/web/package.json"
+npx dsh-vision-router repair --profile web
 ```
 
-> Tip: if you are not sure whether the file still has a BOM, run the command above again — it removes it only when present.
+To diagnose without changing the file:
+
+```sh
+npx dsh-vision-router doctor --profile web
+```
+
+Replace `web` if you use another profile, or omit `--profile` to scan all profiles.
+
+Manual fallback: in VS Code, use “Save with Encoding” → `UTF-8` (without BOM). If `repair` removes the BOM but the JSON is still invalid, it will not guess or rewrite any other JSON content; inspect the file manually.
 
 ## Security notes
 
