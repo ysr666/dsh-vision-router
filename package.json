@@ -10,6 +10,9 @@
   "homepage": "https://github.com/ysr666/dsh-vision-router",
   "type": "module",
   "main": "index.js",
+  "bin": {
+    "dsh-vision-router": "./lib/doctor-cli.js"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./lib/client.js",
@@ -58,7 +61,7 @@
     "sharp": "^0.35.3"
   },
   "scripts": {
-    "test": "node --test tests/core.test.js tests/client.test.js tests/http-compat.test.js tests/update-check.test.js tests/self-update.test.js"
+    "test": "node --test tests/core.test.js tests/client.test.js tests/http-compat.test.js tests/update-check.test.js tests/self-update.test.js tests/doctor.test.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
