@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-5B4CF0?style=flat-square" alt="Release v1.2.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-144%20tests-2EA44F?style=flat-square" alt="Verified: 144 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/release-v1.2.1-5B4CF0?style=flat-square" alt="Release v1.2.1" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.2.0)**
+> 📌 **Announcement (v1.2.1)**
 >
-> v1.2.0 closes the loop on zero-config vision: the lower-right chat picker only selects conversation models, settings only select user vision models, internal `Vision HTTP` is hidden, and a five-model anonymous OVH chain remains the final no-signup/no-key fallback. It also adds the three-step model guide, durable inline `vision_present` images, BOM doctor/repair, resilient update checks/safe updates, and fixes image tool results poisoning text-only DeepSeek histories.
+> v1.2.1 hardens the pixel loop: all ten pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

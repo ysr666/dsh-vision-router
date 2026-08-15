@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-5B4CF0?style=flat-square" alt="Release v1.2.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-144%20tests-2EA44F?style=flat-square" alt="Verified: 144 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/release-v1.2.1-5B4CF0?style=flat-square" alt="Release v1.2.1" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.2.0）**
+> 📌 **公告（v1.2.1）**
 >
-> v1.2.0 把“开箱即用”这条链路完整收口：聊天页右下角只选会话模型，设置页只选用户视觉模型，内部 `Vision HTTP` 不再暴露；内置 5 模型 OVH 匿名免费链固定在最后兜底，免注册、免 Key。新增三步模型引导、`vision_present` 持久内联图片、BOM doctor/repair、版本检查/安全更新，并修复图片工具结果污染纯文本 DeepSeek 历史导致后续对话崩溃的问题。
+> v1.2.1 加固像素闭环：十个像素工具可直接接受上传图片的附件 ID（告别 `cannot read …/sha256:…` 的绕路），产物文件名带指纹不再互相覆盖，`vision_ground` 对退化框自动重试，模型引导支持从第 1 步完整重放（先退出设置页），设置卡片在数百模型目录下滚动依然流畅。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />

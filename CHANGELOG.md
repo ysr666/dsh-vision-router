@@ -3,6 +3,24 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.2.1
+
+### 修复 / Fixed
+
+- **像素工具直接接受附件 ID**：`vision_ground` / `vision_detect` / `vision_crop` / `vision_present` / `vision_pixel_diff` / `vision_colors` / `vision_ocr` / `vision_long_screenshot_ocr` / `vision_trace` / `vision_extract_foreground` 的 image 参数现在可以直接传上传图片的附件 ID（如 `sha256:…`），不再报 `cannot read …/sha256:…: not found`；`vision_describe` 的 `paths` 同样支持。
+- **Pixel tools accept attachment ids**: the image argument of all ten pixel tools — and vision_describe's `paths` — now resolves uploaded-image attachment ids like `sha256:…` directly instead of failing with `cannot read …/sha256:…: not found`.
+- **产物文件名不再互相覆盖**：artifact 文件名在截断的 basename 之外追加完整输入的短指纹，64 字符 sha256 附件名与其裁剪产物不再塌缩成同一个 `…-ground.png` 互相覆盖。
+- **Artifact names no longer collide**: stems append a short fingerprint of the full input, so a 64-char sha256 attachment name and its crops no longer collapse onto one `…-ground.png` and overwrite each other.
+- `vision_ground` 对退化框（如 1 像素宽）自动重试一次，重试仍退化则明确报错。
+- `vision_ground` retries once when the vision model returns a degenerate box (e.g. 1px wide) instead of accepting it silently.
+
+### 改进 / Changed
+
+- **模型引导可完整重放**：「重新查看模型引导」现在先退出设置页（设置面板监听标准 Escape 键关闭）、重新弹出三步总览，并依次走完第 1 步（会话/文字模型）、第 2 步（视觉模型）、第 3 步（高亮视觉链）；引导状态改为 v2 步骤标记存储。
+- **The model guide replays fully**: “re-view model guide” closes the settings modal (its panel closes on the standard Escape keydown), reopens the 3-step overview, and walks step 1 (session/text model), step 2 (vision model) and step 3 (highlighted chain) in order; guide state is stored as a v2 step marker.
+- **设置卡片滚动流畅**：长区块滚出视口即跳过绘制（content-visibility），各 provider 的模型选项列表缓存复用，卡片以稳定 props + memo 跳过无关重渲染；openrouter 单 provider 276 个模型下滚动不再卡顿。
+- **Smooth settings scrolling**: long sections paint only when scrolled into view (content-visibility), per-provider model option lists are cached, and the memoized card skips unrelated re-renders — scrolling stays smooth even with 276 openrouter models.
+
 ## v1.2.0
 
 ### 新增 / Added
