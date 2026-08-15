@@ -23,7 +23,7 @@
 > [!WARNING]
 > 📌 **公告（v1.1.1）**
 >
-> 现在安装后会**自动包装 DSH 已有模型**：纯文本路由自动获得粘贴即用的识图入口，原生多模态模型保留原图直传，仅在需要精确定位 / OCR / 像素验证时按需使用 Vision Router 工具。另修复 Windows sharp/libvips 启动冲突，并补齐 npm/npx 与源码 pnpm 两套安装/升级指引。
+> 现在安装后会**自动包装 DSH 已有模型**：纯文本路由自动获得同名的「+ 自动识图」模型组，原生多模态模型保留原图直传，仅在需要精确定位 / OCR / 像素验证时按需使用 Vision Router 工具。**发图时请在聊天页右下角切换到带「+ 自动识图」的模型组；原模型组不会被修改。** 模型与包装范围后续会热更新，无需重启。另修复 Windows sharp/libvips 启动冲突，并补齐 npm/npx 与源码 pnpm 两套安装/升级指引。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -48,7 +48,7 @@
 |---|---|---|
 | 开箱图片问答 | ✅ 内置免费视觉链（OVHcloud 匿名端点），免注册免 Key | 远程工具需自备视觉 API Key（本地像素工具免 Key） |
 | 运行时 | ✅ 纯 Node，无需 Python | 需要 Python 3.11+ 受管运行时 |
-| 图片怎么进来 | ✅ 直接粘贴——轮次自动切视觉链并自动挂载工具 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
+| 图片怎么进来 | ✅ 选一次「+ 自动识图」模型组后直接粘贴 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
 | 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——可选隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
 | 支持 profile | Web | Web + Headless |
 | 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
@@ -58,6 +58,8 @@
 两者都是 MIT 许可、一条命令安装。想要图片**粘贴即用**、零配置就选本插件；需要 Headless 部署或更丰富的案例库，可以看 @anionex/dsh-vision-toolkit。（功能对比以其 README 2026-08 状态为准。）
 
 ## 快速开始
+
+### 1. 安装并让插件加载
 
 普通 npm / npx 安装方式推荐这样用（与 DSH 官方 README 的启动方式一致）：
 
@@ -74,14 +76,32 @@ pnpm dsh plugin --profile web add dsh-vision-router
 pnpm dsh web
 ```
 
-如果你已经全局安装 DSH CLI，并且终端里能直接执行 `dsh`，也可以继续使用较短的 `dsh ...` 写法。长期运行的 Web profile 安装后重启——完成，零配置：
+如果你已经全局安装 DSH CLI，并且终端里能直接执行 `dsh`，也可以继续使用较短的 `dsh ...` 写法。
 
-- 插件的 bundle 补丁自动挂载插件行、挂上准入包装并放宽附件限制到 20MB / 1 亿像素——纯增量、不碰核心行；是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）；
-- 默认视觉链就是内置免费端点；
-- opencode 等自定义/第三方路由用「额外识图包装」获得发图能力；
-- 全部配置可在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）** 实时修改。
+> [!NOTE]
+> 如果你是把插件**首次安装进一个已经长期运行的 Web 进程**，需要让 DSH Web 进程重新加载一次插件本体。插件加载完成后，新增/删除模型、修改自动识图包装范围都会**热更新，无需再重启 DSH**。
 
-然后直接往对话里贴一张图。Agent 自动挂载视觉工具，通过 `vision_describe`（以及其余 8 个工具）看图，需要时连续多步。
+### 2. 在聊天页切换到「+ 自动识图」模型组
+
+插件加载后会自动发现 **设置 → 模型** 里已启用的模型组，并为它们额外创建同名的自动识图入口。例如：
+
+```text
+opencode-go                 ← 原模型组，保持不变
+opencode-go + 自动识图       ← 发图片时选这个
+```
+
+> [!IMPORTANT]
+> **发图前，请点击聊天页输入区右下角的模型选择器，选择带「+ 自动识图」的模型组。**
+>
+> Vision Router 故意**不修改原模型组**。因此如果当前仍选着原来的纯文本 `opencode-go` / DeepSeek 路由，DSH 会在插件处理图片之前先提示“当前模型不支持图片”。这不是视觉后端配置失败，只是还没有切到自动识图入口。
+
+这个模型组的模型列表会跟随 DSH 的模型目录实时同步；新增模型或修改包装范围后无需重启。
+
+### 3. 直接粘贴或上传图片
+
+选好「+ 自动识图」模型组后，直接往对话里贴图即可。Agent 会自动挂载视觉工具，通过 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
+
+默认已经有内置免费视觉后端，无需额外配置 Key。高级配置在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）**；如果只是普通看图，通常不需要改设置。
 
 ### 实际效果
 
@@ -165,6 +185,9 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 2. 配置的 `httpProviders`（OpenAI 兼容直连端点，可选 `apiKeyEnv`）；
 3. 配置的 `providers` / `provider` + `fallbacks`（任何有适配器的供应商，例如 Pi-AI 配置的 OpenRouter 或智谱）。
 
+> [!IMPORTANT]
+> 这里的“视觉链”是 Vision Router 调用的**视觉后端**，必须填写真正支持图片输入的模型；它和聊天页右下角的「+ 自动识图」会话模型组不是一回事。不要把纯文本 DeepSeek / opencode 模型当成视觉后端备用模型。
+
 > 在旧版 `routing: true` 模式下，整轮链只走 `provider + fallbacks`——`httpProviders`（含免费兜底）不参与。默认的 `routing: false`（工具优先）会尝试全部。
 
 失败会分类（地区 / 风控 / 额度 / 限流 / 上下文 / 网络），最终报错附带建议；`429` 会尊重 `Retry-After` 做一次有上限的退避重试。超大上传图在调用前自动压缩（默认预算 400 万像素），保证工具调用不卡。
@@ -183,20 +206,28 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 官方行在场时，插件自动回退为可见包装入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置卡片会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
 
-> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——用「额外识图包装」让它们支持发图。
+> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认会被自动包装成「+ 自动识图」模型组。
 
-## 额外识图包装
+## 自动识图模型组与手动包装
 
-`wrappedProviders` 给任意第三方/自定义文本路由注册「自动识图」孪生条目：模型选择器里选中它就能发图，文字轮原样交给原路由处理。典型用法是 opencode 等接入的自定义接口——它们默认只声明文本输入，加一行包装即可直接发图。设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要包装多个模型就添加多行。
+默认开启 `autoWrapProviders`：插件会自动发现 **设置 → 模型** 中当前已启用的 provider / model，并额外注册同名的「+ 自动识图」模型组。**原模型组完全不变**；发图片时选自动识图组，纯文字仍可继续用原组。DSH 的 `llm/adapters-updated` 变化会触发同步，所以新增/删除模型后无需重启。
+
+`wrappedProviders` 是**可选的手动范围控制**，不是普通用户必须配置的步骤。只有两种情况需要它：
+
+1. 关闭了自动包装，想手动指定哪些 provider / model 获得自动识图入口；
+2. 自动包装保持开启，但只想让某个 provider 的部分模型出现在「+ 自动识图」组。
+
+设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要限定多个模型就添加多行。修改即时生效，无需重启。
 
 ## Web 设置
 
-Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，样式与内置卡片一致，可实时修改：
+Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，顶部会直接提示最重要的使用步骤：**回到聊天页 → 右下角模型选择器 → 选择「+ 自动识图」模型组 → 发图**。其余设置主要用于高级定制：
 
+- **自动创建「+ 自动识图」模型组**：默认开启，自动发现已有模型；模型目录变化热更新，无需重启；
+- **手动限定自动识图范围（可选）**：仅在需要关闭自动包装或限制部分模型时使用；
+- **视觉后端链**：给 `vision_describe` 等视觉工具调用的真正图片模型，默认内置免费 Qwen 即可；不要填纯文本模型；
 - 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式（仅官方 DeepSeek 路由）；
-- **额外识图包装**：provider + 模型双下拉，给 opencode 等自定义路由注册可发图的孪生条目；
-- 视觉请求超时、包装/链路由名；
-- **视觉模型链**（每行一个 `provider/model`，自上而下降级）与文本模型；
+- 视觉请求超时、包装/链路由名、代理等高级参数；
 - 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存；
 - 「测试连接」按钮探测第一个视觉提供方并内联显示延迟/失败原因；
 - 产出制品的工具在对话里渲染专用调用卡（关键字段 + 打开文件按钮）。
@@ -213,15 +244,16 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
-| `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | 简写链路（有适配器的供应商 + 模型） |
-| `fallbacks` | `[]` | 简写供应商的备用模型 |
-| `providers` | 内置免费 `vision-http` 条目 | 多供应商链路 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式。第一行开箱预置内置免费模型 |
+| `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | 简写视觉后端链路（有适配器且真正支持图片输入的供应商 + 模型） |
+| `fallbacks` | `[]` | 简写视觉供应商的备用图片模型 |
+| `providers` | 内置免费 `vision-http` 条目 | 多供应商视觉后端链 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式。不要填写纯文本模型 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 额外识图包装：`{ provider, models[] }`，给 opencode 等任意第三方/自定义文本路由注册可发图的孪生条目（卡片里 provider + 模型双下拉；模型留空 = 包装全部）。预置的 deepseek-official 条目标记内置包装、无副作用；改动即时生效 |
+| `autoWrapProviders` | `true` | 自动发现当前已启用 provider / model，并热更新同名「+ 自动识图」模型组；原模型组不变 |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选的手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只包装部分模型。改动即时生效，无需重启 |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
-| `stealth` | `false` | 接管官方 `deepseek-official` 路由（仅官方行；自定义路由用 `wrappedProviders`） |
+| `stealth` | `false` | 接管官方 `deepseek-official` 路由（仅官方行；自定义路由默认由自动包装处理） |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` ×3 | 视觉工具开关 / 渐进式挂载 / 图片轮自动挂载 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
@@ -257,7 +289,7 @@ pnpm dsh plugin --profile web add dsh-vision-router
 pnpm dsh --profile web --dump-config | grep vision-router
 ```
 
-长期运行的 Web profile 需重启。宿主在启动时通过 `dsh.client` 声明发现浏览器端包。
+首次把插件装进已经长期运行的 Web profile 时，需要让 Web 进程重新加载插件本体；宿主在启动时通过 `dsh.client` 声明发现浏览器端包。**插件加载完成后，模型目录与包装范围的变化会热更新，不需要为这些变化重启。**
 
 ### 禁用 / 恢复
 
