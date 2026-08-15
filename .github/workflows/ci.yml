@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/auto-wrap-providers]
   pull_request:
 
 jobs:
@@ -20,3 +20,66 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  native-host-sharp:
+    name: host sharp / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm pack --pack-destination tmp-pack
+      - name: Build a DSH-like host with sharp 0.35.3
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          fs.mkdirSync('tmp-host', { recursive: true })
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          fs.writeFileSync('tmp-host/package.json', JSON.stringify({
+            private: true,
+            packageManager: 'pnpm@11.20.0',
+            dependencies: {
+              sharp: '0.35.3',
+              'dsh-vision-router': `file:../tmp-pack/${tgz}`,
+            },
+          }, null, 2))
+      name: Install host
+        working-directory: tmp-host
+        run: pnpm install
+      - name: Verify plugin resolves the exact host sharp and can process pixels
+        working-directory: tmp-host
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const { createRequire } = require('node:module')
+          const hostRequire = createRequire(`${process.cwd()}/host-check.cjs`)
+          const pluginEntry = hostRequire.resolve('dsh-vision-router')
+          const pluginRequire = createRequire(pluginEntry)
+          const hostSharp = fs.realpathSync(hostRequire.resolve('sharp'))
+          const pluginSharp = fs.realpathSync(pluginRequire.resolve('sharp'))
+          console.log({ hostSharp, pluginSharp })
+          if (hostSharp !== pluginSharp) {
+            throw new Error('plugin installed/resolved a second sharp copy instead of using the host copy')
+          }
+          const sharp = hostRequire('sharp')
+          const out = await sharp({
+            create: {
+              width: 8,
+              height: 8,
+              channels: 4,
+              background: { r: 10, g: 20, b: 30, alpha: 1 },
+            },
+          }).resize(4, 4).png().toBuffer()
+          if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('sharp pixel smoke test failed')
+          console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
