@@ -1,0 +1,30 @@
+name: tmp-inspect-main-conflict
+on:
+  push:
+    branches:
+      - fix/vision-backend-ux
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vision-backend-ux
+          fetch-depth: 0
+      - name: Inspect merge conflicts
+        run: |
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          status=$?
+          echo "merge_status=$status"
+          echo "--- conflicted files ---"
+          git diff --name-only --diff-filter=U
+          echo "--- conflict markers ---"
+          for f in $(git diff --name-only --diff-filter=U); do
+            echo "===== $f ====="
+            grep -n -B8 -A18 '^<<<<<<<\|^=======\|^>>>>>>>' "$f" || true
+          done
+          exit 0
