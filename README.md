@@ -59,11 +59,22 @@ Both are MIT-licensed and one command away. Pick this plugin when you want image
 
 ## Quick start
 
+Recommended for normal npm/npx installs (the same launch style used by the DSH README):
+
 ```sh
-dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh web
 ```
 
-Restart `dsh web` — done. Zero configuration:
+If you run DeepSeek Harness from a source checkout with pnpm, use the workspace script instead — `dsh` is not necessarily on your shell `PATH`:
+
+```sh
+cd deepseek-harness
+pnpm dsh plugin --profile web add dsh-vision-router
+pnpm dsh web
+```
+
+If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorter `dsh ...` form works too. Restart a long-lived Web profile after installation — done. Zero configuration:
 
 - the plugin's bundle patch mounts the row, adds the admission wrapper and relaxes attachment limits to 20 MB / 100 MP — pure-additive, it never touches the core rows; whether the official DeepSeek route is taken over is decided by the optional stealth setting (off by default);
 - the default vision chain is the built-in free endpoint;
@@ -222,7 +233,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 
 ## Requirements
 
-- DeepSeek Harness with a Web profile and `pnpm` available to `dsh plugin`.
+- DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge only for `vision_html_screenshot`; every other tool works without a browser.
@@ -232,9 +243,18 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 
 ### Install
 
+Normal npm/npx install:
+
 ```sh
-dsh plugin --profile web add dsh-vision-router
-dsh --profile web --dump-config | grep vision-router   # one row, mounted by the bundle patch
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh --profile web --dump-config | grep vision-router
+```
+
+From a DeepSeek Harness source checkout:
+
+```sh
+pnpm dsh plugin --profile web add dsh-vision-router
+pnpm dsh --profile web --dump-config | grep vision-router
 ```
 
 Restart a long-lived Web profile. The host discovers the browser bundle through `dsh.client` at startup.
@@ -251,7 +271,11 @@ Set it back to `false` to re-enable. Unloading removes the wrapper routes, tools
 ### Upgrade
 
 ```sh
-dsh plugin --profile web update dsh-vision-router
+# normal npm/npx install
+npx @deepseek-ai/dsh plugin --profile web update dsh-vision-router
+
+# DeepSeek Harness source checkout
+pnpm dsh plugin --profile web update dsh-vision-router
 ```
 
 Settings live in the profile's settings provider and survive upgrades.
@@ -259,7 +283,11 @@ Settings live in the profile's settings provider and survive upgrades.
 ### Uninstall
 
 ```sh
-dsh plugin --profile web remove dsh-vision-router
+# normal npm/npx install
+npx @deepseek-ai/dsh plugin --profile web remove dsh-vision-router
+
+# DeepSeek Harness source checkout
+pnpm dsh plugin --profile web remove dsh-vision-router
 ```
 
 This removes the dependency and the bundle layer. If you disabled the stock DeepSeek row manually, re-enable it in your profile patch.

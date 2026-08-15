@@ -1366,7 +1366,7 @@ test('apply registers the vision-tools skill with source and content', () => {
   assert.ok(skill.content.includes('vision_describe') || skill.content.includes('vision_ground'))
 })
 
-test('auto-wrap discovers existing text-only providers and skips native vision models', async () => {
+test('auto-wrap discovers existing providers including native vision models', async () => {
   const { ctx, adapters } = mockHarnessCtx()
   const mixed = {
     providerInfo: (p) => ({ id: p, name: 'MiniMax' }),
@@ -1390,8 +1390,8 @@ test('auto-wrap discovers existing text-only providers and skips native vision m
   const twin = adapters.get('minimax-vision')
   assert.ok(twin, 'expected an automatically discovered minimax-vision twin')
   const listed = await twin.listModels('minimax-vision')
-  assert.deepEqual(listed.map((m) => m.id), ['minimax-m2.7'])
-  assert.deepEqual(listed[0].inputModalities, ['text', 'image'])
+  assert.deepEqual(listed.map((m) => m.id), ['minimax-m2.7', 'minimax-vision-native'])
+  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
 })
 
 test('auto-wrap follows providers that become live after plugin apply', async () => {
@@ -1517,6 +1517,30 @@ test('twin route registers before its source adapter appears (live provider regi
   for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
   const resolved = await twin.resolveModel('opencode-go-vision', 'deepseek-v4-flash')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+})
+
+test('auto-wrap also exposes a twin for an already image-capable GLM model', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const glm = {
+    providerInfo: (p) => ({ id: p, name: 'Zhipu GLM' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', inputModalities: ['text', 'image'] },
+      { provider: p, id: 'glm-4v-flash', name: 'GLM-4V-Flash', inputModalities: ['text', 'image'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text', 'image'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['zhipu'], glm)
+  apply(ctx, Config({ autoWrapProviders: true }))
+  assert.ok(adapters.has('zhipu-vision'), 'expected Zhipu GLM + auto-vision twin')
+  const listed = await adapters.get('zhipu-vision').listModels('zhipu-vision')
+  assert.deepEqual(listed.map((m) => m.id), ['glm-4.6v-flash', 'glm-4v-flash'])
+  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
 })
 
 test('twin sync is idempotent across llm/adapters-updated events', async () => {

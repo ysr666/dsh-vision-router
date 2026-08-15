@@ -59,11 +59,22 @@
 
 ## 快速开始
 
+普通 npm / npx 安装方式推荐这样用（与 DSH 官方 README 的启动方式一致）：
+
 ```sh
-dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh web
 ```
 
-重启 `dsh web`——完成，零配置：
+如果你是从 DeepSeek Harness 源码仓库通过 pnpm 运行，`dsh` 不一定在系统 `PATH` 里，请改用工作区脚本：
+
+```sh
+cd deepseek-harness
+pnpm dsh plugin --profile web add dsh-vision-router
+pnpm dsh web
+```
+
+如果你已经全局安装 DSH CLI，并且终端里能直接执行 `dsh`，也可以继续使用较短的 `dsh ...` 写法。长期运行的 Web profile 安装后重启——完成，零配置：
 
 - 插件的 bundle 补丁自动挂载插件行、挂上准入包装并放宽附件限制到 20MB / 1 亿像素——纯增量、不碰核心行；是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）；
 - 默认视觉链就是内置免费端点；
@@ -222,7 +233,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 
 ## 环境要求
 
-- DeepSeek Harness 的 Web profile，且 `dsh plugin` 可用 `pnpm`。
+- DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - `vision_html_screenshot` 才需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
@@ -232,9 +243,18 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 
 ### 安装
 
+普通 npm / npx 安装：
+
 ```sh
-dsh plugin --profile web add dsh-vision-router
-dsh --profile web --dump-config | grep vision-router   # 一行，由 bundle 补丁挂载
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+npx @deepseek-ai/dsh --profile web --dump-config | grep vision-router
+```
+
+从 DeepSeek Harness 源码仓库运行：
+
+```sh
+pnpm dsh plugin --profile web add dsh-vision-router
+pnpm dsh --profile web --dump-config | grep vision-router
 ```
 
 长期运行的 Web profile 需重启。宿主在启动时通过 `dsh.client` 声明发现浏览器端包。
@@ -251,7 +271,11 @@ dsh --profile web --dump-config | grep vision-router   # 一行，由 bundle 补
 ### 升级
 
 ```sh
-dsh plugin --profile web update dsh-vision-router
+# 普通 npm / npx 安装
+npx @deepseek-ai/dsh plugin --profile web update dsh-vision-router
+
+# DeepSeek Harness 源码仓库
+pnpm dsh plugin --profile web update dsh-vision-router
 ```
 
 设置存放在 profile 的设置提供方里，升级不丢失。
@@ -259,7 +283,11 @@ dsh plugin --profile web update dsh-vision-router
 ### 卸载
 
 ```sh
-dsh plugin --profile web remove dsh-vision-router
+# 普通 npm / npx 安装
+npx @deepseek-ai/dsh plugin --profile web remove dsh-vision-router
+
+# DeepSeek Harness 源码仓库
+pnpm dsh plugin --profile web remove dsh-vision-router
 ```
 
 同时移除依赖与 bundle 层。若你曾手动禁用官方 DeepSeek 行，记得在 profile 补丁里恢复。

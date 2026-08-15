@@ -91,10 +91,12 @@ export const Config = z.object({
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
   freeFallback: z.boolean().default(true),
-  // Automatically mirror every currently registered text-only provider as an
+  // Automatically mirror every currently registered provider as an
   // image-capable twin. The source registry is live (ctx.llm.listProviders),
   // so providers added later through Settings are picked up by the existing
-  // llm/adapters-updated sync. Native image-capable models are never duplicated.
+  // llm/adapters-updated sync. The original route is never changed: even a
+  // native multimodal model may expose an additional + auto-vision entry so
+  // users can deliberately route image work through vision-router's toolchain.
   autoWrapProviders: z.boolean().default(true),
   // Text-provider routes the user wants wrapped as image-capable twins
   // (e.g. opencode-go): each entry registers a "<provider>-vision" route
@@ -2012,14 +2014,6 @@ export function apply(ctx, config = {}) {
           const listed = await original.listModels(provider)
           return listed
             .filter((model) => models.length === 0 || models.includes(model.id))
-            // Never duplicate a model that already declares native image input.
-            // Missing modalities are treated as not image-capable by DSH's
-            // admission layer, so those are exactly the models a twin helps.
-            .filter(
-              (model) =>
-                !Array.isArray(model && model.inputModalities) ||
-                !model.inputModalities.includes('image'),
-            )
             .map((model) => ({ ...model, provider: twinRoute, inputModalities: ['text', 'image'] }))
         } catch {
           return []
@@ -2041,9 +2035,9 @@ export function apply(ctx, config = {}) {
   }
   const syncTwins = () => {
     const wanted = new Map()
-    // Default path: every live non-vision provider gets a twin. listModels()
-    // performs the per-model native-image filter, so mixed routes only expose
-    // their text-only members in the generated twin group.
+    // Default path: every live non-router provider gets a twin. The source
+    // route remains untouched, including native multimodal models; this adds a
+    // separate + auto-vision choice that deliberately uses vision-router.
     for (const provider of autoWrappedProviders()) wanted.set(provider, [])
     // Explicit settings win for a provider and can narrow the twin to selected
     // model ids. They still work when auto discovery is disabled, and can be
