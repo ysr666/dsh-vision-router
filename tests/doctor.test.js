@@ -38,6 +38,21 @@ test('inspectProfileManifest diagnoses BOM without mutating by default', () => {
   assert.deepEqual(readFileSync(manifestPath), original)
 })
 
+test('doctor reports an unresolved BOM as unhealthy and repair clears it', () => {
+  const { home } = fixture(Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from(validManifest),
+  ]))
+  const before = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(before.profiles[0].validJson, true)
+  assert.equal(before.profiles[0].hasBom, true)
+  assert.equal(before.ok, false)
+
+  const after = doctorProfiles({ dshHome: home, profile: 'web', fix: true })
+  assert.equal(after.profiles[0].repaired, true)
+  assert.equal(after.ok, true)
+})
+
 test('inspectProfileManifest repair removes only the leading BOM', () => {
   const { manifestPath } = fixture(Buffer.concat([
     Buffer.from([0xef, 0xbb, 0xbf]),
