@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   checkPackageUpdate,
   compareSemver,
+  createCachedUpdateChecker,
   normalizeRegistryBase,
   registryBaseFromEnv,
 } from '../lib/update-check.js'
@@ -77,4 +78,43 @@ test('checkPackageUpdate rejects registry failures and malformed versions', asyn
       }),
     /invalid version/,
   )
+})
+
+test('cached checker coalesces startup/card-open requests and reuses success', async () => {
+  let calls = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const checker = createCachedUpdateChecker({
+    currentVersion: '1.1.1',
+    successTtlMs: 60_000,
+    fetchImpl: async () => {
+      calls += 1
+      await gate
+      return { ok: true, status: 200, async json() { return { version: '1.2.0' } } }
+    },
+  })
+  const startup = checker.check(false)
+  const cardOpen = checker.check(false)
+  const manualWhileRunning = checker.check(true)
+  assert.equal(calls, 1)
+  release()
+  const [a, b, c] = await Promise.all([startup, cardOpen, manualWhileRunning])
+  assert.equal(a.latestVersion, '1.2.0')
+  assert.equal(b.latestVersion, '1.2.0')
+  assert.equal(c.latestVersion, '1.2.0')
+  assert.equal(calls, 1)
+  const cached = await checker.check(false)
+  assert.equal(cached.latestVersion, '1.2.0')
+  assert.equal(calls, 1)
+})
+
+test('cached checker turns registry failures into non-fatal status objects', async () => {
+  const checker = createCachedUpdateChecker({
+    currentVersion: '1.1.1',
+    fetchImpl: async () => { throw new Error('offline') },
+  })
+  const result = await checker.check(false)
+  assert.equal(result.ok, false)
+  assert.equal(result.currentVersion, '1.1.1')
+  assert.match(result.error, /offline/)
 })
