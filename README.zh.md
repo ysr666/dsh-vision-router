@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/release-v1.1.1-5B4CF0?style=flat-square" alt="Release v1.1.1" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-102%20tests-2EA44F?style=flat-square" alt="Verified: 102 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-5B4CF0?style=flat-square" alt="Release v1.2.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-144%20tests-2EA44F?style=flat-square" alt="Verified: 144 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -21,11 +21,12 @@
 <p align="center"><a href="README.md">English</a> · 中文</p>
 
 > [!WARNING]
-> 📌 **公告（v1.1.1）**
+> 📌 **公告（v1.2.0）**
 >
-> 现在安装后会**自动包装 DSH 已有模型**：纯文本路由自动获得同名的「+ 自动识图」模型组，原生多模态模型保留原图直传，仅在需要精确定位 / OCR / 像素验证时按需使用 Vision Router 工具。**发图时请在聊天页右下角切换到带「+ 自动识图」的模型组；原模型组不会被修改。** 模型与包装范围后续会热更新，无需重启。另修复 Windows sharp/libvips 启动冲突，并补齐 npm/npx 与源码 pnpm 两套安装/升级指引。
+> v1.2.0 把“开箱即用”这条链路完整收口：聊天页右下角只选会话模型，设置页只选用户视觉模型，内部 `Vision HTTP` 不再暴露；内置 5 模型 OVH 匿名免费链固定在最后兜底，免注册、免 Key。新增三步模型引导、`vision_present` 持久内联图片、BOM doctor/repair、版本检查/安全更新，并修复图片工具结果污染纯文本 DeepSeek 历史导致后续对话崩溃的问题。
 
 <p align="center">
+  <img src="assets/vision-demo.gif"<p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
 </p>
 
@@ -34,7 +35,7 @@
 大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**原图像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
 
 - **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
-- **默认免费。** 视觉链内置 OVHcloud 匿名端点（`Qwen2.5-VL-72B-Instruct`，免注册、免 Key，每 IP 2 次/分钟）。付费链路（OpenRouter、Pi-AI 供应商、任意 OpenAI 兼容直连端点）是可选升级。
+- **默认免费。** 视觉工具最终兜底为 5 个 OVHcloud 匿名视觉模型：免注册、免 Key，每 IP、每模型 2 次/分钟，独立限额理论合计约 10 次/分钟；用户自备视觉模型会优先调用。
 - **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
 - **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
 - **DeepSeek 始终是大脑。** 文字轮在模型、成本、上下文上完全不动；视觉模型只当“眼睛”、按需调用，答案按图片内容缓存。
@@ -52,7 +53,7 @@
 | 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——可选隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
 | 支持 profile | Web | Web + Headless |
 | 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
-| 测试 | 86 | 162 |
+| 测试 | 144 | 162 |
 | 安装 | 一条命令 | 一条命令（npm） |
 
 两者都是 MIT 许可、一条命令安装。想要图片**粘贴即用**、零配置就选本插件；需要 Headless 部署或更丰富的案例库，可以看 @anionex/dsh-vision-toolkit。（功能对比以其 README 2026-08 状态为准。）

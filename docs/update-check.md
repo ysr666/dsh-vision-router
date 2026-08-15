@@ -24,3 +24,19 @@ dsh plugin --profile <current-profile> update dsh-vision-router
 The subprocess uses `execFile` with `shell: false`; no shell command is constructed from browser input. The update endpoint also requires a process-local token returned by the same-origin update-check endpoint. After the updater exits successfully, the settings card asks the user to restart DSH so the new plugin bundle is loaded.
 
 If the CLI cannot be verified — for example a raw TypeScript source entry that needs a workspace-specific loader — the one-click button is not offered. This commonly applies to a DSH source checkout launched with `pnpm dsh`: version checking still works, but updating remains under the source workspace's own pnpm workflow. The card keeps the version information and release-notes link and tells the user to update through their original DSH installation path instead.
+
+## Manual recovery
+
+If automatic update is unavailable, the version check fails, or a one-click update fails, the settings card still shows direct Project/Releases links and a manual command. For a DeepSeek Harness source checkout run:
+
+```sh
+pnpm dsh plugin --profile web update dsh-vision-router
+```
+
+For normal npm/npx DSH usage run:
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web update dsh-vision-router
+```
+
+The settings card substitutes the active profile when it can determine one.

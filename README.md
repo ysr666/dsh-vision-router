@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/release-v1.1.1-5B4CF0?style=flat-square" alt="Release v1.1.1" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-102%20tests-2EA44F?style=flat-square" alt="Verified: 102 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/release-v1.2.0-5B4CF0?style=flat-square" alt="Release v1.2.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-144%20tests-2EA44F?style=flat-square" alt="Verified: 144 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -21,11 +21,12 @@
 <p align="center">English · <a href="README.zh.md">中文</a></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.1.1)**
+> 📌 **Announcement (v1.2.0)**
 >
-> Existing DSH providers are now **auto-wrapped on install**: text-only routes gain a same-name **“+ Auto Vision”** model group, while native multimodal models keep their original image input and use Vision Router tools only when useful. **Before sending an image, choose the “+ Auto Vision” group from the lower-right model selector; the original group is intentionally left untouched.** Model and wrapper changes hot-update without a restart. Windows sharp/libvips startup conflicts are fixed by sharing the host sharp; install/update docs distinguish npm/npx from source-checkout pnpm usage.
+> v1.2.0 closes the loop on zero-config vision: the lower-right chat picker only selects conversation models, settings only select user vision models, internal `Vision HTTP` is hidden, and a five-model anonymous OVH chain remains the final no-signup/no-key fallback. It also adds the three-step model guide, durable inline `vision_present` images, BOM doctor/repair, resilient update checks/safe updates, and fixes image tool results poisoning text-only DeepSeek histories.
 
 <p align="center">
+  <img src="assets/vision-demo.gif"<p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
 </p>
 
@@ -34,7 +35,7 @@
 Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — lossy, one-shot, and blind to pixels. This plugin keeps the **original pixels on the vision model's side** and DeepSeek on the reasoning side, and makes looking at an image an **ordinary tool call**:
 
 - **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper and the attachment limits automatically — zero manual file edits. Taking over the official DeepSeek route is an optional setting (stealth mode, off by default).
-- **Free by default.** The vision chain starts with a built-in OVHcloud anonymous endpoint (`Qwen2.5-VL-72B-Instruct`, no account, no key, 2 req/min per IP). Paid chains (OpenRouter, Pi-AI providers, direct OpenAI-compatible endpoints) are optional upgrades.
+- **Free by default.** Vision tools end with a five-model OVHcloud anonymous fallback: no account, no key, 2 requests/minute per IP per model, roughly 10 RPM in theory across independent buckets. User-provided vision models run first.
 - **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
 - **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
 - **DeepSeek stays the brain.** Text turns are untouched in model, cost and context. The vision model is only the eyes, called on demand; answers are cached by image content.
@@ -52,7 +53,7 @@ The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anio
 | Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — optional stealth takeover keeps the model picker looking stock | Tool-driven; no whole-turn auto-routing |
 | Profiles | Web | Web + Headless |
 | Playbooks | The pixel loop: ground → crop → diff → fix → screenshot again | Richer case library (long-screenshot OCR, UI restoration, GUI automation) |
-| Tests | 86 | 162 |
+| Tests | 144 | 162 |
 | Install | One command | One command (npm) |
 
 Both are MIT-licensed and one command away. Pick this plugin when you want images to *just work* with zero setup; pick theirs when you need headless profiles or the extended playbook library. (Feature comparison reflects their README as of 2026-08.)

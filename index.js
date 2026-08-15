@@ -1782,7 +1782,7 @@ export function apply(ctx, config = {}) {
     autoUpdate: {
       supported: selfUpdatePlan.available === true,
       method: selfUpdatePlan.available === true ? selfUpdatePlan.method : undefined,
-      profile: selfUpdatePlan.available === true ? selfUpdatePlan.profile : undefined,
+      profile: selfUpdatePlan.profile,
       reason: selfUpdatePlan.available === true ? undefined : selfUpdatePlan.reason,
       token:
         selfUpdatePlan.available === true &&

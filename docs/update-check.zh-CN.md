@@ -24,3 +24,19 @@ dsh plugin --profile <当前 profile> update dsh-vision-router
 子进程通过 `execFile` 且 `shell: false` 启动，不会把浏览器输入拼成 shell 命令。更新接口还要求由同源更新检查接口返回的本进程临时 token，避免网页跨站请求直接触发更新。更新命令成功后，设置卡会提示用户重启 DSH，让新插件 bundle 真正加载。
 
 若无法可靠验证当前 CLI——例如直接运行需要 workspace 专用 loader 的 TypeScript 源码入口——就不会显示一键更新按钮。**源码仓库里通过 `pnpm dsh` 启动通常属于这种情况：版本检查仍然可以正常工作，只是一键更新继续交给源码工作区自己的 pnpm 流程。** 此时仍会显示当前/最新版本和 Release Notes，并提示用户沿用原来的 DSH 安装方式手动更新。
+
+## 手动兜底
+
+如果自动更新不可用、版本检查失败，或一键更新失败，设置卡仍会直接显示项目主页 / Releases 入口和可执行的手动命令。DeepSeek Harness 源码仓库通过 pnpm 启动时使用：
+
+```sh
+pnpm dsh plugin --profile web update dsh-vision-router
+```
+
+普通 npm / npx DSH 使用：
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web update dsh-vision-router
+```
+
+如果插件能识别当前 profile，设置页会把命令里的 `web` 自动替换成实际 profile。

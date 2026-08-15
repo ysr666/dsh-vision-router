@@ -60,7 +60,7 @@ test('detectDshSelfUpdatePlan refuses unverified or loader-dependent CLI entries
   const source = fixture({ entry: 'src/cli.ts' })
   assert.deepEqual(
     detectDshSelfUpdatePlan({ argv: ['node', source.cliEntry, 'web'], execPath: 'node' }),
-    { available: false, reason: 'source-cli-needs-loader' },
+    { available: false, reason: 'source-cli-needs-loader', profile: 'web' },
   )
 })
 
