@@ -40,10 +40,136 @@ import { createHash, randomBytes } from 'node:crypto'
 // lazily and cache the resolved factory so a sharp failure degrades only the
 // pixel-level tools — the routing chain and text tools keep working.
 let sharpPromise
+// Module-level warning sink installed by apply(): the plugin routes runtime
+// diagnostics through ctx.logger instead of console.warn. Kept as a plain
+// function slot so loadSharp() stays usable outside a Cordis context (tests,
+// the doctor CLI).
+let sharpWarningHook
+export function registerSharpWarningHook(hook) {
+  sharpWarningHook = typeof hook === 'function' ? hook : undefined
+}
+
+function warnSharp(message) {
+  if (sharpWarningHook !== undefined) {
+    try {
+      sharpWarningHook(message)
+      return
+    } catch {
+      /* fall through to console */
+    }
+  }
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(message)
+}
+
+/** Split "1.2.3" / "1.2" / "1" / "1.2.3-beta.4" into comparable parts
+ * (missing minor/patch default to 0, like semver). */
+export function parseVersionParts(version) {
+  const match = String(version ?? '').trim().match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$/)
+  if (!match) return undefined
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2] ?? 0),
+    patch: Number(match[3] ?? 0),
+    pre: match[4],
+  }
+}
+
+function compareVersionParts(a, b) {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
+  // A prerelease sorts below its release: 0.35.3-beta < 0.35.3.
+  if (a.pre === undefined && b.pre === undefined) return 0
+  if (a.pre === undefined) return 1
+  if (b.pre === undefined) return -1
+  return a.pre < b.pre ? -1 : a.pre > b.pre ? 1 : 0
+}
+
+/**
+ * Minimal semver range check for the comparator shapes the plugin itself
+ * declares (`>=0.35.3 <1`, space-separated clauses, `||` alternatives).
+ * @returns true when `version` satisfies `range`, false otherwise (also for
+ * malformed inputs, so an unparsable range fails safe and loud).
+ */
+export function versionSatisfies(version, range) {
+  const parts = parseVersionParts(version)
+  if (parts === undefined) return false
+  const alternatives = String(range ?? '')
+    .split('||')
+    .map((alt) => alt.trim())
+    .filter((alt) => alt !== '')
+  if (alternatives.length === 0) return false
+  return alternatives.some((alternative) => {
+    const clauses = alternative.split(/\s+/)
+    if (clauses.length === 0) return false
+    return clauses.every((clause) => {
+      const match = clause.match(/^(>=|<=|>|<|=)?\s*(.+)$/)
+      if (!match) return false
+      const op = match[1] ?? '='
+      const other = parseVersionParts(match[2])
+      if (other === undefined) return false
+      const cmp = compareVersionParts(parts, other)
+      switch (op) {
+        case '>=': return cmp >= 0
+        case '<=': return cmp <= 0
+        case '>': return cmp > 0
+        case '<': return cmp < 0
+        default: return cmp === 0
+      }
+    })
+  })
+}
+
+// Read the plugin's own peerDependencies.sharp range from the installed
+// package.json (createRequire resolves it relative to this file, so the value
+// is never hardcoded and follows package.json through releases).
+let sharpPeerRangeCache
+function sharpPeerRange() {
+  if (sharpPeerRangeCache === undefined) {
+    try {
+      const requireLocal = createRequire(import.meta.url)
+      const pkg = requireLocal('./package.json')
+      sharpPeerRangeCache =
+        pkg && pkg.peerDependencies && typeof pkg.peerDependencies.sharp === 'string'
+          ? pkg.peerDependencies.sharp
+          : undefined
+    } catch {
+      sharpPeerRangeCache = undefined
+    }
+  }
+  return sharpPeerRangeCache
+}
+
 function loadSharp() {
   if (!sharpPromise) {
     sharpPromise = import('sharp')
-      .then((mod) => mod.default ?? mod)
+      .then((mod) => {
+        const sharp = mod.default ?? mod
+        // issue #75: an upgrade from v1.1.x can leave a stale sharp 0.34.0 in
+        // the profile's node_modules; pnpm does not physically remove orphaned
+        // peer copies on upgrade. On Windows the stale copy's libvips DLL and
+        // the host's coexist in one process and every pixel tool then dies
+        // with the cryptic "colourspace: parameter space not set". Detect the
+        // violation up front and turn it into an actionable warning.
+        try {
+          const version = sharp && sharp.versions && typeof sharp.versions.sharp === 'string'
+            ? sharp.versions.sharp
+            : undefined
+          const range = sharpPeerRange()
+          if (version !== undefined && range !== undefined && !versionSatisfies(version, range)) {
+            warnSharp(
+              `dsh-vision-router: the resolved sharp ${version} does not satisfy the plugin peer range "${range}". ` +
+                'This is usually a stale sharp left in the profile from a pre-v1.2 upgrade: remove ' +
+                '`<profile>/node_modules/sharp` and `<profile>/node_modules/@img` (or run `pnpm install` in the profile) ' +
+                'and restart, so the plugin falls through to the host sharp. Until then, pixel tools may fail with ' +
+                '"colourspace: parameter space not set".',
+            )
+          }
+        } catch {
+          /* diagnostics must never break the pixel tools */
+        }
+        return sharp
+      })
       .catch((cause) => {
         sharpPromise = undefined // allow a retry after the environment is repaired
         const error = new Error(
@@ -397,27 +523,98 @@ export function renderVisionPresent(value) {
   ]
 }
 
+/** Text marker replacing a tool-produced image block (shared by the pre-step
+ * inbox sanitizer and the session-surface shadow sanitizer). */
+export function toolImageMarker(block) {
+  const attachment = block && block.attachment ? block.attachment : {}
+  const id = attachment.attachmentId || attachment.id || 'unknown'
+  const name = attachment.name || 'tool image'
+  return {
+    type: 'text',
+    text:
+      `[tool result produced image "${name}", attachment id "${id}". ` +
+      `The image was kept out of the text-model request to prevent session corruption. ` +
+      `To inspect it, call vision_describe with attachmentIds: ["${id}"] when available, ` +
+      'or use a path-based vision tool. To show a generated image to the user, use vision_present instead of read_image.]',
+  }
+}
+
 export function sanitizeToolResultImages(messages) {
   let anyChanged = false
   const rewritten = (messages ?? []).map((message) => {
     if (!message || !Array.isArray(message.content)) return message
-    const result = rewriteToolResultImages(message.content, (block) => {
-      const attachment = block.attachment || {}
-      const id = attachment.attachmentId || attachment.id || 'unknown'
-      const name = attachment.name || 'tool image'
-      return {
-        type: 'text',
-        text:
-          `[tool result produced image "${name}", attachment id "${id}". ` +
-          `The image was kept out of the text-model request to prevent session corruption. ` +
-          `To inspect it, call vision_describe with attachmentIds: ["${id}"] when available, ` +
-          'or use a path-based vision tool. To show a generated image to the user, use vision_present instead of read_image.]',
-      }
-    })
+    const result = rewriteToolResultImages(message.content, toolImageMarker)
     if (result.changed) anyChanged = true
     return result.changed ? { ...message, content: result.content } : message
   })
   return { messages: anyChanged ? rewritten : (messages ?? []), changed: anyChanged }
+}
+
+/** Recursively freeze a plain structured-clone tree (the session log keeps its
+ * messages deep-frozen; replacements must match). */
+export function deepFreezeLocal(value) {
+  if (value !== null && typeof value === 'object') {
+    for (const key of Object.keys(value)) deepFreezeLocal(value[key])
+    Object.freeze(value)
+  }
+  return value
+}
+
+/**
+ * Build the sanitized, deep-frozen copy of a tool-result message: identical
+ * to the original except that every image block (top-level or nested inside
+ * tool-result content) is replaced with a text marker. Returns the original
+ * message object unchanged when it contains no image.
+ */
+export function sanitizeToolResultMessage(message) {
+  if (!message || !Array.isArray(message.content)) return message
+  const result = rewriteImagesDeep(message.content, toolImageMarker)
+  if (!result.changed) return message
+  const clone = structuredClone(message)
+  clone.content = result.content
+  return deepFreezeLocal(clone)
+}
+
+/**
+ * Plan the shadow replacements that keep tool-produced image blocks out of
+ * the model-visible session surface.
+ *
+ * A tool result (e.g. vision_present, or the host read_image) is persisted as
+ * a durable `tool/result` event whose message nests an image block. The agent
+ * pre-step only sees the inbox claim — never the historical surface — so no
+ * pre-step rewrite can catch these blocks before `Session.deriveMessages()`
+ * feeds them to the adapter, and a text-only adapter then rejects every
+ * subsequent request (issue #74: UNSUPPORTED_CONTENT session lock).
+ *
+ * The harness supports shadowing a surface node with a replacement event that
+ * carries `surfaceOp: {op:'replace', start, end}` + `sourceEventSeqs: [seq]`:
+ * the human transcript keeps rendering the append-origin original (the user
+ * still sees the image), while every later `deriveMessages()` projection sees
+ * the sanitized replacement. This is the same mechanism the host compaction
+ * pruner uses, so it is durable, replayable, and survives session resume.
+ *
+ * This function is pure: it returns the replacement events to append. The
+ * apply() side decides which events to strip (route-aware: an image-capable
+ * route legitimately uses read_image's result image) and performs the append.
+ *
+ * @param events - the session event log array (`session.events`).
+ * @param surfaceNodes - the ordered seqs of the current surface (`session.surface.nodes`).
+ * @param shouldStrip - (seq, event) => boolean; true to plan a replacement.
+ * @returns [{ seq, event, message }] where message is the sanitized frozen
+ * replacement message for the append at `seq`.
+ */
+export function planToolResultImageShadows(events, surfaceNodes, shouldStrip) {
+  const plans = []
+  for (const seq of surfaceNodes ?? []) {
+    const event = events && events[seq]
+    if (!event || event.type !== 'tool/result') continue
+    const message = event.data && event.data.message
+    if (!message || !Array.isArray(message.content) || !blocksHaveImage(message.content)) continue
+    if (typeof shouldStrip !== 'function' || shouldStrip(seq, event) !== true) continue
+    const sanitized = sanitizeToolResultMessage(message)
+    if (sanitized !== message) plans.push({ seq, event, message: sanitized })
+  }
+  return plans
 }
 
 /** Marker text for an image the text-only model cannot see (see vision_describe). */
@@ -445,6 +642,51 @@ export function rewriteImageBlocks(messages) {
     return result.changed ? { ...message, content: result.content } : message
   })
   return { messages: anyChanged ? rewritten : (messages ?? []), attachments }
+}
+
+/**
+ * Collect distinct durable attachment refs from a session event log.
+ *
+ * The event log is the only place that sees every image that entered the
+ * conversation, including host-produced ones such as `read_image` re-uploads,
+ * which are persisted as `tool/result` events and never pass through the
+ * inbox-claim message stream a plugin sees on `agent/pre-step` (issue #72).
+ * Extracting refs here — with full metadata, so `attachments.readImage` can
+ * verify the bytes — is what lets `vision_describe` / the pixel tools resolve
+ * ids the harness announced but the plugin never indexed.
+ *
+ * Handles the same message-producing event types the host surface derives
+ * (`user/message` carries the message directly; `assistant/message` and
+ * `tool/result` nest it under `data.message`) and descends into nested
+ * `tool-result` content exactly like `rewriteImageBlocks`.
+ *
+ * @param events - the session event log (`session.events`), or any array shaped like it.
+ * @returns distinct attachment refs in first-seen order.
+ */
+export function collectEventAttachmentRefs(events) {
+  const refs = []
+  const seen = new Set()
+  for (const event of events ?? []) {
+    if (!event || !event.data) continue
+    let message
+    if (event.type === 'user/message') {
+      message = event.data
+    } else if (event.type === 'assistant/message' || event.type === 'tool/result') {
+      message = event.data.message
+    } else {
+      continue
+    }
+    if (!message || !Array.isArray(message.content)) continue
+    rewriteImagesDeep(message.content, (block) => {
+      const attachment = block && block.attachment
+      if (attachment && attachment.attachmentId && !seen.has(String(attachment.attachmentId))) {
+        seen.add(String(attachment.attachmentId))
+        refs.push(attachment)
+      }
+      return block
+    })
+  }
+  return refs
 }
 
 /** Extract a JSON object/array from model output (tolerates fences and prose). */
@@ -1755,6 +1997,11 @@ export function modelInfoAcceptsImages(info) {
 }
 
 export function apply(ctx, config = {}) {
+  // Route sharp version diagnostics (issue #75) through the harness logger
+  // instead of console.warn, so the warning lands in the server log.
+  registerSharpWarningHook((message) => {
+    ctx.logger?.warn(message)
+  })
   // Live configuration: composition entry at boot, then the resolved settings
   // section once the settings service mounts (installSettingsSection below).
   let current = () => config
@@ -2710,6 +2957,39 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // session id -> event-log length already scanned for attachment refs.
+  // Mirrors sessionAttachmentsById: sessions are long-lived objects, and only
+  // the id string survives a process resume, so the index is keyed by id.
+  const scannedSessionEventSeqs = new Map()
+
+  /**
+   * Index image attachments recorded anywhere in the session event log, not
+   * just in the inbox-claim message stream `agent/pre-step` hands us
+   * (issue #72). Host-produced images (the built-in `read_image` tool's
+   * re-uploads, persisted as `tool/result` events) never enter that stream,
+   * so the harness-announced attachment id stayed unresolvable even though
+   * the UI showed the image and the bytes are durably stored. `session.events`
+   * is the complete append-only log (seeded from storage on resume), so
+   * scanning it — incrementally, per session id — finds every ref with full
+   * metadata for a later `attachments.readImage(ref)`.
+   */
+  const scanSessionEventLog = (session) => {
+    if (!session) return
+    let events
+    try {
+      events = session.events
+    } catch {
+      return // not a host Session (or the getter is unavailable): nothing to scan
+    }
+    if (!Array.isArray(events) || events.length === 0) return
+    const key = session.id !== undefined ? String(session.id) : undefined
+    const last = key !== undefined ? (scannedSessionEventSeqs.get(key) ?? 0) : 0
+    if (last >= events.length) return
+    const refs = collectEventAttachmentRefs(events.slice(last))
+    if (key !== undefined) scannedSessionEventSeqs.set(key, events.length)
+    if (refs.length > 0) recordUploadedAttachments(session, refs)
+  }
+
   const lookupAttachment = (session, id) => {
     const byId = session && session.id !== undefined
       ? sessionAttachmentsById.get(String(session.id))
@@ -2719,7 +2999,163 @@ export function apply(ctx, config = {}) {
       if (hit !== undefined) return hit
     }
     const map = session ? sessionAttachments.get(session) : undefined
-    return map ? map.get(String(id)) : undefined
+    const hit = map ? map.get(String(id)) : undefined
+    if (hit !== undefined) return hit
+    // Miss: fall back to the session event log. Ids announced by the harness
+    // for images it persisted itself (read_image re-uploads) live there even
+    // though they never crossed the inbox-claim stream, so this resolves them
+    // exactly like user-uploaded ids (issue #72). Refs from the log carry
+    // full metadata, so a later attachments.readImage(ref) verifies and
+    // returns the bytes.
+    if (session !== undefined) {
+      scanSessionEventLog(session)
+      const afterById = session.id !== undefined
+        ? sessionAttachmentsById.get(String(session.id))
+        : undefined
+      if (afterById !== undefined) {
+        const after = afterById.get(String(id))
+        if (after !== undefined) return after
+      }
+      const afterMap = sessionAttachments.get(session)
+      const afterHit = afterMap ? afterMap.get(String(id)) : undefined
+      if (afterHit !== undefined) return afterHit
+    }
+    return undefined
+  }
+
+  // ── issue #74: shadow-sanitize tool-result image blocks on the surface ────
+  //
+  // A tool result that renders an image block (vision_present, or the host
+  // read_image on image-capable routes) is persisted as a durable
+  // `tool/result` event and then flows into EVERY later request through
+  // `Session.deriveMessages()`. A text-only adapter (DeepSeek native, pi-ai
+  // text routes) rejects nested images with UNSUPPORTED_CONTENT and the
+  // session is locked forever. The pre-step inbox sanitizer cannot see these
+  // historical events, so the surface itself is rewritten instead: each
+  // offending event is shadowed by a sanitized replacement event
+  // (`surfaceOp: {op:'replace'}`, the same mechanism the host compaction
+  // pruner uses). The Web UI transcript renders append-origin events, so the
+  // user still sees the image; only the model-visible surface is sanitized.
+  // The decision is route-aware: an image-capable route legitimately consumes
+  // read_image's result image, mirroring the host's own gate
+  // (`assertImageCapableRoute` in dsh-tool-fs).
+
+  // session -> { count: nodes examined, done: Set<seqs already decided> }
+  const sessionSurfaceScans = new WeakMap()
+
+  const sessionRouteHandlesImages = async (session) => {
+    let provider
+    let model
+    try {
+      const header = typeof session.requestHeader === 'function' ? session.requestHeader() : undefined
+      provider = header && header.config ? header.config.provider : undefined
+      model = header && header.config ? header.config.model : undefined
+    } catch {
+      return false
+    }
+    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
+      return false
+    }
+    // Plugin-owned routes handle image blocks at their stream boundary: the
+    // wrapper and the provider twins rewrite them into markers/descriptions,
+    // the stealth adapter does the same, and the vision-chain route serves
+    // image-capable models.
+    if (provider === wrapperRoute() || provider === chainRoute() || provider.endsWith('-vision')) {
+      return true
+    }
+    if (stealthActive && provider === 'deepseek-official') return true
+    // Routing mode reverse-routes text-only turns back to the text provider;
+    // when neither the wrapper nor the stealth adapter is there to rewrite
+    // images, the reverse target is the bare text adapter, which rejects
+    // tool-result images. Sanitize so text turns stay usable.
+    if (routingEnabled() && reverseRoutingEnabled() && !wrapperRegistered && !stealthActive) {
+      return false
+    }
+    // Same probe the host uses to gate read_image: only routes whose models
+    // declare image input may keep tool-result images.
+    try {
+      const info = await ctx.llm.resolveModelInfo(provider, model)
+      return Array.isArray(info && info.inputModalities) && info.inputModalities.includes('image')
+    } catch {
+      return false // unknown route: fail safe and sanitize
+    }
+  }
+
+  const sanitizeSessionToolResults = async (session) => {
+    if (!session) return
+    let events
+    let nodes
+    try {
+      events = session.events
+      nodes = session.surface && session.surface.nodes
+    } catch {
+      return // not a host Session: nothing to sanitize
+    }
+    if (!Array.isArray(events) || !Array.isArray(nodes) || nodes.length === 0) return
+    let scan = sessionSurfaceScans.get(session)
+    if (!scan) {
+      scan = { count: 0, done: new Set() }
+      sessionSurfaceScans.set(session, scan)
+    }
+    // Compaction replaces the surface wholesale; a shrunk node list means the
+    // positional cursor is stale, so restart from the head. Kept decisions are
+    // memoized in `done`, so a restart is a cheap no-op for examined events.
+    if (nodes.length < scan.count) {
+      scan.count = 0
+      scan.done = new Set()
+    }
+    if (nodes.length === scan.count) return
+    let routeHandlesImages
+    const newSeqs = nodes.slice(scan.count)
+    for (const seq of newSeqs) {
+      const event = events[seq]
+      if (!event || event.type !== 'tool/result' || scan.done.has(seq)) continue
+      const message = event.data && event.data.message
+      if (!message || !Array.isArray(message.content) || !blocksHaveImage(message.content)) {
+        scan.done.add(seq)
+        continue
+      }
+      if (routeHandlesImages === undefined) {
+        routeHandlesImages = await sessionRouteHandlesImages(session)
+      }
+      if (routeHandlesImages) {
+        // Image-capable route: keep the image (read_image's result is the
+        // model's view of the file). The wrapper/twin/stealth routes rewrite
+        // it at stream time anyway.
+        scan.done.add(seq)
+        continue
+      }
+      const sanitized = sanitizeToolResultMessage(message)
+      if (sanitized === message) {
+        scan.done.add(seq)
+        continue
+      }
+      try {
+        session.append(
+          'tool/result',
+          { ...event.data, message: sanitized },
+          {
+            surfaceOp: { op: 'replace', start: seq, end: seq },
+            sourceEventSeqs: [seq],
+          },
+        )
+        scan.done.add(seq)
+        ctx.logger?.info(
+          'vision-router: sanitized a tool-result image block out of the model surface (event seq %s)',
+          seq,
+        )
+      } catch (error) {
+        // A failed shadow leaves the original event on the surface: the
+        // session stays usable (today's behavior) instead of crashing the
+        // pre-step.
+        ctx.logger?.warn(
+          'vision-router: could not sanitize tool-result image at event seq %s (%s)',
+          seq,
+          error && error.message ? error.message : String(error),
+        )
+      }
+    }
+    scan.count += newSeqs.length
   }
 
   // session -> { turn, startIndex, hasImage, routed, failures, lastError }
@@ -2735,12 +3171,37 @@ export function apply(ctx, config = {}) {
     // sanitized. This preserves attachment lookup for a later vision_describe.
     const rawImageRefs = rewriteImageBlocks(rawMessages)
     recordUploadedAttachments(session, rawImageRefs.attachments)
+    // Also index image attachments that live only in the session event log
+    // (read_image re-uploads never cross the inbox-claim message stream).
+    // Incremental: scans only new events (issue #72).
+    scanSessionEventLog(session)
     // Hard invariant: tool-produced image blocks never reach a model request.
-    // This is deliberately route-agnostic, because merely having a wrapper
-    // registered does not prove that the current request is actually using it.
+    // Two layers: (1) sanitize tool-result images in the inbox claim, and
+    // (2) shadow-sanitize historical tool/result events on the session
+    // surface (issue #74) — the only lever that can rewrite durable history.
     const sanitizedToolResults = sanitizeToolResultImages(rawMessages)
     const messages = sanitizedToolResults.messages
     const hasImage = messages.some((message) => blocksHaveImage(message && message.content))
+    try {
+      await sanitizeSessionToolResults(session)
+    } catch (error) {
+      ctx.logger?.warn(
+        'vision-router: session-surface sanitization failed (%s)',
+        error && error.message ? error.message : String(error),
+      )
+    }
+    // Register the turn state BEFORE the image-turn branches below: those
+    // branches return early (auto-mount reminder, history rewrite), and the
+    // agent/request hook must still see the state, otherwise an image turn is
+    // served by the text provider and rejected (issue #74, second root cause).
+    if (routingEnabled()) {
+      const events = session.events ?? []
+      turnState.set(session, {
+        turn: payload.turn,
+        startIndex: events.length,
+        hasImage,
+      })
+    }
     if (hasImage) {
       // Auto-mount the deep vision tools on image turns: the model can use
       // them from its very first step without the user asking for them.
@@ -2804,14 +3265,6 @@ export function apply(ctx, config = {}) {
       if (cleaned.messages !== base) {
         return { ...decision, messages: cleaned.messages }
       }
-    }
-    if (routingEnabled()) {
-      const events = session.events ?? []
-      turnState.set(session, {
-        turn: payload.turn,
-        startIndex: events.length,
-        hasImage,
-      })
     }
     return sanitizedToolResults.changed ? { ...decision, messages } : decision
   })

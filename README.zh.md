@@ -28,7 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.2.1）**
+> 📌 **公告（v1.2.2）**
+>
+> v1.2.2 现已支持：补上最后一处附件 ID 缺口——宿主 `read_image` 回挂图片公布的 `sha256:…` ID 现在可被 `vision_describe` 与全部像素工具解析（issue #72）；`vision_present` 等工具结果里的图像块不再把文本模型会话锁死在 `UNSUPPORTED_CONTENT`（issue #74，已锁死的历史会话升级后自动修复）；检测到 v1.1.x 升级残留的旧版 sharp 时明确告警，把玄学的 `colourspace` 报错变成一眼可见的修复指引（issue #75）。
 >
 > v1.2.1 加固像素闭环：十一个像素工具可直接接受上传图片的附件 ID（告别 `cannot read …/sha256:…` 的绕路），产物文件名带指纹不再互相覆盖，`vision_ground` 对退化框自动重试，模型引导支持从第 1 步完整重放（先退出设置页），设置卡片在数百模型目录下滚动依然流畅。
 
@@ -337,6 +339,14 @@ pnpm dsh plugin --profile web update dsh-vision-router
 >   config:
 >     # 你的配置…
 > ```
+
+> **从 v1.1.x 升级后像素工具报 `colourspace: parameter space not set`：**
+> 这是 v1.1.0 时代自带的 sharp 0.34.0 残留在 profile 里、与宿主 sharp 0.35.3
+> 同进程 DLL 冲突所致（issue #42 / #75）。删除
+> `~/.dsh/profiles/<profile>/node_modules/sharp` 与
+> `~/.dsh/profiles/<profile>/node_modules/@img` 后重启，或在 profile 目录执行
+> `pnpm install` 重装依赖即可。v1.2.2 起插件会在检测到残留版本时直接告警并
+> 给出同样的指引。
 
 ### 卸载
 

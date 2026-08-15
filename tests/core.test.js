@@ -22,6 +22,13 @@ import {
   rewriteImageBlocks,
   rewriteImagesDeep,
   sanitizeToolResultImages,
+  sanitizeToolResultMessage,
+  planToolResultImageShadows,
+  toolImageMarker,
+  deepFreezeLocal,
+  collectEventAttachmentRefs,
+  parseVersionParts,
+  versionSatisfies,
   renderVisionPresent,
   extractJson,
   createCache,
@@ -2072,4 +2079,174 @@ test('artifactStemOf keeps long content-addressed inputs distinct', () => {
   // Stable for the same input, different for different suffixes.
   assert.equal(artifactStemOf(upload, 'ground'), groundUpload)
   assert.notEqual(artifactStemOf(upload, 'ground'), artifactStemOf(upload, 'detect'))
+})
+
+// ── issue #72: attachment refs from the session event log ───────────────────
+
+const imageRef = (id, name) => ({
+  attachmentId: id,
+  mediaType: 'image/png',
+  bytes: 1234,
+  width: 10,
+  height: 10,
+  name,
+})
+
+test('collectEventAttachmentRefs collects refs from user/assistant/tool-result events', () => {
+  const events = [
+    { seq: 1, type: 'user/message', data: { role: 'user', content: [{ type: 'image', attachment: imageRef('sha256:aaa', 'a.png') }] } },
+    {
+      seq: 2,
+      type: 'assistant/message',
+      data: { message: { role: 'assistant', content: [{ type: 'text', text: 'no image' }] } },
+    },
+    {
+      seq: 3,
+      type: 'tool/result',
+      data: {
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'call-1',
+              content: [
+                { type: 'text', text: 'read output' },
+                { type: 'image', attachment: imageRef('sha256:bbb', 'b.png') },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    { seq: 4, type: 'turn/start', data: { turn: 1 } },
+  ]
+  const refs = collectEventAttachmentRefs(events)
+  assert.deepEqual(
+    refs.map((ref) => ref.attachmentId),
+    ['sha256:aaa', 'sha256:bbb'],
+  )
+  // Full metadata survives so attachments.readImage(ref) can verify bytes.
+  assert.equal(refs[1].mediaType, 'image/png')
+  assert.equal(refs[1].bytes, 1234)
+})
+
+test('collectEventAttachmentRefs dedups by attachment id in first-seen order', () => {
+  const events = [
+    { type: 'user/message', data: { content: [{ type: 'image', attachment: imageRef('sha256:dup', 'a') }] } },
+    { type: 'tool/result', data: { message: { content: [{ type: 'tool-result', content: [{ type: 'image', attachment: imageRef('sha256:dup', 'a') }] }] } } },
+    { type: 'user/message', data: { content: [{ type: 'image', attachment: imageRef('sha256:other', 'b') }] } },
+  ]
+  const refs = collectEventAttachmentRefs(events)
+  assert.deepEqual(refs.map((ref) => ref.attachmentId), ['sha256:dup', 'sha256:other'])
+})
+
+test('collectEventAttachmentRefs tolerates missing events and data', () => {
+  assert.deepEqual(collectEventAttachmentRefs(undefined), [])
+  assert.deepEqual(collectEventAttachmentRefs([null, {}, { type: 'user/message' }, { type: 'tool/result', data: {} }]), [])
+})
+
+// ── issue #74: surface shadow sanitization of tool-result images ────────────
+
+const toolResultEvent = (seq, content, callSeq) => ({
+  seq,
+  type: 'tool/result',
+  data: {
+    turn: 1,
+    step: 1,
+    message: {
+      id: `msg-${seq}`,
+      role: 'user',
+      source: { kind: 'tool', callId: 'call-1' },
+      content: [{ type: 'tool-result', toolCallId: 'call-1', content, isError: false }],
+    },
+  },
+  sourceEventSeqs: callSeq === undefined ? undefined : [callSeq],
+})
+
+test('planToolResultImageShadows plans replacements only for image-bearing tool results', () => {
+  const events = [
+    toolResultEvent(0, [{ type: 'text', text: 'plain' }]),
+    toolResultEvent(1, [
+      { type: 'text', text: '{"safePresentation":true}' },
+      { type: 'image', attachment: imageRef('sha256:show', 'shown.png') },
+    ]),
+    { seq: 2, type: 'user/message', data: { role: 'user', content: [{ type: 'image', attachment: imageRef('sha256:user', 'u.png') }] } },
+    toolResultEvent(3, [{ type: 'text', text: 'another plain one' }]),
+  ]
+  const plans = planToolResultImageShadows(events, [0, 1, 2, 3], (seq, event) => seq === 1)
+  assert.equal(plans.length, 1)
+  assert.equal(plans[0].seq, 1)
+  const message = plans[0].message
+  // The replacement keeps the tool-result envelope and drops the image.
+  assert.equal(message.id, 'msg-1')
+  assert.equal(message.content[0].type, 'tool-result')
+  assert.equal(blocksHaveImage(message.content), false)
+  const texts = message.content[0].content.filter((block) => block.type === 'text').map((block) => block.text)
+  assert.equal(texts.some((text) => text.includes('sha256:show')), true)
+  // The original event is untouched (the caller replaces it by appending).
+  assert.equal(blocksHaveImage(events[1].data.message.content), true)
+})
+
+test('planToolResultImageShadows respects the shouldStrip decision', () => {
+  const events = [toolResultEvent(0, [{ type: 'image', attachment: imageRef('sha256:keep', 'k.png') }])]
+  assert.deepEqual(planToolResultImageShadows(events, [0], () => false), [])
+  assert.equal(planToolResultImageShadows(events, [0], () => true).length, 1)
+})
+
+test('sanitizeToolResultMessage is identity-preserving without images and frozen with them', () => {
+  const plain = toolResultEvent(0, [{ type: 'text', text: 'plain' }]).data.message
+  assert.equal(sanitizeToolResultMessage(plain), plain)
+  const withImage = toolResultEvent(1, [{ type: 'image', attachment: imageRef('sha256:x', 'x.png') }]).data.message
+  const sanitized = sanitizeToolResultMessage(withImage)
+  assert.notEqual(sanitized, withImage)
+  assert.equal(Object.isFrozen(sanitized), true)
+  assert.equal(Object.isFrozen(sanitized.content[0]), true)
+  assert.equal(blocksHaveImage(sanitized.content), false)
+})
+
+test('toolImageMarker names the attachment id and points at vision_describe', () => {
+  const marker = toolImageMarker({ attachment: imageRef('sha256:marker', 'm.png') })
+  assert.equal(marker.type, 'text')
+  assert.match(marker.text, /sha256:marker/)
+  assert.match(marker.text, /vision_describe/)
+})
+
+test('deepFreezeLocal freezes nested structures', () => {
+  const tree = { a: { b: [{ c: 1 }] } }
+  const frozen = deepFreezeLocal(tree)
+  assert.equal(frozen, tree)
+  assert.equal(Object.isFrozen(tree), true)
+  assert.equal(Object.isFrozen(tree.a), true)
+  assert.equal(Object.isFrozen(tree.a.b), true)
+})
+
+// ── issue #75: sharp peer-range diagnostics ─────────────────────────────────
+
+test('parseVersionParts handles releases, partial versions and prereleases', () => {
+  assert.deepEqual(parseVersionParts('0.35.3'), { major: 0, minor: 35, patch: 3, pre: undefined })
+  assert.deepEqual(parseVersionParts('1.2.3-beta.4'), { major: 1, minor: 2, patch: 3, pre: 'beta.4' })
+  // Partial versions pad to zero like semver ("1" means ">=1.0.0").
+  assert.deepEqual(parseVersionParts('1'), { major: 1, minor: 0, patch: 0, pre: undefined })
+  assert.deepEqual(parseVersionParts('1.2'), { major: 1, minor: 2, patch: 0, pre: undefined })
+  assert.equal(parseVersionParts('1.2.3.4'), undefined)
+  assert.equal(parseVersionParts('nonsense'), undefined)
+  assert.equal(parseVersionParts(undefined), undefined)
+})
+
+test('versionSatisfies evaluates the plugin peer range shape', () => {
+  const range = '>=0.35.3 <1'
+  assert.equal(versionSatisfies('0.34.0', range), false) // stale v1.1.x-era sharp
+  assert.equal(versionSatisfies('0.35.2', range), false)
+  assert.equal(versionSatisfies('0.35.3', range), true)
+  assert.equal(versionSatisfies('0.35.4', range), true)
+  assert.equal(versionSatisfies('1.0.0', range), false)
+  // Prereleases of the upper bound still satisfy "<1" (semver ordering).
+  assert.equal(versionSatisfies('1.0.0-beta.1', range), true)
+  // Alternatives and bare versions.
+  assert.equal(versionSatisfies('0.34.5', '>=0.35.3 <1 || 0.34.5'), true)
+  assert.equal(versionSatisfies('0.34.5', '0.34.5'), true)
+  assert.equal(versionSatisfies('0.34.5', ''), false)
+  assert.equal(versionSatisfies('0.34.5', undefined), false)
+  assert.equal(versionSatisfies(undefined, range), false)
 })

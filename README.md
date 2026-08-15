@@ -28,9 +28,11 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.2.1)**
+> 📌 **Announcement (v1.2.2)**
 >
-> v1.2.1 hardens the pixel loop: all eleven pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
+> v1.2.2 closes the last attachment-id gap — ids announced for images the host persisted itself (e.g. `read_image` re-uploads, `sha256:…`) now resolve in `vision_describe` and every pixel tool (issue #72) — stops `vision_present` and other tool-result image blocks from ever locking a text-model session with `UNSUPPORTED_CONTENT` (issue #74; already-locked sessions heal after upgrading), and warns loudly when a stale sharp left over from a pre-v1.2 upgrade would break the pixel tools with `colourspace: parameter space not set` (issue #75).
+>
+> v1.2.1 hardened the pixel loop: all eleven pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -339,6 +341,15 @@ Settings live in the profile's settings provider and survive upgrades.
 >   config:
 >     # your overrides …
 > ```
+
+> **After upgrading from v1.1.x, pixel tools fail with
+> `colourspace: parameter space not set`:** a stale sharp 0.34.0 from the
+> v1.1.0 era still sits in the profile and its libvips DLL conflicts with the
+> host's sharp 0.35.3 in the same process (issues #42 / #75). Delete
+> `~/.dsh/profiles/<profile>/node_modules/sharp` and
+> `~/.dsh/profiles/<profile>/node_modules/@img` and restart, or run
+> `pnpm install` inside the profile. Since v1.2.2 the plugin detects the
+> stale version at runtime and prints the same guidance itself.
 
 ### Uninstall
 

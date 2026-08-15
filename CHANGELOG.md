@@ -3,6 +3,22 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.2.2
+
+### 修复 / Fixed
+
+- **`read_image` 回挂的附件 ID 现在可被解析（#72）**：此前插件只索引 `agent/pre-step` 消息流（inbox claim，仅含用户新消息）里的图片块，宿主 `read_image` 持久化为 `tool/result` 事件的图片永远进不了索引，文本模型拿到会话中公布的 `sha256:…` ID 后调用 `vision_describe(attachmentIds=[…])` 报 `unknown attachment id`。现在索引会增量扫描会话事件日志（`user/message` / `assistant/message` / `tool/result`，含嵌套 tool-result），`lookupAttachment` 未命中时自动回退，跨回合、跨进程恢复均可用。
+- **Attachment ids produced by `read_image` now resolve (#72)**: the plugin used to index only image blocks from the `agent/pre-step` inbox-claim stream, so images the host persisted as `tool/result` events never entered the index and `vision_describe(attachmentIds=[…])` failed with `unknown attachment id`. The index now incrementally scans the session event log, and `lookupAttachment` falls back to that scan on a miss — across turns and across process resumes.
+- **工具结果里的图像块不再锁死文本模型会话（#74）**：`vision_present`（以及任何在工具结果中渲染图像的宿主工具）会把图像块持久化进会话历史，此后每一次请求都带上它，文本适配器以 `UNSUPPORTED_CONTENT` 拒绝，会话永久锁死。现在插件用宿主的表面替换机制（`surfaceOp: replace`，与压缩剪枝同一机制）把这类事件的模型视图替换为文本标记——用户界面仍显示原图（界面渲染 append-origin 事件），只有模型输入被净化；已锁死的历史会话升级后发一条消息即可自愈。净化按路由判断（与宿主 `read_image` 的门禁判定一致）：能直接看图的视觉路由仍正常内联看到 `read_image` 的结果图。同时修复了图片轮自动挂载分支提前 return 导致路由状态未登记、图片请求落到文本模型被拒的问题。
+- **Tool-result image blocks no longer lock text-model sessions (#74)**: `vision_present` (and any host tool that renders an image into its result) persisted the image block into durable history, so every later request carried it and text-only adapters rejected the session forever with `UNSUPPORTED_CONTENT`. The plugin now rewrites the model-visible surface with sanitized replacements (`surfaceOp: replace` — the same mechanism the host compaction pruner uses): the Web UI keeps showing the image (it renders append-origin events), only the model input is sanitized, and already-locked sessions heal on the next message after upgrading. Sanitization is route-aware (mirroring the host's `read_image` gate), so image-capable routes still see `read_image` results inline. Also fixed the image-turn auto-mount branch returning early before the routing state was registered, which sent image requests to the text provider.
+- **检测升级残留的旧版 sharp（#75）**：`loadSharp()` 现在对照 `package.json` 的 `peerDependencies.sharp` 范围校验实际解析到的 sharp 版本，不满足时打印明确告警（残留版本 vs 期望范围 + 清理指引），把 `colourspace: parameter space not set` 这类玄学报错变成一眼可见的修复提示。纯诊断，不改变任何行为。
+- **Stale-sharp detection on upgrade (#75)**: `loadSharp()` now validates the resolved sharp against the `peerDependencies.sharp` range in `package.json` and warns with the stale version, the expected range, and cleanup guidance — turning the cryptic `colourspace: parameter space not set` into an actionable message. Diagnostics only, no behavior change.
+
+### 升级注意 / Upgrade notes
+
+- 从 v1.1.x 升级后若像素工具报 `colourspace: parameter space not set`：删除 profile 内残留的旧 sharp（`node_modules/sharp` 与 `node_modules/@img`）后重启，或在 profile 目录执行 `pnpm install` 重装。全新安装不受影响。
+- If pixel tools report `colourspace: parameter space not set` after upgrading from v1.1.x: delete the stale sharp in the profile (`node_modules/sharp` and `node_modules/@img`) and restart, or run `pnpm install` in the profile. Fresh installs are unaffected.
+
 ## v1.2.1
 
 ### 修复 / Fixed
