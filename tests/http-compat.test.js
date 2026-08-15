@@ -9,7 +9,7 @@ import {
   resolveHttpProviderCompatibility,
   shouldUseMaxCompletionTokens,
 } from '../lib/http-compat.js'
-import { visionDescribeHttpPrompt } from '../lib/entry.js'
+import { callOpenAICompatible, visionDescribePrompt } from '../index.js'
 
 test('GLM-4V-Flash family preset caps output tokens without overriding stricter user values', () => {
   assert.ok(HTTP_PROVIDER_COMPAT_PRESETS.some((preset) => preset.id === 'glm-4v-flash-max-output'))
@@ -62,7 +62,7 @@ test('image-only OpenAI content receives the vision_describe question', () => {
 })
 
 test('structured vision_describe HTTP prompt preserves the JSON evidence contract', () => {
-  const prompt = visionDescribeHttpPrompt({ question: 'Read this UI', json: true })
+  const prompt = visionDescribePrompt('Read this UI', true)
   assert.match(prompt, /^Read this UI\n\n/)
   assert.match(prompt, /Return ONE JSON object/)
   assert.match(prompt, /"summary"/)
@@ -78,6 +78,7 @@ test('max-token limit parser recognizes Zhipu and common English errors', () => 
     parseMaxTokensLimit('max_tokens must be less than or equal to 2048'),
     2048,
   )
+  assert.equal(parseMaxTokensLimit('temperature 参数非法：限制数值范围[0,2]'), undefined)
   assert.equal(parseMaxTokensLimit('unrelated HTTP 400 code 1210'), undefined)
 })
 
@@ -153,6 +154,34 @@ test('compat fetch applies the GLM preset before the first network attempt', asy
   })
 })
 
+test('callOpenAICompatible routes every direct provider through the preset layer', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (_url, init) => {
+    captured = JSON.parse(init.body)
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const text = await callOpenAICompatible(
+      {
+        name: 'glm',
+        baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+        model: 'glm-4v-flash',
+        apiKeyEnv: '',
+      },
+      [{ role: 'user', content: [{ type: 'text', text: 'describe' }] }],
+      { maxTokens: 4096 },
+    )
+    assert.equal(text, 'OK')
+    assert.equal(captured.max_tokens, 1024)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
 test('compat fetch can migrate max_tokens when a server explicitly asks for max_completion_tokens', async () => {
   assert.equal(
     shouldUseMaxCompletionTokens(
@@ -197,7 +226,7 @@ test('compat fetch can migrate max_tokens when a server explicitly asks for max_
   assert.equal(bodies[1].max_completion_tokens, 2048)
 })
 
-test('compat fetch is inert outside vision-router-owned execution context', async () => {
+test('compat fetch is inert when explicitly disabled', async () => {
   let body
   const fakeFetch = async (_input, init) => {
     body = JSON.parse(init.body)
