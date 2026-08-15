@@ -149,7 +149,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 11 个深看工具在图片轮自动挂载（`autoActivateOnImage`）；文字轮可通过 `vision_activate` 或 `/vision-tools` 技能挂载。全部基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
-  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 10 个视觉工具。" />
+  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个视觉工具。" />
 </p>
 
 | 工具 | 作用 | 产物 |
