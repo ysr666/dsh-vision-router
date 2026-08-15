@@ -9,9 +9,9 @@
   },
   "homepage": "https://github.com/ysr666/dsh-vision-router",
   "type": "module",
-  "main": "lib/entry.js",
+  "main": "index.js",
   "exports": {
-    ".": "./lib/entry.js",
+    ".": "./index.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
