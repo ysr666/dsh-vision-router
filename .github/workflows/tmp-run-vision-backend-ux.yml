@@ -20,7 +20,17 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
       - name: Apply patch
-        run: python .github/scripts/apply-vision-backend-ux.py
+        run: |
+          python .github/scripts/apply-vision-backend-ux.py
+          node <<'NODE'
+          const fs = require('fs')
+          const path = 'index.js'
+          let text = fs.readFileSync(path, 'utf8')
+          const old = "  if (!allowDefault) return configured\n  const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))"
+          const next = "  if (!allowDefault) return configured\n  if (configured.length === 0) return DEFAULT_HTTP_PROVIDERS\n  const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))"
+          if (!text.includes(old)) throw new Error('httpProvidersOf compatibility insertion point missing')
+          fs.writeFileSync(path, text.replace(old, next))
+          NODE
       - name: Sanity checks
         run: |
           node --check index.js
