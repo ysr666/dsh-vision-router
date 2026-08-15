@@ -28,7 +28,6 @@
 > v1.2.0 closes the loop on zero-config vision: the lower-right chat picker only selects conversation models, settings only select user vision models, internal `Vision HTTP` is hidden, and a five-model anonymous OVH chain remains the final no-signup/no-key fallback. It also adds the three-step model guide, durable inline `vision_present` images, BOM doctor/repair, resilient update checks/safe updates, and fixes image tool results poisoning text-only DeepSeek histories.
 
 <p align="center">
-  <img src="assets/vision-demo.gif"<p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
 </p>
 
@@ -126,9 +125,9 @@ The built-in anonymous OVH vision fallback is already configured, so normal imag
 
 ### Pixel loop in practice
 
-<p align="center">
-  <img src="assets/pixel-loop.png" width="100%" alt="Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference." />
-</p>
+[![Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference.](assets/pixel-loop.png)](assets/pixel-loop.png)
+
+<p align="center"><sub>Click the image to open the full-resolution original.</sub></p>
 
 The agent rebuilt the UI from the reference image, then verified the final result with `vision_pixel_diff`: **2.54% final diff** (32,939 / 1,296,000 differing pixels, threshold 16/channel).
 

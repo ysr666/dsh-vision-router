@@ -28,7 +28,6 @@
 > v1.2.0 把“开箱即用”这条链路完整收口：聊天页右下角只选会话模型，设置页只选用户视觉模型，内部 `Vision HTTP` 不再暴露；内置 5 模型 OVH 匿名免费链固定在最后兜底，免注册、免 Key。新增三步模型引导、`vision_present` 持久内联图片、BOM doctor/repair、版本检查/安全更新，并修复图片工具结果污染纯文本 DeepSeek 历史导致后续对话崩溃的问题。
 
 <p align="center">
-  <img src="assets/vision-demo.gif"<p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
 </p>
 
@@ -126,9 +125,9 @@ opencode-go + 自动识图       ← 发图片时选这个
 
 ### 像素闭环实测
 
-<p align="center">
-  <img src="assets/pixel-loop-zh.png" width="100%" alt="参考设计与 Agent 最终复刻，通过 vision_pixel_diff 实测最终差异为 2.54%。" />
-</p>
+[![参考设计与 Agent 最终复刻，通过 vision_pixel_diff 实测最终差异为 2.54%。](assets/pixel-loop-zh.png)](assets/pixel-loop-zh.png)
+
+<p align="center"><sub>点击图片可查看完整原图。</sub></p>
 
 Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结果：**最终差异 2.54%**（32,939 / 1,296,000 个差异像素，threshold 16/channel）。
 
