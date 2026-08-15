@@ -801,7 +801,10 @@ export function describeStructuredInstruction(question) {
 
 /** Shared vision_describe prompt for adapter and direct-HTTP paths. */
 export function visionDescribePrompt(question, wantJson = false) {
-  const text = String(question ?? '')
+  const raw = String(question ?? '').trim()
+  const text = raw === ''
+    ? 'Describe the image accurately and answer based only on visible content.'
+    : raw
   return wantJson ? text + '\n\n' + describeStructuredInstruction(text) : text
 }
 
