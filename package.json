@@ -47,10 +47,15 @@
     "@deepseek-ai/schemastery": ">=3.18.0",
     "potrace": "^2.1.8",
     "puppeteer-core": "^25.6.0",
-    "sharp": "^0.34.0",
     "undici": ">=6.15.0",
     "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6"
+  },
+  "peerDependencies": {
+    "sharp": ">=0.35.3 <1"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.3"
   },
   "scripts": {
     "test": "node --test tests/core.test.js tests/client.test.js"
