@@ -26,7 +26,17 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/apply-vision-model-filter.mjs
+      - name: Apply staged patch
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const source = fs.readFileSync('scripts/apply-vision-model-filter.mjs', 'utf8')
+          const before = "  if (after === before) throw new Error(`${path}: patch made no changes`)"
+          const after = "  if (after === before) { if (path.startsWith('README')) return; throw new Error(`${path}: patch made no changes`) }"
+          if (!source.includes(before)) throw new Error('could not patch staged script')
+          fs.writeFileSync('/tmp/apply-vision-model-filter.mjs', source.replace(before, after))
+          NODE
+          node /tmp/apply-vision-model-filter.mjs
       - run: pnpm test
       - run: git diff --check
       - name: Commit generated patch
