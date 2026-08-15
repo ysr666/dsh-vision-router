@@ -280,6 +280,27 @@ pnpm dsh plugin --profile web update dsh-vision-router
 
 Settings live in the profile's settings provider and survive upgrades.
 
+> **Upgrading from a pre-bundle-patch install (v0.x):** the package now mounts
+> itself through its own bundle patch, so a leftover manual row in
+> `~/.dsh/profiles/<profile>/cordis.patch.yml` duplicates it and `dsh web`
+> fails at startup with `duplicate loader entry id: vision-router`. Delete the
+> old block:
+>
+> ```yaml
+> - insert:            # remove this whole block
+>     - id: vision-router
+>       name: dsh-vision-router
+> ```
+>
+> To keep custom settings, replace it with a plain by-id override (no
+> `insert`):
+>
+> ```yaml
+> - id: vision-router
+>   config:
+>     # your overrides …
+> ```
+
 ### Uninstall
 
 ```sh

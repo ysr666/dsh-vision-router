@@ -280,6 +280,25 @@ pnpm dsh plugin --profile web update dsh-vision-router
 
 设置存放在 profile 的设置提供方里，升级不丢失。
 
+> **从 bundle 补丁之前（v0.x）升级：** 现在插件由自带的 bundle 补丁自动挂载，
+> 若 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里还残留旧版手动行，会与之
+> 重复，`dsh web` 启动即报 `duplicate loader entry id: vision-router`。删除
+> 旧块：
+>
+> ```yaml
+> - insert:            # 删除整块
+>     - id: vision-router
+>       name: dsh-vision-router
+> ```
+>
+> 若要保留自定义配置，改为不带 insert 的按 id 覆盖行：
+>
+> ```yaml
+> - id: vision-router
+>   config:
+>     # 你的配置…
+> ```
+
 ### 卸载
 
 ```sh
