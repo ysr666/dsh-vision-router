@@ -1543,6 +1543,49 @@ test('auto-wrap also exposes a twin for an already image-capable GLM model', asy
   for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
 })
 
+test('native multimodal twin preserves original image blocks instead of forcing tool conversion', async () => {
+  const { ctx, adapters } = mockHarnessCtx()
+  const glm = {
+    providerInfo: (p) => ({ id: p, name: 'Zhipu GLM' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', inputModalities: ['text', 'image'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text', 'image'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['zhipu'], glm)
+  apply(ctx, Config({ autoWrapProviders: true }))
+  const twin = adapters.get('zhipu-vision')
+  assert.ok(twin)
+
+  let delegateCall
+  ctx.llm.stream = async function* (options) {
+    delegateCall = options
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'glm-img', name: 'glm.png' } },
+        { type: 'text', text: '直接看看这张图' },
+      ],
+    },
+  ]
+  for await (const _c of twin.stream({ provider: 'zhipu-vision', model: 'glm-4.6v-flash', messages })) {
+    /* drain */
+  }
+  assert.equal(delegateCall.provider, 'zhipu')
+  assert.strictEqual(delegateCall.messages, messages)
+  assert.equal(delegateCall.messages[0].content.filter((b) => b.type === 'image').length, 1)
+  assert.equal(delegateCall.messages[0].content[0].attachment.attachmentId, 'glm-img')
+})
+
 test('twin sync is idempotent across llm/adapters-updated events', async () => {
   const { ctx, adapters, captured } = mockHarnessCtx()
   apply(ctx, Config({ wrappedProviders: [{ provider: 'opencode-go', models: [] }] }))
