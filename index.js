@@ -29,6 +29,7 @@ import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
 
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
@@ -798,6 +799,12 @@ export function describeStructuredInstruction(question) {
   )
 }
 
+/** Shared vision_describe prompt for adapter and direct-HTTP paths. */
+export function visionDescribePrompt(question, wantJson = false) {
+  const text = String(question ?? '')
+  return wantJson ? text + '\n\n' + describeStructuredInstruction(text) : text
+}
+
 /**
  * Normalize a vision_detect model answer into the canonical shape, clamping
  * every box into the image bounds. Returns undefined when the JSON is not a
@@ -1372,12 +1379,17 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   }
   const url = `${provider.baseURL.replace(/\/$/, '')}/chat/completions`
   const request = () =>
-    fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    })
+    fetchWithOpenAICompatibility(
+      fetch,
+      url,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      },
+      { active: true, providerName: provider.name },
+    )
   let retried = false
   for (;;) {
     const response = await request()
@@ -2923,12 +2935,9 @@ export function apply(ctx, config = {}) {
 
         const question = String(args.question ?? '')
         const wantJson = args.json === true
-        // Structured JSON mode: a fixed evidence contract (summary + reading-
-        // order layout regions + entity inventory + verbatim transcription)
-        // instead of a free-form JSON the model invents on the fly.
-        const jsonInstruction = wantJson
-          ? '\n\n' + describeStructuredInstruction(question)
-          : ''
+        // Keep the adapter path and direct OpenAI-compatible HTTP path on the
+        // exact same prompt, including the structured JSON evidence contract.
+        const promptText = visionDescribePrompt(question, wantJson)
         const usablePairs = await resolveToolVisionPairs()
         const rejectedPairs = []
         for (const pair of pairs()) {
@@ -2959,7 +2968,7 @@ export function apply(ctx, config = {}) {
         const baseMessages = [
           {
             role: 'user',
-            content: [...blocks, { type: 'text', text: question + jsonInstruction }],
+            content: [...blocks, { type: 'text', text: promptText }],
             source: { kind: 'plugin', plugin: 'dsh-vision-router' },
           },
         ]
@@ -3040,14 +3049,20 @@ export function apply(ctx, config = {}) {
                 openAIBlocks.push({ type: 'text', text: block.text })
               }
             }
+            // Direct HTTP providers must receive the same image + question as
+            // adapter-backed providers. Some endpoints (e.g. Zhipu GLM) reject
+            // a pure-image user message even when permissive endpoints accept it.
+            const openAIBaseMessages = appendPromptToImageOnlyMessage(
+              [{ role: 'user', content: openAIBlocks }],
+              promptText,
+            ).messages
             const askHttp = async (correction) => {
-              const content = correction === undefined ? openAIBlocks : [{ type: 'text', text: correction }]
               const answer = await callOpenAICompatible(
                 provider,
                 correction === undefined
-                  ? [{ role: 'user', content }]
+                  ? openAIBaseMessages
                   : [
-                      { role: 'user', content: openAIBlocks },
+                      ...openAIBaseMessages,
                       { role: 'user', content: [{ type: 'text', text: correction }] },
                     ],
                 { maxTokens: provider.maxTokens ?? 4096, signal, resolveCredential },
