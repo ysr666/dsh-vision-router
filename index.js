@@ -333,9 +333,9 @@ export function sanitizeToolResultImages(messages) {
       return {
         type: 'text',
         text:
-          `[tool result produced image “${name}”, attachment id “${id}”. ` +
+          `[tool result produced image "${name}", attachment id "${id}". ` +
           `The image was kept out of the text-model request to prevent session corruption. ` +
-          `To inspect it, call vision_describe with attachmentIds: [“${id}”] when available, ` +
+          `To inspect it, call vision_describe with attachmentIds: ["${id}"] when available, ` +
           'or use a path-based vision tool. To show a generated image to the user, use vision_present instead of read_image.]',
       }
     })
@@ -2461,6 +2461,10 @@ export function apply(ctx, config = {}) {
     const session = payload.agent && payload.agent.session
     if (!session) return decision
     const rawMessages = decision.messages ?? payload.messages ?? []
+    // Record every raw image reference before nested tool-result images are
+    // sanitized. This preserves attachment lookup for a later vision_describe.
+    const rawImageRefs = rewriteImageBlocks(rawMessages)
+    recordUploadedAttachments(session, rawImageRefs.attachments)
     // Hard invariant: tool-produced image blocks never reach a model request.
     // This is deliberately route-agnostic, because merely having a wrapper
     // registered does not prove that the current request is actually using it.
@@ -2468,8 +2472,6 @@ export function apply(ctx, config = {}) {
     const messages = sanitizedToolResults.messages
     const hasImage = messages.some((message) => blocksHaveImage(message && message.content))
     if (hasImage) {
-      const rewrite = rewriteImageBlocks(messages)
-      recordUploadedAttachments(session, rewrite.attachments)
       // Auto-mount the deep vision tools on image turns: the model can use
       // them from its very first step without the user asking for them.
       if (toolEnabled() && current().autoActivateOnImage !== false) {
