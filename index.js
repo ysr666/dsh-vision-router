@@ -18,7 +18,6 @@
 
 import { ProxyAgent } from 'undici'
 import z from '@deepseek-ai/schemastery'
-import sharp from 'sharp'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
@@ -33,6 +32,30 @@ import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './
 import { createCachedUpdateChecker } from './lib/update-check.js'
 import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './lib/self-update.js'
 import { randomBytes } from 'node:crypto'
+
+// sharp is a native module with platform-specific prebuilt binaries. It used
+// to be imported statically, so a missing, broken, or conflicting install
+// (e.g. a second sharp version alongside the harness's own) would throw at
+// module load and could take the whole `dsh web` profile down at boot. Load it
+// lazily and cache the resolved factory so a sharp failure degrades only the
+// pixel-level tools — the routing chain and text tools keep working.
+let sharpPromise
+function loadSharp() {
+  if (!sharpPromise) {
+    sharpPromise = import('sharp')
+      .then((mod) => mod.default ?? mod)
+      .catch((cause) => {
+        sharpPromise = undefined // allow a retry after the environment is repaired
+        const error = new Error(
+          'dsh-vision-router: the sharp image library is unavailable, so the pixel-level ' +
+            'vision tools are disabled. Reinstall the plugin dependencies (or run the doctor) to restore them.',
+        )
+        error.cause = cause
+        throw error
+      })
+  }
+  return sharpPromise
+}
 
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
@@ -722,6 +745,7 @@ export function boxToSvg(box, width, height) {
 
 /** Draw one red pixel box onto an image buffer via sharp. */
 export async function annotateBoxBuffer(bytes, box) {
+  const sharp = await loadSharp()
   const image = sharp(bytes, { failOn: 'none' })
   const meta = await image.metadata()
   const width = meta.width ?? box.x2
@@ -759,6 +783,7 @@ export function boxesToSvg(boxes, width, height) {
 
 /** Draw numbered boxes for a detected-element inventory onto an image buffer. */
 export async function annotateBoxesBuffer(bytes, boxes) {
+  const sharp = await loadSharp()
   const image = sharp(bytes, { failOn: 'none' })
   const meta = await image.metadata()
   const width = meta.width ?? 0
@@ -1286,6 +1311,7 @@ export function chromiumCandidates(env = {}, platform = typeof process !== 'unde
 /** Downscale bytes whose intrinsic pixel count exceeds maxPixels; returns original bytes on failure. */
 export async function downscaleImage(bytes, maxPixels) {
   try {
+    const sharp = await loadSharp()
     const image = sharp(bytes, { failOn: 'none' })
     const meta = await image.metadata()
     if (!meta.width || !meta.height) return bytes
@@ -3154,6 +3180,7 @@ export function apply(ctx, config = {}) {
     }
 
     const imageDims = async (bytes) => {
+      const sharp = await loadSharp()
       const meta = await sharp(bytes, { failOn: 'none' }).metadata()
       return { width: meta.width ?? 0, height: meta.height ?? 0 }
     }
@@ -3417,6 +3444,7 @@ export function apply(ctx, config = {}) {
         if (box.x2 > width || box.y2 > height) {
           throw new Error(`vision_crop: region exceeds image bounds (${width}x${height})`)
         }
+        const sharp = await loadSharp()
         const cropped = await sharp(bytes, { failOn: 'none' })
           .extract({ left: box.x1, top: box.y1, width: box.x2 - box.x1, height: box.y2 - box.y1 })
           .png()
@@ -3459,6 +3487,7 @@ export function apply(ctx, config = {}) {
           throw new Error('vision_present: the durable attachment service is not available in this deployment')
         }
         const { bytes } = await readImageBytes(args.image)
+        const sharp = await loadSharp()
         const png = await sharp(bytes, { failOn: 'none' }).png().toBuffer()
         const label =
           typeof args.label === 'string' && args.label.trim() !== '' ? args.label.trim().slice(0, 200) : 'image'
@@ -3507,6 +3536,7 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         const { bytes: originalBytes } = await readImageBytes(args.original)
         const { bytes: rebuiltBytes } = await readImageBytes(args.rebuilt)
+        const sharp = await loadSharp()
         const meta = await sharp(originalBytes, { failOn: 'none' }).metadata()
         const width = meta.width ?? 0
         const height = meta.height ?? 0
@@ -3571,6 +3601,7 @@ export function apply(ctx, config = {}) {
       async execute(args) {
         const { bytes } = await readImageBytes(args.image)
         const top = Number.isInteger(args.top) && args.top > 0 ? args.top : 8
+        const sharp = await loadSharp()
         const raw = await sharp(bytes, { failOn: 'none' })
           .resize(64, 64, { fit: 'inside' })
           .ensureAlpha()
@@ -3648,6 +3679,7 @@ export function apply(ctx, config = {}) {
       output: stringOutput,
       async execute(args, exec) {
         const { bytes, mediaType } = await readImageBytes(args.image)
+        const sharp = await loadSharp()
         const meta = await sharp(bytes, { failOn: 'none' }).metadata()
         const width = meta.width ?? 0
         const height = meta.height ?? 0
@@ -3797,6 +3829,7 @@ export function apply(ctx, config = {}) {
         let colorCount = 0
         try {
           if (colorMode) {
+            const sharp = await loadSharp()
             const colors = Number.isInteger(args.colors) && args.colors > 0 ? Math.min(args.colors, 16) : 8
             const raw = await sharp(traceBytes, { failOn: 'none' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
             const palette = quantizeColors(raw.data, colors)
@@ -3843,6 +3876,7 @@ export function apply(ctx, config = {}) {
           fgBytes = await downscaleImage(bytes, downscaleMaxPixels())
         }
         const tolerance = Number.isFinite(args.tolerance) && args.tolerance >= 0 ? Math.round(args.tolerance) : 40
+        const sharp = await loadSharp()
         const { data, info } = await sharp(fgBytes, { failOn: 'none' })
           .ensureAlpha()
           .raw()
