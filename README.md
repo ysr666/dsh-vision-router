@@ -130,7 +130,7 @@ The built-in anonymous OVH vision fallback is already configured, so normal imag
 
 ### Pixel loop in practice
 
-[![Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference.](assets/pixel-loop.png)](assets/pixel-loop.png)
+[![Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference.](https://raw.githubusercontent.com/ysr666/dsh-vision-router/main/assets/pixel-loop.png)](https://raw.githubusercontent.com/ysr666/dsh-vision-router/main/assets/pixel-loop.png)
 
 <p align="center"><sub>Click the image to open the full-resolution original.</sub></p>
 
