@@ -20,6 +20,8 @@
 
 <p align="center"><a href="README.md">English</a> · 中文</p>
 
+<p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
+
 > [!WARNING]
 > 📌 **公告（v1.2.0）**
 >

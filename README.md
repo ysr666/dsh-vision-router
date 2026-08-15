@@ -20,6 +20,8 @@
 
 <p align="center">English · <a href="README.zh.md">中文</a></p>
 
+<p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
+
 > [!WARNING]
 > 📌 **Announcement (v1.2.0)**
 >
