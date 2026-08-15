@@ -1,0 +1,51 @@
+name: Temporary add QQ group to README
+
+on:
+  push:
+    branches:
+      - docs/qq-group
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: docs/qq-group
+      - name: Add QQ group to both READMEs
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+          const changes = [
+            {
+              file: 'README.zh.md',
+              marker: '<p align="center"><a href="README.md">English</a> · 中文</p>',
+              insert: '<p align="center"><a href="README.md">English</a> · 中文</p>\n\n<p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>',
+            },
+            {
+              file: 'README.md',
+              marker: '<p align="center">English · <a href="README.zh.md">中文</a></p>',
+              insert: '<p align="center">English · <a href="README.zh.md">中文</a></p>\n\n<p align="center">💬 <strong>QQ community group: 1105463028</strong></p>',
+            },
+          ]
+          for (const { file, marker, insert } of changes) {
+            let text = fs.readFileSync(file, 'utf8')
+            if (text.includes('1105463028')) continue
+            if (!text.includes(marker)) throw new Error(`${file}: language marker not found`)
+            text = text.replace(marker, insert)
+            fs.writeFileSync(file, text)
+          }
+          NODE
+          rm .github/workflows/tmp-add-qq-group.yml
+      - name: Commit README update
+        shell: bash
+        run: |
+          git config user.name "Shirui"
+          git config user.email "77105194+ysr666@users.noreply.github.com"
+          git add README.md README.zh.md .github/workflows/tmp-add-qq-group.yml
+          git commit -m "docs: add QQ user community group"
+          git push origin HEAD:docs/qq-group
