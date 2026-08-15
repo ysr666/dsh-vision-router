@@ -48,7 +48,7 @@ export const DEFAULT_PROXY_HOSTS = [
 
 export const Config = z.object({
   provider: z.string().default('vision-http'),
-  model: z.string().default('ovh/Qwen2.5-VL-72B-Instruct'),
+  model: z.string().default('ovh/Qwen3.5-397B-A17B'),
   fallbacks: z.array(z.string()).default([]),
   // 默认预置内置免费端点为第一行（与运行时兜底一致）：新用户在卡片里
   // 直接看到「vision-http / ovh/Qwen2.5-VL-72B-Instruct（内置免费模型）」
@@ -61,7 +61,7 @@ export const Config = z.object({
         fallbacks: z.array(z.string()).default([]),
       }),
     )
-    .default([{ provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] }]),
+    .default([{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }]),
   // 默认关闭：图片轮不整轮切到视觉模型，而是像普通文本轮一样由会话模型
   // 调用视觉工具看图（可连续多步操作）。开启后恢复旧的整轮自动路由行为。
   routing: z.boolean().default(false),
@@ -210,7 +210,7 @@ export function providersOf(config = {}) {
   for (const fallback of config.fallbacks ?? []) {
     if (typeof fallback === 'string' && fallback !== '') models.push(fallback)
   }
-  if (models.length === 0) models.push('ovh/Qwen2.5-VL-72B-Instruct')
+  if (models.length === 0) models.push('ovh/Qwen3.5-397B-A17B')
   return models.map((model) => ({ provider, model }))
 }
 
@@ -1294,13 +1294,14 @@ export async function downscaleImage(bytes, maxPixels) {
  * registration-free vision endpoint (2 requests/min/IP, best-effort).
  */
 export const DEFAULT_HTTP_PROVIDERS = [
-  {
-    name: 'ovh',
-    baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
-    model: 'Qwen2.5-VL-72B-Instruct',
-    apiKeyEnv: '',
-    maxTokens: 4096,
-  },
+  // OVHcloud anonymous quota is per IP AND per model. Keep the free chain
+  // ordered largest -> smallest so quality wins first. A 429 on one model can
+  // immediately fall through to the next model's independent anonymous bucket.
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.5-397B-A17B', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen2.5-VL-72B-Instruct', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.6-27B', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Mistral-Small-3.2-24B-Instruct-2506', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.5-9B', apiKeyEnv: '', maxTokens: 4096 },
 ]
 
 export function httpProvidersOf(config, allowDefault = true) {
@@ -1380,8 +1381,16 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   let retried = false
   for (;;) {
     const response = await request()
-    // Free endpoints are heavily rate limited (e.g. OVHcloud anonymous:
-    // 2 req/min/IP). Honor Retry-After once (capped), then surface the 429.
+    // OVH anonymous quota is per model. Surface its 429 immediately so
+    // the outer vision fallback can use the next model's independent bucket
+    // instead of blocking the agent for 30-60 seconds.
+    const anonymousOvh =
+      apiKeyEnv === '' && /(?:^|\.)ai\.cloud\.ovh\.net$/i.test(new URL(provider.baseURL).hostname)
+    if (response.status === 429 && anonymousOvh) {
+      const detail = (await response.text().catch(() => '')).slice(0, 300)
+      throw new Error(`http provider "${provider.name}": 429 ${detail}`)
+    }
+    // Other HTTP providers retain the existing one-shot Retry-After behavior.
     if (response.status === 429 && !retried) {
       retried = true
       const retryAfter = Number(response.headers.get('retry-after'))
@@ -1661,6 +1670,11 @@ export function createStealthAdapter(ctx, { native, imageMemory, pairs, chainRou
   }
 }
 
+/** True only when exact model metadata explicitly declares image input. */
+export function modelInfoAcceptsImages(info) {
+  return Array.isArray(info && info.inputModalities) && info.inputModalities.includes('image')
+}
+
 export function apply(ctx, config = {}) {
   // Live configuration: composition entry at boot, then the resolved settings
   // section once the settings service mounts (installSettingsSection below).
@@ -1713,8 +1727,31 @@ export function apply(ctx, config = {}) {
     Number.isFinite(config.cacheMaxEntries) ? config.cacheMaxEntries : 200,
     (Number.isFinite(config.cacheTtlSeconds) ? config.cacheTtlSeconds : 3600) * 1000,
   )
-  const httpProviders = () =>
-    dedupeHttpProviders(pairs(), httpProvidersOf(current(), current().freeFallback !== false))
+  const httpProviders = () => {
+    const raw = httpProvidersOf(current(), current().freeFallback !== false)
+    // A vision-http config row picks the preferred direct HTTP model. Keep the
+    // other built-in OVH models behind it instead of deleting the selected
+    // model from the direct fallback chain.
+    const preferredIds = pairs()
+      .filter((pair) => pair && pair.provider === 'vision-http')
+      .map((pair) => pair.model)
+    const preferred = []
+    const rest = []
+    for (const provider of raw) {
+      const id = `${provider.name}/${provider.model}`
+      if (preferredIds.includes(id)) preferred.push(provider)
+      else rest.push(provider)
+    }
+    preferred.sort(
+      (a, b) =>
+        preferredIds.indexOf(`${a.name}/${a.model}`) -
+        preferredIds.indexOf(`${b.name}/${b.model}`),
+    )
+    return dedupeHttpProviders(
+      pairs().filter((pair) => pair && pair.provider !== 'vision-http'),
+      [...preferred, ...rest],
+    )
+  }
   const resolveCredential = async (ref) => {
     const credentials = ctx.get('credentials')
     if (credentials === undefined) return undefined
@@ -2234,6 +2271,110 @@ export function apply(ctx, config = {}) {
   syncTwins()
   ctx.on('llm/adapters-updated', syncTwins)
 
+  // A generated + 自动识图 route is an admission/tool wrapper, not a real
+  // vision backend. Never offer it as an eye model or recurse into it from
+  // vision_describe. The built-in vision-http route is the deliberate
+  // exception: it is a real image-capable backend implemented by this plugin.
+  const isGeneratedVisionWrapperRoute = (provider) => {
+    if (provider === wrapperRoute() || provider === chainRoute()) return true
+    if (typeof provider !== 'string' || !provider.endsWith('-vision')) return false
+    return twinHandles.has(provider.slice(0, -'-vision'.length))
+  }
+
+  const resolveVisionBackendCapability = async (provider, model) => {
+    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
+      return { image: false, inputModalities: [], reason: 'missing provider/model' }
+    }
+    if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) {
+      return { image: false, inputModalities: [], reason: 'generated auto-vision wrapper, not a vision backend' }
+    }
+    if (!adapterAvailable(ctx.llm, provider)) {
+      return { image: false, inputModalities: [], reason: 'provider adapter is not registered' }
+    }
+    try {
+      const info = await ctx.llm.resolveModelInfo(provider, model)
+      const inputModalities = Array.isArray(info && info.inputModalities)
+        ? info.inputModalities.filter((item) => typeof item === 'string')
+        : []
+      return {
+        image: modelInfoAcceptsImages(info),
+        inputModalities,
+        reason: modelInfoAcceptsImages(info) ? undefined : 'model metadata does not declare image input',
+      }
+    } catch (error) {
+      return {
+        image: false,
+        inputModalities: [],
+        reason: error && error.message ? error.message : String(error),
+      }
+    }
+  }
+
+  const collectVisionBackendCapabilities = async () => {
+    const capabilities = {}
+    if (typeof ctx.llm.listProviders !== 'function') return capabilities
+    let providers = []
+    try {
+      providers = ctx.llm.listProviders()
+    } catch {
+      return capabilities
+    }
+    for (const entry of providers) {
+      const provider = entry && typeof entry.id === 'string' ? entry.id : ''
+      if (provider === '') continue
+      if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) continue
+      let listed = []
+      try {
+        const registration = ctx.llm.registration(provider)
+        const adapter = registration && registration.adapter
+        if (!adapter || typeof adapter.listModels !== 'function') continue
+        listed = await adapter.listModels(provider)
+      } catch {
+        continue
+      }
+      const rows = await Promise.all(
+        (Array.isArray(listed) ? listed : [])
+          .filter((model) => model && typeof model.id === 'string' && model.id !== '')
+          .map(async (model) => [model.id, await resolveVisionBackendCapability(provider, model.id)]),
+      )
+      if (rows.length > 0) capabilities[provider] = Object.fromEntries(rows)
+    }
+    return capabilities
+  }
+
+
+  // Build the tool-side adapter chain from real image-capable models already
+  // registered in DSH. Explicit non-HTTP backend rows keep their configured
+  // order, then any other native multimodal models are appended. Generated
+  // + 自动识图 wrappers and plugin-owned routes are not real visual backends;
+  // direct HTTP/OVH remains the final fallback layer.
+  const resolveToolVisionPairs = async () => {
+    const out = []
+    const seen = new Set()
+    const add = (provider, model) => {
+      const key = `${provider}/${model}`
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({ provider, model })
+    }
+
+    for (const pair of pairs()) {
+      if (!pair || pair.provider === HTTP_ROUTE) continue
+      if (!adapterAvailable(ctx.llm, pair.provider)) continue
+      const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+      if (capability.image) add(pair.provider, pair.model)
+    }
+
+    const capabilities = await collectVisionBackendCapabilities()
+    for (const [provider, models] of Object.entries(capabilities)) {
+      if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
+      for (const [model, capability] of Object.entries(models ?? {})) {
+        if (capability && capability.image) add(provider, model)
+      }
+    }
+    return out
+  }
+
   // ── vision chain route: fallback under our own control ─────────────────────
   //
   // The agent-loop's request-error retry is owned by dsh-llm-retry, which sits
@@ -2250,12 +2391,18 @@ export function apply(ctx, config = {}) {
         return undefined
       },
       async listModels() {
-        return pairs().map((pair) => ({
-          provider: chainRoute(),
-          id: `${pair.provider}/${pair.model}`,
-          name: `${pair.provider}/${pair.model}`,
-          inputModalities: ['text', 'image'],
-        }))
+        const entries = []
+        for (const pair of pairs()) {
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (!capability.image) continue
+          entries.push({
+            provider: chainRoute(),
+            id: `${pair.provider}/${pair.model}`,
+            name: `${pair.provider}/${pair.model}`,
+            inputModalities: ['text', 'image'],
+          })
+        }
+        return entries
       },
       async resolveModel(provider, model) {
         return {
@@ -2304,6 +2451,19 @@ export function apply(ctx, config = {}) {
               'vision-router: chain skips %s/%s (no adapter)',
               pair.provider,
               pair.model,
+            )
+            continue
+          }
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (!capability.image) {
+            failures.push(
+              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+            )
+            ctx.logger?.warn(
+              'vision-router: chain skips %s/%s (not image-capable: %s)',
+              pair.provider,
+              pair.model,
+              capability.reason ?? 'unknown capability',
             )
             continue
           }
@@ -2769,9 +2929,23 @@ export function apply(ctx, config = {}) {
         const jsonInstruction = wantJson
           ? '\n\n' + describeStructuredInstruction(question)
           : ''
-        const usablePairs = pairs().filter((pair) => adapterAvailable(ctx.llm, pair.provider))
+        const usablePairs = await resolveToolVisionPairs()
+        const rejectedPairs = []
+        for (const pair of pairs()) {
+          if (!pair || pair.provider === HTTP_ROUTE) continue
+          if (!adapterAvailable(ctx.llm, pair.provider)) {
+            rejectedPairs.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
+            continue
+          }
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (!capability.image) {
+            rejectedPairs.push(
+              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+            )
+          }
+        }
         const key = cacheKeyFor({
-          pairs: pairs(),
+          pairs: usablePairs,
           httpProviders: httpProviders(),
           contentIds,
           wantJson,
@@ -2790,7 +2964,7 @@ export function apply(ctx, config = {}) {
           },
         ]
         const signal = AbortSignal.timeout(timeoutMs())
-        const errors = []
+        const errors = [...rejectedPairs]
 
         for (const pair of usablePairs) {
           try {
@@ -3017,7 +3191,20 @@ export function apply(ctx, config = {}) {
       const errors = []
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
       const signal = AbortSignal.timeout(timeoutMs())
-      const usablePairs = pairs().filter((pair) => adapterAvailable(ctx.llm, pair.provider))
+      const usablePairs = await resolveToolVisionPairs()
+      for (const pair of pairs()) {
+        if (!pair || pair.provider === HTTP_ROUTE) continue
+        if (!adapterAvailable(ctx.llm, pair.provider)) {
+          errors.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
+          continue
+        }
+        const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+        if (!capability.image) {
+          errors.push(
+            `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+          )
+        }
+      }
       for (const pair of usablePairs) {
         try {
           const text = await visionAnswer(ctx.llm, {
@@ -3815,7 +4002,14 @@ export function apply(ctx, config = {}) {
     webCtx.effect(() => {
       const probe = async () => {
         const started = Date.now()
-        const first = pairs().find((pair) => adapterAvailable(ctx.llm, pair.provider))
+        let first
+        for (const pair of pairs()) {
+          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          if (capability.image) {
+            first = pair
+            break
+          }
+        }
         const probeModels = async (baseURL) => {
           try {
             const response = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
@@ -3890,6 +4084,41 @@ export function apply(ctx, config = {}) {
         },
       })
     }, 'vision-router: test-connection route')
+  })
+
+  // Exact capability metadata for the settings card. DSH's public llm.models
+  // wire intentionally omits inputModalities, so the plugin exposes a narrow
+  // read-only view backed by the same resolveModelInfo() check used at runtime.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(
+      () =>
+        webCtx.webServer.register({
+          kind: 'exact',
+          path: '/_dsh/vision-router/model-capabilities',
+          handler: async (req, res) => {
+            if (req.method !== 'GET') {
+              res.setHeader('Allow', 'GET')
+              res.writeHead(405)
+              res.end()
+              return
+            }
+            try {
+              const capabilities = await collectVisionBackendCapabilities()
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ capabilities }))
+            } catch (error) {
+              res.writeHead(500, { 'content-type': 'application/json' })
+              res.end(
+                JSON.stringify({
+                  capabilities: {},
+                  error: error && error.message ? error.message : String(error),
+                }),
+              )
+            }
+          },
+        }),
+      'vision-router: model capabilities route',
+    )
   })
 
   // Expose the namespace to the web configuration boundary. The API proxy
