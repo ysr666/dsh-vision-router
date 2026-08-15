@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Paste an image and it just works — eyes for text-only agents on DeepSeek Harness. Free out of the box, no key, no Python, one command.</strong></p>
 
-<p align="center">DeepSeek keeps thinking; the built-in free vision chain and ten pixel-level tools do the seeing. Image turns behave like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
+<p align="center">DeepSeek keeps thinking; the built-in free vision chain and eleven pixel-level tools do the seeing. Image turns behave like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
@@ -30,7 +30,7 @@
 > [!WARNING]
 > 📌 **Announcement (v1.2.1)**
 >
-> v1.2.1 hardens the pixel loop: all ten pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
+> v1.2.1 hardens the pixel loop: all eleven pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -125,7 +125,7 @@ The built-in anonymous OVH vision fallback is already configured, so normal imag
 - **Automatic failover with classified errors.** Region blocks, ToS filtering, 402 quota, 429 rate limits (with Retry-After backoff), context overflow, network failures — the chain walks providers one by one and only reports after all of them failed, with actionable advice.
 - **Image memory.** Vision answers are cached by attachment content hash; later text turns substitute the recorded description (marked as untrusted evidence), so DeepSeek genuinely remembers earlier images without re-spending vision calls.
 - **A verifiable pixel loop.** Reference → `vision_html_screenshot` → `vision_pixel_diff` (ratio + red heatmap + worst-region ranking) → fix → repeat until the mismatch converges. UI restoration becomes measurable instead of eyeballed.
-- **Progressive schema exposure.** Only a zero-arg `vision_activate` bootstrap is always visible; image turns auto-mount all ten deep tools with a one-time usage note, and a `vision-tools` skill is registered for text-only turns.
+- **Progressive schema exposure.** Only a zero-arg `vision_activate` bootstrap is always visible; image turns auto-mount all eleven deep tools with a one-time usage note, and a `vision-tools` skill is registered for text-only turns.
 - **Selective proxy.** Only the configured vision provider hosts go through your local proxy; DeepSeek stays direct.
 
 ### Pixel loop in practice
@@ -146,7 +146,7 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 
 ## Tools
 
-All ten deep tools mount automatically on image turns (`autoActivateOnImage`); text turns can mount them via `vision_activate` or the `/vision-tools` skill. Built on sharp / potrace / tesseract / system Chrome — no Python:
+All eleven deep tools mount automatically on image turns (`autoActivateOnImage`); text turns can mount them via `vision_activate` or the `/vision-tools` skill. Built on sharp / potrace / tesseract / system Chrome — no Python:
 
 <p align="center">
   <img src="assets/vision-tools.svg" width="100%" alt="Nine vision tools available in DSH Vision Router." />
