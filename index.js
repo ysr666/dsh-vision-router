@@ -30,6 +30,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
+import { createCachedUpdateChecker } from './lib/update-check.js'
 
 export const name = 'vision-router'
 export const inject = ['tools', 'llm']
@@ -1776,6 +1777,23 @@ export function apply(ctx, config = {}) {
       return undefined
     }
   }
+
+  // Version checks never mutate the installation. They only compare this
+  // package's own version with the configured/inherited npm registry, so the
+  // behavior is identical for npx/global CLI/source-checkout/bun-style DSH
+  // launches. The process-local cache keeps card opens from spamming registry.
+  const updateChecker = createCachedUpdateChecker({
+    fetchImpl: (...args) => globalThis.fetch(...args),
+  })
+  void updateChecker.check(false).then((result) => {
+    if (result && result.ok === true && result.updateAvailable === true) {
+      ctx.logger?.info(
+        'vision-router: update available %s -> %s',
+        result.currentVersion,
+        result.latestVersion,
+      )
+    }
+  })
 
   // ── stealth takeover: serve `deepseek-official` ourselves ────────────────
   //
@@ -4102,6 +4120,34 @@ export function apply(ctx, config = {}) {
         },
       })
     }, 'vision-router: test-connection route')
+  })
+
+  // Install-method-agnostic update status for the settings card. Manual
+  // checks pass ?force=1; startup/card-open checks share the process cache.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(
+      () =>
+        webCtx.webServer.register({
+          kind: 'exact',
+          path: '/_dsh/vision-router/update-check',
+          handler: async (req, res) => {
+            if (req.method !== 'GET') {
+              res.setHeader('Allow', 'GET')
+              res.writeHead(405)
+              res.end()
+              return
+            }
+            const force = /(?:[?&])force=1(?:&|$)/.test(String(req.url ?? ''))
+            const result = await updateChecker.check(force)
+            res.writeHead(200, {
+              'content-type': 'application/json',
+              'cache-control': 'no-store',
+            })
+            res.end(JSON.stringify(result))
+          },
+        }),
+      'vision-router: update-check route',
+    )
   })
 
   // Exact capability metadata for the settings card. DSH's public llm.models
