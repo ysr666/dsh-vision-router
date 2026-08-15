@@ -1,6 +1,6 @@
 # Update checks
 
-Vision Router checks for newer published package versions without changing the installation.
+Vision Router checks for newer published package versions and can offer a safe one-click update when the running DSH CLI can be verified.
 
 - A non-blocking check starts once when the plugin starts with DSH.
 - Opening the settings card reuses the process-local result; if no check has completed yet, it joins/starts one.
@@ -9,13 +9,16 @@ Vision Router checks for newer published package versions without changing the i
 - Network/registry failures never block plugin startup or vision features.
 - Version comparison follows SemVer, including prerelease versions. A source/prerelease build newer than the registry is never told to downgrade.
 
-## Installation methods
+## One-click update safety
 
-The checker intentionally does **not** run an update command. DSH and the plugin may have been installed through different paths, including:
+DSH and the plugin may have been launched through different paths, including `npx`, a globally installed CLI, a source checkout using pnpm, or another wrapper. Vision Router therefore does **not** guess npm/pnpm/npx/bun commands.
 
-- `npx @deepseek-ai/dsh ...`
-- a globally installed `dsh` CLI
-- a DeepSeek Harness source checkout using `pnpm dsh ...`
-- another package-manager or wrapper setup
+When an update is available, the plugin inspects the CLI entry of the current process. One-click update is enabled only when that entry can be traced to a real `@deepseek-ai/dsh` package and can be executed safely by the current Node runtime. In that case Vision Router runs the documented DSH updater through the **same DSH CLI that is already hosting the plugin**:
 
-When a newer package exists, the settings card shows the current/latest versions and links to the release notes, then asks the user to update through the same DSH/plugin installation path they originally used. This avoids guessing the user's package manager, profile, checkout, or global/local layout.
+```sh
+dsh plugin --profile <current-profile> update dsh-vision-router
+```
+
+The subprocess uses `execFile` with `shell: false`; no shell command is constructed from browser input. The update endpoint also requires a process-local token returned by the same-origin update-check endpoint. After the updater exits successfully, the settings card asks the user to restart DSH so the new plugin bundle is loaded.
+
+If the CLI cannot be verified — for example a raw TypeScript source entry that needs a workspace-specific loader — the one-click button is not offered. The card keeps the version information and release-notes link and tells the user to update through their original DSH installation path instead.
