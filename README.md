@@ -345,6 +345,32 @@ pnpm dsh plugin --profile web remove dsh-vision-router
 
 This removes the dependency and the bundle layer. If you disabled the stock DeepSeek row manually, re-enable it in your profile patch.
 
+## Troubleshooting
+
+### Startup fails with `Unexpected token ... is not valid JSON` (UTF-8 BOM)
+
+**Symptom:** `dsh web` / `pnpm dsh web` exits immediately at startup:
+
+```
+SyntaxError: Unexpected token ...
+is not valid JSON
+at JSON.parse (<anonymous>)
+at readProfileManifest (packages/boot/app-boot/src/profile.ts)
+```
+
+**Cause:** `~/.dsh/profiles/<profile>/package.json` was saved as **UTF-8 with BOM** by an editor. The invisible `\uFEFF` character at the start makes `JSON.parse` fail, because JSON does not allow it before the opening brace.
+
+**Fix:** re-save the file as **UTF-8 without BOM**:
+
+- VS Code: click the encoding label in the status bar → “Save with Encoding” → `UTF-8`;
+- or strip the leading BOM from the command line (replace `web` with your profile name, then restart `dsh web`):
+
+```sh
+node -e "const fs=require('fs');const p=process.argv[1];const b=fs.readFileSync(p);if(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)fs.writeFileSync(p,b.subarray(3))" "$HOME/.dsh/profiles/web/package.json"
+```
+
+> Tip: if you are not sure whether the file still has a BOM, run the command above again — it removes it only when present.
+
 ## Security notes
 
 - Image text is **untrusted evidence**: descriptions, OCR output and the auto-mount note all tell the agent never to execute instructions found inside images.

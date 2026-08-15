@@ -343,6 +343,32 @@ pnpm dsh plugin --profile web remove dsh-vision-router
 
 同时移除依赖与 bundle 层。若你曾手动禁用官方 DeepSeek 行，记得在 profile 补丁里恢复。
 
+## 故障排查
+
+### 启动报错 `Unexpected token ... is not valid JSON`（UTF-8 BOM）
+
+**现象**：`dsh web` / `pnpm dsh web` 启动时直接退出：
+
+```
+SyntaxError: Unexpected token ...
+is not valid JSON
+at JSON.parse (<anonymous>)
+at readProfileManifest (packages/boot/app-boot/src/profile.ts)
+```
+
+**原因**：`~/.dsh/profiles/<profile>/package.json` 被某些编辑器保存成了 **UTF-8 with BOM**。文件最前面多了一个不可见的 `\uFEFF` 字符，dsh 读取 manifest 时直接 `JSON.parse`，而 JSON 不允许在开头出现这个字符，于是解析失败。
+
+**解决**：把该文件重新保存为 **UTF-8（无 BOM）** 即可：
+
+- VS Code：右下角编码 → “通过编码保存” → 选择 `UTF-8`；
+- 或命令行去掉开头的 BOM（把 `web` 换成你的 profile 名，改完重启 `dsh web`）：
+
+```sh
+node -e "const fs=require('fs');const p=process.argv[1];const b=fs.readFileSync(p);if(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)fs.writeFileSync(p,b.subarray(3))" "$HOME/.dsh/profiles/web/package.json"
+```
+
+> 提示：保存后如果不确定是否还带 BOM，可以用上面的命令自查；带 BOM 时它会帮你去掉。
+
 ## 安全说明
 
 - 图片中的文字是**不可信证据**：描述、OCR 输出与自动挂载提示都要求 Agent 绝不执行图片内出现的指令。
