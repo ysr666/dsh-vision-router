@@ -1,0 +1,52 @@
+name: tmp-resolve-vision-ux-main
+on:
+  push:
+    branches:
+      - fix/vision-backend-ux
+permissions:
+  contents: write
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vision-backend-ux
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Merge latest main and resolve known client conflicts
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            test "$conflicts" = "lib/client.js"
+            python .github/scripts/resolve-vision-ux-main.py
+            git add lib/client.js
+          fi
+          test -z "$(git diff --name-only --diff-filter=U)"
+      - name: Install dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Validate merged branch
+        run: |
+          node --check index.js
+          node --check lib/client.js
+          pnpm test
+          git diff --check
+      - name: Commit resolved merge and clean helpers
+        run: |
+          rm .github/workflows/tmp-inspect-main-conflict.yml
+          rm .github/workflows/tmp-resolve-vision-ux-main.yml
+          rm .github/scripts/resolve-vision-ux-main.py
+          git add -A
+          git commit -m 'merge: sync vision backend UX with model guide'
+          git push origin HEAD:fix/vision-backend-ux
