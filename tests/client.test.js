@@ -15,6 +15,9 @@ function loadClientBundle() {
   }
   return spec.factory((name) => {
     if (name === 'react') return ReactStub
+    if (name === '@deepseek-ai/dsh-client-ui-attachment') {
+      return { ImageGallery: () => null }
+    }
     throw new Error('require(' + name + ')')
   })
 }
@@ -38,6 +41,6 @@ test('unwrapModelsResult reads the catalog from the RPC envelope', () => {
 
 test('the client bundle still loads and registers with the proven injects', () => {
   const bundle = loadClientBundle()
-  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale'])
+  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions'])
   assert.equal(typeof bundle.apply, 'function')
 })
