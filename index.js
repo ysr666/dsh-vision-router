@@ -1834,7 +1834,7 @@ export function apply(ctx, config = {}) {
   // adapter for anything the waterfalls did not rewrite.
   if (wrapperRoute() !== undefined) {
     const WRAPPER_MODEL_IDS = ['deepseek-v4-pro', 'deepseek-v4-flash']
-    const wrapName = (name) => `${name ?? 'DeepSeek'}（自动识图）`
+    const wrapName = (name) => name ?? 'DeepSeek'
     const textProviderRoute = () => (stealthActive ? nativeRoute : textProvider().provider)
     const delegateAdapter = () => {
       try {
