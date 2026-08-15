@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/release-v1.1.0-5B4CF0?style=flat-square" alt="Release v1.1.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-94%20tests-2EA44F?style=flat-square" alt="Verified: 94 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/release-v1.1.1-5B4CF0?style=flat-square" alt="Release v1.1.1" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-101%20tests-2EA44F?style=flat-square" alt="Verified: 101 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -21,9 +21,9 @@
 <p align="center">English · <a href="README.zh.md">中文</a></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.1.0)**
+> 📌 **Announcement (v1.1.1)**
 >
-> Now supports **Extra vision wrappers**: any custom text route (e.g. opencode) sends images out of the box — plus long-screenshot OCR, a "Test connection" button and artifact preview cards in the settings panel. Stealth mode is off by default and the official DeepSeek row is no longer taken over implicitly.
+> Existing DSH providers are now **auto-wrapped on install**: text-only routes gain paste-and-go vision automatically, while native multimodal models keep their original image input and use Vision Router tools only when useful. Windows sharp/libvips startup conflicts are fixed by sharing the host sharp; install/update docs now distinguish npm/npx from source-checkout pnpm usage.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

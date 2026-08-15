@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/release-v1.1.0-5B4CF0?style=flat-square" alt="Release v1.1.0" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-94%20tests-2EA44F?style=flat-square" alt="Verified: 94 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/release-v1.1.1-5B4CF0?style=flat-square" alt="Release v1.1.1" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-101%20tests-2EA44F?style=flat-square" alt="Verified: 101 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -21,9 +21,9 @@
 <p align="center"><a href="README.md">English</a> · 中文</p>
 
 > [!WARNING]
-> 📌 **公告（v1.1.0）**
+> 📌 **公告（v1.1.1）**
 >
-> 现已支持「**额外识图包装**」：opencode 等任意自定义文本路由开箱即可发图；另含长截图 OCR、设置卡片「测试连接」与视觉产物预览卡。隐身模式默认关闭，官方 DeepSeek 行不再被默认接管。
+> 现在安装后会**自动包装 DSH 已有模型**：纯文本路由自动获得粘贴即用的识图入口，原生多模态模型保留原图直传，仅在需要精确定位 / OCR / 像素验证时按需使用 Vision Router 工具。另修复 Windows sharp/libvips 启动冲突，并补齐 npm/npx 与源码 pnpm 两套安装/升级指引。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
