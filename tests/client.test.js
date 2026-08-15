@@ -124,3 +124,24 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   // Step 1 parks the prompt on the left so the chat selector stays usable.
   assert.equal(source.includes('vr-guide-prompt-left'), true)
 })
+
+test('the settings card skips offscreen paint and rebuilds model options once', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // Long sections paint only when scrolled into view: the card hosts many
+  // native selects whose option lists can reach hundreds of entries per
+  // provider, which used to make scrolling the settings panel stutter.
+  assert.equal(source.includes('content-visibility:auto'), true)
+  assert.equal(source.includes('contain-intrinsic-size:auto 96px'), true)
+  // Option vnode lists are memoized and the per-provider model lists cached,
+  // so re-renders no longer rebuild hundreds of option elements.
+  assert.equal(source.includes('const groupOptions = useMemo('), true)
+  assert.equal(source.includes('const visionGroupOptions = useMemo('), true)
+  assert.equal(source.includes('const wrapGroupOptions = useMemo('), true)
+  assert.equal(source.includes('modelOptionCache = React.useRef(new Map())'), true)
+  assert.equal(source.includes('modelOptionsOf(modelsOf('), true)
+  // The card is memoized with a stable props object so app re-renders of the
+  // settings panel skip it.
+  assert.equal(source.includes('React.memo(VisionRouterCard)'), true)
+  assert.equal(source.includes('const cardInject = { scope, getConnection, t, locale: ctx.locale }'), true)
+  assert.equal(source.includes('inject: () => cardInject'), true)
+})
