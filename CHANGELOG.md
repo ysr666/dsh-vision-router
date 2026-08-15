@@ -3,6 +3,13 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.2.2
+
+### 修复 / Fixed
+
+- **`read_image` 回挂的附件 id 现在可被 `vision_describe` / 像素工具解析**：此前插件只索引 `agent/pre-step` 消息流（inbox claim，仅含用户新消息）里的图片块，`read_image` 持久化为 `tool/result` 事件的图片永远进不了索引，文本模型拿到宿主公布的 `sha256:…` id 后调用 `vision_describe(attachmentIds=[…])` 报 `unknown attachment id`。现在索引改从会话事件日志（`session.events`）增量收集所有消息类事件（`user/message` / `assistant/message` / `tool/result`，含嵌套 tool-result）里的附件 ref，`lookupAttachment` 未命中时自动回退扫描，跨回合、跨进程恢复均可用。
+- **Attachment ids produced by `read_image` are now resolvable by `vision_describe` and the pixel tools**: the plugin used to index only image blocks from the `agent/pre-step` message stream (inbox claim — new user messages only), so images that `read_image` persists as `tool/result` events never entered the index, and a text-only model calling `vision_describe(attachmentIds=[…])` with the harness-announced `sha256:…` id failed with `unknown attachment id`. The index now collects attachment refs incrementally from the full session event log (`session.events` — `user/message` / `assistant/message` / `tool/result`, including nested tool-results), and `lookupAttachment` falls back to that scan on a miss, so ids resolve across turns and across process resumes.
+
 ## v1.2.1
 
 ### 修复 / Fixed

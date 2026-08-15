@@ -21,6 +21,7 @@ import {
   providersOf,
   rewriteImageBlocks,
   rewriteImagesDeep,
+  collectEventAttachmentRefs,
   sanitizeToolResultImages,
   renderVisionPresent,
   extractJson,
@@ -2072,4 +2073,105 @@ test('artifactStemOf keeps long content-addressed inputs distinct', () => {
   // Stable for the same input, different for different suffixes.
   assert.equal(artifactStemOf(upload, 'ground'), groundUpload)
   assert.notEqual(artifactStemOf(upload, 'ground'), artifactStemOf(upload, 'detect'))
+})
+
+test('collectEventAttachmentRefs gathers refs from every message-producing event', () => {
+  const uploadRef = {
+    attachmentId: 'sha256:295be0356ade856a977e7afea9bae37cf91e405e2f01dad6f09fefcc2f2ab7ab',
+    mediaType: 'image/png',
+    bytes: 123,
+    width: 10,
+    height: 20,
+    name: 'sample.png',
+  }
+  const toolRef = {
+    attachmentId: 'sha256:af672871af2edbed961b8280e0b527efff2501afce39d96391be60cefdf4cfa2',
+    mediaType: 'image/jpeg',
+    bytes: 456,
+    width: 30,
+    height: 40,
+    name: 'photo.jpg',
+  }
+  const nestedRef = {
+    attachmentId: 'sha256:92ecfeb1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    mediaType: 'image/webp',
+    bytes: 789,
+    width: 50,
+    height: 60,
+  }
+  const events = [
+    // user upload: message is the event data itself
+    { type: 'user/message', data: { role: 'user', content: [{ type: 'image', attachment: uploadRef }] } },
+    // assistant message nests under data.message
+    {
+      type: 'assistant/message',
+      data: { message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } },
+    },
+    // tool/result from read_image: the image block may be nested in tool-result
+    {
+      type: 'tool/result',
+      data: {
+        message: {
+          role: 'tool',
+          content: [
+            { type: 'text', text: '<path>sample.png</path>' },
+            { type: 'tool-result', content: [{ type: 'image', attachment: toolRef }] },
+          ],
+        },
+      },
+    },
+    // plain text user message: no refs
+    { type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+    // duplicate id in a later event: only the first occurrence is kept
+    {
+      type: 'tool/result',
+      data: { message: { role: 'tool', content: [{ type: 'image', attachment: { ...toolRef, name: 'again.jpg' } }] } },
+    },
+    // nested tool-result image
+    {
+      type: 'tool/result',
+      data: {
+        message: {
+          role: 'tool',
+          content: [{ type: 'tool-result', content: [{ type: 'image', attachment: nestedRef }] }],
+        },
+      },
+    },
+    // non-message events are ignored
+    { type: 'turn/start', data: { turn: 1 } },
+    { type: 'agent/inbox/spliced', data: { inserted: [{ role: 'user', content: [{ type: 'image', attachment: uploadRef }] }] } },
+  ]
+  const refs = collectEventAttachmentRefs(events)
+  assert.equal(refs.length, 3)
+  assert.equal(refs[0].attachmentId, uploadRef.attachmentId)
+  assert.equal(refs[0].name, 'sample.png')
+  assert.equal(refs[1].attachmentId, toolRef.attachmentId)
+  // the first-seen ref wins over the later duplicate
+  assert.equal(refs[1].name, 'photo.jpg')
+  assert.equal(refs[2].attachmentId, nestedRef.attachmentId)
+  // full metadata survives, so attachments.readImage can verify the bytes
+  assert.deepEqual(
+    { mediaType: refs[1].mediaType, bytes: refs[1].bytes, width: refs[1].width, height: refs[1].height },
+    { mediaType: toolRef.mediaType, bytes: toolRef.bytes, width: toolRef.width, height: toolRef.height },
+  )
+})
+
+test('collectEventAttachmentRefs tolerates malformed and empty inputs', () => {
+  assert.deepEqual(collectEventAttachmentRefs(undefined), [])
+  assert.deepEqual(collectEventAttachmentRefs(null), [])
+  assert.deepEqual(collectEventAttachmentRefs([]), [])
+  assert.deepEqual(collectEventAttachmentRefs([null, {}, { data: null }, { type: 'turn/start', data: {} }]), [])
+  // a message whose content is missing or not an array is skipped
+  assert.deepEqual(
+    collectEventAttachmentRefs([
+      { type: 'tool/result', data: { message: { role: 'tool' } } },
+      { type: 'user/message', data: { role: 'user', content: 'not-an-array' } },
+    ]),
+    [],
+  )
+  // an image block without a usable attachment id is skipped
+  const noId = collectEventAttachmentRefs([
+    { type: 'user/message', data: { role: 'user', content: [{ type: 'image', attachment: { name: 'x.png' } }] } },
+  ])
+  assert.deepEqual(noId, [])
 })

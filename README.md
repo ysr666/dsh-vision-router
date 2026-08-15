@@ -28,9 +28,11 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.2.1)**
+> 📌 **Announcement (v1.2.2)**
 >
-> v1.2.1 hardens the pixel loop: all ten pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
+> v1.2.2 fixes the last attachment-id gap: ids announced for images the host persisted itself — e.g. `read_image` re-uploads (`sha256:…`) — are now indexed from the session event log, so `vision_describe(attachmentIds=[…])` and every pixel tool resolve them exactly like user-uploaded ids (issue #72).
+>
+> v1.2.1 hardened the pixel loop: all ten pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

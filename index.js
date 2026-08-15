@@ -546,6 +546,52 @@ export function collectImageBlocks(messages) {
   return out
 }
 
+/**
+ * Collect distinct durable attachment refs from a session event log.
+ *
+ * The session event log is the only place that sees every image that entered
+ * the conversation, including host-produced ones such as `read_image`
+ * re-uploads, which are persisted as `tool/result` (or nested-dispatch
+ * `user/message`) events and never pass through the inbox-claim message stream
+ * a plugin sees on `agent/pre-step`. Extracting refs here — with full
+ * metadata, so `attachments.readImage` can verify the bytes — is what lets
+ * `vision_describe` / the pixel tools resolve ids the harness announced but
+ * the plugin never indexed.
+ *
+ * Handles the same message-producing event types the host surface derives
+ * (`user/message` carries the message directly; `assistant/message` and
+ * `tool/result` nest it under `data.message`) and descends into nested
+ * `tool-result` content exactly like `rewriteImageBlocks`.
+ *
+ * @param events - the session event log (`session.events`), or any array shaped like it.
+ * @returns distinct attachment refs in first-seen order.
+ */
+export function collectEventAttachmentRefs(events) {
+  const refs = []
+  const seen = new Set()
+  for (const event of events ?? []) {
+    if (!event || !event.data) continue
+    let message
+    if (event.type === 'user/message') {
+      message = event.data
+    } else if (event.type === 'assistant/message' || event.type === 'tool/result') {
+      message = event.data.message
+    } else {
+      continue
+    }
+    if (!message || !Array.isArray(message.content)) continue
+    rewriteImagesDeep(message.content, (block) => {
+      const attachment = block && block.attachment
+      if (attachment && attachment.attachmentId && !seen.has(String(attachment.attachmentId))) {
+        seen.add(String(attachment.attachmentId))
+        refs.push(attachment)
+      }
+      return block
+    })
+  }
+  return refs
+}
+
 /** Text blocks of the last user message, joined. */
 export function lastUserText(messages) {
   for (let i = (messages ?? []).length - 1; i >= 0; i--) {
@@ -2710,6 +2756,40 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // session id -> seq already scanned in that session's event log. Mirror of
+  // sessionAttachmentsById: the web host disables module-level HMR, so a
+  // session object is long-lived and only its id string survives a resume.
+  const scannedSessionSeqs = new Map()
+
+  /**
+   * Index image attachments recorded anywhere in the session event log, not
+   * just in the inbox-claim message stream `agent/pre-step` hands us.
+   *
+   * Host-produced images (e.g. the built-in `read_image` tool's re-uploads,
+   * persisted as `tool/result` events, or a nested dispatch's deferred
+   * `user/message`) never enter that stream, so the announced attachment id
+   * stayed unresolvable even though the harness UI showed the image and the
+   * bytes are durably stored. `session.events` is the complete append-only
+   * log (seeded from storage on resume), so scanning it — incrementally, per
+   * session id — finds every ref with full metadata.
+   */
+  const scanSessionEventLog = (session) => {
+    if (!session) return
+    let events
+    try {
+      events = session.events
+    } catch {
+      return // not a host Session (or the getter is unavailable): nothing to scan
+    }
+    if (!Array.isArray(events) || events.length === 0) return
+    const key = session.id !== undefined ? String(session.id) : undefined
+    const last = key !== undefined ? (scannedSessionSeqs.get(key) ?? 0) : 0
+    if (last >= events.length) return
+    const refs = collectEventAttachmentRefs(events.slice(last))
+    if (key !== undefined) scannedSessionSeqs.set(key, events.length)
+    if (refs.length > 0) recordUploadedAttachments(session, refs)
+  }
+
   const lookupAttachment = (session, id) => {
     const byId = session && session.id !== undefined
       ? sessionAttachmentsById.get(String(session.id))
@@ -2719,7 +2799,28 @@ export function apply(ctx, config = {}) {
       if (hit !== undefined) return hit
     }
     const map = session ? sessionAttachments.get(session) : undefined
-    return map ? map.get(String(id)) : undefined
+    const hit = map ? map.get(String(id)) : undefined
+    if (hit !== undefined) return hit
+    // Miss: fall back to the session event log. Ids announced by the harness
+    // for images it persisted itself (read_image re-uploads) live there even
+    // though they never crossed the inbox-claim stream, so this resolves them
+    // exactly like user-uploaded ids. Ref data from the log carries full
+    // metadata, so a later attachments.readImage(ref) verifies and returns
+    // the bytes.
+    if (session !== undefined) {
+      scanSessionEventLog(session)
+      const afterById = session.id !== undefined
+        ? sessionAttachmentsById.get(String(session.id))
+        : undefined
+      if (afterById !== undefined) {
+        const after = afterById.get(String(id))
+        if (after !== undefined) return after
+      }
+      const afterMap = sessionAttachments.get(session)
+      const afterHit = afterMap ? afterMap.get(String(id)) : undefined
+      if (afterHit !== undefined) return afterHit
+    }
+    return undefined
   }
 
   // session -> { turn, startIndex, hasImage, routed, failures, lastError }
@@ -2735,6 +2836,10 @@ export function apply(ctx, config = {}) {
     // sanitized. This preserves attachment lookup for a later vision_describe.
     const rawImageRefs = rewriteImageBlocks(rawMessages)
     recordUploadedAttachments(session, rawImageRefs.attachments)
+    // Also index image attachments that live only in the session event log
+    // (read_image re-uploads and other host-produced images never cross the
+    // inbox-claim message stream). Incremental: scans only new events.
+    scanSessionEventLog(session)
     // Hard invariant: tool-produced image blocks never reach a model request.
     // This is deliberately route-agnostic, because merely having a wrapper
     // registered does not prove that the current request is actually using it.
