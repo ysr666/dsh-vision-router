@@ -31,25 +31,13 @@ jobs:
           from pathlib import Path
           p = Path('index.js')
           s = p.read_text()
-          old = """    const rawMessages = decision.messages ?? payload.messages ?? []
-          // Hard invariant: tool-produced image blocks never reach a model request.
-          """
-          new = """    const rawMessages = decision.messages ?? payload.messages ?? []
-          // Record every raw image reference before nested tool-result images are
-          // sanitized. This preserves attachment lookup for a later vision_describe.
-          const rawImageRefs = rewriteImageBlocks(rawMessages)
-          recordUploadedAttachments(session, rawImageRefs.attachments)
-          // Hard invariant: tool-produced image blocks never reach a model request.
-          """
+          old = "    const rawMessages = decision.messages ?? payload.messages ?? []\n    // Hard invariant: tool-produced image blocks never reach a model request."
+          new = "    const rawMessages = decision.messages ?? payload.messages ?? []\n    // Record every raw image reference before nested tool-result images are\n    // sanitized. This preserves attachment lookup for a later vision_describe.\n    const rawImageRefs = rewriteImageBlocks(rawMessages)\n    recordUploadedAttachments(session, rawImageRefs.attachments)\n    // Hard invariant: tool-produced image blocks never reach a model request."
           if old not in s:
               raise SystemExit('missing rawMessages anchor')
           s = s.replace(old, new, 1)
-          old = """    if (hasImage) {
-            const rewrite = rewriteImageBlocks(messages)
-            recordUploadedAttachments(session, rewrite.attachments)
-          """
-          new = """    if (hasImage) {
-          """
+          old = "    if (hasImage) {\n      const rewrite = rewriteImageBlocks(messages)\n      recordUploadedAttachments(session, rewrite.attachments)"
+          new = "    if (hasImage) {"
           if old not in s:
               raise SystemExit('missing duplicate registration anchor')
           s = s.replace(old, new, 1)
