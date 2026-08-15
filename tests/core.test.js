@@ -4,6 +4,8 @@ import sharp from 'sharp'
 import {
   mediaTypeOf,
   sniffMediaType,
+  isAttachmentIdInput,
+  artifactStemOf,
   boxesToSvg,
   annotateBoxesBuffer,
   visionDetectInstruction,
@@ -2029,4 +2031,45 @@ test('httpProvidersOf appends built-in OVH fallback after configured HTTP provid
   assert.equal(withFallback.length, 1 + DEFAULT_HTTP_PROVIDERS.length)
   assert.equal(withFallback[1].model, DEFAULT_HTTP_PROVIDERS[0].model)
   assert.deepEqual(httpProvidersOf({ httpProviders: [custom] }, false), [custom])
+})
+
+test('isAttachmentIdInput recognizes durable attachment ids but not file paths', () => {
+  assert.equal(
+    isAttachmentIdInput('sha256:7d76d1467c6545675325558168712483a5d71c4bd639c44d6bc27b1d70ba5dc5'),
+    true,
+  )
+  assert.equal(isAttachmentIdInput('  sha256:7d76d1467c6545675325558168712483a5d71c4bd639c44d6bc27b1d70ba5dc5  '), true)
+  assert.equal(isAttachmentIdInput('md5:098f6bcd4621d373cade4e832627b4f6'), true)
+  assert.equal(isAttachmentIdInput('sha1:a9993e364706816aba3e25717850c26c9cd0d89d'), true)
+  assert.equal(isAttachmentIdInput('/Users/y/.dsh/attachments/v1/objects/7d/7d76d1467c6545675325558168712483a5d71c4bd639c44d6bc27b1d70ba5dc5'), false)
+  assert.equal(isAttachmentIdInput('image.png'), false)
+  assert.equal(isAttachmentIdInput('./artifacts/photo.png'), false)
+  assert.equal(isAttachmentIdInput('sha256:'), false)
+  assert.equal(isAttachmentIdInput('sha256:zzzz'), false)
+  assert.equal(isAttachmentIdInput(123), false)
+  assert.equal(isAttachmentIdInput(undefined), false)
+})
+
+test('artifactStemOf keeps long content-addressed inputs distinct', () => {
+  const upload =
+    '/Users/y/.dsh/attachments/v1/objects/7d/7d76d1467c6545675325558168712483a5d71c4bd639c44d6bc27b1d70ba5dc5'
+  const cropA =
+    '/Users/y/artifacts/7d76d1467c6545675325558168712483a5d71c4bd639c44d-crop-0-1400-2662-2226.png'
+  const cropB =
+    '/Users/y/artifacts/7d76d1467c6545675325558168712483a5d71c4bd639c44d-crop-1950-1200-2350-1500.png'
+  const groundUpload = artifactStemOf(upload, 'ground')
+  const groundCropA = artifactStemOf(cropA, 'ground')
+  const groundCropB = artifactStemOf(cropB, 'ground')
+  // Before the fingerprint, the 48-char truncation of the 64-char sha256 name
+  // made all three collapse onto one stem and overwrite each other.
+  assert.notEqual(groundUpload, groundCropA)
+  assert.notEqual(groundUpload, groundCropB)
+  assert.notEqual(groundCropA, groundCropB)
+  for (const stem of [groundUpload, groundCropA, groundCropB]) {
+    assert.match(stem, /-ground$/)
+    assert.ok(stem.length <= 80)
+  }
+  // Stable for the same input, different for different suffixes.
+  assert.equal(artifactStemOf(upload, 'ground'), groundUpload)
+  assert.notEqual(artifactStemOf(upload, 'ground'), artifactStemOf(upload, 'detect'))
 })
