@@ -38,7 +38,15 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm pack --pack-destination tmp-pack
+      - name: Pack plugin
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const { spawnSync } = require('node:child_process')
+          fs.mkdirSync('tmp-pack', { recursive: true })
+          const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+          const result = spawnSync(cmd, ['pack', '--pack-destination', 'tmp-pack'], { stdio: 'inherit' })
+          if (result.status !== 0) process.exit(result.status ?? 1)
       - name: Build a DSH-like host with sharp 0.35.3
         shell: node {0}
         run: |
@@ -54,7 +62,7 @@ jobs:
               'dsh-vision-router': `file:../tmp-pack/${tgz}`,
             },
           }, null, 2))
-      name: Install host
+      - name: Install host
         working-directory: tmp-host
         run: pnpm install
       - name: Verify plugin resolves the exact host sharp and can process pixels
@@ -63,23 +71,28 @@ jobs:
         run: |
           const fs = require('node:fs')
           const { createRequire } = require('node:module')
-          const hostRequire = createRequire(`${process.cwd()}/host-check.cjs`)
-          const pluginEntry = hostRequire.resolve('dsh-vision-router')
-          const pluginRequire = createRequire(pluginEntry)
-          const hostSharp = fs.realpathSync(hostRequire.resolve('sharp'))
-          const pluginSharp = fs.realpathSync(pluginRequire.resolve('sharp'))
-          console.log({ hostSharp, pluginSharp })
-          if (hostSharp !== pluginSharp) {
-            throw new Error('plugin installed/resolved a second sharp copy instead of using the host copy')
-          }
-          const sharp = hostRequire('sharp')
-          const out = await sharp({
-            create: {
-              width: 8,
-              height: 8,
-              channels: 4,
-              background: { r: 10, g: 20, b: 30, alpha: 1 },
-            },
-          }).resize(4, 4).png().toBuffer()
-          if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('sharp pixel smoke test failed')
-          console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
+          ;(async () => {
+            const hostRequire = createRequire(`${process.cwd()}/host-check.cjs`)
+            const pluginEntry = hostRequire.resolve('dsh-vision-router')
+            const pluginRequire = createRequire(pluginEntry)
+            const hostSharp = fs.realpathSync(hostRequire.resolve('sharp'))
+            const pluginSharp = fs.realpathSync(pluginRequire.resolve('sharp'))
+            console.log({ hostSharp, pluginSharp })
+            if (hostSharp !== pluginSharp) {
+              throw new Error('plugin installed/resolved a second sharp copy instead of using the host copy')
+            }
+            const sharp = hostRequire('sharp')
+            const out = await sharp({
+              create: {
+                width: 8,
+                height: 8,
+                channels: 4,
+                background: { r: 10, g: 20, b: 30, alpha: 1 },
+              },
+            }).resize(4, 4).png().toBuffer()
+            if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('sharp pixel smoke test failed')
+            console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
