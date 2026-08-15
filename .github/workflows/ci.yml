@@ -38,15 +38,12 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Pack plugin
+      - name: Prepare pack directory
         shell: node {0}
         run: |
-          const fs = require('node:fs')
-          const { spawnSync } = require('node:child_process')
-          fs.mkdirSync('tmp-pack', { recursive: true })
-          const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-          const result = spawnSync(cmd, ['pack', '--pack-destination', 'tmp-pack'], { stdio: 'inherit' })
-          if (result.status !== 0) process.exit(result.status ?? 1)
+          require('node:fs').mkdirSync('tmp-pack', { recursive: true })
+      - name: Pack plugin
+        run: pnpm pack --pack-destination tmp-pack
       - name: Install into a DSH-like host and verify one shared sharp
         shell: node {0}
         run: |
@@ -70,7 +67,11 @@ jobs:
               },
             }, null, 2))
             const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-            const installed = spawnSync(cmd, ['install'], { cwd: hostDir, stdio: 'inherit' })
+            const installed = spawnSync(cmd, ['install'], {
+              cwd: hostDir,
+              stdio: 'inherit',
+              shell: process.platform === 'win32',
+            })
             if (installed.status !== 0) process.exit(installed.status ?? 1)
 
             const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
