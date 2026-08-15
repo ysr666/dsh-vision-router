@@ -91,6 +91,11 @@ export const Config = z.object({
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
   freeFallback: z.boolean().default(true),
+  // Automatically mirror every currently registered text-only provider as an
+  // image-capable twin. The source registry is live (ctx.llm.listProviders),
+  // so providers added later through Settings are picked up by the existing
+  // llm/adapters-updated sync. Native image-capable models are never duplicated.
+  autoWrapProviders: z.boolean().default(true),
   // Text-provider routes the user wants wrapped as image-capable twins
   // (e.g. opencode-go): each entry registers a "<provider>-vision" route
   // whose catalog mirrors the original models but declares image input.
@@ -1941,6 +1946,26 @@ export function apply(ctx, config = {}) {
         (route) => route !== undefined && route !== null && route !== '',
       ),
     )
+  // Auto-discovery is registry-driven rather than settings-file-driven. This
+  // intentionally follows the providers DSH can actually serve right now and
+  // reacts to later Settings changes through llm/adapters-updated. Explicit
+  // wrappedProviders entries below override the auto-discovered model filter.
+  const autoWrappedProviders = () => {
+    if (current().autoWrapProviders !== true || typeof ctx.llm.listProviders !== 'function') return []
+    try {
+      return ctx.llm
+        .listProviders()
+        .map((entry) => (entry && typeof entry.id === 'string' ? entry.id : ''))
+        .filter(
+          (provider) =>
+            provider !== '' &&
+            !ownRoutes().has(provider) &&
+            !provider.endsWith('-vision'),
+        )
+    } catch {
+      return []
+    }
+  }
   // The twin must NOT resolve its source adapter eagerly: providers backed by
   // user settings (llm-pi-ai's openrouter/deepseek) register their routes LIVE
   // once the settings document loads, i.e. AFTER this plugin's apply. Same for
@@ -1987,6 +2012,14 @@ export function apply(ctx, config = {}) {
           const listed = await original.listModels(provider)
           return listed
             .filter((model) => models.length === 0 || models.includes(model.id))
+            // Never duplicate a model that already declares native image input.
+            // Missing modalities are treated as not image-capable by DSH's
+            // admission layer, so those are exactly the models a twin helps.
+            .filter(
+              (model) =>
+                !Array.isArray(model && model.inputModalities) ||
+                !model.inputModalities.includes('image'),
+            )
             .map((model) => ({ ...model, provider: twinRoute, inputModalities: ['text', 'image'] }))
         } catch {
           return []
@@ -2008,9 +2041,16 @@ export function apply(ctx, config = {}) {
   }
   const syncTwins = () => {
     const wanted = new Map()
+    // Default path: every live non-vision provider gets a twin. listModels()
+    // performs the per-model native-image filter, so mixed routes only expose
+    // their text-only members in the generated twin group.
+    for (const provider of autoWrappedProviders()) wanted.set(provider, [])
+    // Explicit settings win for a provider and can narrow the twin to selected
+    // model ids. They still work when auto discovery is disabled, and can be
+    // registered before a settings-backed source adapter appears.
     for (const entry of wrappedProviders()) {
       const provider = entry.provider
-      if (ownRoutes().has(provider)) continue
+      if (ownRoutes().has(provider) || provider.endsWith('-vision')) continue
       const models = Array.isArray(entry.models)
         ? entry.models.filter((model) => typeof model === 'string' && model !== '')
         : []
@@ -2028,7 +2068,8 @@ export function apply(ctx, config = {}) {
       }
     }
     // Register the missing twins. Runs idempotently: our own registration
-    // emits llm/adapters-updated, and the second pass finds nothing to do.
+    // emits llm/adapters-updated, and the second pass sees the generated
+    // `*-vision` route but excludes it from auto discovery.
     for (const [provider, models] of wanted) {
       const twinRoute = `${provider}-vision`
       try {
