@@ -1,0 +1,50 @@
+name: Temporary README image fixer
+
+on:
+  push:
+    branches:
+      - fix/readme-demo-duplicate
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/readme-demo-duplicate
+      - name: Fix duplicated demo and pixel-loop rendering
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+          for (const file of ['README.md', 'README.zh.md']) {
+            let s = fs.readFileSync(file, 'utf8')
+            s = s.replace('  <img src="assets/vision-demo.gif"<p align="center">\n', '')
+            if (file === 'README.zh.md') {
+              s = s.replace(
+                '<p align="center">\n  <img src="assets/pixel-loop-zh.png" width="100%" alt="参考设计与 Agent 最终复刻，通过 vision_pixel_diff 实测最终差异为 2.54%。" />\n</p>',
+                '[![参考设计与 Agent 最终复刻，通过 vision_pixel_diff 实测最终差异为 2.54%。](assets/pixel-loop-zh.png)](assets/pixel-loop-zh.png)\n\n<p align="center"><sub>点击图片可查看完整原图。</sub></p>'
+              )
+            } else {
+              s = s.replace(
+                '<p align="center">\n  <img src="assets/pixel-loop.png" width="100%" alt="Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference." />\n</p>',
+                '[![Reference design and final agent rebuild, verified with vision_pixel_diff at 2.54% final difference.](assets/pixel-loop.png)](assets/pixel-loop.png)\n\n<p align="center"><sub>Click the image to open the full-resolution original.</sub></p>'
+              )
+            }
+            if ((s.match(/assets\/vision-demo\.gif/g) || []).length !== 1) throw new Error(`${file}: vision-demo.gif must appear exactly once`)
+            if (s.includes('<img src="assets/vision-demo.gif"<p')) throw new Error(`${file}: malformed demo tag remains`)
+            fs.writeFileSync(file, s)
+          }
+          NODE
+      - name: Commit clean README-only diff
+        shell: bash
+        run: |
+          git rm .github/workflows/tmp-fix-readme-images.yml
+          git config user.name "Shirui"
+          git config user.email "77105194+ysr666@users.noreply.github.com"
+          git add README.md README.zh.md
+          git commit -m "docs: fix README image rendering"
+          git push origin HEAD:fix/readme-demo-duplicate
