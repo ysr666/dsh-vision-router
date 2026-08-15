@@ -1,0 +1,54 @@
+name: agent-merge-main-debug
+
+on:
+  push:
+    branches: [agent/read-image-hardening]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/read-image-hardening
+          fetch-depth: 0
+      - name: Inspect merge conflicts with main
+        shell: bash
+        run: |
+          git fetch origin main
+          set +e
+          git merge --no-commit --no-ff origin/main
+          rc=$?
+          set -e
+          echo "merge_rc=$rc"
+          echo "=== unresolved files ==="
+          git diff --name-only --diff-filter=U || true
+          echo "=== conflict regions ==="
+          for f in $(git diff --name-only --diff-filter=U); do
+            echo "----- $f -----"
+            python - "$f" <<'PY'
+import sys
+from pathlib import Path
+p = Path(sys.argv[1])
+lines = p.read_text().splitlines()
+i = 0
+while i < len(lines):
+    if lines[i].startswith('<<<<<<< '):
+        start = max(0, i - 8)
+        j = i
+        while j < len(lines) and not lines[j].startswith('>>>>>>> '):
+            j += 1
+        end = min(len(lines), j + 9)
+        print(f'@@ lines {start+1}-{end} @@')
+        print('\n'.join(lines[start:end]))
+        print()
+        i = end
+    else:
+        i += 1
+PY
+          done
+          git merge --abort || true
+          exit 0
