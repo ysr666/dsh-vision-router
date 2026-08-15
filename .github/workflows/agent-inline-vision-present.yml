@@ -1,0 +1,130 @@
+name: agent-inline-vision-present
+
+on:
+  push:
+    branches:
+      - agent/read-image-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/read-image-hardening
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Patch inline image presentation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          index = Path('index.js')
+          src = index.read_text()
+
+          anchor = "    const stringOutput = {\n      schema: { type: 'string' },\n      render: (_args, value) => [{ type: 'text', text: value }],\n    }\n"
+          if anchor not in src:
+              raise SystemExit('stringOutput anchor not found')
+          replacement = anchor + "\n    const visionPresentOutput = {\n      schema: {\n        type: 'object',\n        properties: {\n          path: { type: 'string' },\n          label: { type: 'string' },\n          width: { type: 'number' },\n          height: { type: 'number' },\n          bytes: { type: 'number' },\n          safePresentation: { type: 'boolean' },\n          attachment: {\n            type: 'object',\n            properties: {\n              attachmentId: { type: 'string' },\n              mediaType: { type: 'string' },\n              bytes: { type: 'number' },\n              width: { type: 'number' },\n              height: { type: 'number' },\n              name: { type: 'string' },\n            },\n            required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],\n            additionalProperties: false,\n          },\n        },\n        required: ['path', 'label', 'width', 'height', 'bytes', 'safePresentation', 'attachment'],\n        additionalProperties: false,\n      },\n      render: (_args, value) => renderVisionPresent(value),\n    }\n"
+          src = src.replace(anchor, replacement, 1)
+
+          marker = "export function sanitizeToolResultImages(messages) {"
+          if marker not in src:
+              raise SystemExit('sanitize marker not found')
+          helper = '''export function renderVisionPresent(value) {\n  const attachment = value.attachment\n  return [\n    {\n      type: 'text',\n      text: JSON.stringify({\n        path: value.path,\n        label: value.label,\n        width: value.width,\n        height: value.height,\n        bytes: value.bytes,\n        safePresentation: true,\n        attachmentId: String(attachment.attachmentId),\n      }),\n    },\n    { type: 'image', attachment },\n  ]\n}\n\n'''
+          src = src.replace(marker, helper + marker, 1)
+
+          start = src.find("    deepToolDefs.push({\n      name: 'vision_present',")
+          end = src.find("\n    deepToolDefs.push({\n      name: 'vision_pixel_diff',", start)
+          if start < 0 or end < 0:
+              raise SystemExit('vision_present block anchors not found')
+          present = '''    deepToolDefs.push({\n      name: 'vision_present',\n      description:\n        'Present a generated local image directly to the user with the host-native image preview. ' +\n        'Use this when you want to show a PNG/JPEG/WebP/GIF you created. Prefer this over read_image for presentation: ' +\n        'read_image is for model-side inspection, while vision_present creates a durable user-facing attachment. ' +\n        'The image is retained in the session UI but sanitized out of later text-only model requests.',\n      parameters: {\n        type: 'object',\n        properties: {\n          image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif)' },\n          label: { type: 'string', description: 'Optional short user-facing label for the image' },\n        },\n        required: ['image'],\n        additionalProperties: false,\n      },\n      output: visionPresentOutput,\n      async execute(args, exec) {\n        const attachments = ctx.get('attachments')\n        if (attachments === undefined) {\n          throw new Error('vision_present: the durable attachment service is not available in this deployment')\n        }\n        const { bytes } = await readImageBytes(args.image)\n        const png = await sharp(bytes, { failOn: 'none' }).png().toBuffer()\n        const label =\n          typeof args.label === 'string' && args.label.trim() !== '' ? args.label.trim().slice(0, 200) : 'image'\n        const target = await saveArtifact(exec, `${artifactStem(args.image, 'present')}.png`, png)\n        let attachment\n        try {\n          attachment = await attachments.saveImage({\n            data: png,\n            mediaType: 'image/png',\n            name: label,\n          })\n        } catch (error) {\n          throw new Error(\n            `vision_present: failed to publish the image attachment (${error && error.message ? error.message : String(error)})`,\n          )\n        }\n        return {\n          path: target,\n          label,\n          width: attachment.width,\n          height: attachment.height,\n          bytes: attachment.bytes,\n          safePresentation: true,\n          attachment,\n        }\n      },\n    })\n'''
+          src = src[:start] + present + src[end:]
+          index.write_text(src)
+
+          client = Path('lib/client.js')
+          c = client.read_text()
+          old = "    const React = require('react')\n    const { useState, useMemo } = React\n"
+          new = "    const React = require('react')\n    const { useState, useMemo } = React\n    const { ImageGallery } = require('@deepseek-ai/dsh-client-ui-attachment')\n"
+          if old not in c:
+              raise SystemExit('client require anchor not found')
+          c = c.replace(old, new, 1)
+
+          zh_anchor = "      textTextProviderHint: '格式「provider/model」。',\n    }\n    const en = {"
+          zh_extra = "      textTextProviderHint: '格式「provider/model」。',\n      presentingImage: '正在准备图片…',\n      presentedImage: '图片',\n      openPresentedImage: '点击查看原图',\n      openNamedImage: '查看原图：{name}',\n      loadingPresentedImage: '图片加载中…',\n      retryPresentedImage: '加载失败，点击重试',\n      imagePreviewDialog: '图片预览',\n      closeImagePreview: '关闭预览',\n    }\n    const en = {"
+          if zh_anchor not in c:
+              raise SystemExit('zh locale anchor not found')
+          c = c.replace(zh_anchor, zh_extra, 1)
+
+          en_anchor = "      textTextProviderHint: 'Format \\\"provider/model\\\".',\n    }\n\n    /**"
+          # The source contains ordinary quote characters, not backslash escapes.
+          en_anchor = "      textTextProviderHint: 'Format \"provider/model\".',\n    }\n\n    /**"
+          en_extra = "      textTextProviderHint: 'Format \"provider/model\".',\n      presentingImage: 'Preparing image…',\n      presentedImage: 'Image',\n      openPresentedImage: 'Open original image',\n      openNamedImage: 'Open original image: {name}',\n      loadingPresentedImage: 'Loading image…',\n      retryPresentedImage: 'Load failed, click to retry',\n      imagePreviewDialog: 'Image preview',\n      closeImagePreview: 'Close preview',\n    }\n\n    /**"
+          if en_anchor not in c:
+              raise SystemExit('en locale anchor not found')
+          c = c.replace(en_anchor, en_extra, 1)
+
+          c = c.replace("    const ARTIFACT_TOOL_KEYS = [\n      'vision_present',\n", "    const ARTIFACT_TOOL_KEYS = [\n", 1)
+
+          apply_anchor = "    function apply(ctx) {\n      const scope = ctx.settingsScope.bind({ namespace: 'vision-router' })\n"
+          if apply_anchor not in c:
+              raise SystemExit('apply anchor not found')
+          apply_replacement = '''    function apply(ctx) {\n      const scope = ctx.settingsScope.bind({ namespace: 'vision-router' })\n      const presentedImageUrls = new Map()\n      const createdImageUrls = new Set()\n      const loadPresentedImage = (sessionId, attachment) => {\n        const key = `${String(sessionId)}:${String(attachment.attachmentId)}`\n        const cached = presentedImageUrls.get(key)\n        if (cached !== undefined) return cached\n        const pending = (async () => {\n          const binding = ctx.sessions.binding(sessionId)\n          if (binding === undefined) throw new Error(`vision_present: unknown session ${String(sessionId)}`)\n          const result = await binding.session.readAttachment(attachment.attachmentId)\n          if (!result.ok) {\n            throw new Error(`vision_present: ${result.error.code}: ${result.error.message}`)\n          }\n          const ref = result.value.attachment\n          const data = result.value.data\n          if (typeof URL.createObjectURL === 'function') {\n            const url = URL.createObjectURL(new Blob([data], { type: ref.mediaType }))\n            createdImageUrls.add(url)\n            return url\n          }\n          let binary = ''\n          const chunk = 0x8000\n          for (let offset = 0; offset < data.length; offset += chunk) {\n            binary += String.fromCharCode(...data.subarray(offset, offset + chunk))\n          }\n          return `data:${ref.mediaType};base64,${btoa(binary)}`\n        })().catch((error) => {\n          presentedImageUrls.delete(key)\n          throw error\n        })\n        presentedImageUrls.set(key, pending)\n        return pending\n      }\n      const presentLabels = {\n        image: t => t('presentedImage'),\n      }\n'''
+          # keep only closure setup; labels are resolved in the component after t is bound below
+          apply_replacement = apply_replacement.replace("      const presentLabels = {\\n        image: t => t('presentedImage'),\\n      }\\n", "")
+          c = c.replace(apply_anchor, apply_replacement, 1)
+
+          t_anchor = "      const t = ctx.locale.bind(NS)\n      // Lazily reach the client `connection` service for the model catalog.\n"
+          component = '''      const t = ctx.locale.bind(NS)\n      const VisionPresentCard = (props) => {\n        const { block, sessionId } = props\n        const content = block && Array.isArray(block.content) ? block.content : []\n        const images = content\n          .filter((item) => item && item.type === 'image' && item.attachment)\n          .map((item) => ({ attachment: item.attachment }))\n        if (images.length === 0) {\n          return React.createElement(\n            'div',\n            { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', padding: '4px 0' } },\n            t('presentingImage'),\n          )\n        }\n        let parsed\n        const raw = textOf(block)\n        if (raw) {\n          try { parsed = JSON.parse(raw) } catch { parsed = undefined }\n        }\n        const labels = {\n          image: t('presentedImage'),\n          open: t('openPresentedImage'),\n          openNamed: (name) => t('openNamedImage', { name }),\n          loading: t('loadingPresentedImage'),\n          loadFailed: t('retryPresentedImage'),\n          lightbox: { dialog: t('imagePreviewDialog'), close: t('closeImagePreview') },\n        }\n        return React.createElement(\n          'div',\n          { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '4px 0' } },\n          parsed && typeof parsed.label === 'string' && parsed.label !== 'image'\n            ? React.createElement(\n                'div',\n                { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },\n                parsed.label,\n              )\n            : null,\n          React.createElement(ImageGallery, {\n            images,\n            align: 'start',\n            labels,\n            load: (attachment) => loadPresentedImage(sessionId, attachment),\n          }),\n        )\n      }\n      ctx.effect(\n        () => () => {\n          for (const url of createdImageUrls) URL.revokeObjectURL(url)\n          createdImageUrls.clear()\n          presentedImageUrls.clear()\n        },\n        'vision-router: presented image URL cache',\n      )\n      // Lazily reach the client `connection` service for the model catalog.\n'''
+          if t_anchor not in c:
+              raise SystemExit('t anchor not found')
+          c = c.replace(t_anchor, component, 1)
+
+          slot_anchor = "          ctx.slots.inject('tool.call.toolview', function* () {\n            for (const key of ARTIFACT_TOOL_KEYS) {"
+          slot_replacement = "          ctx.slots.inject('tool.call.toolview', function* () {\n            yield ctx.slots.register(\n              { name: 'tool.call.toolview', key: 'vision_present', inject: () => ({}) },\n              VisionPresentCard,\n            )\n            for (const key of ARTIFACT_TOOL_KEYS) {"
+          if slot_anchor not in c:
+              raise SystemExit('toolview slot anchor not found')
+          c = c.replace(slot_anchor, slot_replacement, 1)
+          c = c.replace("    exports.inject = ['settingsScope', 'slots', 'locale']", "    exports.inject = ['settingsScope', 'slots', 'locale', 'sessions']", 1)
+          client.write_text(c)
+
+          tests = Path('tests/core.test.js')
+          t = tests.read_text()
+          import_anchor = "  sanitizeToolResultImages,\n"
+          if import_anchor not in t:
+              raise SystemExit('test import anchor not found')
+          t = t.replace(import_anchor, import_anchor + "  renderVisionPresent,\n", 1)
+          test_marker = "test('sanitizeToolResultImages removes nested read_image-style images but preserves user images', () => {"
+          if test_marker not in t:
+              raise SystemExit('sanitizer test marker not found')
+          test_block = '''test('vision_present renders a durable image for UI and sanitizer removes it from text-model input', () => {\n  const attachment = {\n    attachmentId: 'present-1',\n    mediaType: 'image/png',\n    bytes: 123,\n    width: 320,\n    height: 200,\n    name: 'Preview',\n  }\n  const rendered = renderVisionPresent({\n    path: '/workspace/present.png',\n    label: 'Preview',\n    width: 320,\n    height: 200,\n    bytes: 123,\n    safePresentation: true,\n    attachment,\n  })\n  assert.equal(rendered.length, 2)\n  assert.equal(rendered[1].type, 'image')\n  assert.equal(rendered[1].attachment, attachment)\n  assert.match(rendered[0].text, /present-1/)\n\n  const wrapped = [{\n    role: 'user',\n    content: [{ type: 'tool-result', toolCallId: 'call-1', content: rendered }],\n  }]\n  const sanitized = sanitizeToolResultImages(wrapped)\n  assert.equal(sanitized.changed, true)\n  assert.equal(sanitized.messages[0].content[0].content.some((block) => block.type === 'image'), false)\n  assert.match(sanitized.messages[0].content[0].content.at(-1).text, /present-1/)\n})\n\n'''
+          t = t.replace(test_marker, test_block + test_marker, 1)
+          tests.write_text(t)
+          PY
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Validate
+        run: |
+          pnpm test
+          node --check lib/client.js
+          git diff --check
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/agent-inline-vision-present.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.js lib/client.js tests/core.test.js .github/workflows/agent-inline-vision-present.yml
+          git commit -m 'fix: render vision_present inline with native image UI'
+          git push origin HEAD:agent/read-image-hardening
