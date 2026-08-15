@@ -23,7 +23,7 @@
 > [!WARNING]
 > 📌 **Announcement (v1.1.1)**
 >
-> Existing DSH providers are now **auto-wrapped on install**: text-only routes gain paste-and-go vision automatically, while native multimodal models keep their original image input and use Vision Router tools only when useful. Windows sharp/libvips startup conflicts are fixed by sharing the host sharp; install/update docs now distinguish npm/npx from source-checkout pnpm usage.
+> Existing DSH providers are now **auto-wrapped on install**: text-only routes gain a same-name **“+ Auto Vision”** model group, while native multimodal models keep their original image input and use Vision Router tools only when useful. **Before sending an image, choose the “+ Auto Vision” group from the lower-right model selector; the original group is intentionally left untouched.** Model and wrapper changes hot-update without a restart. Windows sharp/libvips startup conflicts are fixed by sharing the host sharp; install/update docs distinguish npm/npx from source-checkout pnpm usage.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -48,7 +48,7 @@ The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anio
 |---|---|---|
 | Image Q&A out of the box | ✅ Built-in free chain (anonymous OVHcloud endpoint) — no account, no key | Requires your own vision API key (local pixel tools work without one) |
 | Runtime | ✅ Node only — no Python | Python 3.11+ managed runtime |
-| Getting an image in | ✅ Paste it — the turn auto-routes to the vision chain and auto-mounts the tools | Workspace path + `/vision-tools` command, then explicit tool calls |
+| Getting an image in | ✅ Pick a “+ Auto Vision” group once, then paste directly | Workspace path + `/vision-tools` command, then explicit tool calls |
 | Turn routing | ✅ Image turns switch to vision, text turns switch back to DeepSeek — optional stealth takeover keeps the model picker looking stock | Tool-driven; no whole-turn auto-routing |
 | Profiles | Web | Web + Headless |
 | Playbooks | The pixel loop: ground → crop → diff → fix → screenshot again | Richer case library (long-screenshot OCR, UI restoration, GUI automation) |
@@ -58,6 +58,8 @@ The closest alternative is [@anionex/dsh-vision-toolkit](https://github.com/Anio
 Both are MIT-licensed and one command away. Pick this plugin when you want images to *just work* with zero setup; pick theirs when you need headless profiles or the extended playbook library. (Feature comparison reflects their README as of 2026-08.)
 
 ## Quick start
+
+### 1. Install and load the plugin
 
 Recommended for normal npm/npx installs (the same launch style used by the DSH README):
 
@@ -74,14 +76,32 @@ pnpm dsh plugin --profile web add dsh-vision-router
 pnpm dsh web
 ```
 
-If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorter `dsh ...` form works too. Restart a long-lived Web profile after installation — done. Zero configuration:
+If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorter `dsh ...` form works too.
 
-- the plugin's bundle patch mounts the row, adds the admission wrapper and relaxes attachment limits to 20 MB / 100 MP — pure-additive, it never touches the core rows; whether the official DeepSeek route is taken over is decided by the optional stealth setting (off by default);
-- the default vision chain is the built-in free endpoint;
-- custom/third-party routes (e.g. opencode) gain image input through **Extra vision wrappers**;
-- every setting is editable live in **Settings → Plugins → Plugin config → 视觉路由（自动识图）**.
+> [!NOTE]
+> If you install the plugin **into a Web process that was already running long-term**, let that DSH Web process reload once so the plugin bundle itself is discovered. After the plugin is loaded, adding/removing models or changing wrapper scope **hot-updates without further DSH restarts**.
 
-Then just paste an image into a conversation. The agent mounts the vision tools automatically and looks at it through `vision_describe` (and friends) — multi-step if needed.
+### 2. Switch to a “+ Auto Vision” model group in chat
+
+Once loaded, the plugin discovers the model groups enabled under **Settings → Models** and creates same-name auto-vision entries. For example:
+
+```text
+opencode-go                 ← original model group, unchanged
+opencode-go + Auto Vision   ← choose this when sending images
+```
+
+> [!IMPORTANT]
+> **Before sending an image, open the model selector in the lower-right corner of the chat composer and choose a group marked “+ Auto Vision”.**
+>
+> Vision Router deliberately **does not modify the original model group**. If the conversation still uses the original text-only opencode / DeepSeek route, DSH can reject the image with “the current model does not support images” *before Vision Router gets a chance to handle it*. That is a model-entry selection issue, not a broken vision backend.
+
+The auto-vision group follows the live DSH model catalog. Adding models or changing wrapper scope does not require a restart.
+
+### 3. Paste or upload the image
+
+After choosing the “+ Auto Vision” group, paste or upload an image normally. The agent auto-mounts the vision tools and can use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
+
+The built-in free vision backend is already configured, so normal image use needs no API key or extra setup. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**.
 
 ### See it in action
 
@@ -165,6 +185,9 @@ The vision chain walks providers in order and only surfaces an error after every
 2. configured `httpProviders` (direct OpenAI-compatible endpoints with optional `apiKeyEnv`);
 3. configured `providers` / `provider` + `fallbacks` (any adapter-backed provider, e.g. a Pi-AI profile like OpenRouter or Zhipu).
 
+> [!IMPORTANT]
+> This “vision chain” is the **vision backend** called by Vision Router. Its models must genuinely accept image input. It is separate from the “+ Auto Vision” conversation model group in the lower-right selector; do not put a text-only DeepSeek/opencode model here as a vision fallback.
+
 > In the legacy `routing: true` mode, the whole-turn chain walks only `provider + fallbacks` — `httpProviders` (including the free fallback) do not participate there. The default `routing: false` (tools-first) tries everything.
 
 Failures are classified (region / tos / quota / rate-limit / context / network) and the final error carries advice; `429` responses honor `Retry-After` once with a capped backoff. Oversized uploads are downscaled before the call (default budget 4 MP) to keep tool calls fast.
@@ -183,21 +206,29 @@ With stealth on, the plugin takes over the official `deepseek-official` route: t
 
 With the stock row present, the plugin falls back to the visible wrapper entry. Conversely, with stealth off but the stock row still disabled, the plugin performs a keep-alive takeover so the DeepSeek models don't vanish (the settings card explains this); to restore the fully official route, flip the `disabled` above back to `false` and restart.
 
-> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes like opencode are unrelated — use **Extra vision wrappers** below to give them image input.
+> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes such as opencode are auto-wrapped into “+ Auto Vision” groups by default.
 
-## Extra vision wrappers
+## Auto-vision model groups and manual wrappers
 
-`wrappedProviders` registers an auto-vision twin for any third-party/custom text route: pick the twin in the model selector and send images; text turns delegate to the original route unchanged. The typical use case is a custom interface such as opencode — it only declares text input, and one wrapper row makes it image-ready. In the settings card, configure it with two dropdowns (provider + model); leaving the model empty wraps every model of that route.
+`autoWrapProviders` is on by default. The plugin discovers the provider/model entries currently enabled under **Settings → Models** and registers a same-name “+ Auto Vision” model group for them. **The original group is never changed**: choose the auto-vision group for images, or keep using the original group for plain text. DSH `llm/adapters-updated` events are synced live, so adding/removing models does not require a restart.
+
+`wrappedProviders` is an **optional manual scope control**, not a required setup step. Use it only when:
+
+1. automatic wrapping is off and you want to pick which provider/models receive an auto-vision entry; or
+2. automatic wrapping remains on but one provider should expose only selected models in its “+ Auto Vision” group.
+
+The settings card uses provider + model dropdowns; an empty model means every model on that route. Add multiple rows to select multiple models. Changes apply immediately with no restart.
 
 ## Web settings
 
-The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**, styled like the built-in cards. It live-edits:
+The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**. Its top callout spells out the only step most users need: **return to chat → lower-right model selector → choose a “+ Auto Vision” model group → send the image**. The remaining controls are advanced customization:
 
-- switches: whole-turn legacy routing, vision tools, image-block rewriting, stealth (official DeepSeek route only);
-- **extra vision wrappers**: provider + model dropdowns that register image-capable twin entries for custom routes such as opencode;
-- vision request timeout, wrapper/chain route names;
-- the **vision chain** (one `provider/model` per line, top-down fallback) and the text model;
-- every field shows an "overridden" badge with a one-click reset to the composition default, plus discard/save;
+- **Auto-create “+ Auto Vision” model groups**: enabled by default; follows the live model catalog with no restart;
+- **Manual auto-vision scope (optional)**: only for disabling auto-wrap or limiting selected models;
+- **Vision backend chain**: the real image-capable models used by `vision_describe` and friends; the built-in free Qwen is normally enough, and text-only models should not be placed here;
+- switches for legacy whole-turn routing, vision tools, image-block rewriting and stealth mode (official DeepSeek route only);
+- timeout, wrapper/chain route names, proxy and other advanced parameters;
+- every field shows an overridden badge with one-click reset plus discard/save;
 - a **Test connection** button probes the first vision provider and reports latency inline;
 - artifact-producing tools render dedicated call cards with result facts and open-file buttons.
 
@@ -213,15 +244,16 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 
 | Field | Default | Meaning |
 |---|---|---|
-| `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | shorthand chain (adapter-backed provider + model) |
-| `fallbacks` | `[]` | backup models for the shorthand provider |
-| `providers` | built-in free `vision-http` pair | multi-provider chain `{ provider, model, fallbacks[] }`, tried in order; wins over the shorthand. The first row ships as the built-in free model |
+| `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | shorthand **vision backend** route (adapter-backed provider + model that genuinely accepts images) |
+| `fallbacks` | `[]` | backup image models for the shorthand vision provider |
+| `providers` | built-in free `vision-http` pair | multi-provider **vision backend** chain `{ provider, model, fallbacks[] }`, tried in order; do not put text-only models here |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | extra text routes to wrap as image-capable twins: `{ provider, models[] }` — registers an auto-vision twin for any custom/third-party route (e.g. opencode); in the card, provider + model dropdowns, empty model = wrap all. The pre-filled deepseek-official row marks the built-in wrapper and is a no-op; changes apply live |
+| `autoWrapProviders` | `true` | discover enabled provider/models and live-sync same-name “+ Auto Vision” groups; original groups stay unchanged |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | optional manual wrapper scope `{ provider, models[] }`, used after disabling auto-wrap or to restrict one provider to selected models; changes apply live, no restart |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |
-| `stealth` | `false` | take over the official `deepseek-official` route (official row only; custom routes use `wrappedProviders`) |
+| `stealth` | `false` | take over the official `deepseek-official` route (official row only; custom routes are auto-wrapped by default) |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | the model that reasons (your daily model) |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` ×3 | vision tools on / progressive mounting / auto-mount on image turns |
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
@@ -257,7 +289,7 @@ pnpm dsh plugin --profile web add dsh-vision-router
 pnpm dsh --profile web --dump-config | grep vision-router
 ```
 
-Restart a long-lived Web profile. The host discovers the browser bundle through `dsh.client` at startup.
+When first adding the plugin to an already long-lived Web profile, let that Web process reload the plugin bundle; the host discovers the browser bundle through `dsh.client` at startup. **After the plugin is loaded, model-catalog and wrapper-scope changes hot-update and do not require a restart.**
 
 ### Disable / re-enable
 
