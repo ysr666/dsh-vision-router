@@ -188,7 +188,7 @@ test('providersOf flattens the single-provider shorthand', () => {
       { provider: 'openrouter', model: 'm2' },
     ],
   )
-  assert.deepEqual(providersOf({}), [{ provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct' }])
+  assert.deepEqual(providersOf({}), [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B' }])
 })
 
 test('providersOf flattens the multi-provider form and prefers it', () => {
@@ -1213,7 +1213,7 @@ test('autoWrapProviders defaults to true', () => {
 })
 test('the vision chain ships with the built-in free model as its first row', () => {
   assert.deepEqual(Config({}).providers, [
-    { provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] },
+    { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] },
   ])
 })
 
@@ -1657,16 +1657,16 @@ test('wrapper lists the vision-chain pairs only when whole-turn routing is on', 
   assert.deepEqual(wrapped.map((m) => m.id), [
     'deepseek-v4-flash',
     'deepseek-v4-pro',
-    'vision-http/ovh/Qwen2.5-VL-72B-Instruct',
+    'vision-http/ovh/Qwen3.5-397B-A17B',
   ])
-  const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  const visionEntry = wrapped.find((m) => m.id === 'vision-http/ovh/Qwen3.5-397B-A17B')
   assert.ok(visionEntry)
   assert.deepEqual(visionEntry.inputModalities, ['text', 'image'])
   assert.ok(String(visionEntry.name).includes('视觉'))
   // resolving a vision-pair entry still returns image-capable metadata
-  const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  const resolved = await wrapper.resolveModel('deepseek-vision', 'vision-http/ovh/Qwen3.5-397B-A17B')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
-  assert.equal(resolved.id, 'vision-http/ovh/Qwen2.5-VL-72B-Instruct')
+  assert.equal(resolved.id, 'vision-http/ovh/Qwen3.5-397B-A17B')
 })
 test('floodFillBackground clears border-connected background pixels', () => {
   // 4x4: white background, black 2x2 square in the middle
@@ -1894,4 +1894,47 @@ test('toRealPath converts fs resolve results to real paths', () => {
   assert.equal(toRealPath({}, { targetKey: '/abs/page.html' }), '/abs/page.html')
   assert.equal(toRealPath(null, { targetKey: '/abs/page.html' }), '/abs/page.html')
   assert.equal(toRealPath({}, { targetKey: '' }), '[object Object]')
+})
+
+
+test('built-in OVH anonymous fallback is largest-first across independent model buckets', () => {
+  assert.deepEqual(DEFAULT_HTTP_PROVIDERS.map((provider) => provider.model), [
+    'Qwen3.5-397B-A17B',
+    'Qwen2.5-VL-72B-Instruct',
+    'Qwen3.6-27B',
+    'Mistral-Small-3.2-24B-Instruct-2506',
+    'Qwen3.5-9B',
+  ])
+  assert.ok(DEFAULT_HTTP_PROVIDERS.every((provider) => provider.apiKeyEnv === ''))
+})
+
+test('anonymous OVH 429 surfaces immediately so the next model can run', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    return new Response('{"message":"API rate limit exceeded"}', {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'retry-after': '60' },
+    })
+  }
+  const started = Date.now()
+  try {
+    await assert.rejects(
+      () => callOpenAICompatible(
+        {
+          name: 'ovh',
+          baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
+          model: 'Qwen3.5-397B-A17B',
+          apiKeyEnv: '',
+        },
+        [{ role: 'user', content: [] }],
+      ),
+      /429/,
+    )
+    assert.equal(calls, 1)
+    assert.ok(Date.now() - started < 1000)
+  } finally {
+    globalThis.fetch = original
+  }
 })

@@ -48,7 +48,7 @@ export const DEFAULT_PROXY_HOSTS = [
 
 export const Config = z.object({
   provider: z.string().default('vision-http'),
-  model: z.string().default('ovh/Qwen2.5-VL-72B-Instruct'),
+  model: z.string().default('ovh/Qwen3.5-397B-A17B'),
   fallbacks: z.array(z.string()).default([]),
   // 默认预置内置免费端点为第一行（与运行时兜底一致）：新用户在卡片里
   // 直接看到「vision-http / ovh/Qwen2.5-VL-72B-Instruct（内置免费模型）」
@@ -61,7 +61,7 @@ export const Config = z.object({
         fallbacks: z.array(z.string()).default([]),
       }),
     )
-    .default([{ provider: 'vision-http', model: 'ovh/Qwen2.5-VL-72B-Instruct', fallbacks: [] }]),
+    .default([{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }]),
   // 默认关闭：图片轮不整轮切到视觉模型，而是像普通文本轮一样由会话模型
   // 调用视觉工具看图（可连续多步操作）。开启后恢复旧的整轮自动路由行为。
   routing: z.boolean().default(false),
@@ -210,7 +210,7 @@ export function providersOf(config = {}) {
   for (const fallback of config.fallbacks ?? []) {
     if (typeof fallback === 'string' && fallback !== '') models.push(fallback)
   }
-  if (models.length === 0) models.push('ovh/Qwen2.5-VL-72B-Instruct')
+  if (models.length === 0) models.push('ovh/Qwen3.5-397B-A17B')
   return models.map((model) => ({ provider, model }))
 }
 
@@ -1167,13 +1167,14 @@ export async function downscaleImage(bytes, maxPixels) {
  * registration-free vision endpoint (2 requests/min/IP, best-effort).
  */
 export const DEFAULT_HTTP_PROVIDERS = [
-  {
-    name: 'ovh',
-    baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',
-    model: 'Qwen2.5-VL-72B-Instruct',
-    apiKeyEnv: '',
-    maxTokens: 4096,
-  },
+  // OVHcloud anonymous quota is per IP AND per model. Keep the free chain
+  // ordered largest -> smallest so quality wins first. A 429 on one model can
+  // immediately fall through to the next model's independent anonymous bucket.
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.5-397B-A17B', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen2.5-VL-72B-Instruct', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.6-27B', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Mistral-Small-3.2-24B-Instruct-2506', apiKeyEnv: '', maxTokens: 4096 },
+  { name: 'ovh', baseURL: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', model: 'Qwen3.5-9B', apiKeyEnv: '', maxTokens: 4096 },
 ]
 
 export function httpProvidersOf(config, allowDefault = true) {
@@ -1253,8 +1254,16 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   let retried = false
   for (;;) {
     const response = await request()
-    // Free endpoints are heavily rate limited (e.g. OVHcloud anonymous:
-    // 2 req/min/IP). Honor Retry-After once (capped), then surface the 429.
+    // OVH anonymous quota is per model. Surface its 429 immediately so
+    // the outer vision fallback can use the next model's independent bucket
+    // instead of blocking the agent for 30-60 seconds.
+    const anonymousOvh =
+      apiKeyEnv === '' && /(?:^|\.)ai\.cloud\.ovh\.net$/i.test(new URL(provider.baseURL).hostname)
+    if (response.status === 429 && anonymousOvh) {
+      const detail = (await response.text().catch(() => '')).slice(0, 300)
+      throw new Error(`http provider "${provider.name}": 429 ${detail}`)
+    }
+    // Other HTTP providers retain the existing one-shot Retry-After behavior.
     if (response.status === 429 && !retried) {
       retried = true
       const retryAfter = Number(response.headers.get('retry-after'))
@@ -1591,8 +1600,31 @@ export function apply(ctx, config = {}) {
     Number.isFinite(config.cacheMaxEntries) ? config.cacheMaxEntries : 200,
     (Number.isFinite(config.cacheTtlSeconds) ? config.cacheTtlSeconds : 3600) * 1000,
   )
-  const httpProviders = () =>
-    dedupeHttpProviders(pairs(), httpProvidersOf(current(), current().freeFallback !== false))
+  const httpProviders = () => {
+    const raw = httpProvidersOf(current(), current().freeFallback !== false)
+    // A vision-http config row picks the preferred direct HTTP model. Keep the
+    // other built-in OVH models behind it instead of deleting the selected
+    // model from the direct fallback chain.
+    const preferredIds = pairs()
+      .filter((pair) => pair && pair.provider === 'vision-http')
+      .map((pair) => pair.model)
+    const preferred = []
+    const rest = []
+    for (const provider of raw) {
+      const id = `${provider.name}/${provider.model}`
+      if (preferredIds.includes(id)) preferred.push(provider)
+      else rest.push(provider)
+    }
+    preferred.sort(
+      (a, b) =>
+        preferredIds.indexOf(`${a.name}/${a.model}`) -
+        preferredIds.indexOf(`${b.name}/${b.model}`),
+    )
+    return dedupeHttpProviders(
+      pairs().filter((pair) => pair && pair.provider !== 'vision-http'),
+      [...preferred, ...rest],
+    )
+  }
   const resolveCredential = async (ref) => {
     const credentials = ctx.get('credentials')
     if (credentials === undefined) return undefined
@@ -2183,6 +2215,39 @@ export function apply(ctx, config = {}) {
     return capabilities
   }
 
+
+  // Build the tool-side adapter chain from real image-capable models already
+  // registered in DSH. Explicit non-HTTP backend rows keep their configured
+  // order, then any other native multimodal models are appended. Generated
+  // + 自动识图 wrappers and plugin-owned routes are not real visual backends;
+  // direct HTTP/OVH remains the final fallback layer.
+  const resolveToolVisionPairs = async () => {
+    const out = []
+    const seen = new Set()
+    const add = (provider, model) => {
+      const key = `${provider}/${model}`
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({ provider, model })
+    }
+
+    for (const pair of pairs()) {
+      if (!pair || pair.provider === HTTP_ROUTE) continue
+      if (!adapterAvailable(ctx.llm, pair.provider)) continue
+      const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+      if (capability.image) add(pair.provider, pair.model)
+    }
+
+    const capabilities = await collectVisionBackendCapabilities()
+    for (const [provider, models] of Object.entries(capabilities)) {
+      if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
+      for (const [model, capability] of Object.entries(models ?? {})) {
+        if (capability && capability.image) add(provider, model)
+      }
+    }
+    return out
+  }
+
   // ── vision chain route: fallback under our own control ─────────────────────
   //
   // The agent-loop's request-error retry is owned by dsh-llm-retry, which sits
@@ -2730,23 +2795,23 @@ export function apply(ctx, config = {}) {
         const jsonInstruction = wantJson
           ? '\n\n' + describeStructuredInstruction(question)
           : ''
-        const usablePairs = []
+        const usablePairs = await resolveToolVisionPairs()
         const rejectedPairs = []
         for (const pair of pairs()) {
+          if (!pair || pair.provider === HTTP_ROUTE) continue
           if (!adapterAvailable(ctx.llm, pair.provider)) {
             rejectedPairs.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
             continue
           }
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (capability.image) usablePairs.push(pair)
-          else {
+          if (!capability.image) {
             rejectedPairs.push(
               `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
             )
           }
         }
         const key = cacheKeyFor({
-          pairs: pairs(),
+          pairs: usablePairs,
           httpProviders: httpProviders(),
           contentIds,
           wantJson,
@@ -2962,15 +3027,15 @@ export function apply(ctx, config = {}) {
       const errors = []
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
       const signal = AbortSignal.timeout(timeoutMs())
-      const usablePairs = []
+      const usablePairs = await resolveToolVisionPairs()
       for (const pair of pairs()) {
+        if (!pair || pair.provider === HTTP_ROUTE) continue
         if (!adapterAvailable(ctx.llm, pair.provider)) {
           errors.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
           continue
         }
         const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-        if (capability.image) usablePairs.push(pair)
-        else {
+        if (!capability.image) {
           errors.push(
             `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
           )
