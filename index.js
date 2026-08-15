@@ -4221,9 +4221,14 @@ export function apply(ctx, config = {}) {
                 const pending = runDshPluginUpdate(selfUpdatePlan)
                   .then((result) => ({ ...result, targetVersion: fresh.latestVersion }))
                 selfUpdateInFlight = pending
-                void pending.finally(() => {
-                  if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
-                })
+                void pending.then(
+                  () => {
+                    if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
+                  },
+                  () => {
+                    if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
+                  },
+                )
               }
               const result = await selfUpdateInFlight
               // Rotate the token after a successful mutation so a captured
