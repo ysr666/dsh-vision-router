@@ -178,3 +178,34 @@ test('the settings card skips offscreen paint and rebuilds model options once', 
   assert.equal(source.includes('const cardInject = { scope, getConnection, t, locale: ctx.locale }'), true)
   assert.equal(source.includes('inject: () => cardInject'), true)
 })
+
+
+test('empty vision dropdown diagnostics identify undeclared image models and support re-detection', () => {
+  const bundle = loadClientBundle()
+  const groups = [
+    { id: 'zhipu', name: '智谱', models: [
+      { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
+      { id: 'glm-4.5v', name: 'GLM-4.5V' },
+    ] },
+    { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'qwen-vl', name: 'Qwen VL' }] },
+  ]
+  const hidden = bundle.collectFilteredVisionBackends(groups, {
+    zhipu: {
+      'glm-4.6v-flash': { image: false, reason: 'model metadata does not declare image input' },
+      'glm-4.5v': { image: false, reason: 'model metadata does not declare image input' },
+    },
+    openrouter: { 'qwen-vl': { image: true } },
+  })
+  assert.deepEqual(hidden.map((entry) => [entry.provider, entry.model, entry.missingImageDeclaration]), [
+    ['zhipu', 'glm-4.6v-flash', true],
+    ['zhipu', 'glm-4.5v', true],
+  ])
+
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
+  assert.equal(source.includes('input: [text, image]'), true)
+  assert.equal(source.includes('defaultInput: [text, image]'), true)
+  assert.equal(source.includes('loadCatalog(true)'), true)
+  assert.equal(source.includes('loadVisionCapabilities(true)'), true)
+  assert.equal(source.includes('emptyVisionModelsPanel()'), true)
+})
