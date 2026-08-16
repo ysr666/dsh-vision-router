@@ -1,7 +1,7 @@
 // 运行期端到端测试：dsh-vision 并入特性的真实运行时路径。
 // 不 stub fetch——起一个本地 OpenAI 兼容假服务（node:http），驱动真实的
 // callOpenAICompatible / buildInstantLocalMap / vision_screenshot 代码路径：
-// 键缺失、429 重试、超时中止、ECONNREFUSED 降级、跨轮图片记忆写回、
+// 键缺失、429 熔断元数据、超时中止、ECONNREFUSED 降级、跨轮图片记忆写回、
 // 桌面截屏 + identify 全链路。CI 安全：只依赖内置模块与本机端口。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -16,6 +16,7 @@ import {
   buildInstantLocalMap,
   imageMemorySet,
   localOllamaProvidersOf,
+  createWrapperStreamBody,
   apply,
   Config,
 } from '../index.js'
@@ -137,25 +138,33 @@ test('callOpenAICompatible sends Bearer auth only for a keyed provider', async (
   }
 })
 
-test('callOpenAICompatible honors Retry-After on 429 and retries once', async () => {
-  const server = await startFakeOpenAI(async (_req, _body, nth) =>
-    nth === 1
-      ? { status: 429, headers: { 'retry-after': '1' }, body: 'slow down' }
-      : chatOk('after-retry'),
-  )
+test('callOpenAICompatible surfaces 429 immediately with Retry-After metadata', async () => {
+  const server = await startFakeOpenAI(async () => ({
+    status: 429,
+    headers: { 'retry-after': '1' },
+    body: 'slow down',
+  }))
   try {
-    const text = await callOpenAICompatible(
-      { name: 'p', baseURL: server.baseURL, model: 'm', apiKeyEnv: '' },
-      [{ role: 'user', content: [] }],
+    await assert.rejects(
+      () =>
+        callOpenAICompatible(
+          { name: 'p', baseURL: server.baseURL, model: 'm', apiKeyEnv: '' },
+          [{ role: 'user', content: [] }],
+        ),
+      (error) => {
+        assert.equal(error.status, 429)
+        assert.equal(error.code, 'RATE_LIMIT')
+        assert.equal(error.providerRetryAfterMs, 1000)
+        return true
+      },
     )
-    assert.equal(text, 'after-retry')
-    assert.equal(server.requests.length, 2)
+    assert.equal(server.requests.length, 1)
   } finally {
     await server.close()
   }
 })
 
-test('callOpenAICompatible surfaces a second 429 as an error', async () => {
+test('callOpenAICompatible never performs a blind retry on repeated 429 responses', async () => {
   const server = await startFakeOpenAI(async () => ({ status: 429, headers: { 'retry-after': '1' }, body: 'quota' }))
   try {
     await assert.rejects(
@@ -166,7 +175,7 @@ test('callOpenAICompatible surfaces a second 429 as an error', async () => {
         ),
       /429/,
     )
-    assert.equal(server.requests.length, 2)
+    assert.equal(server.requests.length, 1)
   } finally {
     await server.close()
   }
@@ -303,7 +312,9 @@ test('buildInstantLocalMap drives the real HTTP path: structured prompt, prefix 
     // 跨轮图片记忆写回纯文本（不带前缀标签）。
     assert.equal(memory.get('a1'), '这是一张测试图片')
     assert.equal(logs.warn.length, 0)
-    assert.equal(logs.info.length, 1)
+    assert.equal(logs.info.length, 2)
+    assert.ok(logs.info.some((entry) => String(entry[0]).includes('via %s recognized %d/%d')))
+    assert.ok(logs.info.some((entry) => String(entry[0]).includes('uncached image(s)')))
   } finally {
     await server.close()
   }
@@ -443,6 +454,121 @@ test('buildInstantLocalMap aborts a hung server within the configured timeout', 
   }
 })
 
+test('buildInstantLocalMap reserves time for LM Studio when Ollama hangs', async () => {
+  const hang = await startFakeOpenAI(async (req) => {
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 5000)
+      req.on('close', () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    return chatOk('too late')
+  })
+  const fast = await startFakeOpenAI(async () => chatOk('LM Studio fallback answered'))
+  try {
+    const startedAt = Date.now()
+    const map = await buildInstantLocalMap(
+      fakeCtx(),
+      messagesWithImages(['a1']),
+      [
+        { name: 'local-ollama', baseURL: hang.baseURL, model: 'ollama-vl', apiKeyEnv: '' },
+        { name: 'local-lmstudio', baseURL: fast.baseURL, model: 'lm-vl', apiKeyEnv: '' },
+      ],
+      { timeoutMs: 600 },
+    )
+    const elapsed = Date.now() - startedAt
+    assert.equal(hang.requests.length, 1)
+    assert.equal(fast.requests.length, 1)
+    assert.equal(map.size, 1)
+    assert.match(map.get('a1'), /LM Studio fallback answered$/)
+    assert.ok(elapsed < 1500, `fallback should complete inside the shared budget (took ${elapsed}ms)`)
+  } finally {
+    await hang.close()
+    await fast.close()
+  }
+})
+
+test('wrapper resolves instant-local settings getters on every stream', async () => {
+  const local = await startFakeOpenAI(async () => chatOk('live settings caption'))
+  let instantProvider
+  const delegated = []
+  const ctx = fakeCtx()
+  ctx.llm = {
+    stream: async function* (options) {
+      delegated.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const adapter = createWrapperStreamBody(ctx, {
+    imageMemory: new Map(),
+    delegateProvider: () => 'text-provider',
+    instantLocal: () => instantProvider,
+    instantLocalStyle: () => 'plain',
+    instantLocalTimeoutMs: () => 1000,
+  })
+  const run = async (id) => {
+    for await (const _chunk of adapter.stream({ model: 'text-model', messages: messagesWithImages([id]) })) {
+      // consume the delegated stream
+    }
+  }
+  try {
+    await run('before-enable')
+    assert.equal(local.requests.length, 0)
+    assert.match(delegated[0].messages[0].content[0].text, /当前文本模型无法直接查看图片/)
+
+    instantProvider = {
+      name: 'local-ollama',
+      baseURL: local.baseURL,
+      model: 'live-model',
+      apiKeyEnv: '',
+    }
+    await run('after-enable')
+    assert.equal(local.requests.length, 1)
+    assert.match(delegated[1].messages[0].content[0].text, /live settings caption/)
+    assert.equal(delegated[1].provider, 'text-provider')
+  } finally {
+    await local.close()
+  }
+})
+
+test('native multimodal wrapper preserves images without a discarded local caption call', async () => {
+  const local = await startFakeOpenAI(async () => chatOk('must not be requested'))
+  let delegated
+  const ctx = fakeCtx()
+  ctx.llm = {
+    stream: async function* (options) {
+      delegated = options
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const adapter = createWrapperStreamBody(ctx, {
+    imageMemory: new Map(),
+    delegateProvider: 'native-provider',
+    preserveImageInput: async () => true,
+    instantLocal: () => ({
+      name: 'local-ollama',
+      baseURL: local.baseURL,
+      model: 'local-model',
+      apiKeyEnv: '',
+    }),
+    instantLocalTimeoutMs: () => 1000,
+  })
+  try {
+    for await (const _chunk of adapter.stream({
+      model: 'native-multimodal',
+      messages: messagesWithImages(['native-image']),
+    })) {
+      // consume the delegated stream
+    }
+    assert.equal(local.requests.length, 0)
+    assert.equal(delegated.messages[0].content[0].type, 'image')
+    assert.equal(delegated.provider, 'native-provider')
+  } finally {
+    await local.close()
+  }
+})
+
 // 进程级退出金丝雀：若 buildInstantLocalMap 内部回退为不清理的
 // AbortSignal.timeout(120s)，子进程会被悬挂计时器拖住 120s 无法退出，
 // 本用例会在 15s 判定线内把子进程判死并失败。
@@ -513,6 +639,8 @@ test('imageMemorySet keeps exactly the FIFO limit and updates do not evict or re
 function bootHarness(config0 = {}) {
   const registrations = new Map()
   const toolDefs = new Map()
+  let resolvedSettings = Config({ ...config0 })
+  let settingsWatcher
   let attachmentCounter = 0
   const attachments = {
     saveImage: async (input) => ({
@@ -542,7 +670,15 @@ function bootHarness(config0 = {}) {
     },
     on() {},
     inject(_deps, callback) {
-      const scope = { get: () => ({ ...Config({}), ...config0 }), watch: () => {} }
+      const scope = {
+        get: () => resolvedSettings,
+        watch: (watcher) => {
+          settingsWatcher = watcher
+          return () => {
+            if (settingsWatcher === watcher) settingsWatcher = undefined
+          }
+        },
+      }
       callback({ settings: { register: () => scope }, effect: () => () => {} })
     },
     tools: {
@@ -573,7 +709,15 @@ function bootHarness(config0 = {}) {
       },
     },
   }
-  return { ctx, toolDefs }
+  return {
+    ctx,
+    toolDefs,
+    registrations,
+    setSettings(next) {
+      resolvedSettings = Config({ ...next })
+      if (typeof settingsWatcher === 'function') settingsWatcher(resolvedSettings)
+    },
+  }
 }
 
 async function mountDeepTool(config0, name) {
@@ -588,8 +732,86 @@ async function mountDeepTool(config0, name) {
 }
 
 async function mountVisionScreenshot(config0) {
-  return mountDeepTool(config0, 'vision_screenshot')
+  return mountDeepTool({ ...config0, desktopScreenshot: true }, 'vision_screenshot')
 }
+
+test('vision-http reads local backend settings live, including URL/model/protocol changes', async () => {
+  const first = await startFakeOpenAI(async (req, body) => {
+    assert.equal(req.url, '/v1/chat/completions')
+    assert.equal(body.model, 'first-model')
+    return chatOk('first settings value')
+  })
+  const second = await startFakeOpenAI(async (req, body) => {
+    assert.equal(req.url, '/v1/messages')
+    assert.equal(body.model, 'second-model')
+    return {
+      status: 200,
+      body: JSON.stringify({ content: [{ type: 'text', text: 'second settings value' }] }),
+    }
+  })
+  const harness = bootHarness({ freeFallback: false })
+  try {
+    apply(harness.ctx, Config({ freeFallback: false }))
+    const registration = harness.registrations.get('vision-http')
+    assert.ok(registration, 'the route must exist even when no provider is enabled at apply time')
+    const adapter = registration.adapter
+
+    harness.setSettings({
+      freeFallback: false,
+      localOllama: {
+        enabled: true,
+        baseURL: first.baseURL,
+        model: 'first-model',
+      },
+    })
+    await adapter.resolveModel('vision-http', 'local-ollama/first-model')
+    const firstChunks = []
+    for await (const chunk of adapter.stream({
+      model: 'local-ollama/first-model',
+      messages: messagesWithImages(['first']),
+    })) {
+      firstChunks.push(chunk)
+    }
+    assert.ok(firstChunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === 'first settings value'))
+    assert.equal(first.requests.length, 1)
+
+    harness.setSettings({
+      freeFallback: false,
+      localLmStudio: {
+        enabled: true,
+        baseURL: second.baseURL,
+        model: 'second-model',
+        format: 'anthropic',
+      },
+    })
+    await assert.rejects(
+      () => adapter.resolveModel('vision-http', 'local-ollama/first-model'),
+      /unknown model/,
+    )
+    await adapter.resolveModel('vision-http', 'local-lmstudio/second-model')
+    const secondChunks = []
+    for await (const chunk of adapter.stream({
+      model: 'local-lmstudio/second-model',
+      messages: messagesWithImages(['second']),
+    })) {
+      secondChunks.push(chunk)
+    }
+    assert.ok(secondChunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === 'second settings value'))
+    assert.equal(first.requests.length, 1, 'disabled Ollama must not keep its stale provider snapshot')
+    assert.equal(second.requests.length, 1)
+  } finally {
+    await first.close()
+    await second.close()
+  }
+})
+
+test('vision_screenshot is inert until the user explicitly opts in', async () => {
+  const def = await mountDeepTool({}, 'vision_screenshot')
+  await assert.rejects(
+    () => def.execute({}, {}),
+    /disabled; enable Desktop screenshot explicitly/,
+  )
+})
 
 test('vision_screenshot really captures the desktop and writes a PNG artifact (darwin)', async (t) => {
   if (process.platform !== 'darwin') return t.skip('desktop capture test is macOS-only')
@@ -639,6 +861,7 @@ test('vision_screenshot identify=true drives the real local-ollama call end to e
     }
     const result = JSON.parse(raw)
     assert.equal(result.identified, '屏幕上有一个终端窗口')
+    assert.equal(result.identifiedBy, 'local-ollama')
     assert.ok(result.elapsedSec >= 1)
     assert.equal(result.identifyError, undefined)
     assert.equal(server.requests.length, 1)
@@ -651,6 +874,34 @@ test('vision_screenshot identify=true drives the real local-ollama call end to e
     assert.equal(sent.top_p, 0.8)
   } finally {
     await server.close()
+    rmSync(workdir, { recursive: true, force: true })
+  }
+})
+
+test('vision_screenshot identify falls through from Ollama to LM Studio', async (t) => {
+  if (process.platform !== 'darwin') return t.skip('desktop capture test is macOS-only')
+  const ollamaBaseURL = await closedPortBaseURL()
+  const lmStudio = await startFakeOpenAI(async () => chatOk('LM Studio 看到了桌面'))
+  const def = await mountVisionScreenshot({
+    localOllama: { enabled: true, baseURL: ollamaBaseURL, model: 'ollama-vl' },
+    localLmStudio: { enabled: true, baseURL: lmStudio.baseURL, model: 'lm-vl' },
+    timeoutMs: 1200,
+  })
+  const workdir = mkdtempSync(path.join(tmpdir(), 'vr-shot-'))
+  try {
+    let raw
+    try {
+      raw = await def.execute({ identify: true }, { agent: { session: { header: { cwd: workdir } } } })
+    } catch (error) {
+      return t.skip(`screencapture unavailable: ${error && error.message ? error.message : error}`)
+    }
+    const result = JSON.parse(raw)
+    assert.equal(result.identified, 'LM Studio 看到了桌面')
+    assert.equal(result.identifiedBy, 'local-lmstudio')
+    assert.equal(result.identifyError, undefined)
+    assert.equal(lmStudio.requests.length, 1)
+  } finally {
+    await lmStudio.close()
     rmSync(workdir, { recursive: true, force: true })
   }
 })
@@ -727,7 +978,11 @@ test('vision chain falls through to the next provider when the first hangs', asy
       { name: 'hang', baseURL: hang.baseURL, model: 'hang-vl' },
       { name: 'fast', baseURL: fast.baseURL, model: 'fast-vl' },
     ],
-    timeoutMs: 1500,
+    freeFallback: false,
+    // The per-request cap is deliberately much larger than the total task
+    // budget. Fair sharing, not timeoutMs, must preserve the second attempt.
+    timeoutMs: 10000,
+    visionTaskTimeoutMs: 1200,
   }
   const def = await mountDeepTool(config0, 'vision_describe')
   const workdir = mkdtempSync(path.join(tmpdir(), 'vr-chain-'))
@@ -743,7 +998,7 @@ test('vision chain falls through to the next provider when the first hangs', asy
     assert.equal(text, 'fast provider answered')
     assert.ok(hang.requests.length >= 1, 'the hanging provider must have been tried')
     assert.ok(fast.requests.length >= 1, 'the next provider must still get a real attempt')
-    assert.ok(elapsed < 8000, `fallthrough should be bounded (took ${elapsed}ms)`)
+    assert.ok(elapsed < 2500, `fallthrough should stay inside the shared task budget (took ${elapsed}ms)`)
   } finally {
     await hang.close()
     await fast.close()
