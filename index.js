@@ -2628,6 +2628,13 @@ export function resolveChannelBridgeTransport(rawProfile, resolvedProfile, model
 
 export function apply(ctx, config = {}) {
   // 探针：core.apply 是否执行（区分 entry.js 问题与 index.js 问题）。
+  // 文件探针不依赖 logger 通道——若日志行缺失但文件行存在，即 logger 通道问题。
+  try {
+    const probePath = `${process.env.USERPROFILE ?? 'C:/Users/shaqiu yu'}/.dsh/logs/vision-router/module-probe.log`
+    appendFileSync(probePath, `[core-apply-entered] ${new Date().toISOString()}\n`, 'utf8')
+  } catch {
+    /* probe */
+  }
   ctx.logger?.info('vision-router: core apply entered')
   // Route sharp version diagnostics (issue #75) through the harness logger
   // instead of console.warn, so the warning lands in the server log.
