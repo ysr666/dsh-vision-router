@@ -3,6 +3,29 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.3.0
+
+### 改进 / Changed
+
+- **长会话默认保持稳定工具 schema（#81 / #86）**：`progressiveTools` 改为显式 opt-in；默认从会话开始注册完整视觉工具集合，图片轮不再中途扩展 tools schema，减少 prefix/KV cache 失效与重复计费风险。
+- **Stable tool schema for long sessions by default (#81 / #86)**: `progressiveTools` is now explicit opt-in. The complete vision tool set is registered from session start so image turns no longer expand the request tool schema mid-session and invalidate prefix/KV caches.
+- **可持久化诊断日志（#88）**：现有诊断信息写入 `$DSH_HOME` 下的有界、脱敏日志，并可从设置页一键打开日志目录；包含轮转、同源保护与 macOS / Windows / Linux 兼容。
+- **Persistent diagnostics (#88)**: existing diagnostics can be written to a bounded, redacted log under `$DSH_HOME`, with a one-click Settings action to reveal the folder across macOS, Windows and Linux.
+- **视觉模型目录诊断更明确（#89）**：视觉后端按 model 粒度过滤，不会因为同一 provider 中某个模型缺少 image 能力就误伤整个 provider；无法验证 image 元数据时会列出被隐藏模型、给出修复提示，并支持重新检测。
+- **Clearer vision-model catalog diagnostics (#89)**: filtering is per model, so one text-only or unverifiable model cannot hide image-capable siblings from the same provider. Hidden models explain missing image metadata and support re-detection.
+
+### 修复 / Fixed
+
+- **宿主 DSH capability 包使用 peer 依赖（#87 / #90）**：`@deepseek-ai/dsh-llm-deepseek` 与 `@deepseek-ai/dsh-anonymous-user-id` 改为 `peerDependencies`，避免 profile 内重复宿主能力包；`@deepseek-ai/schemastery` 按官方 DSH package cookbook 继续作为 runtime `dependency`，并加入 manifest 回归测试。
+- **Host DSH capability packages use peers (#87 / #90)**: `@deepseek-ai/dsh-llm-deepseek` and `@deepseek-ai/dsh-anonymous-user-id` now use `peerDependencies`; `@deepseek-ai/schemastery` correctly remains a runtime dependency per the official DSH package cookbook.
+- **与其他视觉插件共装不再因 toolview key 冲突启动失败（#91 / #92）**：Vision Router 为自己的 keyed 工具卡使用独立的 `priority: -10`，允许默认 priority 的其他视觉插件共存，同时保留 Vision Router 自己的渲染优先级。工具执行与视觉路由逻辑不变。
+- **No startup failure from toolview-key collisions with other vision plugins (#91 / #92)**: Vision Router registers its keyed tool cards at `priority: -10`, allowing default-priority renderers from other plugins to coexist while keeping Vision Router rendering precedence. Tool execution and vision routing are unchanged.
+
+### 兼容性说明 / Compatibility note
+
+- 推荐安装方式仍是官方 DSH CLI：`npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router`。第三方 `dsh-web-plugin-manager` / `dshpm` 当前仍可能误判 Schemastery；该上游兼容性问题继续跟踪于 #87，不影响推荐的 npx 安装链路。
+- The recommended install path remains the official DSH CLI: `npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router`. The third-party `dsh-web-plugin-manager` / `dshpm` may still reject Schemastery due to its current quality-gate rule; that upstream compatibility issue remains tracked in #87 and does not affect the recommended npx path.
+
 ## v1.2.3
 
 ### 修复 / Fixed

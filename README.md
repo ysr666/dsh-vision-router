@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/release-v1.2.1-5B4CF0?style=flat-square" alt="Release v1.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/release-v1.3.0-5B4CF0?style=flat-square" alt="Release v1.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,7 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.2.3)**
+> 📌 **Announcement (v1.3.0)**
+>
+> **v1.3.0** makes long sessions and mixed-plugin setups safer: the vision-tool schema is stable by default to protect prefix/KV caches, diagnostics can be persisted and opened from Settings, custom vision-model filtering explains missing image metadata and supports re-detection, host-provided DSH capability packages use the correct peer contract, and Vision Router tool cards can coexist with other vision plugins while keeping Vision Router rendering precedence.
 >
 > v1.2.3 fixes DSH Desktop's re-appearing first-run dialog: the onboarding "seen" flag and the model-guide step now persist in the profile settings file instead of origin-scoped `localStorage`, which a random per-launch port (`--port 0`) wiped on every boot (issue #78).
 >

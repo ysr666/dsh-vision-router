@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.2.1"><img src="https://img.shields.io/badge/release-v1.2.1-5B4CF0?style=flat-square" alt="Release v1.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/release-v1.3.0-5B4CF0?style=flat-square" alt="Release v1.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,7 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.2.3）**
+> 📌 **公告（v1.3.0）**
+>
+> **v1.3.0** 重点加固长会话稳定性与插件共存：视觉工具 schema 默认从会话开始保持稳定，减少 prefix/KV cache 失效；诊断日志可持久化并从设置页直接打开；自定义视觉模型缺失 image 元数据时会明确解释并支持重新检测；宿主提供的 DSH capability 包使用正确的 peer 依赖契约；与其他视觉插件共装时，同名工具卡不再导致启动失败，同时保留 Vision Router 自己的渲染优先级。
 >
 > v1.2.3 现已支持：修复 DSH Desktop 每次启动都重复弹出首次引导的问题——引导「已读」标记与模型引导步骤改存 profile 设置文件（不再依赖按 origin 隔离、每次随机端口重启即清零的 `localStorage`）（issue #78）。
 >
