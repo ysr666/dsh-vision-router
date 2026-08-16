@@ -5,6 +5,11 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## v1.4.3
 
+### 新增 / Added
+
+- **免费视觉 Key 渠道指南（#127）**：README 在 Quick Start 后新增免费视觉 Key 配置入口，方便用户把自己的免费额度接入视觉后端链，绕开内置匿名视觉后端约 2 req/min 的单模型限速；同时精简配置说明，移除不必要的 `settings.yaml` 示例，让安装后更容易直接找到并配置可用渠道。
+- **Free vision-key channel guide (#127)**: the README now surfaces free vision-key setup immediately after Quick Start, making it easier to bring free personal quota into the vision chain instead of relying on the built-in anonymous backend's roughly 2 req/min per-model limit. The setup was also simplified by removing the unnecessary `settings.yaml` example.
+
 ### 改进 / Changed
 
 - **自定义视觉后端改为运行时验证（#128 / #130）**：DSH 的图片能力元数据现在只作提示，不再作为准入门槛。设置 → 模型中可调用的生成式模型都会出现在视觉后端链里；未声明图片能力或被标成仅文本的模型仍可手动选择并显示警告。运行时始终先走供应商已注册的 DSH adapter，HTTP、WebSocket、RPC 与私有协议保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才允许进入直连兼容桥。实际图片调用失败后继续自动尝试下一后端；embedding/reranker 与插件自身包装路由仍结构性排除。`extraVisionModels` 降级为可选能力标记覆盖，不再是解锁模型的前置条件。
