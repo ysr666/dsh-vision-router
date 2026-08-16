@@ -86,7 +86,7 @@ test('commitSettingsPlan keeps drafts when a resolved set did not land in the us
     { key: 'providers', run: { value: requested } },
   ], drafts)
 
-  assert.deepEqual(calls, [['providers', requested]])
+  assert.deepEqual(calls, [['providers', requested], ['providers', requested]])
   assert.equal(outcome.landed, false)
   assert.equal(outcome.failed, true)
   assert.equal(outcome.nextDrafts, drafts)
@@ -192,11 +192,60 @@ test('commitSettingsPlan classifies write and readback errors without dropping d
   ])
 })
 
+
+test('commitSettingsPlan retries one resolved-but-unlanded settings write', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const snapshot = { status: 'ready', writable: true, user: {} }
+  let writes = 0
+  let loads = 0
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field, value) {
+      writes += 1
+      if (writes === 2) snapshot.user[field] = structuredClone(value)
+    },
+    async load() { loads += 1 },
+    getSnapshot() { return snapshot },
+  }, [{ key: 'providers', run: { value: requested } }], { providers: requested })
+
+  assert.equal(outcome.landed, true)
+  assert.equal(writes, 2)
+  assert.equal(loads, 1)
+  assert.deepEqual(outcome.nextDrafts, {})
+})
+
+test('vision chain normalization drops legacy blank rows without hiding half-filled drafts', () => {
+  const bundle = loadClientBundle()
+  assert.deepEqual(bundle.normalizeVisionChainRows([
+    { provider: '', model: '' },
+    { provider: '  ', model: ' ' },
+    { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B' },
+    { provider: ' zhipu ', model: '' },
+    { provider: ' siliconflow ', model: ' Qwen/Qwen3-VL-32B-Instruct ' },
+  ]), [
+    { provider: 'zhipu', model: '' },
+    { provider: 'siliconflow', model: 'Qwen/Qwen3-VL-32B-Instruct' },
+  ])
+})
+
+test('guide dismissal is page-authoritative and hidden persistence does not spin on rejection', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('let onboardingSeenMemory = false'), true)
+  assert.equal(source.includes('if (onboardingSeenMemory) return true'), true)
+  assert.equal(source.includes('onboardingSeenMemory = true'), true)
+  assert.equal(source.includes('let visionGuideMemoryAuthoritative = false'), true)
+  assert.equal(source.includes('if (visionGuideMemoryAuthoritative) return visionGuideStepMemory'), true)
+  assert.equal(source.includes('visionGuideMemoryAuthoritative = true'), true)
+  assert.equal(source.includes("pending.set(field, { operation, value, attempted: false })"), true)
+  assert.equal(source.includes('filter(([, entry]) => !entry.attempted)'), true)
+})
+
 test('settings save failure copy says unwritten drafts were kept', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes('保存失败：部分配置未写入。未写入的修改已保留，请重试。'), true)
   assert.equal(source.includes('Save failed: some changes were not written. Unwritten changes were kept; please retry.'), true)
   assert.equal(source.includes("className: 'vr-failed', role: 'alert'"), true)
+  assert.equal(source.includes("failedFields.join('、')"), true)
   // One-click field resets share the same verified write path, and all
   // editors are frozen during the round-trip so a successful save cannot
   // discard a newer in-flight edit.
