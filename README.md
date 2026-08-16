@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-300%20tests-2EA44F?style=flat-square" alt="Verified: 300 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.4.2)**
+> 📌 **Announcement (v1.4.3)**
 >
-> **v1.4.2 now supports** Oh-DSH Desktop — the plugin no longer races the stock DeepSeek route on the bundled DSH 0.1.0-rc.5 runtime (fixes "DSH runtime exited before readiness"), opencode-go qwen3.6-plus vision calls reach the correct Anthropic endpoint, and "+ Auto Vision" twins keep the picker's reasoning effort across multi-step turns.
+> **v1.4.3:** Custom vision backends are runtime-verified instead of blocked by DSH capability metadata, including WebSocket/private transports.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -144,7 +144,7 @@ The auto-vision group follows the live DSH model catalog. Adding models or chang
 
 After choosing the “+ Auto Vision” group, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
 
-The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row selects one image-capable user model already configured under **Settings → Models**. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
+The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
 ### See it in action
 

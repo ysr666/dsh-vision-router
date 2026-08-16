@@ -17,6 +17,18 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **本地链超时、热更新与隐私边界**：每轮后端按剩余总预算公平分配超时，首个本地服务挂起时仍会尝试下一层；`freeFallback: false` 只关闭匿名 OVH，不再误删显式本地后端。桌面截图改为独立的默认关闭隐私开关，macOS 只抓主显示器并避免多屏临时文件残留；Linux 依赖说明与各平台行为已校正。
 - **Local timeout, live-update and privacy boundaries**: backend rounds receive a fair share of the remaining total budget, so a hung first local service still leaves time for the next one; `freeFallback: false` now disables only anonymous OVH models, not explicit local backends. Desktop capture has a separate off-by-default privacy opt-in, macOS captures only the main display without multi-display temp-file leftovers, and Linux dependency/platform behavior is documented accurately.
 
+## v1.4.3
+
+### 改进 / Changed
+
+- **自定义视觉后端改为运行时验证（#128 / #130）**：DSH 的图片能力元数据现在只作提示，不再作为准入门槛。设置 → 模型中可调用的生成式模型都会出现在视觉后端链里；未声明图片能力或被标成仅文本的模型仍可手动选择并显示警告。运行时始终先走供应商已注册的 DSH adapter，HTTP、WebSocket、RPC 与私有协议保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才允许进入直连兼容桥。实际图片调用失败后继续自动尝试下一后端；embedding/reranker 与插件自身包装路由仍结构性排除。`extraVisionModels` 降级为可选能力标记覆盖，不再是解锁模型的前置条件。
+- **Custom vision backends are now runtime-verified (#128 / #130)**: DSH image-capability metadata is advisory instead of an admission gate. Any callable generative model from Settings → Models can be selected in the vision chain; undeclared or text-only-labelled models remain selectable with warnings. Runtime dispatch is adapter-first, preserving native HTTP, WebSocket, RPC and private transports; the direct compatibility bridge is used only for positively identified http(s) OpenAI Chat Completions channels. A real image-call failure falls through to the next backend, while embedding/reranker endpoints and the plugin's own generated wrapper routes remain structurally excluded. `extraVisionModels` is now an optional capability-label override rather than an unlock requirement.
+
+### 修复 / Fixed
+
+- **视觉失败摘要不再出现重复句号（#131）**：当 adapter 自身错误已经以句号或其他句末标点结束时，整轮失败汇总不再额外追加一个 `.`，避免出现 `..`；新增回归测试覆盖英文与中文句末标点。
+- **Vision failure summaries no longer produce doubled punctuation (#131)**: when an adapter error already ends in terminal punctuation, the whole-turn failure summary no longer appends another period, avoiding `..`; regression coverage includes English and Chinese sentence endings.
+
 ## v1.4.2
 
 ### 修复 / Fixed

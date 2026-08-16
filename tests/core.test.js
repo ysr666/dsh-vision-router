@@ -2647,10 +2647,11 @@ test('looksLikeVisionModel recognizes well-known multimodal families conservativ
   assert.equal(looksLikeVisionModel('openrouter/zhipu/glm-4.6v'), true)
 })
 
-test('decideVisionBackendCapability honors declarations, overrides and inference', () => {
+test('decideVisionBackendCapability treats metadata as advisory but keeps structural exclusions', () => {
   const declared = { inputModalities: ['text', 'image'] }
   assert.deepEqual(decideVisionBackendCapability(declared, 'zhipu-glm', 'glm-4.6v', []), {
     image: true,
+    attemptable: true,
     inputModalities: ['text', 'image'],
     inferred: false,
     reason: undefined,
@@ -2658,6 +2659,7 @@ test('decideVisionBackendCapability honors declarations, overrides and inference
   // Undeclared glm-4.6v: recognized by name.
   assert.deepEqual(decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6v', []), {
     image: true,
+    attemptable: true,
     inputModalities: ['text', 'image'],
     inferred: 'name',
     reason: undefined,
@@ -2665,7 +2667,7 @@ test('decideVisionBackendCapability honors declarations, overrides and inference
   // Undeclared plain glm-4.6: forced via the override list (bare model id).
   assert.deepEqual(
     decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6', ['glm-4.6']),
-    { image: true, inputModalities: ['text', 'image'], inferred: 'override', reason: undefined },
+    { image: true, attemptable: true, inputModalities: ['text', 'image'], inferred: 'override', reason: undefined },
   )
   // "provider/model" override entries match too.
   assert.equal(
@@ -2674,15 +2676,18 @@ test('decideVisionBackendCapability honors declarations, overrides and inference
   )
   // Metadata lookup failure still falls back to inference.
   assert.equal(decideVisionBackendCapability(undefined, 'zhipu-glm', 'glm-4.6v', []).image, true)
-  // Truly text-only model stays text-only.
+  // A text-only declaration is advisory: the user may explicitly try it.
   assert.deepEqual(decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6', []), {
     image: false,
+    attemptable: true,
     inputModalities: ['text'],
     inferred: false,
-    reason: 'model metadata does not declare image input',
+    reason: 'model metadata declares no image input',
   })
-  // Missing inputModalities metadata is treated as text-only unless inferred.
-  assert.equal(decideVisionBackendCapability({}, 'zhipu-glm', 'glm-4.6', []).image, false)
+  // Missing input metadata is also advisory rather than an admission failure.
+  const unknown = decideVisionBackendCapability({}, 'zhipu-glm', 'glm-4.6', [])
+  assert.equal(unknown.image, false)
+  assert.equal(unknown.attemptable, true)
 })
 
 

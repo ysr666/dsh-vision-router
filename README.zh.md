@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-300%20tests-2EA44F?style=flat-square" alt="Verified: 300 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.4.2）**
+> 📌 **公告（v1.4.3）**
 >
-> **v1.4.2 现已支持**：Oh-DSH Desktop 兼容——在内置的 DSH 0.1.0-rc.5 上不再与官方 DeepSeek 路由竞争导致启动崩溃（修复「DSH runtime exited before readiness」）；opencode-go qwen3.6-plus 视觉调用走正确的 Anthropic 端点；「+ 自动识图」twin 组在多步对话中保留选择器里的推理等级。
+> **v1.4.3：自定义视觉后端改为运行时验证，支持 WebSocket/私有协议。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -142,7 +142,7 @@ opencode-go + 自动识图       ← 发图片时选这个
 
 选好「+ 自动识图」模型组后，直接往对话里贴图即可。默认情况下完整视觉工具表从会话开始就保持稳定，Agent 可直接调用 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
 
-默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）**：视觉后端链每一行只选择一个你在 **设置 → 模型** 中已经配置且支持图片输入的用户模型；一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
+默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明现在只作提示：未声明图片能力、甚至被标成仅文本的模型也会列出并给出警告。运行时永远先通过该供应商已注册的 DSH adapter 实际调用，因此 WebSocket、RPC 和私有协议都保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才可能进入 HTTP 直连兼容兜底。实际调用失败后自动尝试下一后端；一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
 
 ### 实际效果
 

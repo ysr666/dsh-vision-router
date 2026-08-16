@@ -39,25 +39,30 @@ test('unwrapModelsResult reads the catalog from the RPC envelope', () => {
   )
 })
 
-test('filterVisionBackendGroups hides text-only models and the internal vision-http route', () => {
+test('filterVisionBackendGroups keeps callable generative models and hides only structural routes', () => {
   const bundle = loadClientBundle()
   const groups = [
     { id: 'vision-http', name: 'Vision HTTP', models: [{ id: 'free', name: 'free' }] },
+    { id: 'vision-chain', name: 'Vision chain', models: [{ id: 'internal', name: 'internal' }] },
+    { id: 'opencode-go-vision', name: 'Generated wrapper', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4' }] },
     { id: 'opencode-go', name: 'opencode-go', models: [
       { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
       { id: 'qwen-vl', name: 'Qwen VL' },
+      { id: 'embedding', name: 'Embedding' },
     ] },
   ]
   const filtered = bundle.filterVisionBackendGroups(groups, {
     'opencode-go': {
-      'deepseek-v4-flash': { image: false },
-      'qwen-vl': { image: true },
+      'deepseek-v4-flash': { image: false, attemptable: true, inputModalities: ['text'] },
+      'qwen-vl': { image: true, attemptable: true, inputModalities: ['text', 'image'] },
+      embedding: { image: false, attemptable: false, inputModalities: ['text'] },
     },
   })
   assert.deepEqual(filtered.map((group) => [group.id, group.models.map((model) => model.id)]), [
-    ['opencode-go', ['qwen-vl']],
+    ['opencode-go', ['deepseek-v4-flash', 'qwen-vl']],
   ])
-  assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), [])
+  // Missing capability metadata is advisory: catalog models remain selectable.
+  assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
 test('the client bundle still loads and registers with the proven injects', () => {
@@ -492,7 +497,7 @@ test('local vision settings are complete, localized, responsive, and collapsed b
   assert.equal(source.includes("'vision_screenshot',"), true)
 })
 
-test('empty vision dropdown diagnostics identify undeclared image models and support re-detection', () => {
+test('advisory capability diagnostics keep undeclared models selectable and support re-detection', () => {
   const bundle = loadClientBundle()
   const groups = [
     { id: 'zhipu', name: '智谱', models: [
@@ -502,25 +507,50 @@ test('empty vision dropdown diagnostics identify undeclared image models and sup
     { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'qwen-vl', name: 'Qwen VL' }] },
     { id: 'opencode-go-vision', name: 'opencode-go + 自动识图', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4' }] },
   ]
-  const hidden = bundle.collectFilteredVisionBackends(groups, {
+  const capabilities = {
     zhipu: {
-      'glm-4.6v-flash': { image: false, reason: 'model metadata does not declare image input' },
-      'glm-4.5v': { image: false, reason: 'model metadata does not declare image input' },
+      'glm-4.6v-flash': {
+        image: false,
+        attemptable: true,
+        inputModalities: [],
+        reason: 'model metadata does not declare image input',
+      },
+      'glm-4.5v': {
+        image: false,
+        attemptable: true,
+        inputModalities: ['text'],
+        reason: 'model metadata declares no image input',
+      },
     },
-    openrouter: { 'qwen-vl': { image: true } },
-  })
-  assert.deepEqual(hidden.map((entry) => [entry.provider, entry.model, entry.missingImageDeclaration]), [
-    ['zhipu', 'glm-4.6v-flash', true],
-    ['zhipu', 'glm-4.5v', true],
+    openrouter: {
+      'qwen-vl': { image: true, attemptable: true, inputModalities: ['text', 'image'] },
+    },
+    'opencode-go-vision': {
+      'deepseek-v4': { image: false, attemptable: false, inputModalities: [] },
+    },
+  }
+  const uncertain = bundle.collectFilteredVisionBackends(groups, capabilities)
+  assert.deepEqual(uncertain.map((entry) => [entry.provider, entry.model]), [
+    ['zhipu', 'glm-4.6v-flash'],
+    ['zhipu', 'glm-4.5v'],
   ])
+  const selectable = bundle.filterVisionBackendGroups(groups, capabilities)
+  assert.deepEqual(selectable.map((entry) => entry.id), ['zhipu', 'openrouter'])
+  assert.equal(
+    bundle.visionCapabilityWarningKey(capabilities.zhipu['glm-4.6v-flash'], 'ready'),
+    'visionCapabilityUndeclaredWarning',
+  )
+  assert.equal(
+    bundle.visionCapabilityWarningKey(capabilities.zhipu['glm-4.5v'], 'ready'),
+    'visionCapabilityTextOnlyWarning',
+  )
 
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
-  assert.equal(source.includes('input: [text, image]'), true)
-  assert.equal(source.includes('defaultInput: [text, image]'), true)
   assert.equal(source.includes('loadCatalog(true)'), true)
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
-  assert.equal(source.includes('emptyVisionModelsPanel()'), true)
+  assert.equal(source.includes('Capability metadata is advisory, not an admission gate'), true)
+  assert.equal(source.includes('emptyVisionModelsPanel(),'), false)
 })
 
 
@@ -571,10 +601,10 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   // flash / apparent page refresh).
   assert.equal(source.includes("outcome.landedFields.includes('extraVisionModels')"), true)
   assert.equal(source.includes('loadVisionCapabilities(true, true)'), true)
-  // The capability notice reflects name-based / manual recognition.
-  assert.equal(source.includes('or are recognized as vision models by name / manual override'), true)
-  // The hidden-models panel points at the override editor.
-  assert.equal(source.includes('select it in the “Extra vision models” dropdown under Advanced'), true)
+  // The override is now only a capability label; it no longer unlocks admission.
+  assert.equal(source.includes('This setting no longer unlocks the picker or admission'), true)
+  // Transport-specific HTTP bridging stays behind an explicit http(s) guard.
+  assert.equal(source.includes('only a confirmed http(s) OpenAI Chat Completions channel'), true)
   // The hidden-models list is memoized so per-render catalog walks cannot
   // regress the settings card's scroll smoothness.
   assert.equal(source.includes('collectFilteredVisionBackends(catalog.groups, visionCaps.capabilities)'), true)
@@ -603,4 +633,36 @@ test('the twin preserves the picker-chosen reasoningEffort across steps (issue #
   assert.equal(serverSource.includes('reasoningEffort: undefined'), true)
   assert.equal(serverSource.includes('reasoningEffort: z.string()'), false)
   assert.equal(serverSource.includes('wrappedProviders[].reasoningEffort'), false)
+})
+
+
+test('vision backend picker keeps generative models when image metadata is advisory', () => {
+  const bundle = loadClientBundle()
+  const groups = [
+    { id: 'custom-ws', name: 'WS provider', models: [
+      { id: 'mystery-chat', name: 'Mystery chat' },
+      { id: 'embed-model', name: 'Embedding' },
+    ] },
+    { id: 'declared', name: 'Declared', models: [{ id: 'vision', name: 'Vision' }] },
+  ]
+  const capabilities = {
+    'custom-ws': {
+      'mystery-chat': { image: false, attemptable: true, inputModalities: ['text'] },
+      'embed-model': { image: false, attemptable: false, inputModalities: ['text', 'image'] },
+    },
+    declared: {
+      vision: { image: true, attemptable: true, inputModalities: ['text', 'image'] },
+    },
+  }
+  const filtered = bundle.filterVisionBackendGroups(groups, capabilities)
+  assert.deepEqual(filtered.map((group) => [group.id, group.models.map((model) => model.id)]), [
+    ['custom-ws', ['mystery-chat']],
+    ['declared', ['vision']],
+  ])
+  assert.equal(
+    bundle.visionCapabilityWarningKey(capabilities['custom-ws']['mystery-chat'], 'ready'),
+    'visionCapabilityTextOnlyWarning',
+  )
+  assert.equal(bundle.visionCapabilityWarningKey(undefined, 'error'), 'visionCapabilityUnknownWarning')
+  assert.equal(bundle.visionCapabilityWarningKey(capabilities.declared.vision, 'ready'), undefined)
 })
