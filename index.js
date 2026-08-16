@@ -1594,6 +1594,49 @@ export function chromiumCandidates(env = {}, platform = typeof process !== 'unde
   return out
 }
 
+/**
+ * Wake lazy/revealed content before a full-page capture so the PNG does not
+ * miss anything below the initial viewport:
+ *
+ * 1. Force instant scrolling — a page-level `scroll-behavior: smooth` turns
+ *    every scrollTo into an animation that cancels the previous one, so a
+ *    step-by-step sweep would barely move.
+ * 2. Sweep top → bottom in viewport-sized steps, pausing briefly at each stop
+ *    so IntersectionObserver callbacks fire and scroll-triggered reveals
+ *    (e.g. `opacity: 0` until visible) actually render.
+ * 3. Scroll back to the top, then wait for reveal CSS transitions (commonly
+ *    0.5–0.8s) to settle before the screenshot is taken.
+ *
+ * Lazy images are handled separately at launch time via
+ * `--blink-settings=imagesLazyLoadingEnabled=false`.
+ */
+export async function wakePageForFullCapture(page, viewportHeight) {
+  const step = Number.isInteger(viewportHeight) && viewportHeight > 0 ? viewportHeight : 720
+  await page.evaluate(() => {
+    document.documentElement.style.scrollBehavior = 'auto'
+  })
+  const total = await page.evaluate(() =>
+    Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
+  )
+  for (let y = 0; y < total; y += step) {
+    await page.evaluate((yy) => window.scrollTo(0, yy), y)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+  }
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await new Promise((resolve) => setTimeout(resolve, 800))
+}
+
+/** Full scrollable page height (CSS px), measured after reveals have woken. */
+export async function fullPageHeightOf(page) {
+  return await page.evaluate(() =>
+    Math.max(
+      document.documentElement.scrollHeight,
+      document.body ? document.body.scrollHeight : 0,
+      window.innerHeight,
+    ),
+  )
+}
+
 /** Downscale bytes whose intrinsic pixel count exceeds maxPixels; returns original bytes on failure. */
 export async function downscaleImage(bytes, maxPixels) {
   try {
@@ -4748,13 +4791,23 @@ export function apply(ctx, config = {}) {
       description:
         'Render a local .html/.htm file in the system Chrome (headless, network disabled by ' +
         'default) and save a PNG screenshot as an artifact — the verify step of the ' +
-        'reference -> implementation -> screenshot -> pixel-diff loop.',
+        'reference -> implementation -> screenshot -> pixel-diff loop. With fullPage: true the ' +
+        'page keeps the requested viewport but the whole scrollable height is captured and the ' +
+        'result JSON reports pageHeight (CSS px).',
       parameters: {
         type: 'object',
         properties: {
           source: { type: 'string', description: 'Local .html or .htm file path' },
           width: { type: 'number', description: 'Viewport width, default 1200' },
           height: { type: 'number', description: 'Viewport height, default 720' },
+          fullPage: {
+            type: 'boolean',
+            description:
+              'Capture the complete scrollable page height at the requested viewport width ' +
+              'instead of just the viewport (default false). Lazy-loaded images and ' +
+              'scroll-triggered reveals are woken first; the result JSON then includes ' +
+              'pageHeight (CSS px).',
+          },
         },
         required: ['source'],
         additionalProperties: false,
@@ -4795,18 +4848,37 @@ export function apply(ctx, config = {}) {
         }
         const width = Number.isInteger(args.width) && args.width > 0 ? args.width : 1200
         const height = Number.isInteger(args.height) && args.height > 0 ? args.height : 720
+        const fullPage = args.fullPage === true
+        const launchArgs = ['--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--incognito']
+        if (fullPage) {
+          // `loading="lazy"` images below the initial viewport never load
+          // during a full-page capture; disable lazy loading so they do.
+          launchArgs.push('--blink-settings=imagesLazyLoadingEnabled=false')
+        }
         const browser = await puppeteer.default.launch({
           executablePath,
           headless: true,
-          args: ['--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--incognito'],
+          args: launchArgs,
         })
         try {
           const page = await browser.newPage()
           await page.setViewport({ width, height })
           await page.goto(pathToFileURL(targetPath).href, { waitUntil: 'networkidle0', timeout: 30000 })
-          const png = await page.screenshot({ type: 'png' })
-          const target = await saveArtifact(exec, `${artifactStem(source, `shot-${width}x${height}`)}.png`, png)
-          return JSON.stringify({ path: target, width, height, bytes: png.length })
+          let pageHeight
+          if (fullPage) {
+            await wakePageForFullCapture(page, height)
+            pageHeight = await fullPageHeightOf(page)
+          }
+          const png = fullPage
+            ? await page.screenshot({ type: 'png', fullPage: true })
+            : await page.screenshot({ type: 'png' })
+          const stem = fullPage ? `shot-${width}x${height}-fullpage` : `shot-${width}x${height}`
+          const target = await saveArtifact(exec, `${artifactStem(source, stem)}.png`, png)
+          const result = { path: target, width, height, bytes: png.length }
+          if (fullPage) {
+            result.pageHeight = pageHeight
+          }
+          return JSON.stringify(result)
         } finally {
           await browser.close()
         }
@@ -4864,8 +4936,8 @@ export function apply(ctx, config = {}) {
                 '图片消息会自动挂载它们；纯文字任务需要时可调用 `vision_activate`（只需一次）。\n' +
                 'Use these tools for pixel-level vision work. They auto-mount on image turns; on text-only turns call `vision_activate` once if needed.\n\n' +
                 '1. 定位与细看：`vision_ground` 定位 → `vision_crop` 裁剪放大 → `vision_describe` 细看；盘点页面元素用 `vision_detect`（编号清单+框，可引用“元素 #n”）；\n' +
-                '2. 还原验证循环（本插件招牌流程）：参考图 → 实现 → `vision_html_screenshot` 截图 → `vision_pixel_diff` 度量差异 → 修复 → 再截图，迭代到差异收敛（0% 是常见终点）；\n' +
-                '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`；\n' +
+                '2. 还原验证循环（本插件招牌流程）：参考图 → 实现 → `vision_html_screenshot` 截图 → `vision_pixel_diff` 度量差异 → 修复 → 再截图，迭代到差异收敛（0% 是常见终点）；长页面用 `fullPage: true` 一次截整页并拿到 `pageHeight`；\n' +
+                '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`（长页面加 `fullPage: true` 截整页）；\n' +
                 '4. 展示规则（必须遵守）：当你生成、编辑、截图或导出一张图片，并希望用户看到它时，必须调用 `vision_present`。' +
                 '`read_image` 仅用于你自己读取或检查图片内容，绝不能把 `read_image` 当成向用户展示或发送图片的方法。\n' +
                 '   MANDATORY PRESENTATION RULE: when you generate, edit, screenshot, or export an image and want the user to see it, ' +
