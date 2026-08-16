@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/release-v1.3.0-5B4CF0?style=flat-square" alt="Release v1.3.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/release-v1.4.0-5B4CF0?style=flat-square" alt="Release v1.4.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.3.0）**
+> 📌 **公告（v1.4.0）**
 >
-> **v1.3.0**：增强长会话稳定性、诊断日志、视觉模型检测与多视觉插件共存。
+> **v1.4.0 现已支持**：未声明视觉模型的自动识别与直连桥接、doctor 修复过期版本钉住豁免、引导流程聚光灯高亮——并增强设置保存校验与视觉后端兼容性。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -287,6 +287,40 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `timeoutMs` | `120000` | 单次视觉调用超时 |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | 产物目录（相对会话工作区） |
 | `proxy` / `proxyHosts` | `''` / openrouter 域名 | 仅视觉供应商域名可选的本地代理 |
+
+### 本地 Ollama 视觉后端（并入自 dsh-vision）
+
+完全本地的视觉路径：隐私、零费用、可离线，不需要 Key、图不出机器。它作为视觉链里一个可选的 `httpProviders` 条目（`local-ollama`）接入，其他一切照旧。
+
+**1. 安装 Ollama 并拉取视觉模型**
+
+```sh
+# https://ollama.com —— 然后：
+ollama pull qwen2.5vl
+```
+
+**2. 开启** —— 设置卡片「本地视觉」组，或 profile patch：
+
+```yaml
+- id: vision-router
+  config:
+    localOllama:
+      enabled: true
+      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI 兼容端点
+      model: 'qwen2.5vl'
+      temperature: 0.5                        # 可选；识别用低温更稳
+      top_p: 0.8                              # 可选；留空 = 服务端默认
+    instantDescribe: true                     # 图片轮第一轮即本地识别
+    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+```
+
+**3. 行为说明**
+
+- 开启后 `local-ollama` 排在视觉链最前：图不出机器、不花钱、可离线。
+- Ollama 未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
+- `instantDescribe` 在图片轮第一轮就用本地 Ollama 识别图片，模型立即看懂而不是看到工具提示；识别结果按附件 id 缓存，后续轮次直接复用。
+- `vision_screenshot` 的 `identify=true` 同样使用该后端（需开启 `localOllama.enabled`）。
+- 日志中看到 `instant local describe recognized N/M image(s)` 即表示生效。
 
 ## 环境要求
 

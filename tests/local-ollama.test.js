@@ -9,6 +9,7 @@ import {
   DEFAULT_HTTP_PROVIDERS,
   buildInstantLocalMap,
   localDescribePrompt,
+  imageMemorySet,
 } from '../index.js'
 
 test('localOllamaProvidersOf returns [] when unset or disabled', () => {
@@ -134,4 +135,20 @@ test('buildInstantLocalMap failure leaves memory untouched and never rejects', a
   })
   assert.equal(map.size, 0)
   assert.equal(memory.size, 0)
+})
+
+test('imageMemorySet evicts oldest entries beyond the FIFO limit', () => {
+  const map = new Map()
+  for (let i = 0; i < 200; i++) imageMemorySet(map, `id-${i}`, `desc-${i}`)
+  assert.equal(map.size, 200)
+  // 第 201 条新 key 挤掉最旧条目。
+  imageMemorySet(map, 'id-200', 'desc-200')
+  assert.equal(map.size, 200)
+  assert.equal(map.has('id-0'), false)
+  assert.equal(map.get('id-200'), 'desc-200')
+  // 更新已存在的 key 不触发淘汰。
+  imageMemorySet(map, 'id-199', 'updated')
+  assert.equal(map.size, 200)
+  assert.equal(map.has('id-1'), true)
+  assert.equal(map.get('id-199'), 'updated')
 })

@@ -30,7 +30,9 @@ import {
   parseVersionParts,
   versionSatisfies,
   looksLikeVisionModel,
+  looksLikeNonGenerativeVisionModel,
   decideVisionBackendCapability,
+  resolveChannelBridgeTransport,
   renderVisionPresent,
   extractJson,
   createCache,
@@ -2266,6 +2268,11 @@ test('looksLikeVisionModel recognizes well-known multimodal families conservativ
   assert.equal(looksLikeVisionModel('glm-4.5'), false)
   // Other well-known families.
   assert.equal(looksLikeVisionModel('qwen2.5-vl-72b-instruct'), true)
+  assert.equal(looksLikeVisionModel('Qwen/Qwen3-VL-32B-Instruct'), true)
+  assert.equal(looksLikeVisionModel('Qwen/Qwen3-VL-Embedding-8B'), false)
+  assert.equal(looksLikeVisionModel('Qwen/Qwen3-VL-Reranker-8B'), false)
+  assert.equal(looksLikeNonGenerativeVisionModel('Qwen3-VL-Embedding-8B'), true)
+  assert.equal(looksLikeNonGenerativeVisionModel('Qwen3-VL-Reranker-8B'), true)
   assert.equal(looksLikeVisionModel('qvq-72b'), true)
   assert.equal(looksLikeVisionModel('gpt-4o-mini'), true)
   assert.equal(looksLikeVisionModel('gpt-4.1'), true)
@@ -2323,4 +2330,65 @@ test('decideVisionBackendCapability honors declarations, overrides and inference
   })
   // Missing inputModalities metadata is treated as text-only unless inferred.
   assert.equal(decideVisionBackendCapability({}, 'zhipu-glm', 'glm-4.6', []).image, false)
+})
+
+
+test('non-generative VL endpoints stay hidden unless explicitly forced', () => {
+  const metadata = { inputModalities: ['text', 'image'] }
+  const rejected = decideVisionBackendCapability(
+    metadata,
+    'siliconflow',
+    'Qwen/Qwen3-VL-Embedding-8B',
+    [],
+  )
+  assert.equal(rejected.image, false)
+  assert.match(rejected.reason, /embedding\/reranker/)
+  const forced = decideVisionBackendCapability(
+    { inputModalities: ['text'] },
+    'siliconflow',
+    'Qwen/Qwen3-VL-Reranker-8B',
+    ['siliconflow/Qwen/Qwen3-VL-Reranker-8B'],
+  )
+  assert.equal(forced.image, true)
+  assert.equal(forced.inferred, 'override')
+})
+
+test('channel bridge transport uses resolved pi-ai catalog model facts', () => {
+  const resolved = {
+    apiKeyEnv: 'SILICONFLOW_API_KEY',
+    piProvider: {
+      baseUrl: 'https://provider.example/v1',
+      getModels: () => [
+        {
+          id: 'Qwen/Qwen3-VL-32B-Instruct',
+          api: 'openai-completions',
+          baseUrl: 'https://model.example/v1',
+        },
+      ],
+    },
+  }
+  assert.deepEqual(
+    resolveChannelBridgeTransport(
+      { apiKeyEnv: 'RAW_KEY_ONLY' },
+      resolved,
+      'Qwen/Qwen3-VL-32B-Instruct',
+    ),
+    {
+      baseURL: 'https://model.example/v1',
+      api: 'openai-completions',
+      apiKeyEnv: 'RAW_KEY_ONLY',
+    },
+  )
+  assert.deepEqual(
+    resolveChannelBridgeTransport(
+      { baseURL: 'https://raw.example/v1', api: 'anthropic-messages' },
+      undefined,
+      'claude-4-sonnet',
+    ),
+    {
+      baseURL: 'https://raw.example/v1',
+      api: 'anthropic-messages',
+      apiKeyEnv: undefined,
+    },
+  )
 })

@@ -9,6 +9,7 @@
 import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { installVisionRouterFileLogging } from './lib/file-logger.js'
+import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -21,13 +22,14 @@ export const Config = core.Config
 
 // Defense in depth for direct/programmatic callers that invoke apply() without
 // first running the Cordis Config resolver: only an explicit true enables the
-// schema-changing progressive mode. The wrapped context changes only logger:
-// every existing vision-router diagnostic still reaches the host logger and is
-// also persisted to ~/.dsh/logs/vision-router/vision-router.log.
+// schema-changing progressive mode. The wrapped context changes logger plus a
+// private llm view used only by Vision Router: wrapper -> delegate calls can
+// restore adapter-owned replay identity without mutating the host LLM service.
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
+  const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
   try {
-    const result = core.apply(logging.ctx, {
+    const result = core.apply(runtimeCtx, {
       ...config,
       progressiveTools: config.progressiveTools === true,
     })

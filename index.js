@@ -1987,6 +1987,18 @@ export function localDescribePrompt(style) {
   )
 }
 
+// 跨轮图片描述记忆（attachmentId -> description）有界化：缓存只增不减会
+// 随超长会话无界膨胀。FIFO 上限淘汰最旧条目（Map 迭代序 = 插入序）；
+// 更新已存在的 key 不触发淘汰。
+const IMAGE_MEMORY_LIMIT = 200
+export function imageMemorySet(map, id, description) {
+  if (map.size >= IMAGE_MEMORY_LIMIT && !map.has(id)) {
+    const oldest = map.keys().next()
+    if (!oldest.done) map.delete(oldest.value)
+  }
+  return map.set(id, description)
+}
+
 /**
  * dsh-vision 并入：即时本地翻译。
  * 对模型输入里的图片块（按附件 id 去重）调用本地 Ollama 识别，返回
@@ -2048,7 +2060,7 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
           id,
           `已由本地视觉识别（本地识别 ${elapsedSec}s）\n${plain}`,
         )
-        if (memory !== undefined) memory.set(id, plain)
+        if (memory !== undefined) imageMemorySet(memory, id, plain)
       }
     }
     // 排障可见性：成功与失败都进宿主日志（含 v1.3.0 的持久化诊断日志）。
@@ -2214,6 +2226,21 @@ export function modelInfoAcceptsImages(info) {
 // perfectly usable vision backends. The conservative, curated name patterns
 // below recognize well-known multimodal model families as a fallback; models
 // that still do not match can be forced via the `extraVisionModels` setting.
+// A vision-looking name does not necessarily identify a generative chat model.
+// Embedding and reranker endpoints often share the same VL family prefix but
+// cannot answer vision_describe. Keep them out of the automatic candidate
+// set; an explicit extraVisionModels override remains the expert escape hatch.
+const NON_GENERATIVE_VISION_MODEL_HINTS = [
+  /(^|[\/_.-])(embedding|embeddings|embed)(?=$|[\/_.-])/i,
+  /(^|[\/_.-])(rerank|reranker|reranking)(?=$|[\/_.-])/i,
+]
+
+export function looksLikeNonGenerativeVisionModel(modelId) {
+  const id = String(modelId ?? '').trim()
+  if (id === '') return false
+  return NON_GENERATIVE_VISION_MODEL_HINTS.some((pattern) => pattern.test(id))
+}
+
 const VISION_MODEL_NAME_HINTS = [
   // Zhipu VLM family: glm-4.6v, glm-4.6v-flash, glm-4v-plus, glm-4.5v(-plus)…
   /(^|\/)glm-4[\w.-]*v(?=$|[-/])/i,
@@ -2246,14 +2273,14 @@ const VISION_MODEL_NAME_HINTS = [
  */
 export function looksLikeVisionModel(modelId) {
   const id = String(modelId ?? '').trim()
-  if (id === '') return false
+  if (id === '' || looksLikeNonGenerativeVisionModel(id)) return false
   return VISION_MODEL_NAME_HINTS.some((pattern) => pattern.test(id))
 }
 
 /**
- * Pure capability decision for a vision backend: explicit metadata first,
- * then the user's `extraVisionModels` override list, then the name-based
- * inference, and finally a text-only verdict.
+ * Pure capability decision for a vision backend: an explicit user override
+ * wins first, known non-generative endpoint roles are excluded next, then
+ * declared image metadata and conservative name inference are considered.
  *
  * @param info - resolved model metadata (may be undefined when the lookup failed).
  * @param provider - provider id, used to match "provider/model" override entries.
@@ -2268,31 +2295,78 @@ export function decideVisionBackendCapability(info, provider, model, extraVision
     ? info.inputModalities.filter((item) => typeof item === 'string')
     : []
   const modelId = String(model ?? '').trim()
-  if (inputModalities.includes('image')) {
-    return { image: true, inputModalities, inferred: false, reason: undefined }
-  }
+  const providerId = String(provider ?? '').trim()
   const extras = Array.isArray(extraVisionModels)
     ? extraVisionModels.map((entry) => String(entry ?? '').trim()).filter((entry) => entry !== '')
     : []
-  if (modelId !== '' && extras.some((entry) => entry === modelId)) {
-    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'override', reason: undefined }
-  }
-  const providerId = String(provider ?? '').trim()
-  if (
+  const forced =
     modelId !== '' &&
-    providerId !== '' &&
-    extras.some((entry) => entry === `${providerId}/${modelId}`)
-  ) {
-    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'override', reason: undefined }
+    extras.some((entry) => entry === modelId || (providerId !== '' && entry === `${providerId}/${modelId}`))
+  // Manual override is deliberately strongest: advanced users can still
+  // force an unusual endpoint that our role/name heuristics reject.
+  if (forced) {
+    return { image: true, inputModalities: [...new Set([...inputModalities, 'image'])], inferred: 'override', reason: undefined }
+  }
+  // A model can consume images and still be the wrong KIND of endpoint
+  // for this plugin: embedding/reranking produces no assistant answer.
+  if (modelId !== '' && looksLikeNonGenerativeVisionModel(modelId)) {
+    return {
+      image: false,
+      inputModalities,
+      inferred: false,
+      reason: 'model name indicates an embedding/reranker endpoint, not a generative vision backend',
+    }
+  }
+  if (inputModalities.includes('image')) {
+    return { image: true, inputModalities, inferred: false, reason: undefined }
   }
   if (modelId !== '' && looksLikeVisionModel(modelId)) {
-    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'name', reason: undefined }
+    return { image: true, inputModalities: [...new Set([...inputModalities, 'image'])], inferred: 'name', reason: undefined }
   }
   return {
     image: false,
     inputModalities,
     inferred: false,
     reason: 'model metadata does not declare image input',
+  }
+}
+
+/**
+ * Resolve transport facts for the direct channel compatibility bridge.
+ * Raw llm-pi-ai settings commonly omit baseURL/api for built-in catalog
+ * providers; the materialized pi-ai model carries the effective values.
+ */
+export function resolveChannelBridgeTransport(rawProfile, resolvedProfile, modelId) {
+  let resolvedModel
+  try {
+    const getModels = resolvedProfile && resolvedProfile.piProvider && resolvedProfile.piProvider.getModels
+    const models = typeof getModels === 'function'
+      ? getModels.call(resolvedProfile.piProvider)
+      : []
+    resolvedModel = Array.isArray(models)
+      ? models.find((entry) => entry && String(entry.id) === String(modelId))
+      : undefined
+  } catch {
+    resolvedModel = undefined
+  }
+  const firstString = (...values) =>
+    values.find((value) => typeof value === 'string' && value.trim() !== '')
+  return {
+    baseURL: firstString(
+      resolvedModel && resolvedModel.baseUrl,
+      rawProfile && rawProfile.baseURL,
+      resolvedProfile && resolvedProfile.baseURL,
+      resolvedProfile && resolvedProfile.piProvider && resolvedProfile.piProvider.baseUrl,
+    ),
+    api: firstString(
+      resolvedModel && resolvedModel.api,
+      rawProfile && rawProfile.api,
+      resolvedProfile && resolvedProfile.api,
+    ),
+    apiKeyEnv: firstString(
+      rawProfile && rawProfile.apiKeyEnv,
+      resolvedProfile && resolvedProfile.apiKeyEnv,
+    ),
   }
 }
 
@@ -2974,52 +3048,105 @@ export function apply(ctx, config = {}) {
   // reads only: if the channel settings section, the baseURL, or the
   // credential cannot be resolved, the bridge is simply unavailable and the
   // adapter's own error is reported.
-  const channelProfileOf = (provider) => {
+  const rawChannelProfileOf = (provider) => {
     try {
       const settings = ctx.get('settings')
       const section =
         settings && typeof settings.get === 'function' ? settings.get('llm-pi-ai') : undefined
-      const profile = section && section.providers ? section.providers[provider] : undefined
-      if (!profile || typeof profile.baseURL !== 'string' || profile.baseURL === '') return undefined
-      return profile
+      return section && section.providers ? section.providers[provider] : undefined
     } catch {
       return undefined
     }
   }
-  const resolveChannelApiKey = async (provider, profile) => {
-    const ref =
-      profile && typeof profile.apiKeyEnv === 'string' && profile.apiKeyEnv !== ''
-        ? profile.apiKeyEnv
-        : undefined
-    if (ref === undefined) return undefined
+  // DSH's public model metadata intentionally omits endpoint/protocol
+  // details. PiAiAdapter has already materialized those facts in its
+  // resolved profile, so feature-detect that shape as a compatibility
+  // shim. If upstream changes it, this fails closed to the normal chain.
+  const resolvedPiAiProfileOf = (provider) => {
     try {
-      const credentials = ctx.get('credentials')
-      if (credentials !== undefined) {
-        const hit = await credentials.resolve(ref)
-        if (hit && typeof hit.value === 'string' && hit.value.length > 0) return hit.value
+      const registration = ctx.llm.registration(provider)
+      const adapter = registration && registration.adapter
+      const config = adapter && adapter.config
+      const profiles = config && typeof config.profiles === 'function' ? config.profiles() : undefined
+      return profiles && typeof profiles.get === 'function' ? profiles.get(provider) : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const channelBridgePlan = (provider, model) => {
+    const rawProfile = rawChannelProfileOf(provider)
+    const resolvedProfile = resolvedPiAiProfileOf(provider)
+    const transport = resolveChannelBridgeTransport(rawProfile, resolvedProfile, model)
+    if (!transport.baseURL) {
+      return { ok: false, reason: 'no resolved channel baseURL', rawProfile, resolvedProfile, transport }
+    }
+    // callOpenAICompatible speaks Chat Completions. Never send another
+    // provider protocol through this bridge just because its name looks visual.
+    if (transport.api !== 'openai-completions') {
+      return {
+        ok: false,
+        reason: `channel protocol ${transport.api || 'unknown'} is not OpenAI Chat Completions`,
+        rawProfile,
+        resolvedProfile,
+        transport,
+      }
+    }
+    return { ok: true, rawProfile, resolvedProfile, transport }
+  }
+  const resolveChannelApiKey = async (plan) => {
+    const ref = plan && plan.transport && plan.transport.apiKeyEnv
+    if (typeof ref === 'string' && ref !== '') {
+      try {
+        const credentials = ctx.get('credentials')
+        if (credentials !== undefined) {
+          const hit = await credentials.resolve(ref)
+          if (hit && typeof hit.value === 'string' && hit.value.length > 0) return hit.value
+        }
+      } catch {
+        /* fall through to the ambient environment */
+      }
+      if (typeof process !== 'undefined' && process.env && typeof process.env[ref] === 'string') {
+        return process.env[ref]
+      }
+    }
+    // Catalog routes may use provider-native environment discovery and
+    // therefore carry no explicit Harness credential reference.
+    try {
+      const auth = plan && plan.resolvedProfile && plan.resolvedProfile.piProvider
+        && plan.resolvedProfile.piProvider.auth && plan.resolvedProfile.piProvider.auth.apiKey
+      if (auth && typeof auth.resolve === 'function') {
+        const hit = await auth.resolve({ credential: undefined })
+        const value = hit && hit.auth && hit.auth.apiKey
+        if (typeof value === 'string' && value.length > 0) return value
       }
     } catch {
-      /* fall through to the ambient environment */
-    }
-    if (typeof process !== 'undefined' && process.env && typeof process.env[ref] === 'string') {
-      return process.env[ref]
+      /* unavailable native auth */
     }
     return undefined
   }
   const directChannelVisionAnswer = async (provider, model, blocks, instruction, signal) => {
-    const profile = channelProfileOf(provider)
-    if (profile === undefined) return undefined
-    const apiKey = await resolveChannelApiKey(provider, profile)
-    if (apiKey === undefined || apiKey === '') return undefined
+    const plan = channelBridgePlan(provider, model)
+    if (!plan.ok) throw new Error(`vision bridge unavailable: ${plan.reason}`)
+    const apiKey = await resolveChannelApiKey(plan)
+    if (apiKey === undefined || apiKey === '') {
+      throw new Error('vision bridge unavailable: channel credential could not be resolved')
+    }
     const attachments = ctx.get('attachments')
-    if (attachments === undefined) return undefined
+    if (attachments === undefined) {
+      throw new Error('vision bridge unavailable: attachment service is not registered')
+    }
     const content = []
     for (const block of blocks) {
       const stored = await attachments.readImage(block.attachment)
       content.push(...toOpenAIContent([block], () => stored.data))
     }
     return callOpenAICompatible(
-      { name: provider, baseURL: profile.baseURL, model, apiKeyEnv: '__vision-router-channel__' },
+      {
+        name: provider,
+        baseURL: plan.transport.baseURL,
+        model,
+        apiKeyEnv: '__vision-router-channel__',
+      },
       [{ role: 'user', content: [...content, { type: 'text', text: instruction }] }],
       { maxTokens: 4096, signal, resolveCredential: () => apiKey },
     )
@@ -3219,7 +3346,7 @@ export function apply(ctx, config = {}) {
                 succeeded = true
                 if (finalText.trim() && imageIds.length > 0) {
                   const record = finalText.trim()
-                  for (const id of imageIds) imageMemory.set(id, record)
+                  for (const id of imageIds) imageMemorySet(imageMemory, id, record)
                 }
                 yield chunk
                 break
@@ -4152,6 +4279,16 @@ export function apply(ctx, config = {}) {
         }
       }
       for (const pair of usablePairs) {
+        // usablePairs also contains auto-discovered models. Before this fix the
+        // map was populated only from explicit config rows, so inferred
+        // SiliconFlow models failed pi-ai image admission and never reached
+        // the direct channel bridge that was meant to rescue them.
+        const pairKey = `${pair.provider}/${pair.model}`
+        let pairCapability = pairCapabilities.get(pairKey)
+        if (pairCapability === undefined) {
+          pairCapability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          pairCapabilities.set(pairKey, pairCapability)
+        }
         try {
           const text = await visionAnswer(ctx.llm, {
             provider: pair.provider,

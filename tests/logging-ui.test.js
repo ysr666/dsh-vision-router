@@ -9,3 +9,11 @@ test('settings card exposes a one-click logs-folder action', () => {
   assert.equal(source.includes("fetch('/_dsh/vision-router/logs'"), true)
   assert.equal(source.includes("method: 'POST'"), true)
 })
+
+test('settings save failures are forwarded to the bounded server diagnostic route', () => {
+  const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const serverSource = readFileSync(new URL('../lib/file-logger.js', import.meta.url), 'utf8')
+  assert.equal(clientSource.includes("fetch('/_dsh/vision-router/settings-save-diagnostics'"), true)
+  assert.equal(serverSource.includes("const SETTINGS_SAVE_DIAGNOSTICS_PATH = '/_dsh/vision-router/settings-save-diagnostics'"), true)
+  assert.equal(serverSource.includes("'vision-router: settings save failed field=%s operation=%s reason=%s detail=%s'"), true)
+})

@@ -3,6 +3,33 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.4.0
+
+### 改进 / Changed
+
+- **未声明视觉模型的自动识别与直连桥接（#99）**：视觉后端能力改用保守的名称推断（glm-4.6v 系列、qwen-vl/qvq、gpt-4o/4.1/5、gemini、claude-3+、internvl、doubao-vision、step-v、grok-4、pixtral、llama-vision、florence 等），并新增 `extraVisionModels` 设置手动声明视觉后端；下拉框、工具对与视觉后端链共用同一判定。当渠道适配器因目录未声明图片输入而拒绝收图（如 pi-ai `UNSUPPORTED_CONTENT`）时，推断/声明的后端自动回退为经该渠道自身 baseURL + 凭据的 OpenAI 兼容直连调用，智谱类渠道开箱即用。
+- **Automatic recognition + direct-channel bridging for undeclared vision models (#99)**: vision-backend capability now uses conservative name-based inference (glm-4.6v family, qwen-vl/qvq, gpt-4o/4.1/5, gemini, claude-3+, internvl, doubao-vision, step-v, grok-4, pixtral, llama-vision, florence, …) plus a new `extraVisionModels` setting to declare vision backends manually; the dropdown, tool pairs and the chain list share one decision. When a channel adapter rejects images because the catalog does not declare image input (pi-ai `UNSUPPORTED_CONTENT`), inferred/declared backends fall back to a direct OpenAI-compatible call over the channel's own baseURL + credential, so Zhipu-like channels work out of the box.
+- **doctor 检测并修复过期的版本钉住豁免（#101）**：pnpm v11 默认 `minimumReleaseAge=1440` 分钟，发布不到 24 小时的新版本会被 `dsh plugin update` 静默忽略；形如 `dsh-vision-router@1.2.0` 的版本钉住豁免只对单个版本生效、随新版发布失效——这正是「出了新版但更新无反应」的根源。doctor 现在会标记各 profile `pnpm-workspace.yaml` 中 `dsh-vision-router` 与 `@deepseek-ai/*` 宿主包的此类条目，修复时重写为裸名 / 组织通配模式。
+- **The doctor detects and repairs stale version-pinned release-age exemptions (#101)**: pnpm v11 defaults `minimumReleaseAge` to 1440 minutes, so releases younger than 24h are silently ignored by `dsh plugin update`; a version-pinned exemption such as `dsh-vision-router@1.2.0` covers only that version and goes stale on the next release — the root cause of "a new release is out but update does nothing". The doctor now flags such entries for `dsh-vision-router` and the `@deepseek-ai/*` host packages in each profile's `pnpm-workspace.yaml` and rewrites them to bare names / the org pattern on repair.
+- **引导流程聚光灯高亮（#107）**：三步引导此前只有第 3 步有卡片内高亮；现在每一步都是聚光灯引导——暗色遮罩 + 呼吸光环圈出真实控件（第 1 步模型选择器、第 2 步设置齿轮与「插件」入口、第 3 步视觉后端链），提示卡带箭头锚定且绝不遮挡目标；第 2 步的「下一步」可自动打开设置面板并进入插件页，全程可从提示卡一键推进。目标用稳定锚点（`data-slot` / `aria-*`）定位，不依赖哈希 CSS 类名；动效遵循 `prefers-reduced-motion`。
+- **Spotlight-guided onboarding walkthrough (#107)**: the three-step guide previously highlighted only step 3. Now every step is a spotlight tour — a dimmed backdrop with a pulsing ring circles the real control (model selector, Settings gear and Plugins entry, vision chain), and the prompt is anchored beside it with an arrow that never covers the target. Step 2's Next button opens the settings panel and enters the Plugins section automatically, so the whole walkthrough can be driven from the prompt. Targets use stable anchors (`data-slot` / `aria-*`) instead of hashed CSS-module classes; motion honors `prefers-reduced-motion`.
+
+### 修复 / Fixed
+
+- **设置保存前先确认写入成功（#102）**：设置卡片在清除未保存草稿前会先校验写入确实生效，避免保存失败时静默丢弃草稿。
+- **Settings writes are verified before drafts are cleared (#102)**: the settings card checks that a write actually succeeded before clearing unsaved drafts, so a failed save can no longer silently discard them.
+- **doctor CLI 兼容 npx shim 符号链接调用（#104）**：npm 的 npx shim 在 POSIX 上通过 `node_modules/.bin` 的符号链接调用 bin，旧的字符串路径比对从未匹配，导致 macOS/Linux 上 `npx dsh-vision-router doctor` 静默退出 0 且无任何输出；现在按 realpath 比对，并补充单元与符号链接回归测试。
+- **The doctor CLI works through the npx shim's symlinked bin (#104)**: npm's npx shim invokes the bin through a symlink under `node_modules/.bin` on POSIX, so the old string comparison never matched and `npx dsh-vision-router doctor` silently exited 0 without output on macOS/Linux; paths are now compared after realpath, with unit and symlink-spawn regression tests.
+- **git 安装的 bin 可执行位（#105）**：pnpm 安装 git 来源插件时直接符号链接 bin 目标，文件本身需要可执行位，否则 profile 内调用 `node_modules/.bin/dsh-vision-router` 报 `EACCES`；已修复。
+- **Executable bit for the git-hosted bin (#105)**: pnpm installs git-hosted plugins by symlinking the bin target directly, so the file itself needs the exec bit; without it, invoking `node_modules/.bin/dsh-vision-router` inside a profile fails with `EACCES`.
+- **视觉后端兼容性加固（#106）**：收紧视觉模型过滤——保留 Qwen3-VL 聊天模型、排除 Embedding/Reranker 误报；自动发现模型在 pi-ai 准入失败前先填充能力状态；直连桥接恢复目录内的 baseURL/协议；对不兼容的提供方协议 fail-closed，并保留显式专家覆盖。
+- **Hardened vision-backend compatibility (#106)**: vision-model filtering is tightened (Qwen3-VL chat models kept, Embedding/Reranker false positives excluded); capability state is populated for auto-discovered models before pi-ai admission failures; the direct bridge recovers the catalog-backed baseURL/protocol; incompatible provider protocols fail closed while explicit expert overrides are preserved.
+
+### 文档 / Docs
+
+- **dshpm 0.4.2 兼容说明（#97）与一条命令安装 + 目录（#95）**：注明 dshpm 0.4.2 兼容性；README 安装改为一条命令并补充目录。
+- **dshpm 0.4.2 compatibility note (#97) and one-command install + TOC (#95)**: the README notes dshpm 0.4.2 compatibility, the install is now one command, and a table of contents was added.
+
 ## v1.3.0
 
 ### 改进 / Changed

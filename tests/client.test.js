@@ -66,6 +66,147 @@ test('the client bundle still loads and registers with the proven injects', () =
   assert.equal(typeof bundle.apply, 'function')
 })
 
+test('commitSettingsPlan keeps drafts when a resolved set did not land in the user layer', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const drafts = { providers: requested }
+  const calls = []
+  const scope = {
+    async set(field, value) {
+      calls.push([field, value])
+      // SettingsScope resolves after its recovery read even when the Host
+      // rejected the mutation. Deliberately leave the old user layer intact.
+    },
+    getSnapshot() {
+      return { status: 'ready', writable: true, user: { providers: [] } }
+    },
+  }
+
+  const outcome = await bundle.commitSettingsPlan(scope, [
+    { key: 'providers', run: { value: requested } },
+  ], drafts)
+
+  assert.deepEqual(calls, [['providers', requested]])
+  assert.equal(outcome.landed, false)
+  assert.equal(outcome.failed, true)
+  assert.equal(outcome.nextDrafts, drafts)
+  assert.deepEqual(outcome.failures.map(({ field, operation, reason }) => ({ field, operation, reason })), [{
+    field: 'providers',
+    operation: 'set',
+    reason: 'readback-mismatch',
+  }])
+})
+
+test('commitSettingsPlan accepts structurally equal JSON readback and clears drafts', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const snapshot = { status: 'ready', writable: true, user: {} }
+  const scope = {
+    async set(field, value) {
+      snapshot.user[field] = structuredClone(value)
+    },
+    getSnapshot() {
+      return snapshot
+    },
+  }
+
+  const outcome = await bundle.commitSettingsPlan(scope, [
+    { key: 'providers', run: { value: requested } },
+  ], { providers: requested })
+
+  assert.equal(outcome.landed, true)
+  assert.equal(outcome.failed, false)
+  assert.deepEqual(outcome.nextDrafts, {})
+  assert.deepEqual(outcome.failures, [])
+  assert.equal(bundle.jsonValueEqual({ a: 1, b: [2] }, { b: [2], a: 1 }), true)
+  assert.equal(bundle.jsonValueEqual(-0, 0), true)
+})
+
+test('commitSettingsPlan clears only fields that landed during a partial save', async () => {
+  const bundle = loadClientBundle()
+  const providers = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const drafts = { routing: true, providers }
+  const snapshot = { status: 'ready', writable: true, user: { providers: [] } }
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field, value) {
+      if (field === 'routing') snapshot.user[field] = value
+      // The providers write resolves after a rejected Host mutation and its
+      // recovery read, leaving the old user-layer value in place.
+    },
+    getSnapshot() { return snapshot },
+  }, [
+    { key: 'routing', run: { value: true } },
+    { key: 'providers', run: { value: providers } },
+  ], drafts)
+
+  assert.equal(outcome.landed, false)
+  assert.deepEqual(outcome.landedFields, ['routing'])
+  assert.deepEqual(outcome.nextDrafts, { providers })
+  assert.deepEqual(outcome.failures.map(({ field, reason }) => [field, reason]), [
+    ['providers', 'readback-mismatch'],
+  ])
+})
+
+test('commitSettingsPlan requires unset to remove the user-layer own property', async () => {
+  const bundle = loadClientBundle()
+  const plan = [{ key: 'proxyHosts', run: { clear: true } }]
+  const drafts = { proxyHosts: '' }
+  const rejectedSnapshot = { status: 'ready', writable: true, user: { proxyHosts: ['example.test'] } }
+  const rejected = await bundle.commitSettingsPlan({
+    async unset() {},
+    getSnapshot() { return rejectedSnapshot },
+  }, plan, drafts)
+  assert.equal(rejected.landed, false)
+  assert.equal(rejected.nextDrafts, drafts)
+  assert.equal(rejected.failures[0].reason, 'readback-mismatch')
+
+  const acceptedSnapshot = { status: 'ready', writable: true, user: { proxyHosts: ['example.test'] } }
+  const accepted = await bundle.commitSettingsPlan({
+    async unset(field) { delete acceptedSnapshot.user[field] },
+    getSnapshot() { return acceptedSnapshot },
+  }, plan, drafts)
+  assert.equal(accepted.landed, true)
+  assert.deepEqual(accepted.nextDrafts, {})
+})
+
+test('commitSettingsPlan classifies write and readback errors without dropping drafts', async () => {
+  const bundle = loadClientBundle()
+  const drafts = { routing: true, tool: true }
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field) {
+      if (field === 'routing') throw new Error('transport failed')
+    },
+    getSnapshot() {
+      throw new Error('snapshot failed')
+    },
+  }, [
+    { key: 'routing', run: { value: true } },
+    { key: 'tool', run: { value: true } },
+  ], drafts)
+
+  assert.equal(outcome.landed, false)
+  assert.equal(outcome.nextDrafts, drafts)
+  assert.deepEqual(outcome.failures.map(({ field, reason }) => [field, reason]), [
+    ['routing', 'write-error'],
+    ['tool', 'readback-error'],
+  ])
+})
+
+test('settings save failure copy says unwritten drafts were kept', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('保存失败：部分配置未写入。未写入的修改已保留，请重试。'), true)
+  assert.equal(source.includes('Save failed: some changes were not written. Unwritten changes were kept; please retry.'), true)
+  assert.equal(source.includes("className: 'vr-failed', role: 'alert'"), true)
+  // One-click field resets share the same verified write path, and all
+  // editors are frozen during the round-trip so a successful save cannot
+  // discard a newer in-flight edit.
+  assert.equal(source.includes('const resetField = async (key) => {'), true)
+  assert.equal(source.includes("commitSettingsPlan(scope, [{ key, run: { clear: true } }], drafts)"), true)
+  assert.equal(source.includes('const editBlocked = !writable || saving'), true)
+  assert.equal(source.includes('if (outcome.landedFields.length > 0) setDrafts(outcome.nextDrafts)'), true)
+  assert.equal(source.includes("if (outcome.landedFields.includes('extraVisionModels'))"), true)
+})
+
 
 test('model-selection guide separates session and vision models and targets the vision chain', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
@@ -154,8 +295,41 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes("guideStepNext: 'Next'"), true)
   assert.equal(source.includes("guidePromptTitle: 'Step 2 · Vision model'"), true)
   assert.equal(source.includes("guideChainTitle: 'Step 3 · This is the vision model'"), true)
-  // Step 1 parks the prompt on the left so the chat selector stays usable.
-  assert.equal(source.includes('vr-guide-prompt-left'), true)
+  // Every step now carries a visual target, not just step 3: the prompt is
+  // anchored to a highlighted element (spotlight hole + pulsing ring + arrow),
+  // and step 2's copy differs between the sidebar gear phase and the settings
+  // panel's Plugins nav row.
+  assert.equal(source.includes('vr-guide-spot-hole'), true)
+  assert.equal(source.includes('vr-guide-spot-ring'), true)
+  assert.equal(source.includes('vr-guide-arrow'), true)
+  assert.equal(source.includes("guidePromptGearBody: '点击侧边栏左下角被高亮圈出的「设置」齿轮"), true)
+  assert.equal(source.includes("guidePromptNavBody: '在设置面板左侧的导航里，点击被高亮的「插件」入口"), true)
+  assert.equal(source.includes("guidePromptGearBody: 'Click the highlighted Settings gear"), true)
+  assert.equal(source.includes("guidePromptNavBody: 'In the settings panel’s left navigation"), true)
+  // Stable DOM anchors: DSH web hashes its CSS-module class names, so targets
+  // are addressed via data-slot / aria attributes instead of class names.
+  assert.equal(source.includes('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]'), true)
+  assert.equal(source.includes('button[aria-haspopup="dialog"]'), true)
+  assert.equal(source.includes('[role="dialog"][aria-modal="true"]'), true)
+  // The prompt veils itself while the step-1 model menu is open so the menu
+  // stays clickable, and animations respect reduced motion.
+  assert.equal(source.includes('vr-guide-prompt-veiled'), true)
+  assert.equal(source.includes('prefers-reduced-motion'), true)
+  // Step 2 also carries a Next button: it performs the current phase's
+  // action for the user (open the settings panel, then enter Plugins), so
+  // every non-final step can be driven entirely from the prompt.
+  assert.equal(source.includes("const currentPhase = guidePhase('step2')"), true)
+  assert.equal(source.includes('gear.click()'), true)
+  assert.equal(source.includes("row.tagName === 'BUTTON'"), true)
+  assert.equal(source.includes('也可以直接点「下一步」帮你打开'), true)
+  assert.equal(source.includes(', or press “Next” and I will open it for you'), true)
+  // Anchoring correctness: the prompt must never cover the highlighted
+  // target (coverage is judged on the viewport-clamped box, with a small
+  // halo around the target), and the arrow must sit on the prompt's edge
+  // that faces the target — above the target means a bottom arrow, etc.
+  assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
+  assert.equal(source.includes('const halo = 10'), true)
+  assert.equal(source.includes("{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }"), true)
 })
 
 test('the settings card skips offscreen paint and rebuilds model options once', () => {
@@ -256,7 +430,7 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   assert.equal(source.includes('Array.isArray(text)'), true)
   // Saving the override refreshes the capability map silently (no loading
   // flash / apparent page refresh).
-  assert.equal(source.includes("plan.some((item) => item.key === 'extraVisionModels')"), true)
+  assert.equal(source.includes("outcome.landedFields.includes('extraVisionModels')"), true)
   assert.equal(source.includes('loadVisionCapabilities(true, true)'), true)
   // The capability notice reflects name-based / manual recognition.
   assert.equal(source.includes('or are recognized as vision models by name / manual override'), true)
@@ -265,4 +439,13 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   // The hidden-models list is memoized so per-render catalog walks cannot
   // regress the settings card's scroll smoothness.
   assert.equal(source.includes('collectFilteredVisionBackends(catalog.groups, visionCaps.capabilities)'), true)
+})
+
+
+test('auto-discovered inferred vision models retain bridge capability state', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('const pairKey = `${pair.provider}/${pair.model}`'), true)
+  assert.equal(source.includes('pairCapabilities.set(pairKey, pairCapability)'), true)
+  assert.equal(source.includes('resolvedPiAiProfileOf'), true)
+  assert.equal(source.includes("transport.api !== 'openai-completions'"), true)
 })

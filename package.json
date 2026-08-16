@@ -1,6 +1,6 @@
 {
   "name": "dsh-vision-router",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Eyes for text-only DeepSeek Harness agents: built-in free vision chain (no key) + pixel-level vision tools (Q&A, grounding, crop, pixel diff, colors, OCR, SVG trace, cutout, screenshots). One-command install, no Python, image turns work like ordinary tool-calling turns.",
   "license": "MIT",
   "repository": {
@@ -64,7 +64,7 @@
     "sharp": "^0.35.3"
   },
   "scripts": {
-    "test": "node --test tests/core.test.js tests/client.test.js tests/http-compat.test.js tests/update-check.test.js tests/self-update.test.js tests/doctor.test.js tests/bundle-defaults.test.js tests/file-logger.test.js tests/logging-ui.test.js tests/manifest-dependencies.test.js tests/local-ollama.test.js"
+    "test": "node --test tests/core.test.js tests/client.test.js tests/http-compat.test.js tests/update-check.test.js tests/self-update.test.js tests/doctor.test.js tests/doctor-cli.test.js tests/bundle-defaults.test.js tests/file-logger.test.js tests/replay-delegation.test.js tests/logging-ui.test.js tests/manifest-dependencies.test.js tests/local-ollama.test.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

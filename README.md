@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/release-v1.3.0-5B4CF0?style=flat-square" alt="Release v1.3.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/release-v1.4.0-5B4CF0?style=flat-square" alt="Release v1.4.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.3.0)**
+> 📌 **Announcement (v1.4.0)**
 >
-> **v1.3.0** improves long-session stability, diagnostics, vision-model detection, and coexistence with other vision plugins.
+> **v1.4.0 now supports** automatic recognition and direct-channel bridging of undeclared vision models, doctor repair of stale version-pinned exemptions, and a spotlight-guided onboarding walkthrough — plus hardened settings-save verification and vision-backend compatibility.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -287,6 +287,40 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `timeoutMs` | `120000` | per vision call deadline |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | artifact directory (relative to the session workspace) |
 | `proxy` / `proxyHosts` | `''` / openrouter hosts | optional proxy for vision provider hosts only |
+
+### Local Ollama vision backend (merged from dsh-vision)
+
+A fully local vision path for private, free, offline recognition — no API key, no upload. It plugs into the existing vision chain as one more optional `httpProviders` entry (`local-ollama`), so everything else keeps working exactly as before.
+
+**1. Install Ollama and pull a vision model**
+
+```sh
+# https://ollama.com — then:
+ollama pull qwen2.5vl
+```
+
+**2. Enable it** — in the settings card's "Local vision" group, or via a profile patch:
+
+```yaml
+- id: vision-router
+  config:
+    localOllama:
+      enabled: true
+      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI-compatible endpoint
+      model: 'qwen2.5vl'
+      temperature: 0.5                        # optional; low temperature is steadier for recognition
+      top_p: 0.8                              # optional; unset = server default
+    instantDescribe: true                     # recognize images on the first model step
+    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+```
+
+**3. What happens**
+
+- When enabled, `local-ollama` heads the vision chain: images never leave the machine, nothing is billed.
+- If Ollama is down or the call times out, the entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
+- `instantDescribe` recognizes pasted images with local Ollama on the first model step, so the model understands the image immediately instead of seeing a tool hint; results are cached per attachment id, so later turns reuse the same description.
+- `vision_screenshot` with `identify=true` also uses this backend when enabled.
+- Verify with the log line `instant local describe recognized N/M image(s)`.
 
 ## Requirements
 
