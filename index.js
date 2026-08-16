@@ -12,10 +12,9 @@
 // are downscaled with sharp, results are cached by content hash + question,
 // [probe] module-top marker: proves this file is loaded by the host.
 import { appendFileSync } from 'node:fs'
-import path from 'node:path'
 try {
-  const p = path.join(process.env.USERPROFILE ?? 'C:/Users/shaqiu yu', '.dsh', 'logs', 'vision-router', 'module-probe.log')
-  appendFileSync(p, `[module-top] ${new Date().toISOString()} ${import.meta.url}\n`, 'utf8')
+  const probePath = `${process.env.USERPROFILE ?? 'C:/Users/shaqiu yu'}/.dsh/logs/vision-router/module-probe.log`
+  appendFileSync(probePath, `[module-top] ${new Date().toISOString()} ${import.meta.url}\n`, 'utf8')
 } catch {
   /* probe must never break module load */
 }
