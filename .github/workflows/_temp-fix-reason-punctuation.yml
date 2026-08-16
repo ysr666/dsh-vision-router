@@ -1,0 +1,106 @@
+name: temp-fix-reason-punctuation
+
+on:
+  push:
+    branches:
+      - fix/failure-reason-punctuation
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - name: Apply exact patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          # Shared punctuation helper.
+          replace_once(
+              'lib/vision-resilience.js',
+              "const AUTH_PATTERNS = [/\\b401\\b/, /\\b403\\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]",
+              """/** Ensure a user-visible failure sentence ends with exactly one terminal mark. */
+          export function ensureSentencePunctuation(value) {
+            const text = String(value ?? '').trim()
+            if (text === '') return ''
+            return /[.!?。！？]$/.test(text) ? text : `${text}.`
+          }
+
+          const AUTH_PATTERNS = [/\\b401\\b/, /\\b403\\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]""",
+          )
+
+          # Use it in legacy whole-turn failure aggregation.
+          replace_once(
+              'index.js',
+              """  buildVisionFailure,
+            resultCodeForKinds,""",
+              """  buildVisionFailure,
+            ensureSentencePunctuation,
+            resultCodeForKinds,""",
+          )
+          replace_once(
+              'index.js',
+              """          errors.length > 0
+                    ? `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}.`
+                    : 'No vision-capable backend is configured.'""",
+              """          errors.length > 0
+                    ? ensureSentencePunctuation(
+                        `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}`,
+                      )
+                    : 'No vision-capable backend is configured.'""",
+          )
+
+          # Regression coverage for adapter messages that already end in punctuation.
+          replace_once(
+              'tests/vision-resilience.test.js',
+              """  buildVisionFailure,
+            resultCodeForKinds,""",
+              """  buildVisionFailure,
+            ensureSentencePunctuation,
+            resultCodeForKinds,""",
+          )
+          marker = """test('qwenKeyEndpointHint flags Token Plan key/endpoint mismatches without hardcoding providers', () => {"""
+          insert = """test('ensureSentencePunctuation never doubles an existing adapter sentence mark', () => {
+            assert.equal(ensureSentencePunctuation('adapter failed.'), 'adapter failed.')
+            assert.equal(ensureSentencePunctuation('adapter failed'), 'adapter failed.')
+            assert.equal(ensureSentencePunctuation('adapter failed!'), 'adapter failed!')
+            assert.equal(ensureSentencePunctuation('适配器失败。'), '适配器失败。')
+          })
+
+          """
+          p = Path('tests/vision-resilience.test.js')
+          text = p.read_text()
+          if text.count(marker) != 1:
+              raise SystemExit(f'tests/vision-resilience.test.js: expected one insertion marker, found {text.count(marker)}')
+          p.write_text(text.replace(marker, insert + marker, 1))
+          PY
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Commit validated fix
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.js lib/vision-resilience.js tests/vision-resilience.test.js
+          git commit -m "fix: avoid duplicate punctuation in vision failure reasons"
+          git push origin HEAD:fix/failure-reason-punctuation
