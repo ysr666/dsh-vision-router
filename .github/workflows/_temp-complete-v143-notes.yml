@@ -18,45 +18,19 @@ jobs:
           fetch-depth: 0
       - name: Complete v1.4.3 changelog
         shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('CHANGELOG.md')
-          text = p.read_text()
-          start = text.index('## v1.4.3\n')
-          end = text.index('## v1.4.2\n', start)
-          section = """## v1.4.3
-
-### 新增 / Added
-
-- **免费视觉 Key 渠道指南（#127）**：README 在 Quick Start 后新增免费视觉 Key 配置入口，方便用户把自己的免费额度接入视觉后端链，绕开内置匿名视觉后端约 2 req/min 的单模型限速；同时精简配置说明，移除不必要的 `settings.yaml` 示例，让安装后更容易直接找到并配置可用渠道。
-- **Free vision-key channel guide (#127)**: the README now surfaces free vision-key setup immediately after Quick Start, making it easier to bring free personal quota into the vision chain instead of relying on the built-in anonymous backend's roughly 2 req/min per-model limit. The setup was also simplified by removing the unnecessary `settings.yaml` example.
-
-### 改进 / Changed
-
-- **自定义视觉后端改为运行时验证（#128 / #130）**：DSH 的图片能力元数据现在只作提示，不再作为准入门槛。设置 → 模型中可调用的生成式模型都会出现在视觉后端链里；未声明图片能力或被标成仅文本的模型仍可手动选择并显示警告。运行时始终先走供应商已注册的 DSH adapter，HTTP、WebSocket、RPC 与私有协议保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才允许进入直连兼容桥。实际图片调用失败后继续自动尝试下一后端；embedding/reranker 与插件自身包装路由仍结构性排除。`extraVisionModels` 降级为可选能力标记覆盖，不再是解锁模型的前置条件。
-- **Custom vision backends are now runtime-verified (#128 / #130)**: DSH image-capability metadata is advisory instead of an admission gate. Any callable generative model from Settings → Models can be selected in the vision chain; undeclared or text-only-labelled models remain selectable with warnings. Runtime dispatch is adapter-first, preserving native HTTP, WebSocket, RPC and private transports; the direct compatibility bridge is used only for positively identified http(s) OpenAI Chat Completions channels. A real image-call failure falls through to the next backend, while embedding/reranker endpoints and the plugin's own generated wrapper routes remain structurally excluded. `extraVisionModels` is now an optional capability-label override rather than an unlock requirement.
-
-### 修复 / Fixed
-
-- **视觉失败摘要不再出现重复句号（#131）**：当 adapter 自身错误已经以句号或其他句末标点结束时，整轮失败汇总不再额外追加一个 `.`，避免出现 `..`；新增回归测试覆盖英文与中文句末标点。
-- **Vision failure summaries no longer produce doubled punctuation (#131)**: when an adapter error already ends in terminal punctuation, the whole-turn failure summary no longer appends another period, avoiding `..`; regression coverage includes English and Chinese sentence endings.
-
-"""
-          p.write_text(text[:start] + section + text[end:])
-          PY
+        env:
+          V143_SECTION_B64: IyMgdjEuNC4zCgojIyMg5paw5aKeIC8gQWRkZWQKCi0gKirlhY3otLnop4bop4kgS2V5IOa4oOmBk+aMh+WNl++8iCMxMjfvvIkqKu+8mlJFQURNRSDlnKggUXVpY2sgU3RhcnQg5ZCO5paw5aKe5YWN6LS56KeG6KeJIEtleSDphY3nva7lhaXlj6PvvIzmlrnkvr/nlKjmiLfmioroh6rlt7HnmoTlhY3otLnpop3luqbmjqXlhaXop4bop4nlkI7nq6/pk77vvIznu5XlvIDlhoXnva7ljL/lkI3op4bop4nlkI7nq6/nuqYgMiByZXEvbWluIOeahOWNleaooeWei+mZkOmAn++8m+WQjOaXtueyvueugOmFjee9ruivtOaYju+8jOenu+mZpOS4jeW/heimgeeahCBgc2V0dGluZ3MueWFtbGAg56S65L6L77yM6K6p5a6J6KOF5ZCO5pu05a655piT55u05o6l5om+5Yiw5bm26YWN572u5Y+v55So5rig6YGT44CCCi0gKipGcmVlIHZpc2lvbi1rZXkgY2hhbm5lbCBndWlkZSAoIzEyNykqKjogdGhlIFJFQURNRSBub3cgc3VyZmFjZXMgZnJlZSB2aXNpb24ta2V5IHNldHVwIGltbWVkaWF0ZWx5IGFmdGVyIFF1aWNrIFN0YXJ0LCBtYWtpbmcgaXQgZWFzaWVyIHRvIGJyaW5nIGZyZWUgcGVyc29uYWwgcXVvdGEgaW50byB0aGUgdmlzaW9uIGNoYWluIGluc3RlYWQgb2YgcmVseWluZyBvbiB0aGUgYnVpbHQtaW4gYW5vbnltb3VzIGJhY2tlbmQncyByb3VnaGx5IDIgcmVxL21pbiBwZXItbW9kZWwgbGltaXQuIFRoZSBzZXR1cCB3YXMgYWxzbyBzaW1wbGlmaWVkIGJ5IHJlbW92aW5nIHRoZSB1bm5lY2Vzc2FyeSBgc2V0dGluZ3MueWFtbGAgZXhhbXBsZS4KCiMjIyDmlLnov5sgLyBDaGFuZ2VkCgotICoq6Ieq5a6a5LmJ6KeG6KeJ5ZCO56uv5pS55Li66L+Q6KGM5pe26aqM6K+B77yIIzEyOCAvICMxMzDvvIkqKu+8mkRTSCDnmoTlm77niYfog73lipvlhYPmlbDmja7njrDlnKjlj6rkvZzmj5DnpLrvvIzkuI3lho3kvZzkuLrlh4blhaXpl6jmp5vjgILorr7nva4g4oaSIOaooeWei+S4reWPr+iwg+eUqOeahOeUn+aIkOW8j+aooeWei+mDveS8muWHuueOsOWcqOinhuinieWQjuerr+mTvumHjO+8m+acquWjsOaYjuWbvueJh+iDveWKm+aIluiiq+agh+aIkOS7heaWh+acrOeahOaooeWei+S7jeWPr+aJi+WKqOmAieaLqeW5tuaYvuekuuitpuWRiuOAgui/kOihjOaXtuWni+e7iOWFiOi1sOS+m+W6lOWVhuW3suazqOWGjOeahCBEU0ggYWRhcHRlcu+8jEhUVFDjgIFXZWJTb2NrZXTjgIFSUEMg5LiO56eB5pyJ5Y2P6K6u5L+d55WZ5Y6f55Sf5Lyg6L6T77yb5Y+q5pyJ5piO56Gu6K+G5Yir5Li6IGh0dHAocykgT3BlbkFJIENoYXQgQ29tcGxldGlvbnMg55qE5rig6YGT5omN5YWB6K646L+b5YWl55u06L+e5YW85a655qGl44CC5a6e6ZmF5Zu+54mH6LCD55So5aSx6LSl5ZCO57un57ut6Ieq5Yqo5bCd6K+V5LiL5LiA5ZCO56uv77ybZW1iZWRkaW5nL3JlcmFua2VyIOS4juaPkuS7tuiHqui6q+WMheijhei3r+eUseS7jee7k+aehOaAp+aOkumZpOOAgmBleHRyYVZpc2lvbk1vZGVsc2Ag6ZmN57qn5Li65Y+v6YCJ6IO95Yqb5qCH6K6w6KaG55uW77yM5LiN5YaN5piv6Kej6ZSB5qih5Z6L55qE5YmN572u5p2h5Lu244CCCi0gKipDdXN0b20gdmlzaW9uIGJhY2tlbmRzIGFyZSBub3cgcnVudGltZS12ZXJpZmllZCAoIzEyOCAvICMxMzApKio6IERTSCBpbWFnZS1jYXBhYmlsaXR5IG1ldGFkYXRhIGlzIGFkdmlzb3J5IGluc3RlYWQgb2YgYW4gYWRtaXNzaW9uIGdhdGUuIEFueSBjYWxsYWJsZSBnZW5lcmF0aXZlIG1vZGVsIGZyb20gU2V0dGluZ3Mg4oaSIE1vZGVscyBjYW4gYmUgc2VsZWN0ZWQgaW4gdGhlIHZpc2lvbiBjaGFpbjsgdW5kZWNsYXJlZCBvciB0ZXh0LW9ubHktbGFiZWxsZWQgbW9kZWxzIHJlbWFpbiBzZWxlY3RhYmxlIHdpdGggd2FybmluZ3MuIFJ1bnRpbWUgZGlzcGF0Y2ggaXMgYWRhcHRlci1maXJzdCwgcHJlc2VydmluZyBuYXRpdmUgSFRUUCwgV2ViU29ja2V0LCBSUEMgYW5kIHByaXZhdGUgdHJhbnNwb3J0czsgdGhlIGRpcmVjdCBjb21wYXRpYmlsaXR5IGJyaWRnZSBpcyB1c2VkIG9ubHkgZm9yIHBvc2l0aXZlbHkgaWRlbnRpZmllZCBodHRwKHMpIE9wZW5BSSBDaGF0IENvbXBsZXRpb25zIGNoYW5uZWxzLiBBIHJlYWwgaW1hZ2UtY2FsbCBmYWlsdXJlIGZhbGxzIHRocm91Z2ggdG8gdGhlIG5leHQgYmFja2VuZCwgd2hpbGUgZW1iZWRkaW5nL3JlcmFua2VyIGVuZHBvaW50cyBhbmQgdGhlIHBsdWdpbidzIG93biBnZW5lcmF0ZWQgd3JhcHBlciByb3V0ZXMgcmVtYWluIHN0cnVjdHVyYWxseSBleGNsdWRlZC4gYGV4dHJhVmlzaW9uTW9kZWxzYCBpcyBub3cgYW4gb3B0aW9uYWwgY2FwYWJpbGl0eS1sYWJlbCBvdmVycmlkZSByYXRoZXIgdGhhbiBhbiB1bmxvY2sgcmVxdWlyZW1lbnQuCgojIyMg5L+u5aSNIC8gRml4ZWQKCi0gKirop4bop4nlpLHotKXmkZjopoHkuI3lho3lh7rnjrDph43lpI3lj6Xlj7fvvIgjMTMx77yJKirvvJrlvZMgYWRhcHRlciDoh6rouqvplJnor6/lt7Lnu4/ku6Xlj6Xlj7fmiJblhbbku5blj6XmnKvmoIfngrnnu5PmnZ/ml7bvvIzmlbTova7lpLHotKXmsYfmgLvkuI3lho3pop3lpJbov73liqDkuIDkuKogYC5g77yM6YG/5YWN5Ye6546wIGAuLmDvvJvmlrDlop7lm57lvZLmtYvor5Xopobnm5boi7HmlofkuI7kuK3mloflj6XmnKvmoIfngrnjgIIKLSAqKlZpc2lvbiBmYWlsdXJlIHN1bW1hcmllcyBubyBsb25nZXIgcHJvZHVjZSBkb3VibGVkIHB1bmN0dWF0aW9uICgjMTMxKSoqOiB3aGVuIGFuIGFkYXB0ZXIgZXJyb3IgYWxyZWFkeSBlbmRzIGluIHRlcm1pbmFsIHB1bmN0dWF0aW9uLCB0aGUgd2hvbGUtdHVybiBmYWlsdXJlIHN1bW1hcnkgbm8gbG9uZ2VyIGFwcGVuZHMgYW5vdGhlciBwZXJpb2QsIGF2b2lkaW5nIGAuLmA7IHJlZ3Jlc3Npb24gY292ZXJhZ2UgaW5jbHVkZXMgRW5nbGlzaCBhbmQgQ2hpbmVzZSBzZW50ZW5jZSBlbmRpbmdzLgoK
+        run: python3 -c "import os,base64,pathlib; p=pathlib.Path('CHANGELOG.md'); t=p.read_text(); s=t.index('## v1.4.3\\n'); e=t.index('## v1.4.2\\n',s); n=base64.b64decode(os.environ['V143_SECTION_B64']).decode(); p.write_text(t[:s]+n+t[e:])"
       - name: Build corrected GitHub Release notes
         shell: bash
         run: |
-          {
-            echo '# v1.4.3'
-            echo
-            awk '$0 == "## v1.4.3" { flag=1; next } $0 == "## v1.4.2" && flag { exit } flag' CHANGELOG.md
-            echo
-            echo '## Commits'
-            echo
-            git log --pretty=format:'- %s' v1.4.2..v1.4.3
-          } > release-notes.md
+          echo '# v1.4.3' > release-notes.md
+          echo >> release-notes.md
+          awk '$0 == "## v1.4.3" { flag=1; next } $0 == "## v1.4.2" && flag { exit } flag' CHANGELOG.md >> release-notes.md
+          echo >> release-notes.md
+          echo '## Commits' >> release-notes.md
+          echo >> release-notes.md
+          git log --pretty=format:'- %s' v1.4.2..v1.4.3 >> release-notes.md
       - name: Update GitHub Release
         shell: bash
         run: gh release edit v1.4.3 --title v1.4.3 --notes-file release-notes.md
