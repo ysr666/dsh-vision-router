@@ -10,8 +10,8 @@
 
 # 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
 # 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
-# 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在设置层显式把
-# progressiveTools 改回 true；profile/user patch 仍可覆盖这里的默认值。
+# 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在 profile /
+# composition 补丁中显式把 progressiveTools 改回 true（启动期配置）。
 - insert:
     - id: vision-router
       name: dsh-vision-router
