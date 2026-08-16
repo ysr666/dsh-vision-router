@@ -35,7 +35,6 @@ jobs:
                   raise SystemExit(f'{path}: expected exactly one match, found {count}')
               p.write_text(text.replace(old, new, 1))
 
-          # Shared punctuation helper.
           replace_once(
               'lib/vision-resilience.js',
               "const AUTH_PATTERNS = [/\\b401\\b/, /\\b403\\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]",
@@ -49,7 +48,6 @@ jobs:
           const AUTH_PATTERNS = [/\\b401\\b/, /\\b403\\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]""",
           )
 
-          # Use it in legacy whole-turn failure aggregation.
           replace_once(
               'index.js',
               """  buildVisionFailure,
@@ -70,7 +68,6 @@ jobs:
                     : 'No vision-capable backend is configured.'""",
           )
 
-          # Regression coverage for adapter messages that already end in punctuation.
           replace_once(
               'tests/vision-resilience.test.js',
               """  buildVisionFailure,
@@ -104,3 +101,4 @@ jobs:
           git add index.js lib/vision-resilience.js tests/vision-resilience.test.js
           git commit -m "fix: avoid duplicate punctuation in vision failure reasons"
           git push origin HEAD:fix/failure-reason-punctuation
+# trigger
