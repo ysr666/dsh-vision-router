@@ -8,12 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@deepseek-ai/dsh-anonymous-user-id':
-        specifier: ^0.1.0-rc.6
-        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
-      '@deepseek-ai/dsh-llm-deepseek':
-        specifier: ^0.1.0-rc.6
-        version: 0.1.0-rc.6(6cc39616ae72718a5505607d73ce1ab9)
       '@deepseek-ai/schemastery':
         specifier: '>=3.18.0'
         version: 3.18.1
@@ -27,6 +21,12 @@ importers:
         specifier: '>=6.15.0'
         version: 8.10.0
     devDependencies:
+      '@deepseek-ai/dsh-anonymous-user-id':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-home-paths@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.0-rc.6(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-llm-deepseek':
+        specifier: ^0.1.0-rc.6
+        version: 0.1.0-rc.6(6cc39616ae72718a5505607d73ce1ab9)
       sharp:
         specifier: ^0.35.3
         version: 0.35.3(@types/node@16.9.1)
