@@ -8,6 +8,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
+import { installVisionRouterFileLogging } from './lib/file-logger.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -20,10 +21,31 @@ export const Config = core.Config
 
 // Defense in depth for direct/programmatic callers that invoke apply() without
 // first running the Cordis Config resolver: only an explicit true enables the
-// schema-changing progressive mode.
+// schema-changing progressive mode. The wrapped context changes only logger:
+// every existing vision-router diagnostic still reaches the host logger and is
+// also persisted to ~/.dsh/logs/vision-router/vision-router.log.
 export function apply(ctx, config = {}) {
-  return core.apply(ctx, {
-    ...config,
-    progressiveTools: config.progressiveTools === true,
-  })
+  const logging = installVisionRouterFileLogging(ctx)
+  try {
+    const result = core.apply(logging.ctx, {
+      ...config,
+      progressiveTools: config.progressiveTools === true,
+    })
+    if (result && typeof result.then === 'function') {
+      return result.catch((error) => {
+        logging.logger.error(
+          'vision-router: plugin apply failed: %s',
+          error && error.stack ? error.stack : error && error.message ? error.message : String(error),
+        )
+        throw error
+      })
+    }
+    return result
+  } catch (error) {
+    logging.logger.error(
+      'vision-router: plugin apply failed: %s',
+      error && error.stack ? error.stack : error && error.message ? error.message : String(error),
+    )
+    throw error
+  }
 }
