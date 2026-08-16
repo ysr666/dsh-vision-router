@@ -173,6 +173,35 @@ test('buildInstantLocalMap isolates per-image failures across a multi-image batc
   assert.equal(map.size, 0)
 })
 
+test('buildInstantLocalMap accepts a provider list and falls through each level', async () => {
+  // 逐级降级：第一级（ollama）不可达 → 未识别的图交给第二级（lmstudio）。
+  // 两级都失败时整体放弃（map 空、不 reject）——但两轮都尝试了。
+  const ctx = {
+    get: () => ({
+      async readImage() {
+        return { data: Buffer.from('fake-png') }
+      },
+    }),
+  }
+  const messages = [
+    {
+      role: 'user',
+      content: [{ type: 'image', attachment: { attachmentId: 'a1', mediaType: 'image/png' } }],
+    },
+  ]
+  const ollama = { name: 'local-ollama', baseURL: 'http://127.0.0.1:9/v1', model: 'q', maxTokens: 128 }
+  const lmstudio = { name: 'local-lmstudio', baseURL: 'http://127.0.0.1:8/v1', model: 'm', maxTokens: 128 }
+  // 单 provider 兼容：数组只有一个成员。
+  const single = await buildInstantLocalMap(ctx, messages, ollama)
+  assert.equal(single.size, 0)
+  // 数组逐级：两级都失败 → 空 map，不 reject。
+  const both = await buildInstantLocalMap(ctx, messages, [ollama, lmstudio])
+  assert.equal(both.size, 0)
+  // 空数组 / 全 undefined → 空 map（调用方视为回退静态标记）。
+  assert.deepEqual(await buildInstantLocalMap(ctx, messages, []), new Map())
+  assert.deepEqual(await buildInstantLocalMap(ctx, messages, [undefined, null]), new Map())
+})
+
 test('localDescribePrompt switches between plain and structured styles', () => {
   const plain = localDescribePrompt('plain')
   assert.ok(plain.includes('详细描述'))
