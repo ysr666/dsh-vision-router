@@ -24,10 +24,4 @@ tests = replaceOnce(
   "    { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'qwen-vl', name: 'Qwen VL' }] },\n    { id: 'opencode-go-vision', name: 'opencode-go + 自动识图', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4' }] },\n  ]",
   'wrapper regression fixture',
 )
-tests = replaceOnce(
-  tests,
-  "    openrouter: { 'qwen-vl': { image: true } },\n  })",
-  "    openrouter: { 'qwen-vl': { image: true } },\n  })",
-  'keep capability fixture stable',
-)
 writeFileSync(testPath, tests)
