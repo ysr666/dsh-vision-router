@@ -101,8 +101,41 @@ test('re-viewing the model guide replays the overview instead of skipping to ste
   // auto-show and the re-view button share it without stacking duplicates.
   assert.equal(source.includes('function showOnboarding(t)'), true)
   assert.equal(source.includes('if (onboardingOverlay) return'), true)
-  assert.equal(source.includes('setTimeout(() => showOnboarding(t), 650)'), true)
   assert.equal(source.includes('function dismissOnboarding(remember = true)'), true)
+  // The auto-show is deferred (never synchronous) and gated on the durable
+  // seen flag.
+  assert.equal(source.includes('window.setTimeout(() => {'), true)
+  assert.equal(source.includes('if (!readOnboardingSeen()) showOnboarding(t)'), true)
+})
+
+test('onboarding and guide durability live in the settings section, not origin-scoped localStorage (#78)', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // DSH Desktop re-randomizes the Web UI port on every launch, so
+  // origin-scoped localStorage forgets everything between restarts. The
+  // durable flags must be settings-section fields synced through
+  // ctx.settingsScope (persisted in the profile settings file).
+  assert.equal(source.includes("const ONBOARDING_SETTINGS_KEY = 'onboardingSeen'"), true)
+  assert.equal(source.includes("const VISION_GUIDE_SETTINGS_KEY = 'visionGuideStep'"), true)
+  assert.equal(source.includes('function installSettingsPersistence(scope)'), true)
+  assert.equal(source.includes('installSettingsPersistence(scope)'), true)
+  assert.equal(source.includes('function readOnboardingSeen()'), true)
+  assert.equal(source.includes('settingsPersistence.get(ONBOARDING_SETTINGS_KEY) === true'), true)
+  assert.equal(source.includes('settingsPersistence.set(ONBOARDING_SETTINGS_KEY, true)'), true)
+  // The legacy localStorage marker still exists as a migration/downgrade
+  // fallback, not as the source of truth.
+  assert.equal(source.includes("ONBOARDING_STORAGE_KEY = 'dsh-vision-router:onboarding:model-guide-v2'"), true)
+  assert.equal(source.includes("window.localStorage.getItem(ONBOARDING_STORAGE_KEY) === 'seen'"), true)
+  // The guide step mirrors the same dual-channel strategy.
+  assert.equal(source.includes('settingsPersistence.get(VISION_GUIDE_SETTINGS_KEY)'), true)
+  assert.equal(source.includes('settingsPersistence.set(VISION_GUIDE_SETTINGS_KEY, visionGuideStepMemory)'), true)
+  // Both installers re-sync when the settings snapshot changes (the first
+  // snapshot resolves asynchronously after page load).
+  assert.equal(source.includes('settingsPersistence.subscribe(sync)'), true)
+  // Server half declares the two keys in the Config schema so the settings
+  // provider accepts and persists them.
+  const serverSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.equal(serverSource.includes('onboardingSeen: z.boolean().default(false)'), true)
+  assert.equal(serverSource.includes("visionGuideStep: z.string().default('')"), true)
 })
 
 test('the walkthrough walks step 1 (session model), step 2 (open settings), step 3 (chain callout)', () => {

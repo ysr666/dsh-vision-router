@@ -28,7 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.2.2）**
+> 📌 **公告（v1.2.3）**
+>
+> v1.2.3 现已支持：修复 DSH Desktop 每次启动都重复弹出首次引导的问题——引导「已读」标记与模型引导步骤改存 profile 设置文件（不再依赖按 origin 隔离、每次随机端口重启即清零的 `localStorage`）（issue #78）。
 >
 > v1.2.2 现已支持：补上最后一处附件 ID 缺口——宿主 `read_image` 回挂图片公布的 `sha256:…` ID 现在可被 `vision_describe` 与全部像素工具解析（issue #72）；`vision_present` 等工具结果里的图像块不再把文本模型会话锁死在 `UNSUPPORTED_CONTENT`（issue #74，已锁死的历史会话升级后自动修复）；检测到 v1.1.x 升级残留的旧版 sharp 时明确告警，把玄学的 `colourspace` 报错变成一眼可见的修复指引（issue #75）。
 >

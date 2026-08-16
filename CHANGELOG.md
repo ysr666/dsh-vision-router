@@ -3,6 +3,13 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.2.3
+
+### 修复 / Fixed
+
+- **DSH Desktop 每次启动都重复弹出引导弹窗（#78）**：首次使用引导（「Vision Router 已准备好」）和模型引导步骤的「已读/进度」标记原来存在 `localStorage` 里，而 DSH Desktop 每次启动都换一个随机端口（`--port 0`），`localStorage` 按 origin 隔离，等于每次启动都清零。现在这两个标记改存 `vision-router` 设置段（随 profile 设置文件持久化）：客户端通过 `ctx.settingsScope` 读写 `onboardingSeen` / `visionGuideStep` 两个字段（已加入服务端 Config schema），`localStorage` 仅保留为旧版本迁移与降级兜底；同时处理了「设置快照异步到达晚于弹窗调度」的竞态——快照到达后会自动收起已弹出的引导。只读设置提供方下行为不变（回落 localStorage）。
+- **DSH Desktop no longer re-shows the first-run dialog on every launch (#78)**: the onboarding dialog and the model-guide step markers used to live in `localStorage`, which is origin-scoped — and DSH Desktop serves the Web UI from a fresh random port on every launch (`--port 0`), wiping the markers each boot. The two flags now live in the `vision-router` settings section (persisted in the profile settings file) via `ctx.settingsScope` (`onboardingSeen` / `visionGuideStep`, both declared in the server Config schema); `localStorage` remains only as a legacy migration/downgrade fallback. A race where the async settings snapshot resolves after the dialog was scheduled is handled by auto-dismissing the already-shown overlay. Read-only settings providers keep the previous behavior (localStorage fallback).
+
 ## v1.2.2
 
 ### 修复 / Fixed

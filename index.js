@@ -233,6 +233,15 @@ export const Config = z.object({
   tool: z.boolean().default(true),
   progressiveTools: z.boolean().default(true),
   autoActivateOnImage: z.boolean().default(true),
+  // Client-persisted UI state (issue #78): DSH Desktop serves the Web UI from
+  // a random port on every launch, so origin-scoped localStorage forgets the
+  // first-run onboarding dialog and it re-appeared on every boot. These keys
+  // live in the settings section (the profile settings file) instead; the
+  // client still mirrors best-effort copies into localStorage for downgrades.
+  // Both are internal to the client bundle — the settings card renders them
+  // nowhere, and the server half never reads them.
+  onboardingSeen: z.boolean().default(false),
+  visionGuideStep: z.string().default(''),
   artifactsDir: z.string().default('.dsh-vision-router/artifacts'),
   rewriteImages: z.boolean().default(true),
   downscale: z.boolean().default(true),

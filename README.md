@@ -28,9 +28,11 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.2.2)**
+> 📌 **Announcement (v1.2.3)**
 >
-> v1.2.2 closes the last attachment-id gap — ids announced for images the host persisted itself (e.g. `read_image` re-uploads, `sha256:…`) now resolve in `vision_describe` and every pixel tool (issue #72) — stops `vision_present` and other tool-result image blocks from ever locking a text-model session with `UNSUPPORTED_CONTENT` (issue #74; already-locked sessions heal after upgrading), and warns loudly when a stale sharp left over from a pre-v1.2 upgrade would break the pixel tools with `colourspace: parameter space not set` (issue #75).
+> v1.2.3 fixes DSH Desktop's re-appearing first-run dialog: the onboarding "seen" flag and the model-guide step now persist in the profile settings file instead of origin-scoped `localStorage`, which a random per-launch port (`--port 0`) wiped on every boot (issue #78).
+>
+> v1.2.2 closed the last attachment-id gap — ids announced for images the host persisted itself (e.g. `read_image` re-uploads, `sha256:…`) now resolve in `vision_describe` and every pixel tool (issue #72) — stopped `vision_present` and other tool-result image blocks from ever locking a text-model session with `UNSUPPORTED_CONTENT` (issue #74; already-locked sessions heal after upgrading), and warned loudly when a stale sharp left over from a pre-v1.2 upgrade would break the pixel tools with `colourspace: parameter space not set` (issue #75).
 >
 > v1.2.1 hardened the pixel loop: all eleven pixel tools now accept uploaded-image attachment ids directly (no more `cannot read …/sha256:…` round trips), artifact filenames carry collision-free fingerprints, `vision_ground` retries degenerate boxes, the model guide replays fully from step 1 (leaving the settings first), and the settings card scrolls smoothly even with hundreds of models per provider.
 
