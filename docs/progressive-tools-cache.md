@@ -4,11 +4,13 @@
 
 ## 中文
 
-Vision Router 默认让完整视觉工具表从会话开始就保持稳定。正常通过 DSH bundle 安装时，`cordis.patch.yml` 会提供：
+Vision Router 默认让完整视觉工具表从会话开始就保持稳定。正常通过 DSH bundle 安装时，组合层会提供：
 
 ```yaml
-vision-router:
-  progressiveTools: false
+- id: vision-router
+  name: dsh-vision-router
+  config:
+    progressiveTools: false
 ```
 
 插件入口本身也把 `progressiveTools` 的 schema 默认值设为 `false`，因此即使后续 profile patch 整块覆盖了 bundle 的 `config`、但没有重述这个字段，也不会意外回到渐进模式。
@@ -29,11 +31,13 @@ vision-router:
 
 ## English
 
-Vision Router keeps the complete vision tool schema stable from the beginning of a session by default. Normal DSH bundle installs provide:
+Vision Router keeps the complete vision tool schema stable from the beginning of a session by default. Normal DSH bundle installs provide this composition layer:
 
 ```yaml
-vision-router:
-  progressiveTools: false
+- id: vision-router
+  name: dsh-vision-router
+  config:
+    progressiveTools: false
 ```
 
 The public plugin entrypoint also makes `false` the schema default. Therefore a later profile patch that replaces the bundle `config` without restating this field cannot accidentally fall back to progressive mode.
