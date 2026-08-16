@@ -337,6 +337,8 @@ pnpm dsh plugin --profile web update dsh-vision-router
 
 Settings live in the profile's settings provider and survive upgrades.
 
+> **A fresh release does not take effect (`downloaded 0` / `added 0`):** pnpm v11 holds versions younger than 24h back; `npx dsh-vision-router repair` fixes the stale version-pinned profile exemption so updates take effect immediately.
+
 > **Upgrading from a pre-bundle-patch install (v0.x):** the package now mounts
 > itself through its own bundle patch, so a leftover manual row in
 > `~/.dsh/profiles/<profile>/cordis.patch.yml` duplicates it and `dsh web`

@@ -1,17 +1,8 @@
 allowBuilds:
   sharp: true
+# pnpm v11 defaults minimumReleaseAge to 1440 minutes: freshly published
+# versions are not resolved for 24h, so dev installs silently keep old ones.
+# Bare names / org patterns exempt every future version; a `name@x.y.z` entry
+# exempts only that one version and goes stale on the next release.
 minimumReleaseAgeExclude:
-  - '@deepseek-ai/cosmokit@1.8.2'
-  - '@deepseek-ai/schemastery@3.18.1'
-  - '@deepseek-ai/cordis@4.0.1'
-  - '@deepseek-ai/dsh-anonymous-user-id@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-attachment@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-brand@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-credentials@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-home-paths@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-invariants@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-launch-environment@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-llm-deepseek@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-llm@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-settings@0.1.0-rc.6'
-  - '@deepseek-ai/dsh-timeout@0.1.0-rc.6'
+  - '@deepseek-ai/*'
