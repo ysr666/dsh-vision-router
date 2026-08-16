@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/release-v1.4.0-5B4CF0?style=flat-square" alt="Release v1.4.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.1"><img src="https://img.shields.io/badge/release-v1.4.1-5B4CF0?style=flat-square" alt="Release v1.4.1" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-149%20tests-2EA44F?style=flat-square" alt="Verified: 149 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.4.0）**
+> 📌 **公告（v1.4.1）**
 >
-> **v1.4.0 现已支持**：未声明视觉模型的自动识别与直连桥接、doctor 修复过期版本钉住豁免、引导流程聚光灯高亮——并增强设置保存校验与视觉后端兼容性。
+> **v1.4.1 现已支持**：视觉失败链加固——单个视觉后端（401 / 429 / 故障）不再拖垮文本对话；熔断、共享任务预算与结构化失败结果让对话始终顺畅继续。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -40,6 +40,7 @@
 
 - [为什么做这个](#为什么做这个)
 - [对比同类插件](#对比同类插件)
+- [致谢](#致谢)
 - [快速开始](#快速开始)
 - [亮点](#亮点)
 - [工作原理](#工作原理)
@@ -61,20 +62,39 @@
 
 ## 对比同类插件
 
-最接近的同类是 [@anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)（Anionex），它是知名 `agent-vision-toolkit` 系列的 DSH 原生版。两者都提供 `vision-tools` 技能和一组像素级工具，区别在理念：**零配置粘贴即用** vs **Agent 主导的视觉工程**：
+**一句话讲清区别**：其他 dsh 视觉插件大多"把图片转成文字描述再喂给 DeepSeek"（描述桥，有信息损耗）；
+本插件主打"**图片轮直接交给视觉模型看原图**"（路由桥，像素保真），同时内置免 Key 免费模型兜底。
 
-| | dsh-vision-router | @anionex/dsh-vision-toolkit |
+| | 手动切换模型 | MCP 视觉桥 | 本插件 |
+|---|---|---|---|
+| 像素保真 | ✅ 完整（切换后） | ❌ 只有文字描述 | ✅ 完整，图片轮内 |
+| 自动化 | ❌ | ✅ | ✅ |
+| 日常模型不受影响 | ❌（整会话被换） | ✅ | ✅ |
+| 供应商失败恢复 | ❌ | ❌ | ✅ 降级链 |
+| 可复用的结构化查询 | — | 部分 | ✅ JSON 模式 + 缓存 |
+| 免费开箱即用 | ❌ | ❌ | ✅ 内置免 Key 免费端点 |
+| 贴合 dsh 组合体系 | — | 外部服务器 | ✅ 一行插件行 |
+
+**与现有 dsh 社区方案的差异**（均为优秀项目，各有侧重；描述以各家 README 2026-08 状态为准）：
+
+| 项目 | 思路 | 本插件的差异 |
 |---|---|---|
-| 开箱图片问答 | ✅ 内置免费视觉链（OVHcloud 匿名端点），免注册免 Key | 远程工具需自备视觉 API Key（本地像素工具免 Key） |
-| 运行时 | ✅ 纯 Node，无需 Python | 需要 Python 3.11+ 受管运行时 |
-| 图片怎么进来 | ✅ 选一次「+ 自动识图」模型组后直接粘贴 | 工作区路径 + `/vision-tools` 命令，再显式调用工具 |
-| 轮次路由 | ✅ 图片轮切视觉、文本轮切回 DeepSeek——可选隐身接管，模型选择器与官方一致 | 工具驱动，无整轮自动路由 |
-| 支持 profile | Web | Web + Headless |
-| 玩法库 | 像素循环：定位 → 裁剪 → 对比 → 修复 → 再截图 | 更丰富的案例库（长截图 OCR、UI 还原、GUI 自动化） |
-| 测试 | 144 | 162 |
-| 安装 | 一条命令 | 一条命令（npm） |
+| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | 图片先经外部 VLM 做 OCR/描述，描述作为会话消息交给 DeepSeek；默认 LLM7.io 匿名端点（OVHcloud 为无 Key 备选） | 描述桥方案；本插件提供"原图直看"路由，描述能力由 `vision_describe` 按需替代 |
+| [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | 包装 provider 路由，请求流里把图片转译成文本再交给 DeepSeek | 转译桥方案；本插件不包装 provider，通过 `agent/request` 瀑布改写路由 |
+| [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | 注册 `DeepSeek + Vision` 组合路由：图片先经所选视觉模型转成描述，再交给 DeepSeek | 双模型桥思路；本插件在此基础上增加自动路由、降级链与工具 |
+| [modlens](https://github.com/liustack/modlens) | 最早的 dsh 视觉插件；复用本机 Claude Code/Codex/OpenCode/Pi 等登录态作为视觉引擎 | 引擎复用思路；本插件自带供应商链，不依赖本机其他 CLI |
+| [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | 10 个意图化视觉工具（Q&A/OCR/像素校验/UI 还原），按需显式调用 | 工具集更全；本插件多出整轮自动路由与免 Key 免费兜底 |
+| [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | `inspect_image` 工具 + `agent/pre-step` 瀑布图片桥（粘贴图入日志前转成工具提示） | 瀑布桥思路相近；本插件多出轮次路由、降级链、缓存与免费端点 |
 
-两者都是 MIT 许可、一条命令安装。想要图片**粘贴即用**、零配置就选本插件；需要 Headless 部署或更丰富的案例库，可以看 @anionex/dsh-vision-toolkit。（功能对比以其 README 2026-08 状态为准。）
+## 致谢
+
+本插件借鉴了以上全部社区项目的思路，特别是 [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar)
+对免注册免 Key 视觉端点的探索（LLM7.io 与 OVHcloud 匿名层）。感谢
+[dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy)、
+[dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider)、
+[modlens](https://github.com/liustack/modlens)、
+[dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)、
+[dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) 作者们的探索。
 
 ## 快速开始
 
@@ -176,8 +196,8 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_ocr` | 文字转写：本地 tesseract（中英）优先，视觉模型兜底 | — |
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
-| `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome） | PNG |
-| `vision_screenshot` | **截取用户桌面全屏**（Windows PowerShell CopyFromScreen / macOS screencapture / Linux import·scrot，无第三方依赖）；`identify=true` 可选：截屏后立即本地 Ollama 识别（需 localOllama.enabled），返回路径+识别文本 | PNG / +描述文本 |
+| `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome）；`fullPage: true` 截整页并返回 `pageHeight` | PNG |
+| `vision_screenshot` | **截取用户桌面全屏**（Windows PowerShell CopyFromScreen / macOS screencapture / Linux import·scrot，无第三方依赖）；`identify=true` 可选：截屏后立即本地识别（需启用任一本地后端：localOllama / localLmStudio），返回路径+识别文本 | PNG / +描述文本 |
 | `vision_long_screenshot_ocr` | 长截图转写：重叠分片，tesseract 优先 / 视觉模型回退，按序拼接 Markdown | 分片 PNG + Markdown + manifest |
 
 图片格式按**魔数识别**，无扩展名的内容寻址附件文件也能直接用（不用再复制成 `.png`）。
@@ -195,6 +215,7 @@ vision_colors image="ref.png" top=8
 vision_trace image="icon.png" steps=4
 vision_extract_foreground image="logo.png"
 vision_html_screenshot source="page.html" width=1200 height=720
+vision_html_screenshot source="page.html" width=1200 height=720 fullPage=true
 vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
 
@@ -288,6 +309,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `timeoutMs` | `120000` | 单次视觉调用超时 |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | 产物目录（相对会话工作区） |
 | `proxy` / `proxyHosts` | `''` / openrouter 域名 | 仅视觉供应商域名可选的本地代理 |
+| `catalogCorrections` | `true` | 内置目录纠错：当已安装的 pi-ai 目录把已知模型路由到错误协议时（例如 `opencode-go/qwen3.6-plus` 被指向 OpenAI chat completions，而 OpenCode Go 只在 `/v1/messages` 上提供该模型），插件直接按正确协议应答该后端；上游目录修复后每条纠错自动失效 |
 
 ### 本地 Ollama 视觉后端（并入自 dsh-vision）
 
@@ -370,16 +392,17 @@ npx @deepseek-ai/dsh --profile web --dump-config | grep vision-router
 ### 升级
 
 ```sh
-# 普通 npm / npx 安装
-npx @deepseek-ai/dsh plugin --profile web update dsh-vision-router
+# 普通 npm / npx 安装 —— 显式安装目标版本；裸 `update` 会被 pnpm v11
+# 静默拦下发布不足 24 小时的新版本
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router@<版本号>
 
 # DeepSeek Harness 源码仓库
-pnpm dsh plugin --profile web update dsh-vision-router
+pnpm dsh plugin --profile web add dsh-vision-router@<版本号>
 ```
 
-设置存放在 profile 的设置提供方里，升级不丢失。
+设置存放在 profile 的设置提供方里，升级不丢失。设置卡里的一键更新会自动显式安装 registry 已确认的版本，并在命令结束后核对实际安装版本——绝不只凭包管理器退出码就报成功。
 
-> **新版本一直不生效（`downloaded 0` / `added 0`）：** pnpm v11 会拦下发布不足 24 小时的版本；运行 `npx dsh-vision-router repair` 修复过期的带版本号豁免条目后，更新立即生效。
+> **新版本一直不生效（`downloaded 0` / `added 0`）：** pnpm v11 会拦下发布不足 24 小时的版本；按上面方式显式安装目标版本（pnpm 会自动写入豁免），或运行 `npx dsh-vision-router repair` 修复过期的带版本号豁免条目后，更新立即生效。
 
 > **从 bundle 补丁之前（v0.x）升级：** 现在插件由自带的 bundle 补丁自动挂载，
 > 若 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里还残留旧版手动行，会与之

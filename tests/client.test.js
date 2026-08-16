@@ -86,7 +86,7 @@ test('commitSettingsPlan keeps drafts when a resolved set did not land in the us
     { key: 'providers', run: { value: requested } },
   ], drafts)
 
-  assert.deepEqual(calls, [['providers', requested]])
+  assert.deepEqual(calls, [['providers', requested], ['providers', requested]])
   assert.equal(outcome.landed, false)
   assert.equal(outcome.failed, true)
   assert.equal(outcome.nextDrafts, drafts)
@@ -192,11 +192,60 @@ test('commitSettingsPlan classifies write and readback errors without dropping d
   ])
 })
 
+
+test('commitSettingsPlan retries one resolved-but-unlanded settings write', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const snapshot = { status: 'ready', writable: true, user: {} }
+  let writes = 0
+  let loads = 0
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field, value) {
+      writes += 1
+      if (writes === 2) snapshot.user[field] = structuredClone(value)
+    },
+    async load() { loads += 1 },
+    getSnapshot() { return snapshot },
+  }, [{ key: 'providers', run: { value: requested } }], { providers: requested })
+
+  assert.equal(outcome.landed, true)
+  assert.equal(writes, 2)
+  assert.equal(loads, 1)
+  assert.deepEqual(outcome.nextDrafts, {})
+})
+
+test('vision chain normalization drops legacy blank rows without hiding half-filled drafts', () => {
+  const bundle = loadClientBundle()
+  assert.deepEqual(bundle.normalizeVisionChainRows([
+    { provider: '', model: '' },
+    { provider: '  ', model: ' ' },
+    { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B' },
+    { provider: ' zhipu ', model: '' },
+    { provider: ' siliconflow ', model: ' Qwen/Qwen3-VL-32B-Instruct ' },
+  ]), [
+    { provider: 'zhipu', model: '' },
+    { provider: 'siliconflow', model: 'Qwen/Qwen3-VL-32B-Instruct' },
+  ])
+})
+
+test('guide dismissal is page-authoritative and hidden persistence does not spin on rejection', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('let onboardingSeenMemory = false'), true)
+  assert.equal(source.includes('if (onboardingSeenMemory) return true'), true)
+  assert.equal(source.includes('onboardingSeenMemory = true'), true)
+  assert.equal(source.includes('let visionGuideMemoryAuthoritative = false'), true)
+  assert.equal(source.includes('if (visionGuideMemoryAuthoritative) return visionGuideStepMemory'), true)
+  assert.equal(source.includes('visionGuideMemoryAuthoritative = true'), true)
+  assert.equal(source.includes("pending.set(field, { operation, value, attempted: false })"), true)
+  assert.equal(source.includes('filter(([, entry]) => !entry.attempted)'), true)
+})
+
 test('settings save failure copy says unwritten drafts were kept', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes('保存失败：部分配置未写入。未写入的修改已保留，请重试。'), true)
   assert.equal(source.includes('Save failed: some changes were not written. Unwritten changes were kept; please retry.'), true)
   assert.equal(source.includes("className: 'vr-failed', role: 'alert'"), true)
+  assert.equal(source.includes("failedFields.join('、')"), true)
   // One-click field resets share the same verified write path, and all
   // editors are frozen during the round-trip so a successful save cannot
   // discard a newer in-flight edit.
@@ -247,6 +296,25 @@ test('re-viewing the model guide replays the overview instead of skipping to ste
   // seen flag.
   assert.equal(source.includes('window.setTimeout(() => {'), true)
   assert.equal(source.includes('if (!readOnboardingSeen()) showOnboarding(t)'), true)
+})
+
+test('walkthrough ends on save, on picking a vision model, or when the settings panel closes', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // Closing the app-owned settings modal ends the round instead of demoting
+  // the floating prompt back to the "find the vision model in settings"
+  // phase: a grace timer absorbs host re-renders that rebuild the dialog.
+  assert.equal(source.includes('let visionGuidePanelSeen = false'), true)
+  assert.equal(source.includes('let visionGuidePanelCloseTimer'), true)
+  assert.equal(source.includes('function guideSettingsPanelOpen()'), true)
+  assert.equal(source.includes('step !== undefined && visionGuidePanelSeen && !panelOpen'), true)
+  assert.equal(source.includes('if (readVisionGuideStep() !== undefined && !guideSettingsPanelOpen())'), true)
+  // Saving the settings card completes the walkthrough, even when a hidden
+  // write is later rejected — dismissal stays page-authoritative.
+  assert.equal(source.includes('Saving ends the walkthrough'), true)
+  assert.equal(source.includes('finishGuide()'), true)
+  // Picking a real vision model completes it too; picking only a provider
+  // (model still empty) keeps the guide alive.
+  assert.equal(source.includes('if (row.provider && event.target.value) finishGuide()'), true)
 })
 
 test('onboarding and guide durability live in the settings section, not origin-scoped localStorage (#78)', () => {
@@ -330,6 +398,16 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
   assert.equal(source.includes('const halo = 10'), true)
   assert.equal(source.includes("{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }"), true)
+})
+
+test('manual update help uses a dedicated vertical command card', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("className: 'vr-update-manual'"), true)
+  assert.equal(source.includes("className: 'vr-update-command'"), true)
+  assert.equal(source.includes("className: 'vr-update-code'"), true)
+  assert.equal(source.includes("className: 'vr-update-note'"), true)
+  assert.equal(source.includes("className: 'vr-update-actions'"), true)
+  assert.equal(source.includes("const commandStyle = {"), false)
 })
 
 test('the settings card skips offscreen paint and rebuilds model options once', () => {
@@ -448,4 +526,20 @@ test('auto-discovered inferred vision models retain bridge capability state', ()
   assert.equal(source.includes('pairCapabilities.set(pairKey, pairCapability)'), true)
   assert.equal(source.includes('resolvedPiAiProfileOf'), true)
   assert.equal(source.includes("transport.api !== 'openai-completions'"), true)
+})
+
+test('the twin preserves the picker-chosen reasoningEffort across steps (issue #103)', () => {
+  const serverSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  // The reasoning level belongs to the chat page's bottom-right picker: the
+  // plugin never configures or invents one. The wrapper body only remembers
+  // the last explicitly seen effort per delegate and re-injects it on the
+  // later steps that arrive without one, so the user's choice survives the
+  // twin switch (memory is scoped per provider+model).
+  // twin switch. The vision chain keeps reasoningEffort: undefined.
+  assert.equal(serverSource.includes('const lastReasoningEffort = new Map()'), true)
+  assert.equal(serverSource.includes('lastReasoningEffort.set(effortKey, effort)'), true)
+  assert.equal(serverSource.includes('{ ...options, reasoningEffort: effort }'), true)
+  assert.equal(serverSource.includes('reasoningEffort: undefined'), true)
+  assert.equal(serverSource.includes('reasoningEffort: z.string()'), false)
+  assert.equal(serverSource.includes('wrappedProviders[].reasoningEffort'), false)
 })
