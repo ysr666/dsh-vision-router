@@ -10,18 +10,6 @@ import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
-// [probe] sync file markers (entry apply is synchronous — no await allowed).
-import { appendFileSync } from 'node:fs'
-import path from 'node:path'
-const probeFile = () =>
-  path.join(process.env.USERPROFILE ?? 'C:/Users/shaqiu yu', '.dsh', 'logs', 'vision-router', 'module-probe.log')
-const probe = (tag) => {
-  try {
-    appendFileSync(probeFile(), `[${tag}] ${new Date().toISOString()}\n`, 'utf8')
-  } catch {
-    /* probe must never break apply */
-  }
-}
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -40,29 +28,15 @@ export const Config = core.Config
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
-  // 探针：logger 身份对比——core apply entered 日志行缺失的原因判定。
-  // 关键对比：runtimeCtx.logger 是否 === logging.logger（tee）——若不同，
-  // 包装链（contextWithLogger / contextWithDelegatedReplay）在某处断了，
-  // index.js 的 ctx.logger 走不到 sink。
-  probe(`logger-identity teeType=${typeof logging.logger} rtType=${typeof runtimeCtx.logger} sameTee=${runtimeCtx.logger === logging.logger}`)
-  // 探针：apply 后 2s 写一行——若探针缺失，说明 file-logger sink 在 apply
-  // 之后立即失效（写入失败被静默禁用），日志空白是 sink 问题而非业务未执行。
-  try {
-    setTimeout(() => {
-      logging.logger.info('vision-router: post-apply probe')
-    }, 2000).unref?.()
-  } catch {
-    /* probe must never break apply */
-  }
-  // 启动诊断摘要：配置从哪来、本地后端/即时翻译是否启用，一眼可查。
-  // settings 层可能过滤掉部分 key（如 instantDescribe），摘要让这类问题
-  // 不再"静默"——重启后看日志即可确认运行时真实状态。
+  // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
+  // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
+  // 启动快照误当成最终设置状态。
   try {
     const c = config && typeof config === 'object' ? config : {}
     const local = c.localOllama && typeof c.localOllama === 'object' ? c.localOllama : {}
     const lms = c.localLmStudio && typeof c.localLmStudio === 'object' ? c.localLmStudio : {}
     logging.logger.info(
-      'vision-router: apply config summary — instantDescribe=%s localDescribeStyle=%s localOllama=%s localLmStudio=%s',
+      'vision-router: base config summary — instantDescribe=%s localDescribeStyle=%s localOllama=%s localLmStudio=%s',
       c.instantDescribe === true ? 'on' : 'off',
       c.localDescribeStyle === 'structured' ? 'structured' : 'plain',
       local.enabled === true ? 'on' : 'off',
@@ -72,12 +46,10 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    probe('entry-before-core-apply')
     const result = core.apply(runtimeCtx, {
       ...config,
       progressiveTools: config.progressiveTools === true,
     })
-    probe('entry-after-core-apply')
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
         logging.logger.error(

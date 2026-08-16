@@ -5,10 +5,35 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+### 新功能 / Added
+
+- **本地 Ollama / LM Studio 视觉链（#98）**：可选本地后端现已接入 HTTP 视觉链、即时图片描述与桌面截图识别；支持 OpenAI / Anthropic 两种兼容协议、Ollama → LM Studio 逐级降级、可选采样参数，以及按附件记忆跳过重复识别。LM Studio 会校验真实模型标识，设置变更无需重启即可更新 URL、模型、协议和开关。
+- **Local Ollama / LM Studio vision chain (#98)**: optional local backends now participate in the HTTP vision chain, instant image descriptions and desktop-screenshot recognition, with OpenAI/Anthropic-compatible formats, Ollama → LM Studio fallback, optional sampling controls, and attachment-memory reuse that skips repeated recognition. LM Studio validates a real model identifier, and URL/model/protocol/toggle changes apply live.
+
+### 修复 / Fixed
+
+- **设置页大模型目录卡顿与本地配置往返**：视觉模型目录按能力快照缓存并改用可回收的选项缓存，避免每次输入重新遍历、复制数百/数千个模型并持续积累 VNode；本地视觉组默认折叠，同时补齐响应式布局。`instantDescribe` 现以布尔值保存，OpenAI/Anthropic 协议、空采样值及中英文占位文案均可无损往返，保存期间所有相关控件会锁定。
+- **Large-catalog settings lag and local-config round trips**: vision groups are memoized by capability snapshot and option nodes use a reclaimable cache, avoiding a full walk/copy of hundreds or thousands of models on every keystroke and unbounded VNode retention. The local group is collapsed by default with responsive layout. `instantDescribe` now persists as a boolean; protocol, blank sampling values and localized placeholders round-trip safely, and related controls lock while saving.
+- **本地链超时、热更新与隐私边界**：每轮后端按剩余总预算公平分配超时，首个本地服务挂起时仍会尝试下一层；`freeFallback: false` 只关闭匿名 OVH，不再误删显式本地后端。桌面截图改为独立的默认关闭隐私开关，macOS 只抓主显示器并避免多屏临时文件残留；Linux 依赖说明与各平台行为已校正。
+- **Local timeout, live-update and privacy boundaries**: backend rounds receive a fair share of the remaining total budget, so a hung first local service still leaves time for the next one; `freeFallback: false` now disables only anonymous OVH models, not explicit local backends. Desktop capture has a separate off-by-default privacy opt-in, macOS captures only the main display without multi-display temp-file leftovers, and Linux dependency/platform behavior is documented accurately.
+
+## v1.4.2
+
 ### 修复 / Fixed
 
 - **OpenCode Go 的 Qwen 识图模型不再被网关换成 MiniMax M3**：用户反馈 `opencode-go/qwen3.6-plus` 作识图模型时实际调用的是 MiniMax M3——根因是已安装的 pi-ai 目录把 Qwen3.6 Plus 分类为 OpenAI 协议（`/v1/chat/completions`），而 OpenCode Go 官方只在 Anthropic `/v1/messages` 上提供该模型（同病相怜的还有 `minimax-m2.7`），错误端点上的请求被网关落到默认模型。插件新增内置目录纠错（`catalogCorrections`，默认开启）：当解析出的目录条目仍指向错误协议时，该后端改由插件直连正确协议应答（Anthropic Messages + 渠道自身凭据）；上游目录修复、或用户把路由指向自己的网关后，纠错自动失效，回到正常 harness 路径。新增 12 个测试覆盖纠错判定、Anthropic 请求构造、整轮链路的端到端接管与自动失效。
 - **OpenCode Go Qwen vision models are no longer served as MiniMax M3**: users reported that picking `opencode-go/qwen3.6-plus` as the vision backend actually invoked MiniMax M3 — the installed pi-ai catalog classifies Qwen3.6 Plus as OpenAI protocol (`/v1/chat/completions`), but OpenCode Go only serves it over the Anthropic `/v1/messages` endpoint (`minimax-m2.7` is misclassified the same way), so the gateway falls back to a default model on the wrong endpoint. The plugin now ships built-in catalog-routing corrections (`catalogCorrections`, on by default): while the resolved catalog entry still points at the wrong protocol, the backend is answered directly over the corrected one (Anthropic Messages with the channel's own credential); the moment upstream fixes the catalog — or the user points the route at their own gateway — the correction disarms itself and the normal harness path resumes. 12 new tests cover the decision table, the Anthropic request shape, and end-to-end chain take-over and auto-disarm.
+- **Oh-DSH Desktop 内置 DSH 0.1.0-rc.5 上的启动崩溃已修复（#124）**：rc.5 的条目激活顺序是服务驱动的，插件可能在官方 llm-deepseek 行之前 apply；同步执行的 keep-alive 检查把尚未就绪的官方路由误判为「已停用」，抢先注册 deepseek-official 目录项，随后官方行注册时抛出 DUPLICATE_DIRECTORY，把整个运行时带崩（Oh-DSH Desktop 里表现为 `DSH runtime exited before readiness`）。接管决策现在推迟到启动稳定窗口（2s）之后再做：官方路由已注册则完全放手；确实停用/缺失才接管，stealth 与 keep-alive 路径行为不变。新增回归测试覆盖「迟到的官方行不得被误判」场景，并在真实 rc.5 宿主构建上完成端到端验证。
+- **Startup crash on Oh-DSH Desktop's bundled DSH 0.1.0-rc.5 is fixed (#124)**: on rc.5, entry activation is service-driven, so the plugin could apply before the stock llm-deepseek row; the synchronous keep-alive check then misread the not-yet-applied official route as dead, registered the deepseek-official directory entry first, and the stock row's own registration threw DUPLICATE_DIRECTORY, killing the whole runtime (surfacing as `DSH runtime exited before readiness` in Oh-DSH Desktop). The takeover decision now runs after a short boot settle window (2s): a registered stock route means hands off; a still-dead route means the row is genuinely absent/disabled and the takeover is safe. Stealth and keep-alive behavior are otherwise unchanged. A new regression test covers the late-stock-row ordering, verified end-to-end against a real rc.5 host build.
+- **「+ 自动识图」twin 组保留选择器里的推理等级（#103）**：切到 twin 组后宿主会丢掉会话选择器里选好的 reasoningEffort，多步 turn 只有第一步会思考。现在推理等级完全归选择器管：twin 元数据一比一镜像源路由，wrapper 流按「委托 provider + 模型」记忆最近显式的 reasoningEffort 并在后续步骤缺失时补上（选 max 一直 max，选 off 忠实跟随）；视觉链保持不消耗推理预算。顺带修复配置层不一致：wrapper 路由、视觉链路由与 agent/request 钩子改由解析后的 settings 文档响应式挂载/卸载，卡片开关即时生效（含 #120 引导完成时机修复）。
+- **"+ Auto Vision" twins preserve the picker's reasoning effort (#103)**: switching to a twin group made the host drop the reasoningEffort chosen in the session picker, so only the first step of a multi-step turn reasoned. The reasoning level now belongs entirely to the picker: twin metadata mirrors the source route one-to-one, and the wrapper stream remembers the latest explicit reasoningEffort per delegated provider+model and re-applies it when later steps omit it (max stays max, off stays off); the vision chain keeps reasoning effort undefined so it never spends the reasoning budget. Also fixes a config-layer inconsistency: wrapper routes, the chain route and the agent/request hook now mount/unmount reactively from the resolved settings document, so card switches take effect immediately (including the #120 walkthrough-finish fix).
+
+### 文档 / Docs
+
+- **Oh-DSH Desktop 安装说明（#124）**：README 中英双语新增 Oh-DSH Desktop 章节——`DSH_HOME=~/.ohdsh` 的 desktop profile 安装命令、内置 rc.5 运行时的版本注意事项、错误安装导致无法启动时的恢复步骤、插件市场流程与内置 `@oh-dsh/vision` 的共存说明。
+- **Oh-DSH Desktop install guide (#124)**: both READMEs now document the Oh-DSH Desktop path — the `DSH_HOME=~/.ohdsh` desktop-profile install command, the bundled rc.5 runtime caveat, recovery steps for a broken profile, the marketplace flow, and coexistence with the bundled `@oh-dsh/vision`.
+- **多插件对比与致谢恢复并逐条核实（#122 / #123）**：恢复早前 README 重写中删除的六项目社区插件对比表与致谢一节，并按各家 2026-08 的 README 逐条核实措辞（sidecar 默认端点、provider 路由描述、modlens 登录态、toolkit 差异、tool-vision 桥接瀑布等）。
+- **Multi-plugin comparison and acknowledgements restored and fact-checked (#122 / #123)**: the six-project comparison table and the Acknowledgements section lost in an earlier README rewrite are back, with every claim re-verified against each project's README as of 2026-08 (sidecar default endpoint, provider routing description, modlens login reuse, toolkit differences, tool-vision bridge hook, and more).
 
 ## v1.4.1
 
