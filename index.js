@@ -233,6 +233,12 @@ export const Config = z.object({
   tool: z.boolean().default(true),
   progressiveTools: z.boolean().default(true),
   autoActivateOnImage: z.boolean().default(true),
+  // User feedback (Zhipu official channel): some channels expose vision
+  // models whose catalog metadata does not declare image input. Models the
+  // built-in name inference does not recognize can be forced here — one model
+  // id (or "provider/model") per entry. Only consulted for vision BACKEND
+  // capability (the session-side admission stays host-owned).
+  extraVisionModels: z.array(z.string()).default([]),
   // Client-persisted UI state (issue #78): DSH Desktop serves the Web UI from
   // a random port on every launch, so origin-scoped localStorage forgets the
   // first-run onboarding dialog and it re-appeared on every boot. These keys
@@ -2005,6 +2011,96 @@ export function modelInfoAcceptsImages(info) {
   return Array.isArray(info && info.inputModalities) && info.inputModalities.includes('image')
 }
 
+// User feedback: channels like the Zhipu official one (open.bigmodel.cn,
+// configured with a custom model list) expose vision models whose catalog
+// metadata does NOT declare image input, even though the models accept images
+// (e.g. glm-4.6v). DSH's Web settings do not write the `input: [text, image]`
+// declaration for custom channels either, so a strict metadata check hides
+// perfectly usable vision backends. The conservative, curated name patterns
+// below recognize well-known multimodal model families as a fallback; models
+// that still do not match can be forced via the `extraVisionModels` setting.
+const VISION_MODEL_NAME_HINTS = [
+  // Zhipu VLM family: glm-4.6v, glm-4.6v-flash, glm-4v-plus, glm-4.5v(-plus)…
+  /(^|\/)glm-4[\w.-]*v(?=$|[-/])/i,
+  /(^|\/)glm-4v(?=$|[-/])/i,
+  // Qwen VL / QVQ vision-reasoning family (excludes plain qwen3-14b etc.).
+  /(^|\/)qwen[\w.-]*(vl|vision)/i,
+  /(^|\/)qvq(?=$|[-.])/i,
+  // OpenAI multimodal line (gpt-4o*, gpt-4.1*, gpt-5*, gpt-oss*).
+  /(^|\/)gpt-(4o|4\.1|5|oss)(?=$|[-.])/i,
+  /(^|\/)gemini/i,
+  // Claude 3+ / Sonnet/Opus/Haiku are multimodal (claude-2 is not).
+  /(^|\/)(claude-(3|4)(?=$|[-.])|claude[\w.-]*(sonnet|opus|haiku))/i,
+  /(^|\/)(internvl|cogvlm|llava|pixtral)/i,
+  /(^|\/)(doubao|hunyuan|minimax|ernie)[\w.-]*(vl|vision)/i,
+  /(^|\/)ernie-4\.5/i,
+  /(^|\/)(yi-vision|kimi[\w.-]*vision|moonshot[\w.-]*vision)/i,
+  /(^|\/)step[\w.-]*(v|vision)(?=$|[-/])/i,
+  /(^|\/)grok[\w.-]*vision/i,
+  /(^|\/)grok-4(?=$|[-.])/i,
+  /(^|\/)llama[\w.-]*vision/i,
+  /(^|\/)mistral[\w.-]*pixtral/i,
+  /(^|\/)(phi[\w.-]*vision|florence[\w.-]*)/i,
+]
+
+/**
+ * Conservative name-based inference for vision capability: true only when the
+ * model id matches a well-known multimodal naming pattern. Used as a fallback
+ * when catalog metadata does not declare image input; never overrides an
+ * explicit text-only declaration on the session/twin paths.
+ */
+export function looksLikeVisionModel(modelId) {
+  const id = String(modelId ?? '').trim()
+  if (id === '') return false
+  return VISION_MODEL_NAME_HINTS.some((pattern) => pattern.test(id))
+}
+
+/**
+ * Pure capability decision for a vision backend: explicit metadata first,
+ * then the user's `extraVisionModels` override list, then the name-based
+ * inference, and finally a text-only verdict.
+ *
+ * @param info - resolved model metadata (may be undefined when the lookup failed).
+ * @param provider - provider id, used to match "provider/model" override entries.
+ * @param model - model id.
+ * @param extraVisionModels - user-configured model ids (or "provider/model") forced vision-capable.
+ * @returns { image, inputModalities, inferred, reason } where `inferred` is
+ * false for declared image input, 'override' for the user list, 'name' for the
+ * naming heuristic, and `reason` explains a text-only verdict.
+ */
+export function decideVisionBackendCapability(info, provider, model, extraVisionModels) {
+  const inputModalities = Array.isArray(info && info.inputModalities)
+    ? info.inputModalities.filter((item) => typeof item === 'string')
+    : []
+  const modelId = String(model ?? '').trim()
+  if (inputModalities.includes('image')) {
+    return { image: true, inputModalities, inferred: false, reason: undefined }
+  }
+  const extras = Array.isArray(extraVisionModels)
+    ? extraVisionModels.map((entry) => String(entry ?? '').trim()).filter((entry) => entry !== '')
+    : []
+  if (modelId !== '' && extras.some((entry) => entry === modelId)) {
+    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'override', reason: undefined }
+  }
+  const providerId = String(provider ?? '').trim()
+  if (
+    modelId !== '' &&
+    providerId !== '' &&
+    extras.some((entry) => entry === `${providerId}/${modelId}`)
+  ) {
+    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'override', reason: undefined }
+  }
+  if (modelId !== '' && looksLikeVisionModel(modelId)) {
+    return { image: true, inputModalities: [...inputModalities, 'image'], inferred: 'name', reason: undefined }
+  }
+  return {
+    image: false,
+    inputModalities,
+    inferred: false,
+    reason: 'model metadata does not declare image input',
+  }
+}
+
 export function apply(ctx, config = {}) {
   // Route sharp version diagnostics (issue #75) through the harness logger
   // instead of console.warn, so the warning lands in the server log.
@@ -2640,21 +2736,83 @@ export function apply(ctx, config = {}) {
     }
     try {
       const info = await ctx.llm.resolveModelInfo(provider, model)
-      const inputModalities = Array.isArray(info && info.inputModalities)
-        ? info.inputModalities.filter((item) => typeof item === 'string')
-        : []
-      return {
-        image: modelInfoAcceptsImages(info),
-        inputModalities,
-        reason: modelInfoAcceptsImages(info) ? undefined : 'model metadata does not declare image input',
-      }
+      return decideVisionBackendCapability(info, provider, model, current().extraVisionModels)
     } catch (error) {
+      // Metadata lookup failed (custom model lists often do): fall back to
+      // the user override list and the name heuristic before declaring the
+      // model text-only.
+      const fallback = decideVisionBackendCapability(undefined, provider, model, current().extraVisionModels)
+      if (fallback.image) return fallback
       return {
         image: false,
         inputModalities: [],
         reason: error && error.message ? error.message : String(error),
       }
     }
+  }
+
+  // ── direct OpenAI-compatible bridge for undeclared vision channels ─────────
+  //
+  // User feedback (Zhipu official channel, open.bigmodel.cn): some channels
+  // expose vision models whose catalog metadata does NOT declare image input,
+  // so the channel adapter refuses image requests at the wire
+  // (UNSUPPORTED_CONTENT: model "x" does not support image input) even though
+  // the models accept images. For backends recognized only through the name
+  // inference or the extraVisionModels override, fall back to calling the
+  // channel's OpenAI-compatible endpoint directly with the channel's own
+  // baseURL and credential — no hand-edited settings.yaml needed. Defensive
+  // reads only: if the channel settings section, the baseURL, or the
+  // credential cannot be resolved, the bridge is simply unavailable and the
+  // adapter's own error is reported.
+  const channelProfileOf = (provider) => {
+    try {
+      const settings = ctx.get('settings')
+      const section =
+        settings && typeof settings.get === 'function' ? settings.get('llm-pi-ai') : undefined
+      const profile = section && section.providers ? section.providers[provider] : undefined
+      if (!profile || typeof profile.baseURL !== 'string' || profile.baseURL === '') return undefined
+      return profile
+    } catch {
+      return undefined
+    }
+  }
+  const resolveChannelApiKey = async (provider, profile) => {
+    const ref =
+      profile && typeof profile.apiKeyEnv === 'string' && profile.apiKeyEnv !== ''
+        ? profile.apiKeyEnv
+        : undefined
+    if (ref === undefined) return undefined
+    try {
+      const credentials = ctx.get('credentials')
+      if (credentials !== undefined) {
+        const hit = await credentials.resolve(ref)
+        if (hit && typeof hit.value === 'string' && hit.value.length > 0) return hit.value
+      }
+    } catch {
+      /* fall through to the ambient environment */
+    }
+    if (typeof process !== 'undefined' && process.env && typeof process.env[ref] === 'string') {
+      return process.env[ref]
+    }
+    return undefined
+  }
+  const directChannelVisionAnswer = async (provider, model, blocks, instruction, signal) => {
+    const profile = channelProfileOf(provider)
+    if (profile === undefined) return undefined
+    const apiKey = await resolveChannelApiKey(provider, profile)
+    if (apiKey === undefined || apiKey === '') return undefined
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined) return undefined
+    const content = []
+    for (const block of blocks) {
+      const stored = await attachments.readImage(block.attachment)
+      content.push(...toOpenAIContent([block], () => stored.data))
+    }
+    return callOpenAICompatible(
+      { name: provider, baseURL: profile.baseURL, model, apiKeyEnv: '__vision-router-channel__' },
+      [{ role: 'user', content: [...content, { type: 'text', text: instruction }] }],
+      { maxTokens: 4096, signal, resolveCredential: () => apiKey },
+    )
   }
 
   const collectVisionBackendCapabilities = async () => {
@@ -3768,6 +3926,7 @@ export function apply(ctx, config = {}) {
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
       const signal = AbortSignal.timeout(timeoutMs())
       const usablePairs = await resolveToolVisionPairs()
+      const pairCapabilities = new Map()
       for (const pair of pairs()) {
         if (!pair || pair.provider === HTTP_ROUTE) continue
         if (!adapterAvailable(ctx.llm, pair.provider)) {
@@ -3775,6 +3934,7 @@ export function apply(ctx, config = {}) {
           continue
         }
         const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+        pairCapabilities.set(`${pair.provider}/${pair.model}`, capability)
         if (!capability.image) {
           errors.push(
             `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
@@ -3794,6 +3954,30 @@ export function apply(ctx, config = {}) {
           })
           if (text && text.trim() !== '') return { text: text.trim() }
         } catch (error) {
+          // Channels whose catalog does not declare image input reject images
+          // at the adapter wire. When the backend was recognized by the name
+          // inference or the extraVisionModels override, call the channel's
+          // OpenAI-compatible endpoint directly with its own baseURL and
+          // credential before giving up on this pair.
+          const capability = pairCapabilities.get(`${pair.provider}/${pair.model}`)
+          if (capability && capability.inferred) {
+            try {
+              const direct = await directChannelVisionAnswer(
+                pair.provider,
+                pair.model,
+                [block],
+                instruction,
+                signal,
+              )
+              if (direct && direct.trim() !== '') return { text: direct.trim() }
+            } catch (bridgeError) {
+              errors.push(
+                `${pair.provider}/${pair.model}: direct channel fallback failed (${
+                  bridgeError && bridgeError.message ? bridgeError.message : String(bridgeError)
+                })`,
+              )
+            }
+          }
           errors.push(`${pair.provider}/${pair.model}: ${error && error.message ? error.message : String(error)}`)
         }
       }

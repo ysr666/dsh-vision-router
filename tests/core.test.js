@@ -29,6 +29,8 @@ import {
   collectEventAttachmentRefs,
   parseVersionParts,
   versionSatisfies,
+  looksLikeVisionModel,
+  decideVisionBackendCapability,
   renderVisionPresent,
   extractJson,
   createCache,
@@ -2249,4 +2251,76 @@ test('versionSatisfies evaluates the plugin peer range shape', () => {
   assert.equal(versionSatisfies('0.34.5', ''), false)
   assert.equal(versionSatisfies('0.34.5', undefined), false)
   assert.equal(versionSatisfies(undefined, range), false)
+})
+
+// ── vision-backend capability recognition (Zhipu feedback) ──────────────────
+
+test('looksLikeVisionModel recognizes well-known multimodal families conservatively', () => {
+  // Zhipu VLM family — the reported case.
+  assert.equal(looksLikeVisionModel('glm-4.6v'), true)
+  assert.equal(looksLikeVisionModel('glm-4.6v-flash'), true)
+  assert.equal(looksLikeVisionModel('glm-4v-plus'), true)
+  assert.equal(looksLikeVisionModel('glm-4.5v-plus'), true)
+  // Plain glm-4.6 is NOT in the VLM family: no image-input evidence.
+  assert.equal(looksLikeVisionModel('glm-4.6'), false)
+  assert.equal(looksLikeVisionModel('glm-4.5'), false)
+  // Other well-known families.
+  assert.equal(looksLikeVisionModel('qwen2.5-vl-72b-instruct'), true)
+  assert.equal(looksLikeVisionModel('qvq-72b'), true)
+  assert.equal(looksLikeVisionModel('gpt-4o-mini'), true)
+  assert.equal(looksLikeVisionModel('gpt-4.1'), true)
+  assert.equal(looksLikeVisionModel('gpt-5.1'), true)
+  assert.equal(looksLikeVisionModel('gemini-2.0-flash'), true)
+  assert.equal(looksLikeVisionModel('claude-3-5-sonnet'), true)
+  assert.equal(looksLikeVisionModel('internvl3-38b'), true)
+  assert.equal(looksLikeVisionModel('doubao-1.5-vision-pro'), true)
+  assert.equal(looksLikeVisionModel('step-1v-8k'), true)
+  // Text-only names must not match.
+  assert.equal(looksLikeVisionModel('deepseek-v4-pro'), false)
+  assert.equal(looksLikeVisionModel('qwen3-14b'), false)
+  assert.equal(looksLikeVisionModel('glm-4-plus'), false)
+  assert.equal(looksLikeVisionModel('gpt-4-mini'), false)
+  assert.equal(looksLikeVisionModel('claude-2'), false)
+  assert.equal(looksLikeVisionModel(''), false)
+  assert.equal(looksLikeVisionModel(undefined), false)
+  // Provider-prefixed ids match on the last segment.
+  assert.equal(looksLikeVisionModel('openrouter/zhipu/glm-4.6v'), true)
+})
+
+test('decideVisionBackendCapability honors declarations, overrides and inference', () => {
+  const declared = { inputModalities: ['text', 'image'] }
+  assert.deepEqual(decideVisionBackendCapability(declared, 'zhipu-glm', 'glm-4.6v', []), {
+    image: true,
+    inputModalities: ['text', 'image'],
+    inferred: false,
+    reason: undefined,
+  })
+  // Undeclared glm-4.6v: recognized by name.
+  assert.deepEqual(decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6v', []), {
+    image: true,
+    inputModalities: ['text', 'image'],
+    inferred: 'name',
+    reason: undefined,
+  })
+  // Undeclared plain glm-4.6: forced via the override list (bare model id).
+  assert.deepEqual(
+    decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6', ['glm-4.6']),
+    { image: true, inputModalities: ['text', 'image'], inferred: 'override', reason: undefined },
+  )
+  // "provider/model" override entries match too.
+  assert.equal(
+    decideVisionBackendCapability(undefined, 'zhipu-glm', 'glm-4.6', ['zhipu-glm/glm-4.6']).image,
+    true,
+  )
+  // Metadata lookup failure still falls back to inference.
+  assert.equal(decideVisionBackendCapability(undefined, 'zhipu-glm', 'glm-4.6v', []).image, true)
+  // Truly text-only model stays text-only.
+  assert.deepEqual(decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6', []), {
+    image: false,
+    inputModalities: ['text'],
+    inferred: false,
+    reason: 'model metadata does not declare image input',
+  })
+  // Missing inputModalities metadata is treated as text-only unless inferred.
+  assert.equal(decideVisionBackendCapability({}, 'zhipu-glm', 'glm-4.6', []).image, false)
 })
