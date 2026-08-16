@@ -1,10 +1,13 @@
-// dsh-vision 并入特性的测试：本地 Ollama 视觉后端（localOllamaProvidersOf /
+// dsh-vision 并入特性的测试：本地 Ollama / LM Studio 视觉后端
+// （localOllamaProvidersOf / localLmStudioProvidersOf / localProvidersOf /
 // httpProvidersOf 本地优先插入）与即时本地翻译（buildInstantLocalMap 的
-// 优雅降级路径——不依赖真实 Ollama 服务）、提示风格（localDescribePrompt）。
+// 优雅降级路径——不依赖真实本地服务）、提示风格（localDescribePrompt）。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   localOllamaProvidersOf,
+  localLmStudioProvidersOf,
+  localProvidersOf,
   httpProvidersOf,
   DEFAULT_HTTP_PROVIDERS,
   buildInstantLocalMap,
@@ -44,6 +47,48 @@ test('localOllamaProvidersOf carries temperature/top_p only when explicitly set'
   })[0]
   assert.equal(tuned.temperature, 0.3)
   assert.equal(tuned.top_p, 0.7)
+})
+
+test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => {
+  assert.deepEqual(localLmStudioProvidersOf({}), [])
+  assert.deepEqual(localLmStudioProvidersOf({ localLmStudio: {} }), [])
+  assert.deepEqual(localLmStudioProvidersOf({ localLmStudio: { enabled: false } }), [])
+  const list = localLmStudioProvidersOf({ localLmStudio: { enabled: true } })
+  assert.equal(list.length, 1)
+  assert.equal(list[0].name, 'local-lmstudio')
+  assert.equal(list[0].baseURL, 'http://localhost:1234/v1')
+  assert.equal(list[0].model, 'local-model')
+  assert.equal(list[0].apiKeyEnv, '')
+  const custom = localLmStudioProvidersOf({
+    localLmStudio: { enabled: true, baseURL: 'http://localhost:9999/v1', model: 'qwen2.5-vl' },
+  })[0]
+  assert.equal(custom.baseURL, 'http://localhost:9999/v1')
+  assert.equal(custom.model, 'qwen2.5-vl')
+  const tuned = localLmStudioProvidersOf({
+    localLmStudio: { enabled: true, temperature: 0.2, top_p: 0.9 },
+  })[0]
+  assert.equal(tuned.temperature, 0.2)
+  assert.equal(tuned.top_p, 0.9)
+})
+
+test('localProvidersOf orders local-ollama before local-lmstudio', () => {
+  assert.deepEqual(localProvidersOf({}), [])
+  const both = localProvidersOf({ localOllama: { enabled: true }, localLmStudio: { enabled: true } })
+  assert.deepEqual(both.map((p) => p.name), ['local-ollama', 'local-lmstudio'])
+  const onlyLms = localProvidersOf({ localLmStudio: { enabled: true } })
+  assert.deepEqual(onlyLms.map((p) => p.name), ['local-lmstudio'])
+})
+
+test('httpProvidersOf puts enabled local backends first in order', () => {
+  const both = httpProvidersOf({ localOllama: { enabled: true }, localLmStudio: { enabled: true } })
+  assert.deepEqual(both.slice(0, 2).map((p) => p.name), ['local-ollama', 'local-lmstudio'])
+  assert.deepEqual(both.slice(2), DEFAULT_HTTP_PROVIDERS)
+  const onlyLms = httpProvidersOf({ localLmStudio: { enabled: true } })
+  assert.equal(onlyLms[0].name, 'local-lmstudio')
+  assert.deepEqual(onlyLms.slice(1), DEFAULT_HTTP_PROVIDERS)
+  const custom = [{ name: 'custom', baseURL: 'http://example.test/v1', model: 'm' }]
+  const mixed = httpProvidersOf({ localLmStudio: { enabled: true }, httpProviders: custom })
+  assert.deepEqual(mixed.slice(0, 2).map((p) => p.name), ['local-lmstudio', 'custom'])
 })
 
 test('httpProvidersOf puts local-ollama first when enabled', () => {

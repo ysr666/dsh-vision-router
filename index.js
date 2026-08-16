@@ -309,11 +309,27 @@ export const Config = z.object({
       top_p: z.number().min(0).max(1).default(0.8),
     })
     .default({}),
+  // ── dsh-vision 并入：本地 LM Studio 视觉后端（与 Ollama 同层级）───────────
+  // LM Studio 的 OpenAI 兼容端点默认 http://localhost:1234/v1；model 字段
+  // 仅为占位（LM Studio 忽略其内容、使用当前加载的模型）。启用后
+  // local-lmstudio 插在 local-ollama 之后、用户 HTTP 端点之前，同属本地
+  // 免费隐私链；未运行时同样自动跳过降级。
+  localLmStudio: z
+    .object({
+      enabled: z.boolean().default(false),
+      baseURL: z.string().default('http://localhost:1234/v1'),
+      model: z.string().default('local-model'),
+      // 与 localOllama 相同的建议值语义：显式设置才透传，留空尊重服务端默认。
+      temperature: z.number().min(0).max(2).default(0.5),
+      top_p: z.number().min(0).max(1).default(0.8),
+    })
+    .default({}),
   // ── dsh-vision 并入：即时本地翻译 ────────────────────────────────────────
-  // 开启后（且 localOllama.enabled），图片轮第一轮就对无缓存描述的图片块
-  // 直接调用本地 Ollama 识别，把识别文本替换进模型输入——模型第一轮即
-  // "看懂"，不必先调 vision_describe；会话日志仍保留原图（界面照常显示）。
-  // 本地识别失败时回退为静态工具提示标记。默认关闭（保持工具优先哲学）。
+  // 开启后（且任一本地后端启用：localOllama / localLmStudio），图片轮第一轮
+  // 就对无缓存描述的图片块直接调用本地识别，把识别文本替换进模型输入——
+  // 模型第一轮即"看懂"，不必先调 vision_describe；会话日志仍保留原图
+  // （界面照常显示）。本地识别失败时回退为静态工具提示标记。
+  // 默认关闭（保持工具优先哲学）。
   instantDescribe: z.boolean().default(false),
   // ── dsh-vision 并入：本地识别输出风格 ────────────────────────────────────
   // plain = 平铺描述（简洁）；structured = 结构化识别（【初步判断】/【细节】/
@@ -1684,6 +1700,39 @@ export function localOllamaProvidersOf(config) {
   ]
 }
 
+export function localLmStudioProvidersOf(config) {
+  const local = config && config.localLmStudio
+  if (!local || local.enabled !== true) return []
+  const baseURL =
+    typeof local.baseURL === 'string' && local.baseURL !== ''
+      ? local.baseURL
+      : 'http://localhost:1234/v1'
+  // LM Studio 的 OpenAI 兼容端点忽略 model 内容、使用当前加载的模型，
+  // 此处仅为占位（OpenAI 兼容请求需要该字段）。
+  const model =
+    typeof local.model === 'string' && local.model !== '' ? local.model : 'local-model'
+  return [
+    {
+      name: 'local-lmstudio',
+      baseURL,
+      model,
+      apiKeyEnv: '',
+      maxTokens: 2048,
+      ...(typeof local.temperature === 'number' ? { temperature: local.temperature } : {}),
+      ...(typeof local.top_p === 'number' ? { top_p: local.top_p } : {}),
+    },
+  ]
+}
+
+/**
+ * 启用的本地视觉后端（与云端 httpProviders 同层级的本地条目）：
+ * 固定顺序 local-ollama → local-lmstudio，供 instantDescribe /
+ * vision_screenshot identify 选择"第一个启用的本地后端"，也参与视觉链。
+ */
+export function localProvidersOf(config) {
+  return [...localOllamaProvidersOf(config), ...localLmStudioProvidersOf(config)]
+}
+
 export function httpProvidersOf(config, allowDefault = true) {
   const configured = Array.isArray(config.httpProviders)
     ? config.httpProviders.filter(
@@ -1692,12 +1741,12 @@ export function httpProvidersOf(config, allowDefault = true) {
     : []
   if (!allowDefault) return configured
   if (configured.length === 0) {
-    const local = localOllamaProvidersOf(config)
+    const local = localProvidersOf(config)
     return local.length > 0 ? [...local, ...DEFAULT_HTTP_PROVIDERS] : DEFAULT_HTTP_PROVIDERS
   }
   const seen = new Set(configured.map((p) => `${p.name}/${p.model}`))
   return [
-    ...localOllamaProvidersOf(config),
+    ...localProvidersOf(config),
     ...configured,
     ...DEFAULT_HTTP_PROVIDERS.filter((p) => !seen.has(`${p.name}/${p.model}`)),
   ]
@@ -2462,10 +2511,11 @@ export function apply(ctx, config = {}) {
       raw,
     )
   }
-  // dsh-vision 并入：即时本地翻译的 provider（仅 instantDescribe + 本地
-  // Ollama 同时开启时存在；否则 undefined = 保持静态工具提示标记）。
+  // dsh-vision 并入：即时本地翻译的 provider（仅 instantDescribe 且至少
+  // 一个本地后端启用时存在——Ollama 优先、LM Studio 次之；否则 undefined
+  // = 保持静态工具提示标记）。
   const instantLocalProvider = () =>
-    current().instantDescribe === true ? localOllamaProvidersOf(current())[0] : undefined
+    current().instantDescribe === true ? localProvidersOf(current())[0] : undefined
   const instantLocalStyle = () =>
     current().localDescribeStyle === 'structured' ? 'structured' : 'plain'
   const resolveCredential = async (ref) => {
@@ -5128,9 +5178,10 @@ export function apply(ctx, config = {}) {
           const target = await saveArtifact(exec, `screenshot-${Date.now()}.png`, data)
           const result = { path: target, bytes: data.length }
           // dsh-vision 并入：identify —— 截屏后立即本地识别（take_screenshot
-          // identify 的能力）。仅 localOllama.enabled 时可用；失败不阻断截图。
+          // identify 的能力）。任一本地后端启用时可用（Ollama 优先、LM Studio
+          // 次之）；失败不阻断截图。
           if (args.identify === true) {
-            const local = localOllamaProvidersOf(current())[0]
+            const local = localProvidersOf(current())[0]
             if (local !== undefined) {
               const startedAt = Date.now()
               try {
@@ -5180,7 +5231,7 @@ export function apply(ctx, config = {}) {
                   error && error.message ? error.message : String(error)
               }
             } else {
-              result.identifyError = 'localOllama is not enabled; enable it to use identify'
+              result.identifyError = 'no local vision backend enabled (localOllama / localLmStudio); enable one to use identify'
             }
           }
           return JSON.stringify(result)
