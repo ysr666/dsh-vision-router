@@ -2043,24 +2043,52 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
       ? AbortSignal.any([options.signal, AbortSignal.timeout(budgetMs)])
       : AbortSignal.timeout(budgetMs)
   try {
-    for (const { block, id } of blocks) {
-      const startedAt = Date.now()
-      const stored = await attachments.readImage(block.attachment, signal)
-      const content = toOpenAIContent([block], () => stored.data)
-      content.push({ type: 'text', text: prompt })
-      const text = await callOpenAICompatible(
-        provider,
-        [{ role: 'user', content }],
-        { maxTokens: provider.maxTokens ?? 2048, signal },
+    // 多图并行识别：Ollama 本地推理受显存限制，不能无脑全并发——按
+    // 3 张一批并行（批间串行），一次贴 N 张图总耗时 ≈ ⌈N/3⌉ × 单张。
+    // 单张失败只丢那张（记录日志），其余照常识别，不再"一张坏图拖垮整批"。
+    const CONCURRENT = 3
+    for (let start = 0; start < blocks.length; start += CONCURRENT) {
+      const batch = blocks.slice(start, start + CONCURRENT)
+      const outcomes = await Promise.all(
+        batch.map(async ({ block, id }) => {
+          try {
+            const startedAt = Date.now()
+            const stored = await attachments.readImage(block.attachment, signal)
+            const content = toOpenAIContent([block], () => stored.data)
+            content.push({ type: 'text', text: prompt })
+            const text = await callOpenAICompatible(
+              provider,
+              [{ role: 'user', content }],
+              { maxTokens: provider.maxTokens ?? 2048, signal },
+            )
+            return { id, ok: true, text, elapsedMs: Date.now() - startedAt }
+          } catch (error) {
+            return {
+              id,
+              ok: false,
+              error: error && error.message ? error.message : String(error),
+            }
+          }
+        }),
       )
-      if (typeof text === 'string' && text.trim() !== '') {
-        const elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-        const plain = text.trim()
-        map.set(
-          id,
-          `已由本地视觉识别（本地识别 ${elapsedSec}s）\n${plain}`,
-        )
-        if (memory !== undefined) imageMemorySet(memory, id, plain)
+      for (const outcome of outcomes) {
+        if (outcome.ok) {
+          if (typeof outcome.text === 'string' && outcome.text.trim() !== '') {
+            const elapsedSec = Math.max(1, Math.round(outcome.elapsedMs / 1000))
+            const plain = outcome.text.trim()
+            map.set(
+              outcome.id,
+              `已由本地视觉识别（本地识别 ${elapsedSec}s）\n${plain}`,
+            )
+            if (memory !== undefined) imageMemorySet(memory, outcome.id, plain)
+          }
+        } else {
+          ctx.logger?.warn(
+            'vision-router: instant local describe failed for image %s: %s',
+            outcome.id,
+            outcome.error,
+          )
+        }
       }
     }
     // 排障可见性：成功与失败都进宿主日志（含 v1.3.0 的持久化诊断日志）。
@@ -2070,8 +2098,8 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
       blocks.length,
     )
   } catch (error) {
-    // 本地识别失败（Ollama 未运行 / 超时 / 拒绝）：整体放弃，回退静态标记。
-    // 失败必须可排查——静默吞错会让"图片轮为何没识别"无从查起。
+    // 保底：批处理之外的意外整体失败（正常不会走到这里——每张图已在
+    // 任务内 try/catch）。静默吞错会让"图片轮为何没识别"无从查起。
     ctx.logger?.warn(
       'vision-router: instant local describe failed (%d image(s)): %s',
       blocks.length,

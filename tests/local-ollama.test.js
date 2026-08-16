@@ -99,6 +99,32 @@ test('buildInstantLocalMap degrades to an empty map instead of rejecting', async
   assert.equal(map.size, 0)
 })
 
+test('buildInstantLocalMap isolates per-image failures across a multi-image batch', async () => {
+  // 三张图：a1 读取抛错、a2/a3 正常读取但本地端点不可达 → 整批不 reject，
+  // 失败按图隔离记录（map 仍为空），不会因一张坏图中断后续识别。
+  const ctx = {
+    get: () => ({
+      async readImage(attachment) {
+        if (attachment.attachmentId === 'a1') throw new Error('corrupt image')
+        return { data: Buffer.from('fake-png') }
+      },
+    }),
+  }
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'a1', mediaType: 'image/png' } },
+        { type: 'image', attachment: { attachmentId: 'a2', mediaType: 'image/png' } },
+        { type: 'image', attachment: { attachmentId: 'a3', mediaType: 'image/png' } },
+      ],
+    },
+  ]
+  const provider = { name: 'local-ollama', baseURL: 'http://127.0.0.1:9/v1', model: 'q', maxTokens: 128 }
+  const map = await buildInstantLocalMap(ctx, messages, provider)
+  assert.equal(map.size, 0)
+})
+
 test('localDescribePrompt switches between plain and structured styles', () => {
   const plain = localDescribePrompt('plain')
   assert.ok(plain.includes('详细描述'))
