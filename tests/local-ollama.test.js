@@ -32,6 +32,19 @@ test('localOllamaProvidersOf returns a keyless local-ollama provider when enable
   assert.equal(custom.model, 'my-vl')
 })
 
+test('localOllamaProvidersOf carries temperature/top_p only when explicitly set', () => {
+  // 未显式配置：不携带（尊重服务端默认），也不会把 undefined 塞进 body。
+  const bare = localOllamaProvidersOf({ localOllama: { enabled: true } })[0]
+  assert.equal('temperature' in bare, false)
+  assert.equal('top_p' in bare, false)
+  // 显式配置：原样透传给 callOpenAICompatible。
+  const tuned = localOllamaProvidersOf({
+    localOllama: { enabled: true, temperature: 0.3, top_p: 0.7 },
+  })[0]
+  assert.equal(tuned.temperature, 0.3)
+  assert.equal(tuned.top_p, 0.7)
+})
+
 test('httpProvidersOf puts local-ollama first when enabled', () => {
   const withLocal = httpProvidersOf({ localOllama: { enabled: true } })
   assert.equal(withLocal[0].name, 'local-ollama')
