@@ -177,6 +177,7 @@ Default `progressiveTools: false`: all eleven deep tools stay registered from pl
 | `vision_trace` | SVG vectorization (potrace posterization; icons/logos) | SVG |
 | `vision_extract_foreground` | Cutout via border flood fill (uniform backgrounds) | transparent PNG |
 | `vision_html_screenshot` | Screenshot a local HTML file (headless system Chrome) | PNG |
+| `vision_screenshot` | Capture the user's desktop (full virtual screen): PowerShell CopyFromScreen on Windows, screencapture on macOS, ImageMagick import/scrot on Linux — no third-party dependency; optional `identify=true` runs local Ollama recognition on the capture (needs `localOllama.enabled`) and returns the description with the path | PNG / + description |
 | `vision_long_screenshot_ocr` | Long-screenshot transcription: overlapping chunks, tesseract first / vision model fallback, stitched Markdown | chunk PNGs + Markdown + manifest |
 
 Formats are sniffed from magic bytes, so extensionless content-addressed attachment files work everywhere (no `.png` renaming needed).
@@ -203,7 +204,8 @@ The vision tools try backends in order and surface an error only after all of th
 
 1. **User vision models**: one per settings row, top to bottom; only models under **Settings → Models** that explicitly declare image input are shown;
 2. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the user models;
-3. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The five models have independent buckets, so spreading requests across them is about **10 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required.
+3. **Local Ollama (optional, off by default)**: with `localOllama.enabled`, a `local-ollama` entry is pinned to the FRONT of the HTTP chain — private, free, offline recognition against your local Ollama (e.g. qwen2.5vl, OpenAI-compatible, no API key). When Ollama is not running it is skipped automatically (ECONNREFUSED → chain continues), so no call is ever blocked;
+4. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The five models have independent buckets, so spreading requests across them is about **10 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required.
 
 > [!IMPORTANT]
 > This “vision chain” is the **eyes** used by Vision Router: each settings row selects one user vision model, while the lower-right chat picker selects the **brain/conversation model**. The two are deliberately separate. Text-only DeepSeek/opencode models are filtered out of the vision-backend dropdown, and the internal `Vision HTTP` transport route is no longer exposed to users.
@@ -277,6 +279,9 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | the model that reasons (your daily model) |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | vision tools on / progressive mounting (off by default for a stable tool schema) / image-turn auto-mount when progressive mode is enabled; `progressiveTools` is boot-time config |
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl' }` | **Local vision backend (merged from dsh-vision)**: when enabled, `local-ollama` heads the vision chain (private / free / offline); skipped automatically when Ollama is down |
+| `instantDescribe` | `false` | **Instant local translation (merged from dsh-vision)**: when on (and `localOllama.enabled`), image blocks are recognized by local Ollama on the first model step — the model understands the image immediately; failures fall back to the static tool-hint marker |
+| `localDescribeStyle` | `plain` | **Local recognition output style (merged from dsh-vision)**: `plain` = flat description; `structured` = structured recognition (【初步判断】/【细节】/【空间结构】/【原图尺寸】), better for screenshot analysis |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | pre-call downscale and its pixel budget (latency guard) |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | vision answer cache |
 | `timeoutMs` | `120000` | per vision call deadline |

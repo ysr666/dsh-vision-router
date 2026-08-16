@@ -177,6 +177,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome） | PNG |
+| `vision_screenshot` | **截取用户桌面全屏**（Windows PowerShell CopyFromScreen / macOS screencapture / Linux import·scrot，无第三方依赖）；`identify=true` 可选：截屏后立即本地 Ollama 识别（需 localOllama.enabled），返回路径+识别文本 | PNG / +描述文本 |
 | `vision_long_screenshot_ocr` | 长截图转写：重叠分片，tesseract 优先 / 视觉模型回退，按序拼接 Markdown | 分片 PNG + Markdown + manifest |
 
 图片格式按**魔数识别**，无扩展名的内容寻址附件文件也能直接用（不用再复制成 `.png`）。
@@ -203,7 +204,8 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 1. **用户视觉模型**：设置卡里一行一个，从上到下；只显示 **设置 → 模型** 中明确声明支持 image 输入的模型；
 2. **高级自定义 HTTP 视觉端点**：如果旧配置/高级配置中存在 `httpProviders`，在用户模型之后尝试；
-3. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；5 个模型是独立限额，因此理论上分散请求可到约 **10 次/分钟**，实际仍以 OVH 当时的限流为准。免注册、免 Key。
+3. **本地 Ollama（可选，默认关）**：`localOllama.enabled` 开启后，`local-ollama` 条目固定插入 HTTP 链最前——本地隐私识别（如 Ollama 上的 qwen2.5vl，OpenAI 兼容、无需 Key），Ollama 未运行时自动跳过（ECONNREFUSED → 继续降级），不影响任何调用；
+4. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；5 个模型是独立限额，因此理论上分散请求可到约 **10 次/分钟**，实际仍以 OVH 当时的限流为准。免注册、免 Key。
 
 > [!IMPORTANT]
 > 这里的“视觉链”是 Vision Router 调用的**眼睛**：设置页里每一行只选一个用户视觉模型；聊天页右下角选择的是**脑子/会话模型**，两者完全分开。纯文本 DeepSeek / opencode 不会出现在视觉后端下拉里；内部 `Vision HTTP` 也不会再暴露给用户。
@@ -277,6 +279,9 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl' }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排视觉链最前（隐私/零费/离线）；Ollama 未运行自动跳过 |
+| `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启后（且 localOllama.enabled）图片轮第一轮直接本地识别图片块，模型第一轮即看懂；失败回退静态工具标记 |
+| `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存 |
 | `timeoutMs` | `120000` | 单次视觉调用超时 |
