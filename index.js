@@ -3858,6 +3858,13 @@ export function apply(ctx, config = {}) {
                 if (finalText.trim() && imageIds.length > 0) {
                   const record = finalText.trim()
                   for (const id of imageIds) imageMemorySet(imageMemory, id, record)
+                  // 视觉链成功留痕：谁识别了几张图、写入跨轮缓存——排障时
+                  // "这张图的描述是谁生成的"一眼可查（原版此处静默）。
+                  ctx.logger?.info(
+                    'vision-router: vision chain recognized %d image(s) via %s (memory written)',
+                    imageIds.length,
+                    backendKey || `${pair.provider}/${pair.model}`,
+                  )
                 }
                 yield chunk
                 break
