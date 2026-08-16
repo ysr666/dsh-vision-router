@@ -6,7 +6,7 @@
 
 <p align="center"><strong>图片粘贴即用：给 DeepSeek Harness 的纯文本 Agent 装上“眼睛”——开箱免费、免 Key、无 Python、一条命令安装。</strong></p>
 
-<p align="center">DeepSeek 只负责思考，内置免费视觉链 + 11 个像素级工具负责“看”；图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
+<p align="center">DeepSeek 只负责思考，内置免费视觉链 + 13 个深看工具负责“看”；图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-252%20tests-2EA44F?style=flat-square" alt="Verified: 252 tests" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-300%20tests-2EA44F?style=flat-square" alt="Verified: 300 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -177,10 +177,10 @@ opencode-go + 自动识图       ← 发图片时选这个
 ## 亮点
 
 - **原图像素，真实答案。** 视觉链按原始分辨率读图（仅为保护延迟/额度自动缩放）；你的问题随图一起发送，答案围绕*你的问题*，而不是一段泛泛的描述。
-- **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流（尊重 Retry-After 退避重试）、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。
+- **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。遇到 429 会立即尝试下一后端，并按 Retry-After 开启冷却，不会在单次请求内睡眠等待。
 - **图片记忆。** 视觉答案按附件内容哈希缓存；后续文字轮用记录的描述替换历史图片（标注为不可信证据），DeepSeek 真正“记得”之前发过的图，且不重复消耗视觉调用。
 - **可验证的像素闭环。** 参照图 → `vision_html_screenshot` → `vision_pixel_diff`（差异率 + 红色热力图 + 最差区域排行）→ 修复 → 再对比，直到差异收敛。UI 还原从“目测”变成“实测”。
-- **稳定工具 schema。** 默认从会话开始就注册完整 11 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效。仍保留 `progressiveTools: true` 作为高级启动期 opt-in；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
+- **稳定工具 schema。** 默认从会话开始就注册完整 13 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效。仍保留 `progressiveTools: true` 作为高级启动期 opt-in；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
 - **选择性代理。** 只有配置的视觉供应商域名走本地代理；DeepSeek 保持直连。
 
 ### 像素闭环实测
@@ -201,11 +201,13 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 
 ## 工具
 
-默认 `progressiveTools: false`：11 个深看工具从插件启动时就保持常驻，文本轮和图片轮都可直接调用。若你在 profile / composition 的 `cordis.patch.yml` 中显式开启 `progressiveTools: true`，才会恢复渐进模式：初始只暴露 `vision_activate`，首次需要时再挂载完整工具，并注册 `vision-tools` 技能。该开关是启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
+默认 `progressiveTools: false`：13 个深看工具从插件启动时就保持常驻，文本轮和图片轮都可直接调用。若你在 profile / composition 的 `cordis.patch.yml` 中显式开启 `progressiveTools: true`，才会恢复渐进模式：初始只暴露 `vision_activate`，首次需要时再挂载完整工具，并注册 `vision-tools` 技能。该开关是启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
-  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个视觉工具。" />
+  <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
 </p>
+
+图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present`，以及带隐私开关的桌面截屏工具 `vision_screenshot`，完整深看工具集共 13 个。
 
 | 工具 | 作用 | 产物 |
 |---|---|---|
@@ -213,13 +215,14 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_ground` | 定位目标 → **原图像素框 x1/y1/x2/y2** | 标注 PNG（可选） |
 | `vision_detect` | 盘点某类元素（按钮/输入框/链接…）→ 编号清单 + 原图像素框 | 编号标注 PNG |
 | `vision_crop` | 按像素框裁剪放大 | PNG |
+| `vision_present` | 把生成或编辑后的本地图片发布为持久聊天附件，供用户查看 | 图片附件 |
 | `vision_pixel_diff` | 逐像素对比：差异率 + 最差 8×8 网格区域 | 红色热力图 PNG + JSON 报告 |
 | `vision_colors` | 主色提取（十六进制 + 占比） | — |
 | `vision_ocr` | 文字转写：本地 tesseract（中英）优先，视觉模型兜底 | — |
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome）；`fullPage: true` 截整页并返回 `pageHeight` | PNG |
-| `vision_screenshot` | **截取用户桌面全屏**（Windows PowerShell CopyFromScreen / macOS screencapture / Linux import·scrot，无第三方依赖）；`identify=true` 可选：截屏后立即本地识别（需启用任一本地后端：localOllama / localLmStudio），返回路径+识别文本 | PNG / +描述文本 |
+| `vision_screenshot` | **默认关闭，必须显式开启隐私开关。** 截取 Windows 虚拟屏幕、macOS 主显示器或 Linux 根窗口；Windows 使用 PowerShell CopyFromScreen，macOS 使用 `screencapture`，Linux 需安装 ImageMagick `import` 或 `scrot`；`identify=true` 可按顺序尝试已启用的本地识别后端并返回路径+识别文本 | PNG / +描述文本 |
 | `vision_long_screenshot_ocr` | 长截图转写：重叠分片，tesseract 优先 / 视觉模型回退，按序拼接 Markdown | 分片 PNG + Markdown + manifest |
 
 图片格式按**魔数识别**，无扩展名的内容寻址附件文件也能直接用（不用再复制成 `.png`）。
@@ -230,6 +233,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 vision_ground image="ref.png" target="发送按钮"
 vision_detect image="page.png" target="输入框"
 vision_crop   image="ref.png" region="1067,841,1108,881"
+vision_present path="rebuilt.png"
 vision_describe paths=["ref.png","impl.png"] question="列出两图的差异" json=true
 vision_pixel_diff original="ref.png" rebuilt="screenshot.png"
 vision_ocr image="screenshot.png"
@@ -256,7 +260,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 > 在旧版 `routing: true` 模式下，整轮链只走 `provider + fallbacks`——`httpProviders`（含免费兜底）不参与。默认的 `routing: false`（工具优先）会尝试全部。
 
-失败会分类（地区 / 风控 / 额度 / 限流 / 上下文 / 网络），最终报错附带建议；`429` 会尊重 `Retry-After` 做一次有上限的退避重试。超大上传图在调用前自动压缩（默认预算 400 万像素），保证工具调用不卡。
+失败会分类（地区 / 风控 / 额度 / 限流 / 上下文 / 网络），最终报错附带建议；遇到 `429` 会立即尝试下一后端，并按 `Retry-After` 开启有上限的熔断冷却。超大上传图在调用前自动压缩（默认预算 400 万像素），保证工具调用不卡。
 
 ## 隐身模式
 
@@ -295,7 +299,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 - 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式（仅官方 DeepSeek 路由）；
 - 视觉请求超时、包装/链路由名、代理等高级参数；
 - 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存；
-- 「测试连接」按钮探测第一个视觉提供方并内联显示延迟/失败原因；
+- 「测试连接」按钮优先探测已启用的本地后端，并校验所填模型是否出现在 `/v1/models`；否则探测第一个可用视觉提供方；
 - 产出制品的工具在对话里渲染专用调用卡（关键字段 + 打开文件按钮）。
 
 <p align="center">
@@ -323,9 +327,11 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排视觉链最前（隐私/零费/离线）；Ollama 未运行自动跳过；`format` 选择请求协议——`openai`（/chat/completions，默认）或 `anthropic`（/messages，Anthropic Messages API，新版 Ollama 提供）；temperature/top_p 为建议值（识别任务低温度更稳定），可自行调整，未配置时尊重服务端默认 |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: 'local-model', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地 LM Studio 后端（并入自 dsh-vision）**：与 localOllama 同层级——LM Studio 的 OpenAI 兼容端点；模型名仅为占位（LM Studio 使用当前加载的模型，填什么都行）；`format` 同 localOllama（LM Studio 同时提供 /chat/completions 与 /messages）；排在 local-ollama 之后、云链之前；未运行时自动跳过 |
-| `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启后（且 localOllama.enabled）图片轮第一轮直接本地识别图片块，模型第一轮即看懂；一次多张图并发识别（上限 3，本地推理受显存限制），单张失败单独跳过、其余照常；整体失败回退静态工具标记 |
+| `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
+| `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；关闭它不会停用用户明确配置的本地后端 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排在 HTTP 视觉链最前；Ollama 未运行会自动跳过；`format` 可选 `openai`（`/chat/completions`）或 `anthropic`（`/messages`）；可选的 `temperature` / `top_p` 只在显式填写时发送，留空尊重本地服务默认值 |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | **本地 LM Studio 后端（并入自 dsh-vision）**：排在 Ollama 之后、自定义/云 HTTP 后端之前；开启时必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实模型标识；可选采样参数同 Ollama，`format: 'anthropic'` 需 LM Studio 0.4.1+ |
+| `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启且至少一个本地后端可用时，在第一模型步之前识别无缓存图片块；Ollama → LM Studio 共用总超时预算，多图并发上限 3，失败则回退静态工具标记 |
 | `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存 |
@@ -336,7 +342,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 
 ### 本地 Ollama 视觉后端（并入自 dsh-vision）
 
-完全本地的视觉路径：隐私、零费用、可离线，不需要 Key、图不出机器。它作为视觉链里一个可选的 `httpProviders` 条目（`local-ollama`）接入，其他一切照旧。
+可选的本地优先视觉路径：不需要 Key，支持隐私、零费用、离线识别。它作为 HTTP 视觉链里的 `local-ollama` 接入；若本地识别失败，除非用户明确配置纯本地链，否则仍可能继续尝试已配置的云后端。
 
 **1. 安装 Ollama 并拉取视觉模型**
 
@@ -362,20 +368,21 @@ ollama pull qwen2.5vl
 
 **3. 行为说明**
 
-- 开启后 `local-ollama` 排在视觉链最前：图不出机器、不花钱、可离线。
-- **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 LM Studio 的 OpenAI 兼容端点（默认 `http://localhost:1234/v1`）；模型名仅为占位，LM Studio 使用当前加载的模型。它排在 `local-ollama` 之后、云链之前。
-- 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）：`anthropic` 走 `/v1/messages`，带 `x-api-key` + `anthropic-version` 头、图片转 base64 source——LM Studio 与新版 Ollama 都提供该端点。
+- 开启后 `local-ollama` 排在 HTTP 视觉链最前。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
+- **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
+- 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）。Anthropic 模式走 `/v1/messages`，带 `anthropic-version` 并把图片转为 base64 source；只有配置了 Key 才发送 `x-api-key`。LM Studio 需 0.4.1 或更高版本才提供该端点。
 - 任一本地后端未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
-- `instantDescribe` 在图片轮第一轮就用**第一个启用的本地后端**（Ollama 优先、LM Studio 次之）识别图片，模型立即看懂而不是看到工具提示；一次多张图并发识别（上限 3），单张失败不会阻塞其余；识别结果按附件 id 缓存，后续轮次直接复用。
-- `vision_screenshot` 的 `identify=true` 同样使用第一个启用的本地后端。
-- 日志中看到 `instant local describe recognized N/M image(s)` 即表示生效。
+- `instantDescribe` 会在第一模型步之前按 Ollama → LM Studio 的顺序尝试已启用本地后端。多张无缓存图片并发识别（上限 3），单张失败不影响其余；命中附件记忆的图片不会再次请求本地服务。
+- `vision_screenshot` 默认关闭。单独开启「桌面截屏」隐私开关后，`identify=true` 使用同样的 Ollama → LM Studio 降级顺序。
+- 日志中的 `image turn — instantDescribe=… localBackends=…` 显示实时决策；`instant local describe recognized N/M uncached image(s), C cached, F failed attempts` 显示本轮结果。
 
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
-- `vision_html_screenshot` 才需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
+- 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
+- 桌面截屏必须显式开启。Windows/macOS 使用系统截屏能力；Linux 需安装 ImageMagick `import` 或 `scrot`，且必须处于可截取的桌面会话（Wayland 支持取决于环境）。
 - tesseract 可选：本地引擎缺失时 `vision_ocr` 自动退回视觉模型。
 
 ## 安装与生命周期

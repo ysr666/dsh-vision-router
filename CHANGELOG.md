@@ -3,6 +3,20 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## Unreleased
+
+### 新功能 / Added
+
+- **本地 Ollama / LM Studio 视觉链（#98）**：可选本地后端现已接入 HTTP 视觉链、即时图片描述与桌面截图识别；支持 OpenAI / Anthropic 两种兼容协议、Ollama → LM Studio 逐级降级、可选采样参数，以及按附件记忆跳过重复识别。LM Studio 会校验真实模型标识，设置变更无需重启即可更新 URL、模型、协议和开关。
+- **Local Ollama / LM Studio vision chain (#98)**: optional local backends now participate in the HTTP vision chain, instant image descriptions and desktop-screenshot recognition, with OpenAI/Anthropic-compatible formats, Ollama → LM Studio fallback, optional sampling controls, and attachment-memory reuse that skips repeated recognition. LM Studio validates a real model identifier, and URL/model/protocol/toggle changes apply live.
+
+### 修复 / Fixed
+
+- **设置页大模型目录卡顿与本地配置往返**：视觉模型目录按能力快照缓存并改用可回收的选项缓存，避免每次输入重新遍历、复制数百/数千个模型并持续积累 VNode；本地视觉组默认折叠，同时补齐响应式布局。`instantDescribe` 现以布尔值保存，OpenAI/Anthropic 协议、空采样值及中英文占位文案均可无损往返，保存期间所有相关控件会锁定。
+- **Large-catalog settings lag and local-config round trips**: vision groups are memoized by capability snapshot and option nodes use a reclaimable cache, avoiding a full walk/copy of hundreds or thousands of models on every keystroke and unbounded VNode retention. The local group is collapsed by default with responsive layout. `instantDescribe` now persists as a boolean; protocol, blank sampling values and localized placeholders round-trip safely, and related controls lock while saving.
+- **本地链超时、热更新与隐私边界**：每轮后端按剩余总预算公平分配超时，首个本地服务挂起时仍会尝试下一层；`freeFallback: false` 只关闭匿名 OVH，不再误删显式本地后端。桌面截图改为独立的默认关闭隐私开关，macOS 只抓主显示器并避免多屏临时文件残留；Linux 依赖说明与各平台行为已校正。
+- **Local timeout, live-update and privacy boundaries**: backend rounds receive a fair share of the remaining total budget, so a hung first local service still leaves time for the next one; `freeFallback: false` now disables only anonymous OVH models, not explicit local backends. Desktop capture has a separate off-by-default privacy opt-in, macOS captures only the main display without multi-display temp-file leftovers, and Linux dependency/platform behavior is documented accurately.
+
 ## v1.4.2
 
 ### 修复 / Fixed
