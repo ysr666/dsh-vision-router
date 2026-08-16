@@ -407,3 +407,12 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   // regress the settings card's scroll smoothness.
   assert.equal(source.includes('collectFilteredVisionBackends(catalog.groups, visionCaps.capabilities)'), true)
 })
+
+
+test('auto-discovered inferred vision models retain bridge capability state', () => {
+  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('const pairKey = `${pair.provider}/${pair.model}`'), true)
+  assert.equal(source.includes('pairCapabilities.set(pairKey, pairCapability)'), true)
+  assert.equal(source.includes('resolvedPiAiProfileOf'), true)
+  assert.equal(source.includes("transport.api !== 'openai-completions'"), true)
+})
