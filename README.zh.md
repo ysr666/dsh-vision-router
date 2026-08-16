@@ -30,13 +30,7 @@
 > [!WARNING]
 > 📌 **公告（v1.3.0）**
 >
-> **v1.3.0** 重点加固长会话稳定性与插件共存：视觉工具 schema 默认从会话开始保持稳定，减少 prefix/KV cache 失效；诊断日志可持久化并从设置页直接打开；自定义视觉模型缺失 image 元数据时会明确解释并支持重新检测；宿主提供的 DSH capability 包使用正确的 peer 依赖契约；与其他视觉插件共装时，同名工具卡不再导致启动失败，同时保留 Vision Router 自己的渲染优先级。
->
-> v1.2.3 现已支持：修复 DSH Desktop 每次启动都重复弹出首次引导的问题——引导「已读」标记与模型引导步骤改存 profile 设置文件（不再依赖按 origin 隔离、每次随机端口重启即清零的 `localStorage`）（issue #78）。
->
-> v1.2.2 现已支持：补上最后一处附件 ID 缺口——宿主 `read_image` 回挂图片公布的 `sha256:…` ID 现在可被 `vision_describe` 与全部像素工具解析（issue #72）；`vision_present` 等工具结果里的图像块不再把文本模型会话锁死在 `UNSUPPORTED_CONTENT`（issue #74，已锁死的历史会话升级后自动修复）；检测到 v1.1.x 升级残留的旧版 sharp 时明确告警，把玄学的 `colourspace` 报错变成一眼可见的修复指引（issue #75）。
->
-> v1.2.1 加固像素闭环：十一个像素工具可直接接受上传图片的附件 ID（告别 `cannot read …/sha256:…` 的绕路），产物文件名带指纹不再互相覆盖，`vision_ground` 对退化框自动重试，模型引导支持从第 1 步完整重放（先退出设置页），设置卡片在数百模型目录下滚动依然流畅。
+> **v1.3.0**：增强长会话稳定性、诊断日志、视觉模型检测与多视觉插件共存。
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
