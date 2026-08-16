@@ -66,6 +66,147 @@ test('the client bundle still loads and registers with the proven injects', () =
   assert.equal(typeof bundle.apply, 'function')
 })
 
+test('commitSettingsPlan keeps drafts when a resolved set did not land in the user layer', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const drafts = { providers: requested }
+  const calls = []
+  const scope = {
+    async set(field, value) {
+      calls.push([field, value])
+      // SettingsScope resolves after its recovery read even when the Host
+      // rejected the mutation. Deliberately leave the old user layer intact.
+    },
+    getSnapshot() {
+      return { status: 'ready', writable: true, user: { providers: [] } }
+    },
+  }
+
+  const outcome = await bundle.commitSettingsPlan(scope, [
+    { key: 'providers', run: { value: requested } },
+  ], drafts)
+
+  assert.deepEqual(calls, [['providers', requested]])
+  assert.equal(outcome.landed, false)
+  assert.equal(outcome.failed, true)
+  assert.equal(outcome.nextDrafts, drafts)
+  assert.deepEqual(outcome.failures.map(({ field, operation, reason }) => ({ field, operation, reason })), [{
+    field: 'providers',
+    operation: 'set',
+    reason: 'readback-mismatch',
+  }])
+})
+
+test('commitSettingsPlan accepts structurally equal JSON readback and clears drafts', async () => {
+  const bundle = loadClientBundle()
+  const requested = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const snapshot = { status: 'ready', writable: true, user: {} }
+  const scope = {
+    async set(field, value) {
+      snapshot.user[field] = structuredClone(value)
+    },
+    getSnapshot() {
+      return snapshot
+    },
+  }
+
+  const outcome = await bundle.commitSettingsPlan(scope, [
+    { key: 'providers', run: { value: requested } },
+  ], { providers: requested })
+
+  assert.equal(outcome.landed, true)
+  assert.equal(outcome.failed, false)
+  assert.deepEqual(outcome.nextDrafts, {})
+  assert.deepEqual(outcome.failures, [])
+  assert.equal(bundle.jsonValueEqual({ a: 1, b: [2] }, { b: [2], a: 1 }), true)
+  assert.equal(bundle.jsonValueEqual(-0, 0), true)
+})
+
+test('commitSettingsPlan clears only fields that landed during a partial save', async () => {
+  const bundle = loadClientBundle()
+  const providers = [{ provider: 'zhipu', model: 'glm-4.6v-flash' }]
+  const drafts = { routing: true, providers }
+  const snapshot = { status: 'ready', writable: true, user: { providers: [] } }
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field, value) {
+      if (field === 'routing') snapshot.user[field] = value
+      // The providers write resolves after a rejected Host mutation and its
+      // recovery read, leaving the old user-layer value in place.
+    },
+    getSnapshot() { return snapshot },
+  }, [
+    { key: 'routing', run: { value: true } },
+    { key: 'providers', run: { value: providers } },
+  ], drafts)
+
+  assert.equal(outcome.landed, false)
+  assert.deepEqual(outcome.landedFields, ['routing'])
+  assert.deepEqual(outcome.nextDrafts, { providers })
+  assert.deepEqual(outcome.failures.map(({ field, reason }) => [field, reason]), [
+    ['providers', 'readback-mismatch'],
+  ])
+})
+
+test('commitSettingsPlan requires unset to remove the user-layer own property', async () => {
+  const bundle = loadClientBundle()
+  const plan = [{ key: 'proxyHosts', run: { clear: true } }]
+  const drafts = { proxyHosts: '' }
+  const rejectedSnapshot = { status: 'ready', writable: true, user: { proxyHosts: ['example.test'] } }
+  const rejected = await bundle.commitSettingsPlan({
+    async unset() {},
+    getSnapshot() { return rejectedSnapshot },
+  }, plan, drafts)
+  assert.equal(rejected.landed, false)
+  assert.equal(rejected.nextDrafts, drafts)
+  assert.equal(rejected.failures[0].reason, 'readback-mismatch')
+
+  const acceptedSnapshot = { status: 'ready', writable: true, user: { proxyHosts: ['example.test'] } }
+  const accepted = await bundle.commitSettingsPlan({
+    async unset(field) { delete acceptedSnapshot.user[field] },
+    getSnapshot() { return acceptedSnapshot },
+  }, plan, drafts)
+  assert.equal(accepted.landed, true)
+  assert.deepEqual(accepted.nextDrafts, {})
+})
+
+test('commitSettingsPlan classifies write and readback errors without dropping drafts', async () => {
+  const bundle = loadClientBundle()
+  const drafts = { routing: true, tool: true }
+  const outcome = await bundle.commitSettingsPlan({
+    async set(field) {
+      if (field === 'routing') throw new Error('transport failed')
+    },
+    getSnapshot() {
+      throw new Error('snapshot failed')
+    },
+  }, [
+    { key: 'routing', run: { value: true } },
+    { key: 'tool', run: { value: true } },
+  ], drafts)
+
+  assert.equal(outcome.landed, false)
+  assert.equal(outcome.nextDrafts, drafts)
+  assert.deepEqual(outcome.failures.map(({ field, reason }) => [field, reason]), [
+    ['routing', 'write-error'],
+    ['tool', 'readback-error'],
+  ])
+})
+
+test('settings save failure copy says unwritten drafts were kept', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('保存失败：部分配置未写入。未写入的修改已保留，请重试。'), true)
+  assert.equal(source.includes('Save failed: some changes were not written. Unwritten changes were kept; please retry.'), true)
+  assert.equal(source.includes("className: 'vr-failed', role: 'alert'"), true)
+  // One-click field resets share the same verified write path, and all
+  // editors are frozen during the round-trip so a successful save cannot
+  // discard a newer in-flight edit.
+  assert.equal(source.includes('const resetField = async (key) => {'), true)
+  assert.equal(source.includes("commitSettingsPlan(scope, [{ key, run: { clear: true } }], drafts)"), true)
+  assert.equal(source.includes('const editBlocked = !writable || saving'), true)
+  assert.equal(source.includes('if (outcome.landedFields.length > 0) setDrafts(outcome.nextDrafts)'), true)
+  assert.equal(source.includes("if (outcome.landedFields.includes('extraVisionModels'))"), true)
+})
+
 
 test('model-selection guide separates session and vision models and targets the vision chain', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
@@ -256,7 +397,7 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   assert.equal(source.includes('Array.isArray(text)'), true)
   // Saving the override refreshes the capability map silently (no loading
   // flash / apparent page refresh).
-  assert.equal(source.includes("plan.some((item) => item.key === 'extraVisionModels')"), true)
+  assert.equal(source.includes("outcome.landedFields.includes('extraVisionModels')"), true)
   assert.equal(source.includes('loadVisionCapabilities(true, true)'), true)
   // The capability notice reflects name-based / manual recognition.
   assert.equal(source.includes('or are recognized as vision models by name / manual override'), true)
