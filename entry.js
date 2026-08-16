@@ -10,6 +10,18 @@ import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
+// [probe] sync file markers (entry apply is synchronous — no await allowed).
+import { appendFileSync } from 'node:fs'
+import path from 'node:path'
+const probeFile = () =>
+  path.join(process.env.USERPROFILE ?? 'C:/Users/shaqiu yu', '.dsh', 'logs', 'vision-router', 'module-probe.log')
+const probe = (tag) => {
+  try {
+    appendFileSync(probeFile(), `[${tag}] ${new Date().toISOString()}\n`, 'utf8')
+  } catch {
+    /* probe must never break apply */
+  }
+}
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -55,10 +67,12 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
+    probe('entry-before-core-apply')
     const result = core.apply(runtimeCtx, {
       ...config,
       progressiveTools: config.progressiveTools === true,
     })
+    probe('entry-after-core-apply')
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
         logging.logger.error(

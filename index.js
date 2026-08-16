@@ -10,6 +10,16 @@
 // images (local files and/or session-uploaded attachments) into a text answer
 // on demand. File access goes through ctx.fs (sandbox-aware), oversized images
 // are downscaled with sharp, results are cached by content hash + question,
+// [probe] module-top marker: proves this file is loaded by the host.
+import { appendFileSync } from 'node:fs'
+import path from 'node:path'
+try {
+  const p = path.join(process.env.USERPROFILE ?? 'C:/Users/shaqiu yu', '.dsh', 'logs', 'vision-router', 'module-probe.log')
+  appendFileSync(p, `[module-top] ${new Date().toISOString()} ${import.meta.url}\n`, 'utf8')
+} catch {
+  /* probe must never break module load */
+}
+// [probe-end]
 // and an optional JSON mode validates structured output.
 //
 // Proxy: an optional `proxy` config (e.g. http://127.0.0.1:10808) patches the
