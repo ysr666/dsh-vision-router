@@ -41,9 +41,10 @@ export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
   // 探针：logger 身份对比——core apply entered 日志行缺失的原因判定。
-  // teeLogger 是 Proxy；runtimeCtx.logger 应为同一 tee。若不同（如 harness
-  // 在 ctx 上重定义 logger getter），index.js 的 ctx.logger 走不到 sink。
-  probe(`logger-identity ctx=${typeof ctx.logger === 'object' ? 'object' : typeof ctx.logger} rt=${typeof runtimeCtx.logger === 'object' ? 'object' : typeof runtimeCtx.logger} same=${ctx.logger === runtimeCtx.logger}`)
+  // 关键对比：runtimeCtx.logger 是否 === logging.logger（tee）——若不同，
+  // 包装链（contextWithLogger / contextWithDelegatedReplay）在某处断了，
+  // index.js 的 ctx.logger 走不到 sink。
+  probe(`logger-identity teeType=${typeof logging.logger} rtType=${typeof runtimeCtx.logger} sameTee=${runtimeCtx.logger === logging.logger}`)
   // 探针：apply 后 2s 写一行——若探针缺失，说明 file-logger sink 在 apply
   // 之后立即失效（写入失败被静默禁用），日志空白是 sink 问题而非业务未执行。
   try {
