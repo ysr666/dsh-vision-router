@@ -2171,32 +2171,51 @@ export function decideVisionBackendCapability(info, provider, model, extraVision
   const forced =
     modelId !== '' &&
     extras.some((entry) => entry === modelId || (providerId !== '' && entry === `${providerId}/${modelId}`))
-  // Manual override is deliberately strongest: advanced users can still
-  // force an unusual endpoint that our role/name heuristics reject.
+
+  // Capability metadata is ADVISORY. A user-selected generative model is
+  // allowed to prove itself by an actual adapter call even when DSH omitted
+  // image metadata or explicitly reports text-only input. The only hard gate
+  // here is structural: endpoints that cannot produce an assistant answer
+  // (embedding/reranker) are never valid vision backends.
   if (forced) {
-    return { image: true, inputModalities: [...new Set([...inputModalities, 'image'])], inferred: 'override', reason: undefined }
+    return {
+      image: true,
+      attemptable: true,
+      inputModalities: [...new Set([...inputModalities, 'image'])],
+      inferred: 'override',
+      reason: undefined,
+    }
   }
-  // A model can consume images and still be the wrong KIND of endpoint
-  // for this plugin: embedding/reranking produces no assistant answer.
   if (modelId !== '' && looksLikeNonGenerativeVisionModel(modelId)) {
     return {
       image: false,
+      attemptable: false,
       inputModalities,
       inferred: false,
       reason: 'model name indicates an embedding/reranker endpoint, not a generative vision backend',
     }
   }
   if (inputModalities.includes('image')) {
-    return { image: true, inputModalities, inferred: false, reason: undefined }
+    return { image: true, attemptable: true, inputModalities, inferred: false, reason: undefined }
   }
   if (modelId !== '' && looksLikeVisionModel(modelId)) {
-    return { image: true, inputModalities: [...new Set([...inputModalities, 'image'])], inferred: 'name', reason: undefined }
+    return {
+      image: true,
+      attemptable: true,
+      inputModalities: [...new Set([...inputModalities, 'image'])],
+      inferred: 'name',
+      reason: undefined,
+    }
   }
   return {
     image: false,
+    attemptable: true,
     inputModalities,
     inferred: false,
-    reason: 'model metadata does not declare image input',
+    reason:
+      inputModalities.length > 0
+        ? 'model metadata declares no image input'
+        : 'model metadata does not declare image input',
   }
 }
 
@@ -2236,6 +2255,19 @@ export function resolveChannelBridgeTransport(rawProfile, resolvedProfile, model
       rawProfile && rawProfile.apiKeyEnv,
       resolvedProfile && resolvedProfile.apiKeyEnv,
     ),
+  }
+}
+
+/** True only for a transport we can safely send through fetch + Chat Completions. */
+export function isOpenAIHttpBridgeTransport(transport) {
+  if (!transport || transport.api !== 'openai-completions' || typeof transport.baseURL !== 'string') {
+    return false
+  }
+  try {
+    const url = new URL(transport.baseURL)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
   }
 }
 
@@ -3005,28 +3037,37 @@ export function apply(ctx, config = {}) {
 
   const resolveVisionBackendCapability = async (provider, model) => {
     if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
-      return { image: false, inputModalities: [], reason: 'missing provider/model' }
+      return { image: false, attemptable: false, inputModalities: [], reason: 'missing provider/model' }
     }
     if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) {
-      return { image: false, inputModalities: [], reason: 'generated auto-vision wrapper, not a vision backend' }
+      return {
+        image: false,
+        attemptable: false,
+        inputModalities: [],
+        reason: 'generated auto-vision wrapper, not a vision backend',
+      }
     }
     if (!adapterAvailable(ctx.llm, provider)) {
-      return { image: false, inputModalities: [], reason: 'provider adapter is not registered' }
+      return {
+        image: false,
+        attemptable: false,
+        inputModalities: [],
+        reason: 'provider adapter is not registered',
+      }
     }
     try {
       const info = await ctx.llm.resolveModelInfo(provider, model)
       return decideVisionBackendCapability(info, provider, model, current().extraVisionModels)
     } catch (error) {
-      // Metadata lookup failed (custom model lists often do): fall back to
-      // the user override list and the name heuristic before declaring the
-      // model text-only.
+      // Custom/WebSocket/private adapters can be perfectly callable while
+      // their model metadata is incomplete or not resolvable. Preserve the
+      // structural decision and surface the lookup failure only as advisory
+      // diagnostics; the real adapter call is the source of truth.
       const fallback = decideVisionBackendCapability(undefined, provider, model, current().extraVisionModels)
-      if (fallback.image) return fallback
-      return {
-        image: false,
-        inputModalities: [],
-        reason: error && error.message ? error.message : String(error),
+      if (!fallback.image) {
+        fallback.reason = `capability metadata unavailable: ${error && error.message ? error.message : String(error)}`
       }
+      return fallback
     }
   }
 
@@ -3096,12 +3137,16 @@ export function apply(ctx, config = {}) {
     if (!transport.baseURL) {
       return { ok: false, reason: 'no resolved channel baseURL', rawProfile, resolvedProfile, transport }
     }
-    // callOpenAICompatible speaks Chat Completions. Never send another
-    // provider protocol through this bridge just because its name looks visual.
-    if (transport.api !== 'openai-completions') {
+    // This compatibility bridge is deliberately transport-specific. The
+    // normal path always delegates to DSH's registered adapter, which may be
+    // HTTP, WebSocket, RPC or a private protocol. Only a positively identified
+    // http(s) OpenAI Chat Completions endpoint may bypass it.
+    if (!isOpenAIHttpBridgeTransport(transport)) {
       return {
         ok: false,
-        reason: `channel protocol ${transport.api || 'unknown'} is not OpenAI Chat Completions`,
+        reason:
+          `channel transport ${transport.api || 'unknown'} @ ${transport.baseURL || 'unknown'} ` +
+          'is not an http(s) OpenAI Chat Completions endpoint',
         rawProfile,
         resolvedProfile,
         transport,
@@ -3261,6 +3306,56 @@ export function apply(ctx, config = {}) {
     })
   }
 
+  const configuredVisionPairKeys = () =>
+    new Set(
+      pairs()
+        .filter((pair) => pair && pair.provider !== HTTP_ROUTE)
+        .map((pair) => `${pair.provider}/${pair.model}`),
+    )
+
+  const mayUseDirectChannelBridge = (pair, capability, classification) => {
+    if (!pair || !classification) return false
+    const kind = classification.kind
+    if (
+      kind !== VISION_FAILURE_KINDS.INVALID_REQUEST &&
+      kind !== VISION_FAILURE_KINDS.NETWORK &&
+      kind !== VISION_FAILURE_KINDS.OTHER
+    ) return false
+    // Explicit selection is permission to TRY an undeclared model. Inferred /
+    // manual-override backends keep the legacy bridge behavior. Transport is
+    // still fail-closed: WebSocket/private adapters never get converted to
+    // HTTP because channelBridgePlan() must positively identify http(s) +
+    // OpenAI Chat Completions before a direct request is made.
+    if (!configuredVisionPairKeys().has(`${pair.provider}/${pair.model}`) && !(capability && capability.inferred)) {
+      return false
+    }
+    return channelBridgePlan(pair.provider, pair.model).ok === true
+  }
+
+  const callVisionPairWithOptionalBridge = async (pair, messages, options = {}) => {
+    try {
+      return await callVisionPair(pair, messages, options)
+    } catch (error) {
+      const classification = classifyVisionFailure(error)
+      const capability =
+        options.capability ?? (await resolveVisionBackendCapability(pair.provider, pair.model))
+      if (
+        mayUseDirectChannelBridge(pair, capability, classification) &&
+        Array.isArray(options.bridgeBlocks) &&
+        typeof options.bridgeInstruction === 'string'
+      ) {
+        return directChannelVisionAnswer(
+          pair.provider,
+          pair.model,
+          options.bridgeBlocks,
+          options.bridgeInstruction,
+          options.signal,
+        )
+      }
+      throw error
+    }
+  }
+
   const collectVisionBackendCapabilities = async () => {
     const capabilities = {}
     if (typeof ctx.llm.listProviders !== 'function') return capabilities
@@ -3273,7 +3368,6 @@ export function apply(ctx, config = {}) {
     for (const entry of providers) {
       const provider = entry && typeof entry.id === 'string' ? entry.id : ''
       if (provider === '') continue
-      if (provider !== HTTP_ROUTE && isGeneratedVisionWrapperRoute(provider)) continue
       let listed = []
       try {
         const registration = ctx.llm.registration(provider)
@@ -3294,11 +3388,11 @@ export function apply(ctx, config = {}) {
   }
 
 
-  // Build the tool-side adapter chain from real image-capable models already
-  // registered in DSH. Explicit non-HTTP backend rows keep their configured
-  // order, then any other native multimodal models are appended. Generated
-  // + 自动识图 wrappers and plugin-owned routes are not real visual backends;
-  // direct HTTP/OVH remains the final fallback layer.
+  // Build the tool-side adapter chain. Explicit rows are user intent: every
+  // structurally callable generative backend gets a real adapter attempt even
+  // when DSH does not declare image input. Auto-discovery remains conservative
+  // and only appends models positively identified as visual. This avoids
+  // silently trying every text model while making custom providers reliable.
   const resolveToolVisionPairs = async () => {
     const out = []
     const seen = new Set()
@@ -3313,14 +3407,14 @@ export function apply(ctx, config = {}) {
       if (!pair || pair.provider === HTTP_ROUTE) continue
       if (!adapterAvailable(ctx.llm, pair.provider)) continue
       const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-      if (capability.image) add(pair.provider, pair.model)
+      if (capability.attemptable !== false) add(pair.provider, pair.model)
     }
 
     const capabilities = await collectVisionBackendCapabilities()
     for (const [provider, models] of Object.entries(capabilities)) {
       if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
       for (const [model, capability] of Object.entries(models ?? {})) {
-        if (capability && capability.image) add(provider, model)
+        if (capability && capability.attemptable !== false && capability.image) add(provider, model)
       }
     }
     return out
@@ -3349,8 +3443,9 @@ export function apply(ctx, config = {}) {
       async listModels() {
         const entries = []
         for (const pair of pairs()) {
+          if (!adapterAvailable(ctx.llm, pair.provider)) continue
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (!capability.image) continue
+          if (capability.attemptable === false) continue
           entries.push({
             provider: chainRoute(),
             id: `${pair.provider}/${pair.model}`,
@@ -3425,17 +3520,25 @@ export function apply(ctx, config = {}) {
             continue
           }
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (!capability.image) {
+          if (capability.attemptable === false) {
             failures.push(
-              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+              `${pair.provider}/${pair.model}: structurally unavailable (${capability.reason ?? 'unknown reason'})`,
             )
             ctx.logger?.warn(
-              'vision-router: chain skips %s/%s (not image-capable: %s)',
+              'vision-router: chain skips %s/%s (structurally unavailable: %s)',
               pair.provider,
               pair.model,
-              capability.reason ?? 'unknown capability',
+              capability.reason ?? 'unknown reason',
             )
             continue
+          }
+          if (!capability.image) {
+            ctx.logger?.info(
+              'vision-router: chain tries %s/%s despite advisory image capability (%s)',
+              pair.provider,
+              pair.model,
+              capability.reason ?? 'not declared',
+            )
           }
           let budget = defaultBudget
           try {
@@ -4215,9 +4318,9 @@ export function apply(ctx, config = {}) {
             continue
           }
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (!capability.image) {
+          if (capability.attemptable === false) {
             rejectedPairs.push(
-              `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+              `${pair.provider}/${pair.model}: structurally unavailable (${capability.reason ?? 'unknown reason'})`,
             )
           }
         }
@@ -4277,7 +4380,14 @@ export function apply(ctx, config = {}) {
           try {
             let messages = baseMessages
             const signal = combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs()))
-            let text = await callVisionPair(pair, messages, { maxTokens: 4096, signal })
+            const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+            let text = await callVisionPairWithOptionalBridge(pair, messages, {
+              maxTokens: 4096,
+              signal,
+              capability,
+              bridgeBlocks: blocks,
+              bridgeInstruction: promptText,
+            })
             if (wantJson) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
@@ -4300,7 +4410,14 @@ export function apply(ctx, config = {}) {
                       source: { kind: 'plugin', plugin: 'dsh-vision-router' },
                     },
                   ]
-                  text = await callVisionPair(pair, messages, { maxTokens: 4096, signal })
+                  text = await callVisionPairWithOptionalBridge(pair, messages, {
+                    maxTokens: 4096,
+                    signal,
+                    capability,
+                    bridgeBlocks: blocks,
+                    bridgeInstruction:
+                      promptText + '\n\nThat output was not valid JSON. Respond with ONLY a valid JSON object now.',
+                  })
                 }
               }
               const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
@@ -4595,9 +4712,9 @@ export function apply(ctx, config = {}) {
         }
         const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
         pairCapabilities.set(`${pair.provider}/${pair.model}`, capability)
-        if (!capability.image) {
+        if (capability.attemptable === false) {
           errors.push(
-            `${pair.provider}/${pair.model}: not an image-capable backend (${capability.reason ?? 'unknown capability'})`,
+            `${pair.provider}/${pair.model}: structurally unavailable (${capability.reason ?? 'unknown reason'})`,
           )
         }
       }
@@ -4628,53 +4745,21 @@ export function apply(ctx, config = {}) {
           pairCapabilities.set(pairKey, pairCapability)
         }
         try {
-          const text = await callVisionPair(
+          const text = await callVisionPairWithOptionalBridge(
             pair,
             [{ role: 'user', content: [block, { type: 'text', text: instruction }] }],
             {
               maxTokens: 4096,
               signal: combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs())),
+              capability: pairCapability,
+              bridgeBlocks: [block],
+              bridgeInstruction: instruction,
             },
           )
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
         } catch (error) {
           const classification = classifyVisionFailure(error)
           visionBreaker.record(pairKey, fingerprint, classification, scope)
-          // Channels whose catalog does not declare image input reject images
-          // at the adapter wire. When the backend was recognized by the name
-          // inference or the extraVisionModels override, call the channel's
-          // OpenAI-compatible endpoint directly with its own baseURL and
-          // credential before giving up on this pair. Deterministic failures
-          // (AUTH / RATE_LIMIT / TIMEOUT) are NOT bridged: the bridge uses the
-          // same endpoint and credential, so it would fail identically.
-          const capability = pairCapabilities.get(pairKey)
-          const bridged =
-            capability &&
-            capability.inferred &&
-            (classification.kind === VISION_FAILURE_KINDS.INVALID_REQUEST ||
-              classification.kind === VISION_FAILURE_KINDS.NETWORK ||
-              classification.kind === VISION_FAILURE_KINDS.OTHER)
-          if (bridged) {
-            try {
-              const direct = await directChannelVisionAnswer(
-                pair.provider,
-                pair.model,
-                [block],
-                instruction,
-                combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs())),
-              )
-              if (direct && direct.trim() !== '') return { ok: true, text: direct.trim() }
-            } catch (bridgeError) {
-              const bridgeClassification = classifyVisionFailure(bridgeError)
-              visionBreaker.record(pairKey, fingerprint, bridgeClassification, scope)
-              recordFailure(
-                pairKey,
-                bridgeClassification,
-                `direct channel fallback failed (${bridgeError && bridgeError.message ? bridgeError.message : String(bridgeError)})`,
-              )
-              continue
-            }
-          }
           recordFailure(pairKey, classification, error && error.message ? error.message : String(error))
         }
       }
@@ -5640,8 +5725,10 @@ export function apply(ctx, config = {}) {
         const started = Date.now()
         let first
         for (const pair of pairs()) {
+          if (!pair) continue
+          if (pair.provider !== HTTP_ROUTE && !adapterAvailable(ctx.llm, pair.provider)) continue
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (capability.image) {
+          if (capability.attemptable !== false) {
             first = pair
             break
           }

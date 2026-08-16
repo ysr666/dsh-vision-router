@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-252%20tests-2EA44F?style=flat-square" alt="Verified: 252 tests" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-256%20tests-2EA44F?style=flat-square" alt="Verified: 256 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -144,7 +144,7 @@ The auto-vision group follows the live DSH model catalog. Adding models or chang
 
 After choosing the “+ Auto Vision” group, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
 
-The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row selects one image-capable user model already configured under **Settings → Models**. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
+The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
 ### See it in action
 
