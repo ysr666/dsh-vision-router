@@ -28,9 +28,11 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.3.0)**
+> 📌 **Announcement (v1.3.1)**
 >
-> **v1.3.0** improves long-session stability, diagnostics, vision-model detection, and coexistence with other vision plugins.
+> **v1.3.1** recognizes vision models that do not declare image input (user feedback: Zhipu official channel): well-known multimodal names are auto-recognized in the vision-backend dropdown, an advanced two-select “Extra vision models” editor force-treats anything else (e.g. glm-4.6), and when the channel adapter refuses images the plugin calls the channel's own OpenAI-compatible endpoint directly — no settings.yaml edits.
+>
+> **v1.3.0** improved long-session stability, diagnostics, vision-model detection, and coexistence with other vision plugins.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

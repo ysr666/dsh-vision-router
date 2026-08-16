@@ -3,6 +3,13 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.3.1
+
+### 新增 / Added
+
+- **识别「未声明图片输入」的视觉模型（用户反馈：智谱官方渠道）**：像智谱官方渠道（open.bigmodel.cn，自定义模型列表）这类渠道，目录元数据不声明 `image`，但模型本身支持看图。现在：① 常见多模态命名（glm-4.6v/-flash、qwen-vl/qvq、gpt-4o/4.1/5、gemini、claude-3+、internvl、doubao-vision 等）按保守规则自动识别，直接出现在视觉后端下拉；② 高级设置新增「额外视觉模型」两列下拉编辑器（与视觉后端链同款交互，选项即被排除的模型），可强制指定 glm-4.6 这类名称无法推断的模型；③ 渠道适配器因未声明而拒绝图片时，插件直连该渠道自身的 baseURL + 凭据走 OpenAI 兼容接口，无需手改 settings.yaml。同时修复了该编辑器引发的两个回归（条件 hook 导致设置卡片崩溃、半填行折叠）。
+- **Vision models without declared image input are now recognized (user feedback: Zhipu official channel)**: channels like the Zhipu official one (open.bigmodel.cn with a custom model list) expose models that accept images (e.g. glm-4.6v) without declaring `image` in the catalog. Now: 1) well-known multimodal names are conservatively auto-recognized in the vision-backend dropdown; 2) an advanced two-select "Extra vision models" editor (same interaction as the backend chain, options = the excluded models) force-treats anything else, e.g. glm-4.6; 3) when the channel adapter refuses images, the plugin calls the channel's own OpenAI-compatible endpoint directly with its baseURL + credential — no settings.yaml edits. Also fixed two regressions the editor introduced (a conditional-hook crash that blanked the settings card, and collapsing half-filled rows).
+
 ## v1.3.0
 
 ### 改进 / Changed
