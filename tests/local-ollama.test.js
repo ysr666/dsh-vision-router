@@ -202,6 +202,36 @@ test('buildInstantLocalMap accepts a provider list and falls through each level'
   assert.deepEqual(await buildInstantLocalMap(ctx, messages, [undefined, null]), new Map())
 })
 
+test('buildInstantLocalMap skips images already cached in memory', async () => {
+  // pre-step 识别 / 上次 vision_describe 已写入缓存的图不再重复识别：
+  // memory 里已有该 id → 不调用 readImage/后端，map 为空、memory 保持不变。
+  let readCalls = 0
+  const ctx = {
+    get: () => ({
+      async readImage() {
+        readCalls++
+        return { data: Buffer.from('fake-png') }
+      },
+    }),
+  }
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'cached-1', mediaType: 'image/png' } },
+        { type: 'image', attachment: { attachmentId: 'fresh-1', mediaType: 'image/png' } },
+      ],
+    },
+  ]
+  const provider = { name: 'local-ollama', baseURL: 'http://127.0.0.1:9/v1', model: 'q', maxTokens: 128 }
+  const memory = new Map([['cached-1', '已有描述']])
+  const map = await buildInstantLocalMap(ctx, messages, provider, { memory })
+  // cached-1 被跳过（无识别尝试）；fresh-1 尝试了（readImage 被调用，随后后端失败）。
+  assert.equal(map.size, 0)
+  assert.equal(readCalls, 1)
+  assert.equal(memory.get('cached-1'), '已有描述')
+})
+
 test('localDescribePrompt switches between plain and structured styles', () => {
   const plain = localDescribePrompt('plain')
   assert.ok(plain.includes('详细描述'))

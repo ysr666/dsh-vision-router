@@ -2200,7 +2200,9 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
       if (!block || block.type !== 'image' || !block.attachment) continue
       const attachment = block.attachment
       const id = attachment.attachmentId || attachment.id || ''
-      if (id === '' || seen.has(id)) continue
+      // 已由前置阶段（pre-step 识别 / 上次 vision_describe）写入缓存的图
+      // 不再重复识别：改写层直接命中缓存描述，省一次本地推理。
+      if (id === '' || seen.has(id) || (memory !== undefined && memory.has(id))) continue
       seen.add(id)
       blocks.push({ block, id })
     }
@@ -4310,6 +4312,36 @@ export function apply(ctx, config = {}) {
       })
     }
     if (hasImage) {
+      // ── dsh-vision 并入：pre-step 即时本地翻译 ───────────────────────────
+      // instantDescribe 在这里执行，而不是只挂在 wrapper/twin 路由上——否则
+      // 用户选普通模型组时它永远不跑（无任何提示）。图片轮无论走哪条路由，
+      // 都先尝试本地识别并把结果写入 imageMemory：后续 rewriteHistoryImages
+      // / wrapper 改写时缓存命中，模型第一轮即"看懂"。失败（无本地后端 /
+      // 连接失败 / 超时）静默回退原有标记，绝不阻塞图片轮。
+      if (rewriteEnabled() && !routingEnabled() && current().instantDescribe === true) {
+        const localProviders = localProvidersOf(current())
+        if (localProviders.length > 0) {
+          try {
+            const instantMap = await buildInstantLocalMap(ctx, messages, localProviders, {
+              style: instantLocalStyle(),
+              memory: imageMemory,
+              timeoutMs: instantLocalTimeoutMs(),
+            })
+            if (instantMap.size > 0) {
+              ctx.logger?.info(
+                'vision-router: pre-step instant local describe recognized %d image(s)',
+                instantMap.size,
+              )
+            }
+          } catch (error) {
+            // buildInstantLocalMap 自身不 reject；此处为意外兜底，不影响图片轮。
+            ctx.logger?.warn(
+              'vision-router: pre-step instant local describe error: %s',
+              error && error.message ? error.message : String(error),
+            )
+          }
+        }
+      }
       // Auto-mount the deep vision tools on image turns: the model can use
       // them from its very first step without the user asking for them.
       if (toolEnabled() && current().autoActivateOnImage !== false) {
