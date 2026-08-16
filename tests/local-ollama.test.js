@@ -16,6 +16,7 @@ import {
   imageMemorySet,
   callOpenAICompatible,
   toAnthropicContent,
+  Config,
 } from '../index.js'
 
 test('localOllamaProvidersOf returns [] when unset or disabled', () => {
@@ -56,11 +57,14 @@ test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => 
   assert.deepEqual(localLmStudioProvidersOf({}), [])
   assert.deepEqual(localLmStudioProvidersOf({ localLmStudio: {} }), [])
   assert.deepEqual(localLmStudioProvidersOf({ localLmStudio: { enabled: false } }), [])
-  const list = localLmStudioProvidersOf({ localLmStudio: { enabled: true } })
+  assert.deepEqual(localLmStudioProvidersOf({ localLmStudio: { enabled: true } }), [])
+  const list = localLmStudioProvidersOf({
+    localLmStudio: { enabled: true, model: 'lm-model' },
+  })
   assert.equal(list.length, 1)
   assert.equal(list[0].name, 'local-lmstudio')
   assert.equal(list[0].baseURL, 'http://localhost:1234/v1')
-  assert.equal(list[0].model, 'local-model')
+  assert.equal(list[0].model, 'lm-model')
   assert.equal(list[0].apiKeyEnv, '')
   const custom = localLmStudioProvidersOf({
     localLmStudio: { enabled: true, baseURL: 'http://localhost:9999/v1', model: 'qwen2.5-vl' },
@@ -68,7 +72,7 @@ test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => 
   assert.equal(custom.baseURL, 'http://localhost:9999/v1')
   assert.equal(custom.model, 'qwen2.5-vl')
   const tuned = localLmStudioProvidersOf({
-    localLmStudio: { enabled: true, temperature: 0.2, top_p: 0.9 },
+    localLmStudio: { enabled: true, model: 'lm-model', temperature: 0.2, top_p: 0.9 },
   })[0]
   assert.equal(tuned.temperature, 0.2)
   assert.equal(tuned.top_p, 0.9)
@@ -76,21 +80,30 @@ test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => 
 
 test('localProvidersOf orders local-ollama before local-lmstudio', () => {
   assert.deepEqual(localProvidersOf({}), [])
-  const both = localProvidersOf({ localOllama: { enabled: true }, localLmStudio: { enabled: true } })
+  const both = localProvidersOf({
+    localOllama: { enabled: true },
+    localLmStudio: { enabled: true, model: 'lm-model' },
+  })
   assert.deepEqual(both.map((p) => p.name), ['local-ollama', 'local-lmstudio'])
-  const onlyLms = localProvidersOf({ localLmStudio: { enabled: true } })
+  const onlyLms = localProvidersOf({ localLmStudio: { enabled: true, model: 'lm-model' } })
   assert.deepEqual(onlyLms.map((p) => p.name), ['local-lmstudio'])
 })
 
 test('httpProvidersOf puts enabled local backends first in order', () => {
-  const both = httpProvidersOf({ localOllama: { enabled: true }, localLmStudio: { enabled: true } })
+  const both = httpProvidersOf({
+    localOllama: { enabled: true },
+    localLmStudio: { enabled: true, model: 'lm-model' },
+  })
   assert.deepEqual(both.slice(0, 2).map((p) => p.name), ['local-ollama', 'local-lmstudio'])
   assert.deepEqual(both.slice(2), DEFAULT_HTTP_PROVIDERS)
-  const onlyLms = httpProvidersOf({ localLmStudio: { enabled: true } })
+  const onlyLms = httpProvidersOf({ localLmStudio: { enabled: true, model: 'lm-model' } })
   assert.equal(onlyLms[0].name, 'local-lmstudio')
   assert.deepEqual(onlyLms.slice(1), DEFAULT_HTTP_PROVIDERS)
   const custom = [{ name: 'custom', baseURL: 'http://example.test/v1', model: 'm' }]
-  const mixed = httpProvidersOf({ localLmStudio: { enabled: true }, httpProviders: custom })
+  const mixed = httpProvidersOf({
+    localLmStudio: { enabled: true, model: 'lm-model' },
+    httpProviders: custom,
+  })
   assert.deepEqual(mixed.slice(0, 2).map((p) => p.name), ['local-lmstudio', 'custom'])
 })
 
@@ -103,8 +116,12 @@ test('httpProvidersOf puts local-ollama first when enabled', () => {
   assert.equal(mixed[0].name, 'local-ollama')
   assert.equal(mixed[1].name, 'custom')
   assert.equal(mixed.length, 1 + 1 + DEFAULT_HTTP_PROVIDERS.length)
-  // allowDefault=false still excludes built-ins (and local is a built-in).
-  assert.equal(httpProvidersOf({ localOllama: { enabled: true }, httpProviders: custom }, false).length, 1)
+  // allowDefault=false excludes only anonymous OVH. Explicitly enabled local
+  // backends remain available for a local-only/privacy-oriented chain.
+  assert.deepEqual(
+    httpProvidersOf({ localOllama: { enabled: true }, httpProviders: custom }, false).map((p) => p.name),
+    ['local-ollama', 'custom'],
+  )
 })
 
 test('httpProvidersOf unchanged when local disabled (upstream behavior preserved)', () => {
@@ -217,19 +234,15 @@ test('buildInstantLocalMap skips images already cached in memory', async () => {
   const messages = [
     {
       role: 'user',
-      content: [
-        { type: 'image', attachment: { attachmentId: 'cached-1', mediaType: 'image/png' } },
-        { type: 'image', attachment: { attachmentId: 'fresh-1', mediaType: 'image/png' } },
-      ],
+      content: [{ type: 'image', attachment: { attachmentId: 'a1', mediaType: 'image/png' } }],
     },
   ]
-  const provider = { name: 'local-ollama', baseURL: 'http://127.0.0.1:9/v1', model: 'q', maxTokens: 128 }
-  const memory = new Map([['cached-1', '已有描述']])
-  const map = await buildInstantLocalMap(ctx, messages, provider, { memory })
-  // cached-1 被跳过（无识别尝试）；fresh-1 尝试了（readImage 被调用，随后后端失败）。
+  const ollama = { name: 'local-ollama', baseURL: 'http://127.0.0.1:9/v1', model: 'q', maxTokens: 128 }
+  const memory = new Map([['a1', 'cached description']])
+  const map = await buildInstantLocalMap(ctx, messages, ollama, { memory })
   assert.equal(map.size, 0)
-  assert.equal(readCalls, 1)
-  assert.equal(memory.get('cached-1'), '已有描述')
+  assert.equal(readCalls, 0, 'cached images must not trigger attachment reads')
+  assert.equal(memory.get('a1'), 'cached description')
 })
 
 test('localDescribePrompt switches between plain and structured styles', () => {
@@ -242,6 +255,17 @@ test('localDescribePrompt switches between plain and structured styles', () => {
   assert.ok(structured.includes('【空间结构】'))
   assert.ok(structured.includes('【原图尺寸】'))
   assert.ok(localDescribePrompt(undefined).includes('详细描述'))
+})
+
+test('Config leaves local sampling parameters absent when the user leaves them blank', () => {
+  const parsed = Config({
+    localOllama: { enabled: true },
+    localLmStudio: { enabled: true },
+  })
+  assert.equal('temperature' in parsed.localOllama, false)
+  assert.equal('top_p' in parsed.localOllama, false)
+  assert.equal('temperature' in parsed.localLmStudio, false)
+  assert.equal('top_p' in parsed.localLmStudio, false)
 })
 
 test('buildInstantLocalMap failure leaves memory untouched and never rejects', async () => {
@@ -290,12 +314,14 @@ test('toAnthropicContent converts text and data-URI image blocks', () => {
   const converted = toAnthropicContent([
     { type: 'text', text: '看这张图' },
     { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+    { type: 'image_url', image_url: { url: 'data:image/jpg;base64,REVG' } },
     { type: 'image_url', image_url: { url: 'https://example.com/x.png' } }, // 非 data URI 丢弃
     { type: 'tool_use', id: 'x' }, // 未知块类型丢弃
   ])
   assert.deepEqual(converted, [
     { type: 'text', text: '看这张图' },
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'REVG' } },
   ])
 })
 
@@ -307,10 +333,12 @@ test('local providers carry format=anthropic only when explicitly chosen', () =>
   })[0]
   assert.equal(ollamaAnthropic.format, 'anthropic')
   const lmsAnthropic = localLmStudioProvidersOf({
-    localLmStudio: { enabled: true, format: 'anthropic' },
+    localLmStudio: { enabled: true, model: 'lm-model', format: 'anthropic' },
   })[0]
   assert.equal(lmsAnthropic.format, 'anthropic')
-  const lmsDefault = localLmStudioProvidersOf({ localLmStudio: { enabled: true } })[0]
+  const lmsDefault = localLmStudioProvidersOf({
+    localLmStudio: { enabled: true, model: 'lm-model' },
+  })[0]
   assert.equal('format' in lmsDefault, false)
 })
 
@@ -346,7 +374,8 @@ test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', asy
     )
     assert.equal(text, '识别结果')
     assert.equal(captured.url, 'http://localhost:1234/v1/messages')
-    assert.equal(captured.headers['x-api-key'], '')
+    assert.equal(captured.headers['x-api-key'], undefined)
+    assert.equal(captured.headers.authorization, undefined)
     assert.equal(captured.headers['anthropic-version'], '2023-06-01')
     assert.equal(captured.body.model, 'local-model')
     assert.equal(captured.body.max_tokens, 64)
@@ -355,6 +384,35 @@ test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', asy
       { type: 'text', text: '看这张图' },
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
     ])
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('callOpenAICompatible uses x-api-key without duplicate Bearer auth for keyed Anthropic', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (_url, init) => {
+    captured = init.headers
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    await callOpenAICompatible(
+      {
+        name: 'anthropic-compatible',
+        baseURL: 'http://localhost:1234/v1',
+        model: 'm',
+        format: 'anthropic',
+        apiKeyEnv: 'LOCAL_KEY',
+      },
+      [{ role: 'user', content: [] }],
+      { resolveCredential: async () => 'secret' },
+    )
+    assert.equal(captured['x-api-key'], 'secret')
+    assert.equal(captured.authorization, undefined)
   } finally {
     globalThis.fetch = original
   }
