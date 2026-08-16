@@ -342,6 +342,10 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 
 ### 本地 Ollama 视觉后端（并入自 dsh-vision）
 
+> **增量开发作者**：[shaoqiuyuavailable](https://github.com/shaoqiuyuavailable)（router 本地视觉增量）
+>
+> **思路来源**：本地视觉后端（Ollama / LM Studio 双后端、即时识别、结构化输出、截屏识别、同图去重记忆、失败降级占位、并发防雪崩、超时防护）的思路继承自 [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision)——本项目将其并入 HTTP 视觉链，并在此基础上扩展了逐级降级链与双协议支持。
+
 可选的本地优先视觉路径：不需要 Key，支持隐私、零费用、离线识别。它作为 HTTP 视觉链里的 `local-ollama` 接入；若本地识别失败，除非用户明确配置纯本地链，否则仍可能继续尝试已配置的云后端。
 
 **1. 安装 Ollama 并拉取视觉模型**

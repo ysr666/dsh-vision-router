@@ -344,6 +344,14 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 
 ### Local Ollama vision backend (merged from dsh-vision)
 
+> **Incremental author**: [shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) (router local-vision increment)
+>
+> **Design credit**: the local vision backends (Ollama / LM Studio dual backends, instant recognition,
+> structured output, screenshot identification, same-image memory dedup, failure-fallback placeholder,
+> concurrency anti-snowball, timeout protection) inherit their design from
+> [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision) —
+> merged into the HTTP vision chain here, with per-level fallback and dual-protocol support added on top.
+
 An optional keyless local-first vision path for private, free, offline recognition. It plugs into the existing HTTP vision chain as `local-ollama`; if it fails, any configured cloud backends can still be tried unless you deliberately configure a local-only chain.
 
 **1. Install Ollama and pull a vision model**
