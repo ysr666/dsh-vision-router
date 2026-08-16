@@ -32,7 +32,7 @@ jobs:
               text = p.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+                  raise SystemExit(f'{path}: expected exactly one match for {old[:60]!r}, found {count}')
               p.write_text(text.replace(old, new, 1))
 
           replace_once(
@@ -50,33 +50,23 @@ jobs:
 
           replace_once(
               'index.js',
-              """  buildVisionFailure,
-            resultCodeForKinds,""",
-              """  buildVisionFailure,
-            ensureSentencePunctuation,
-            resultCodeForKinds,""",
+              "  buildVisionFailure,\n",
+              "  buildVisionFailure,\n  ensureSentencePunctuation,\n",
           )
           replace_once(
               'index.js',
-              """          errors.length > 0
-                    ? `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}.`
-                    : 'No vision-capable backend is configured.'""",
-              """          errors.length > 0
-                    ? ensureSentencePunctuation(
+              "? `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}.`",
+              """? ensureSentencePunctuation(
                         `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}`,
-                      )
-                    : 'No vision-capable backend is configured.'""",
+                      )""",
           )
 
           replace_once(
               'tests/vision-resilience.test.js',
-              """  buildVisionFailure,
-            resultCodeForKinds,""",
-              """  buildVisionFailure,
-            ensureSentencePunctuation,
-            resultCodeForKinds,""",
+              "  buildVisionFailure,\n",
+              "  buildVisionFailure,\n  ensureSentencePunctuation,\n",
           )
-          marker = """test('qwenKeyEndpointHint flags Token Plan key/endpoint mismatches without hardcoding providers', () => {"""
+          marker = "test('qwenKeyEndpointHint flags Token Plan key/endpoint mismatches without hardcoding providers', () => {"
           insert = """test('ensureSentencePunctuation never doubles an existing adapter sentence mark', () => {
             assert.equal(ensureSentencePunctuation('adapter failed.'), 'adapter failed.')
             assert.equal(ensureSentencePunctuation('adapter failed'), 'adapter failed.')
@@ -85,11 +75,7 @@ jobs:
           })
 
           """
-          p = Path('tests/vision-resilience.test.js')
-          text = p.read_text()
-          if text.count(marker) != 1:
-              raise SystemExit(f'tests/vision-resilience.test.js: expected one insertion marker, found {text.count(marker)}')
-          p.write_text(text.replace(marker, insert + marker, 1))
+          replace_once('tests/vision-resilience.test.js', marker, insert + marker)
           PY
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
@@ -101,4 +87,3 @@ jobs:
           git add index.js lib/vision-resilience.js tests/vision-resilience.test.js
           git commit -m "fix: avoid duplicate punctuation in vision failure reasons"
           git push origin HEAD:fix/failure-reason-punctuation
-# trigger
