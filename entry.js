@@ -41,10 +41,10 @@ export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
   // 探针：logger 身份对比——core apply entered 日志行缺失的原因判定。
-  // 关键对比：runtimeCtx.logger 是否 === logging.logger（tee）——若不同，
-  // 包装链（contextWithLogger / contextWithDelegatedReplay）在某处断了，
-  // index.js 的 ctx.logger 走不到 sink。
-  probe(`logger-identity teeType=${typeof logging.logger} rtType=${typeof runtimeCtx.logger} sameTee=${runtimeCtx.logger === logging.logger}`)
+  // 记录来源特征：tee 是 Proxy(harness logger)，若 runtimeCtx.logger 的
+  // name/源码与 tee 不同，说明包装链（contextWithLogger / replay）在
+  // harness 环境下失效，index.js 的 ctx.logger 走不到 sink。
+  probe(`logger-identity teeType=${typeof logging.logger} rtType=${typeof runtimeCtx.logger} sameTee=${runtimeCtx.logger === logging.logger} teeName=${String(logging.logger && logging.logger.name)} rtName=${String(runtimeCtx.logger && runtimeCtx.logger.name)} teeSrc=${String(logging.logger).slice(0, 60)} rtSrc=${String(runtimeCtx.logger).slice(0, 60)}`)
   // 探针：apply 后 2s 写一行——若探针缺失，说明 file-logger sink 在 apply
   // 之后立即失效（写入失败被静默禁用），日志空白是 sink 问题而非业务未执行。
   try {
