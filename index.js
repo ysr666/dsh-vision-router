@@ -2618,6 +2618,8 @@ export function resolveChannelBridgeTransport(rawProfile, resolvedProfile, model
 }
 
 export function apply(ctx, config = {}) {
+  // 探针：core.apply 是否执行（区分 entry.js 问题与 index.js 问题）。
+  ctx.logger?.info('vision-router: core apply entered')
   // Route sharp version diagnostics (issue #75) through the harness logger
   // instead of console.warn, so the warning lands in the server log.
   registerSharpWarningHook((message) => {
@@ -4255,6 +4257,9 @@ export function apply(ctx, config = {}) {
   // session -> { turn, startIndex, hasImage, routed, failures, lastError }
   const turnState = new WeakMap()
 
+  // 探针：pre-step handler 注册确认——此行为空 = 注册代码未执行（apply 中途
+  // 崩溃或注册条件未达）；有注册行但无 enter 行 = 事件未分发到本插件。
+  ctx.logger?.info('vision-router: registering agent/pre-step handler')
   ctx.on('agent/pre-step', async (payload, next) => {
     // 入口探针：任何 pre-step 触发都留痕——若此行为空说明 handler 未注册
     // 或事件未触发；配合 decision.kind 可区分网关拒绝与正常流程。
@@ -4262,8 +4267,7 @@ export function apply(ctx, config = {}) {
       'vision-router: pre-step enter (turn=%s, kind=%s)',
       payload && payload.turn,
       payload && payload.kind ? payload.kind : 'n/a',
-    )
-    const decision = await next()
+    )    const decision = await next()
     if (decision && decision.kind === 'reject') {
       ctx.logger?.info('vision-router: pre-step decision rejected (%s)', decision.kind)
       return decision
