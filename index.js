@@ -4249,8 +4249,18 @@ export function apply(ctx, config = {}) {
   const turnState = new WeakMap()
 
   ctx.on('agent/pre-step', async (payload, next) => {
+    // 入口探针：任何 pre-step 触发都留痕——若此行为空说明 handler 未注册
+    // 或事件未触发；配合 decision.kind 可区分网关拒绝与正常流程。
+    ctx.logger?.info(
+      'vision-router: pre-step enter (turn=%s, kind=%s)',
+      payload && payload.turn,
+      payload && payload.kind ? payload.kind : 'n/a',
+    )
     const decision = await next()
-    if (decision && decision.kind === 'reject') return decision
+    if (decision && decision.kind === 'reject') {
+      ctx.logger?.info('vision-router: pre-step decision rejected (%s)', decision.kind)
+      return decision
+    }
     const session = payload.agent && payload.agent.session
     if (!session) return decision
     // Bind the turn-scoped failure memory for this session+turn: tool calls

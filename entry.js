@@ -28,6 +28,15 @@ export const Config = core.Config
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
+  // 探针：apply 后 2s 写一行——若探针缺失，说明 file-logger sink 在 apply
+  // 之后立即失效（写入失败被静默禁用），日志空白是 sink 问题而非业务未执行。
+  try {
+    setTimeout(() => {
+      logging.logger.info('vision-router: post-apply probe')
+    }, 2000).unref?.()
+  } catch {
+    /* probe must never break apply */
+  }
   // 启动诊断摘要：配置从哪来、本地后端/即时翻译是否启用，一眼可查。
   // settings 层可能过滤掉部分 key（如 instantDescribe），摘要让这类问题
   // 不再"静默"——重启后看日志即可确认运行时真实状态。
