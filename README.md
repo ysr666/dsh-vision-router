@@ -86,6 +86,9 @@ For normal npm/npx installs, installation is a single command:
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
 
+> [!NOTE]
+> Third-party `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** is also compatible: its quality gate now correctly allows `@deepseek-ai/schemastery` as a runtime dependency. The official DSH CLI above remains the recommended install path.
+
 If you run DeepSeek Harness from a source checkout with pnpm, use the workspace script instead — `dsh` is not necessarily on your shell `PATH`:
 
 ```sh

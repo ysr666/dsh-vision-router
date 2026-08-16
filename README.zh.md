@@ -86,6 +86,9 @@
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
 
+> [!NOTE]
+> 第三方 `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** 现已兼容：其质量门已正确放行作为运行时依赖的 `@deepseek-ai/schemastery`。上面的官方 DSH CLI 仍是推荐安装方式。
+
 如果你是从 DeepSeek Harness 源码仓库通过 pnpm 运行，`dsh` 不一定在系统 `PATH` 里，请改用工作区脚本：
 
 ```sh
