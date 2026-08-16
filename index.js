@@ -5106,11 +5106,30 @@ export function apply(ctx, config = {}) {
             if (local !== undefined) {
               const startedAt = Date.now()
               try {
+                // 识别前降采样：全屏 PNG 可达数 MB（4K 屏 / 多显示器虚拟屏），
+                // 原样 base64 直送会拖慢识别甚至超出视觉模型分辨率上限。
+                // 限制最长边（等比缩放、不放大）后再送，识别又快又稳；
+                // sharp 不可用时（罕见）回退原图，不阻断识别。
+                let identifyBytes = data
+                try {
+                  const sharp = await loadSharp()
+                  if (sharp) {
+                    const downscaled = await sharp(data, { failOn: 'none' })
+                      .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+                      .png()
+                      .toBuffer()
+                    if (downscaled.length > 0 && downscaled.length < data.length) {
+                      identifyBytes = downscaled
+                    }
+                  }
+                } catch {
+                  /* keep the original capture */
+                }
                 const content = [
                   {
                     type: 'image_url',
                     image_url: {
-                      url: `data:image/png;base64,${data.toString('base64')}`,
+                      url: `data:image/png;base64,${identifyBytes.toString('base64')}`,
                     },
                   },
                   { type: 'text', text: localDescribePrompt(instantLocalStyle()) },
@@ -5122,6 +5141,12 @@ export function apply(ctx, config = {}) {
                 )
                 result.identified = identified.trim()
                 result.elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+                if (identifyBytes !== data) {
+                  result.identifyDownscaled = {
+                    originalBytes: data.length,
+                    sentBytes: identifyBytes.length,
+                  }
+                }
               } catch (error) {
                 result.identifyError =
                   error && error.message ? error.message : String(error)
