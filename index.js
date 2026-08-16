@@ -45,6 +45,7 @@ import {
   createVisionCircuitBreaker,
   createVisionTurnMemory,
   buildVisionFailure,
+  ensureSentencePunctuation,
   resultCodeForKinds,
   qwenKeyEndpointHint,
   kindForHttpStatus,
@@ -4546,7 +4547,9 @@ export function apply(ctx, config = {}) {
         // must see a retryable=false result code, not an "occasional glitch".
         const reason =
           errors.length > 0
-            ? `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}.`
+            ? ensureSentencePunctuation(
+              `All vision models failed: ${errors.slice(0, 6).join(' | ')}${errors.length > 6 ? ` | … ${errors.length - 6} more` : ''}`,
+            )
             : 'No vision-capable backend is configured.'
         const failure = await visionFailureResult(
           scope,

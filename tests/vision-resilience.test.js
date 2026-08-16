@@ -12,6 +12,7 @@ import {
   createVisionCircuitBreaker,
   createVisionTurnMemory,
   buildVisionFailure,
+  ensureSentencePunctuation,
   resultCodeForKinds,
   qwenKeyEndpointHint,
   VISION_RESULT_CODES,
@@ -155,6 +156,13 @@ test('buildVisionFailure carries retryable:false and explicit code', () => {
   assert.equal(failure.retryable, false)
   assert.equal(failure.code, VISION_RESULT_CODES.BACKEND_UNAVAILABLE_THIS_TURN)
   assert.ok(failure.advice.includes('Do NOT call vision_describe'))
+})
+
+test('ensureSentencePunctuation never doubles an existing adapter sentence mark', () => {
+  assert.equal(ensureSentencePunctuation('adapter failed.'), 'adapter failed.')
+  assert.equal(ensureSentencePunctuation('adapter failed'), 'adapter failed.')
+  assert.equal(ensureSentencePunctuation('adapter failed!'), 'adapter failed!')
+  assert.equal(ensureSentencePunctuation('适配器失败。'), '适配器失败。')
 })
 
 test('qwenKeyEndpointHint flags Token Plan key/endpoint mismatches without hardcoding providers', () => {
