@@ -188,6 +188,7 @@ test('empty vision dropdown diagnostics identify undeclared image models and sup
       { id: 'glm-4.5v', name: 'GLM-4.5V' },
     ] },
     { id: 'openrouter', name: 'OpenRouter', models: [{ id: 'qwen-vl', name: 'Qwen VL' }] },
+    { id: 'opencode-go-vision', name: 'opencode-go + 自动识图', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4' }] },
   ]
   const hidden = bundle.collectFilteredVisionBackends(groups, {
     zhipu: {
