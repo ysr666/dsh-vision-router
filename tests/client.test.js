@@ -210,3 +210,13 @@ test('empty vision dropdown diagnostics identify undeclared image models and sup
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
   assert.equal(source.includes('emptyVisionModelsPanel()'), true)
 })
+
+
+test('toolview cards use a non-default priority so other vision plugins can coexist (#91)', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // DSH keyed slots allow the same key at different priorities. Use a small
+  // negative priority so Vision Router keeps ownership of its own tool cards
+  // while coexisting with plugins that use the default priority 0.
+  assert.equal(source.includes("key: 'vision_present', priority: -10"), true)
+  assert.equal(source.includes("key, priority: -10, inject"), true)
+})
