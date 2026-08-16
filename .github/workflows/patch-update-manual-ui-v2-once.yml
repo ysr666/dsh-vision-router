@@ -40,3 +40,5 @@ jobs:
           git add lib/client.js tests/client.test.js .github/workflows/patch-update-manual-ui-v2-once.yml .github/patch_update_manual_ui.py
           git commit -m 'style: clean up manual update command panel'
           git push origin HEAD:ui/update-manual-card-v2
+
+# run
