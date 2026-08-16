@@ -381,6 +381,16 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes("{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }"), true)
 })
 
+test('manual update help uses a dedicated vertical command card', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("className: 'vr-update-manual'"), true)
+  assert.equal(source.includes("className: 'vr-update-command'"), true)
+  assert.equal(source.includes("className: 'vr-update-code'"), true)
+  assert.equal(source.includes("className: 'vr-update-note'"), true)
+  assert.equal(source.includes("className: 'vr-update-actions'"), true)
+  assert.equal(source.includes("const commandStyle = {"), false)
+})
+
 test('the settings card skips offscreen paint and rebuilds model options once', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   // Long sections paint only when scrolled into view: the card hosts many
