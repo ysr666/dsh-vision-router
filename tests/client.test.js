@@ -298,6 +298,25 @@ test('re-viewing the model guide replays the overview instead of skipping to ste
   assert.equal(source.includes('if (!readOnboardingSeen()) showOnboarding(t)'), true)
 })
 
+test('walkthrough ends on save, on picking a vision model, or when the settings panel closes', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // Closing the app-owned settings modal ends the round instead of demoting
+  // the floating prompt back to the "find the vision model in settings"
+  // phase: a grace timer absorbs host re-renders that rebuild the dialog.
+  assert.equal(source.includes('let visionGuidePanelSeen = false'), true)
+  assert.equal(source.includes('let visionGuidePanelCloseTimer'), true)
+  assert.equal(source.includes('function guideSettingsPanelOpen()'), true)
+  assert.equal(source.includes('step !== undefined && visionGuidePanelSeen && !panelOpen'), true)
+  assert.equal(source.includes('if (readVisionGuideStep() !== undefined && !guideSettingsPanelOpen())'), true)
+  // Saving the settings card completes the walkthrough, even when a hidden
+  // write is later rejected — dismissal stays page-authoritative.
+  assert.equal(source.includes('Saving ends the walkthrough'), true)
+  assert.equal(source.includes('finishGuide()'), true)
+  // Picking a real vision model completes it too; picking only a provider
+  // (model still empty) keeps the guide alive.
+  assert.equal(source.includes('if (row.provider && event.target.value) finishGuide()'), true)
+})
+
 test('onboarding and guide durability live in the settings section, not origin-scoped localStorage (#78)', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   // DSH Desktop re-randomizes the Web UI port on every launch, so
