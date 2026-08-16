@@ -8,11 +8,15 @@
 # 挂载后是否接管官方 deepseek-official 路由由设置里的「隐身模式」开关决定
 # （默认关；开启后需自行在 profile 补丁层禁用 llm-deepseek 行）。
 
-# 挂载插件行。配置全部可选（默认即内置免费视觉端点 + 工具优先的图片流程），
-# 可在 Web 设置 > 插件 > 插件配置 的「视觉路由」卡片里实时修改。
+# 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
+# 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
+# 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在设置层显式把
+# progressiveTools 改回 true；profile/user patch 仍可覆盖这里的默认值。
 - insert:
     - id: vision-router
       name: dsh-vision-router
+      config:
+        progressiveTools: false
 
 # 放宽附件图片限制（部署默认 5MB / 4000 万像素 → 20MB / 1 亿像素），
 # 大尺寸设计稿/扫描图可过审。字段可选，不需要可在 profile 补丁层覆写。
