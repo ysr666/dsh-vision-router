@@ -4267,7 +4267,8 @@ export function apply(ctx, config = {}) {
       'vision-router: pre-step enter (turn=%s, kind=%s)',
       payload && payload.turn,
       payload && payload.kind ? payload.kind : 'n/a',
-    )    const decision = await next()
+    )
+    const decision = await next()
     if (decision && decision.kind === 'reject') {
       ctx.logger?.info('vision-router: pre-step decision rejected (%s)', decision.kind)
       return decision
