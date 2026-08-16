@@ -45,6 +45,8 @@ import {
   adapterAvailable,
   httpProvidersOf,
   DEFAULT_HTTP_PROVIDERS,
+  httpProviderFallbackWeight,
+  weightedFallbackBudget,
   reverseRouteTarget,
   stripImageBlocks,
   replaceImageBlocksWithMemory,
@@ -2915,4 +2917,181 @@ test('wrapper route mount follows the settings wrapperRoute name', async () => {
   for (const watch of settingsWatchers) watch()
   assert.equal(adapters.has('deepseek-vision'), false, 'old name is disposed')
   assert.ok(adapters.has('my-wrapper'), 'wrapper re-mounts under the new name')
+})
+
+test('httpProviderFallbackWeight charges one slice for built-in OVH, a full tier for locals', () => {
+  const builtIn = { ...DEFAULT_HTTP_PROVIDERS[0] }
+  assert.equal(httpProviderFallbackWeight(builtIn), 1)
+  // A local LM Studio / Ollama backend is worth the whole built-in tier, so a
+  // healthy local model keeps half of a local→OVH fallback budget.
+  const local = {
+    name: 'lmstudio',
+    baseURL: 'http://127.0.0.1:1234/v1',
+    model: 'qwen2.5-vl',
+    apiKeyEnv: '',
+    maxTokens: 4096,
+  }
+  assert.equal(httpProviderFallbackWeight(local), DEFAULT_HTTP_PROVIDERS.length)
+  // Trailing-slash differences do not disqualify a built-in match.
+  assert.equal(httpProviderFallbackWeight({ ...builtIn, baseURL: builtIn.baseURL + '/' }), 1)
+  // A built-in row carrying a credential or a changed endpoint is user-owned.
+  assert.equal(
+    httpProviderFallbackWeight({ ...builtIn, apiKeyEnv: 'OVH_KEY' }),
+    DEFAULT_HTTP_PROVIDERS.length,
+  )
+  assert.equal(
+    httpProviderFallbackWeight({ ...builtIn, baseURL: 'https://example.com/v1' }),
+    DEFAULT_HTTP_PROVIDERS.length,
+  )
+  assert.equal(httpProviderFallbackWeight(undefined), DEFAULT_HTTP_PROVIDERS.length)
+})
+
+test('weightedFallbackBudget allocates fair shares and clamps to the limits', () => {
+  // 60s left, 20s per call, weight 1 of 3 → a 20s fair share.
+  assert.equal(weightedFallbackBudget(60000, 20000, 1, 3), 20000)
+  // The per-call timeout caps a larger fair share.
+  assert.equal(weightedFallbackBudget(60000, 10000, 1, 3), 10000)
+  // The last candidate (weight === remainingWeight) may keep the whole rest,
+  // still capped by the per-call limit.
+  assert.equal(weightedFallbackBudget(45000, 20000, 3, 3), 20000)
+  // The remaining budget wins when smaller than the fair share.
+  assert.equal(weightedFallbackBudget(9000, 20000, 1, 3), 3000)
+  // Degenerate inputs never return less than 1 ms.
+  assert.equal(weightedFallbackBudget(0, 0, 0, 0), 1)
+  assert.equal(weightedFallbackBudget(-5, NaN, 0, 0), 1)
+})
+
+test('chain injects the configured local backend ahead of the http rows', async () => {
+  const config = {
+    routing: true,
+    freeFallback: false,
+    localOllama: { enabled: true, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl' },
+  }
+  const { ctx, adapters } = mockHarnessCtx({ attachments: true, config0: config })
+  apply(ctx, Config(config))
+  const chain = adapters.get('vision-chain')
+  assert.ok(chain)
+  // The stock mock llm.stream is a no-op stub; dispatch to the registered
+  // adapter so the chain reaches the vision-http route and its HTTP call.
+  ctx.llm.stream = async function* (options) {
+    const adapter = adapters.get(options.provider)
+    if (adapter === undefined || typeof adapter.stream !== 'function') {
+      yield {
+        type: 'finish',
+        reason: {
+          kind: 'error',
+          failure: { message: `no adapter registered for provider "${options.provider}"` },
+        },
+      }
+      return
+    }
+    yield* adapter.stream(options)
+  }
+
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), body: JSON.parse(init.body) }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'LOCAL OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const chunks = []
+    for await (const chunk of chain.stream({
+      provider: 'vision-chain',
+      model: 'local-ollama/qwen2.5vl',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'What is this?' }] }],
+    })) {
+      chunks.push(chunk)
+    }
+    assert.equal(captured.url, 'http://127.0.0.1:11434/v1/chat/completions')
+    assert.equal(captured.body.model, 'qwen2.5vl')
+    const text = chunks
+      .filter((chunk) => chunk.type === 'text-delta')
+      .map((chunk) => chunk.text)
+      .join('')
+    assert.equal(text, 'LOCAL OK')
+    assert.deepEqual(chunks.at(-1), { type: 'finish', reason: { kind: 'stop' } })
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('anthropic-format local backend keeps system text and image blocks', async () => {
+  const config = {
+    routing: true,
+    freeFallback: false,
+    downscale: false,
+    localOllama: {
+      enabled: true,
+      baseURL: 'http://127.0.0.1:11434/v1',
+      model: 'qwen2.5vl',
+      format: 'anthropic',
+    },
+  }
+  const { ctx, adapters } = mockHarnessCtx({ attachments: true, config0: config })
+  apply(ctx, Config(config))
+  const chain = adapters.get('vision-chain')
+  assert.ok(chain)
+  ctx.llm.stream = async function* (options) {
+    const adapter = adapters.get(options.provider)
+    if (adapter === undefined || typeof adapter.stream !== 'function') {
+      yield {
+        type: 'finish',
+        reason: {
+          kind: 'error',
+          failure: { message: `no adapter registered for provider "${options.provider}"` },
+        },
+      }
+      return
+    }
+    yield* adapter.stream(options)
+  }
+
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: init.headers, body: JSON.parse(init.body) }
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ANTH OK' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const chunks = []
+    for await (const chunk of chain.stream({
+      provider: 'vision-chain',
+      model: 'local-ollama/qwen2.5vl',
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Be terse.' }] },
+        {
+          role: 'user',
+          content: [
+            { type: 'image', attachment: { attachmentId: 'img-1', mediaType: 'image/png' } },
+            { type: 'text', text: 'What is this?' },
+          ],
+        },
+      ],
+    })) {
+      chunks.push(chunk)
+    }
+    assert.equal(captured.url, 'http://127.0.0.1:11434/v1/messages')
+    assert.equal(captured.body.model, 'qwen2.5vl')
+    assert.equal(captured.body.system, 'Be terse.')
+    const imageBlocks = captured.body.messages[0].content.filter((block) => block.type === 'image')
+    assert.equal(imageBlocks.length, 1)
+    assert.equal(imageBlocks[0].source.type, 'base64')
+    assert.equal(imageBlocks[0].source.media_type, 'image/png')
+    assert.ok(imageBlocks[0].source.data.length > 0)
+    assert.equal(captured.headers['x-api-key'], undefined, 'keyless local backend omits the header')
+    const text = chunks
+      .filter((chunk) => chunk.type === 'text-delta')
+      .map((chunk) => chunk.text)
+      .join('')
+    assert.equal(text, 'ANTH OK')
+  } finally {
+    globalThis.fetch = original
+  }
 })

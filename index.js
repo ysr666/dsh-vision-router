@@ -1764,6 +1764,38 @@ export const DEFAULT_HTTP_PROVIDERS = [
 ]
 
 /**
+ * Budget weight for one direct HTTP fallback. Every explicit/local backend is
+ * weighted like the complete built-in OVH tier, while each individual OVH
+ * model receives one slice inside that tier. A healthy local model therefore
+ * gets half of a local→OVH task budget instead of only one sixth of it.
+ */
+export function httpProviderFallbackWeight(provider) {
+  const builtIn = DEFAULT_HTTP_PROVIDERS.some(
+    (candidate) =>
+      candidate.name === provider?.name &&
+      candidate.model === provider?.model &&
+      candidate.baseURL.replace(/\/$/, '') === String(provider?.baseURL ?? '').replace(/\/$/, '') &&
+      (provider?.apiKeyEnv ?? '') === '',
+  )
+  return builtIn ? 1 : DEFAULT_HTTP_PROVIDERS.length
+}
+
+/** Allocate one candidate's share without exceeding the task or call limit. */
+export function weightedFallbackBudget(
+  remainingMs,
+  perCallTimeoutMs,
+  currentWeight,
+  remainingWeight,
+) {
+  const remaining = Math.max(1, Math.floor(Number(remainingMs) || 0))
+  const callLimit = Math.max(1, Math.floor(Number(perCallTimeoutMs) || remaining))
+  const weight = Math.max(1, Number(currentWeight) || 1)
+  const totalWeight = Math.max(weight, Number(remainingWeight) || weight)
+  const share = Math.max(1, Math.floor((remaining * weight) / totalWeight))
+  return Math.max(1, Math.min(remaining, callLimit, share))
+}
+
+/**
  * dsh-vision 并入：本地 Ollama 视觉后端条目。
  * 启用时返回单个 local-ollama provider（OpenAI 兼容、无 Key）。
  * baseURL 形如 http://127.0.0.1:11434/v1（callOpenAICompatible 会拼 /chat/completions）。
@@ -1936,18 +1968,13 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   // 时走 /messages，x-api-key + anthropic-version 头，响应从 content 块
   // 数组拼接文本；否则保持原 OpenAI /chat/completions 路径完全不变。
   const anthropic = provider.format === 'anthropic'
+  const anthropicWire = anthropic ? await toAnthropicMessages(messages) : undefined
   const body = anthropic
     ? {
         model: provider.model,
         max_tokens: options.maxTokens ?? provider.maxTokens ?? 4096,
-        messages: messages.map((m) => ({
-          role: m && typeof m.role === 'string' ? m.role : 'user',
-          content: Array.isArray(m && m.content)
-            ? toAnthropicContent(m.content)
-            : typeof m.content === 'string'
-              ? m.content
-              : '',
-        })),
+        messages: anthropicWire.messages,
+        ...(anthropicWire.system === '' ? {} : { system: anthropicWire.system }),
         stream: false,
         ...(typeof provider.temperature === 'number' ? { temperature: provider.temperature } : {}),
         ...(typeof provider.top_p === 'number' ? { top_p: provider.top_p } : {}),
@@ -3012,6 +3039,37 @@ export function apply(ctx, config = {}) {
       name: `${provider.name}/${provider.model}`,
       provider,
     }))
+
+  // Legacy whole-turn routing normally follows the configured provider rows.
+  // Local HTTP backends are configured in their own settings group, so inject
+  // them after explicit native rows and before any valid vision-http row. A
+  // stale built-in OVH row is dropped when freeFallback=false.
+  const routingPairs = () => {
+    const availableHttp = new Set(httpEntries().map((entry) => entry.id))
+    const explicit = pairs()
+    const native = explicit.filter((pair) => pair && pair.provider !== HTTP_ROUTE)
+    const local = localProvidersOf(current())
+      .map((provider) => ({ provider: HTTP_ROUTE, model: `${provider.name}/${provider.model}` }))
+      .filter((pair) => availableHttp.has(pair.model))
+    const http = explicit.filter(
+      (pair) => pair && pair.provider === HTTP_ROUTE && availableHttp.has(pair.model),
+    )
+    const seen = new Set()
+    return [...native, ...local, ...http].filter((pair) => {
+      const key = `${pair.provider}/${pair.model}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }
+
+  const routingPairWeight = (pair, entriesById) => {
+    if (pair.provider !== HTTP_ROUTE) return DEFAULT_HTTP_PROVIDERS.length
+    const entry = entriesById.get(pair.model)
+    return entry === undefined
+      ? DEFAULT_HTTP_PROVIDERS.length
+      : httpProviderFallbackWeight(entry.provider)
+  }
   {
     const httpAdapter = {
       providerInfo(provider) {
@@ -3215,7 +3273,7 @@ export function apply(ctx, config = {}) {
         // tools-first mode they are noise — vision happens through tool calls,
         // so the wrapper group only lists the DeepSeek text mirrors.
         if (routingEnabled()) {
-          for (const pair of pairs()) {
+          for (const pair of routingPairs()) {
             if (!adapterAvailable(ctx.llm, pair.provider)) continue
             entries.push({
               provider: wrapperRoute(),
@@ -3229,7 +3287,9 @@ export function apply(ctx, config = {}) {
       },
       async resolveModel(provider, model) {
         // Vision-pair entries resolve against the pair's own adapter metadata.
-        const pair = pairs().find((candidate) => `${candidate.provider}/${candidate.model}` === model)
+        const pair = routingPairs().find(
+          (candidate) => `${candidate.provider}/${candidate.model}` === model,
+        )
         if (pair !== undefined && adapterAvailable(ctx.llm, pair.provider)) {
           try {
             const base = await ctx.llm.resolveModelInfo(pair.provider, pair.model)
@@ -3753,9 +3813,11 @@ export function apply(ctx, config = {}) {
 
   // Build the tool-side adapter chain from real image-capable models already
   // registered in DSH. Explicit non-HTTP backend rows keep their configured
-  // order, then any other native multimodal models are appended. Generated
-  // + 自动识图 wrappers and plugin-owned routes are not real visual backends;
-  // direct HTTP/OVH remains the final fallback layer.
+  // order. Auto-discovery is a zero-config fallback only: once the user has
+  // selected a native row, enabled a local backend, or configured a custom
+  // HTTP endpoint, unrelated registered adapters must not join the execution
+  // chain behind their back. Generated + 自动识图 wrappers and plugin-owned
+  // routes are never real visual backends; direct HTTP/OVH remains final.
   const resolveToolVisionPairs = async () => {
     const out = []
     const seen = new Set()
@@ -3773,11 +3835,24 @@ export function apply(ctx, config = {}) {
       if (capability.image) add(pair.provider, pair.model)
     }
 
-    const capabilities = await collectVisionBackendCapabilities()
-    for (const [provider, models] of Object.entries(capabilities)) {
-      if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
-      for (const [model, capability] of Object.entries(models ?? {})) {
-        if (capability && capability.image) add(provider, model)
+    const hasCustomHttp = Array.isArray(current().httpProviders)
+      ? current().httpProviders.some(
+          (provider) =>
+            provider &&
+            typeof provider.baseURL === 'string' &&
+            typeof provider.model === 'string' &&
+            provider.model !== '',
+        )
+      : false
+    const mayAutoDiscover =
+      out.length === 0 && localProvidersOf(current()).length === 0 && !hasCustomHttp
+    if (mayAutoDiscover) {
+      const capabilities = await collectVisionBackendCapabilities()
+      for (const [provider, models] of Object.entries(capabilities)) {
+        if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
+        for (const [model, capability] of Object.entries(models ?? {})) {
+          if (capability && capability.image) add(provider, model)
+        }
       }
     }
     return out
@@ -3805,7 +3880,7 @@ export function apply(ctx, config = {}) {
       },
       async listModels() {
         const entries = []
-        for (const pair of pairs()) {
+        for (const pair of routingPairs()) {
           const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
           if (!capability.image) continue
           entries.push({
@@ -3841,27 +3916,35 @@ export function apply(ctx, config = {}) {
           if (imageIds.length > 0) break
         }
         let finalText = ''
+        const chainPairs = routingPairs()
+        const chainHttpEntries = new Map(httpEntries().map((entry) => [entry.id, entry]))
         // Fit the conversation into the target model's context window: a long
         // session easily exceeds the 200-260k windows of typical vision models.
         let defaultBudget = 256000
-        try {
-          const base = await ctx.llm.resolveModelInfo(pairs()[0].provider, pairs()[0].model)
-          if (base.context && base.context.contextWindow > 0) {
-            defaultBudget = base.context.contextWindow
+        const firstPair = chainPairs[0]
+        if (firstPair !== undefined) {
+          try {
+            const base = await ctx.llm.resolveModelInfo(firstPair.provider, firstPair.model)
+            if (base.context && base.context.contextWindow > 0) {
+              defaultBudget = base.context.contextWindow
+            }
+          } catch {
+            /* keep default */
           }
-        } catch {
-          /* keep default */
         }
         // One deadline for the whole fallback walk: chained backends share the
         // remaining budget instead of each restarting its own timeout. Each
         // candidate gets at most a fair share so a hung first backend cannot
         // consume the entire deadline and starve every fallback.
         const deadline = createDeadline(visionTaskTimeoutMs())
-        const chainPairs = pairs()
-        let chainCandidatesLeft = chainPairs.length
+        let remainingWeight = chainPairs.reduce(
+          (sum, pair) => sum + routingPairWeight(pair, chainHttpEntries),
+          0,
+        )
         for (const pair of chainPairs) {
-          const candidatesAtStart = Math.max(1, chainCandidatesLeft)
-          chainCandidatesLeft = Math.max(0, chainCandidatesLeft - 1)
+          const candidateWeight = routingPairWeight(pair, chainHttpEntries)
+          const weightAtStart = Math.max(candidateWeight, remainingWeight)
+          remainingWeight = Math.max(0, remainingWeight - candidateWeight)
           if (deadline.expired()) {
             failures.push('deadline: the vision task budget was exhausted before this backend ran')
             break
@@ -3918,9 +4001,11 @@ export function apply(ctx, config = {}) {
           let failed = false
           let failMessage = 'unknown error'
           try {
-            const attemptBudgetMs = Math.max(
-              1,
-              Math.min(timeoutMs(), Math.floor(deadline.remaining() / candidatesAtStart)),
+            const attemptBudgetMs = weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
             )
             const attemptSignal = combineSignals(
               options.signal,
@@ -3994,11 +4079,7 @@ export function apply(ctx, config = {}) {
           reason: {
             kind: 'error',
             failure: {
-              message:
-                `all vision models failed: ${failures.join(' | ')}` +
-                (httpProviders().length > 0
-                  ? ' note: httpProviders (including the free fallback) are skipped while routing=true — set routing=false for the tools-first flow that uses them'
-                  : ''),
+              message: `all vision models failed: ${failures.join(' | ')}`,
               code: 'VISION_CHAIN_EXHAUSTED',
             },
           },
@@ -4517,7 +4598,7 @@ export function apply(ctx, config = {}) {
       // to the text provider (DeepSeek) so daily work stays on it.
       if (reverseRoutingEnabled()) {
         const target = reverseRouteTarget(config0, {
-          pairs: pairs(),
+          pairs: routingPairs(),
           wrapperRoute: wrapperRoute(),
           wrapperRegistered,
           textProvider: textProvider(),
@@ -4532,11 +4613,14 @@ export function apply(ctx, config = {}) {
     // Route the image turn to the chain adapter (falls back under our own
     // control), or directly to the first vision model when the chain route
     // is disabled.
+    const routePairs = routingPairs()
     if (chainRoute() !== undefined) {
       if (config0.provider === chainRoute()) return config0
-      return switchRoute(config0, chainRoute(), `${pairs()[0].provider}/${pairs()[0].model}`)
+      const first = routePairs[0]
+      if (first === undefined) return config0
+      return switchRoute(config0, chainRoute(), `${first.provider}/${first.model}`)
     }
-    const first = pairs()[0]
+    const first = routePairs[0]
     if (first === undefined || config0.provider === first.provider) return config0
     return switchRoute(config0, first.provider, first.model)
   })
@@ -4753,11 +4837,18 @@ export function apply(ctx, config = {}) {
         ]
         const errors = [...rejectedPairs]
         const attempted = []
-        let candidatesLeft = usablePairs.length + httpFallbacks.length
+        const primaryWeight = DEFAULT_HTTP_PROVIDERS.length
+        let remainingWeight =
+          usablePairs.length * primaryWeight +
+          httpFallbacks.reduce(
+            (sum, provider) => sum + httpProviderFallbackWeight(provider),
+            0,
+          )
 
         for (const pair of usablePairs) {
-          const candidatesAtStart = Math.max(1, candidatesLeft)
-          candidatesLeft = Math.max(0, candidatesLeft - 1)
+          const candidateWeight = primaryWeight
+          const weightAtStart = Math.max(candidateWeight, remainingWeight)
+          remainingWeight = Math.max(0, remainingWeight - candidateWeight)
           if (deadline.expired()) {
             errors.push('deadline: the vision task budget was exhausted before this backend ran')
             break
@@ -4771,9 +4862,11 @@ export function apply(ctx, config = {}) {
           }
           try {
             let messages = baseMessages
-            const attemptBudgetMs = Math.max(
-              1,
-              Math.min(timeoutMs(), Math.floor(deadline.remaining() / candidatesAtStart)),
+            const attemptBudgetMs = weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
             )
             const signal = combineSignals(
               deadline.signal(),
@@ -4839,8 +4932,9 @@ export function apply(ctx, config = {}) {
         // final fallbacks: they bypass the harness llm service entirely, so the
         // anonymous free endpoint works without any credential.
         for (const provider of httpFallbacks) {
-          const candidatesAtStart = Math.max(1, candidatesLeft)
-          candidatesLeft = Math.max(0, candidatesLeft - 1)
+          const candidateWeight = httpProviderFallbackWeight(provider)
+          const weightAtStart = Math.max(candidateWeight, remainingWeight)
+          remainingWeight = Math.max(0, remainingWeight - candidateWeight)
           if (deadline.expired()) {
             errors.push('deadline: the vision task budget was exhausted before the http fallback ran')
             break
@@ -4870,9 +4964,11 @@ export function apply(ctx, config = {}) {
               [{ role: 'user', content: openAIBlocks }],
               promptText,
             ).messages
-            const attemptBudgetMs = Math.max(
-              1,
-              Math.min(timeoutMs(), Math.floor(deadline.remaining() / candidatesAtStart)),
+            const attemptBudgetMs = weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
             )
             const attemptSignal = combineSignals(
               deadline.signal(),
@@ -5098,6 +5194,16 @@ export function apply(ctx, config = {}) {
       const attempted = []
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
       const usablePairs = await resolveToolVisionPairs()
+      // Freeze one fallback walk. Settings changes are observed by the next
+      // task, never between two attempts in the current task.
+      const httpFallbacks = httpProviders()
+      const primaryWeight = DEFAULT_HTTP_PROVIDERS.length
+      let remainingWeight =
+        usablePairs.length * primaryWeight +
+        httpFallbacks.reduce(
+          (sum, provider) => sum + httpProviderFallbackWeight(provider),
+          0,
+        )
       const pairCapabilities = new Map()
       for (const pair of pairs()) {
         if (!pair || pair.provider === HTTP_ROUTE) continue
@@ -5119,6 +5225,9 @@ export function apply(ctx, config = {}) {
         errors.push(`${backendKey}: ${message}`)
       }
       for (const pair of usablePairs) {
+        const candidateWeight = primaryWeight
+        const weightAtStart = Math.max(candidateWeight, remainingWeight)
+        remainingWeight = Math.max(0, remainingWeight - candidateWeight)
         if (deadline.expired()) {
           errors.push('deadline: the vision task budget was exhausted before this backend ran')
           break
@@ -5139,13 +5248,23 @@ export function apply(ctx, config = {}) {
           pairCapability = await resolveVisionBackendCapability(pair.provider, pair.model)
           pairCapabilities.set(pairKey, pairCapability)
         }
+        const attemptBudgetMs = weightedFallbackBudget(
+          deadline.remaining(),
+          timeoutMs(),
+          candidateWeight,
+          weightAtStart,
+        )
+        const attemptSignal = combineSignals(
+          deadline.signal(),
+          AbortSignal.timeout(attemptBudgetMs),
+        )
         try {
           const text = await callVisionPair(
             pair,
             [{ role: 'user', content: [block, { type: 'text', text: instruction }] }],
             {
               maxTokens: 4096,
-              signal: combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs())),
+              signal: attemptSignal,
             },
           )
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
@@ -5173,7 +5292,7 @@ export function apply(ctx, config = {}) {
                 pair.model,
                 [block],
                 instruction,
-                combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs())),
+                attemptSignal,
               )
               if (direct && direct.trim() !== '') return { ok: true, text: direct.trim() }
             } catch (bridgeError) {
@@ -5190,7 +5309,11 @@ export function apply(ctx, config = {}) {
           recordFailure(pairKey, classification, error && error.message ? error.message : String(error))
         }
       }
-      for (const provider of httpProviders()) {
+      const httpContent = toOpenAIContent([block], () => imageBytes)
+      for (const provider of httpFallbacks) {
+        const candidateWeight = httpProviderFallbackWeight(provider)
+        const weightAtStart = Math.max(candidateWeight, remainingWeight)
+        remainingWeight = Math.max(0, remainingWeight - candidateWeight)
         if (deadline.expired()) {
           errors.push('deadline: the vision task budget was exhausted before the http fallback ran')
           break
@@ -5203,14 +5326,21 @@ export function apply(ctx, config = {}) {
           continue
         }
         try {
-          const stored = await ctx.get('attachments').readImage(block.attachment)
-          const content = toOpenAIContent([block], () => stored.data)
+          const attemptBudgetMs = weightedFallbackBudget(
+            deadline.remaining(),
+            timeoutMs(),
+            candidateWeight,
+            weightAtStart,
+          )
           const text = await callOpenAICompatible(
             provider,
-            [{ role: 'user', content: [...content, { type: 'text', text: instruction }] }],
+            [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
             {
               maxTokens: provider.maxTokens ?? 4096,
-              signal: combineSignals(deadline.signal(), AbortSignal.timeout(timeoutMs())),
+              signal: combineSignals(
+                deadline.signal(),
+                AbortSignal.timeout(attemptBudgetMs),
+              ),
               resolveCredential,
             },
           )

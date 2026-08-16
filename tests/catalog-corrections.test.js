@@ -176,6 +176,44 @@ test('toAnthropicMessages opens with a user message even when history starts wit
   assert.equal(result.messages[1].role, 'assistant')
 })
 
+test('toAnthropicMessages keeps data-URI image_url blocks without attachment reads', async () => {
+  const result = await toAnthropicMessages(
+    [
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==' } },
+          { type: 'text', text: 'what is this?' },
+        ],
+      },
+    ],
+    async () => {
+      throw new Error('materialized data URIs must not trigger attachment reads')
+    },
+  )
+  assert.equal(result.system, '')
+  assert.equal(result.messages.length, 1)
+  assert.deepEqual(result.messages[0].content, [
+    {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQSkZJRg==' },
+    },
+    { type: 'text', text: 'what is this?' },
+  ])
+  // A non-data URL is dropped instead of guessed at.
+  const dropped = await toAnthropicMessages(
+    [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://x/y.png' } }] }],
+    async () => Buffer.from([1]),
+  )
+  assert.equal(dropped.messages.length, 0)
+})
+
+test('toAnthropicMessages folds plain string content into a text block', async () => {
+  const result = await toAnthropicMessages([{ role: 'user', content: 'hello there' }])
+  assert.equal(result.messages.length, 1)
+  assert.deepEqual(result.messages[0].content, [{ type: 'text', text: 'hello there' }])
+})
+
 test('callAnthropicCompatible posts /v1/messages with anthropic auth and parses text', async () => {
   const original = globalThis.fetch
   let captured
