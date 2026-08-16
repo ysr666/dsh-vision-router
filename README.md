@@ -221,6 +221,7 @@ Default `progressiveTools: false`: all eleven deep tools stay registered from pl
 | `vision_trace` | SVG vectorization (potrace posterization; icons/logos) | SVG |
 | `vision_extract_foreground` | Cutout via border flood fill (uniform backgrounds) | transparent PNG |
 | `vision_html_screenshot` | Screenshot a local HTML file (headless system Chrome); `fullPage: true` captures the whole page and reports `pageHeight` | PNG |
+| `vision_screenshot` | Capture the user's desktop (full virtual screen): PowerShell CopyFromScreen on Windows, screencapture on macOS, ImageMagick import/scrot on Linux — no third-party dependency; optional `identify=true` runs local recognition on the capture (needs a local backend enabled: `localOllama` / `localLmStudio`) and returns the description with the path | PNG / + description |
 | `vision_long_screenshot_ocr` | Long-screenshot transcription: overlapping chunks, tesseract first / vision model fallback, stitched Markdown | chunk PNGs + Markdown + manifest |
 
 Formats are sniffed from magic bytes, so extensionless content-addressed attachment files work everywhere (no `.png` renaming needed).
@@ -247,8 +248,10 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 The vision tools try backends in order and surface an error only after all of them fail:
 
 1. **User vision models**: one per settings row, top to bottom; only models under **Settings → Models** that explicitly declare image input are shown;
-2. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the user models;
-3. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The five models have independent buckets, so spreading requests across them is about **10 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required. Want more headroom? See [Free vision key channels](#free-vision-key-channels) — a free OVH access key lifts this same endpoint to 400 requests/minute.
+2. **Local Ollama (optional, off by default)**: `localOllama.enabled` adds keyless, offline recognition through your local Ollama (for example qwen2.5vl);
+3. **Local LM Studio (optional, off by default)**: `localLmStudio.enabled` follows Ollama and requires the real model identifier shown in LM Studio Developer or returned by `/v1/models`;
+4. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the local backends;
+5. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The five models have independent buckets, so spreading requests across them is about **10 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required. Want more headroom? See [Free vision key channels](#free-vision-key-channels) — a free OVH access key lifts this same endpoint to 400 requests/minute.
 
 > [!IMPORTANT]
 > This “vision chain” is the **eyes** used by Vision Router: each settings row selects one user vision model, while the lower-right chat picker selects the **brain/conversation model**. The two are deliberately separate. Text-only DeepSeek/opencode models are filtered out of the vision-backend dropdown, and the internal `Vision HTTP` transport route is no longer exposed to users.
@@ -322,12 +325,52 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | the model that reasons (your daily model) |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | vision tools on / progressive mounting (off by default for a stable tool schema) / image-turn auto-mount when progressive mode is enabled; `progressiveTools` is boot-time config |
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **Local vision backend (merged from dsh-vision)**: when enabled, `local-ollama` heads the vision chain (private / free / offline); skipped automatically when Ollama is down; `format` selects the request protocol — `openai` (`/chat/completions`, default) or `anthropic` (`/messages`, Anthropic Messages API, offered by newer Ollama builds); temperature/top_p are suggested values (low temperature is steadier for recognition), adjustable by the user — when unset the server default is respected |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: 'local-model', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **Local LM Studio backend (merged from dsh-vision)**: same level as `localOllama` — LM Studio's OpenAI-compatible endpoint; the model name is only a placeholder (LM Studio serves the currently loaded model, any value works); `format` works like `localOllama` (LM Studio exposes both `/chat/completions` and `/messages`); sits after `local-ollama` and before the cloud chain; skipped automatically when down |
+| `instantDescribe` | `false` | **Instant local translation (merged from dsh-vision)**: when on (and `localOllama.enabled`), image blocks are recognized by local Ollama on the first model step — the model understands the image immediately; multi-image batches run concurrently (up to 3, VRAM-bound local inference) and a failing image is skipped individually, the rest still recognized; total failure falls back to the static tool-hint marker |
+| `localDescribeStyle` | `plain` | **Local recognition output style (merged from dsh-vision)**: `plain` = flat description; `structured` = structured recognition (【初步判断】/【细节】/【空间结构】/【原图尺寸】), better for screenshot analysis |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | pre-call downscale and its pixel budget (latency guard) |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | vision answer cache |
 | `timeoutMs` | `120000` | per vision call deadline |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | artifact directory (relative to the session workspace) |
 | `proxy` / `proxyHosts` | `''` / openrouter hosts | optional proxy for vision provider hosts only |
 | `catalogCorrections` | `true` | built-in catalog-routing corrections: when the installed pi-ai catalog routes a known model to the wrong wire protocol (e.g. `opencode-go/qwen3.6-plus` to OpenAI chat completions while OpenCode Go only serves it on `/v1/messages`), the plugin answers that backend directly over the corrected protocol. Each correction disarms itself once the catalog is fixed upstream |
+
+### Local Ollama vision backend (merged from dsh-vision)
+
+A fully local vision path for private, free, offline recognition — no API key, no upload. It plugs into the existing vision chain as one more optional `httpProviders` entry (`local-ollama`), so everything else keeps working exactly as before.
+
+**1. Install Ollama and pull a vision model**
+
+```sh
+# https://ollama.com — then:
+ollama pull qwen2.5vl
+```
+
+**2. Enable it** — in the settings card's "Local vision" group, or via a profile patch:
+
+```yaml
+- id: vision-router
+  config:
+    localOllama:
+      enabled: true
+      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI-compatible endpoint
+      model: 'qwen2.5vl'
+      temperature: 0.5                        # optional; low temperature is steadier for recognition
+      top_p: 0.8                              # optional; unset = server default
+    instantDescribe: true                     # recognize images on the first model step
+    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+```
+
+**3. What happens**
+
+- When enabled, `local-ollama` heads the vision chain: images never leave the machine, nothing is billed.
+- **LM Studio works the same way** — enable `localLmStudio` in the same "Local vision" group with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`); the model name is a placeholder, LM Studio serves whatever model is currently loaded. It sits after `local-ollama` in the chain, before the cloud backends.
+- Each local backend can speak **OpenAI or Anthropic format** via `format` (default `openai`): `anthropic` routes to `/v1/messages` with `x-api-key` + `anthropic-version` headers and base64 image sources — both LM Studio and newer Ollama builds expose that endpoint.
+- If a local backend is down or the call times out, its entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
+- `instantDescribe` recognizes pasted images with the first enabled local backend (Ollama first, then LM Studio) on the first model step, so the model understands the image immediately instead of seeing a tool hint; multiple images are recognized concurrently (up to 3) and a failing image never blocks the rest; results are cached per attachment id, so later turns reuse the same description.
+- `vision_screenshot` with `identify=true` also uses the first enabled local backend.
+- Verify with the log line `instant local describe recognized N/M image(s)`.
 
 ## Requirements
 

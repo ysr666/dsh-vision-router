@@ -219,6 +219,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome）；`fullPage: true` 截整页并返回 `pageHeight` | PNG |
+| `vision_screenshot` | **截取用户桌面全屏**（Windows PowerShell CopyFromScreen / macOS screencapture / Linux import·scrot，无第三方依赖）；`identify=true` 可选：截屏后立即本地识别（需启用任一本地后端：localOllama / localLmStudio），返回路径+识别文本 | PNG / +描述文本 |
 | `vision_long_screenshot_ocr` | 长截图转写：重叠分片，tesseract 优先 / 视觉模型回退，按序拼接 Markdown | 分片 PNG + Markdown + manifest |
 
 图片格式按**魔数识别**，无扩展名的内容寻址附件文件也能直接用（不用再复制成 `.png`）。
@@ -245,8 +246,10 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 视觉工具按顺序逐个尝试，全部失败才报错：
 
 1. **用户视觉模型**：设置卡里一行一个，从上到下；只显示 **设置 → 模型** 中明确声明支持 image 输入的模型；
-2. **高级自定义 HTTP 视觉端点**：如果旧配置/高级配置中存在 `httpProviders`，在用户模型之后尝试；
-3. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；5 个模型是独立限额，因此理论上分散请求可到约 **10 次/分钟**，实际仍以 OVH 当时的限流为准。免注册、免 Key。想提额度？详见[免费视觉 Key 渠道](#免费视觉-key-渠道)——同一个端点挂免费 access key 后是 400 次/分钟。
+2. **本地 Ollama（可选，默认关）**：`localOllama.enabled` 开启后，通过本机 Ollama 做免 Key、离线识别（例如 qwen2.5vl）；
+3. **本地 LM Studio（可选，默认关）**：`localLmStudio.enabled` 排在 Ollama 之后，模型名必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实标识；
+4. **高级自定义 HTTP 视觉端点**：旧配置/高级配置中的 `httpProviders` 排在本地后端之后；
+5. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Mistral-Small-3.2-24B-Instruct-2506` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；5 个模型是独立限额，因此理论上分散请求可到约 **10 次/分钟**，实际仍以 OVH 当时的限流为准。免注册、免 Key。想提额度？详见[免费视觉 Key 渠道](#免费视觉-key-渠道)——同一个端点挂免费 access key 后是 400 次/分钟。
 
 > [!IMPORTANT]
 > 这里的“视觉链”是 Vision Router 调用的**眼睛**：设置页里每一行只选一个用户视觉模型；聊天页右下角选择的是**脑子/会话模型**，两者完全分开。纯文本 DeepSeek / opencode 不会出现在视觉后端下拉里；内部 `Vision HTTP` 也不会再暴露给用户。
@@ -320,12 +323,52 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排视觉链最前（隐私/零费/离线）；Ollama 未运行自动跳过；`format` 选择请求协议——`openai`（/chat/completions，默认）或 `anthropic`（/messages，Anthropic Messages API，新版 Ollama 提供）；temperature/top_p 为建议值（识别任务低温度更稳定），可自行调整，未配置时尊重服务端默认 |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: 'local-model', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地 LM Studio 后端（并入自 dsh-vision）**：与 localOllama 同层级——LM Studio 的 OpenAI 兼容端点；模型名仅为占位（LM Studio 使用当前加载的模型，填什么都行）；`format` 同 localOllama（LM Studio 同时提供 /chat/completions 与 /messages）；排在 local-ollama 之后、云链之前；未运行时自动跳过 |
+| `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启后（且 localOllama.enabled）图片轮第一轮直接本地识别图片块，模型第一轮即看懂；一次多张图并发识别（上限 3，本地推理受显存限制），单张失败单独跳过、其余照常；整体失败回退静态工具标记 |
+| `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存 |
 | `timeoutMs` | `120000` | 单次视觉调用超时 |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | 产物目录（相对会话工作区） |
 | `proxy` / `proxyHosts` | `''` / openrouter 域名 | 仅视觉供应商域名可选的本地代理 |
 | `catalogCorrections` | `true` | 内置目录纠错：当已安装的 pi-ai 目录把已知模型路由到错误协议时（例如 `opencode-go/qwen3.6-plus` 被指向 OpenAI chat completions，而 OpenCode Go 只在 `/v1/messages` 上提供该模型），插件直接按正确协议应答该后端；上游目录修复后每条纠错自动失效 |
+
+### 本地 Ollama 视觉后端（并入自 dsh-vision）
+
+完全本地的视觉路径：隐私、零费用、可离线，不需要 Key、图不出机器。它作为视觉链里一个可选的 `httpProviders` 条目（`local-ollama`）接入，其他一切照旧。
+
+**1. 安装 Ollama 并拉取视觉模型**
+
+```sh
+# https://ollama.com —— 然后：
+ollama pull qwen2.5vl
+```
+
+**2. 开启** —— 设置卡片「本地视觉」组，或 profile patch：
+
+```yaml
+- id: vision-router
+  config:
+    localOllama:
+      enabled: true
+      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI 兼容端点
+      model: 'qwen2.5vl'
+      temperature: 0.5                        # 可选；识别用低温更稳
+      top_p: 0.8                              # 可选；留空 = 服务端默认
+    instantDescribe: true                     # 图片轮第一轮即本地识别
+    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+```
+
+**3. 行为说明**
+
+- 开启后 `local-ollama` 排在视觉链最前：图不出机器、不花钱、可离线。
+- **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 LM Studio 的 OpenAI 兼容端点（默认 `http://localhost:1234/v1`）；模型名仅为占位，LM Studio 使用当前加载的模型。它排在 `local-ollama` 之后、云链之前。
+- 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）：`anthropic` 走 `/v1/messages`，带 `x-api-key` + `anthropic-version` 头、图片转 base64 source——LM Studio 与新版 Ollama 都提供该端点。
+- 任一本地后端未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
+- `instantDescribe` 在图片轮第一轮就用**第一个启用的本地后端**（Ollama 优先、LM Studio 次之）识别图片，模型立即看懂而不是看到工具提示；一次多张图并发识别（上限 3），单张失败不会阻塞其余；识别结果按附件 id 缓存，后续轮次直接复用。
+- `vision_screenshot` 的 `identify=true` 同样使用第一个启用的本地后端。
+- 日志中看到 `instant local describe recognized N/M image(s)` 即表示生效。
 
 ## 环境要求
 
