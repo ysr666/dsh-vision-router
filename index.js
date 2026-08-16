@@ -2185,7 +2185,11 @@ export function imageMemorySet(map, id, description) {
  */
 export async function buildInstantLocalMap(ctx, messages, provider, options = {}) {
   const map = new Map()
-  if (!provider || !messages) return map
+  // 逐级降级：provider 可以是单个后端或后端数组。数组时按顺序逐级尝试——
+  // 上一级后端不可用（连接失败/超时/空结果）时，未识别的图自动交给下一级
+  // （如 Ollama 挂 → LM Studio 补），全部失败才整体放弃回退静态标记。
+  const providers = Array.isArray(provider) ? provider.filter(Boolean) : provider ? [provider] : []
+  if (providers.length === 0 || !messages) return map
   const style = options.style === 'structured' ? 'structured' : 'plain'
   const memory = options.memory instanceof Map ? options.memory : undefined
   const seen = new Set()
@@ -2219,53 +2223,66 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
       ? AbortSignal.any([options.signal, AbortSignal.timeout(budgetMs)])
       : AbortSignal.timeout(budgetMs)
   try {
-    // 多图并行识别：Ollama 本地推理受显存限制，不能无脑全并发——按
-    // 3 张一批并行（批间串行），一次贴 N 张图总耗时 ≈ ⌈N/3⌉ × 单张。
-    // 单张失败只丢那张（记录日志），其余照常识别，不再"一张坏图拖垮整批"。
+    // 逐级降级主循环：每轮只处理仍未识别的图（上一级已成功的直接跳过）。
+    // 多图并行识别：本地推理受显存限制，不能无脑全并发——按 3 张一批并行
+    // （批间串行），一次贴 N 张图总耗时 ≈ ⌈N/3⌉ × 单张。单张失败只丢那张。
     const CONCURRENT = 3
-    for (let start = 0; start < blocks.length; start += CONCURRENT) {
-      const batch = blocks.slice(start, start + CONCURRENT)
-      const outcomes = await Promise.all(
-        batch.map(async ({ block, id }) => {
-          try {
-            const startedAt = Date.now()
-            const stored = await attachments.readImage(block.attachment, signal)
-            const content = toOpenAIContent([block], () => stored.data)
-            content.push({ type: 'text', text: prompt })
-            const text = await callOpenAICompatible(
-              provider,
-              [{ role: 'user', content }],
-              { maxTokens: provider.maxTokens ?? 2048, signal },
-            )
-            return { id, ok: true, text, elapsedMs: Date.now() - startedAt }
-          } catch (error) {
-            return {
-              id,
-              ok: false,
-              error: error && error.message ? error.message : String(error),
+    for (const currentProvider of providers) {
+      const pending = blocks.filter((b) => !map.has(b.id))
+      if (pending.length === 0) break
+      const roundBefore = map.size
+      for (let start = 0; start < pending.length; start += CONCURRENT) {
+        const batch = pending.slice(start, start + CONCURRENT)
+        const outcomes = await Promise.all(
+          batch.map(async ({ block, id }) => {
+            try {
+              const startedAt = Date.now()
+              const stored = await attachments.readImage(block.attachment, signal)
+              const content = toOpenAIContent([block], () => stored.data)
+              content.push({ type: 'text', text: prompt })
+              const text = await callOpenAICompatible(
+                currentProvider,
+                [{ role: 'user', content }],
+                { maxTokens: currentProvider.maxTokens ?? 2048, signal },
+              )
+              return { id, ok: true, text, elapsedMs: Date.now() - startedAt }
+            } catch (error) {
+              return {
+                id,
+                ok: false,
+                error: error && error.message ? error.message : String(error),
+              }
             }
-          }
-        }),
-      )
-      for (const outcome of outcomes) {
-        if (outcome.ok) {
-          if (typeof outcome.text === 'string' && outcome.text.trim() !== '') {
-            const elapsedSec = Math.max(1, Math.round(outcome.elapsedMs / 1000))
-            const plain = outcome.text.trim()
-            map.set(
+          }),
+        )
+        for (const outcome of outcomes) {
+          if (outcome.ok) {
+            if (typeof outcome.text === 'string' && outcome.text.trim() !== '') {
+              const elapsedSec = Math.max(1, Math.round(outcome.elapsedMs / 1000))
+              const plain = outcome.text.trim()
+              map.set(
+                outcome.id,
+                `已由本地视觉识别（本地识别 ${elapsedSec}s）\n${plain}`,
+              )
+              if (memory !== undefined) imageMemorySet(memory, outcome.id, plain)
+            }
+          } else {
+            ctx.logger?.warn(
+              'vision-router: instant local describe via %s failed for image %s: %s',
+              currentProvider.name,
               outcome.id,
-              `已由本地视觉识别（本地识别 ${elapsedSec}s）\n${plain}`,
+              outcome.error,
             )
-            if (memory !== undefined) imageMemorySet(memory, outcome.id, plain)
           }
-        } else {
-          ctx.logger?.warn(
-            'vision-router: instant local describe failed for image %s: %s',
-            outcome.id,
-            outcome.error,
-          )
         }
       }
+      // 每轮（每个后端）的识别结果都要可排查——谁成功了几张、谁没派上用场。
+      ctx.logger?.info(
+        'vision-router: instant local describe via %s recognized %d/%d pending image(s)',
+        currentProvider.name,
+        map.size - roundBefore,
+        pending.length,
+      )
     }
     // 排障可见性：成功与失败都进宿主日志（含 v1.3.0 的持久化诊断日志）。
     ctx.logger?.info(
@@ -2674,11 +2691,11 @@ export function apply(ctx, config = {}) {
       raw,
     )
   }
-  // dsh-vision 并入：即时本地翻译的 provider（仅 instantDescribe 且至少
-  // 一个本地后端启用时存在——Ollama 优先、LM Studio 次之；否则 undefined
-  // = 保持静态工具提示标记）。
+  // dsh-vision 并入：即时本地翻译的 provider 列表（仅 instantDescribe 且至少
+  // 一个本地后端启用时存在——Ollama 优先、LM Studio 次之，逐级降级尝试；
+  // 否则 undefined = 保持静态工具提示标记）。
   const instantLocalProvider = () =>
-    current().instantDescribe === true ? localProvidersOf(current())[0] : undefined
+    current().instantDescribe === true ? localProvidersOf(current()) : undefined
   const instantLocalStyle = () =>
     current().localDescribeStyle === 'structured' ? 'structured' : 'plain'
   const resolveCredential = async (ref) => {
