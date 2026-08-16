@@ -342,6 +342,8 @@ pnpm dsh plugin --profile web update dsh-vision-router
 
 设置存放在 profile 的设置提供方里，升级不丢失。
 
+> **新版本一直不生效（`downloaded 0` / `added 0`）：** pnpm v11 会拦下发布不足 24 小时的版本；运行 `npx dsh-vision-router repair` 修复过期的带版本号豁免条目后，更新立即生效。
+
 > **从 bundle 补丁之前（v0.x）升级：** 现在插件由自带的 bundle 补丁自动挂载，
 > 若 `~/.dsh/profiles/<profile>/cordis.patch.yml` 里还残留旧版手动行，会与之
 > 重复，`dsh web` 启动即报 `duplicate loader entry id: vision-router`。删除
