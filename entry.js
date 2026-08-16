@@ -28,6 +28,23 @@ export const Config = core.Config
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
+  // 启动诊断摘要：配置从哪来、本地后端/即时翻译是否启用，一眼可查。
+  // settings 层可能过滤掉部分 key（如 instantDescribe），摘要让这类问题
+  // 不再"静默"——重启后看日志即可确认运行时真实状态。
+  try {
+    const c = config && typeof config === 'object' ? config : {}
+    const local = c.localOllama && typeof c.localOllama === 'object' ? c.localOllama : {}
+    const lms = c.localLmStudio && typeof c.localLmStudio === 'object' ? c.localLmStudio : {}
+    logging.logger.info(
+      'vision-router: apply config summary — instantDescribe=%s localDescribeStyle=%s localOllama=%s localLmStudio=%s',
+      c.instantDescribe === true ? 'on' : 'off',
+      c.localDescribeStyle === 'structured' ? 'structured' : 'plain',
+      local.enabled === true ? 'on' : 'off',
+      lms.enabled === true ? 'on' : 'off',
+    )
+  } catch {
+    /* diagnostics must never break apply */
+  }
   try {
     const result = core.apply(runtimeCtx, {
       ...config,

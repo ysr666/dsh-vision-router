@@ -4370,6 +4370,23 @@ export function apply(ctx, config = {}) {
     const visionScope = visionScopeOf(session)
     visionTurnMemory.bindSession(sessionIdOf(session), visionScope)
     const rawMessages = decision.messages ?? payload.messages ?? []
+    // 图片轮诊断入口：谁在看这张图、即时翻译决策如何。settings 层可能过滤
+    // 配置 key，这里把运行时真实决策落盘——instantDescribe 未生效时（如
+    // settings 无该 key）一眼可见 "instant=off"。
+    if (ctx.logger) {
+      const hasImage = rawMessages.some(
+        (message) => message && Array.isArray(message.content) && blocksHaveImage(message.content),
+      )
+      if (hasImage) {
+        ctx.logger.info(
+          'vision-router: image turn — instantDescribe=%s localBackends=%s',
+          current().instantDescribe === true ? 'on' : 'off',
+          localProvidersOf(current())
+            .map((p) => p.name)
+            .join(',') || 'none',
+        )
+      }
+    }
     // Record every raw image reference before nested tool-result images are
     // sanitized. This preserves attachment lookup for a later vision_describe.
     const rawImageRefs = rewriteImageBlocks(rawMessages)
