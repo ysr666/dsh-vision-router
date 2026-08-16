@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-256%20tests-2EA44F?style=flat-square" alt="Verified: 256 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-257%20tests-2EA44F?style=flat-square" alt="Verified: 257 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.4.2）**
+> 📌 **公告（v1.4.3）**
 >
-> **v1.4.2 现已支持**：Oh-DSH Desktop 兼容——在内置的 DSH 0.1.0-rc.5 上不再与官方 DeepSeek 路由竞争导致启动崩溃（修复「DSH runtime exited before readiness」）；opencode-go qwen3.6-plus 视觉调用走正确的 Anthropic 端点；「+ 自动识图」twin 组在多步对话中保留选择器里的推理等级。
+> **v1.4.3：自定义视觉后端改为运行时验证，支持 WebSocket/私有协议。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />

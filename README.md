@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.2"><img src="https://img.shields.io/badge/release-v1.4.2-5B4CF0?style=flat-square" alt="Release v1.4.2" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-256%20tests-2EA44F?style=flat-square" alt="Verified: 256 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-257%20tests-2EA44F?style=flat-square" alt="Verified: 257 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.4.2)**
+> 📌 **Announcement (v1.4.3)**
 >
-> **v1.4.2 now supports** Oh-DSH Desktop — the plugin no longer races the stock DeepSeek route on the bundled DSH 0.1.0-rc.5 runtime (fixes "DSH runtime exited before readiness"), opencode-go qwen3.6-plus vision calls reach the correct Anthropic endpoint, and "+ Auto Vision" twins keep the picker's reasoning effort across multi-step turns.
+> **v1.4.3:** Custom vision backends are runtime-verified instead of blocked by DSH capability metadata, including WebSocket/private transports.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
