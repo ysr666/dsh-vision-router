@@ -279,8 +279,8 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', temperature: 0.5, top_p: 0.8 }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排视觉链最前（隐私/零费/离线）；Ollama 未运行自动跳过；temperature/top_p 为建议值（识别任务低温度更稳定），可自行调整，未配置时尊重服务端默认 |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: 'local-model', temperature: 0.5, top_p: 0.8 }` | **本地 LM Studio 后端（并入自 dsh-vision）**：与 localOllama 同层级——LM Studio 的 OpenAI 兼容端点；模型名仅为占位（LM Studio 使用当前加载的模型，填什么都行）；排在 local-ollama 之后、云链之前；未运行时自动跳过 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排视觉链最前（隐私/零费/离线）；Ollama 未运行自动跳过；`format` 选择请求协议——`openai`（/chat/completions，默认）或 `anthropic`（/messages，Anthropic Messages API，新版 Ollama 提供）；temperature/top_p 为建议值（识别任务低温度更稳定），可自行调整，未配置时尊重服务端默认 |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: 'local-model', format: 'openai', temperature: 0.5, top_p: 0.8 }` | **本地 LM Studio 后端（并入自 dsh-vision）**：与 localOllama 同层级——LM Studio 的 OpenAI 兼容端点；模型名仅为占位（LM Studio 使用当前加载的模型，填什么都行）；`format` 同 localOllama（LM Studio 同时提供 /chat/completions 与 /messages）；排在 local-ollama 之后、云链之前；未运行时自动跳过 |
 | `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启后（且 localOllama.enabled）图片轮第一轮直接本地识别图片块，模型第一轮即看懂；一次多张图并发识别（上限 3，本地推理受显存限制），单张失败单独跳过、其余照常；整体失败回退静态工具标记 |
 | `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
@@ -319,6 +319,7 @@ ollama pull qwen2.5vl
 
 - 开启后 `local-ollama` 排在视觉链最前：图不出机器、不花钱、可离线。
 - **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 LM Studio 的 OpenAI 兼容端点（默认 `http://localhost:1234/v1`）；模型名仅为占位，LM Studio 使用当前加载的模型。它排在 `local-ollama` 之后、云链之前。
+- 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）：`anthropic` 走 `/v1/messages`，带 `x-api-key` + `anthropic-version` 头、图片转 base64 source——LM Studio 与新版 Ollama 都提供该端点。
 - 任一本地后端未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
 - `instantDescribe` 在图片轮第一轮就用**第一个启用的本地后端**（Ollama 优先、LM Studio 次之）识别图片，模型立即看懂而不是看到工具提示；一次多张图并发识别（上限 3），单张失败不会阻塞其余；识别结果按附件 id 缓存，后续轮次直接复用。
 - `vision_screenshot` 的 `identify=true` 同样使用第一个启用的本地后端。

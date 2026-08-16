@@ -303,6 +303,9 @@ export const Config = z.object({
       enabled: z.boolean().default(false),
       baseURL: z.string().default('http://127.0.0.1:11434/v1'),
       model: z.string().default('qwen2.5vl'),
+      // 请求格式：'openai'（/chat/completions，默认）| 'anthropic'
+      // （/messages，Ollama 新版本提供 Anthropic 兼容端点）。
+      format: z.union(['openai', 'anthropic']).default('openai'),
       // 建议值（与原版 dsh-vision 一致）：识别任务低温度更稳定；
       // 用户可按模型手感在设置卡自行调整。
       temperature: z.number().min(0).max(2).default(0.5),
@@ -319,6 +322,9 @@ export const Config = z.object({
       enabled: z.boolean().default(false),
       baseURL: z.string().default('http://localhost:1234/v1'),
       model: z.string().default('local-model'),
+      // 请求格式：'openai'（/chat/completions，默认）| 'anthropic'
+      // （/messages，LM Studio 的 OpenAI 兼容服务同样提供）。
+      format: z.union(['openai', 'anthropic']).default('openai'),
       // 与 localOllama 相同的建议值语义：显式设置才透传，留空尊重服务端默认。
       temperature: z.number().min(0).max(2).default(0.5),
       top_p: z.number().min(0).max(1).default(0.8),
@@ -1692,6 +1698,8 @@ export function localOllamaProvidersOf(config) {
       model,
       apiKeyEnv: '',
       maxTokens: 2048,
+      // 仅显式选择 anthropic 格式时携带（默认 openai 路径保持字节不变）。
+      ...(local.format === 'anthropic' ? { format: 'anthropic' } : {}),
       // 建议值透传：温度/top_p 只在显式配置时携带（callOpenAICompatible
       // 仅对 number 类型发送），未配置时用服务端默认。
       ...(typeof local.temperature === 'number' ? { temperature: local.temperature } : {}),
@@ -1718,6 +1726,7 @@ export function localLmStudioProvidersOf(config) {
       model,
       apiKeyEnv: '',
       maxTokens: 2048,
+      ...(local.format === 'anthropic' ? { format: 'anthropic' } : {}),
       ...(typeof local.temperature === 'number' ? { temperature: local.temperature } : {}),
       ...(typeof local.top_p === 'number' ? { top_p: local.top_p } : {}),
     },
@@ -1788,6 +1797,34 @@ export function toOpenAIContent(blocks, bytesOf) {
 }
 
 /** One non-streaming OpenAI-compatible chat completion; keyless when apiKeyEnv is empty. */
+/**
+ * OpenAI content blocks → Anthropic content blocks. The local-recognition
+ * call sites only ever produce text + base64 image_url blocks; anything else
+ * is dropped (Anthropic would reject unknown block types).
+ */
+export function toAnthropicContent(content) {
+  const out = []
+  for (const block of content ?? []) {
+    if (!block || typeof block !== 'object') continue
+    if (block.type === 'text' && typeof block.text === 'string') {
+      out.push({ type: 'text', text: block.text })
+    } else if (
+      block.type === 'image_url' &&
+      block.image_url &&
+      typeof block.image_url.url === 'string'
+    ) {
+      const match = /^data:([^;,]+);base64,(.+)$/.exec(block.image_url.url)
+      if (match) {
+        out.push({
+          type: 'image',
+          source: { type: 'base64', media_type: match[1], data: match[2] },
+        })
+      }
+    }
+  }
+  return out
+}
+
 export async function callOpenAICompatible(provider, messages, options = {}) {
   const headers = { 'content-type': 'application/json' }
   const apiKeyEnv = typeof provider.apiKeyEnv === 'string' ? provider.apiKeyEnv : ''
@@ -1803,24 +1840,53 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
     if (apiKey === '') throw new Error(`http provider "${provider.name}": ${apiKeyEnv} is not set`)
     headers.authorization = `Bearer ${apiKey}`
   }
-  const body = {
-    model: provider.model,
-    messages,
-    max_tokens: options.maxTokens ?? provider.maxTokens ?? 4096,
-    stream: false,
-    // dsh-vision 并入：temperature/top_p 可选透传（仅 provider 显式携带时
-    // 才发送，不改变既有 HTTP provider 的默认行为）。
-    ...(typeof provider.temperature === 'number' ? { temperature: provider.temperature } : {}),
-    ...(typeof provider.top_p === 'number' ? { top_p: provider.top_p } : {}),
-  }
-  const url = `${provider.baseURL.replace(/\/$/, '')}/chat/completions`
+  // dsh-vision 并入：Anthropic Messages API 格式（本地后端如 LM Studio /
+  // Ollama 的新端点也提供 /v1/messages）。provider.format === 'anthropic'
+  // 时走 /messages，x-api-key + anthropic-version 头，响应从 content 块
+  // 数组拼接文本；否则保持原 OpenAI /chat/completions 路径完全不变。
+  const anthropic = provider.format === 'anthropic'
+  const body = anthropic
+    ? {
+        model: provider.model,
+        max_tokens: options.maxTokens ?? provider.maxTokens ?? 4096,
+        messages: messages.map((m) => ({
+          role: m && typeof m.role === 'string' ? m.role : 'user',
+          content: Array.isArray(m && m.content)
+            ? toAnthropicContent(m.content)
+            : typeof m.content === 'string'
+              ? m.content
+              : '',
+        })),
+        stream: false,
+        ...(typeof provider.temperature === 'number' ? { temperature: provider.temperature } : {}),
+        ...(typeof provider.top_p === 'number' ? { top_p: provider.top_p } : {}),
+      }
+    : {
+        model: provider.model,
+        messages,
+        max_tokens: options.maxTokens ?? provider.maxTokens ?? 4096,
+        stream: false,
+        // dsh-vision 并入：temperature/top_p 可选透传（仅 provider 显式携带时
+        // 才发送，不改变既有 HTTP provider 的默认行为）。
+        ...(typeof provider.temperature === 'number' ? { temperature: provider.temperature } : {}),
+        ...(typeof provider.top_p === 'number' ? { top_p: provider.top_p } : {}),
+      }
+  const url = `${provider.baseURL.replace(/\/$/, '')}${anthropic ? '/messages' : '/chat/completions'}`
+  const requestHeaders = anthropic
+    ? {
+        ...headers,
+        // Anthropic 用 x-api-key（本地后端通常无 Key，传空串即可）。
+        'x-api-key': headers.authorization ? headers.authorization.slice('Bearer '.length) : '',
+        'anthropic-version': '2023-06-01',
+      }
+    : headers
   const request = () =>
     fetchWithOpenAICompatibility(
       fetch,
       url,
       {
         method: 'POST',
-        headers,
+        headers: requestHeaders,
         body: JSON.stringify(body),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       },
@@ -1852,9 +1918,16 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
       throw new Error(`http provider "${provider.name}": ${response.status} ${detail}`)
     }
     const data = await response.json()
-    const content = data && data.choices && data.choices[0] && data.choices[0].message
-      ? data.choices[0].message.content
-      : undefined
+    const content = anthropic
+      ? Array.isArray(data.content)
+        ? data.content
+            .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+            .map((b) => b.text)
+            .join('')
+        : data.content
+      : data && data.choices && data.choices[0] && data.choices[0].message
+        ? data.choices[0].message.content
+        : undefined
     if (typeof content !== 'string') throw new Error(`http provider "${provider.name}": unexpected response shape`)
     return content.trim()
   }

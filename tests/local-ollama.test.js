@@ -1,7 +1,8 @@
 // dsh-vision 并入特性的测试：本地 Ollama / LM Studio 视觉后端
 // （localOllamaProvidersOf / localLmStudioProvidersOf / localProvidersOf /
-// httpProvidersOf 本地优先插入）与即时本地翻译（buildInstantLocalMap 的
-// 优雅降级路径——不依赖真实本地服务）、提示风格（localDescribePrompt）。
+// httpProvidersOf 本地优先插入）、OpenAI / Anthropic 两种请求格式
+// （callOpenAICompatible 的 format 分支）与即时本地翻译
+// （buildInstantLocalMap 的优雅降级路径——不依赖真实本地服务）、提示风格。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -13,6 +14,8 @@ import {
   buildInstantLocalMap,
   localDescribePrompt,
   imageMemorySet,
+  callOpenAICompatible,
+  toAnthropicContent,
 } from '../index.js'
 
 test('localOllamaProvidersOf returns [] when unset or disabled', () => {
@@ -222,4 +225,78 @@ test('imageMemorySet evicts oldest entries beyond the FIFO limit', () => {
   assert.equal(map.size, 200)
   assert.equal(map.has('id-1'), true)
   assert.equal(map.get('id-199'), 'updated')
+})
+
+test('toAnthropicContent converts text and data-URI image blocks', () => {
+  const converted = toAnthropicContent([
+    { type: 'text', text: '看这张图' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+    { type: 'image_url', image_url: { url: 'https://example.com/x.png' } }, // 非 data URI 丢弃
+    { type: 'tool_use', id: 'x' }, // 未知块类型丢弃
+  ])
+  assert.deepEqual(converted, [
+    { type: 'text', text: '看这张图' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+  ])
+})
+
+test('local providers carry format=anthropic only when explicitly chosen', () => {
+  const ollamaDefault = localOllamaProvidersOf({ localOllama: { enabled: true } })[0]
+  assert.equal('format' in ollamaDefault, false)
+  const ollamaAnthropic = localOllamaProvidersOf({
+    localOllama: { enabled: true, format: 'anthropic' },
+  })[0]
+  assert.equal(ollamaAnthropic.format, 'anthropic')
+  const lmsAnthropic = localLmStudioProvidersOf({
+    localLmStudio: { enabled: true, format: 'anthropic' },
+  })[0]
+  assert.equal(lmsAnthropic.format, 'anthropic')
+  const lmsDefault = localLmStudioProvidersOf({ localLmStudio: { enabled: true } })[0]
+  assert.equal('format' in lmsDefault, false)
+})
+
+test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: init.headers, body: JSON.parse(init.body) }
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: '识别结果' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const text = await callOpenAICompatible(
+      {
+        name: 'local-lmstudio',
+        baseURL: 'http://localhost:1234/v1',
+        model: 'local-model',
+        format: 'anthropic',
+        temperature: 0.2,
+      },
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '看这张图' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+          ],
+        },
+      ],
+      { maxTokens: 64 },
+    )
+    assert.equal(text, '识别结果')
+    assert.equal(captured.url, 'http://localhost:1234/v1/messages')
+    assert.equal(captured.headers['x-api-key'], '')
+    assert.equal(captured.headers['anthropic-version'], '2023-06-01')
+    assert.equal(captured.body.model, 'local-model')
+    assert.equal(captured.body.max_tokens, 64)
+    assert.equal(captured.body.temperature, 0.2)
+    assert.deepEqual(captured.body.messages[0].content, [
+      { type: 'text', text: '看这张图' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    ])
+  } finally {
+    globalThis.fetch = original
+  }
 })
