@@ -9,12 +9,12 @@
   },
   "homepage": "https://github.com/ysr666/dsh-vision-router",
   "type": "module",
-  "main": "index.js",
+  "main": "entry.js",
   "bin": {
     "dsh-vision-router": "./lib/doctor-cli.js"
   },
   "exports": {
-    ".": "./index.js",
+    ".": "./entry.js",
     "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
@@ -26,6 +26,7 @@
     "assets",
     "cordis.patch.yml",
     "docs",
+    "entry.js",
     "index.js",
     "lib",
     "presets"
