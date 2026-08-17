@@ -998,6 +998,16 @@ test('vision chain falls through from a hung local backend to the next local bac
     visionTaskTimeoutMs: 1200,
   }
   const { ctx, registrations, toolDefs } = bootHarness(config0)
+  // Capture the plugin's logger after boot but before apply, so per-backend
+  // call diagnostics can be asserted (regression: degenerate outputs used to
+  // look like successes with no way to tell which backend produced them).
+  const infos = []
+  const warns = []
+  ctx.logger = {
+    info: (...args) => { infos.push(args) },
+    warn: (...args) => { warns.push(args) },
+    error() {},
+  }
   apply(ctx, Config(config0))
   // Route the chain's delegation through the registered adapters like a real
   // harness would (the stock mock stream is a no-op stub).
@@ -1026,6 +1036,18 @@ test('vision chain falls through from a hung local backend to the next local bac
     assert.ok(hang.requests.length >= 1, 'the hanging local backend must have been tried')
     assert.ok(fast.requests.length >= 1, 'the next local backend must still get a real attempt')
     assert.ok(elapsed < 2500, `fallthrough should stay inside the shared task budget (took ${elapsed}ms)`)
+
+    // Per-backend diagnostics: the successful call must name its backend,
+    // content length and latency; the hung backend's fallthrough must be
+    // logged with the backend key so degenerate/failed hops are traceable.
+    const okLine = infos.find((args) => String(args[0]).includes('vision call') && String(args[0]).includes(' ok '))
+    assert.ok(okLine, 'a per-backend ok diagnostic must be logged')
+    assert.match(String(okLine[1]), /fast-vl/)
+    assert.equal(okLine[2], 'fast provider answered'.length)
+    const fallbackWarn = warns.find((args) => String(args[0]).includes('fallback'))
+    assert.ok(fallbackWarn, 'the hung backend fallthrough must be logged as a warn')
+    assert.match(String(fallbackWarn[1]), /hang-vl/)
+    assert.equal(fallbackWarn[2], 'TIMEOUT')
   } finally {
     await hang.close()
     await fast.close()

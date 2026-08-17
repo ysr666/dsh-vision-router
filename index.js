@@ -5169,8 +5169,12 @@ export function apply(ctx, config = {}) {
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
+            ctx.logger?.info('vision-router: vision call %s skipped (circuit open: %s)', backendKey, gate.reason)
             continue
           }
+          // Declared outside the try so the catch can report the elapsed time
+          // even when the failure happens before the first network call.
+          let attemptStarted = Date.now()
           try {
             let messages = baseMessages
             // Local backends get an independent anti-hang budget (a fair share
@@ -5197,6 +5201,12 @@ export function apply(ctx, config = {}) {
               bridgeBlocks: blocks,
               bridgeInstruction: promptText,
             })
+            ctx.logger?.info(
+              'vision-router: vision call %s ok (%d chars, %d ms)',
+              backendKey,
+              String(text ?? '').length,
+              Date.now() - attemptStarted,
+            )
             if (wantJson) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
@@ -5219,6 +5229,7 @@ export function apply(ctx, config = {}) {
                       source: { kind: 'plugin', plugin: 'dsh-vision-router' },
                     },
                   ]
+                  attemptStarted = Date.now()
                   text = await callVisionPairWithOptionalBridge(pair, messages, {
                     maxTokens: 4096,
                     signal,
@@ -5227,6 +5238,12 @@ export function apply(ctx, config = {}) {
                     bridgeInstruction:
                       promptText + '\n\nThat output was not valid JSON. Respond with ONLY a valid JSON object now.',
                   })
+                  ctx.logger?.info(
+                    'vision-router: vision call %s ok after JSON correction (%d chars, %d ms)',
+                    backendKey,
+                    String(text ?? '').length,
+                    Date.now() - attemptStarted,
+                  )
                 }
               }
               const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
@@ -5252,8 +5269,10 @@ export function apply(ctx, config = {}) {
             const message = error && error.message ? error.message : String(error)
             errors.push(`${backendKey}: ${message}`)
             ctx.logger?.warn(
-              'vision-router: vision_describe fallback (%s): %s',
+              'vision-router: vision_describe fallback [%s] (%s, %d ms): %s',
+              backendKey,
               classification.kind,
+              Date.now() - attemptStarted,
               message,
             )
           }
@@ -5275,8 +5294,12 @@ export function apply(ctx, config = {}) {
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
+            ctx.logger?.info('vision-router: vision call %s skipped (circuit open: %s)', backendKey, gate.reason)
             continue
           }
+          // Declared outside the try so the catch can report the elapsed time
+          // even when the failure happens before the first network call.
+          let attemptStarted = Date.now()
           try {
             // Precompute bytes once per block (attachments.readImage is async).
             const openAIBlocks = []
@@ -5317,6 +5340,12 @@ export function apply(ctx, config = {}) {
               return answer
             }
             let text = await askHttp(undefined)
+            ctx.logger?.info(
+              'vision-router: vision call %s ok (%d chars, %d ms)',
+              backendKey,
+              String(text ?? '').length,
+              Date.now() - attemptStarted,
+            )
             if (wantJson) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
@@ -5326,8 +5355,15 @@ export function apply(ctx, config = {}) {
                   return compact
                 }
                 if (attempt === 0) {
+                  attemptStarted = Date.now()
                   text = await askHttp(
                     'That output was not valid JSON. Respond with ONLY a valid JSON object now.',
+                  )
+                  ctx.logger?.info(
+                    'vision-router: vision call %s ok after JSON correction (%d chars, %d ms)',
+                    backendKey,
+                    String(text ?? '').length,
+                    Date.now() - attemptStarted,
                   )
                 }
               }
@@ -5351,8 +5387,10 @@ export function apply(ctx, config = {}) {
             const message = error && error.message ? error.message : String(error)
             errors.push(`${backendKey}: ${message}`)
             ctx.logger?.warn(
-              'vision-router: vision_describe http fallback (%s): %s',
+              'vision-router: vision_describe http fallback [%s] (%s, %d ms): %s',
+              backendKey,
               classification.kind,
+              Date.now() - attemptStarted,
               message,
             )
           }
