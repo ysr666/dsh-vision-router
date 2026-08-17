@@ -455,6 +455,105 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   assert.equal(source.includes('inject: () => cardInject'), true)
 })
 
+test('guide sync never queries the DOM or forces layout when no walkthrough is active', () => {
+  const bundle = loadClientBundle()
+  const savedDocument = globalThis.document
+  const savedWindow = globalThis.window
+  let queryCount = 0
+  let rectCount = 0
+  // A settings dialog is on screen (as it is while scrolling the settings
+  // panel). The idle guide sync must not even look for it: querySelectorAll
+  // and getBoundingClientRect per scroll event are what forced layout and
+  // stuttered the panel.
+  const fakeDialog = {
+    getBoundingClientRect: () => {
+      rectCount += 1
+      return { width: 800, height: 600, x: 0, y: 0, left: 0, top: 0, right: 800, bottom: 600 }
+    },
+  }
+  globalThis.document = {
+    body: {},
+    querySelectorAll: () => {
+      queryCount += 1
+      return [fakeDialog]
+    },
+  }
+  globalThis.window = { clearInterval: () => {}, clearTimeout: () => {}, setTimeout: () => 0 }
+  try {
+    bundle.syncVisionGuidePrompt((key) => key)
+    assert.equal(queryCount, 0)
+    assert.equal(rectCount, 0)
+  } finally {
+    globalThis.document = savedDocument
+    globalThis.window = savedWindow
+  }
+})
+
+test('guide scroll syncs coalesce into one requestAnimationFrame per frame', () => {
+  const bundle = loadClientBundle()
+  const savedDocument = globalThis.document
+  const savedWindow = globalThis.window
+  const rafQueue = []
+  const scrollHandlers = []
+  globalThis.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    requestAnimationFrame: (fn) => {
+      rafQueue.push(fn)
+      return rafQueue.length
+    },
+    cancelAnimationFrame: () => {},
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    clearInterval: () => {},
+    setInterval: () => 0,
+  }
+  globalThis.document = {
+    body: {},
+    addEventListener: (name, handler, capture) => {
+      if (name === 'scroll' && capture === true) scrollHandlers.push(handler)
+    },
+    removeEventListener: () => {},
+    querySelectorAll: () => [],
+  }
+  try {
+    bundle.installVisionSettingsGuide((key) => key)
+    assert.equal(scrollHandlers.length, 1)
+    const scroll = scrollHandlers[0]
+    // Five scroll events in the same frame queue exactly one rAF.
+    for (let i = 0; i < 5; i++) scroll()
+    assert.equal(rafQueue.length, 1)
+    // Running the frame lets the next burst queue exactly one more.
+    rafQueue[0]()
+    for (let i = 0; i < 3; i++) scroll()
+    assert.equal(rafQueue.length, 2)
+  } finally {
+    globalThis.document = savedDocument
+    globalThis.window = savedWindow
+  }
+})
+
+test('guide sync gates DOM layout work behind the active phase and coalesces via rAF', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  // syncVisionGuidePrompt must compute the phase and return on the idle
+  // branches BEFORE guideSettingsPanelOpen() can run its dialog query and
+  // getBoundingClientRect — per-event forced layout was the direct cause of
+  // the settings panel scroll stutter.
+  const fn = source.match(/function syncVisionGuidePrompt\(t\) \{[\s\S]*?\n    \}/)
+  assert.ok(fn, 'syncVisionGuidePrompt body found')
+  const body = fn[0]
+  assert.ok(
+    body.indexOf('const phase = guidePhase(step)') < body.indexOf('guideSettingsPanelOpen()'),
+    'phase gate precedes the panel DOM query',
+  )
+  // Event-driven syncs coalesce through requestAnimationFrame (one per frame)
+  // instead of one setTimeout per scroll event.
+  assert.equal(source.includes('guideSyncFrame !== undefined'), true)
+  assert.equal(source.includes('window.requestAnimationFrame'), true)
+  assert.equal(source.includes('cancelAnimationFrame'), true)
+  assert.equal(source.includes("document.addEventListener('scroll', sync, true)"), true)
+})
+
 test('local provider drafts preserve protocol and optional sampling fields', () => {
   const bundle = loadClientBundle()
   const defaults = { baseURL: 'http://local.test/v1', model: 'model-default' }
