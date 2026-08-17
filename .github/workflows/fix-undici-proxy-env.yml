@@ -31,103 +31,72 @@ jobs:
 
           index_path = Path('index.js')
           source = index_path.read_text()
-          static_import = "import { ProxyAgent } from 'undici'\n"
-          if source.count(static_import) != 1:
-              raise SystemExit('expected exactly one static ProxyAgent import')
-          source = source.replace(static_import, '')
 
-          old = """  {
-            const originalFetch = globalThis.fetch
-            let cachedAgentUrl
-            let cachedAgent
-            const agentFor = (url) => {
-              if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent
-              cachedAgentUrl = url
-              cachedAgent = new ProxyAgent(url)
-              return cachedAgent
-            }
-            const patchedFetch = (input, init) => {
-              const proxyUrl = currentProxyUrl()
-              if (proxyUrl === undefined) return originalFetch(input, init)
-              let url
-              try {
-                url = new URL(
-                  typeof input === 'string' ? input : input && input.url ? input.url : String(input),
-                )
-              } catch {
-                return originalFetch(input, init)
+          static_import = "import { ProxyAgent } from 'undici'\n"
+          if static_import not in source:
+              raise SystemExit('static ProxyAgent import not found')
+          source = source.replace(static_import, '', 1)
+
+          old_agent = """    let cachedAgentUrl
+              let cachedAgent
+              const agentFor = (url) => {
+                if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent
+                cachedAgentUrl = url
+                cachedAgent = new ProxyAgent(url)
+                return cachedAgent
               }
-              if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
-              return originalFetch(input, { ...(init ?? {}), dispatcher: agentFor(proxyUrl) })
-            }
-            ctx.effect(() => {
-              globalThis.fetch = patchedFetch
-              return () => {
-                globalThis.fetch = originalFetch
-              }
-            }, 'vision-router: proxy fetch')
-          }
           """
-          new = """  {
-            const originalFetch = globalThis.fetch
-            let cachedAgentUrl
-            let cachedAgentPromise
-            const agentFor = (url) => {
-              if (cachedAgentUrl === url && cachedAgentPromise !== undefined) return cachedAgentPromise
-              cachedAgentUrl = url
-              // Do not import userland Undici at plugin/module load time. Undici 8 can
-              // replace the legacy global dispatcher used by Node's built-in fetch,
-              // which breaks a host-owned HTTPS_PROXY/https_proxy setup even when the
-              // vision-router proxy setting is empty. Load ProxyAgent only when the
-              // user explicitly configured this plugin's selective proxy.
-              cachedAgentPromise = import('undici')
-                .then(({ ProxyAgent }) => {
-                  if (typeof ProxyAgent !== 'function') {
-                    throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
-                  }
-                  return new ProxyAgent(url)
-                })
-                .catch((error) => {
-                  if (cachedAgentUrl === url) {
-                    cachedAgentUrl = undefined
-                    cachedAgentPromise = undefined
-                  }
-                  throw error
-                })
-              return cachedAgentPromise
-            }
-            const patchedFetch = (input, init) => {
-              const proxyUrl = currentProxyUrl()
-              if (proxyUrl === undefined) return originalFetch(input, init)
-              let url
-              try {
-                url = new URL(
-                  typeof input === 'string' ? input : input && input.url ? input.url : String(input),
-                )
-              } catch {
-                return originalFetch(input, init)
+          # Triple-quoted YAML/Python indentation is awkward; normalize the exact
+          # source fragment explicitly instead of relying on incidental workflow indentation.
+          old_agent = "    let cachedAgentUrl\n    let cachedAgent\n    const agentFor = (url) => {\n      if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent\n      cachedAgentUrl = url\n      cachedAgent = new ProxyAgent(url)\n      return cachedAgent\n    }\n"
+          new_agent = """    let cachedAgentUrl
+              let cachedAgentPromise
+              const agentFor = (url) => {
+                if (cachedAgentUrl === url && cachedAgentPromise !== undefined) return cachedAgentPromise
+                cachedAgentUrl = url
+                // Do not import userland Undici at plugin/module load time. Loading a
+                // different Undici major can disturb the dispatcher used by the host's
+                // built-in fetch even when Vision Router's own proxy setting is empty.
+                // Load ProxyAgent only when this plugin's selective proxy is actually used.
+                cachedAgentPromise = import('undici')
+                  .then(({ ProxyAgent }) => {
+                    if (typeof ProxyAgent !== 'function') {
+                      throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
+                    }
+                    return new ProxyAgent(url)
+                  })
+                  .catch((error) => {
+                    if (cachedAgentUrl === url) {
+                      cachedAgentUrl = undefined
+                      cachedAgentPromise = undefined
+                    }
+                    throw error
+                  })
+                return cachedAgentPromise
               }
-              if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
-              return agentFor(proxyUrl).then((dispatcher) =>
+          """
+          # Remove the workflow indentation embedded in new_agent.
+          new_agent = "\n".join(line[10:] if line.startswith('          ') else line for line in new_agent.splitlines()) + "\n"
+          if old_agent not in source:
+              raise SystemExit('proxy agent fragment not found')
+          source = source.replace(old_agent, new_agent, 1)
+
+          old_dispatch = "      return originalFetch(input, { ...(init ?? {}), dispatcher: agentFor(proxyUrl) })\n"
+          new_dispatch = """      return agentFor(proxyUrl).then((dispatcher) =>
                 originalFetch(input, { ...(init ?? {}), dispatcher }),
               )
-            }
-            ctx.effect(() => {
-              globalThis.fetch = patchedFetch
-              return () => {
-                globalThis.fetch = originalFetch
-              }
-            }, 'vision-router: proxy fetch')
-          }
           """
-          if source.count(old) != 1:
-              raise SystemExit('expected exactly one proxy fetch block')
-          index_path.write_text(source.replace(old, new))
+          new_dispatch = "\n".join(line[10:] if line.startswith('          ') else line for line in new_dispatch.splitlines()) + "\n"
+          if old_dispatch not in source:
+              raise SystemExit('proxy dispatch call not found')
+          source = source.replace(old_dispatch, new_dispatch, 1)
+          index_path.write_text(source)
 
           package_path = Path('package.json')
           package = json.loads(package_path.read_text())
-          if package.get('dependencies', {}).get('undici') != '>=6.15.0':
-              raise SystemExit(f"unexpected undici dependency: {package.get('dependencies', {}).get('undici')!r}")
+          old_version = package.get('dependencies', {}).get('undici')
+          if old_version != '>=6.15.0':
+              raise SystemExit(f'unexpected undici dependency: {old_version!r}')
           package['dependencies']['undici'] = '^7.29.0'
           package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n')
 
