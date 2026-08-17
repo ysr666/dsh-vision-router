@@ -36,18 +36,16 @@ jobs:
                   raise SystemExit(f'{label}: expected exactly 1 match, got {count}')
               return text.replace(old, new, 1)
 
+          # Runtime: preserve main's 1+x contract and avoid advertising a
+          # boot-disabled screenshot tool to the model.
           p = Path('index.js')
           s = p.read_text()
-
           s = replace_once(
               s,
               "  const instantLocalProvider = () =>\n    current().instantDescribe === true ? localProvidersOf(current()) : undefined",
               "  // The main 1+x structured bootstrap owns the first visual pass.\n  // Never stack instantDescribe in front of it (that would silently become 2+x).\n  const instantLocalProvider = () =>\n    current().instantDescribe === true && !structuredBootstrapEnabled()\n      ? localProvidersOf(current())\n      : undefined",
               'instantDescribe/structured-bootstrap guard',
           )
-
-          # The screenshot tool is boot-time opt-in. When absent from the schema,
-          # do not advertise it in generic model-facing reminders/skills.
           s = s.replace('、vision_screenshot（桌面截屏）', '')
           s = s.replace(' / vision_screenshot)', ')')
           s = s.replace('；桌面截屏用 `vision_screenshot`，但该隐私敏感工具默认禁用，只有用户在 Vision Router 设置中显式开启后才可执行；', '；')
@@ -58,7 +56,57 @@ jobs:
           s = s.replace('【原图尺寸】），对截图分析', '【输入图尺寸】），对截图分析')
           p.write_text(s)
 
-          # Ensure the new regression suites are part of the repository CI entrypoint.
+          # Settings UX: #139 is the source of truth. Reinsert #98 as one
+          # collapsed local-vision group instead of restoring the old page.
+          # Keep desktop screenshot in Advanced/Developer because it is a
+          # boot-time privacy-sensitive capability.
+          p = Path('lib/client.js')
+          s = p.read_text()
+          s = replace_once(
+              s,
+              "    const DEVELOPER_TOGGLE_KEYS = ['stealth']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS]",
+              "    const DEVELOPER_TOGGLE_KEYS = ['stealth', 'desktopScreenshot']\n    const LOCAL_TOGGLE_KEYS = ['instantDescribe']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS, ...LOCAL_TOGGLE_KEYS]",
+              'local toggle integration',
+          )
+          local_group = """              // #98 local vision, adapted to #139 Settings UX v2: one collapsed
+              // group on the main surface; existing main controls remain in place.
+              h('div', { className: 'vr-group' },
+                h('button', {
+                  type: 'button', className: 'vr-group-head', 'aria-expanded': showLocalVision,
+                  'aria-controls': 'vr-local-vision-body',
+                  onClick: () => setShowLocalVision(!showLocalVision),
+                },
+                  h('span', { className: 'vr-group-title' }, t('groupLocalOllama')),
+                  h('span', { className: 'vr-group-summary', title: localVisionSummary() }, localVisionSummary()),
+                  h('span', { className: 'vr-chevron' + (showLocalVision ? ' vr-chevron-open' : '') }, '▾'),
+                ),
+                showLocalVision
+                  ? h('div', { className: 'vr-local-body', id: 'vr-local-vision-body' },
+                      toggleField('instantDescribe'),
+                      localOllamaEditor(),
+                      localLmStudioEditor(),
+                      describeStyleEditor(),
+                    )
+                  : null,
+              ),
+"""
+          s = replace_once(
+              s,
+              "              TOGGLE_KEYS.map((key) => toggleField(key)),\n              h('p', { className: 'vr-hint' }, t('defaultChainNote'))",
+              "              TOGGLE_KEYS.map((key) => toggleField(key)),\n" + local_group + "              h('p', { className: 'vr-hint' }, t('defaultChainNote'))",
+              'local settings render group',
+          )
+          s = s.replace(
+              '开启后（需同时开启至少一个本地视觉后端），图片轮第一轮直接用本地模型识别图片块——模型第一轮即看懂，不必先调用识图工具；',
+              '开启后（需同时开启至少一个本地视觉后端），图片轮第一轮直接用本地模型识别图片块；若同时开启「结构化预识别（1+x）」，则由 1+x 首遍识别接管，本开关不会额外再跑一遍；',
+          )
+          s = s.replace(
+              'When enabled (and at least one local vision backend is enabled), image turns are described locally before the text model sees them;',
+              'When enabled (and at least one local vision backend is enabled), image turns are described locally before the text model sees them; when Structured pre-scan (1+x) is also enabled, 1+x owns the first pass and this option does not add a second pre-scan;',
+          )
+          p.write_text(s)
+
+          # Ensure #98 regression suites are in the repository CI entrypoint.
           p = Path('package.json')
           s = p.read_text()
           old = 'tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js"'
@@ -66,7 +114,7 @@ jobs:
           s = replace_once(s, old, new, 'package test script')
           p.write_text(s)
 
-          # README: main now contributes vision_bootstrap. Screenshot is optional at boot.
+          # README: main contributes vision_bootstrap; screenshot is optional at boot.
           p = Path('README.md')
           s = p.read_text()
           s = s.replace(
@@ -100,6 +148,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm -f .github/workflows/finalize-pr98-integration.yml
-          git add index.js package.json README.md README.zh.md
-          git commit -m "fix: preserve 1+x and tool visibility in #98 integration"
+          git add index.js lib/client.js package.json README.md README.zh.md
+          git commit -m "fix: integrate #98 with current settings and 1+x semantics"
           git push origin HEAD:integrate/pr98-final
