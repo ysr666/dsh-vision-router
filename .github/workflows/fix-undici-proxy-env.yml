@@ -1,0 +1,163 @@
+name: Stage Undici proxy compatibility fix
+
+on:
+  push:
+    branches: [fix/undici-proxy-env-regression]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/undici-proxy-env-regression
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Apply proxy compatibility patch
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+
+          index_path = Path('index.js')
+          source = index_path.read_text()
+          static_import = "import { ProxyAgent } from 'undici'\n"
+          if source.count(static_import) != 1:
+              raise SystemExit('expected exactly one static ProxyAgent import')
+          source = source.replace(static_import, '')
+
+          old = """  {
+            const originalFetch = globalThis.fetch
+            let cachedAgentUrl
+            let cachedAgent
+            const agentFor = (url) => {
+              if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent
+              cachedAgentUrl = url
+              cachedAgent = new ProxyAgent(url)
+              return cachedAgent
+            }
+            const patchedFetch = (input, init) => {
+              const proxyUrl = currentProxyUrl()
+              if (proxyUrl === undefined) return originalFetch(input, init)
+              let url
+              try {
+                url = new URL(
+                  typeof input === 'string' ? input : input && input.url ? input.url : String(input),
+                )
+              } catch {
+                return originalFetch(input, init)
+              }
+              if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
+              return originalFetch(input, { ...(init ?? {}), dispatcher: agentFor(proxyUrl) })
+            }
+            ctx.effect(() => {
+              globalThis.fetch = patchedFetch
+              return () => {
+                globalThis.fetch = originalFetch
+              }
+            }, 'vision-router: proxy fetch')
+          }
+          """
+          new = """  {
+            const originalFetch = globalThis.fetch
+            let cachedAgentUrl
+            let cachedAgentPromise
+            const agentFor = (url) => {
+              if (cachedAgentUrl === url && cachedAgentPromise !== undefined) return cachedAgentPromise
+              cachedAgentUrl = url
+              // Do not import userland Undici at plugin/module load time. Undici 8 can
+              // replace the legacy global dispatcher used by Node's built-in fetch,
+              // which breaks a host-owned HTTPS_PROXY/https_proxy setup even when the
+              // vision-router proxy setting is empty. Load ProxyAgent only when the
+              // user explicitly configured this plugin's selective proxy.
+              cachedAgentPromise = import('undici')
+                .then(({ ProxyAgent }) => {
+                  if (typeof ProxyAgent !== 'function') {
+                    throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
+                  }
+                  return new ProxyAgent(url)
+                })
+                .catch((error) => {
+                  if (cachedAgentUrl === url) {
+                    cachedAgentUrl = undefined
+                    cachedAgentPromise = undefined
+                  }
+                  throw error
+                })
+              return cachedAgentPromise
+            }
+            const patchedFetch = (input, init) => {
+              const proxyUrl = currentProxyUrl()
+              if (proxyUrl === undefined) return originalFetch(input, init)
+              let url
+              try {
+                url = new URL(
+                  typeof input === 'string' ? input : input && input.url ? input.url : String(input),
+                )
+              } catch {
+                return originalFetch(input, init)
+              }
+              if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
+              return agentFor(proxyUrl).then((dispatcher) =>
+                originalFetch(input, { ...(init ?? {}), dispatcher }),
+              )
+            }
+            ctx.effect(() => {
+              globalThis.fetch = patchedFetch
+              return () => {
+                globalThis.fetch = originalFetch
+              }
+            }, 'vision-router: proxy fetch')
+          }
+          """
+          if source.count(old) != 1:
+              raise SystemExit('expected exactly one proxy fetch block')
+          index_path.write_text(source.replace(old, new))
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text())
+          if package.get('dependencies', {}).get('undici') != '>=6.15.0':
+              raise SystemExit(f"unexpected undici dependency: {package.get('dependencies', {}).get('undici')!r}")
+          package['dependencies']['undici'] = '^7.29.0'
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n')
+
+          test_path = Path('tests/manifest-dependencies.test.js')
+          tests = test_path.read_text()
+          marker = "test('undici stays below v8 and is lazy-loaded for plugin proxy use'"
+          if marker not in tests:
+              tests += """
+
+          test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () => {
+            const pkg = await manifest()
+            assert.equal(pkg.dependencies?.undici, '^7.29.0')
+
+            const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+            assert.doesNotMatch(source, /^\\s*import\\s+.*from\\s+['\"]undici['\"]/m)
+            assert.match(source, /import\\(['\"]undici['\"]\\)/)
+          })
+          """
+          test_path.write_text(tests)
+
+      - name: Refresh lockfile and install
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run test suite
+        run: pnpm test
+
+      - name: Commit validated patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.js package.json pnpm-lock.yaml tests/manifest-dependencies.test.js
+          git commit -m "fix: preserve host HTTPS proxy when vision router loads"
+          git push origin HEAD:fix/undici-proxy-env-regression
