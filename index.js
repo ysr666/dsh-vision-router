@@ -60,6 +60,7 @@ import {
   structuredBootstrapMemory,
   structuredBootstrapQuestion,
 } from './lib/structured-bootstrap.js'
+import { assertNoRepetitionLoop } from './lib/repetition-guard.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -5197,6 +5198,7 @@ export function apply(ctx, config = {}) {
               bridgeBlocks: blocks,
               bridgeInstruction: promptText,
             })
+            assertNoRepetitionLoop(text, backendKey)
             if (wantJson) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
@@ -5227,6 +5229,7 @@ export function apply(ctx, config = {}) {
                     bridgeInstruction:
                       promptText + '\n\nThat output was not valid JSON. Respond with ONLY a valid JSON object now.',
                   })
+                  assertNoRepetitionLoop(text, backendKey)
                 }
               }
               const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
@@ -5317,6 +5320,7 @@ export function apply(ctx, config = {}) {
               return answer
             }
             let text = await askHttp(undefined)
+            assertNoRepetitionLoop(text, backendKey)
             if (wantJson) {
               for (let attempt = 0; attempt < 2; attempt++) {
                 const parsed = extractJson(text)
@@ -5329,6 +5333,7 @@ export function apply(ctx, config = {}) {
                   text = await askHttp(
                     'That output was not valid JSON. Respond with ONLY a valid JSON object now.',
                   )
+                  assertNoRepetitionLoop(text, backendKey)
                 }
               }
               const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
