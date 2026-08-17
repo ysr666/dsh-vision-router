@@ -1,5 +1,6 @@
 name: Apply universal structured bootstrap
 
+# one-shot migration: remove the pre-visual mode selector and keep pass 1 universal
 on:
   push:
     branches:
