@@ -4075,7 +4075,7 @@ export function apply(ctx, config = {}) {
           {
             type: 'text',
             text:
-              '结构化预识别（实验）已开启。本轮采用 1+x 视觉流程：第一次视觉调用必须先调用 vision_bootstrap，并把真实任务写进 goal。' +
+              '结构化预识别（实验）已开启。本轮采用 1+x 视觉流程：第一次视觉调用必须先调用 vision_bootstrap。该预识别只建立任务无关的视觉底图，不携带也不生成 goal。' +
               '不需要、也不要预先选择 OCR / 文档 / UI / 代码等 mode；vision_bootstrap 会直接看图并完成固定的第 1 次详细结构化视觉识别，' +
               '自行识别图片属于聊天、文档、UI、代码或一般场景，并建立可复用的文字、布局、对象、关系、状态和不确定区域基线。' +
               '在 vision_bootstrap 返回前不要直接基于图片作答，也不要调用其他视觉工具；拿到结构化结果后进入普通 Agent 循环。' +
@@ -4103,8 +4103,9 @@ export function apply(ctx, config = {}) {
             text:
               '第 1 次结构化视觉预识别已经完成，但 1+x 流程还没有结束：x 必须 >= 1。' +
               '现在请基于 vision_bootstrap 返回的 evidence，优先参考 recommended_followups，选择并调用至少 1 个能新增或验证证据的视觉工具。' +
-              '例如：文字/聊天/文档优先 vision_ocr；UI 元素盘点优先 vision_detect；局部目标优先 vision_ground；一般细节验证可用 vision_describe。' +
-              '在至少 1 次后续证据工具调用完成前，不要直接回答用户。完成后才进入自由 Agent 循环，可继续调用更多工具或作答。',
+              '不要把 OCR 当成默认第二步：仅当任务真的需要逐字转写或 bootstrap 明确标出文字不确定时才用 vision_ocr；UI/截图语义验证优先 vision_detect 或聚焦的 vision_describe。' +
+              '结构化模式下若确实调用 vision_ocr 且未显式指定引擎，会自动使用视觉模型 OCR（engine=vision）而不是先接受本地 Tesseract 的非空结果，以提高中文/UI 文字准确率。' +
+              '局部目标可用 vision_ground。在至少 1 次后续证据工具调用完成前，不要直接回答用户。完成后才进入自由 Agent 循环，可继续调用更多工具或作答。',
           },
         ],
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
@@ -4663,7 +4664,7 @@ export function apply(ctx, config = {}) {
       description:
         'Required FIRST visual call when the Vision Router setting “Structured bootstrap / 结构化预识别” is enabled. ' +
         'Do not choose an OCR/document/UI/code mode first. This tool directly inspects the image, infers its visual kind, ' +
-        'performs exactly one detailed structured vision pass, and returns the dedicated bootstrap schema: visual_kind, ' +
+        'performs exactly one task-independent detailed structured vision pass, and returns the dedicated bootstrap schema: visual_kind, ' +
         'overview, regions, visible_text, entities, relationships, uncertainties, and recommended_followups. ' +
         'After it succeeds you MUST call at least one task-directed evidence/deepening vision tool before answering; ' +
         'then continue with more tools only as needed. This is 1+x with x >= 1, not a one-shot bootstrap.',
@@ -4680,12 +4681,7 @@ export function apply(ctx, config = {}) {
             items: { type: 'string' },
             description: 'Attachment ids of images uploaded in this conversation',
           },
-          goal: {
-            type: 'string',
-            description: 'Concrete user/task goal the structured first pass should prepare evidence for',
-          },
         },
-        required: ['goal'],
         additionalProperties: false,
       },
       output: {
@@ -4701,12 +4697,11 @@ export function apply(ctx, config = {}) {
             reason: 'structured vision bootstrap is disabled in Vision Router settings',
           })
         }
-        const goal = String(args.goal ?? '').trim()
         const raw = await visionDescribeTool.execute(
           {
             paths: Array.isArray(args.paths) ? args.paths : [],
             attachmentIds: Array.isArray(args.attachmentIds) ? args.attachmentIds : [],
-            question: structuredBootstrapQuestion(goal),
+            question: structuredBootstrapQuestion(),
             // IMPORTANT: do not use vision_describe's generic json:true schema
             // here; the bootstrap prompt owns its dedicated structured contract.
             json: false,
@@ -4727,7 +4722,7 @@ export function apply(ctx, config = {}) {
           bootstrapState.followupCompleted = false
         }
         const evidence = normalizeStructuredBootstrapResult(parsed, raw)
-        const memory = structuredBootstrapMemory(goal, evidence)
+        const memory = structuredBootstrapMemory(evidence)
         const ids = new Set()
         for (const id of Array.isArray(args.attachmentIds) ? args.attachmentIds : []) {
           if (typeof id === 'string' && id !== '') ids.add(id)
@@ -4739,7 +4734,6 @@ export function apply(ctx, config = {}) {
         return JSON.stringify({
           ok: true,
           phase: 'structured-bootstrap',
-          goal,
           evidence,
           next:
             'Structured baseline ready. REQUIRED next step: choose at least one task-directed tool from recommended_followups (or another evidence tool) and call it before answering. After that, continue with more tools only as needed.',
@@ -5817,7 +5811,20 @@ export function apply(ctx, config = {}) {
                         : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
                     })
                   }
-                  const result = await def.execute(args, exec)
+                  let effectiveArgs = args
+                  if (
+                    structuredBootstrapEnabled() &&
+                    state &&
+                    state.required &&
+                    state.completed === true &&
+                    def.name === 'vision_ocr' &&
+                    (!args || args.engine === undefined || args.engine === 'auto')
+                  ) {
+                    // Local Tesseract auto mode accepts any non-empty result, which is often noisy on Chinese/UI screenshots.
+                    // In the experimental structured flow, make OCR an accuracy-first visual verification unless explicitly forced local.
+                    effectiveArgs = { ...(args ?? {}), engine: 'vision' }
+                  }
+                  const result = await def.execute(effectiveArgs, exec)
                   if (
                     structuredBootstrapEnabled() &&
                     state &&
