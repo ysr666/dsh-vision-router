@@ -30,6 +30,13 @@ jobs:
           git show FETCH_HEAD:tests/vision-scene-router.test.js > tests/vision-scene-router.test.js
       - name: Apply session hardening patch
         run: python3 scripts/patch-v2-session-hardening.py
+      - name: Commit generated patch for inspection
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js package.json lib/structured-bootstrap.js lib/vision-capability-router.js lib/vision-capability-benchmark.js lib/vision-scene-router.js tests/vision-capability-router.test.js tests/vision-capability-benchmark.test.js tests/vision-scene-router.test.js tests/session-hardening.test.js
+          git commit -m "fix: harden structured vision sessions and capability benchmark"
+          git push origin HEAD:fix/v2-session-hardening
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
@@ -52,10 +59,3 @@ jobs:
         run: pnpm test
       - name: Diff check
         run: git diff --check
-      - name: Commit generated patch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.js package.json lib/structured-bootstrap.js lib/vision-capability-router.js lib/vision-capability-benchmark.js lib/vision-scene-router.js tests/vision-capability-router.test.js tests/vision-capability-benchmark.test.js tests/vision-scene-router.test.js tests/session-hardening.test.js
-          git commit -m "fix: harden structured vision sessions and capability benchmark"
-          git push origin HEAD:fix/v2-session-hardening
