@@ -10,6 +10,7 @@ import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
+import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -28,6 +29,12 @@ export const Config = core.Config
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
+  // #141 stabilization boundary: keep the recently merged local-vision
+  // behavior isolated from main's existing provider/router semantics. It
+  // normalizes only the local settings/runtime seams before core.apply sees
+  // the context (desktop screenshot exposure, instant-local budget/one-pass,
+  // local vision-http transport and connection-probe fallback).
+  const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(runtimeCtx, config, core)
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
   // 启动快照误当成最终设置状态。
@@ -46,8 +53,8 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(runtimeCtx, {
-      ...config,
+    const result = core.apply(stabilizedCtx, {
+      ...bootConfig,
       progressiveTools: config.progressiveTools === true,
     })
     if (result && typeof result.then === 'function') {
