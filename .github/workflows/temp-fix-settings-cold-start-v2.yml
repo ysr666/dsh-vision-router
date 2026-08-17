@@ -1,0 +1,62 @@
+name: temp fix settings cold start v2
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/settings-card-cold-start
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply focused cold-start fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          client = Path('lib/client.js')
+          source = client.read_text()
+          old = "    exports.inject = ['settingsScope', 'slots', 'locale', 'sessions', 'connection', 'remote']"
+          new = "    exports.inject = ['settingsScope', 'slots', 'locale', 'sessions', 'remote']"
+          if source.count(old) != 1:
+              raise SystemExit(f'client inject: expected one match, got {source.count(old)}')
+          client.write_text(source.replace(old, new, 1))
+
+          test = Path('tests/client.test.js')
+          source = test.read_text()
+          old = """test('the client bundle still loads and registers with the proven injects', () => {
+  const bundle = loadClientBundle()
+  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'connection', 'remote'])
+  assert.equal(typeof bundle.apply, 'function')
+})"""
+          new = """test('the client bundle does not hard-inject the optional connection service', () => {
+  const bundle = loadClientBundle()
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'remote'])
+  assert.equal(typeof bundle.apply, 'function')
+  assert.equal(source.includes(\"return ctx.get('connection')\"), true)
+  assert.equal(source.includes(\"'sessions', 'connection', 'remote'\"), false)
+})"""
+          if source.count(old) != 1:
+              raise SystemExit(f'client inject test: expected one match, got {source.count(old)}')
+          test.write_text(source.replace(old, new, 1))
+          PY
+      - run: pnpm test
+      - name: Commit fix and remove temp workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/temp-fix-settings-cold-start.yml
+          rm -f .github/workflows/temp-fix-settings-cold-start-v2.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/client.js tests/client.test.js .github/workflows/
+          git commit -m 'fix: register settings card before connection is ready [cold-start-fix-applied]'
+          git push origin HEAD:fix/settings-card-cold-start
