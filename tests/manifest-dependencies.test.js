@@ -33,3 +33,13 @@ test('schemastery remains a runtime dependency', async () => {
   assert.ok(pkg.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-connection'))
   assert.ok(pkg.dsh?.client?.inject?.includes('@deepseek-ai/dsh-api-remotes'))
 })
+
+
+test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () => {
+  const pkg = await manifest()
+  assert.equal(pkg.dependencies?.undici, '^7.29.0')
+
+  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
+  assert.match(source, /import\(['"]undici['"]\)/)
+})

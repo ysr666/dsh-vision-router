@@ -51,7 +51,7 @@
     "@deepseek-ai/schemastery": ">=3.18.0",
     "potrace": "^2.1.8",
     "puppeteer-core": "^25.6.0",
-    "undici": ">=6.15.0"
+    "undici": "^7.29.0"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6",

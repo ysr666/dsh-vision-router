@@ -18,7 +18,6 @@
 
 export * from './lib/vision-resilience.js'
 
-import { ProxyAgent } from 'undici'
 import z from '@deepseek-ai/schemastery'
 import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
 import path from 'node:path'
@@ -4365,12 +4364,29 @@ export function apply(ctx, config = {}) {
   {
     const originalFetch = globalThis.fetch
     let cachedAgentUrl
-    let cachedAgent
+    let cachedAgentPromise
     const agentFor = (url) => {
-      if (cachedAgentUrl === url && cachedAgent !== undefined) return cachedAgent
+      if (cachedAgentUrl === url && cachedAgentPromise !== undefined) return cachedAgentPromise
       cachedAgentUrl = url
-      cachedAgent = new ProxyAgent(url)
-      return cachedAgent
+      // Do not import userland Undici at plugin/module load time. Loading a
+      // different Undici major can disturb the dispatcher used by the host's
+      // built-in fetch even when Vision Router's own proxy setting is empty.
+      // Load ProxyAgent only when this plugin's selective proxy is actually used.
+      cachedAgentPromise = import('undici')
+        .then(({ ProxyAgent }) => {
+if (typeof ProxyAgent !== 'function') {
+  throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
+}
+return new ProxyAgent(url)
+        })
+        .catch((error) => {
+if (cachedAgentUrl === url) {
+  cachedAgentUrl = undefined
+  cachedAgentPromise = undefined
+}
+throw error
+        })
+      return cachedAgentPromise
     }
     const patchedFetch = (input, init) => {
       const proxyUrl = currentProxyUrl()
@@ -4384,7 +4400,9 @@ export function apply(ctx, config = {}) {
         return originalFetch(input, init)
       }
       if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
-      return originalFetch(input, { ...(init ?? {}), dispatcher: agentFor(proxyUrl) })
+      return agentFor(proxyUrl).then((dispatcher) =>
+      originalFetch(input, { ...(init ?? {}), dispatcher }),
+    )
     }
     ctx.effect(() => {
       globalThis.fetch = patchedFetch
