@@ -3,6 +3,21 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.5.2
+
+> **v1.5.1 → v1.5.2 紧急补丁**：修复当前 DSH keyed Settings slot 契约下会导致客户端插件直接加载失败的问题。
+> **v1.5.1 → v1.5.2 emergency hotfix**: fixes a client-loader failure under the current DSH keyed Settings-slot contract.
+
+### 客户端加载 / Client loading
+
+- **修复 `settings.plugin.item` keyed-slot 注册（#160 / #162）**：Vision Router 的设置卡注册现在显式携带 `key: 'vision-router'`，不再只提供 `id`。这修复了 Harness 启动时的 `Failed to load plugins` / `keyed slot "settings.plugin.item" requires options.key`，避免插件在进入设置卡之前就被 loader 拒绝。现有 `id`、排序、文案、注入与视觉运行时行为均保持不变。
+- **Fix keyed `settings.plugin.item` registration (#160 / #162)**: the Vision Router Settings card now supplies the required `key: 'vision-router'` in addition to its existing `id`. This fixes the Harness startup error `Failed to load plugins` / `keyed slot "settings.plugin.item" requires options.key`, where the loader rejected the client plugin before the Settings card could mount. Existing ordering, labels, injection, and vision runtime behavior are unchanged.
+
+### 验证 / Validation
+
+- 新增 keyed-slot 回归测试；全量套件为 **355 tests：350 pass + 5 macOS-only skips + 0 fail**，Node 22 / Node 24 均通过。发布仍由既有 immutable Release workflow 在 tag 上再次执行完整验证，并通过 npm Trusted Publishing（OIDC）发布。
+- Added a keyed-slot regression guard. The full suite is **355 tests: 350 pass + 5 macOS-only skips + 0 fail** on Node 22 and Node 24. The existing immutable tag-based Release workflow re-runs full verification and publishes through npm Trusted Publishing (OIDC).
+
 ## v1.5.1
 
 > 本节为 **v1.5.0 → v1.5.1** 的补丁版本说明，覆盖 v1.5.0 发布后合入的全部用户可见修复。
