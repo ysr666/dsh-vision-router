@@ -1,0 +1,56 @@
+name: temp fix settings cold start v3
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/settings-card-cold-start
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply focused cold-start fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/client.js')
+          s = p.read_text()
+          old = "    exports.inject = ['settingsScope', 'slots', 'locale', 'sessions', 'connection', 'remote']"
+          new = "    exports.inject = ['settingsScope', 'slots', 'locale', 'sessions', 'remote']"
+          if s.count(old) != 1: raise SystemExit(f'client inject match count: {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          p = Path('tests/client.test.js')
+          s = p.read_text()
+          old_name = "test('the client bundle still loads and registers with the proven injects', () => {"
+          new_name = "test('the client bundle does not hard-inject the optional connection service', () => {"
+          if s.count(old_name) != 1: raise SystemExit(f'test name match count: {s.count(old_name)}')
+          s = s.replace(old_name, new_name, 1)
+          old_assert = "  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'connection', 'remote'])"
+          new_assert = "  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'remote'])"
+          if s.count(old_assert) != 1: raise SystemExit(f'inject assertion match count: {s.count(old_assert)}')
+          s = s.replace(old_assert, new_assert, 1)
+          marker = "  assert.equal(typeof bundle.apply, 'function')"
+          extra = marker + "\n  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')\n  assert.equal(source.includes(\"return ctx.get('connection')\"), true)\n  assert.equal(source.includes(\"'sessions', 'connection', 'remote'\"), false)"
+          if s.count(marker) != 1: raise SystemExit(f'apply assertion match count: {s.count(marker)}')
+          p.write_text(s.replace(marker, extra, 1))
+          PY
+      - run: pnpm test
+      - name: Commit fix and remove temp workflows
+        shell: bash
+        run: |
+          rm -f .github/workflows/temp-fix-settings-cold-start.yml
+          rm -f .github/workflows/temp-fix-settings-cold-start-v2.yml
+          rm -f .github/workflows/temp-fix-settings-cold-start-v3.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/client.js tests/client.test.js .github/workflows/
+          git commit -m 'fix: register settings card before connection is ready [cold-start-fix-applied]'
+          git push origin HEAD:fix/settings-card-cold-start
