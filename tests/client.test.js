@@ -423,13 +423,13 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   assert.equal(source.includes('content-visibility:auto'), true)
   assert.equal(source.includes('contain-intrinsic-size:auto 96px'), true)
   // Option vnode lists are memoized and the per-provider model lists cached,
-  // so re-renders no longer rebuild hundreds of option elements.
+  // so re-renders no longer rebuild hundreds of option elements. The local
+  // vision merge keeps main's cache shape (Map) and does not memo visionGroups.
   assert.equal(source.includes('const groupOptions = useMemo('), true)
   assert.equal(source.includes('const visionGroupOptions = useMemo('), true)
   assert.equal(source.includes('const wrapGroupOptions = useMemo('), true)
-  assert.equal(source.includes('const visionGroups = useMemo('), true)
-  assert.equal(source.includes('() => filterVisionBackendGroups(catalog.groups, visionCaps.capabilities)'), true)
-  assert.equal(source.includes('modelOptionCache = React.useRef(new WeakMap())'), true)
+  assert.equal(source.includes('const visionGroups = filterVisionBackendGroups('), true)
+  assert.equal(source.includes('modelOptionCache = React.useRef(new Map())'), true)
   assert.equal(source.includes('modelOptionsOf(modelsOf('), true)
   // The card is memoized with a stable props object so app re-renders of the
   // settings panel skip it.

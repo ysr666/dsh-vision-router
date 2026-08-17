@@ -13,6 +13,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   callOpenAICompatible,
+  callLocalBackend,
   buildInstantLocalMap,
   imageMemorySet,
   localOllamaProvidersOf,
@@ -88,10 +89,10 @@ const chatOk = (text) => ({ status: 200, body: JSON.stringify({ choices: [{ mess
 
 // ── A. callOpenAICompatible 真实 HTTP 线协议 ──────────────────────────────
 
-test('callOpenAICompatible posts the real wire body and returns trimmed content', async () => {
+test('callLocalBackend posts the real wire body with local sampling and returns trimmed content', async () => {
   const server = await startFakeOpenAI(async () => chatOk('  识别结果  '))
   try {
-    const text = await callOpenAICompatible(
+    const text = await callLocalBackend(
       { name: 'local-ollama', baseURL: server.baseURL, model: 'test-vl', apiKeyEnv: '', maxTokens: 2048, temperature: 0.5, top_p: 0.8 },
       [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
     )
@@ -102,7 +103,7 @@ test('callOpenAICompatible posts the real wire body and returns trimmed content'
     assert.equal(sent.body.model, 'test-vl')
     assert.equal(sent.body.stream, false)
     assert.equal(sent.body.max_tokens, 2048)
-    // temperature/top_p 只在 provider 显式携带时上送。
+    // temperature/top_p 由本地 dispatcher 从 provider 显式配置中透传。
     assert.equal(sent.body.temperature, 0.5)
     assert.equal(sent.body.top_p, 0.8)
   } finally {
@@ -502,7 +503,9 @@ test('wrapper resolves instant-local settings getters on every stream', async ()
   }
   const adapter = createWrapperStreamBody(ctx, {
     imageMemory: new Map(),
-    delegateProvider: () => 'text-provider',
+    // main behavior: delegateProvider is a static string (live reads belong
+    // to the local-vision options only, per the zero-regression review).
+    delegateProvider: 'text-provider',
     instantLocal: () => instantProvider,
     instantLocalStyle: () => 'plain',
     instantLocalTimeoutMs: () => 1000,
@@ -617,21 +620,20 @@ test('successful instant describe strands no lingering timer (child-process exit
   )
 })
 
-// ── C. imageMemorySet 有界记忆边界 ─────────────────────────────────────────
-test('imageMemorySet keeps exactly the FIFO limit and updates do not evict or refresh recency', () => {
+// ── C. imageMemorySet 无界记忆（main 语义）─────────────────────────────────
+test('imageMemorySet keeps main unbounded semantics (no FIFO eviction)', () => {
   const map = new Map()
   for (let i = 0; i < 200; i++) imageMemorySet(map, `id-${i}`, `d-${i}`)
   assert.equal(map.size, 200)
   imageMemorySet(map, 'id-200', 'd-200')
-  assert.equal(map.size, 200)
-  assert.equal(map.has('id-0'), false)
+  // Beyond the old FIFO limit the map still grows — long sessions of users
+  // who never enabled local vision must not start forgetting images.
+  assert.equal(map.size, 201)
+  assert.equal(map.has('id-0'), true)
   assert.equal(map.has('id-1'), true)
-  // 更新现有 key：不触发淘汰，也不刷新 FIFO 位置。
   imageMemorySet(map, 'id-1', 'updated')
-  assert.equal(map.size, 200)
-  imageMemorySet(map, 'id-201', 'd-201')
-  assert.equal(map.has('id-1'), false, 'updated oldest entry should still be the next evicted')
-  assert.equal(map.has('id-2'), true)
+  assert.equal(map.size, 201)
+  assert.equal(map.get('id-1'), 'updated')
 })
 
 // ── D. vision_screenshot 真实截屏 + identify 全链路 ────────────────────────
@@ -805,12 +807,23 @@ test('vision-http reads local backend settings live, including URL/model/protoco
   }
 })
 
-test('vision_screenshot is inert until the user explicitly opts in', async () => {
-  const def = await mountDeepTool({}, 'vision_screenshot')
-  await assert.rejects(
-    () => def.execute({}, {}),
-    /disabled; enable Desktop screenshot explicitly/,
-  )
+test('vision_screenshot is NOT registered until the user explicitly opts in (boot-time)', async () => {
+  // Default (desktopScreenshot=false): the tool is absent from the model-
+  // visible set entirely — a disabled default must not change the tool
+  // schema / token / prefix cache.
+  const disabled = bootHarness({})
+  apply(disabled.ctx, Config({}))
+  const activate = disabled.toolDefs.get('vision_activate')
+  assert.ok(activate, 'progressive mode should register vision_activate')
+  await activate.execute({}, {})
+  assert.equal(disabled.toolDefs.has('vision_screenshot'), false)
+
+  // Opted in at boot: the tool is registered and executable.
+  const enabled = bootHarness({ desktopScreenshot: true })
+  apply(enabled.ctx, Config({ desktopScreenshot: true }))
+  const activate2 = enabled.toolDefs.get('vision_activate')
+  await activate2.execute({}, {})
+  assert.equal(enabled.toolDefs.has('vision_screenshot'), true)
 })
 
 test('vision_screenshot really captures the desktop and writes a PNG artifact (darwin)', async (t) => {
@@ -960,7 +973,7 @@ test('vision_screenshot identify reports disabled localOllama without calling ou
 // 自动跳过帮不上忙——若整条链共享一个超时信号，第一个 provider 的挂起会
 // 吃掉全部预算，云端兜底根本轮不到。期望：每个 provider 独立预算，挂起
 // 的跳过、后面的继续答。
-test('vision chain falls through to the next provider when the first hangs', async () => {
+test('vision chain falls through from a hung local backend to the next local backend', async () => {
   const hang = await startFakeOpenAI(async (req) => {
     // 挂起 15s；客户端中止时（req close）立刻结束 handler。
     await new Promise((resolve) => {
@@ -974,17 +987,31 @@ test('vision chain falls through to the next provider when the first hangs', asy
   })
   const fast = await startFakeOpenAI(async () => chatOk('fast provider answered'))
   const config0 = {
-    httpProviders: [
-      { name: 'hang', baseURL: hang.baseURL, model: 'hang-vl' },
-      { name: 'fast', baseURL: fast.baseURL, model: 'fast-vl' },
-    ],
+    routing: true,
     freeFallback: false,
-    // The per-request cap is deliberately much larger than the total task
-    // budget. Fair sharing, not timeoutMs, must preserve the second attempt.
+    localOllama: { enabled: true, baseURL: hang.baseURL, model: 'hang-vl' },
+    localLmStudio: { enabled: true, baseURL: fast.baseURL, model: 'fast-vl' },
+    // Local backends get independent anti-hang budgets (fair shares of the
+    // task deadline), so a hung Ollama must still leave LM Studio a real
+    // attempt. Regular providers keep main's per-call timeout semantics.
     timeoutMs: 10000,
     visionTaskTimeoutMs: 1200,
   }
-  const def = await mountDeepTool(config0, 'vision_describe')
+  const { ctx, registrations, toolDefs } = bootHarness(config0)
+  apply(ctx, Config(config0))
+  // Route the chain's delegation through the registered adapters like a real
+  // harness would (the stock mock stream is a no-op stub).
+  ctx.llm.stream = async function* (options) {
+    const registration = registrations.get(options.provider)
+    if (registration === undefined || typeof registration.adapter.stream !== 'function') {
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: `no adapter for ${options.provider}` } } }
+      return
+    }
+    yield* registration.adapter.stream(options)
+  }
+  const activate = toolDefs.get('vision_activate')
+  await activate.execute({}, {})
+  const def = toolDefs.get('vision_describe')
   const workdir = mkdtempSync(path.join(tmpdir(), 'vr-chain-'))
   try {
     const pngPath = path.join(workdir, 'tiny.png')
@@ -996,8 +1023,8 @@ test('vision chain falls through to the next provider when the first hangs', asy
     )
     const elapsed = Date.now() - startedAt
     assert.equal(text, 'fast provider answered')
-    assert.ok(hang.requests.length >= 1, 'the hanging provider must have been tried')
-    assert.ok(fast.requests.length >= 1, 'the next provider must still get a real attempt')
+    assert.ok(hang.requests.length >= 1, 'the hanging local backend must have been tried')
+    assert.ok(fast.requests.length >= 1, 'the next local backend must still get a real attempt')
     assert.ok(elapsed < 2500, `fallthrough should stay inside the shared task budget (took ${elapsed}ms)`)
   } finally {
     await hang.close()

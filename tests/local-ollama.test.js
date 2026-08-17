@@ -1,7 +1,6 @@
 // dsh-vision 并入特性的测试：本地 Ollama / LM Studio 视觉后端
-// （localOllamaProvidersOf / localLmStudioProvidersOf / localProvidersOf /
-// httpProvidersOf 本地优先插入）、OpenAI / Anthropic 两种请求格式
-// （callOpenAICompatible 的 format 分支）与即时本地翻译
+// （localOllamaProvidersOf / localLmStudioProvidersOf / localProvidersOf）、
+// OpenAI / Anthropic 两种请求格式（callLocalBackend 分发）与即时本地翻译
 // （buildInstantLocalMap 的优雅降级路径——不依赖真实本地服务）、提示风格。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -14,7 +13,7 @@ import {
   buildInstantLocalMap,
   localDescribePrompt,
   imageMemorySet,
-  callOpenAICompatible,
+  callLocalBackend,
   toAnthropicContent,
   Config,
 } from '../index.js'
@@ -89,38 +88,31 @@ test('localProvidersOf orders local-ollama before local-lmstudio', () => {
   assert.deepEqual(onlyLms.map((p) => p.name), ['local-lmstudio'])
 })
 
-test('httpProvidersOf puts enabled local backends first in order', () => {
+test('httpProvidersOf is main-identical: local backends are NOT injected (they ride routingPairs instead)', () => {
   const both = httpProvidersOf({
     localOllama: { enabled: true },
     localLmStudio: { enabled: true, model: 'lm-model' },
   })
-  assert.deepEqual(both.slice(0, 2).map((p) => p.name), ['local-ollama', 'local-lmstudio'])
-  assert.deepEqual(both.slice(2), DEFAULT_HTTP_PROVIDERS)
+  // Local backends live in their own settings group and join the vision chain
+  // through routingPairs(); httpProvidersOf keeps main's shape so existing
+  // HTTP fallback behavior is byte-identical.
+  assert.deepEqual(both, DEFAULT_HTTP_PROVIDERS)
   const onlyLms = httpProvidersOf({ localLmStudio: { enabled: true, model: 'lm-model' } })
-  assert.equal(onlyLms[0].name, 'local-lmstudio')
-  assert.deepEqual(onlyLms.slice(1), DEFAULT_HTTP_PROVIDERS)
+  assert.deepEqual(onlyLms, DEFAULT_HTTP_PROVIDERS)
   const custom = [{ name: 'custom', baseURL: 'http://example.test/v1', model: 'm' }]
   const mixed = httpProvidersOf({
     localLmStudio: { enabled: true, model: 'lm-model' },
     httpProviders: custom,
   })
-  assert.deepEqual(mixed.slice(0, 2).map((p) => p.name), ['local-lmstudio', 'custom'])
+  assert.deepEqual(mixed.slice(0, 1), custom)
+  assert.deepEqual(mixed.slice(1), DEFAULT_HTTP_PROVIDERS)
 })
 
-test('httpProvidersOf puts local-ollama first when enabled', () => {
-  const withLocal = httpProvidersOf({ localOllama: { enabled: true } })
-  assert.equal(withLocal[0].name, 'local-ollama')
-  assert.deepEqual(withLocal.slice(1), DEFAULT_HTTP_PROVIDERS)
+test('httpProvidersOf allowDefault=false excludes OVH but keeps user http providers only', () => {
   const custom = [{ name: 'custom', baseURL: 'http://example.test/v1', model: 'm' }]
-  const mixed = httpProvidersOf({ localOllama: { enabled: true }, httpProviders: custom })
-  assert.equal(mixed[0].name, 'local-ollama')
-  assert.equal(mixed[1].name, 'custom')
-  assert.equal(mixed.length, 1 + 1 + DEFAULT_HTTP_PROVIDERS.length)
-  // allowDefault=false excludes only anonymous OVH. Explicitly enabled local
-  // backends remain available for a local-only/privacy-oriented chain.
   assert.deepEqual(
     httpProvidersOf({ localOllama: { enabled: true }, httpProviders: custom }, false).map((p) => p.name),
-    ['local-ollama', 'custom'],
+    ['custom'],
   )
 })
 
@@ -253,7 +245,8 @@ test('localDescribePrompt switches between plain and structured styles', () => {
   assert.ok(structured.includes('【初步判断】'))
   assert.ok(structured.includes('【细节】'))
   assert.ok(structured.includes('【空间结构】'))
-  assert.ok(structured.includes('【原图尺寸】'))
+  assert.ok(structured.includes('【输入图尺寸】'))
+  assert.ok(structured.includes('不是原图尺寸'))
   assert.ok(localDescribePrompt(undefined).includes('详细描述'))
 })
 
@@ -294,19 +287,18 @@ test('buildInstantLocalMap failure leaves memory untouched and never rejects', a
   assert.equal(memory.size, 0)
 })
 
-test('imageMemorySet evicts oldest entries beyond the FIFO limit', () => {
+test('imageMemorySet keeps main unbounded semantics (no eviction)', () => {
   const map = new Map()
   for (let i = 0; i < 200; i++) imageMemorySet(map, `id-${i}`, `desc-${i}`)
   assert.equal(map.size, 200)
-  // 第 201 条新 key 挤掉最旧条目。
+  // Beyond the old FIFO limit the map still grows — long sessions of users
+  // who never enabled local vision must not start forgetting images.
   imageMemorySet(map, 'id-200', 'desc-200')
-  assert.equal(map.size, 200)
-  assert.equal(map.has('id-0'), false)
+  assert.equal(map.size, 201)
+  assert.equal(map.has('id-0'), true)
   assert.equal(map.get('id-200'), 'desc-200')
-  // 更新已存在的 key 不触发淘汰。
   imageMemorySet(map, 'id-199', 'updated')
-  assert.equal(map.size, 200)
-  assert.equal(map.has('id-1'), true)
+  assert.equal(map.size, 201)
   assert.equal(map.get('id-199'), 'updated')
 })
 
@@ -342,7 +334,7 @@ test('local providers carry format=anthropic only when explicitly chosen', () =>
   assert.equal('format' in lmsDefault, false)
 })
 
-test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', async () => {
+test('callLocalBackend speaks Anthropic Messages when format=anthropic (dispatch to callAnthropicCompatible)', async () => {
   const original = globalThis.fetch
   let captured
   globalThis.fetch = async (url, init) => {
@@ -353,7 +345,7 @@ test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', asy
     })
   }
   try {
-    const text = await callOpenAICompatible(
+    const text = await callLocalBackend(
       {
         name: 'local-lmstudio',
         baseURL: 'http://localhost:1234/v1',
@@ -366,13 +358,14 @@ test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', asy
           role: 'user',
           content: [
             { type: 'text', text: '看这张图' },
-            { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+            { type: 'image', attachment: { mediaType: 'image/png' } },
           ],
         },
       ],
-      { maxTokens: 64 },
+      { maxTokens: 64, resolveCredential: async () => '' },
     )
     assert.equal(text, '识别结果')
+    // callAnthropicCompatible appends /v1/messages to a baseURL without /v1.
     assert.equal(captured.url, 'http://localhost:1234/v1/messages')
     assert.equal(captured.headers['x-api-key'], undefined)
     assert.equal(captured.headers.authorization, undefined)
@@ -380,16 +373,36 @@ test('callOpenAICompatible speaks Anthropic Messages when format=anthropic', asy
     assert.equal(captured.body.model, 'local-model')
     assert.equal(captured.body.max_tokens, 64)
     assert.equal(captured.body.temperature, 0.2)
-    assert.deepEqual(captured.body.messages[0].content, [
-      { type: 'text', text: '看这张图' },
-      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
-    ])
   } finally {
     globalThis.fetch = original
   }
 })
 
-test('callOpenAICompatible uses x-api-key without duplicate Bearer auth for keyed Anthropic', async () => {
+test('callLocalBackend openai format stays on the pure OpenAI transport', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: init.headers, body: JSON.parse(init.body) }
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: 'ok' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )
+  }
+  try {
+    const text = await callLocalBackend(
+      { name: 'local-ollama', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl' },
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      {},
+    )
+    assert.equal(text, 'ok')
+    assert.equal(captured.url, 'http://127.0.0.1:11434/v1/chat/completions')
+    assert.equal(captured.headers.authorization, undefined)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('callLocalBackend anthropic with a key sends x-api-key without duplicate Bearer', async () => {
   const original = globalThis.fetch
   let captured
   globalThis.fetch = async (_url, init) => {
@@ -400,7 +413,7 @@ test('callOpenAICompatible uses x-api-key without duplicate Bearer auth for keye
     })
   }
   try {
-    await callOpenAICompatible(
+    await callLocalBackend(
       {
         name: 'anthropic-compatible',
         baseURL: 'http://localhost:1234/v1',

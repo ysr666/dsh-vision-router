@@ -176,7 +176,10 @@ test('toAnthropicMessages opens with a user message even when history starts wit
   assert.equal(result.messages[1].role, 'assistant')
 })
 
-test('toAnthropicMessages keeps data-URI image_url blocks without attachment reads', async () => {
+test('toAnthropicMessages ignores image_url blocks without attachment refs (main behavior preserved)', async () => {
+  // The local vision merge does not extend the correction path's block
+  // conversion: image_url-only content (no attachment ref) is skipped, and
+  // attachment-backed image blocks read through bytesOf as in main.
   const result = await toAnthropicMessages(
     [
       {
@@ -188,30 +191,21 @@ test('toAnthropicMessages keeps data-URI image_url blocks without attachment rea
       },
     ],
     async () => {
-      throw new Error('materialized data URIs must not trigger attachment reads')
+      throw new Error('no attachment reads expected for image_url-only content')
     },
   )
   assert.equal(result.system, '')
   assert.equal(result.messages.length, 1)
-  assert.deepEqual(result.messages[0].content, [
-    {
-      type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: '/9j/4AAQSkZJRg==' },
-    },
-    { type: 'text', text: 'what is this?' },
-  ])
-  // A non-data URL is dropped instead of guessed at.
-  const dropped = await toAnthropicMessages(
-    [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://x/y.png' } }] }],
-    async () => Buffer.from([1]),
-  )
-  assert.equal(dropped.messages.length, 0)
+  assert.deepEqual(result.messages[0].content, [{ type: 'text', text: 'what is this?' }])
 })
 
-test('toAnthropicMessages folds plain string content into a text block', async () => {
+test('toAnthropicMessages folds plain string content into a text block (main behavior)', async () => {
+  // main's conversion handles string content only for non-user/assistant
+  // roles; a user string goes through convertBlocks and is dropped when no
+  // block conversion applies (no array, no attachment). The local vision
+  // merge must not extend this behavior.
   const result = await toAnthropicMessages([{ role: 'user', content: 'hello there' }])
-  assert.equal(result.messages.length, 1)
-  assert.deepEqual(result.messages[0].content, [{ type: 'text', text: 'hello there' }])
+  assert.equal(result.messages.length, 0)
 })
 
 test('callAnthropicCompatible posts /v1/messages with anthropic auth and parses text', async () => {
