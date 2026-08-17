@@ -1,0 +1,43 @@
+name: Patch issue 160
+
+on:
+  push:
+    branches:
+      - fix/issue-160-host-routes
+    paths:
+      - .github/workflows/patch-issue160.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/issue-160-host-routes
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Apply patch
+        run: python3 .github/scripts/patch_issue160.py
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Validate
+        run: |
+          node --check index.js
+          node --test tests/host-route-registration.test.js
+          git diff --check
+      - name: Full tests
+        run: pnpm test
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js tests/host-route-registration.test.js
+          git commit -m "fix: keep host routes in one webServer injection"
+          git push origin HEAD:fix/issue-160-host-routes
