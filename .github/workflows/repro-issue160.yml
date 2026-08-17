@@ -8,7 +8,7 @@ on:
       - .github/workflows/repro-issue160.yml
 
 jobs:
-  verify-patched-branch:
+  isolate-webserver-wrapper:
     strategy:
       fail-fast: false
       matrix:
@@ -24,54 +24,51 @@ jobs:
       - name: Install DSH rc.6
         shell: bash
         run: npm install --global @deepseek-ai/dsh@0.1.0-rc.6
-      - name: Pack patched plugin
+      - name: Bypass only the stabilizer webServer child-context wrapper
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('lib/local-vision-stabilizer.js')
+          s = p.read_text()
+          start_marker = "          if (Array.isArray(deps) && deps.includes('webServer') && childCtx?.webServer) {"
+          end_marker = "          return callback(wrapped)"
+          start = s.index(start_marker)
+          end = s.index(end_marker, start)
+          s = s[:start] + s[end:]
+          p.write_text(s)
+          PY
+          node --check lib/local-vision-stabilizer.js
+      - name: Pack experimental plugin
         shell: bash
         run: |
           npm pack --json > pack.json
           node -e "const p=require('./pack.json'); if(!p[0]?.filename) process.exit(1); console.log(p[0].filename)" > tarball.txt
-      - name: Install patched plugin and probe host routes
+      - name: Install experimental plugin and probe host routes
         shell: bash
         run: |
           set -eu
           TARBALL="$(cat tarball.txt)"
-          echo "node=$(node --version)"
-          echo "npm=$(npm --version)"
-          echo "pnpm=$(pnpm --version)"
-          echo "tarball=$TARBALL"
           dsh plugin --profile web add "./$TARBALL"
 
           dsh web > dsh-issue160.log 2>&1 &
           DSH_PID=$!
-          cleanup() {
-            kill "$DSH_PID" >/dev/null 2>&1 || true
-          }
+          cleanup() { kill "$DSH_PID" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
 
           ready=0
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:3080/ >/dev/null 2>&1; then
-              ready=1
-              break
-            fi
-            if ! kill -0 "$DSH_PID" >/dev/null 2>&1; then
-              echo 'DSH exited before becoming ready'
-              cat dsh-issue160.log || true
-              exit 1
-            fi
+            if curl -fsS http://127.0.0.1:3080/ >/dev/null 2>&1; then ready=1; break; fi
+            if ! kill -0 "$DSH_PID" >/dev/null 2>&1; then cat dsh-issue160.log || true; exit 1; fi
             sleep 1
           done
-          if [ "$ready" != 1 ]; then
-            echo 'DSH did not become ready'
-            cat dsh-issue160.log || true
-            exit 1
-          fi
+          [ "$ready" = 1 ] || { cat dsh-issue160.log || true; exit 1; }
 
           assert_json_get() {
             route="$1"
             code="$(curl -sS -o body.txt -w '%{http_code}' "http://127.0.0.1:3080$route")"
-            type="$(curl -sSI "http://127.0.0.1:3080$route" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type" {print $2; exit}')"
-            echo "GET $route -> $code $type"
-            head -c 300 body.txt || true
+            echo "GET $route -> $code"
+            head -c 250 body.txt || true
             echo
             [ "$code" = 200 ]
             grep -qi '^{' body.txt
@@ -81,15 +78,15 @@ jobs:
           assert_json_get '/_dsh/vision-router/model-capabilities'
 
           code="$(curl -sS -X POST -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/self-update)"
-          echo "POST /_dsh/vision-router/self-update -> $code"
+          echo "POST self-update -> $code"
           cat body.txt || true
           echo
           [ "$code" = 403 ]
           grep -q 'invalid update token' body.txt
 
           code="$(curl -sS -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/test-connection)"
-          echo "GET /_dsh/vision-router/test-connection -> $code"
-          head -c 300 body.txt || true
+          echo "GET test-connection -> $code"
+          head -c 250 body.txt || true
           echo
           [ "$code" = 200 ] || [ "$code" = 502 ]
           grep -qi '^{' body.txt
