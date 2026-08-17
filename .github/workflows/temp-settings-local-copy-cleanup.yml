@@ -1,0 +1,71 @@
+name: temp settings local copy cleanup
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[settings-local-copy-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/settings-local-copy-cleanup
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile=false
+      - name: Apply focused copy/style cleanup
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('lib/client.js')
+          s = p.read_text()
+
+          replacements = [
+            ("toggleInstantDescribe: '即时本地翻译',", "toggleInstantDescribe: '即时本地识图',"),
+            ("hintLocalDescribeStyle: '仅影响本地识别（即时翻译 / 截图识别）的输出格式；结构化对截图分析（GUI / 文档 / 聊天记录）质量更高。',", "hintLocalDescribeStyle: '仅影响本地识别（即时识图 / 截图识图）的输出格式；结构化对截图分析（GUI / 文档 / 聊天记录）质量更高。',"),
+            ("toggleFreeFallback: '内置免费兜底',\n      toggleStealth: '隐身模式',", "toggleFreeFallback: '内置免费兜底',\n      toggleDesktopScreenshot: '桌面截图识图',\n      toggleStealth: '隐身模式',"),
+            ("hintFreeFallback: '当你选择的识图模型都不可用时，自动尝试内置 OVH 免费模型。免注册、免 API Key。',\n      hintStealth:", "hintFreeFallback: '当你选择的识图模型都不可用时，自动尝试内置 OVH 免费模型。免注册、免 API Key。',\n      hintDesktopScreenshot: '允许模型按需截取桌面屏幕用于识图。默认关闭；开启后才提供 vision_screenshot 工具，系统可能请求屏幕录制权限。',\n      hintStealth:"),
+            ("toggleInstantDescribe: 'Instant local translation',", "toggleInstantDescribe: 'Instant local image recognition',"),
+            ("hintLocalDescribeStyle: 'Affects only local recognition output (instant translation / screenshot identify); structured is better for screenshot analysis (GUI / documents / chat logs).',", "hintLocalDescribeStyle: 'Affects only local recognition output (instant image recognition / screenshot recognition); structured is better for screenshot analysis (GUI / documents / chat logs).',"),
+            ("toggleFreeFallback: 'Built-in free fallback',\n      toggleStealth: 'Stealth mode',", "toggleFreeFallback: 'Built-in free fallback',\n      toggleDesktopScreenshot: 'Desktop screenshot vision',\n      toggleStealth: 'Stealth mode',"),
+            ("hintFreeFallback: 'If your selected vision models fail, automatically try the built-in OVH free models. No signup or API key required.',\n      hintStealth:", "hintFreeFallback: 'If your selected vision models fail, automatically try the built-in OVH free models. No signup or API key required.',\n      hintDesktopScreenshot: 'Lets the model capture the desktop on demand for image understanding. Off by default; vision_screenshot is exposed only when enabled, and the OS may request screen-recording permission.',\n      hintStealth:"),
+            ("localVisionHeroBadge: '本地 · 免费 · 隐私优先',\n", ""),
+            ("localVisionHeroBadge: 'Local · free · privacy-first',\n", ""),
+            ("'.vr-local-group{content-visibility:auto;contain-intrinsic-size:auto 96px;margin:8px 0 4px;padding:12px 13px;border:1px solid var(--dsw-alias-brand-primary);border-radius:12px;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 7%,var(--dsw-alias-bg-layer-2));gap:7px}' +\n      '.vr-local-group .vr-group-head{align-items:center;gap:10px}' +\n      '.vr-local-headcopy{display:flex;flex-direction:column;gap:2px;min-width:0;flex:none}' +\n      '.vr-local-title{font-size:13px;font-weight:700;color:var(--dsw-alias-label-primary)}' +\n      '.vr-local-badge{font-size:10px;font-weight:600;color:var(--dsw-alias-brand-primary);letter-spacing:.01em}' +", "'.vr-local-group{margin:0;padding:10px 0 2px;gap:7px}' +\n      '.vr-local-title{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)}' +"),
+            ("h('div', { className: 'vr-local-group' },", "h('div', { className: 'vr-group vr-local-group' },"),
+            ("h('span', { className: 'vr-local-headcopy' },\n                    h('span', { className: 'vr-group-title vr-local-title' }, t('groupLocalOllama')),\n                    h('span', { className: 'vr-local-badge' }, t('localVisionHeroBadge')),\n                  ),", "h('span', { className: 'vr-group-title vr-local-title' }, t('groupLocalOllama')),"),
+          ]
+          for old, new in replacements:
+            count = s.count(old)
+            if count != 1:
+              raise SystemExit(f'expected exactly one match, got {count}: {old[:100]!r}')
+            s = s.replace(old, new)
+          p.write_text(s)
+
+          t = Path('tests/client.test.js')
+          q = t.read_text()
+          old = '''  assert.equal(source.includes("groupLocalOllama: '本地视觉 · Ollama / LM Studio'"), true)\n  assert.equal(source.includes("localVisionHeroBadge: '本地 · 免费 · 隐私优先'"), true)\n  assert.equal(source.includes("groupLocalOllama: 'Local vision · Ollama / LM Studio'"), true)\n  assert.equal(source.includes("className: 'vr-local-group'"), true)\n  assert.equal(source.includes("className: 'vr-local-badge'"), true)\n  assert.equal(source.includes("className: 'vr-local-entry-hint'"), true)\n'''
+          new = '''  assert.equal(source.includes("groupLocalOllama: '本地视觉 · Ollama / LM Studio'"), true)\n  assert.equal(source.includes("groupLocalOllama: 'Local vision · Ollama / LM Studio'"), true)\n  assert.equal(source.includes("toggleInstantDescribe: '即时本地识图'"), true)\n  assert.equal(source.includes("toggleInstantDescribe: 'Instant local image recognition'"), true)\n  assert.equal(source.includes("toggleDesktopScreenshot: '桌面截图识图'"), true)\n  assert.equal(source.includes("toggleDesktopScreenshot: 'Desktop screenshot vision'"), true)\n  assert.equal(source.includes("hintDesktopScreenshot: '允许模型按需截取桌面屏幕用于识图。"), true)\n  assert.equal(source.includes("hintDesktopScreenshot: 'Lets the model capture the desktop on demand"), true)\n  assert.equal(source.includes("className: 'vr-group vr-local-group'"), true)\n  assert.equal(source.includes("className: 'vr-local-entry-hint'"), true)\n  assert.equal(source.includes("localVisionHeroBadge:"), false)\n  assert.equal(source.includes("className: 'vr-local-badge'"), false)\n  assert.equal(source.includes(".vr-local-title{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)"), true)\n'''
+          if q.count(old) != 1:
+            raise SystemExit('local settings assertion block did not match exactly once')
+          q = q.replace(old, new)
+          t.write_text(q)
+          PY
+      - run: pnpm test
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/temp-settings-local-copy-cleanup.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/client.js tests/client.test.js .github/workflows/temp-settings-local-copy-cleanup.yml
+          git commit -m 'fix: clarify local vision settings copy [settings-local-copy-applied]'
+          git push origin HEAD:fix/settings-local-copy-cleanup
