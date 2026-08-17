@@ -1,0 +1,61 @@
+name: v2 session hardening patch
+
+on:
+  push:
+    branches:
+      - fix/v2-session-hardening
+    paths:
+      - scripts/patch-v2-session-hardening.py
+      - .github/workflows/v2-session-hardening-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v2-session-hardening
+          fetch-depth: 0
+      - name: Fetch v2 prototype helpers
+        run: |
+          git fetch origin feat/v2-benchmark-scene-router-test
+          git show FETCH_HEAD:lib/vision-capability-router.js > lib/vision-capability-router.js
+          git show FETCH_HEAD:lib/vision-capability-benchmark.js > lib/vision-capability-benchmark.js
+          git show FETCH_HEAD:lib/vision-scene-router.js > lib/vision-scene-router.js
+          git show FETCH_HEAD:tests/vision-capability-router.test.js > tests/vision-capability-router.test.js
+          git show FETCH_HEAD:tests/vision-capability-benchmark.test.js > tests/vision-capability-benchmark.test.js
+          git show FETCH_HEAD:tests/vision-scene-router.test.js > tests/vision-scene-router.test.js
+      - name: Apply session hardening patch
+        run: python3 scripts/patch-v2-session-hardening.py
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Syntax checks
+        run: |
+          node --check index.js
+          node --check lib/structured-bootstrap.js
+          node --check lib/vision-capability-router.js
+          node --check lib/vision-capability-benchmark.js
+          node --check lib/vision-scene-router.js
+      - name: Focused regression tests
+        run: node --test tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js tests/vision-capability-router.test.js tests/vision-capability-benchmark.test.js tests/vision-scene-router.test.js tests/session-hardening.test.js
+      - name: Full test suite
+        run: pnpm test
+      - name: Diff check
+        run: git diff --check
+      - name: Commit generated patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js package.json lib/structured-bootstrap.js lib/vision-capability-router.js lib/vision-capability-benchmark.js lib/vision-scene-router.js tests/vision-capability-router.test.js tests/vision-capability-benchmark.test.js tests/vision-scene-router.test.js tests/session-hardening.test.js
+          git commit -m "fix: harden structured vision sessions and capability benchmark"
+          git push origin HEAD:fix/v2-session-hardening
