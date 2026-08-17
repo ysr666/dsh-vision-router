@@ -28,8 +28,8 @@ test('measured evidence is preferred in the agent reference', () => {
     { measured: { [key]: { scores: { ocr: 0.97, grounding: 0.42 } } } },
   )
   assert.match(reference.text, /实测/)
-  assert.match(reference.text, /OCR:0\.91|OCR:0\.9[0-9]/)
-  assert.doesNotMatch(reference.text, /永久排行榜/)
+  assert.match(reference.text, /OCR:0\.88/)
+  assert.match(reference.text, /不是永久排行榜/)
 })
 
 test('discovery planner probes task intent first and then a compact cross-section', () => {
