@@ -67,6 +67,14 @@ import {
   explainVisionRoute,
 } from './lib/vision-capability-router.js'
 import { buildAgentVisionModelReference } from './lib/vision-capability-reference.js'
+import {
+  CORE_BENCHMARK_INTENTS,
+  aggregateCapabilityBenchmark,
+  capabilityBenchmarkFingerprint,
+  listCapabilityBenchmarkFixtures,
+  scoreCapabilityBenchmarkResult,
+} from './lib/vision-capability-benchmark.js'
+import { routePostBootstrapScene, sceneRouteAgentInstruction } from './lib/vision-scene-router.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -4042,6 +4050,219 @@ export function apply(ctx, config = {}) {
   }
 
 
+  // Exact-endpoint benchmark profiles. These records are deliberately keyed by
+  // the concrete backend transport fingerprint, not just a model family name.
+  // A relay/path/config/credential change therefore cannot inherit stale scores.
+  const capabilityBenchmarkMemory = new Map()
+  const capabilityBenchmarkDir = () =>
+    path.resolve(process.cwd(), String(current().artifactsDir || '.dsh-vision-router/artifacts'), 'capability-benchmarks')
+
+  const benchmarkCandidateForPair = (pair) => ({
+    kind: 'adapter',
+    key: `${pair.provider}/${pair.model}`,
+    provider: pair.provider,
+    model: pair.model,
+    pair,
+  })
+
+  const benchmarkCandidateForHttp = (provider) => ({
+    kind: 'http',
+    key: `http:${provider.name}/${provider.model}`,
+    provider: `http:${provider.name}`,
+    model: provider.model,
+    http: provider,
+  })
+
+  const exactBenchmarkCandidates = async () => {
+    const candidates = []
+    const seen = new Set()
+    for (const pair of await resolveToolVisionPairs()) {
+      const candidate = benchmarkCandidateForPair(pair)
+      if (!seen.has(candidate.key)) { seen.add(candidate.key); candidates.push(candidate) }
+    }
+    for (const provider of httpProviders()) {
+      const candidate = benchmarkCandidateForHttp(provider)
+      if (!seen.has(candidate.key)) { seen.add(candidate.key); candidates.push(candidate) }
+    }
+    return candidates
+  }
+
+  const capabilityBenchmarkIdentity = async (candidate) => {
+    let endpoint = ''
+    let api = ''
+    let credentialFingerprint
+    const config = { kind: candidate.kind }
+    if (candidate.kind === 'http') {
+      endpoint = String(candidate.http?.baseURL ?? '')
+      api = 'openai-completions'
+      credentialFingerprint = await credentialFingerprintFor({
+        kind: 'http',
+        apiKeyEnv: candidate.http?.apiKeyEnv,
+      })
+      config.providerName = candidate.http?.name
+      config.maxTokens = candidate.http?.maxTokens
+    } else {
+      credentialFingerprint = await credentialFingerprintFor({ provider: candidate.pair.provider })
+      const correction = await routingCorrectionForPair(candidate.pair)
+      const catalog = resolvedCatalogFactsOf(candidate.pair.provider, candidate.pair.model)
+      const bridge = channelBridgePlan(candidate.pair.provider, candidate.pair.model)
+      endpoint = String(correction?.baseURL ?? catalog?.baseUrl ?? bridge?.transport?.baseURL ?? '')
+      api = String(correction?.api ?? catalog?.api ?? bridge?.transport?.api ?? '')
+      config.bridgeAvailable = bridge?.ok === true
+      config.inferredTransport = endpoint === '' ? 'adapter-owned' : 'resolved'
+    }
+    config.api = api
+    config.credentialFingerprint = credentialFingerprint
+    const fingerprint = capabilityBenchmarkFingerprint({
+      provider: candidate.provider,
+      model: candidate.model,
+      endpoint,
+      config,
+    })
+    return { fingerprint, endpoint, config }
+  }
+
+  const loadCapabilityBenchmarkForCandidate = async (candidate) => {
+    const identity = await capabilityBenchmarkIdentity(candidate)
+    const cached = capabilityBenchmarkMemory.get(identity.fingerprint)
+    if (cached && cached.backend === candidate.key) return cached
+    const file = path.join(capabilityBenchmarkDir(), `${identity.fingerprint}.json`)
+    try {
+      const parsed = JSON.parse(await readFile(file, 'utf8'))
+      if (
+        parsed && parsed.fingerprint === identity.fingerprint &&
+        parsed.backend === candidate.key && parsed.aggregate?.scores
+      ) {
+        capabilityBenchmarkMemory.set(identity.fingerprint, parsed)
+        return parsed
+      }
+    } catch {}
+    return undefined
+  }
+
+  const persistCapabilityBenchmark = async (record) => {
+    const dir = capabilityBenchmarkDir()
+    await mkdir(dir, { recursive: true })
+    const file = path.join(dir, `${record.fingerprint}.json`)
+    await writeFile(file, JSON.stringify(record, null, 2))
+    capabilityBenchmarkMemory.set(record.fingerprint, record)
+    return file
+  }
+
+  const benchmarkImageBlock = async (bytes) => {
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined) {
+      throw new Error('vision capability benchmark: attachment service is not available')
+    }
+    const ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png' })
+    return { type: 'image', attachment: ref }
+  }
+
+  // Run generated fixtures against exactly ONE selected backend. The adapter
+  // path may use that SAME backend's direct-channel compatibility bridge, but
+  // this function never calls answerVision() and never walks to another model.
+  const runExactCapabilityBenchmark = async ({ backend, intents }) => {
+    const candidates = await exactBenchmarkCandidates()
+    const candidate = candidates.find((item) => item.key === backend)
+    if (!candidate) {
+      return {
+        ok: false,
+        code: 'CAPABILITY_BENCHMARK_BACKEND_NOT_FOUND',
+        backend,
+        available: candidates.map((item) => item.key),
+      }
+    }
+    const selectedIntents = Array.isArray(intents) && intents.length > 0
+      ? [...new Set(intents.filter((intent) => CORE_BENCHMARK_INTENTS.includes(intent)))]
+      : [...CORE_BENCHMARK_INTENTS]
+    if (selectedIntents.length === 0) {
+      return { ok: false, code: 'CAPABILITY_BENCHMARK_NO_VALID_INTENTS', backend }
+    }
+
+    const fixtures = listCapabilityBenchmarkFixtures(selectedIntents)
+    const sharp = await loadSharp()
+    const results = []
+    const deadline = createDeadline(Math.max(visionTaskTimeoutMs(), fixtures.length * 15000))
+    for (const fixture of fixtures) {
+      if (deadline.expired()) {
+        results.push({ fixture: fixture.id, intent: fixture.intent, score: 0, ok: false, failure: 'TIMEOUT', error: 'benchmark deadline exhausted' })
+        continue
+      }
+      const imageBytes = await sharp(Buffer.from(fixture.svg)).png().toBuffer()
+      const block = await benchmarkImageBlock(imageBytes)
+      const attemptBudgetMs = Math.max(1, Math.min(timeoutMs(), deadline.remaining()))
+      const signal = combineSignals(deadline.signal(), AbortSignal.timeout(attemptBudgetMs))
+      const startedAt = Date.now()
+      try {
+        let output
+        if (candidate.kind === 'http') {
+          const openAIBlock = toOpenAIContent([block], () => imageBytes)[0]
+          const messages = appendPromptToImageOnlyMessage(
+            [{ role: 'user', content: [openAIBlock] }],
+            fixture.prompt,
+          ).messages
+          output = await callOpenAICompatible(candidate.http, messages, {
+            maxTokens: candidate.http.maxTokens ?? 2048,
+            signal,
+            resolveCredential,
+          })
+        } else {
+          const capability = await resolveVisionBackendCapability(candidate.pair.provider, candidate.pair.model)
+          output = await callVisionPairWithOptionalBridge(
+            candidate.pair,
+            [{
+              role: 'user',
+              content: [block, { type: 'text', text: fixture.prompt }],
+              source: { kind: 'plugin', plugin: 'dsh-vision-router' },
+            }],
+            {
+              maxTokens: 2048,
+              signal,
+              capability,
+              bridgeBlocks: [block],
+              bridgeInstruction: fixture.prompt,
+            },
+          )
+        }
+        results.push({
+          ...scoreCapabilityBenchmarkResult(fixture, output, Date.now() - startedAt),
+          ok: true,
+          output: String(output ?? '').slice(0, 4000),
+        })
+      } catch (error) {
+        const classification = classifyVisionFailure(error)
+        results.push({
+          fixture: fixture.id,
+          intent: fixture.intent,
+          score: 0,
+          latencyMs: Date.now() - startedAt,
+          ok: false,
+          failure: classification.kind ?? 'OTHER',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    const identity = await capabilityBenchmarkIdentity(candidate)
+    const record = {
+      version: 2,
+      backend: candidate.key,
+      backendKind: candidate.kind,
+      fingerprint: identity.fingerprint,
+      endpoint: identity.endpoint,
+      measuredAt: new Date().toISOString(),
+      intents: selectedIntents,
+      aggregate: aggregateCapabilityBenchmark(results),
+      results,
+    }
+    record.file = await persistCapabilityBenchmark(record)
+    ctx.logger?.info(
+      'vision-router: exact capability benchmark backend=%s fingerprint=%s scores=%s file=%s',
+      record.backend, record.fingerprint, JSON.stringify(record.aggregate.scores), record.file,
+    )
+    return { ok: true, ...record }
+  }
+
   // Build a compact evidence-aware model reference for the text agent. This is
   // intentionally shadow-only: it lets us compare an agent recommendation
   // against the scorer without changing which backend actually executes.
@@ -4050,26 +4271,24 @@ export function apply(ctx, config = {}) {
     const usablePairs = await resolveToolVisionPairs()
     const httpFallbacks = httpProviders()
     const candidates = []
+    const measured = {}
     for (const pair of usablePairs) {
+      const key = `${pair.provider}/${pair.model}`
       const local = isLocalBackendPair(pair)
-      candidates.push({
-        provider: pair.provider,
-        model: pair.model,
-        key: `${pair.provider}/${pair.model}`,
-        local,
-        cost: local ? 0 : 0.5,
-      })
+      candidates.push({ provider: pair.provider, model: pair.model, key, local, cost: local ? 0 : 0.5 })
+      const benchmark = await loadCapabilityBenchmarkForCandidate(benchmarkCandidateForPair(pair))
+      if (benchmark?.aggregate?.scores) measured[key] = benchmark.aggregate.scores
     }
     for (const provider of httpFallbacks) {
+      const key = `http:${provider.name}/${provider.model}`
       candidates.push({
-        provider: `http:${provider.name}`,
-        model: provider.model,
-        key: `http:${provider.name}/${provider.model}`,
-        local: false,
+        provider: `http:${provider.name}`, model: provider.model, key, local: false,
         cost: typeof provider.apiKeyEnv === 'string' && provider.apiKeyEnv !== '' ? 0.5 : 0,
       })
+      const benchmark = await loadCapabilityBenchmarkForCandidate(benchmarkCandidateForHttp(provider))
+      if (benchmark?.aggregate?.scores) measured[key] = benchmark.aggregate.scores
     }
-    const reference = buildAgentVisionModelReference(candidates)
+    const reference = buildAgentVisionModelReference(candidates, { measured })
     return reference.text || undefined
   }
 
@@ -4081,6 +4300,7 @@ export function apply(ctx, config = {}) {
     if (!capabilityRoutingShadowEnabled()) return undefined
     const candidates = []
     const health = {}
+    const measured = {}
     for (const pair of usablePairs) {
       const key = `${pair.provider}/${pair.model}`
       const fingerprint = await credentialFingerprintFor({ provider: pair.provider })
@@ -4088,6 +4308,8 @@ export function apply(ctx, config = {}) {
       health[key] = { circuitOpen: gate.blocked === true }
       const local = isLocalBackendPair(pair)
       candidates.push({ provider: pair.provider, model: pair.model, key, local, cost: local ? 0 : 0.5 })
+      const benchmark = await loadCapabilityBenchmarkForCandidate(benchmarkCandidateForPair(pair))
+      if (benchmark?.aggregate?.scores) measured[key] = benchmark.aggregate.scores
     }
     for (const provider of httpFallbacks) {
       const key = `http:${provider.name}/${provider.model}`
@@ -4101,6 +4323,8 @@ export function apply(ctx, config = {}) {
         local: false,
         cost: typeof provider.apiKeyEnv === 'string' && provider.apiKeyEnv !== '' ? 0.5 : 0,
       })
+      const benchmark = await loadCapabilityBenchmarkForCandidate(benchmarkCandidateForHttp(provider))
+      if (benchmark?.aggregate?.scores) measured[key] = benchmark.aggregate.scores
     }
     if (candidates.length === 0) return undefined
     const resolvedIntent = intent ?? inferToolVisionIntent(toolName, args)
@@ -4113,6 +4337,7 @@ export function apply(ctx, config = {}) {
       candidates,
       strategy: capabilityRoutingStrategy(),
       health,
+      measured,
     })
     const v1 = candidates.map((candidate) => candidate.key)
     const v2 = ranked.map((candidate) => candidate.key)
@@ -4849,7 +5074,7 @@ export function apply(ctx, config = {}) {
               '完成这次后续视觉调用之前不要直接回答用户；之后才可按任务需要继续调用更多工具或作答。' +
               (capabilityReference
                 ? '\n\n【v2 能力参考影子实验】\n' + capabilityReference +
-                  '\n请只根据用户当前任务和以上证据，选出你认为最适合执行第一次结构化视觉识别的 backend key，并在 vision_bootstrap 的 preferredBackend 中填写。' +
+                  '\n请只根据以上能力证据，选出你认为最适合执行任务无关 structured baseline 的 backend key，并在 vision_bootstrap 的 preferredBackend 中填写；不要在 bootstrap 前先判断 OCR / 文档 / UI / 代码场景。' +
                   '这只是影子推荐：不会改变实际执行模型，用于和 Router scorer 做对照。不要因为模型名本身臆测未验证新模型的能力。'
                 : '') +
               '这不是单次 bootstrap。如果 bootstrap 返回 ok:false 的后端故障结果，本轮停止视觉调用并基于已有文本继续。' +
@@ -4873,10 +5098,14 @@ export function apply(ctx, config = {}) {
             type: 'text',
             text:
               '第 1 次结构化视觉预识别已经完成，但 1+x 流程还没有结束：x 必须 >= 1。' +
-              '现在请基于 vision_bootstrap 返回的 evidence，优先参考 recommended_followups，选择并调用至少 1 个能新增或验证证据的视觉工具。' +
-              '不要把 OCR 当成默认第二步：仅当任务真的需要逐字转写或 bootstrap 明确标出文字不确定时才用 vision_ocr；UI/截图语义验证优先 vision_detect 或聚焦的 vision_describe。' +
+              '现在请基于 vision_bootstrap 返回的 evidence 和 scene_route，选择并调用至少 1 个能新增或验证证据的视觉工具。' +
+              (bootstrapState.sceneRoute ? sceneRouteAgentInstruction(bootstrapState.sceneRoute) : '') +
+              'scene_route 只在结构化预识别之后判断场景，不是预识别前的 mode 选择。chat 优先精确 OCR，code/table/UI 使用对应 specialist；Other 使用通用 VLM。' +
+              '若 scene_route.zoom.recommended=true，先用 vision_ground 定位需要核验的区域，再按需 vision_crop 放大后做 specialist 识别。' +
+              '不要把 OCR 当成所有图片的默认第二步：仅当 chat/逐字转写任务或文字不确定需要精确文本时才用 vision_ocr。' +
               '结构化模式下若确实调用 vision_ocr 且未显式指定引擎，会自动使用视觉模型 OCR（engine=vision）而不是先接受本地 Tesseract 的非空结果，以提高中文/UI 文字准确率。' +
-              '局部目标可用 vision_ground。在至少 1 次后续证据工具调用完成前，不要直接回答用户。完成后才进入自由 Agent 循环，可继续调用更多工具或作答。',
+              '任何 Guess 都必须是 evidence-backed inference：精确文字、坐标、UI 状态、表格值或代码仍不清楚时继续调用 focused tool 或明确保留不确定性，禁止脑补。' +
+              '在至少 1 次后续证据工具调用完成前，不要直接回答用户。完成后才进入自由 Agent 循环，可继续调用更多工具或作答。',
           },
         ],
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
@@ -5505,6 +5734,38 @@ export function apply(ctx, config = {}) {
     }
     deepToolDefs.push(visionDescribeTool)
 
+    deepToolDefs.push({
+      name: 'vision_capability_benchmark',
+      description:
+        'Developer v2 exact-endpoint self-benchmark. Runs privacy-safe generated fixtures against ONE exact configured vision backend with NO model fallback, then stores measured capability scores for routing. Use only when the user explicitly asks to test model capabilities.',
+      parameters: {
+        type: 'object',
+        properties: {
+          backend: {
+            type: 'string',
+            description: 'Exact backend key, e.g. provider/model or http:<provider-name>/<model>.',
+          },
+          intents: {
+            type: 'array',
+            items: { type: 'string', enum: CORE_BENCHMARK_INTENTS },
+            description: 'Optional subset. Defaults to structured, ocr, grounding, document, general. OCR includes Latin/UI and Chinese-chat fixtures.',
+          },
+        },
+        required: ['backend'],
+        additionalProperties: false,
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      async execute(args) {
+        return JSON.stringify(await runExactCapabilityBenchmark({
+          backend: String(args.backend ?? '').trim(),
+          intents: args.intents,
+        }))
+      },
+    })
+
     // Universal structured first pass for the optional 1+x flow. The vision
     // chain inspects the pixels and infers the visual kind itself; the text
     // agent does not choose a mode beforehand. After this baseline, x is at
@@ -5580,6 +5841,8 @@ export function apply(ctx, config = {}) {
           bootstrapState.followupCompleted = false
         }
         const evidence = normalizeStructuredBootstrapResult(parsed, raw)
+        const sceneRoute = routePostBootstrapScene(evidence)
+        if (bootstrapState) bootstrapState.sceneRoute = sceneRoute
         const memory = structuredBootstrapMemory(evidence)
         const ids = new Set()
         for (const id of Array.isArray(args.attachmentIds) ? args.attachmentIds : []) {
@@ -5593,8 +5856,8 @@ export function apply(ctx, config = {}) {
           ok: true,
           phase: 'structured-bootstrap',
           evidence,
-          next:
-            'Structured baseline ready. REQUIRED next step: choose at least one task-directed tool from recommended_followups (or another evidence tool) and call it before answering. After that, continue with more tools only as needed.',
+          scene_route: sceneRoute,
+          next: sceneRouteAgentInstruction(sceneRoute),
         })
       },
     })
