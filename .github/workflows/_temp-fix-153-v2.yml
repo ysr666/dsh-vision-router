@@ -36,3 +36,4 @@ jobs:
           git add index.js lib/client.js tests/core.test.js README.md README.zh.md
           git commit -m "fix: materialize attachments for offline fallback (#153)"
           git push origin HEAD:fix/issue-153-attachment-materialize
+# rerun-2
