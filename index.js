@@ -60,6 +60,12 @@ import {
   structuredBootstrapMemory,
   structuredBootstrapQuestion,
 } from './lib/structured-bootstrap.js'
+import {
+  VISION_STRATEGIES,
+  inferToolVisionIntent,
+  rankVisionCandidates,
+  explainVisionRoute,
+} from './lib/vision-capability-router.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -264,6 +270,10 @@ export const Config = z.object({
   // evidence/deepening vision-tool call before answering (x >= 1). Off by
   // default because it adds at least two visual/tool calls to image turns.
   structuredVisionBootstrap: z.boolean().default(false),
+  // v2 prototype: compute an intent-aware model order and log it, but keep
+  // executing the existing v1 fallback order. Safe for real-world comparison.
+  capabilityRoutingShadow: z.boolean().default(false),
+  capabilityRoutingStrategy: z.string().default('balanced'),
   progressiveTools: z.boolean().default(true),
   autoActivateOnImage: z.boolean().default(true),
   // Desktop capture crosses a separate privacy boundary from inspecting user-
@@ -2823,6 +2833,11 @@ export function apply(ctx, config = {}) {
   }
   const toolEnabled = () => current().tool !== false
   const structuredBootstrapEnabled = () => current().structuredVisionBootstrap === true
+  const capabilityRoutingShadowEnabled = () => current().capabilityRoutingShadow === true
+  const capabilityRoutingStrategy = () => {
+    const value = current().capabilityRoutingStrategy
+    return VISION_STRATEGIES.includes(value) ? value : 'balanced'
+  }
   // Assigned in the tools section below; the pre-step listener calls it on
   // image turns so the deep tools are mounted before the first model step.
   let activateDeepTools = () => '视觉深看工具尚不可用。'
@@ -4025,6 +4040,68 @@ export function apply(ctx, config = {}) {
     return out
   }
 
+
+  // Phase-2 v2 shadow router. It sees the exact candidate pool and current
+  // breaker state, produces an intent-aware suggested order, and logs the
+  // comparison. Crucially, callers continue iterating usablePairs/httpFallbacks
+  // in their original v1 order; this helper never mutates execution order.
+  const shadowVisionRouting = async ({ toolName, args = {}, intent, usablePairs = [], httpFallbacks = [], scope = 'anon:0' }) => {
+    if (!capabilityRoutingShadowEnabled()) return undefined
+    const candidates = []
+    const health = {}
+    for (const pair of usablePairs) {
+      const key = `${pair.provider}/${pair.model}`
+      const fingerprint = await credentialFingerprintFor({ provider: pair.provider })
+      const gate = visionBreaker.inspect(key, fingerprint, scope)
+      health[key] = { circuitOpen: gate.blocked === true }
+      const local = isLocalBackendPair(pair)
+      candidates.push({ provider: pair.provider, model: pair.model, key, local, cost: local ? 0 : 0.5 })
+    }
+    for (const provider of httpFallbacks) {
+      const key = `http:${provider.name}/${provider.model}`
+      const fingerprint = await credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv })
+      const gate = visionBreaker.inspect(key, fingerprint, scope)
+      health[key] = { circuitOpen: gate.blocked === true }
+      candidates.push({
+        provider: `http:${provider.name}`,
+        model: provider.model,
+        key,
+        local: false,
+        cost: typeof provider.apiKeyEnv === 'string' && provider.apiKeyEnv !== '' ? 0.5 : 0,
+      })
+    }
+    if (candidates.length === 0) return undefined
+    const resolvedIntent = intent ?? inferToolVisionIntent(toolName, args)
+    const ranked = rankVisionCandidates({
+      intent: resolvedIntent,
+      candidates,
+      strategy: capabilityRoutingStrategy(),
+      health,
+    })
+    const v1 = candidates.map((candidate) => candidate.key)
+    const v2 = ranked.map((candidate) => candidate.key)
+    const changed = v1.join('\u0000') !== v2.join('\u0000')
+    const scored = ranked.map((candidate) => `${candidate.key}(${candidate.score.toFixed(3)})`)
+    ctx.logger?.info(
+      'vision-router: capability-shadow tool=%s intent=%s strategy=%s changed=%s v1=[%s] v2=[%s]',
+      toolName,
+      resolvedIntent,
+      capabilityRoutingStrategy(),
+      changed ? 'yes' : 'no',
+      v1.join(' > '),
+      scored.join(' > '),
+    )
+    return {
+      toolName,
+      intent: resolvedIntent,
+      strategy: capabilityRoutingStrategy(),
+      changed,
+      v1,
+      v2,
+      explanation: explainVisionRoute(ranked),
+    }
+  }
+
   // ── vision chain route: fallback under our own control ─────────────────────
   //
   // The agent-loop's request-error retry is owned by dsh-llm-retry, which sits
@@ -5068,6 +5145,8 @@ export function apply(ctx, config = {}) {
 
         const question = String(args.question ?? '')
         const wantJson = args.json === true
+        const shadowToolName = typeof args.__visionToolName === 'string' ? args.__visionToolName : 'vision_describe'
+        const shadowIntent = typeof args.__visionIntent === 'string' ? args.__visionIntent : undefined
         // Keep the adapter path and direct OpenAI-compatible HTTP path on the
         // exact same prompt, including the structured JSON evidence contract.
         const promptText = visionDescribePrompt(question, wantJson)
@@ -5106,6 +5185,14 @@ export function apply(ctx, config = {}) {
         // 401 provider, no minutes of "deep diving".
         const session = exec && exec.agent && exec.agent.session
         const scope = visionScopeOf(session)
+        await shadowVisionRouting({
+          toolName: shadowToolName,
+          args,
+          intent: shadowIntent,
+          usablePairs,
+          httpFallbacks,
+          scope,
+        })
         if (visionTurnMemory.allFailed(scope)) {
           return JSON.stringify(
             buildVisionFailure({
@@ -5408,6 +5495,8 @@ export function apply(ctx, config = {}) {
             paths: Array.isArray(args.paths) ? args.paths : [],
             attachmentIds: Array.isArray(args.attachmentIds) ? args.attachmentIds : [],
             question: structuredBootstrapQuestion(),
+            __visionToolName: 'vision_bootstrap',
+            __visionIntent: 'structured',
             // IMPORTANT: do not use vision_describe's generic json:true schema
             // here; the bootstrap prompt owns its dedicated structured contract.
             json: false,
@@ -5592,6 +5681,18 @@ export function apply(ctx, config = {}) {
       // Freeze one fallback walk. Settings changes are observed by the next
       // task, never between two attempts in the current task.
       const httpFallbacks = httpProviders()
+      const shadowIntent = options.intent ?? inferToolVisionIntent(
+        options.toolName ?? 'vision_describe',
+        options.toolArgs ?? { question: instruction },
+      )
+      await shadowVisionRouting({
+        toolName: options.toolName ?? 'vision_internal',
+        args: options.toolArgs ?? { question: instruction },
+        intent: shadowIntent,
+        usablePairs,
+        httpFallbacks,
+        scope,
+      })
       const primaryWeight = DEFAULT_HTTP_PROVIDERS.length
       let remainingWeight =
         usablePairs.length * primaryWeight +

@@ -150,9 +150,9 @@ Advanced settings can expose per-intent preferred/blocked models and raw profile
 - unit tests;
 - **no runtime behavior change**.
 
-### Phase 2 — shadow routing
+### Phase 2 — shadow routing (implemented on this branch)
 
-Wire the scorer into `resolveToolVisionPairs(intent)` in shadow mode. Log `current order` vs `v2 suggested order`, but continue executing the v1 order. This gives real-world evidence without risking users.
+The scorer is now wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order. The shadow plan includes the current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents. This gives real-world evidence without risking users.
 
 ### Phase 3 — opt-in runtime routing
 
