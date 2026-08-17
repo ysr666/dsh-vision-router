@@ -691,3 +691,81 @@ test('vision backend picker keeps generative models when image metadata is advis
   assert.equal(bundle.visionCapabilityWarningKey(undefined, 'error'), 'visionCapabilityUnknownWarning')
   assert.equal(bundle.visionCapabilityWarningKey(capabilities.declared.vision, 'ready'), undefined)
 })
+
+
+test('hidden settings persistence sends an identical mutation at most once (issue #155)', async () => {
+  const bundle = loadClientBundle()
+  const snapshot = { status: 'ready', writable: true, value: {}, user: {} }
+  const listeners = new Set()
+  let writes = 0
+  const scope = {
+    getSnapshot() { return snapshot },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
+    async set() {
+      writes += 1
+      // Reproduce the problematic Host behavior: resolve/recover without
+      // landing the value, while subscribers keep receiving snapshots.
+      for (const listener of [...listeners]) listener()
+    },
+    async unset() {
+      writes += 1
+      for (const listener of [...listeners]) listener()
+    },
+  }
+  const persistence = bundle.installSettingsPersistence(scope)
+  persistence.subscribe(() => {
+    // A render/effect can ask for the same hidden state again on every
+    // snapshot. It must not generate another settings.mutate request.
+    persistence.set('onboardingSeen', true)
+  })
+  persistence.set('onboardingSeen', true)
+  for (let i = 0; i < 8; i++) {
+    for (const listener of [...listeners]) listener()
+    persistence.set('onboardingSeen', true)
+    await Promise.resolve()
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(writes, 1)
+})
+
+test('hidden settings persistence skips mutations already present in the user layer', async () => {
+  const bundle = loadClientBundle()
+  const snapshot = {
+    status: 'ready', writable: true,
+    value: { onboardingSeen: true },
+    user: { onboardingSeen: true },
+  }
+  let writes = 0
+  const persistence = bundle.installSettingsPersistence({
+    getSnapshot() { return snapshot },
+    subscribe() { return () => {} },
+    async set() { writes += 1 },
+    async unset() { writes += 1 },
+  })
+  persistence.set('onboardingSeen', true)
+  await Promise.resolve()
+  assert.equal(writes, 0)
+})
+
+test('hidden settings persistence still permits real state transitions', async () => {
+  const bundle = loadClientBundle()
+  const snapshot = { status: 'ready', writable: true, value: {}, user: {} }
+  const writes = []
+  const persistence = bundle.installSettingsPersistence({
+    getSnapshot() { return snapshot },
+    subscribe() { return () => {} },
+    async set(field, value) { writes.push(['set', field, value]); snapshot.user[field] = value; snapshot.value[field] = value },
+    async unset(field) { writes.push(['unset', field]); delete snapshot.user[field]; delete snapshot.value[field] },
+  })
+  persistence.set('visionGuideStep', 'step1')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  persistence.set('visionGuideStep', 'step2')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  persistence.unset('visionGuideStep')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(writes, [
+    ['set', 'visionGuideStep', 'step1'],
+    ['set', 'visionGuideStep', 'step2'],
+    ['unset', 'visionGuideStep'],
+  ])
+})
