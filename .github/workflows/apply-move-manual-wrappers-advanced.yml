@@ -1,0 +1,44 @@
+name: Apply manual wrapper advanced-settings migration
+
+on:
+  push:
+    branches:
+      - feat/structured-vision-bootstrap
+    paths:
+      - scripts/move-manual-wrappers-advanced.cjs
+      - .github/workflows/apply-move-manual-wrappers-advanced.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/structured-vision-bootstrap
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Apply UI move
+        run: node scripts/move-manual-wrappers-advanced.cjs
+      - name: Remove one-shot helpers
+        run: rm scripts/move-manual-wrappers-advanced.cjs .github/workflows/apply-move-manual-wrappers-advanced.yml
+      - name: Run focused tests
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm test
+      - name: Commit generated changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/client.js scripts/move-manual-wrappers-advanced.cjs .github/workflows/apply-move-manual-wrappers-advanced.yml
+          git commit -m "ui: move manual model wrapping to advanced settings"
+          git push origin HEAD:feat/structured-vision-bootstrap
