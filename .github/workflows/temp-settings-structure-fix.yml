@@ -1,0 +1,225 @@
+name: temp settings structure fix
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[settings-structure-fix-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/settings-structure-screenshot-permission
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile=false
+      - name: Apply focused hierarchy/runtime/permission patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def once(text, old, new, label):
+            count = text.count(old)
+            if count != 1:
+              raise SystemExit(f'{label}: expected one exact match, got {count}')
+            return text.replace(old, new, 1)
+
+          # --- Settings client -------------------------------------------------
+          p = Path('lib/client.js')
+          s = p.read_text()
+
+          s = once(
+            s,
+            "            localVisionHeroHint: '让图片优先在本机识别；默认关闭，不改变现有云端识图链。',",
+            "      localVisionHeroHint: '这里只配置 Ollama / LM Studio 本地视觉后端；自动首遍识别统一由上方「结构化预识别（1+x）」控制，无需额外开关。',",
+            'zh local vision hint',
+          )
+          s = once(
+            s,
+            "            localVisionHeroHint: 'Prefer on-device image understanding; off by default and does not change the existing cloud vision chain.',",
+            "      localVisionHeroHint: 'This section only configures Ollama / LM Studio backends. The automatic first visual pass is controlled solely by “Structured pre-scan (1+x)” above; no extra switch is needed.',",
+            'en local vision hint',
+          )
+          s = once(
+            s,
+            "      hintStructuredVisionBootstrap: '默认关闭。开启后，每个图片任务会先做一次不读取具体任务目标的结构化预识别，再由聊天模型根据原问题至少追加一次验证或深挖识图调用（1+x，x≥1）。准确性更高，但会增加至少一次视觉调用；若后续需要 OCR，自动模式会优先使用视觉模型。需保持「识图工具」开启。',",
+            "      hintStructuredVisionBootstrap: '默认关闭。开启后，每个图片任务会先做一次不读取具体任务目标的结构化预识别，再由聊天模型根据原问题至少追加一次验证或深挖识图调用（1+x，x≥1）。启用的 Ollama / LM Studio 会和其他视觉后端一样参与这条识图链，不需要另开「即时识图」。准确性更高，但会增加至少一次视觉调用；若后续需要 OCR，自动模式会优先使用视觉模型。需保持「识图工具」开启。',",
+            'zh structured hint',
+          )
+          s = once(
+            s,
+            "      hintStructuredVisionBootstrap: 'Off by default. Each image task first gets one task-independent structured visual baseline with no task goal passed into the pre-scan, then the chat model must make at least one evidence or deepening vision call for the original request (1+x, x>=1). This improves evidence quality but adds at least one visual call. If OCR is needed, auto mode prefers vision-model OCR. Keep Vision tools enabled.',",
+            "      hintStructuredVisionBootstrap: 'Off by default. Each image task first gets one task-independent structured visual baseline with no task goal passed into the pre-scan, then the chat model must make at least one evidence or deepening vision call for the original request (1+x, x>=1). Enabled Ollama / LM Studio backends participate in this same vision chain; there is no separate instant-recognition switch. This improves evidence quality but adds at least one visual call. If OCR is needed, auto mode prefers vision-model OCR. Keep Vision tools enabled.',",
+            'en structured hint',
+          )
+          s = once(
+            s,
+            "      hintDesktopScreenshot: '允许模型按需截取桌面屏幕用于识图。默认关闭；开启后才提供 vision_screenshot 工具，系统可能请求屏幕录制权限。',",
+            "      hintDesktopScreenshot: '允许模型按需截取桌面屏幕用于识图。默认关闭；开启后才提供 vision_screenshot 工具。macOS 在保存开启时会立即触发一次屏幕录制授权检查；如果已经授权，系统不会重复弹窗。',",
+            'zh screenshot hint',
+          )
+          s = once(
+            s,
+            "      hintDesktopScreenshot: 'Lets the model capture the desktop on demand for image understanding. Off by default; vision_screenshot is exposed only when enabled, and the OS may request screen-recording permission.',",
+            "      hintDesktopScreenshot: 'Lets the model capture the desktop on demand for image understanding. Off by default; vision_screenshot is exposed only when enabled. On macOS, saving the enabled setting immediately triggers a screen-recording permission check; if permission was already granted, macOS will not prompt again.',",
+            'en screenshot hint',
+          )
+
+          s = once(
+            s,
+            "      '.vr-local-group{margin:0;padding:10px 0 2px;gap:7px}' +\n      '.vr-local-title{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)}' +",
+            "      '.vr-local-group{margin:0;padding:10px 0 2px;gap:7px}' +\n      '.vr-local-group-open{margin-bottom:10px;padding-bottom:12px;border-bottom:1px solid var(--dsw-alias-border-l2)}' +\n      '.vr-local-title{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary)}' +",
+            'local group separator css',
+          )
+          s = s.replace("      '.vr-local-options{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-width:0}' +\n", '', 1)
+          s = s.replace("      '.vr-local-style{display:inline-flex;align-items:center;gap:6px;flex:none;white-space:nowrap}' +\n", '', 1)
+
+          summary_pattern = re.compile(
+            r"      // 折叠状态下的紧凑摘要：.*?      // dsh-vision 并入：本地 Ollama 编辑器",
+            re.S,
+          )
+          summary_new = """      // 折叠摘要只描述启用的本地后端。首遍识别是否自动运行由\n      // structuredVisionBootstrap 统一控制，不再暴露第二套即时识图/输出风格状态。\n      const localVisionSummary = () => {\n        const ollama = format('localOllama') || {}\n        const lmStudio = format('localLmStudio') || {}\n        if (ollama.enabled !== true && lmStudio.enabled !== true) return t('localVisionOff')\n        const parts = [t('localVisionOn')]\n        if (ollama.enabled === true) parts.push(`Ollama ${ollama.model || 'qwen2.5vl'}`)\n        if (lmStudio.enabled === true) {\n          parts.push(\n            lmStudio.model\n              ? `LM Studio ${lmStudio.model}`\n              : `LM Studio ${t('localModelRequiredShort')}`,\n          )\n        }\n        return parts.join(' · ')\n      }\n      // dsh-vision 并入：本地 Ollama 编辑器"""
+          s, n = summary_pattern.subn(summary_new, s, count=1)
+          if n != 1:
+            raise SystemExit(f'local summary block: expected one match, got {n}')
+
+          style_pattern = re.compile(
+            r"      // dsh-vision 并入：识别输出风格（plain / structured 单选）。\n      const describeStyleEditor = \(\) => \{.*?\n      \}\n      const finishGuide",
+            re.S,
+          )
+          s, n = style_pattern.subn("      const finishGuide", s, count=1)
+          if n != 1:
+            raise SystemExit(f'describe style editor: expected one match, got {n}')
+
+          marker = """      const runUpdateCheck = async (force = false) => {"""
+          permission_fn = """      const requestDesktopScreenshotPermission = () => {\n        // Fire-and-forget: saving the setting must stay responsive while macOS\n        // owns the native permission dialog. The tool itself still reports a\n        // real capture failure if the user denies access.\n        void fetch('/_dsh/vision-router/request-screenshot-permission', {\n          method: 'POST',\n          cache: 'no-store',\n        }).catch(() => {})\n      }\n\n"""
+          if s.count(marker) != 1:
+            raise SystemExit('runUpdateCheck marker not unique')
+          s = s.replace(marker, permission_fn + marker, 1)
+
+          save_marker = """          if (outcome.landedFields.includes('extraVisionModels')) {\n            loadVisionCapabilities(true, true)\n          }"""
+          save_new = save_marker + """\n          if (\n            outcome.landedFields.includes('desktopScreenshot') &&\n            plan.some((item) => item.key === 'desktopScreenshot' && item.run && item.run.value === true)\n          ) {\n            requestDesktopScreenshotPermission()\n          }"""
+          s = once(s, save_marker, save_new, 'permission trigger after save')
+
+          render_old = """              h('div', { className: 'vr-group vr-local-group' },\n                h('button', {\n                  type: 'button', className: 'vr-group-head', 'aria-expanded': showLocalVision,\n                  'aria-controls': 'vr-local-vision-body',\n                  onClick: () => setShowLocalVision(!showLocalVision),\n                },\n                  h('span', { className: 'vr-group-title vr-local-title' }, t('groupLocalOllama')),\n                  h('span', { className: 'vr-group-summary', title: localVisionSummary() }, localVisionSummary()),\n                  h('span', { className: 'vr-chevron' + (showLocalVision ? ' vr-chevron-open' : '') }, '▾'),\n                ),\n                h('p', { className: 'vr-local-entry-hint' }, t('localVisionHeroHint')),\n                showLocalVision\n                  ? h('div', { className: 'vr-local-body', id: 'vr-local-vision-body' },\n                      toggleField('instantDescribe'),\n                      localOllamaEditor(),\n                      localLmStudioEditor(),\n                      describeStyleEditor(),\n                      toggleField('desktopScreenshot'),\n                    )\n                  : null,\n              ),"""
+          render_new = """              h('div', {\n                className: 'vr-group vr-local-group' + (showLocalVision ? ' vr-local-group-open' : ''),\n              },\n                h('button', {\n                  type: 'button', className: 'vr-group-head', 'aria-expanded': showLocalVision,\n                  'aria-controls': 'vr-local-vision-body',\n                  onClick: () => setShowLocalVision(!showLocalVision),\n                },\n                  h('span', { className: 'vr-group-title vr-local-title' }, t('groupLocalOllama')),\n                  h('span', { className: 'vr-group-summary', title: localVisionSummary() }, localVisionSummary()),\n                  h('span', { className: 'vr-chevron' + (showLocalVision ? ' vr-chevron-open' : '') }, '▾'),\n                ),\n                h('p', { className: 'vr-local-entry-hint' }, t('localVisionHeroHint')),\n                showLocalVision\n                  ? h('div', { className: 'vr-local-body', id: 'vr-local-vision-body' },\n                      localOllamaEditor(),\n                      localLmStudioEditor(),\n                    )\n                  : null,\n              ),\n              toggleField('desktopScreenshot'),"""
+          s = once(s, render_old, render_new, 'local group render')
+          p.write_text(s)
+
+          # --- Runtime stabilizer ---------------------------------------------
+          p = Path('lib/local-vision-stabilizer.js')
+          s = p.read_text()
+          imports = """import { execFile } from 'node:child_process'\nimport { unlink } from 'node:fs/promises'\nimport { tmpdir } from 'node:os'\nimport path from 'node:path'\nimport { promisify } from 'node:util'\n\n"""
+          if not s.startswith('/**'):
+            raise SystemExit('unexpected stabilizer header')
+          s = imports + s
+
+          helper_marker = "export function installLocalVisionStabilizer(ctx, config = {}, core) {"
+          helper = """export async function triggerDesktopScreenshotPermission({\n  platform = typeof process !== 'undefined' ? process.platform : '',\n  run = promisify(execFile),\n  remove = unlink,\n  tempDir = tmpdir(),\n} = {}) {\n  // Windows has no Screen Recording privacy prompt equivalent and Linux\n  // capture permission is compositor-specific. macOS is the platform where\n  // enabling this feature must proactively cross an OS privacy boundary.\n  if (platform !== 'darwin') return { ok: true, platform, requested: false }\n  const target = path.join(\n    tempDir,\n    `vision-screenshot-permission-${Date.now()}-${Math.floor(Math.random() * 1e9)}.png`,\n  )\n  try {\n    await run('screencapture', ['-x', '-m', target], { timeout: 15000 })\n    return { ok: true, platform, requested: true }\n  } catch (error) {\n    return {\n      ok: false,\n      platform,\n      requested: true,\n      error: error && error.message ? error.message : String(error),\n    }\n  } finally {\n    try { await remove(target) } catch { /* best effort */ }\n  }\n}\n\n"""
+          s = once(s, helper_marker, helper + helper_marker, 'permission helper insertion')
+          s = once(
+            s,
+            "  let screenshotMountedDef\n",
+            "  let screenshotMountedDef\n  let screenshotPermissionRouteHandle\n",
+            'permission route handle',
+          )
+
+          config_pattern = re.compile(
+            r"  const configForCore = \(\) => \{.*?\n  \}\n\n  const unmountScreenshot",
+            re.S,
+          )
+          config_new = """  const configForCore = () => {\n    const actual = actualConfig()\n    // `instantDescribe` / `localDescribeStyle` are retained in the schema only\n    // so old profiles keep loading. The public model now has exactly one\n    // automatic first-pass switch: structuredVisionBootstrap (1+x). Keep the\n    // old automatic caption path disabled and use one fixed structured prompt\n    // for the optional screenshot-identify helper.\n    return { ...actual, instantDescribe: false, localDescribeStyle: 'structured' }\n  }\n\n  const unmountScreenshot"""
+          s, n = config_pattern.subn(config_new, s, count=1)
+          if n != 1:
+            raise SystemExit(f'configForCore replacement: expected one match, got {n}')
+
+          s = once(
+            s,
+            "  const bootConfig = { ...config, desktopScreenshot: true }",
+            "  const bootConfig = { ...config, desktopScreenshot: true, instantDescribe: false, localDescribeStyle: 'structured' }",
+            'boot config legacy normalization',
+          )
+
+          web_marker = """  const wrapWebServer = (webServer) =>\n    new Proxy(webServer, {"""
+          web_new = """  const ensureScreenshotPermissionRoute = (webServer) => {\n    if (screenshotPermissionRouteHandle || !webServer || typeof webServer.register !== 'function') return\n    screenshotPermissionRouteHandle = webServer.register({\n      path: '/_dsh/vision-router/request-screenshot-permission',\n      handler: async (req, res) => {\n        res.setHeader?.('content-type', 'application/json')\n        if (req.method !== 'POST') {\n          res.writeHead(405, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ ok: false, error: 'method not allowed' }))\n          return\n        }\n        if (actualConfig().desktopScreenshot !== true) {\n          res.writeHead(409, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ ok: false, error: 'desktop screenshot is disabled' }))\n          return\n        }\n        const result = await triggerDesktopScreenshotPermission()\n        res.writeHead(result.ok ? 200 : 500, { 'content-type': 'application/json' })\n        res.end(JSON.stringify(result))\n      },\n    })\n  }\n\n  const wrapWebServer = (webServer) => {\n    ensureScreenshotPermissionRoute(webServer)\n    return new Proxy(webServer, {"""
+          s = once(s, web_marker, web_new, 'web server wrapper start')
+          s = once(
+            s,
+            "    })\n\n  const inject = rawInject",
+            "    })\n  }\n\n  const inject = rawInject",
+            'web server wrapper close',
+          )
+
+          cleanup_old = """    ctx.effect?.(\n      () => () => unmountScreenshot(),\n      'vision-router: local vision stabilizer',\n    )"""
+          cleanup_new = """    ctx.effect?.(\n      () => () => {\n        unmountScreenshot()\n        if (typeof screenshotPermissionRouteHandle === 'function') {\n          try { screenshotPermissionRouteHandle() } catch { /* best effort */ }\n        }\n        screenshotPermissionRouteHandle = undefined\n      },\n      'vision-router: local vision stabilizer',\n    )"""
+          s = once(s, cleanup_old, cleanup_new, 'stabilizer cleanup')
+          p.write_text(s)
+
+          # --- Core comments: mark legacy fields and dynamic screenshot ----------
+          p = Path('index.js')
+          s = p.read_text()
+          s = once(
+            s,
+            """  // Desktop capture crosses a separate privacy boundary from inspecting user-\n  // supplied images. Boot-time opt-in: the tool is registered only when this\n  // is enabled, so a disabled default never changes the model-visible tool\n  // set (token / prefix-cache stability). Changing the toggle takes effect\n  // after a restart.\n  desktopScreenshot: z.boolean().default(false),""",
+            """  // Desktop capture crosses a separate privacy boundary from inspecting user-\n  // supplied images. The entry-layer stabilizer dynamically mounts/unmounts\n  // vision_screenshot as this setting changes, so saving the toggle is enough;\n  // on macOS the client also asks the server to trigger the OS permission check.\n  desktopScreenshot: z.boolean().default(false),""",
+            'desktop screenshot config comment',
+          )
+          legacy_old = """  // ── dsh-vision 并入：即时本地翻译 ────────────────────────────────────────\n  // 开启后（且任一本地后端启用：localOllama / localLmStudio），图片轮第一轮\n  // 就对无缓存描述的图片块直接调用本地识别，把识别文本替换进模型输入——\n  // 模型第一轮即\"看懂\"，不必先调 vision_describe；会话日志仍保留原图\n  // （界面照常显示）。本地识别失败时回退为静态工具提示标记。\n  // 默认关闭（保持工具优先哲学）。\n  instantDescribe: z.boolean().default(false),\n  // ── dsh-vision 并入：本地识别输出风格 ────────────────────────────────────\n  // plain = 平铺描述（简洁）；structured = 结构化识别（【初步判断】/【细节】/\n  // 【空间结构】/【输入图尺寸】），对截图分析（GUI/文档/聊天记录）质量更高。\n  // 仅影响 instantDescribe 与 vision_screenshot identify 的本地识别提示。\n  localDescribeStyle: z.union(['plain', 'structured']).default('plain'),"""
+          legacy_new = """  // Legacy compatibility only: older profiles may still contain these two\n  // fields. The entry-layer stabilizer normalizes instantDescribe=false and a\n  // fixed structured local style; the UI no longer exposes either control.\n  // structuredVisionBootstrap is the sole automatic first-pass switch.\n  instantDescribe: z.boolean().default(false),\n  localDescribeStyle: z.union(['plain', 'structured']).default('plain'),"""
+          s = once(s, legacy_old, legacy_new, 'legacy config comments')
+          p.write_text(s)
+
+          # --- Client regression tests -----------------------------------------
+          p = Path('tests/client.test.js')
+          s = p.read_text()
+          test_pattern = re.compile(
+            r"test\('local vision settings are complete, localized, responsive, and collapsed by default', \(\) => \{.*?\n\}\)\n",
+            re.S,
+          )
+          test_new = """test('local vision settings expose backends only and keep 1+x as the sole first-pass switch', () => {\n  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')\n  assert.equal(source.includes(\"const [showLocalVision, setShowLocalVision] = useState(false)\"), true)\n  assert.equal(source.includes(\"'aria-controls': 'vr-local-vision-body'\"), true)\n  assert.equal(source.includes(\"id: 'vr-local-vision-body'\"), true)\n  assert.equal(source.includes(\"groupLocalOllama: '本地视觉 · Ollama / LM Studio'\"), true)\n  assert.equal(source.includes(\"groupLocalOllama: 'Local vision · Ollama / LM Studio'\"), true)\n  assert.equal(source.includes('自动首遍识别统一由上方「结构化预识别（1+x）」控制'), true)\n  assert.equal(source.includes('controlled solely by “Structured pre-scan (1+x)” above'), true)\n  assert.equal(source.includes(\"toggleField('instantDescribe')\"), false)\n  assert.equal(source.includes('const describeStyleEditor ='), false)\n  assert.equal(source.includes('.vr-local-style{'), false)\n  assert.equal(source.includes(\"localOllamaEditor(),\\n                      localLmStudioEditor(),\"), true)\n  assert.equal(source.includes(\"className: 'vr-group vr-local-group' + (showLocalVision ? ' vr-local-group-open' : '')\"), true)\n  assert.equal(source.includes('.vr-local-group-open{margin-bottom:10px;padding-bottom:12px;border-bottom:1px solid'), true)\n  assert.equal(source.includes(\"toggleDesktopScreenshot: '桌面截图识图'\"), true)\n  assert.equal(source.includes(\"toggleDesktopScreenshot: 'Desktop screenshot vision'\"), true)\n  assert.equal(source.includes('/_dsh/vision-router/request-screenshot-permission'), true)\n  assert.equal(source.includes(\"outcome.landedFields.includes('desktopScreenshot')\"), true)\n  assert.equal(source.includes(\"toggleField('desktopScreenshot'),\"), true)\n  assert.equal(source.includes(\"placeholder: t('localTemperaturePlaceholder')\"), true)\n  assert.equal(source.includes(\"placeholder: t('localTopPPlaceholder')\"), true)\n  assert.equal(source.includes(\"placeholder: t('localLmStudioModelPlaceholder')\"), true)\n  assert.equal(source.includes('.vr-local-row{display:grid'), true)\n  assert.equal(source.includes(\"'vision_screenshot',\"), true)\n})\n"""
+          s, n = test_pattern.subn(test_new, s, count=1)
+          if n != 1:
+            raise SystemExit(f'client local settings test: expected one match, got {n}')
+          p.write_text(s)
+
+          # --- Stabilizer regression tests -------------------------------------
+          p = Path('tests/local-vision-stabilizer.test.js')
+          s = p.read_text()
+          s = once(
+            s,
+            "import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'",
+            "import { installLocalVisionStabilizer, triggerDesktopScreenshotPermission } from '../lib/local-vision-stabilizer.js'",
+            'stabilizer test import',
+          )
+          legacy_tests = re.compile(
+            r"test\('pre-step caps instantDescribe.*?\n\}\)\n\ntest\('wrapper stream suppresses.*?\n\}\)\n",
+            re.S,
+          )
+          legacy_test_new = """test('legacy instantDescribe and localDescribeStyle stay loadable but cannot create a second automatic first pass', () => {\n  const harness = makeHarness({ instantDescribe: true, localDescribeStyle: 'plain', timeoutMs: 120000 })\n  const core = makeCore()\n  const { ctx: stabilized, bootConfig } = installLocalVisionStabilizer(\n    harness.ctx,\n    { instantDescribe: true, localDescribeStyle: 'plain' },\n    core,\n  )\n  const scopeOf = installSettingsLikeCore(stabilized)\n  assert.equal(bootConfig.instantDescribe, false)\n  assert.equal(bootConfig.localDescribeStyle, 'structured')\n  assert.equal(scopeOf().get().instantDescribe, false)\n  assert.equal(scopeOf().get().localDescribeStyle, 'structured')\n  assert.equal(scopeOf().get().timeoutMs, 120000)\n})\n\ntest('macOS screenshot permission probe runs screencapture once and removes its temporary file', async () => {\n  let call\n  let removed\n  const result = await triggerDesktopScreenshotPermission({\n    platform: 'darwin',\n    tempDir: '/tmp',\n    run: async (...args) => { call = args },\n    remove: async (target) => { removed = target },\n  })\n  assert.equal(result.ok, true)\n  assert.equal(result.requested, true)\n  assert.equal(call[0], 'screencapture')\n  assert.deepEqual(call[1].slice(0, 2), ['-x', '-m'])\n  assert.equal(call[1][2], removed)\n})\n"""
+          s, n = legacy_tests.subn(legacy_test_new, s, count=1)
+          if n != 1:
+            raise SystemExit(f'legacy stabilizer tests: expected one match, got {n}')
+
+          route_test = """\ntest('desktop screenshot permission route is registered and gated by the persisted opt-in', async () => {\n  const harness = makeHarness({ desktopScreenshot: false })\n  const core = makeCore()\n  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)\n  installSettingsLikeCore(stabilized)\n  stabilized.inject(['webServer'], (webCtx) => {\n    // Accessing the wrapped web server installs the plugin-owned permission route.\n    void webCtx.webServer\n  })\n  const route = harness.webRoutes.get('/_dsh/vision-router/request-screenshot-permission')\n  assert.ok(route)\n  const invoke = async () => {\n    let status\n    let body = ''\n    await route.handler({ method: 'POST' }, {\n      setHeader() {},\n      writeHead(code) { status = code },\n      end(value) { body = String(value ?? '') },\n    })\n    return { status, body: JSON.parse(body) }\n  }\n  const disabled = await invoke()\n  assert.equal(disabled.status, 409)\n  harness.setSettings({ desktopScreenshot: true })\n  const enabled = await invoke()\n  assert.equal(enabled.status, 200)\n  assert.equal(enabled.body.ok, true)\n  assert.equal(enabled.body.platform, process.platform)\n})\n"""
+          insert_before = "\ntest('connection probe falls through Ollama failure to LM Studio success'"
+          if s.count(insert_before) != 1:
+            raise SystemExit('connection test marker not unique')
+          s = s.replace(insert_before, route_test + insert_before, 1)
+          p.write_text(s)
+          PY
+      - run: pnpm test
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/temp-settings-structure-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/client.js lib/local-vision-stabilizer.js index.js tests/client.test.js tests/local-vision-stabilizer.test.js .github/workflows/temp-settings-structure-fix.yml
+          git commit -m 'fix: unify first-pass settings and request screenshot permission [settings-structure-fix-applied]'
+          git push origin HEAD:fix/settings-structure-screenshot-permission
