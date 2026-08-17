@@ -1,0 +1,73 @@
+name: Prepare v1.5.1 release
+"on":
+  push:
+    branches:
+      - release/v1.5.1
+    paths:
+      - .github/workflows/_temp-prepare-v151.yml
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply release metadata
+        run: python3 .github/_temp_prepare_v151.py
+      - name: Verify and count tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm test 2>&1 | tee /tmp/v151-tests.log
+          TEST_COUNT="$(python3 - <<'PY'
+          import re
+          text = open('/tmp/v151-tests.log', encoding='utf-8', errors='replace').read()
+          matches = re.findall(r'(?:^|\n)(?:#|ℹ)?\s*tests\s+(\d+)\s*(?:\n|$)', text)
+          if not matches:
+              raise SystemExit('could not determine test count from node --test output')
+          print(matches[-1])
+          PY
+          )"
+          echo "test_count=$TEST_COUNT"
+          TEST_COUNT="$TEST_COUNT" python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          count = os.environ['TEST_COUNT']
+          for name in ('README.md', 'README.zh.md'):
+              path = Path(name)
+              text = path.read_text()
+              text, n1 = re.subn(r'verified-\d+%20tests', f'verified-{count}%20tests', text, count=1)
+              text, n2 = re.subn(r'Verified: \d+ tests', f'Verified: {count} tests', text, count=1)
+              if n1 != 1 or n2 != 1:
+                  raise SystemExit(f'{name}: failed to update test badge ({n1=}, {n2=})')
+              path.write_text(text)
+          PY
+      - name: Release preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(node -p "require('./package.json').version")" = "1.5.1" ]
+          grep -q 'releases/tag/v1.5.1' README.md
+          grep -q 'releases/tag/v1.5.1' README.zh.md
+          grep -q '^## v1.5.1$' CHANGELOG.md
+          grep -q 'vision_materialize' CHANGELOG.md
+          grep -q '#151 / #158' CHANGELOG.md
+          grep -q '#155 / #156' CHANGELOG.md
+          grep -q '#153 / #157' CHANGELOG.md
+          ! grep -q 'thirteen deep tools' README.md
+          ! grep -q '13 个深看工具' README.zh.md
+          git diff --check
+      - name: Commit release prep
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/_temp_prepare_v151.py .github/workflows/_temp-prepare-v151.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json README.md README.zh.md CHANGELOG.md .github/_temp_prepare_v151.py .github/workflows/_temp-prepare-v151.yml
+          git commit -m "chore: prepare v1.5.1 release"
+          git push origin HEAD:release/v1.5.1
