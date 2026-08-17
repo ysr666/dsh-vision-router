@@ -239,3 +239,138 @@ test('connection probe falls through Ollama failure to LM Studio success', async
     globalThis.fetch = originalFetch
   }
 })
+
+
+function makeLifecycleHarness(initial = {}) {
+  let settings = { ...initial }
+  let watcher
+  let scope
+  let settingsCtx
+  let webCtx
+  let webRoutes = new Map()
+  const toolDefs = new Map()
+  const settingsCallbacks = []
+  const webCallbacks = []
+  let settingsCleanups = []
+  let webCleanups = []
+
+  const makeEffect = (bucket) => (effect) => {
+    const cleanup = effect()
+    if (typeof cleanup === 'function') bucket.push(cleanup)
+    return cleanup
+  }
+  const makeScope = () => ({
+    get: () => settings,
+    watch(fn) {
+      watcher = fn
+      return () => { if (watcher === fn) watcher = undefined }
+    },
+  })
+  const makeSettingsCtx = () => ({
+    settings: { register: () => scope },
+    effect: makeEffect(settingsCleanups),
+  })
+  const makeWebCtx = () => {
+    const routes = new Map()
+    webRoutes = routes
+    const server = {
+      register(spec) {
+        routes.set(spec.path, spec)
+        return () => {
+          if (routes.get(spec.path) === spec) routes.delete(spec.path)
+        }
+      },
+    }
+    return { webServer: server, effect: makeEffect(webCleanups) }
+  }
+  const dispose = (bucket) => {
+    for (const cleanup of bucket.splice(0).reverse()) cleanup()
+  }
+
+  scope = makeScope()
+  settingsCtx = makeSettingsCtx()
+  webCtx = makeWebCtx()
+
+  const ctx = {
+    logger: { warn() {}, info() {}, error() {} },
+    tools: {
+      register(def) {
+        toolDefs.set(def.name, def)
+        return () => { if (toolDefs.get(def.name) === def) toolDefs.delete(def.name) }
+      },
+    },
+    llm: { registerAdapter() { return () => {} } },
+    get() { return undefined },
+    on() { return () => {} },
+    effect(effect) { return effect() },
+    inject(deps, callback) {
+      if (deps.includes('settings')) {
+        settingsCallbacks.push(callback)
+        callback(settingsCtx)
+      }
+      if (deps.includes('webServer')) {
+        webCallbacks.push(callback)
+        callback(webCtx)
+      }
+    },
+  }
+
+  return {
+    ctx,
+    toolDefs,
+    get webRoutes() { return webRoutes },
+    disposeSettings() {
+      dispose(settingsCleanups)
+      settingsCleanups = []
+      watcher = undefined
+    },
+    restoreSettings(next) {
+      settings = { ...next }
+      watcher = undefined
+      scope = makeScope()
+      settingsCtx = makeSettingsCtx()
+      for (const callback of settingsCallbacks) callback(settingsCtx)
+    },
+    cycleWebServer() {
+      const previous = webRoutes
+      dispose(webCleanups)
+      webCleanups = []
+      webCtx = makeWebCtx()
+      for (const callback of webCallbacks) callback(webCtx)
+      return { previous, current: webRoutes }
+    },
+  }
+}
+
+test('stabilizer releases a stale settings scope when the settings service unloads and rebinds on restore', () => {
+  const harness = makeLifecycleHarness({ desktopScreenshot: true })
+  const core = makeCore()
+  const { ctx: stabilized } = installLocalVisionStabilizer(
+    harness.ctx,
+    { desktopScreenshot: false },
+    core,
+  )
+  installSettingsLikeCore(stabilized)
+  stabilized.tools.register({ name: 'vision_screenshot', execute() {} })
+  assert.equal(harness.toolDefs.has('vision_screenshot'), true)
+
+  harness.disposeSettings()
+  assert.equal(harness.toolDefs.has('vision_screenshot'), false)
+
+  harness.restoreSettings({ desktopScreenshot: true })
+  assert.equal(harness.toolDefs.has('vision_screenshot'), true)
+})
+
+test('screenshot permission route follows webServer replacement instead of staying bound to the old server', () => {
+  const harness = makeLifecycleHarness({ desktopScreenshot: true })
+  const core = makeCore()
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  installSettingsLikeCore(stabilized)
+  stabilized.inject(['webServer'], (webCtx) => { void webCtx.webServer })
+
+  const path = '/_dsh/vision-router/request-screenshot-permission'
+  assert.equal(harness.webRoutes.has(path), true)
+  const { previous, current } = harness.cycleWebServer()
+  assert.equal(previous.has(path), false)
+  assert.equal(current.has(path), true)
+})

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -269,6 +269,113 @@ test('openLogDirectory keeps native nonzero failures strict on macOS and Linux',
   try {
     await assert.rejects(openLogDirectory(root, { platform: 'darwin', exec }), { code: 1 })
     await assert.rejects(openLogDirectory(root, { platform: 'linux', exec }), { code: 1 })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test('file log sink recovers after a transient write failure instead of staying permanently disabled', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-log-recover-'))
+  const file = path.join(root, 'vision-router.log')
+  const backup = path.join(root, 'vision-router.1.log')
+  let clock = 1_000
+  let appendAttempts = 0
+  const reported = []
+  const fsOps = {
+    mkdir,
+    rename,
+    rm,
+    stat,
+    async appendFile(...args) {
+      appendAttempts += 1
+      if (appendAttempts === 1) {
+        const error = new Error('temporary mount race')
+        error.code = 'EBUSY'
+        throw error
+      }
+      return appendFile(...args)
+    },
+  }
+  try {
+    const sink = createFileLogSink({
+      file,
+      backup,
+      retryBaseMs: 100,
+      retryMaxMs: 100,
+      now: () => clock,
+      fsOps,
+      onError: (error) => reported.push(error.message),
+    })
+    await sink.write('info', ['first write races the mount'])
+    assert.equal(sink.disabled, true)
+    assert.equal(appendAttempts, 1)
+    assert.deepEqual(reported, ['temporary mount race'])
+
+    // Calls inside the cooldown are cheap and do not hammer a broken disk.
+    await sink.write('info', ['still cooling down'])
+    assert.equal(appendAttempts, 1)
+
+    clock += 100
+    await sink.write('info', ['recovered write'])
+    await sink.flush()
+    assert.equal(sink.disabled, false)
+    assert.equal(appendAttempts, 2)
+    assert.match(await readFile(file, 'utf8'), /recovered write/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('file logging installation cache expires with the plugin fiber so routes remount on reload', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-log-lifecycle-'))
+  let routes = new Map()
+  let pluginCleanups = []
+  let serviceCleanups = []
+  const makeEffect = (bucket) => (effect) => {
+    const cleanup = effect()
+    if (typeof cleanup === 'function') bucket.push(cleanup)
+    return cleanup
+  }
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    effect: makeEffect(pluginCleanups),
+    inject(_deps, install) {
+      install({
+        webServer: {
+          register(spec) {
+            routes.set(spec.path, spec)
+            return () => {
+              if (routes.get(spec.path) === spec) routes.delete(spec.path)
+            }
+          },
+        },
+        effect: makeEffect(serviceCleanups),
+      })
+    },
+  }
+  const dispose = async (bucket) => {
+    for (const cleanup of bucket.splice(0).reverse()) await cleanup()
+  }
+  try {
+    const first = installVisionRouterFileLogging(ctx, { dshHome: root })
+    const duplicate = installVisionRouterFileLogging(ctx, { dshHome: root })
+    assert.equal(duplicate, first)
+    assert.equal(routes.has('/_dsh/vision-router/logs'), true)
+    await first.sink.flush()
+
+    await dispose(serviceCleanups)
+    await dispose(pluginCleanups)
+    assert.equal(routes.has('/_dsh/vision-router/logs'), false)
+
+    // Same Cordis context object, new plugin-fiber activation.
+    routes = new Map()
+    pluginCleanups = []
+    serviceCleanups = []
+    const second = installVisionRouterFileLogging(ctx, { dshHome: root })
+    assert.notEqual(second, first)
+    assert.equal(routes.has('/_dsh/vision-router/logs'), true)
+    await second.sink.flush()
   } finally {
     await rm(root, { recursive: true, force: true })
   }
