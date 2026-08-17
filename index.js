@@ -4374,17 +4374,17 @@ export function apply(ctx, config = {}) {
       // Load ProxyAgent only when this plugin's selective proxy is actually used.
       cachedAgentPromise = import('undici')
         .then(({ ProxyAgent }) => {
-if (typeof ProxyAgent !== 'function') {
-  throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
-}
-return new ProxyAgent(url)
+          if (typeof ProxyAgent !== 'function') {
+            throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
+          }
+          return new ProxyAgent(url)
         })
         .catch((error) => {
-if (cachedAgentUrl === url) {
-  cachedAgentUrl = undefined
-  cachedAgentPromise = undefined
-}
-throw error
+          if (cachedAgentUrl === url) {
+            cachedAgentUrl = undefined
+            cachedAgentPromise = undefined
+          }
+          throw error
         })
       return cachedAgentPromise
     }
@@ -4401,8 +4401,8 @@ throw error
       }
       if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
       return agentFor(proxyUrl).then((dispatcher) =>
-      originalFetch(input, { ...(init ?? {}), dispatcher }),
-    )
+        originalFetch(input, { ...(init ?? {}), dispatcher }),
+      )
     }
     ctx.effect(() => {
       globalThis.fetch = patchedFetch
