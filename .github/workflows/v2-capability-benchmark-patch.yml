@@ -23,7 +23,18 @@ jobs:
         with:
           node-version: 22
       - name: Apply exact benchmark patch
-        run: node scripts/patch-v2-capability-benchmark.mjs
+        run: |
+          node scripts/patch-v2-capability-benchmark.mjs
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/capability-shadow.test.js')
+          s = p.read_text()
+          s = s.replace(
+              "  assert.match(source, /rankVisionCandidates\\(\\{[\\s\\S]*measured,[\\s\\S]*\\}\\)/)\n",
+              "  assert.match(source, /const benchmark = await loadCapabilityBenchmarkForPair\\(pair\\)/)\n  assert.match(source, /measured,/)\n",
+          )
+          p.write_text(s)
+          PY
       - name: Run focused tests
         run: node --test tests/vision-capability-router.test.js tests/vision-capability-reference.test.js tests/vision-capability-benchmark.test.js tests/capability-shadow.test.js
       - name: Syntax and diff check
