@@ -2,12 +2,16 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - 'release/publish-v1.5.1'
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-v1.5.1-replay
   cancel-in-progress: false
+
+env:
+  RELEASE_SOURCE_TAG: v1.5.1
+  RELEASE_SOURCE_SHA: d12ff269ac4808a3d43acbf20e4c58bbb1dc0613
 
 jobs:
   verify:
@@ -20,6 +24,7 @@ jobs:
       - name: Checkout exact tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: v1.5.1
           fetch-depth: 0
           persist-credentials: false
 
@@ -40,17 +45,21 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           EXPECTED_TAG="v$VERSION"
 
-          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ] || {
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+          [ "$RELEASE_SOURCE_TAG" = "$EXPECTED_TAG" ] || {
+            echo "::error::tag $RELEASE_SOURCE_TAG does not match package.json version $VERSION"
             exit 1
           }
-          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || {
-            echo "::error::checkout HEAD does not match the tag event SHA"
+          [ "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_SHA" ] || {
+            echo "::error::checkout HEAD does not match immutable release SHA"
+            exit 1
+          }
+          [ "$(git rev-list -n1 "$RELEASE_SOURCE_TAG")" = "$RELEASE_SOURCE_SHA" ] || {
+            echo "::error::release tag does not resolve to immutable release SHA"
             exit 1
           }
 
           git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+          git merge-base --is-ancestor "$RELEASE_SOURCE_SHA" origin/main || {
             echo "::error::release tag is not reachable from origin/main"
             exit 1
           }
@@ -101,6 +110,7 @@ jobs:
       - name: Checkout exact tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: v1.5.1
           fetch-depth: 0
           persist-credentials: false
 
@@ -138,8 +148,9 @@ jobs:
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           EXPECTED_TAG="v$VERSION"
-          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ]
-          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ "$RELEASE_SOURCE_TAG" = "$EXPECTED_TAG" ]
+          [ "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_SHA" ]
+          [ "$(git rev-list -n1 "$RELEASE_SOURCE_TAG")" = "$RELEASE_SOURCE_SHA" ]
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
 
@@ -219,18 +230,18 @@ jobs:
             echo "## Commits"
             echo
           } >> release-notes.md
-          PREV_TAG="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+          PREV_TAG="$(git describe --tags --abbrev=0 "$RELEASE_SOURCE_SHA^" 2>/dev/null || true)"
           if [ -n "$PREV_TAG" ]; then
-            git log --pretty=format:'- %s' "$PREV_TAG..$GITHUB_SHA" >> release-notes.md
+            git log --pretty=format:'- %s' "$PREV_TAG..$RELEASE_SOURCE_SHA" >> release-notes.md
           else
-            git log --pretty=format:'- %s' "$GITHUB_SHA" >> release-notes.md
+            git log --pretty=format:'- %s' "$RELEASE_SOURCE_SHA" >> release-notes.md
           fi
           {
             echo
             echo
             echo "## Supply-chain verification"
             echo
-            echo "- Git commit: \`$GITHUB_SHA\`"
+            echo "- Git commit: \`$RELEASE_SOURCE_SHA\`"
             echo "- npm tarball SHA-1: \`$PACKAGE_SHA1\`"
             echo "- tarball SHA-256: \`$PACKAGE_SHA256\`"
             echo "- packed files: \`$PACKAGE_FILE_COUNT\`"
