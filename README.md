@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.5"><img src="https://img.shields.io/badge/release-v1.4.5-5B4CF0?style=flat-square" alt="Release v1.4.5" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-270%20tests-2EA44F?style=flat-square" alt="Verified: 270 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/release-v1.5.0-5B4CF0?style=flat-square" alt="Release v1.5.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-348%20tests-2EA44F?style=flat-square" alt="Verified: 348 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.4.5)**
+> 📌 **Announcement (v1.5.0)**
 >
-> **v1.4.5:** Adds optional structured 1+x vision pre-scan, refreshes image settings, and fixes Windows log-folder opening.
+> **v1.5.0:** Adds local Ollama / LM Studio vision and desktop screenshots, with stronger Settings and lifecycle reliability.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

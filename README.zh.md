@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.5"><img src="https://img.shields.io/badge/release-v1.4.5-5B4CF0?style=flat-square" alt="Release v1.4.5" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-270%20tests-2EA44F?style=flat-square" alt="Verified: 270 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/release-v1.5.0-5B4CF0?style=flat-square" alt="Release v1.5.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-348%20tests-2EA44F?style=flat-square" alt="Verified: 348 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.4.5）**
+> 📌 **公告（v1.5.0）**
 >
-> **v1.4.5：新增可选 1+x 结构化预识别，重做图片识别设置页，并修复 Windows 打开日志文件夹。**
+> **v1.5.0：新增 Ollama / LM Studio 本地视觉与桌面截图，强化设置和生命周期稳定性。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
