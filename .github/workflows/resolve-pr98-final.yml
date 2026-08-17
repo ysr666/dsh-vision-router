@@ -1,0 +1,38 @@
+name: Resolve latest PR 98 head against main
+
+on:
+  push:
+    branches:
+      - integrate/pr98-final
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+        with:
+          ref: integrate/pr98-final
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge latest main, preserving main on conflicting hunks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-ff -X theirs origin/main -m "merge: integrate #98 on latest main"
+          if git ls-files -u | grep -q .; then
+            echo "Unresolved conflicts remain:" >&2
+            git status --short >&2
+            exit 1
+          fi
+          git rm -f .github/workflows/resolve-pr98-final.yml
+          git commit --amend --no-edit
+          git push origin HEAD:integrate/pr98-final
