@@ -4,6 +4,7 @@ import {
   checkPackageUpdate,
   compareSemver,
   createCachedUpdateChecker,
+  GITHUB_LATEST_RELEASE_API,
   normalizeRegistryBase,
   registryBaseFromEnv,
 } from '../lib/update-check.js'
@@ -77,6 +78,40 @@ test('checkPackageUpdate falls back to npmjs when an inherited pnpm/npm registry
   assert.equal(result.latestVersion, '1.2.0')
   assert.equal(result.registry, 'https://registry.npmjs.org')
   assert.equal(result.registryFallbackFrom, 'https://slow-mirror.example.test')
+})
+
+
+test('checkPackageUpdate uses GitHub Releases to recover an exact target when registries fail', async () => {
+  const requests = []
+  const result = await checkPackageUpdate({
+    currentVersion: '1.4.0',
+    registry: 'https://offline-mirror.example.test/',
+    fetchImpl: async (url) => {
+      requests.push(url)
+      if (url === GITHUB_LATEST_RELEASE_API) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { tag_name: 'v1.5.0' }
+          },
+        }
+      }
+      throw new Error('registry offline')
+    },
+  })
+  assert.deepEqual(requests, [
+    'https://offline-mirror.example.test/dsh-vision-router/latest',
+    'https://registry.npmjs.org/dsh-vision-router/latest',
+    GITHUB_LATEST_RELEASE_API,
+  ])
+  assert.equal(result.ok, true)
+  assert.equal(result.latestVersion, '1.5.0')
+  assert.equal(result.updateAvailable, true)
+  assert.equal(result.latestSource, 'github-release')
+  assert.equal(result.releaseFallback, true)
+  assert.equal(result.packageSpec, 'dsh-vision-router@1.5.0')
+  assert.equal(result.registryFailures.length, 2)
 })
 
 test('checkPackageUpdate reports every attempted registry when all attempts fail', async () => {

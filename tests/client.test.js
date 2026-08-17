@@ -408,7 +408,7 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes("{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }"), true)
 })
 
-test('manual update help uses a dedicated vertical command card', () => {
+test('manual update help uses a dedicated vertical command card and never falls back to bare update', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes("className: 'vr-update-manual'"), true)
   assert.equal(source.includes("className: 'vr-update-command'"), true)
@@ -416,6 +416,13 @@ test('manual update help uses a dedicated vertical command card', () => {
   assert.equal(source.includes("className: 'vr-update-note'"), true)
   assert.equal(source.includes("className: 'vr-update-actions'"), true)
   assert.equal(source.includes("const commandStyle = {"), false)
+  assert.equal(source.includes(": 'update dsh-vision-router'"), false)
+  assert.equal(source.includes("const manualAction = 'add ' + manualPackageSpec"), true)
+  assert.equal(source.includes("'dsh-vision-router@latest'"), true)
+  assert.equal(source.includes("updateNoDiagnostic: '更新检查接口未返回可诊断的错误详情'"), true)
+  assert.equal(source.includes("updateInvalidResponse: '更新检查接口返回了无效响应'"), true)
+  assert.equal(source.includes("typeof result.ok !== 'boolean'"), true)
+  assert.equal(source.includes("result.releaseFallback === true"), true)
 })
 
 test('the settings card skips offscreen paint and reuses bounded model-option caches', () => {
