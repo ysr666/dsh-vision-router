@@ -58,7 +58,16 @@ import {
   normalizeStructuredBootstrapResult,
   structuredBootstrapMemory,
   structuredBootstrapQuestion,
+  extractStructuredBootstrapJson,
 } from './lib/structured-bootstrap.js'
+import {
+  CORE_BENCHMARK_INTENTS,
+  aggregateCapabilityBenchmark,
+  capabilityBenchmarkFingerprint,
+  listCapabilityBenchmarkFixtures,
+  scoreCapabilityBenchmarkResult,
+} from './lib/vision-capability-benchmark.js'
+import { routePostBootstrapScene, sceneRouteAgentInstruction } from './lib/vision-scene-router.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -2017,6 +2026,22 @@ export function toAnthropicContent(content) {
   return out
 }
 
+export function openAICompatibleResponseText(data) {
+  const choice = data && Array.isArray(data.choices) ? data.choices[0] : undefined
+  const content = choice && choice.message ? choice.message.content : undefined
+  if (typeof content === 'string') return content.trim()
+  if (Array.isArray(content)) {
+    const text = content
+      .map((part) => part && typeof part.text === 'string' ? part.text : '')
+      .filter(Boolean)
+      .join('')
+      .trim()
+    if (text !== '') return text
+  }
+  if (choice && typeof choice.text === 'string') return choice.text.trim()
+  return undefined
+}
+
 export async function callOpenAICompatible(provider, messages, options = {}) {
   const headers = { 'content-type': 'application/json' }
   const apiKeyEnv = typeof provider.apiKeyEnv === 'string' ? provider.apiKeyEnv : ''
@@ -2074,11 +2099,9 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
     throw error
   }
   const data = await response.json()
-  const content = data && data.choices && data.choices[0] && data.choices[0].message
-    ? data.choices[0].message.content
-    : undefined
-  if (typeof content !== 'string') throw new Error(`http provider "${provider.name}": unexpected response shape`)
-  return content.trim()
+  const content = openAICompatibleResponseText(data)
+  if (content === undefined) throw new Error(`http provider "${provider.name}": unexpected response shape`)
+  return content
 }
 
 /**
@@ -2825,6 +2848,19 @@ export function apply(ctx, config = {}) {
   // Per-session turn gate: pass 1 is the actual universal structured visual call.
   // The gate opens only after vision_bootstrap has completed that visual request.
   const structuredBootstrapTurnState = new WeakMap()
+  const structuredBootstrapTurnStateById = new Map()
+  const structuredBootstrapStateGet = (session) => {
+    if (!session) return undefined
+    const direct = structuredBootstrapStateGet(session)
+    if (direct !== undefined) return direct
+    return session.id !== undefined ? structuredBootstrapTurnStateById.get(String(session.id)) : undefined
+  }
+  const structuredBootstrapStateSet = (session, state) => {
+    if (!session) return state
+    structuredBootstrapTurnState.set(session, state)
+    if (session.id !== undefined) structuredBootstrapTurnStateById.set(String(session.id), state)
+    return state
+  }
   const rewriteEnabled = () => current().rewriteImages !== false
   const downscaleEnabled = () => current().downscale !== false
   const downscaleMaxPixels = () => {
@@ -4017,6 +4053,171 @@ export function apply(ctx, config = {}) {
     return out
   }
 
+
+  // ── v2 exact-endpoint capability benchmark ────────────────────────────────
+  // Only explicitly configured backends are benchmark candidates. Auto-discovered
+  // catalog models are intentionally excluded so an error cannot dump hundreds
+  // of irrelevant models into the conversation.
+  const capabilityBenchmarkMemory = new Map()
+  const capabilityBenchmarkDir = () =>
+    path.resolve(process.cwd(), String(current().artifactsDir || '.dsh-vision-router/artifacts'), 'capability-benchmarks')
+  const benchmarkCandidateForPair = (pair) => ({ kind: 'adapter', key: `${pair.provider}/${pair.model}`, provider: pair.provider, model: pair.model, pair })
+  const benchmarkCandidateForHttp = (provider) => ({ kind: 'http', key: `http:${provider.name}/${provider.model}`, provider: `http:${provider.name}`, model: provider.model, http: provider })
+  const exactBenchmarkCandidates = async () => {
+    const out = []
+    const seen = new Set()
+    for (const pair of pairs()) {
+      if (!pair || pair.provider === HTTP_ROUTE || !adapterAvailable(ctx.llm, pair.provider)) continue
+      const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+      if (capability.attemptable === false) continue
+      const candidate = benchmarkCandidateForPair(pair)
+      if (!seen.has(candidate.key)) { seen.add(candidate.key); out.push(candidate) }
+    }
+    for (const provider of httpProviders()) {
+      const candidate = benchmarkCandidateForHttp(provider)
+      if (!seen.has(candidate.key)) { seen.add(candidate.key); out.push(candidate) }
+    }
+    return out
+  }
+  const resolveBenchmarkCandidate = (candidates, requested) => {
+    const raw = String(requested ?? '').trim()
+    if (raw === '') return candidates[0]
+    const exact = candidates.find((item) => item.key === raw)
+    if (exact) return exact
+    const visionHttpModel = raw.startsWith('vision-http/') ? raw.slice('vision-http/'.length) : undefined
+    if (visionHttpModel) {
+      const matches = candidates.filter((item) => item.kind === 'http' && item.model === visionHttpModel)
+      if (matches.length === 1) return matches[0]
+    }
+    const byModel = candidates.filter((item) => item.model === raw || item.key.endsWith(`/${raw}`))
+    return byModel.length === 1 ? byModel[0] : undefined
+  }
+  const capabilityBenchmarkIdentity = async (candidate) => {
+    let endpoint = ''
+    const config = { kind: candidate.kind }
+    if (candidate.kind === 'http') {
+      endpoint = String(candidate.http?.baseURL ?? '')
+      config.providerName = candidate.http?.name
+      config.maxTokens = candidate.http?.maxTokens
+    } else {
+      const correction = await routingCorrectionForPair(candidate.pair)
+      const catalog = resolvedCatalogFactsOf(candidate.pair.provider, candidate.pair.model)
+      const bridge = channelBridgePlan(candidate.pair.provider, candidate.pair.model)
+      endpoint = String(correction?.baseURL ?? catalog?.baseUrl ?? bridge?.transport?.baseURL ?? '')
+      config.api = String(correction?.api ?? catalog?.api ?? bridge?.transport?.api ?? '')
+      config.bridgeAvailable = bridge?.ok === true
+    }
+    const fingerprint = capabilityBenchmarkFingerprint({ provider: candidate.provider, model: candidate.model, endpoint, config })
+    return { fingerprint, endpoint }
+  }
+  const persistCapabilityBenchmark = async (record) => {
+    const dir = capabilityBenchmarkDir()
+    await mkdir(dir, { recursive: true })
+    const file = path.join(dir, `${record.fingerprint}.json`)
+    await writeFile(file, JSON.stringify(record, null, 2))
+    capabilityBenchmarkMemory.set(record.fingerprint, record)
+    return file
+  }
+  const benchmarkImageBlock = async (bytes) => {
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined) throw new Error('vision capability benchmark: attachment service is not available')
+    const ref = await attachments.saveImage({ data: bytes, mediaType: 'image/png' })
+    return { type: 'image', attachment: ref }
+  }
+  const runExactCapabilityBenchmark = async ({ backend, intents }) => {
+    const candidates = await exactBenchmarkCandidates()
+    const candidate = resolveBenchmarkCandidate(candidates, backend)
+    if (!candidate) {
+      return {
+        ok: false,
+        code: 'CAPABILITY_BENCHMARK_BACKEND_NOT_FOUND',
+        backend: String(backend ?? ''),
+        availableCount: candidates.length,
+        suggestions: candidates.slice(0, 8).map((item) => item.key),
+        advice: 'Omit backend to benchmark the first configured vision backend, or use one of the short suggestions.',
+      }
+    }
+    const selectedIntents = Array.isArray(intents) && intents.length > 0
+      ? [...new Set(intents.filter((intent) => CORE_BENCHMARK_INTENTS.includes(intent)))]
+      : [...CORE_BENCHMARK_INTENTS]
+    if (selectedIntents.length === 0) return { ok: false, code: 'CAPABILITY_BENCHMARK_NO_VALID_INTENTS', backend: candidate.key }
+    const fixtures = listCapabilityBenchmarkFixtures(selectedIntents)
+    const sharp = await loadSharp()
+    const results = []
+    const healthFailures = []
+    const deadline = createDeadline(Math.max(visionTaskTimeoutMs(), fixtures.length * 15000))
+    for (const fixture of fixtures) {
+      if (deadline.expired()) {
+        healthFailures.push({ fixture: fixture.id, intent: fixture.intent, failure: 'TIMEOUT', error: 'benchmark deadline exhausted' })
+        break
+      }
+      let imageBytes
+      try {
+        imageBytes = await sharp(Buffer.from(fixture.svg)).png().toBuffer()
+      } catch (error) {
+        return { ok: false, code: 'CAPABILITY_BENCHMARK_FIXTURE_INVALID', fixture: fixture.id, error: error instanceof Error ? error.message : String(error) }
+      }
+      const block = await benchmarkImageBlock(imageBytes)
+      const signal = combineSignals(deadline.signal(), AbortSignal.timeout(Math.max(1, Math.min(timeoutMs(), deadline.remaining()))))
+      const startedAt = Date.now()
+      try {
+        let output
+        if (candidate.kind === 'http') {
+          const openAIBlock = toOpenAIContent([block], () => imageBytes)[0]
+          const messages = appendPromptToImageOnlyMessage([{ role: 'user', content: [openAIBlock] }], fixture.prompt).messages
+          output = await callOpenAICompatible(candidate.http, messages, { maxTokens: candidate.http.maxTokens ?? 2048, signal, resolveCredential })
+        } else {
+          const capability = await resolveVisionBackendCapability(candidate.pair.provider, candidate.pair.model)
+          output = await callVisionPairWithOptionalBridge(candidate.pair, [{ role: 'user', content: [block, { type: 'text', text: fixture.prompt }], source: { kind: 'plugin', plugin: 'dsh-vision-router' } }], {
+            maxTokens: 2048, signal, capability, bridgeBlocks: [block], bridgeInstruction: fixture.prompt,
+          })
+        }
+        results.push({ ...scoreCapabilityBenchmarkResult(fixture, output, Date.now() - startedAt), ok: true, output: String(output ?? '').slice(0, 4000) })
+      } catch (error) {
+        const classification = classifyVisionFailure(error)
+        healthFailures.push({
+          fixture: fixture.id,
+          intent: fixture.intent,
+          failure: classification.kind ?? 'OTHER',
+          latencyMs: Date.now() - startedAt,
+          retryAfterMs: Number.isFinite(Number(error?.providerRetryAfterMs)) ? Number(error.providerRetryAfterMs) : undefined,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        // Infrastructure health is not capability. Stop immediately rather than
+        // persisting zeroes or busy-looping through more fixtures on 429/auth/outage.
+        break
+      }
+    }
+    const aggregate = aggregateCapabilityBenchmark(results)
+    if (results.length === 0) {
+      const failure = healthFailures[0]
+      return {
+        ok: false,
+        code: `CAPABILITY_BENCHMARK_${String(failure?.failure ?? 'UNAVAILABLE').toUpperCase()}`,
+        backend: candidate.key,
+        retryable: false,
+        healthFailures,
+        advice: 'No capability score was saved because the exact backend did not produce a successful fixture. Do not retry in a tight loop.',
+      }
+    }
+    const identity = await capabilityBenchmarkIdentity(candidate)
+    const record = {
+      version: 3,
+      backend: candidate.key,
+      backendKind: candidate.kind,
+      fingerprint: identity.fingerprint,
+      endpoint: identity.endpoint,
+      measuredAt: new Date().toISOString(),
+      intents: selectedIntents,
+      aggregate,
+      results,
+      healthFailures,
+      partial: healthFailures.length > 0 || results.length < fixtures.length,
+    }
+    record.file = await persistCapabilityBenchmark(record)
+    return { ok: true, ...record }
+  }
+
   // ── vision chain route: fallback under our own control ─────────────────────
   //
   // The agent-loop's request-error retry is owned by dsh-llm-retry, which sits
@@ -4702,23 +4903,25 @@ export function apply(ctx, config = {}) {
         hasImage,
       })
     }
-    let bootstrapState = structuredBootstrapTurnState.get(session)
+    let bootstrapState = structuredBootstrapStateGet(session)
     const bootstrapRequired = hasImage && toolEnabled() && structuredBootstrapEnabled()
     if (!bootstrapState || bootstrapState.turn !== payload.turn) {
-      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupCompleted: false, failed: false }
-      structuredBootstrapTurnState.set(session, bootstrapState)
+      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupCompleted: false, failed: false, taskText: lastUserText(rawMessages), evidenceCalls: 0, maxEvidenceCalls: 4, visualTerminal: false, bootstrapReminderSent: false, followupReminderSent: false, terminalReminderSent: false }
+      structuredBootstrapStateSet(session, bootstrapState)
     } else if (bootstrapRequired) {
       bootstrapState.required = true
+      if (!bootstrapState.taskText) bootstrapState.taskText = lastUserText(rawMessages)
     }
 
     let bootstrapReminder
-    if (bootstrapState.required && bootstrapState.completed !== true && bootstrapState.failed !== true) {
+    if (bootstrapState.required && bootstrapState.completed !== true && bootstrapState.failed !== true && bootstrapState.bootstrapReminderSent !== true) {
       // Enabling the 1+x mode implies its first-pass tool must be present,
       // even when the generic autoActivateOnImage convenience switch is off.
       if (toolEnabled()) activateDeepTools()
+      bootstrapState.bootstrapReminderSent = true
       bootstrapReminder = {
         role: 'user',
-        id: `vision-router-structured-bootstrap-${payload.turn}-${Date.now()}`,
+        id: `vision-router-structured-bootstrap-${payload.turn}`,
         content: [
           {
             type: 'text',
@@ -4739,12 +4942,15 @@ export function apply(ctx, config = {}) {
       bootstrapState.required &&
       bootstrapState.completed === true &&
       bootstrapState.followupCompleted !== true &&
-      bootstrapState.failed !== true
+      bootstrapState.failed !== true &&
+      bootstrapState.visualTerminal !== true &&
+      bootstrapState.followupReminderSent !== true
     ) {
       if (toolEnabled()) activateDeepTools()
+      bootstrapState.followupReminderSent = true
       bootstrapReminder = {
         role: 'user',
-        id: `vision-router-structured-followup-${payload.turn}-${Date.now()}`,
+        id: `vision-router-structured-followup-${payload.turn}`,
         content: [
           {
             type: 'text',
@@ -4759,6 +4965,28 @@ export function apply(ctx, config = {}) {
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
       }
     }
+
+    if (
+      bootstrapState.required &&
+      bootstrapState.completed === true &&
+      (bootstrapState.visualTerminal === true || bootstrapState.evidenceCalls >= bootstrapState.maxEvidenceCalls) &&
+      bootstrapState.terminalReminderSent !== true
+    ) {
+      bootstrapState.terminalReminderSent = true
+      const reason = bootstrapState.visualTerminal === true
+        ? '视觉后端已进入本轮终止状态（认证/限流/超时/后端不可用），不得继续改问法重复视觉调用。'
+        : `本轮结构化视觉证据预算已用完（${bootstrapState.evidenceCalls}/${bootstrapState.maxEvidenceCalls}），不得继续视觉深挖。`
+      bootstrapReminder = {
+        role: 'user',
+        id: `vision-router-structured-terminal-${payload.turn}`,
+        content: [{
+          type: 'text',
+          text: reason + '请基于已有证据回答；如果精确文字、数字、坐标、UI 状态或表格值仍未被一致验证，必须明确写“不确定/无法确认”，不得使用“准确、确定、就是”等措辞把推测包装成事实。',
+        }],
+        source: { kind: 'plugin', plugin: 'dsh-vision-router' },
+      }
+    }
+
     if (hasImage) {
       // ── dsh-vision 并入：pre-step 即时本地翻译 ───────────────────────────
       // instantDescribe 在这里执行，而不是只挂在 wrapper/twin 路由上——否则
@@ -5386,6 +5614,24 @@ export function apply(ctx, config = {}) {
     }
     deepToolDefs.push(visionDescribeTool)
 
+    deepToolDefs.push({
+      name: 'vision_capability_benchmark',
+      description:
+        'Developer v2 exact-endpoint self-benchmark. Runs privacy-safe generated fixtures against ONE exact configured vision backend with NO model fallback. Infrastructure failures (429/auth/timeout/outage) are health failures, never capability score zero. Use only when the user explicitly asks to test model capabilities.',
+      parameters: {
+        type: 'object',
+        properties: {
+          backend: { type: 'string', description: 'Optional exact backend key. Omit to use the first configured vision backend. vision-http/<model> is accepted as an alias for the matching built-in HTTP backend.' },
+          intents: { type: 'array', items: { type: 'string', enum: CORE_BENCHMARK_INTENTS }, description: 'Optional subset. Defaults to structured, ocr, grounding, document, general.' },
+        },
+        additionalProperties: false,
+      },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+      async execute(args) {
+        return JSON.stringify(await runExactCapabilityBenchmark({ backend: args.backend, intents: args.intents }))
+      },
+    })
+
     // Universal structured first pass for the optional 1+x flow. The vision
     // chain inspects the pixels and infers the visual kind itself; the text
     // agent does not choose a mode beforehand. After this baseline, x is at
@@ -5439,9 +5685,9 @@ export function apply(ctx, config = {}) {
           },
           exec,
         )
-        const parsed = extractJson(raw)
+        const parsed = extractStructuredBootstrapJson(raw)
         const session = exec && exec.agent && exec.agent.session
-        const bootstrapState = session ? structuredBootstrapTurnState.get(session) : undefined
+        const bootstrapState = session ? structuredBootstrapStateGet(session) : undefined
         if (parsed && parsed.ok === false) {
           if (bootstrapState) bootstrapState.failed = true
           return raw
@@ -5453,6 +5699,11 @@ export function apply(ctx, config = {}) {
           bootstrapState.followupCompleted = false
         }
         const evidence = normalizeStructuredBootstrapResult(parsed, raw)
+        const sceneRoute = routePostBootstrapScene(evidence, { taskText: bootstrapState?.taskText })
+        if (bootstrapState) {
+          bootstrapState.sceneRoute = sceneRoute
+          bootstrapState.maxEvidenceCalls = sceneRoute.scene === 'document.code' || sceneRoute.scene === 'document.table' ? 6 : 4
+        }
         const memory = structuredBootstrapMemory(evidence)
         const ids = new Set()
         for (const id of Array.isArray(args.attachmentIds) ? args.attachmentIds : []) {
@@ -5466,8 +5717,8 @@ export function apply(ctx, config = {}) {
           ok: true,
           phase: 'structured-bootstrap',
           evidence,
-          next:
-            'Structured baseline ready. REQUIRED next step: choose at least one task-directed tool from recommended_followups (or another evidence tool) and call it before answering. After that, continue with more tools only as needed.',
+          scene_route: sceneRoute,
+          next: sceneRouteAgentInstruction(sceneRoute),
         })
       },
     })
@@ -6143,22 +6394,12 @@ export function apply(ctx, config = {}) {
     deepToolDefs.push({
       name: 'vision_ocr',
       description:
-        'Transcribe TEXT from an image. Uses the local tesseract engine (chi_sim+eng) when ' +
-        'available — fast, free, offline — and falls back to a vision model otherwise. ' +
-        'Returns the text and which engine produced it. ' +
-        'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
-        'as a fallback when vision_describe fails to identify who/what is in a picture ("这是谁" / ' +
-        '"这是什么东西" questions are answered by vision_describe, not OCR). If vision_describe returns ' +
-        'ok:false with a backend-unavailable code, calling vision_ocr instead will fail the same way — ' +
-        'do not chain these tools as retries of each other.',
+        'Transcribe TEXT from an image. auto = local Tesseract first then vision fallback; vision-first = vision model first for accuracy, then local Tesseract only as a degraded fallback when the vision backend is unavailable; tesseract/vision force one engine. Returns text and engine metadata. OCR is not a generic retry for object/scene recognition.',
       parameters: {
         type: 'object',
         properties: {
-          image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
-          engine: {
-            type: 'string',
-            description: '"auto" (default): local tesseract first, vision model fallback; or force "tesseract"/"vision"',
-          },
+          image: { type: 'string', description: 'Local image path or uploaded attachment id (sha256:...)' },
+          engine: { type: 'string', description: 'auto (default), vision-first, tesseract, or vision' },
         },
         required: ['image'],
         additionalProperties: false,
@@ -6166,47 +6407,33 @@ export function apply(ctx, config = {}) {
       output: stringOutput,
       async execute(args, exec) {
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
-        const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
-        // ONE OCR budget shared by tesseract AND the vision fallback: tesseract
-        // gets a capped slice (never more than 12s), the vision model only the
-        // remainder. The two timeouts can never stack into a multi-minute wait.
+        const engine = ['tesseract', 'vision', 'vision-first'].includes(args.engine) ? args.engine : 'auto'
         const deadline = createDeadline(ocrBudgetMs())
-        const tesseractSlice = Math.min(12000, deadline.remaining())
-        if (engine !== 'vision') {
+        const runLocal = async () => {
+          if (deadline.expired()) return ''
+          return (await ocrWithTesseract(bytes, Math.min(12000, deadline.remaining()))).trim()
+        }
+        if (engine === 'auto' || engine === 'tesseract') {
           try {
-            const text = await ocrWithTesseract(bytes, tesseractSlice)
-            if (text.trim() !== '') return JSON.stringify({ engine: 'tesseract', text: text.trim() })
-            if (engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text: '' })
+            const text = await runLocal()
+            if (text !== '' || engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text })
           } catch (error) {
-            if (engine === 'tesseract') {
-              throw new Error(
-                `vision_ocr: local tesseract failed (${error && error.message ? error.message : String(error)})`,
-              )
-            }
+            if (engine === 'tesseract') throw new Error(`vision_ocr: local tesseract failed (${error && error.message ? error.message : String(error)})`)
             ctx.logger?.warn('vision-router: tesseract OCR unavailable, falling back to vision model')
           }
         }
-        if (deadline.expired()) {
-          return JSON.stringify({
-            engine: 'none',
-            ok: false,
-            code: VISION_RESULT_CODES.TIMEOUT,
-            retryable: false,
-            text: '',
-            reason: 'vision_ocr: the OCR task budget was exhausted before the vision fallback could run',
-          })
+        if (deadline.expired()) return JSON.stringify({ engine: 'none', ok: false, code: VISION_RESULT_CODES.TIMEOUT, retryable: false, text: '', reason: 'vision_ocr: OCR budget exhausted' })
+        const vision = await answerVisionForTool(exec, bytes, mediaType, '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。', { deadline })
+        if (vision.ok !== false) return JSON.stringify({ engine: 'vision', text: vision.text })
+        if (engine === 'vision-first') {
+          try {
+            const text = await runLocal()
+            if (text !== '') return JSON.stringify({ engine: 'tesseract', degradedFromVision: true, visionFailure: { code: vision.code, reason: vision.reason }, text })
+          } catch (error) {
+            return JSON.stringify({ engine: 'none', ...vision, localFallbackError: error && error.message ? error.message : String(error), text: '' })
+          }
         }
-        const vision = await answerVisionForTool(
-          exec,
-          bytes,
-          mediaType,
-          '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。',
-          { deadline },
-        )
-        if (vision.ok === false) {
-          return JSON.stringify({ engine: 'none', ...vision, text: '' })
-        }
-        return JSON.stringify({ engine: 'vision', text: vision.text })
+        return JSON.stringify({ engine: 'none', ...vision, text: '' })
       },
     })
 
@@ -6221,17 +6448,24 @@ export function apply(ctx, config = {}) {
       parameters: {
         type: 'object',
         properties: {
-          image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
+          image: { type: 'string', description: 'Local image path or uploaded attachment id (sha256:...)' },
+          attachmentIds: { type: 'array', items: { type: 'string' }, description: 'Compatibility alias: first uploaded attachment id is used when image is omitted' },
           chunkHeight: { type: 'number', description: 'Chunk height in pixels, default 1200' },
           overlap: { type: 'number', description: 'Overlap between adjacent chunks in pixels, default 120' },
           engine: { type: 'string', description: '"auto" (default): local tesseract first, vision model fallback; or force "tesseract"/"vision"' },
         },
-        required: ['image'],
+        required: [],
         additionalProperties: false,
       },
       output: stringOutput,
       async execute(args, exec) {
-        const { bytes, mediaType } = await readImageBytes(exec, args.image)
+        const imageInput = typeof args.image === 'string' && args.image.trim() !== ''
+          ? args.image.trim()
+          : Array.isArray(args.attachmentIds) && typeof args.attachmentIds[0] === 'string'
+            ? args.attachmentIds[0].trim()
+            : ''
+        if (imageInput === '') throw new Error('vision_long_screenshot_ocr: provide image or attachmentIds[0]')
+        const { bytes, mediaType } = await readImageBytes(exec, imageInput)
         const sharp = await loadSharp()
         const meta = await sharp(bytes, { failOn: 'none' }).metadata()
         const width = meta.width ?? 0
@@ -6250,7 +6484,7 @@ export function apply(ctx, config = {}) {
         const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
         // Overlapping horizontal windows in reading order.
         const windows = longOcrWindows(height, chunkHeight, overlap)
-        const stem = artifactStem(args.image, 'ocr')
+        const stem = artifactStem(imageInput, 'ocr')
         const dir = path.join(workspaceOf(exec), artifactsRel, stem)
         await mkdir(dir, { recursive: true })
         // ONE deadline for the whole long-OCR task: every chunk's tesseract
@@ -6358,7 +6592,7 @@ export function apply(ctx, config = {}) {
         const engines = {}
         for (const r of results) engines[r.engine] = (engines[r.engine] ?? 0) + 1
         const manifest = {
-          source: args.image,
+          source: imageInput,
           width,
           height,
           chunkHeight,
@@ -6754,14 +6988,18 @@ export function apply(ctx, config = {}) {
     let deepActive = false
     const deepDisposers = []
     const structuredFollowupEvidenceTools = new Set([
-      'vision_describe',
-      'vision_ground',
-      'vision_detect',
-      'vision_ocr',
-      'vision_colors',
-      'vision_pixel_diff',
-      'vision_long_screenshot_ocr',
+      'vision_describe', 'vision_ground', 'vision_detect', 'vision_ocr', 'vision_colors', 'vision_pixel_diff', 'vision_long_screenshot_ocr',
     ])
+    const structuredBudgetTools = new Set([...structuredFollowupEvidenceTools, 'vision_crop'])
+    const structuredNetworkTools = new Set(['vision_describe', 'vision_ground', 'vision_detect', 'vision_ocr', 'vision_long_screenshot_ocr'])
+    const terminalVisionCodes = new Set([
+      VISION_RESULT_CODES.AUTH_FAILED, VISION_RESULT_CODES.RATE_LIMITED, VISION_RESULT_CODES.TIMEOUT,
+      VISION_RESULT_CODES.BACKEND_UNAVAILABLE, VISION_RESULT_CODES.BACKEND_UNAVAILABLE_THIS_TURN,
+    ])
+    const parsedToolResult = (value) => {
+      if (typeof value !== 'string') return value && typeof value === 'object' ? value : undefined
+      try { return JSON.parse(value) } catch { return undefined }
+    }
     activateDeepTools = () => {
       if (deepActive) return '视觉深看工具已在挂载状态。'
       deepActive = true
@@ -6773,7 +7011,20 @@ export function apply(ctx, config = {}) {
                 ...def,
                 async execute(args, exec) {
                   const session = exec && exec.agent && exec.agent.session
-                  const state = session ? structuredBootstrapTurnState.get(session) : undefined
+                  const state = session ? structuredBootstrapStateGet(session) : undefined
+                  if (
+                    structuredBootstrapEnabled() && state && state.required && state.completed === true &&
+                    state.visualTerminal === true && structuredNetworkTools.has(def.name)
+                  ) {
+                    return JSON.stringify({ ok: false, code: 'STRUCTURED_VISUAL_TERMINAL', retryable: false, reason: 'visual backend is terminal for this turn; answer from existing evidence instead of retrying' })
+                  }
+                  if (
+                    structuredBootstrapEnabled() && state && state.required && state.completed === true &&
+                    structuredBudgetTools.has(def.name) && Number(state.evidenceCalls ?? 0) >= Number(state.maxEvidenceCalls ?? 4)
+                  ) {
+                    state.followupCompleted = true
+                    return JSON.stringify({ ok: false, code: 'STRUCTURED_EVIDENCE_BUDGET_EXHAUSTED', retryable: false, used: state.evidenceCalls, limit: state.maxEvidenceCalls, reason: 'structured vision evidence budget exhausted; answer now or explicitly state uncertainty' })
+                  }
                   if (structuredBootstrapEnabled() && state && state.required && state.completed !== true) {
                     return JSON.stringify({
                       ok: false,
@@ -6795,18 +7046,19 @@ export function apply(ctx, config = {}) {
                   ) {
                     // Local Tesseract auto mode accepts any non-empty result, which is often noisy on Chinese/UI screenshots.
                     // In the experimental structured flow, make OCR an accuracy-first visual verification unless explicitly forced local.
-                    effectiveArgs = { ...(args ?? {}), engine: 'vision' }
+                    effectiveArgs = { ...(args ?? {}), engine: 'vision-first' }
                   }
                   const result = await def.execute(effectiveArgs, exec)
-                  if (
-                    structuredBootstrapEnabled() &&
-                    state &&
-                    state.required &&
-                    state.completed === true &&
-                    state.failed !== true &&
-                    structuredFollowupEvidenceTools.has(def.name)
-                  ) {
-                    state.followupCompleted = true
+                  if (structuredBootstrapEnabled() && state && state.required && state.completed === true && state.failed !== true) {
+                    if (structuredBudgetTools.has(def.name)) state.evidenceCalls = Number(state.evidenceCalls ?? 0) + 1
+                    const parsedResult = parsedToolResult(result)
+                    const terminal = parsedResult && parsedResult.ok === false && terminalVisionCodes.has(parsedResult.code)
+                    if (terminal) {
+                      state.visualTerminal = true
+                      state.followupCompleted = true
+                    } else if (structuredFollowupEvidenceTools.has(def.name)) {
+                      state.followupCompleted = true
+                    }
                   }
                   return result
                 },
