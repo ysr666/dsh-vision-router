@@ -1,0 +1,125 @@
+from pathlib import Path
+
+
+def replace_once(text, old, new, label):
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f'{label}: expected exactly 1 match, got {count}')
+    return text.replace(old, new, 1)
+
+
+# Runtime: preserve main's 1+x contract and avoid advertising a boot-disabled
+# screenshot tool to the model.
+p = Path('index.js')
+s = p.read_text()
+s = replace_once(
+    s,
+    "  const instantLocalProvider = () =>\n    current().instantDescribe === true ? localProvidersOf(current()) : undefined",
+    "  // The main 1+x structured bootstrap owns the first visual pass.\n  // Never stack instantDescribe in front of it (that would silently become 2+x).\n  const instantLocalProvider = () =>\n    current().instantDescribe === true && !structuredBootstrapEnabled()\n      ? localProvidersOf(current())\n      : undefined",
+    'instantDescribe/structured-bootstrap guard',
+)
+s = s.replace('、vision_screenshot（桌面截屏）', '')
+s = s.replace(' / vision_screenshot)', ')')
+s = s.replace(
+    '；桌面截屏用 `vision_screenshot`，但该隐私敏感工具默认禁用，只有用户在 Vision Router 设置中显式开启后才可执行；',
+    '；',
+)
+s = s.replace(
+    '`vision_html_screenshot（页面截图）、${screenshotNote}。现在可以直接调用已启用的工具。` +',
+    "'vision_html_screenshot（页面截图）。现在可以直接调用已启用的工具。' +",
+)
+s = s.replace('【原图尺寸】），对截图分析', '【输入图尺寸】），对截图分析')
+p.write_text(s)
+
+# Settings UX: #139 is source of truth. Reinsert #98 as one collapsed local
+# group; keep desktop screenshot in Advanced/Developer because it is boot-time
+# and privacy-sensitive.
+p = Path('lib/client.js')
+s = p.read_text()
+s = replace_once(
+    s,
+    "    const DEVELOPER_TOGGLE_KEYS = ['stealth']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS]",
+    "    const DEVELOPER_TOGGLE_KEYS = ['stealth', 'desktopScreenshot']\n    const LOCAL_TOGGLE_KEYS = ['instantDescribe']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS, ...LOCAL_TOGGLE_KEYS]",
+    'local toggle integration',
+)
+local_group = """              // #98 local vision, adapted to #139 Settings UX v2: one collapsed
+              // group on the main surface; existing main controls remain in place.
+              h('div', { className: 'vr-group' },
+                h('button', {
+                  type: 'button', className: 'vr-group-head', 'aria-expanded': showLocalVision,
+                  'aria-controls': 'vr-local-vision-body',
+                  onClick: () => setShowLocalVision(!showLocalVision),
+                },
+                  h('span', { className: 'vr-group-title' }, t('groupLocalOllama')),
+                  h('span', { className: 'vr-group-summary', title: localVisionSummary() }, localVisionSummary()),
+                  h('span', { className: 'vr-chevron' + (showLocalVision ? ' vr-chevron-open' : '') }, '▾'),
+                ),
+                showLocalVision
+                  ? h('div', { className: 'vr-local-body', id: 'vr-local-vision-body' },
+                      toggleField('instantDescribe'),
+                      localOllamaEditor(),
+                      localLmStudioEditor(),
+                      describeStyleEditor(),
+                    )
+                  : null,
+              ),
+"""
+s = replace_once(
+    s,
+    "              TOGGLE_KEYS.map((key) => toggleField(key)),\n              h('p', { className: 'vr-hint' }, t('defaultChainNote'))",
+    "              TOGGLE_KEYS.map((key) => toggleField(key)),\n" + local_group + "              h('p', { className: 'vr-hint' }, t('defaultChainNote'))",
+    'local settings render group',
+)
+s = s.replace(
+    '开启后（需同时开启至少一个本地视觉后端），图片轮第一轮直接用本地模型识别图片块——模型第一轮即看懂，不必先调用识图工具；',
+    '开启后（需同时开启至少一个本地视觉后端），图片轮第一轮直接用本地模型识别图片块；若同时开启「结构化预识别（1+x）」，则由 1+x 首遍识别接管，本开关不会额外再跑一遍；',
+)
+s = s.replace(
+    'When enabled (and at least one local vision backend is enabled), image turns are described locally before the text model sees them;',
+    'When enabled (and at least one local vision backend is enabled), image turns are described locally before the text model sees them; when Structured pre-scan (1+x) is also enabled, 1+x owns the first pass and this option does not add a second pre-scan;',
+)
+p.write_text(s)
+
+# Ensure #98 regression suites are in the repository CI entrypoint.
+p = Path('package.json')
+s = p.read_text()
+s = replace_once(
+    s,
+    'tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js"',
+    'tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js tests/local-ollama.test.js tests/zero-regression-gate.test.js tests/runtime-e2e.test.js"',
+    'package test script',
+)
+p.write_text(s)
+
+# README: main contributes vision_bootstrap; screenshot is optional at boot.
+p = Path('README.md')
+s = p.read_text()
+s = s.replace(
+    'The diagram covers the eleven image-processing tools. `vision_present` (durable image delivery) and the privacy-gated `vision_screenshot` (desktop capture) bring the complete deep-tool set to thirteen.',
+    'The diagram covers the eleven image-processing tools. `vision_present` (durable image delivery) and `vision_bootstrap` (the optional 1+x structured first pass) bring the default deep-tool set to thirteen. Enabling the privacy-gated `vision_screenshot` at boot adds an optional fourteenth tool.',
+)
+marker = '| `vision_describe` | Image Q&A / multi-image compare / structured-evidence JSON mode (summary + layout regions + entity inventory + verbatim transcription) | — |'
+if '| `vision_bootstrap` |' not in s:
+    s = replace_once(
+        s,
+        marker,
+        '| `vision_bootstrap` | Optional 1+x structured first visual pass; establishes task-independent evidence before at least one follow-up vision call | — |\n' + marker,
+        'README bootstrap row',
+    )
+p.write_text(s)
+
+p = Path('README.zh.md')
+s = p.read_text()
+s = s.replace(
+    '图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present`，以及带隐私开关的桌面截屏工具 `vision_screenshot`，完整深看工具集共 13 个。',
+    '图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present` 与可选 1+x 结构化首遍识别的 `vision_bootstrap`，默认深看工具集共 13 个。若启动时显式开启隐私敏感的 `vision_screenshot`，则额外增加为第 14 个工具。',
+)
+marker = '| `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |'
+if '| `vision_bootstrap` |' not in s:
+    s = replace_once(
+        s,
+        marker,
+        '| `vision_bootstrap` | 可选 1+x 结构化首遍视觉识别；先建立任务无关证据底图，再至少进行 1 次后续视觉调用 | — |\n' + marker,
+        'README.zh bootstrap row',
+    )
+p.write_text(s)
