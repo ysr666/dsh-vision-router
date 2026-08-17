@@ -518,7 +518,7 @@ test('wrapper resolves instant-local settings getters on every stream', async ()
   try {
     await run('before-enable')
     assert.equal(local.requests.length, 0)
-    assert.match(delegated[0].messages[0].content[0].text, /当前文本模型无法直接查看图片/)
+    assert.match(delegated[0].messages[0].content[0].text, /已收到图片/)
 
     instantProvider = {
       name: 'local-ollama',
