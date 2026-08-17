@@ -1,6 +1,6 @@
 # v2 capability-aware vision routing
 
-This document is the design target for a major-version routing change. The first implementation on `feat/v2-capability-router` is intentionally runtime-neutral: it adds the intent/profile/scoring core and tests without changing the existing v1 fallback order.
+This document is the design target for a major-version routing change. The implementation on `feat/v2-capability-router` keeps the current v1 execution order by default while adding an intent/profile/scoring core and shadow experiments.
 
 ## Why the v1 chain stops scaling
 
@@ -23,11 +23,9 @@ image
   -> repeat as needed
 ```
 
-The agent should not receive a long list of model names or benchmark lore. Model selection belongs inside Vision Router.
+The agent should not receive a long permanent leaderboard. Model selection belongs primarily inside Vision Router.
 
 ## Intent vocabulary
-
-Phase 1 uses the following stable internal intents:
 
 - `structured` — task-independent first-pass visual map (`vision_bootstrap`)
 - `ocr` — exact text transcription
@@ -44,50 +42,33 @@ A tool maps to an intent. `vision_describe` can refine its intent from the reque
 
 ## Capability profile
 
-Each backend gets a normalized profile:
+Each backend gets a normalized profile containing per-intent scores, confidence and traits such as latency/cost/locality. Ranking is per visual call, not per conversation.
 
-```js
-{
-  provider: 'provider-id',
-  model: 'model-id',
-  scores: {
-    structured: 0.90,
-    ocr: 0.96,
-    document: 0.92,
-    ui: 0.88,
-    grounding: 0.94,
-    detection: 0.90,
-    general: 0.90,
-    chart_diagram: 0.86,
-    code_screenshot: 0.84,
-    visual_compare: 0.88,
-  },
-  confidence: { /* per-intent provenance confidence */ },
-  traits: {
-    latencyMs: 850,
-    cost: 0.1,
-    local: false,
-    privacy: 'cloud',
-  },
-  provenance: {
-    prior: 'family-prior',
-    measured: true,
-    override: false,
-  },
-}
+### Capability evidence hierarchy
+
+A permanent hard-coded leaderboard is intentionally **not** the source of truth. New or renamed models can appear faster than this plugin can ship releases, and the same model name can behave differently across providers, quantization and relays.
+
+Use evidence in this order:
+
+1. **exact-endpoint measured/self-benchmark evidence** — strongest long-term source;
+2. **explicit user override** — exact configured backend knowledge;
+3. **provider/model official claims** when available — useful seeding, not final truth;
+4. **conservative family prior** — weak bootstrap evidence only;
+5. **unknown generic prior** — keeps future models routable without inventing specialist strengths.
+
+Unknown models are shown to the agent as **unverified** rather than being assigned confident OCR/grounding/UI claims from a generic score.
+
+`lib/vision-capability-reference.js` builds these compact references and also plans a task-first probe set:
+
+```text
+current task intent -> structured -> OCR -> grounding -> general
 ```
 
-### Three profile sources
-
-1. **Conservative built-in prior** — family-level capability hints, not a hard benchmark ranking. Unknown models remain routable with a generic baseline.
-2. **Runtime benchmark measurement** — a future local fixture suite can write per-intent measurements for the exact provider/model/endpoint fingerprint.
-3. **User override** — explicit capability scores or allow/deny rules always win.
-
-The important rule is that measurements override most of the prior, because the same named model can behave differently through quantization, local inference, relays, prompt wrappers, or provider-specific versions.
+A future self-benchmark runner can execute that small fixture set against the exact provider/model/endpoint fingerprint, so a brand-new model can teach the router what it is good at without waiting for a plugin update.
 
 ## Ranking
 
-Ranking is per visual call, not per conversation. A candidate score combines:
+A candidate score combines:
 
 - capability match for the current intent;
 - backend health (circuit breaker, recent failures, rate limiting);
@@ -95,7 +76,7 @@ Ranking is per visual call, not per conversation. A candidate score combines:
 - cost/free status;
 - local/privacy preference.
 
-Initial user-facing policies:
+User-facing policies:
 
 - `quality`
 - `balanced`
@@ -104,15 +85,42 @@ Initial user-facing policies:
 
 The existing configured order remains the deterministic tie-breaker.
 
-Example: the same model pool may route `vision_ocr` to model A and `vision_ground` to model B without DeepSeek ever seeing A/B's names.
+## Phase 1 — capability core
 
-## Health integration
+- standalone intent vocabulary;
+- tool -> intent mapping;
+- conservative family priors;
+- measured + override profile merge;
+- policy-aware scorer/ranker;
+- health-aware ordering;
+- diagnostics explanation output;
+- unit tests.
 
-The v2 scorer should consume the existing resilience state instead of inventing another retry system. A tripped or rate-limited backend must sink to the bottom (or be filtered) before execution. Existing fallback/circuit-breaker behavior remains the final safety net after routing.
+## Phase 2 — shadow routing
 
-## Planned benchmark fixtures
+The scorer is wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order.
 
-A later phase can add a small, privacy-safe built-in capability test pack. It should measure operations rather than subjective chat quality:
+The shadow plan includes current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents.
+
+### Agent-reference shadow experiment
+
+When shadow mode is enabled, the first bootstrap prompt can also receive a compact evidence-aware model reference. DeepSeek may submit a shadow-only `preferredBackend` chosen from that reference.
+
+The router logs three things side-by-side:
+
+```text
+actual v1 order
+agent preferred backend
+v2 scorer order
+```
+
+`preferredBackend` is **diagnostic only** and never changes execution order. This lets us test the community suggestion — "give the text model a capability reference and let it choose" — without handing production routing to an unvalidated prompt heuristic.
+
+The reference explicitly labels evidence provenance (`实测`, `人工确认`, `家族先验`, `未知新模型`) and tells the agent not to invent strengths for unverified future models.
+
+## Planned self-benchmark fixtures
+
+The next major capability-learning step should measure operations rather than subjective chat quality:
 
 - OCR: exact/normalized text match on Chinese + English UI text;
 - grounding: bounding-box IoU / point-in-target;
@@ -131,50 +139,21 @@ The main card should eventually replace the mental model of a single **vision fa
 
 - Smart vision routing: on/off
 - Policy: Quality / Balanced / Speed / Local privacy
-- Model pool rows with auto-generated capability tags
+- Model pool rows with evidence-aware capability tags
 - One-click `Test model capabilities`
 
 Advanced settings can expose per-intent preferred/blocked models and raw profile overrides. Ordinary users should not maintain a capability matrix manually.
 
 ## Migration phases
 
-### Phase 1 — now on this branch
-
-- standalone intent vocabulary;
-- tool -> intent mapping;
-- conservative family priors;
-- measured + override profile merge;
-- policy-aware scorer/ranker;
-- health-aware ordering;
-- diagnostics explanation output;
-- unit tests;
-- **no runtime behavior change**.
-
-### Phase 2 — shadow routing (implemented on this branch)
-
-The scorer is now wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order. The shadow plan includes the current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents. The first bootstrap prompt can also receive a compact evidence-aware model reference and submit a shadow-only `preferredBackend`; logs compare that agent recommendation with the scorer top choice while ignoring it for execution. This gives real-world evidence without risking users.
-
 ### Phase 3 — opt-in runtime routing
 
-Add `capabilityRouting: true` and policy selection. Use v2 ordering for tool-side visual calls while preserving the current fallback executor and circuit breaker.
+Add `capabilityRouting: true`. Use v2 ordering for tool-side visual calls while preserving the current fallback executor and circuit breaker.
 
-### Phase 4 — self-benchmark and UI
+### Phase 4 — self-benchmark and persistence
 
-Add fixture-based capability measurement, persisted fingerprints, model-pool UI, tags, explanations and manual overrides.
+Add generated privacy-safe fixtures, exact-backend probe execution, persisted endpoint fingerprints, measured capability profiles and UI tags.
 
 ### Phase 5 — v2 default
 
-Only after telemetry/manual testing shows routing is stable: make capability-aware ordering the normal path and document the old fixed-order chain as compatibility behavior.
-
-
-## Capability knowledge and future models
-
-A permanent hard-coded leaderboard is intentionally not the source of truth. New or renamed models can appear faster than this plugin can ship releases, and the same model name can behave differently across providers, quantization and relays. The routing evidence hierarchy is therefore:
-
-1. exact-endpoint measured/self-benchmark evidence;
-2. explicit user override;
-3. provider/model official claims when available;
-4. conservative family prior;
-5. unknown generic prior.
-
-Unknown models are shown to the agent as **unverified** rather than being assigned invented specialist strengths. `lib/vision-capability-reference.js` also plans a small task-first probe set (`task intent -> structured -> OCR -> grounding -> general`) so a future self-benchmark runner can learn the exact configured endpoint without waiting for a model-name table update.
+Only after shadow and benchmark evidence show stable routing: make capability-aware ordering the normal path and keep the old fixed chain as compatibility behavior.
