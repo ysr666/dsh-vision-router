@@ -4947,7 +4947,8 @@ export function apply(ctx, config = {}) {
         'question — rephrasing cannot fix an auth, rate-limit or outage problem. Answer from the information ' +
         'you already have and continue the text task, telling the user vision is temporarily unavailable. ' +
         'Only content-level uncertainty in a SUCCESSFUL answer justifies a second look (vision_crop, ' +
-        'vision_ground or another vision_describe).',
+        'vision_ground or another vision_describe). If infrastructure failure leaves a file_path-only OCR/parser as the fallback, ' +
+        'use vision_materialize on the uploaded attachment id; never guess a same-named local file or private attachment-store path.',
       parameters: {
         type: 'object',
         properties: {
@@ -4997,6 +4998,12 @@ export function apply(ctx, config = {}) {
         if (paths.length + attachmentIds.length === 0 || paths.length + attachmentIds.length > 4) {
           throw new Error('vision_describe: provide 1-4 images via paths and/or attachmentIds')
         }
+        // Preserve only durable upload ids for a deterministic offline fallback.
+        // Never expose or guess the attachment store's private filesystem path.
+        const materializableAttachmentIds = [...new Set([
+          ...attachmentIds.map((id) => String(id)).filter((id) => isAttachmentIdInput(id)),
+          ...paths.map((item) => String(item)).filter((item) => isAttachmentIdInput(item)),
+        ])]
 
         for (const path of paths) {
           let bytes
@@ -5363,11 +5370,18 @@ export function apply(ctx, config = {}) {
           attempted.length > 0 ? attempted : errors.map((text) => ({ backend: 'configured', kind: 'NO_ADAPTER', error: text })),
           reason,
         )
-        return JSON.stringify(
-          attempted.length > 0
-            ? failure
-            : { ...failure, code: VISION_RESULT_CODES.UNSUPPORTED_BACKEND },
-        )
+        const baseFailure = attempted.length > 0
+          ? failure
+          : { ...failure, code: VISION_RESULT_CODES.UNSUPPORTED_BACKEND }
+        if (materializableAttachmentIds.length > 0) {
+          baseFailure.degradedAccess = {
+            tool: 'vision_materialize',
+            attachmentIds: materializableAttachmentIds,
+            advice:
+              'If another local/OCR tool requires a filesystem path, call vision_materialize for the uploaded attachment id. Do not guess a filename or the attachment store path.',
+          }
+        }
+        return JSON.stringify(baseFailure)
       },
     }
     deepToolDefs.push(visionDescribeTool)
@@ -5538,6 +5552,44 @@ export function apply(ctx, config = {}) {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     }
+
+    // issue #153: materialize an authorized attachment into the workspace for
+    // file_path-only local parsers without coupling them to DSH storage internals.
+    deepToolDefs.push({
+      name: 'vision_materialize',
+      description:
+        'Copy an uploaded image attachment (sha256:...) or readable local image into the session workspace and return a real filesystem path. ' +
+        'This tool performs NO vision model/network call. Use it after vision_describe/vision_bootstrap returns ok:false when a local OCR/parser accepts only file_path. ' +
+        'Never guess the attachment store path or search for a same-named file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          image: { type: 'string', description: 'Uploaded image attachment id (recommended, e.g. sha256:...) or a readable local image path' },
+        },
+        required: ['image'],
+        additionalProperties: false,
+      },
+      output: stringOutput,
+      async execute(args, exec) {
+        const source = String(args.image ?? '')
+        const { bytes, mediaType } = await readImageBytes(exec, source)
+        const extension = mediaType === 'image/jpeg'
+          ? 'jpg'
+          : mediaType === 'image/webp'
+            ? 'webp'
+            : mediaType === 'image/gif'
+              ? 'gif'
+              : 'png'
+        const target = await saveArtifact(exec, `${artifactStem(source, 'materialized')}.${extension}`, bytes)
+        return JSON.stringify({
+          path: target,
+          mediaType,
+          bytes: bytes.length,
+          ...(isAttachmentIdInput(source) ? { source } : {}),
+          safeWorkspaceCopy: true,
+        })
+      },
+    })
 
     const visionPresentOutput = {
       schema: {
@@ -6763,7 +6815,7 @@ export function apply(ctx, config = {}) {
       }
       return (
         '视觉深看工具已挂载：vision_bootstrap（结构化预识别）、vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
-        'vision_crop（裁剪放大）、vision_pixel_diff（像素对比验证）、vision_colors（取色）、' +
+        'vision_materialize（附件落盘）、vision_crop（裁剪放大）、vision_pixel_diff（像素对比验证）、vision_colors（取色）、' +
         'vision_ocr（文字识别）、vision_trace（SVG 矢量化）、vision_extract_foreground（抠图）、' +
         'vision_html_screenshot（页面截图）。现在可以直接调用已启用的工具。' +
         '注意：vision_ocr 只用于读取图片文字；视觉工具返回 ok:false 后端不可用结果时，不要改问法重复调用，继续文本任务。'
@@ -6773,7 +6825,7 @@ export function apply(ctx, config = {}) {
       ctx.tools.register({
         name: 'vision_activate',
         description:
-          'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_crop / ' +
+          'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
           'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
           'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
           'automatically on image turns; call this only when you need them on a text-only turn.',

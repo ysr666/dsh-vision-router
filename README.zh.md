@@ -222,6 +222,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 |---|---|---|
 | `vision_bootstrap` | 可选 1+x 结构化首遍视觉识别；先建立任务无关证据底图，再至少进行 1 次后续视觉调用 | — |
 | `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |
+| `vision_materialize` | 把已授权附件复制到会话工作区并返回真实文件路径，供本地 OCR/解析器降级使用；不调用视觉模型或网络 | image copy |
 | `vision_ground` | 定位目标 → **原图像素框 x1/y1/x2/y2** | 标注 PNG（可选） |
 | `vision_detect` | 盘点某类元素（按钮/输入框/链接…）→ 编号清单 + 原图像素框 | 编号标注 PNG |
 | `vision_crop` | 按像素框裁剪放大 | PNG |

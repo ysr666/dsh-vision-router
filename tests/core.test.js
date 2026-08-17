@@ -1063,7 +1063,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
   const adapters = new Map() // provider -> adapter
   const registrations = new Map() // provider -> { adapter, retryPolicy }
   const directories = [] // configurable-provider registrations (directory seam)
-  const captured = { skills: [], on: new Map() }
+  const captured = { skills: [], tools: [], on: new Map() }
   // The mutable user document and the watch seam: tests flip config0 fields
   // and fire the watchers to simulate a settings-card save.
   const userDoc = config0
@@ -1180,7 +1180,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
       }
       callback(sctx)
     },
-    tools: { register: () => () => {} },
+    tools: { register: (tool) => { captured.tools.push(tool); return () => {} } },
     llm: {
       registerAdapter(providers, adapter) {
         for (const provider of providers) {
@@ -3099,4 +3099,38 @@ test('anthropic-format local backend keeps system text and image blocks', async 
   } finally {
     globalThis.fetch = original
   }
+})
+
+
+test('vision_materialize exposes an authorized attachment as a workspace file (issue #153)', async () => {
+  const artifactsDir = '.tmp-vision-materialize-test'
+  const config = { artifactsDir, freeFallback: false, progressiveTools: false }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  apply(ctx, Config(config))
+  const tool = captured.tools.find((entry) => entry && entry.name === 'vision_materialize')
+  assert.ok(tool, 'expected vision_materialize to be registered')
+  assert.match(tool.description, /NO vision model\/network call/)
+
+  const attachment = { attachmentId: 'sha256:40716778ccda05db57befec33e5af91973ecc810b4d5a8076b2c229421f388c2', mediaType: 'image/png', name: 'image.png' }
+  const session = { id: 'issue-153', events: [], header: { cwd: process.cwd() } }
+  const messages = [{ role: 'user', content: [{ type: 'image', attachment }, { type: 'text', text: 'look' }] }]
+  const preStep = captured.on.get('agent/pre-step')
+  assert.equal(typeof preStep, 'function')
+  await preStep({ agent: { session }, messages, turn: 1 }, async () => ({ messages }))
+
+  const output = JSON.parse(await tool.execute({ image: attachment.attachmentId }, { agent: { session } }))
+  assert.equal(output.mediaType, 'image/png')
+  assert.equal(output.safeWorkspaceCopy, true)
+  assert.equal(output.source, attachment.attachmentId)
+  assert.match(output.path, /materialized.*\.png$/)
+  const { readFile, rm } = await import('node:fs/promises')
+  assert.deepEqual(await readFile(output.path), Buffer.from('not-a-real-image'))
+  await rm(new URL('../' + artifactsDir + '/', import.meta.url), { recursive: true, force: true })
+})
+
+test('vision_describe failure contract points attachment ids at vision_materialize (issue #153)', async () => {
+  const source = (await import('node:fs')).readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(source, /degradedAccess/)
+  assert.match(source, /tool: 'vision_materialize'/)
+  assert.match(source, /Do not guess a filename or the attachment store path/)
 })
