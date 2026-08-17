@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.2"><img src="https://img.shields.io/badge/release-v1.5.2-5B4CF0?style=flat-square" alt="Release v1.5.2" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-355%20tests-2EA44F?style=flat-square" alt="Verified: 355 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.3"><img src="https://img.shields.io/badge/release-v1.5.3-5B4CF0?style=flat-square" alt="Release v1.5.3" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-368%20tests-2EA44F?style=flat-square" alt="Verified: 368 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.5.2）**
+> 📌 **公告（v1.5.3）**
 >
-> **v1.5.2：修复 DSH 设置页 keyed-slot 加载失败。**
+> **v1.5.3：修复 rc.6 更新检查路由（#160）、守卫视觉循环输出、改写易误导文案，并逐后端记录视觉调用日志。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />

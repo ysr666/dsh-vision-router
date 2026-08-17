@@ -3,6 +3,45 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.5.3
+
+> **v1.5.2 → v1.5.3**：修复 DSH 0.1.0-rc.6 上 update-check / self-update / model-capabilities 三个 host 路由缺失、视觉后端退化循环输出被当作成功结果、以及设置页与图片提醒中让用户误以为模型不可用的文案；新增逐后端视觉调用诊断日志与视觉后端链保存规范化。
+> **v1.5.2 → v1.5.3**: fixes the missing update-check / self-update / model-capabilities host routes on DSH 0.1.0-rc.6, guards against degenerate repetition-loop vision output masquerading as success, and rewords copy that made users think their models were unusable; adds per-backend vision-call diagnostics and provider-chain save canonicalization.
+
+### 更新与路由 / Updates & routes
+
+- **修复 DSH 0.1.0-rc.6 上 update-check / self-update / model-capabilities 路由缺失（#160 / #166）**：v1.5 引入的本地视觉稳定层曾把注入的 `webServer` child context 换成 Proxy，导致这三个 host 路由静默丢失——设置卡「检查更新」拿到的是 Web UI 的 HTML 而不是 JSON，界面报「更新检查接口返回了无效响应」。现在保持注入上下文原样（不再代理/替换，保留对象身份），截图权限接口改用独立 raw `webServer` injection，多本地后端连接探测移回 core。新增 child-context 身份与本地回退的回归测试。
+- **Fix missing update-check / self-update / model-capabilities host routes on DSH 0.1.0-rc.6 (#160 / #166)**: the local-vision stabilizer introduced in v1.5 replaced the injected `webServer` child context with a Proxy, silently dropping these three host routes — the Settings card's "Check for updates" received the Web UI's HTML instead of JSON and reported an invalid response. The injected context is now left unproxied (original identity preserved), the screenshot-permission endpoint mounts through a dedicated raw injection, and multi-local connection probing moved back into core. Regression tests cover child-context identity and local fallback.
+
+### 识别链路 / Vision chain
+
+- **重复循环输出守卫（#171）**：部分视觉后端在长约束输出（结构化预识别 JSON 模式 + 高截图）下会退化成「網絡路由器 互聯網 路由器…」式的循环，并且伪装成成功结果，导致兜底链从不运行、垃圾内容进入会话。现在每次后端返回内容后检测循环特征（精确周期 / 连续重复 / 词元密度），命中即判为 `REPETITION` 失败，交给现有逐后端兜底机制自动切换下一个候选。新增 9 个守卫测试。
+- **Repetition-loop guard (#171)**: some vision backends degenerate into repetition loops (a short router/datacenter phrase repeated hundreds of times) on long constrained output such as the structured-bootstrap JSON schema over a tall screenshot — output that looks like a successful backend result, so the fallback chain never ran and garbage reached the conversation. Output is now checked for the loop signature (exact period / consecutive run / token density) right after each backend response; a hit becomes a classifiable `REPETITION` failure and the existing per-backend fallback machinery moves to the next candidate. 9 new guard tests.
+
+- **逐后端诊断日志（#172）**：成功调用此前不留任何痕迹，退化后端与健康后端在日志里无法区分。现在每次后端尝试都会写插件诊断日志——跳过（熔断原因）、成功（后端、内容长度、耗时、JSON 纠正重试）、失败/回退（后端、失败类别、耗时）。扩展了挂起本地后端端到端测试断言日志携带后端标识。
+- **Per-backend call diagnostics (#172)**: successful vision calls left no trace, so a degenerate backend was indistinguishable from a healthy one in the logs. Every backend attempt is now logged to the plugin diagnostics file — skips (circuit-open reason), successes (backend key, content length, latency, JSON-correction retries), and failures (backend key, failure kind, latency in the fallback warn). The hung-local-backend e2e test now asserts the backend key appears in both.
+
+### 文案 / Copy
+
+- **设置页模型能力警告去告警化（#169）**：「⚠️ 无法读取此模型的图片能力声明…」「⚠️ DSH 未声明此模型支持图片输入…」「⚠️ DSH 将此模型标记为仅文本…」三条警告改为「不影响使用 / 仍可直接使用 / 会在调用时自动验证，失败自动切换」的口吻并去掉 ⚠️ 图标——它们只是提示，模型仍可选用且会实际尝试。
+- **Settings capability warnings no longer read as breakage (#169)**: the three model-list warnings ("⚠️ 无法读取此模型的图片能力声明…", "⚠️ DSH 未声明此模型支持图片输入…", "⚠️ DSH 将此模型标记为仅文本…") now lead with usability ("不影响使用 / 仍可直接使用 / verified automatically on the call") and drop the alarm icon — they are advisories, and the model remains selectable and is tried for real.
+
+- **图片注入提醒友好化（#169）**：图片上传与结构化预识别（1+x 流程）的注入提醒不再以「当前文本模型无法直接查看图片」开头，改为「已收到图片…我可以借助视觉工具来看图」并用平实语言解释流程；全部功能约束（先 `vision_bootstrap`、不预选模式、x >= 1 深挖证据调用、`ok:false` 故障兜底、图中文字不可信）原样保留。
+- **Friendlier image reminders (#169)**: the reminders injected on image upload and by the structured-bootstrap (1+x) flow no longer open with "当前文本模型无法直接查看图片"; they now lead with "已收到图片…我可以借助视觉工具来看图" and explain the workflow in plain language. Every functional constraint is preserved (first call must be `vision_bootstrap`, no mode preselection, x >= 1 evidence call before answering, `ok:false` failure fallback, text inside images stays untrusted).
+
+### 稳定性与性能 / Stability & performance
+
+- **设置引导滚动同步性能门控（#170）**：引导模块的 document 级滚动监听改为仅在激活阶段工作，滚动同步经 rAF 合并，避免每事件强制布局带来的卡顿。
+- **Settings-guide scroll sync gated behind the active phase (#170)**: the guide's document-level scroll listener now only works while its phase is active, and scroll syncs are coalesced through rAF, removing the per-event forced-layout cost.
+
+- **视觉后端链保存规范化（#168）**：后端链在保存/读回前做规范化，避免重复或坏条目进入配置。
+- **Provider-chain save canonicalization (#168)**: the vision-provider chain is canonicalized before save/readback so duplicates or malformed entries do not reach the configuration.
+
+### 验证 / Validation
+
+- 全量套件 **368 tests pass**，Node 22 与 Node 24 均通过。发布由 tag 触发的 immutable Release workflow 再次执行完整验证，并经 npm Trusted Publishing（OIDC）发布。
+- Full suite passes **368 tests** on Node 22 and Node 24. The immutable tag-based Release workflow re-runs full verification and publishes through npm Trusted Publishing (OIDC).
+
 ## v1.5.2
 
 > **v1.5.1 → v1.5.2 紧急补丁**：修复当前 DSH keyed Settings slot 契约下会导致客户端插件直接加载失败的问题。
