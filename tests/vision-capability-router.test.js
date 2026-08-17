@@ -154,7 +154,7 @@ test('capability tags and route explanation are UI/diagnostics-ready', () => {
   const profile = buildVisionCapabilityProfile({
     provider: 'p',
     model: 'specialist',
-    measured: { ocr: 0.99, document: 0.93, grounding: 0.4 },
+    measured: { ocr: 0.99, document: 0.96, grounding: 0.4 },
   })
   const tags = visionCapabilityTags(profile, 0.85)
   assert.ok(tags.includes('ocr'))
