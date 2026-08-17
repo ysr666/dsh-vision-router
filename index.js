@@ -267,10 +267,9 @@ export const Config = z.object({
   progressiveTools: z.boolean().default(true),
   autoActivateOnImage: z.boolean().default(true),
   // Desktop capture crosses a separate privacy boundary from inspecting user-
-  // supplied images. Boot-time opt-in: the tool is registered only when this
-  // is enabled, so a disabled default never changes the model-visible tool
-  // set (token / prefix-cache stability). Changing the toggle takes effect
-  // after a restart.
+  // supplied images. The entry-layer stabilizer dynamically mounts/unmounts
+  // vision_screenshot as this setting changes, so saving the toggle is enough;
+  // on macOS the client also asks the server to trigger the OS permission check.
   desktopScreenshot: z.boolean().default(false),
   // User feedback (Zhipu official channel): some channels expose vision
   // models whose catalog metadata does not declare image input. Models the
@@ -384,17 +383,11 @@ export const Config = z.object({
       top_p: z.number().min(0).max(1),
     })
     .default({}),
-  // ── dsh-vision 并入：即时本地翻译 ────────────────────────────────────────
-  // 开启后（且任一本地后端启用：localOllama / localLmStudio），图片轮第一轮
-  // 就对无缓存描述的图片块直接调用本地识别，把识别文本替换进模型输入——
-  // 模型第一轮即"看懂"，不必先调 vision_describe；会话日志仍保留原图
-  // （界面照常显示）。本地识别失败时回退为静态工具提示标记。
-  // 默认关闭（保持工具优先哲学）。
+  // Legacy compatibility only: older profiles may still contain these two
+  // fields. The entry-layer stabilizer normalizes instantDescribe=false and a
+  // fixed structured local style; the UI no longer exposes either control.
+  // structuredVisionBootstrap is the sole automatic first-pass switch.
   instantDescribe: z.boolean().default(false),
-  // ── dsh-vision 并入：本地识别输出风格 ────────────────────────────────────
-  // plain = 平铺描述（简洁）；structured = 结构化识别（【初步判断】/【细节】/
-  // 【空间结构】/【输入图尺寸】），对截图分析（GUI/文档/聊天记录）质量更高。
-  // 仅影响 instantDescribe 与 vision_screenshot identify 的本地识别提示。
   localDescribeStyle: z.union(['plain', 'structured']).default('plain'),
 })
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
+import { installLocalVisionStabilizer, triggerDesktopScreenshotPermission } from '../lib/local-vision-stabilizer.js'
 
 function makeCore() {
   const calls = []
@@ -91,32 +91,36 @@ function installSettingsLikeCore(stabilized) {
   return () => seenScope
 }
 
-test('pre-step caps instantDescribe to the vision task budget without changing normal timeout', async () => {
-  const harness = makeHarness({ instantDescribe: true, timeoutMs: 120000, visionTaskTimeoutMs: 45000 })
+test('legacy instantDescribe and localDescribeStyle stay loadable but cannot create a second automatic first pass', () => {
+  const harness = makeHarness({ instantDescribe: true, localDescribeStyle: 'plain', timeoutMs: 120000 })
   const core = makeCore()
-  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  const { ctx: stabilized, bootConfig } = installLocalVisionStabilizer(
+    harness.ctx,
+    { instantDescribe: true, localDescribeStyle: 'plain' },
+    core,
+  )
   const scopeOf = installSettingsLikeCore(stabilized)
-  let seen
-  stabilized.on('agent/pre-step', async () => { seen = scopeOf().get().timeoutMs })
-  assert.equal(scopeOf().get().timeoutMs, 120000)
-  await harness.handlers.get('agent/pre-step')()
-  assert.equal(seen, 45000)
+  assert.equal(bootConfig.instantDescribe, false)
+  assert.equal(bootConfig.localDescribeStyle, 'structured')
+  assert.equal(scopeOf().get().instantDescribe, false)
+  assert.equal(scopeOf().get().localDescribeStyle, 'structured')
   assert.equal(scopeOf().get().timeoutMs, 120000)
 })
 
-test('wrapper stream suppresses the second automatic instantDescribe pass only while streaming', async () => {
-  const harness = makeHarness({ instantDescribe: true })
-  const core = makeCore()
-  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
-  const scopeOf = installSettingsLikeCore(stabilized)
-  let inside
-  stabilized.llm.registerAdapter(['deepseek-vision'], {
-    async *stream() { inside = scopeOf().get().instantDescribe; yield { type: 'finish', reason: { kind: 'stop' } } },
+test('macOS screenshot permission probe runs screencapture once and removes its temporary file', async () => {
+  let call
+  let removed
+  const result = await triggerDesktopScreenshotPermission({
+    platform: 'darwin',
+    tempDir: '/tmp',
+    run: async (...args) => { call = args },
+    remove: async (target) => { removed = target },
   })
-  assert.equal(scopeOf().get().instantDescribe, true)
-  for await (const _ of harness.adapters.get('deepseek-vision').stream({})) {}
-  assert.equal(inside, false)
-  assert.equal(scopeOf().get().instantDescribe, true)
+  assert.equal(result.ok, true)
+  assert.equal(result.requested, true)
+  assert.equal(call[0], 'screencapture')
+  assert.deepEqual(call[1].slice(0, 2), ['-x', '-m'])
+  assert.equal(call[1][2], removed)
 })
 
 test('vision-http dispatches OpenAI local providers through callLocalBackend so sampling is preserved', async () => {
@@ -168,6 +172,36 @@ test('desktop screenshot tool follows the persisted setting and remains absent w
   assert.equal(harness.toolDefs.has('vision_screenshot'), true)
   harness.setSettings({ desktopScreenshot: false })
   assert.equal(harness.toolDefs.has('vision_screenshot'), false)
+})
+
+test('desktop screenshot permission route is registered and gated by the persisted opt-in', async () => {
+  const harness = makeHarness({ desktopScreenshot: false })
+  const core = makeCore()
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  installSettingsLikeCore(stabilized)
+  stabilized.inject(['webServer'], (webCtx) => {
+    // Accessing the wrapped web server installs the plugin-owned permission route.
+    void webCtx.webServer
+  })
+  const route = harness.webRoutes.get('/_dsh/vision-router/request-screenshot-permission')
+  assert.ok(route)
+  const invoke = async () => {
+    let status
+    let body = ''
+    await route.handler({ method: 'POST' }, {
+      setHeader() {},
+      writeHead(code) { status = code },
+      end(value) { body = String(value ?? '') },
+    })
+    return { status, body: JSON.parse(body) }
+  }
+  const disabled = await invoke()
+  assert.equal(disabled.status, 409)
+  harness.setSettings({ desktopScreenshot: true })
+  const enabled = await invoke()
+  assert.equal(enabled.status, 200)
+  assert.equal(enabled.body.ok, true)
+  assert.equal(enabled.body.platform, process.platform)
 })
 
 test('connection probe falls through Ollama failure to LM Studio success', async () => {
