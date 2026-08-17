@@ -772,3 +772,9 @@ test('hidden settings persistence still permits real state transitions', async (
     ['unset', 'visionGuideStep'],
   ])
 })
+
+
+test('keyed settings.plugin.item requires an explicit slot key', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /name: 'settings\.plugin\.item',\s*key: 'vision-router',\s*id: 'vision-router'/)
+})
