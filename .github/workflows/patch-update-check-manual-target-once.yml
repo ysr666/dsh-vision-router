@@ -1,0 +1,43 @@
+name: Patch update-check manual target once
+
+on:
+  push:
+    branches:
+      - fix/update-check-manual-target
+    paths:
+      - .github/workflows/patch-update-check-manual-target-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/update-check-manual-target
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - name: Apply patch
+        run: python .github/patch_update_check_manual_target.py
+      - name: Verify
+        run: |
+          pnpm install --frozen-lockfile
+          node --check lib/client.js
+          node --check lib/update-check.js
+          git diff --check
+          pnpm test
+      - name: Commit patch
+        run: |
+          rm .github/workflows/patch-update-check-manual-target-once.yml
+          rm .github/patch_update_check_manual_target.py
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/client.js lib/update-check.js tests/client.test.js tests/update-check.test.js .github/workflows/patch-update-check-manual-target-once.yml .github/patch_update_check_manual_target.py
+          git commit -m 'fix: keep update recovery commands version-targeted'
+          git push origin HEAD:fix/update-check-manual-target
