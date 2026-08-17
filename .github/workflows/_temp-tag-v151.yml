@@ -1,0 +1,36 @@
+name: Tag v1.5.1
+"on":
+  push:
+    branches:
+      - chore/tag-v1.5.1
+    paths:
+      - .github/workflows/_temp-tag-v151.yml
+permissions:
+  contents: write
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify release commit and create tag
+        shell: bash
+        env:
+          TARGET_SHA: d12ff269ac4808a3d43acbf20e4c58bbb1dc0613
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          MAIN_SHA="$(git rev-parse origin/main)"
+          test "$MAIN_SHA" = "$TARGET_SHA"
+          test "$(git show "$TARGET_SHA:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "1.5.1"
+          git show "$TARGET_SHA:README.md" | grep -q 'releases/tag/v1.5.1'
+          git show "$TARGET_SHA:README.zh.md" | grep -q 'releases/tag/v1.5.1'
+          git show "$TARGET_SHA:CHANGELOG.md" | grep -q '^## v1.5.1$'
+          if git rev-parse -q --verify refs/tags/v1.5.1 >/dev/null; then
+            test "$(git rev-parse refs/tags/v1.5.1^{})" = "$TARGET_SHA"
+            echo 'v1.5.1 already points at target commit'
+          else
+            git tag -a v1.5.1 "$TARGET_SHA" -m 'v1.5.1'
+            git push origin refs/tags/v1.5.1
+          fi
