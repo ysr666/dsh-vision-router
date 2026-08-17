@@ -38,6 +38,7 @@ import {
   anthropicMediaType,
 } from './lib/catalog-corrections.js'
 import { createCachedUpdateChecker } from './lib/update-check.js'
+import { probeLocalBackends } from './lib/local-connection-probe.js'
 import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './lib/self-update.js'
 import {
   classifyVisionFailure,
@@ -6982,10 +6983,12 @@ export function apply(ctx, config = {}) {
         // Explicit local configuration is the most likely thing the user is
         // testing from this card. Probe it before a healthy OVH/default pair,
         // and verify that the configured model identifier actually exists.
-        const localFirst = localProvidersOf(current())[0]
-        if (localFirst !== undefined) {
-          return probeModels(localFirst.baseURL, localFirst.model)
-        }
+        const localProbe = await probeLocalBackends(
+          localProvidersOf(current()),
+          (provider) => probeModels(provider.baseURL, provider.model),
+          started,
+        )
+        if (localProbe !== undefined) return localProbe
         if (first !== undefined && first.provider === HTTP_ROUTE) {
           const entry = httpRouteProviders().find((p) => `${p.name}/${p.model}` === first.model)
           if (entry !== undefined) return probeModels(entry.baseURL, entry.model)

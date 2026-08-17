@@ -50,6 +50,16 @@ function makeHarness(initial = {}) {
     get: () => settings,
     watch(fn) { watcher = fn; return () => { if (watcher === fn) watcher = undefined } },
   }
+  const settingsCtx = { settings: { register: () => scope }, effect() {} }
+  const webCtx = {
+    webServer: {
+      register(spec) {
+        webRoutes.set(spec.path, spec)
+        return () => webRoutes.delete(spec.path)
+      },
+    },
+    effect(fn) { return fn() },
+  }
   const ctx = {
     logger: { warn() {}, info() {}, error() {} },
     tools: {
@@ -71,13 +81,13 @@ function makeHarness(initial = {}) {
     },
     on(event, handler) { handlers.set(event, handler); return () => handlers.delete(event) },
     inject(deps, callback) {
-      if (deps.includes('settings')) callback({ settings: { register: () => scope }, effect() {} })
-      if (deps.includes('webServer')) callback({ webServer: { register(spec) { webRoutes.set(spec.path, spec); return () => webRoutes.delete(spec.path) } }, effect(fn) { return fn() } })
+      if (deps.includes('settings')) callback(settingsCtx)
+      if (deps.includes('webServer')) callback(webCtx)
     },
     effect(fn) { return fn() },
   }
   return {
-    ctx, scope, handlers, toolDefs, adapters, webRoutes,
+    ctx, scope, handlers, toolDefs, adapters, webRoutes, webCtx,
     setSettings(next) { settings = { ...next }; if (watcher) watcher(settings) },
   }
 }
@@ -179,10 +189,6 @@ test('desktop screenshot permission route is registered and gated by the persist
   const core = makeCore()
   const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
   installSettingsLikeCore(stabilized)
-  stabilized.inject(['webServer'], (webCtx) => {
-    // Accessing the wrapped web server installs the plugin-owned permission route.
-    void webCtx.webServer
-  })
   const route = harness.webRoutes.get('/_dsh/vision-router/request-screenshot-permission')
   assert.ok(route)
   const invoke = async () => {
@@ -204,40 +210,13 @@ test('desktop screenshot permission route is registered and gated by the persist
   assert.equal(enabled.body.platform, process.platform)
 })
 
-test('connection probe falls through Ollama failure to LM Studio success', async () => {
-  const harness = makeHarness({
-    localOllama: { enabled: true, baseURL: 'http://ollama/v1', model: 'o' },
-    localLmStudio: { enabled: true, baseURL: 'http://lm/v1', model: 'l' },
-  })
+test('webServer child contexts pass through unchanged for DSH rc.6 route ownership', () => {
+  const harness = makeHarness({})
   const core = makeCore()
-  const originalFetch = globalThis.fetch
-  globalThis.fetch = async (url) => {
-    if (String(url).startsWith('http://ollama')) throw new Error('offline')
-    return new Response(JSON.stringify({ data: [{ id: 'l' }] }), { status: 200, headers: { 'content-type': 'application/json' } })
-  }
-  try {
-    const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
-    installSettingsLikeCore(stabilized)
-    stabilized.inject(['webServer'], (webCtx) => {
-      webCtx.webServer.register({ path: '/_dsh/vision-router/test-connection', handler: async (_req, res) => { res.writeHead(599); res.end('{}') } })
-    })
-    const route = harness.webRoutes.get('/_dsh/vision-router/test-connection')
-    let status
-    let body = ''
-    await route.handler({ method: 'GET' }, {
-      writeHead(code) { status = code },
-      end(value) { body = String(value ?? '') },
-    })
-    const parsed = JSON.parse(body)
-    assert.equal(status, 200)
-    assert.equal(parsed.backend, 'local-lmstudio')
-    assert.equal(parsed.fallbackUsed, true)
-    assert.equal(parsed.attempts.length, 2)
-    assert.equal(parsed.attempts[0].ok, false)
-    assert.equal(parsed.attempts[1].ok, true)
-  } finally {
-    globalThis.fetch = originalFetch
-  }
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  let seen
+  stabilized.inject(['webServer'], (webCtx) => { seen = webCtx })
+  assert.equal(seen, harness.webCtx)
 })
 
 
