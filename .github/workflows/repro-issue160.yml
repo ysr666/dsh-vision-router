@@ -18,6 +18,9 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: '11.22.0'
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -32,6 +35,7 @@ jobs:
           set -u
           echo "node=$(node --version)"
           echo "npm=$(npm --version)"
+          echo "pnpm=$(pnpm --version)"
           echo "dsh=$(npm list -g @deepseek-ai/dsh --depth=0 || true)"
           dsh plugin --profile web add "dsh-vision-router@$PLUGIN_VERSION"
 
