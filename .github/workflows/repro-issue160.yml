@@ -8,12 +8,11 @@ on:
       - .github/workflows/repro-issue160.yml
 
 jobs:
-  repro:
+  verify-patched-branch:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        plugin: ['1.4.5', '1.5.1', '1.5.2']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     steps:
@@ -25,17 +24,21 @@ jobs:
       - name: Install DSH rc.6
         shell: bash
         run: npm install --global @deepseek-ai/dsh@0.1.0-rc.6
-      - name: Install plugin and probe host routes
+      - name: Pack patched plugin
         shell: bash
-        env:
-          PLUGIN_VERSION: ${{ matrix.plugin }}
         run: |
-          set -u
+          npm pack --json > pack.json
+          node -e "const p=require('./pack.json'); if(!p[0]?.filename) process.exit(1); console.log(p[0].filename)" > tarball.txt
+      - name: Install patched plugin and probe host routes
+        shell: bash
+        run: |
+          set -eu
+          TARBALL="$(cat tarball.txt)"
           echo "node=$(node --version)"
           echo "npm=$(npm --version)"
           echo "pnpm=$(pnpm --version)"
-          echo "dsh=$(npm list -g @deepseek-ai/dsh --depth=0 || true)"
-          dsh plugin --profile web add "dsh-vision-router@$PLUGIN_VERSION"
+          echo "tarball=$TARBALL"
+          dsh plugin --profile web add "./$TARBALL"
 
           dsh web > dsh-issue160.log 2>&1 &
           DSH_PID=$!
@@ -63,27 +66,33 @@ jobs:
             exit 1
           fi
 
-          probe_get() {
+          assert_json_get() {
             route="$1"
-            echo "===== GET $route ====="
-            curl -sS -D headers.txt -o body.txt -w 'HTTP=%{http_code} TYPE=%{content_type}\n' "http://127.0.0.1:3080$route" || true
-            sed -n '1,20p' headers.txt || true
-            head -c 400 body.txt || true
+            code="$(curl -sS -o body.txt -w '%{http_code}' "http://127.0.0.1:3080$route")"
+            type="$(curl -sSI "http://127.0.0.1:3080$route" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type" {print $2; exit}')"
+            echo "GET $route -> $code $type"
+            head -c 300 body.txt || true
             echo
-          }
-          probe_post() {
-            route="$1"
-            echo "===== POST $route ====="
-            curl -sS -X POST -D headers.txt -o body.txt -w 'HTTP=%{http_code} TYPE=%{content_type}\n' "http://127.0.0.1:3080$route" || true
-            sed -n '1,20p' headers.txt || true
-            head -c 400 body.txt || true
-            echo
+            [ "$code" = 200 ]
+            grep -qi '^{' body.txt
           }
 
-          probe_get '/_dsh/vision-router/test-connection'
-          probe_get '/_dsh/vision-router/update-check?force=1'
-          probe_post '/_dsh/vision-router/self-update'
-          probe_get '/_dsh/vision-router/model-capabilities'
+          assert_json_get '/_dsh/vision-router/update-check?force=1'
+          assert_json_get '/_dsh/vision-router/model-capabilities'
+
+          code="$(curl -sS -X POST -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/self-update)"
+          echo "POST /_dsh/vision-router/self-update -> $code"
+          cat body.txt || true
+          echo
+          [ "$code" = 403 ]
+          grep -q 'invalid update token' body.txt
+
+          code="$(curl -sS -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/test-connection)"
+          echo "GET /_dsh/vision-router/test-connection -> $code"
+          head -c 300 body.txt || true
+          echo
+          [ "$code" = 200 ] || [ "$code" = 502 ]
+          grep -qi '^{' body.txt
 
           echo '===== vision-router log ====='
           cat "$HOME/.dsh/logs/vision-router/vision-router.log" 2>/dev/null || true
