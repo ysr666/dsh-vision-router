@@ -177,7 +177,7 @@ test('file log sink writes formatted diagnostics and rotates bounded logs', asyn
   }
 })
 
-test('openLogDirectory uses the platform file manager with an argument array', async () => {
+test('openLogDirectory uses the native file manager on macOS, Windows, and Linux', async () => {
   const calls = []
   const exec = async (...args) => calls.push(args)
   const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-'))
@@ -190,6 +190,85 @@ test('openLogDirectory uses the platform file manager with an argument array', a
       ['explorer.exe', [root]],
       ['xdg-open', [root]],
     ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('openLogDirectory accepts a numeric explorer relay exit code on Windows', async () => {
+  const calls = []
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-win-exit-'))
+  const exec = async (...args) => {
+    calls.push(args)
+    const error = new Error('Command failed: explorer.exe')
+    error.code = 1
+    throw error
+  }
+  try {
+    await assert.doesNotReject(openLogDirectory(root, { platform: 'win32', exec }))
+    assert.deepEqual(calls.map(([command, args]) => [command, args]), [
+      ['explorer.exe', [root]],
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('openLogDirectory falls back to cmd start for a Windows spawn-level failure', async () => {
+  const calls = []
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-win-fallback-'))
+  const exec = async (...args) => {
+    calls.push(args)
+    if (args[0] === 'explorer.exe') {
+      const error = new Error('spawn explorer.exe ENOENT')
+      error.code = 'ENOENT'
+      throw error
+    }
+  }
+  try {
+    await openLogDirectory(root, { platform: 'win32', exec })
+    assert.deepEqual(calls.map(([command, args]) => [command, args]), [
+      ['explorer.exe', [root]],
+      ['cmd.exe', ['/d', '/s', '/c', `start "" "${root}"`]],
+    ])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('openLogDirectory reports both Windows launch failures when fallback also fails', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-win-fail-'))
+  const exec = async (command) => {
+    const error = new Error(`failed ${command}`)
+    error.code = command === 'explorer.exe' ? 'ENOENT' : 2
+    throw error
+  }
+  try {
+    await assert.rejects(
+      openLogDirectory(root, { platform: 'win32', exec }),
+      (error) => {
+        assert.equal(error.code, 'OPEN_LOG_DIRECTORY_FAILED')
+        assert.equal(error.explorer?.code, 'ENOENT')
+        assert.equal(error.start?.code, 2)
+        assert.match(error.message, /explorer\.exe spawn failed \(ENOENT\); cmd start failed \(2\)/)
+        return true
+      },
+    )
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('openLogDirectory keeps native nonzero failures strict on macOS and Linux', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-unix-fail-'))
+  const exec = async (command) => {
+    const error = new Error(`failed ${command}`)
+    error.code = 1
+    throw error
+  }
+  try {
+    await assert.rejects(openLogDirectory(root, { platform: 'darwin', exec }), { code: 1 })
+    await assert.rejects(openLogDirectory(root, { platform: 'linux', exec }), { code: 1 })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
