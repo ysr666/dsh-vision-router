@@ -1,0 +1,42 @@
+name: Apply bootstrap goal and OCR correction v2
+
+on:
+  push:
+    branches:
+      - feat/structured-vision-bootstrap
+    paths:
+      - scripts/fix-structured-bootstrap-goal-ocr-v2.py
+      - .github/workflows/apply-bootstrap-goal-ocr-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/structured-vision-bootstrap
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Apply correction
+        run: python3 scripts/fix-structured-bootstrap-goal-ocr-v2.py
+      - name: Check syntax
+        run: node --check index.js && node --check lib/structured-bootstrap.js && node --check lib/client.js
+      - name: Run focused tests
+        run: node --test tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js
+      - name: Remove one-shot helpers
+        run: rm -f scripts/fix-structured-bootstrap-goal-ocr.py scripts/fix-structured-bootstrap-goal-ocr-v2.py .github/workflows/apply-bootstrap-goal-ocr-fix.yml .github/workflows/apply-bootstrap-goal-ocr-v2.yml
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+          else
+            git commit -m "fix: make bootstrap task-independent and improve OCR follow-up"
+            git push origin HEAD:feat/structured-vision-bootstrap
+          fi
