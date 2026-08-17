@@ -422,13 +422,17 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   // provider, which used to make scrolling the settings panel stutter.
   assert.equal(source.includes('content-visibility:auto'), true)
   assert.equal(source.includes('contain-intrinsic-size:auto 96px'), true)
-  // Option vnode lists are memoized and the per-provider model lists cached,
-  // so re-renders no longer rebuild hundreds of option elements. The local
-  // vision merge keeps main's cache shape (Map) and does not memo visionGroups.
+  // Option vnode lists and expensive catalog derivations are memoized.
+  // visionGroups itself must stay stable: an always-new array defeats
+  // visionGroupOptions' memo and brings back large-catalog scroll stutter.
   assert.equal(source.includes('const groupOptions = useMemo('), true)
   assert.equal(source.includes('const visionGroupOptions = useMemo('), true)
   assert.equal(source.includes('const wrapGroupOptions = useMemo('), true)
-  assert.equal(source.includes('const visionGroups = filterVisionBackendGroups('), true)
+  assert.equal(source.includes('const visionGroups = useMemo('), true)
+  assert.equal(source.includes('() => filterVisionBackendGroups(catalog.groups, visionCaps.capabilities)'), true)
+  assert.equal(source.includes('[catalog.groups, visionCaps.capabilities]'), true)
+  assert.equal(source.includes('[catalog.groups, chainRouteValue, wrapperRouteValue]'), true)
+  assert.equal(source.includes("const visionGroups = filterVisionBackendGroups("), false)
   assert.equal(source.includes('modelOptionCache = React.useRef(new Map())'), true)
   assert.equal(source.includes('modelOptionsOf(modelsOf('), true)
   // The card is memoized with a stable props object so app re-renders of the
@@ -486,6 +490,12 @@ test('local vision settings are complete, localized, responsive, and collapsed b
   assert.equal(source.includes("const [showLocalVision, setShowLocalVision] = useState(false)"), true)
   assert.equal(source.includes("'aria-controls': 'vr-local-vision-body'"), true)
   assert.equal(source.includes("id: 'vr-local-vision-body'"), true)
+  assert.equal(source.includes("groupLocalOllama: '本地视觉 · Ollama / LM Studio'"), true)
+  assert.equal(source.includes("localVisionHeroBadge: '本地 · 免费 · 隐私优先'"), true)
+  assert.equal(source.includes("groupLocalOllama: 'Local vision · Ollama / LM Studio'"), true)
+  assert.equal(source.includes("className: 'vr-local-group'"), true)
+  assert.equal(source.includes("className: 'vr-local-badge'"), true)
+  assert.equal(source.includes("className: 'vr-local-entry-hint'"), true)
   assert.equal(source.includes("localRequestFormat: 'Request protocol'"), true)
   assert.equal(source.includes("placeholder: t('localTemperaturePlaceholder')"), true)
   assert.equal(source.includes("placeholder: t('localTopPPlaceholder')"), true)
