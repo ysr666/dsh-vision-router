@@ -1,0 +1,105 @@
+name: Finalize PR 98 integration
+
+on:
+  push:
+    branches:
+      - integrate/pr98-final
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: integrate/pr98-final
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Apply final integration guards
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, got {count}')
+              return text.replace(old, new, 1)
+
+          p = Path('index.js')
+          s = p.read_text()
+
+          s = replace_once(
+              s,
+              "  const instantLocalProvider = () =>\n    current().instantDescribe === true ? localProvidersOf(current()) : undefined",
+              "  // The main 1+x structured bootstrap owns the first visual pass.\n  // Never stack instantDescribe in front of it (that would silently become 2+x).\n  const instantLocalProvider = () =>\n    current().instantDescribe === true && !structuredBootstrapEnabled()\n      ? localProvidersOf(current())\n      : undefined",
+              'instantDescribe/structured-bootstrap guard',
+          )
+
+          # The screenshot tool is boot-time opt-in. When absent from the schema,
+          # do not advertise it in generic model-facing reminders/skills.
+          s = s.replace('、vision_screenshot（桌面截屏）', '')
+          s = s.replace(' / vision_screenshot)', ')')
+          s = s.replace('；桌面截屏用 `vision_screenshot`，但该隐私敏感工具默认禁用，只有用户在 Vision Router 设置中显式开启后才可执行；', '；')
+          s = s.replace(
+              '`vision_html_screenshot（页面截图）、${screenshotNote}。现在可以直接调用已启用的工具。` +',
+              "'vision_html_screenshot（页面截图）。现在可以直接调用已启用的工具。' +",
+          )
+          s = s.replace('【原图尺寸】），对截图分析', '【输入图尺寸】），对截图分析')
+          p.write_text(s)
+
+          # Ensure the new regression suites are part of the repository CI entrypoint.
+          p = Path('package.json')
+          s = p.read_text()
+          old = 'tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js"'
+          new = 'tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js tests/local-ollama.test.js tests/zero-regression-gate.test.js tests/runtime-e2e.test.js"'
+          s = replace_once(s, old, new, 'package test script')
+          p.write_text(s)
+
+          # README: main now contributes vision_bootstrap. Screenshot is optional at boot.
+          p = Path('README.md')
+          s = p.read_text()
+          s = s.replace(
+              'The diagram covers the eleven image-processing tools. `vision_present` (durable image delivery) and the privacy-gated `vision_screenshot` (desktop capture) bring the complete deep-tool set to thirteen.',
+              'The diagram covers the eleven image-processing tools. `vision_present` (durable image delivery) and `vision_bootstrap` (the optional 1+x structured first pass) bring the default deep-tool set to thirteen. Enabling the privacy-gated `vision_screenshot` at boot adds an optional fourteenth tool.',
+          )
+          marker = '| `vision_describe` | Image Q&A / multi-image compare / structured-evidence JSON mode (summary + layout regions + entity inventory + verbatim transcription) | — |'
+          if '| `vision_bootstrap` |' not in s:
+              s = replace_once(s, marker, '| `vision_bootstrap` | Optional 1+x structured first visual pass; establishes task-independent evidence before at least one follow-up vision call | — |\n' + marker, 'README bootstrap row')
+          p.write_text(s)
+
+          p = Path('README.zh.md')
+          s = p.read_text()
+          s = s.replace(
+              '图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present`，以及带隐私开关的桌面截屏工具 `vision_screenshot`，完整深看工具集共 13 个。',
+              '图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present` 与可选 1+x 结构化首遍识别的 `vision_bootstrap`，默认深看工具集共 13 个。若启动时显式开启隐私敏感的 `vision_screenshot`，则额外增加为第 14 个工具。',
+          )
+          marker = '| `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |'
+          if '| `vision_bootstrap` |' not in s:
+              s = replace_once(s, marker, '| `vision_bootstrap` | 可选 1+x 结构化首遍视觉识别；先建立任务无关证据底图，再至少进行 1 次后续视觉调用 | — |\n' + marker, 'README.zh bootstrap row')
+          p.write_text(s)
+
+      - run: pnpm install --frozen-lockfile
+      - name: Run full suite including PR 98 regressions
+        run: pnpm test
+
+      - name: Commit verified integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/finalize-pr98-integration.yml
+          git add index.js package.json README.md README.zh.md
+          git commit -m "fix: preserve 1+x and tool visibility in #98 integration"
+          git push origin HEAD:integrate/pr98-final
