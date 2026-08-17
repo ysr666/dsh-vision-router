@@ -10,6 +10,11 @@ test('settings card exposes a one-click logs-folder action', () => {
   assert.equal(source.includes("method: 'POST'"), true)
 })
 
+test('log-folder failures include a machine-readable error code', () => {
+  const serverSource = readFileSync(new URL('../lib/file-logger.js', import.meta.url), 'utf8')
+  assert.equal(serverSource.includes("code: error && error.code !== undefined ? String(error.code) : undefined"), true)
+})
+
 test('settings save failures are forwarded to the bounded server diagnostic route', () => {
   const clientSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const serverSource = readFileSync(new URL('../lib/file-logger.js', import.meta.url), 'utf8')
