@@ -24,7 +24,16 @@ jobs:
         with:
           node-version: 22
       - name: Apply agent reference shadow patch
-        run: node scripts/patch-v2-agent-reference.mjs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/patch-v2-agent-reference.mjs')
+          s = p.read_text()
+          s = s.replace('`lib/vision-capability-reference.js`', '\\`lib/vision-capability-reference.js\\`')
+          s = s.replace('(`task intent -> structured -> OCR -> grounding -> general`)', '(\\`task intent -> structured -> OCR -> grounding -> general\\`)')
+          p.write_text(s)
+          PY
+          node scripts/patch-v2-agent-reference.mjs
       - name: Run focused tests
         run: node --test tests/vision-capability-router.test.js tests/vision-capability-reference.test.js tests/capability-shadow.test.js
       - name: Check diff
