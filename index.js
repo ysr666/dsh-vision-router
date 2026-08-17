@@ -7039,11 +7039,9 @@ export function apply(ctx, config = {}) {
         },
       })
     }, 'vision-router: test-connection route')
-  })
 
   // Install-method-agnostic update status for the settings card. Manual
   // checks pass ?force=1; startup/card-open checks share the process cache.
-  ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(
       () =>
         webCtx.webServer.register({
@@ -7067,14 +7065,12 @@ export function apply(ctx, config = {}) {
         }),
       'vision-router: update-check route',
     )
-  })
 
   // Safe one-click updater. The browser cannot choose a command, package or
   // target version: POST merely asks the server to refresh the registry and
   // run DSH's own updater for this package through the verified current CLI.
   // A process-local token plus a non-simple custom header prevents a random
   // cross-origin page from submitting a blind update request to localhost.
-  ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(
       () =>
         webCtx.webServer.register({
@@ -7158,12 +7154,10 @@ export function apply(ctx, config = {}) {
         }),
       'vision-router: self-update route',
     )
-  })
 
   // Exact capability metadata for the settings card. DSH's public llm.models
   // wire intentionally omits inputModalities, so the plugin exposes a narrow
   // read-only view backed by the same resolveModelInfo() check used at runtime.
-  ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(
       () =>
         webCtx.webServer.register({
