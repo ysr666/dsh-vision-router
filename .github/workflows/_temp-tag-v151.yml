@@ -31,6 +31,8 @@ jobs:
             test "$(git rev-parse refs/tags/v1.5.1^{})" = "$TARGET_SHA"
             echo 'v1.5.1 already points at target commit'
           else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a v1.5.1 "$TARGET_SHA" -m 'v1.5.1'
             git push origin refs/tags/v1.5.1
           fi
