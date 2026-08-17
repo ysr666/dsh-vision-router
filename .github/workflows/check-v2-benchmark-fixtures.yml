@@ -1,0 +1,28 @@
+name: check v2 benchmark fixtures
+
+on:
+  push:
+    branches:
+      - feat/v2-capability-router
+    paths:
+      - .github/workflows/check-v2-benchmark-fixtures.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v2-capability-router
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax check
+        run: node --check lib/vision-capability-benchmark.js
+      - name: Focused benchmark tests
+        run: node --test tests/vision-capability-benchmark.test.js
+      - name: Diff hygiene
+        run: git diff --check
