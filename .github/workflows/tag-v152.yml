@@ -1,0 +1,32 @@
+name: Tag v1.5.2
+
+on:
+  push:
+    branches:
+      - release/v1.5.2
+    paths:
+      - .github/workflows/tag-v152.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Create v1.5.2 tag on merged main release commit
+        run: |
+          set -euo pipefail
+          RELEASE_SHA="d5952018a4252ced356173103bcb7ee4fad62d68"
+          git fetch origin main --tags
+          test "$(git show "$RELEASE_SHA:package.json" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(JSON.parse(s).version))")" = "1.5.2"
+          if git rev-parse -q --verify refs/tags/v1.5.2 >/dev/null; then
+            test "$(git rev-list -n1 v1.5.2)" = "$RELEASE_SHA"
+            echo "v1.5.2 already points to the intended release commit"
+            exit 0
+          fi
+          git tag v1.5.2 "$RELEASE_SHA"
+          git push origin refs/tags/v1.5.2
