@@ -1,0 +1,38 @@
+name: temp lifecycle hardening
+
+on:
+  push:
+    branches:
+      - fix/lifecycle-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/lifecycle-hardening
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply lifecycle hardening
+        run: python3 .github/scripts/apply-lifecycle-hardening.py
+      - name: Run full test suite
+        run: pnpm test
+      - name: Commit validated patch
+        shell: bash
+        run: |
+          rm .github/scripts/apply-lifecycle-hardening.py
+          rm .github/workflows/temp-lifecycle-hardening.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/file-logger.js lib/local-vision-stabilizer.js tests/file-logger.test.js tests/local-vision-stabilizer.test.js .github/scripts/apply-lifecycle-hardening.py .github/workflows/temp-lifecycle-hardening.yml
+          git commit -m 'fix: harden plugin lifecycle recovery [lifecycle-hardening-applied]'
+          git push origin HEAD:fix/lifecycle-hardening
