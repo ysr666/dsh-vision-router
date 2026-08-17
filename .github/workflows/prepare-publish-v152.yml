@@ -1,0 +1,40 @@
+name: Prepare v1.5.2 OIDC replay
+
+on:
+  push:
+    branches:
+      - release/publish-v1.5.2
+    paths:
+      - .github/workflows/prepare-publish-v152.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: release/publish-v1.5.2
+          fetch-depth: 0
+      - name: Point immutable release replay at v1.5.2
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/release.yml')
+          s = p.read_text()
+          assert 'v1.5.1' in s
+          assert 'd12ff269ac4808a3d43acbf20e4c58bbb1dc0613' in s
+          s = s.replace('v1.5.1', 'v1.5.2')
+          s = s.replace('d12ff269ac4808a3d43acbf20e4c58bbb1dc0613', 'd5952018a4252ced356173103bcb7ee4fad62d68')
+          p.write_text(s)
+          PY
+          git diff --check
+      - name: Commit replay workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/release.yml
+          git commit -m "chore: replay v1.5.2 release from immutable tag"
+          git push origin HEAD:release/publish-v1.5.2
