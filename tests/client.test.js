@@ -65,10 +65,13 @@ test('filterVisionBackendGroups keeps callable generative models and hides only 
   assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
-test('the client bundle still loads and registers with the proven injects', () => {
+test('the client bundle does not hard-inject the optional connection service', () => {
   const bundle = loadClientBundle()
-  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'connection', 'remote'])
+  assert.deepEqual(bundle.inject, ['settingsScope', 'slots', 'locale', 'sessions', 'remote'])
   assert.equal(typeof bundle.apply, 'function')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("return ctx.get('connection')"), true)
+  assert.equal(source.includes("'sessions', 'connection', 'remote'"), false)
 })
 
 test('commitSettingsPlan keeps drafts when a resolved set did not land in the user layer', async () => {
