@@ -3,15 +3,15 @@ name: Release
 on:
   push:
     branches:
-      - 'release/publish-v1.5.1'
+      - 'release/publish-v1.5.2'
 
 concurrency:
-  group: release-v1.5.1-replay
+  group: release-v1.5.2-replay
   cancel-in-progress: false
 
 env:
-  RELEASE_SOURCE_TAG: v1.5.1
-  RELEASE_SOURCE_SHA: d12ff269ac4808a3d43acbf20e4c58bbb1dc0613
+  RELEASE_SOURCE_TAG: v1.5.2
+  RELEASE_SOURCE_SHA: d5952018a4252ced356173103bcb7ee4fad62d68
 
 jobs:
   verify:
@@ -24,7 +24,7 @@ jobs:
       - name: Checkout exact tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: v1.5.1
+          ref: v1.5.2
           fetch-depth: 0
           persist-credentials: false
 
@@ -110,7 +110,7 @@ jobs:
       - name: Checkout exact tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: v1.5.1
+          ref: v1.5.2
           fetch-depth: 0
           persist-credentials: false
 
