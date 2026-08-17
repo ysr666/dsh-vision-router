@@ -40,6 +40,7 @@ test('runtime wires the opt-in switch, first-pass tool and client toggle', () =>
   assert.equal(index.includes("name: 'vision_bootstrap'"), true)
   assert.equal(index.includes('visionDescribeTool.execute('), true)
   assert.equal(index.includes('structuredBootstrapPromptedTurn'), true)
+  assert.equal(index.includes('hasImage &&\n      toolEnabled() &&\n      structuredBootstrapEnabled()'), true)
   assert.equal(client.includes("'structuredVisionBootstrap'"), true)
   assert.equal(client.includes("toggleStructuredVisionBootstrap: '结构化预识别（实验）'"), true)
   assert.equal(client.includes("toggleStructuredVisionBootstrap: 'Structured bootstrap (experimental)'"), true)

@@ -4055,6 +4055,7 @@ export function apply(ctx, config = {}) {
     let bootstrapReminder
     if (
       hasImage &&
+      toolEnabled() &&
       structuredBootstrapEnabled() &&
       structuredBootstrapPromptedTurn.get(session) !== payload.turn
     ) {
@@ -4661,7 +4662,7 @@ export function apply(ctx, config = {}) {
         render: (_args, value) => [{ type: 'text', text: value }],
       },
       async execute(args, exec) {
-        if (!structuredBootstrapEnabled()) {
+        if (!toolEnabled() || !structuredBootstrapEnabled()) {
           return JSON.stringify({
             ok: false,
             code: 'STRUCTURED_BOOTSTRAP_DISABLED',
