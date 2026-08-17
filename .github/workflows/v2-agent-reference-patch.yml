@@ -1,0 +1,37 @@
+name: v2 agent reference patch
+
+on:
+  push:
+    branches:
+      - feat/v2-capability-router
+    paths:
+      - scripts/patch-v2-agent-reference.mjs
+      - .github/workflows/v2-agent-reference-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v2-capability-router
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply agent reference shadow patch
+        run: node scripts/patch-v2-agent-reference.mjs
+      - name: Run focused tests
+        run: node --test tests/vision-capability-router.test.js tests/vision-capability-reference.test.js tests/capability-shadow.test.js
+      - name: Check diff
+        run: git diff --check
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js tests/capability-shadow.test.js docs/v2-capability-routing.md
+          git commit -m "feat: compare agent model hints in capability shadow routing"
+          git push origin HEAD:feat/v2-capability-router
