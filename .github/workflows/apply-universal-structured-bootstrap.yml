@@ -1,0 +1,46 @@
+name: Apply universal structured bootstrap
+
+# one-shot migration: remove the pre-visual mode selector; pass 1 itself is the universal structured look
+on:
+  push:
+    branches:
+      - feat/structured-vision-bootstrap
+    paths:
+      - scripts/universal-structured-bootstrap.py
+      - .github/workflows/apply-universal-structured-bootstrap.yml
+      - lib/structured-bootstrap.js
+      - tests/structured-bootstrap.test.js
+      - tests/structured-bootstrap-gate.test.js
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/structured-vision-bootstrap
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Apply universal bootstrap patch
+        run: python3 scripts/universal-structured-bootstrap.py
+      - name: Check syntax
+        run: node --check index.js
+      - name: Run focused tests
+        run: node --test tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js
+      - name: Remove one-shot helpers
+        run: rm scripts/universal-structured-bootstrap.py .github/workflows/apply-universal-structured-bootstrap.yml
+      - name: Commit generated changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.js scripts/universal-structured-bootstrap.py .github/workflows/apply-universal-structured-bootstrap.yml
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+          else
+            git commit -m "refactor: make structured bootstrap mode-free"
+            git push origin HEAD:feat/structured-vision-bootstrap
+          fi
