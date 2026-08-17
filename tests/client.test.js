@@ -264,15 +264,15 @@ test('settings save failure copy says unwritten drafts were kept', () => {
 
 test('model-selection guide separates session and vision models and targets the vision chain', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.equal(source.includes("onboardingStep1Title: '1 · 会话 / 文字模型'"), true)
-  assert.equal(source.includes("quickStartTitle: '聊天与看图分别设置'"), true)
-  assert.equal(source.includes("quickStartTitle: 'Chat and vision are configured separately'"), true)
+  assert.equal(source.includes("onboardingStep1Title: '1 · 选择聊天模型'"), true)
+  assert.equal(source.includes("quickStartTitle: '聊天和看图分别设置'"), true)
+  assert.equal(source.includes("quickStartTitle: 'Chat and image understanding are separate'"), true)
   assert.equal(source.includes("updateProject: '项目主页'"), true)
   assert.equal(source.includes("updateManualSource: '源码仓库 / pnpm DSH：'"), true)
   assert.equal(source.includes('pnpm dsh plugin --profile '), true)
   assert.equal(source.includes('npx @deepseek-ai/dsh plugin --profile '), true)
   assert.equal(source.includes("onboardingStep2Body: '打开「设置 → 插件 → Vision Router」"), true)
-  assert.equal(source.includes("onboardingStep1Title: '1 · Session / text model'"), true)
+  assert.equal(source.includes("onboardingStep1Title: '1 · Choose your chat model'"), true)
   assert.equal(source.includes('Settings → Plugins → Vision Router'), true)
   assert.equal(source.includes("VISION_GUIDE_STORAGE_KEY = 'dsh-vision-router:guide:vision-backend-v2'"), true)
   assert.equal(source.includes('startVisionSettingsGuide(t)'), true)
@@ -360,14 +360,14 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes("writeVisionGuideStep('step1')"), true)
   assert.equal(source.includes("writeVisionGuideStep('step2')"), true)
   // The step strings exist in both dictionaries, with the renumbered titles.
-  assert.equal(source.includes("guideStep1Title: '第 1 步 · 会话 / 文字模型'"), true)
+  assert.equal(source.includes("guideStep1Title: '第 1 步 · 选择聊天模型'"), true)
   assert.equal(source.includes("guideStepNext: '下一步'"), true)
-  assert.equal(source.includes("guidePromptTitle: '第 2 步 · 视觉模型'"), true)
-  assert.equal(source.includes("guideChainTitle: '第 3 步 · 这里就是视觉模型'"), true)
-  assert.equal(source.includes("guideStep1Title: 'Step 1 · Session / text model'"), true)
+  assert.equal(source.includes("guidePromptTitle: '第 2 步 · 选择识图模型'"), true)
+  assert.equal(source.includes("guideChainTitle: '第 3 步 · 设置备用模型'"), true)
+  assert.equal(source.includes("guideStep1Title: 'Step 1 · Choose your chat model'"), true)
   assert.equal(source.includes("guideStepNext: 'Next'"), true)
-  assert.equal(source.includes("guidePromptTitle: 'Step 2 · Vision model'"), true)
-  assert.equal(source.includes("guideChainTitle: 'Step 3 · This is the vision model'"), true)
+  assert.equal(source.includes("guidePromptTitle: 'Step 2 · Choose the vision model'"), true)
+  assert.equal(source.includes("guideChainTitle: 'Step 3 · Add fallback models'"), true)
   // Every step now carries a visual target, not just step 3: the prompt is
   // anchored to a highlighted element (spotlight hole + pulsing ring + arrow),
   // and step 2's copy differs between the sidebar gear phase and the settings
@@ -376,9 +376,9 @@ test('the walkthrough walks step 1 (session model), step 2 (open settings), step
   assert.equal(source.includes('vr-guide-spot-ring'), true)
   assert.equal(source.includes('vr-guide-arrow'), true)
   assert.equal(source.includes("guidePromptGearBody: '点击侧边栏左下角被高亮圈出的「设置」齿轮"), true)
-  assert.equal(source.includes("guidePromptNavBody: '在设置面板左侧的导航里，点击被高亮的「插件」入口"), true)
+  assert.equal(source.includes("guidePromptNavBody: '在设置面板左侧点击被高亮的「插件」入口"), true)
   assert.equal(source.includes("guidePromptGearBody: 'Click the highlighted Settings gear"), true)
-  assert.equal(source.includes("guidePromptNavBody: 'In the settings panel’s left navigation"), true)
+  assert.equal(source.includes("guidePromptNavBody: 'In Settings, click the highlighted “Plugins” entry"), true)
   // Stable DOM anchors: DSH web hashes its CSS-module class names, so targets
   // are addressed via data-slot / aria attributes instead of class names.
   assert.equal(source.includes('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]'), true)

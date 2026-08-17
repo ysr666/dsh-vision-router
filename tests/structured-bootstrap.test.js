@@ -31,6 +31,6 @@ test('runtime removes goal and makes structured OCR vision-first', () => {
   assert.equal(index.includes('structuredBootstrapMemory(evidence)'), true)
   assert.equal(index.includes("def.name === 'vision_ocr'"), true)
   assert.equal(index.includes("effectiveArgs = { ...(args ?? {}), engine: 'vision' }"), true)
-  assert.equal(client.includes('不会给预识别传 goal'), true)
-  assert.equal(client.includes('auto 会优先使用视觉模型'), true)
+  assert.equal(client.includes('不读取具体任务目标'), true)
+  assert.equal(client.includes('自动模式会优先使用视觉模型'), true)
 })
