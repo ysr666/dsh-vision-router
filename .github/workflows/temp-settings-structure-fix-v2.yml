@@ -1,0 +1,48 @@
+name: temp settings structure fix v2
+on: [push]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/settings-structure-screenshot-permission
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile=false
+      - name: Reuse focused patch and fix generated assertion
+        shell: bash
+        run: |
+          awk '/python3 - <<'\''PY'\''/{flag=1;next} flag && /^          PY$/{exit} flag{sub(/^          /,""); print}' .github/workflows/temp-settings-structure-fix.yml > /tmp/apply-settings-structure.py
+          python3 /tmp/apply-settings-structure.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/client.test.js')
+          s = p.read_text()
+          bad = '''  assert.equal(source.includes("localOllamaEditor(),
+                      localLmStudioEditor(),"), true)
+'''
+          good = '''  assert.equal(source.includes("localOllamaEditor()"), true)
+  assert.equal(source.includes("localLmStudioEditor()"), true)
+'''
+          if s.count(bad) != 1:
+            raise SystemExit(f'expected one broken generated assertion, got {s.count(bad)}')
+          p.write_text(s.replace(bad, good, 1))
+          PY
+      - run: pnpm test
+      - name: Commit patch and remove temporary workflows
+        shell: bash
+        run: |
+          rm .github/workflows/temp-settings-structure-fix.yml
+          rm .github/workflows/temp-settings-structure-fix-v2.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add lib/client.js lib/local-vision-stabilizer.js index.js tests/client.test.js tests/local-vision-stabilizer.test.js .github/workflows/temp-settings-structure-fix.yml .github/workflows/temp-settings-structure-fix-v2.yml
+          git commit -m 'fix: unify first-pass settings and request screenshot permission [settings-structure-fix-applied]'
+          git push origin HEAD:fix/settings-structure-screenshot-permission
