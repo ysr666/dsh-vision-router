@@ -1,0 +1,95 @@
+name: Verify issue 160 host routes
+
+on:
+  push:
+    branches:
+      - fix/issue-160-webserver-wrapper
+    paths:
+      - .github/workflows/verify-issue160-host.yml
+
+jobs:
+  host-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        dsh: ['0.1.0-rc.6', '0.1.0-rc.7']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install DSH host
+        shell: bash
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+        run: npm install --global "@deepseek-ai/dsh@$DSH_VERSION"
+      - name: Pack patched plugin
+        shell: bash
+        run: |
+          npm pack --json > pack.json
+          node -e "const p=require('./pack.json'); if(!p[0]?.filename) process.exit(1); console.log(p[0].filename)" > tarball.txt
+      - name: Install packed plugin and assert routes
+        shell: bash
+        run: |
+          set -eu
+          TARBALL="$(cat tarball.txt)"
+          dsh plugin --profile web add "./$TARBALL"
+          dsh web > dsh-issue160.log 2>&1 &
+          DSH_PID=$!
+          cleanup() { kill "$DSH_PID" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 75); do
+            if curl -fsS http://127.0.0.1:3080/ >/dev/null 2>&1; then ready=1; break; fi
+            if ! kill -0 "$DSH_PID" >/dev/null 2>&1; then
+              echo 'DSH exited before readiness'
+              cat dsh-issue160.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          [ "$ready" = 1 ] || { cat dsh-issue160.log || true; exit 1; }
+
+          get_json() {
+            route="$1"
+            code="$(curl -sS -o body.txt -w '%{http_code}' "http://127.0.0.1:3080$route")"
+            echo "GET $route -> $code"
+            head -c 300 body.txt || true
+            echo
+            [ "$code" = 200 ]
+            grep -q '^{' body.txt
+          }
+
+          get_json '/_dsh/vision-router/update-check?force=1'
+          get_json '/_dsh/vision-router/model-capabilities'
+
+          code="$(curl -sS -X POST -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/self-update)"
+          echo "POST self-update -> $code"
+          cat body.txt || true
+          echo
+          [ "$code" = 403 ]
+          grep -q 'invalid update token' body.txt
+
+          code="$(curl -sS -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/test-connection)"
+          echo "GET test-connection -> $code"
+          head -c 300 body.txt || true
+          echo
+          [ "$code" = 200 ] || [ "$code" = 502 ]
+          grep -q '^{' body.txt
+
+          code="$(curl -sS -X POST -o body.txt -w '%{http_code}' http://127.0.0.1:3080/_dsh/vision-router/request-screenshot-permission)"
+          echo "POST screenshot-permission -> $code"
+          cat body.txt || true
+          echo
+          [ "$code" = 409 ]
+          grep -q 'desktop screenshot is disabled' body.txt
+
+          echo '===== plugin log ====='
+          cat "$HOME/.dsh/logs/vision-router/vision-router.log" 2>/dev/null || true
+          echo '===== dsh output ====='
+          cat dsh-issue160.log || true
