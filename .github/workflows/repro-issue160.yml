@@ -1,0 +1,89 @@
+name: Repro issue 160
+
+on:
+  push:
+    branches:
+      - fix/issue-160-host-routes
+    paths:
+      - .github/workflows/repro-issue160.yml
+
+jobs:
+  repro:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        plugin: ['1.4.5', '1.5.1', '1.5.2']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install DSH rc.6
+        shell: bash
+        run: npm install --global @deepseek-ai/dsh@0.1.0-rc.6
+      - name: Install plugin and probe host routes
+        shell: bash
+        env:
+          PLUGIN_VERSION: ${{ matrix.plugin }}
+        run: |
+          set -u
+          echo "node=$(node --version)"
+          echo "npm=$(npm --version)"
+          echo "dsh=$(npm list -g @deepseek-ai/dsh --depth=0 || true)"
+          dsh plugin --profile web add "dsh-vision-router@$PLUGIN_VERSION"
+
+          dsh web > dsh-issue160.log 2>&1 &
+          DSH_PID=$!
+          cleanup() {
+            kill "$DSH_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3080/ >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$DSH_PID" >/dev/null 2>&1; then
+              echo 'DSH exited before becoming ready'
+              cat dsh-issue160.log || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo 'DSH did not become ready'
+            cat dsh-issue160.log || true
+            exit 1
+          fi
+
+          probe_get() {
+            route="$1"
+            echo "===== GET $route ====="
+            curl -sS -D headers.txt -o body.txt -w 'HTTP=%{http_code} TYPE=%{content_type}\n' "http://127.0.0.1:3080$route" || true
+            sed -n '1,20p' headers.txt || true
+            head -c 400 body.txt || true
+            echo
+          }
+          probe_post() {
+            route="$1"
+            echo "===== POST $route ====="
+            curl -sS -X POST -D headers.txt -o body.txt -w 'HTTP=%{http_code} TYPE=%{content_type}\n' "http://127.0.0.1:3080$route" || true
+            sed -n '1,20p' headers.txt || true
+            head -c 400 body.txt || true
+            echo
+          }
+
+          probe_get '/_dsh/vision-router/test-connection'
+          probe_get '/_dsh/vision-router/update-check?force=1'
+          probe_post '/_dsh/vision-router/self-update'
+          probe_get '/_dsh/vision-router/model-capabilities'
+
+          echo '===== vision-router log ====='
+          cat "$HOME/.dsh/logs/vision-router/vision-router.log" 2>/dev/null || true
+          echo '===== dsh stdout/stderr ====='
+          cat dsh-issue160.log || true
