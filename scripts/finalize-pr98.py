@@ -32,15 +32,15 @@ s = s.replace('【原图尺寸】），对截图分析', '【输入图尺寸】�
 p.write_text(s)
 
 # Settings UX: #139 is source of truth. Reinsert #98 as one collapsed local
-# group; keep desktop screenshot in Advanced/Developer because it is boot-time
-# and privacy-sensitive.
+# group. Keep #139's exact Developer group untouched; the boot-time screenshot
+# privacy switch gets its own parse bucket and is rendered inside Local vision.
 p = Path('lib/client.js')
 s = p.read_text()
 s = replace_once(
     s,
     "    const DEVELOPER_TOGGLE_KEYS = ['stealth']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS]",
-    "    const DEVELOPER_TOGGLE_KEYS = ['stealth', 'desktopScreenshot']\n    const LOCAL_TOGGLE_KEYS = ['instantDescribe']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS, ...LOCAL_TOGGLE_KEYS]",
-    'local toggle integration',
+    "    const DEVELOPER_TOGGLE_KEYS = ['stealth']\n    const LOCAL_TOGGLE_KEYS = ['instantDescribe']\n    const PRIVACY_TOGGLE_KEYS = ['desktopScreenshot']\n    const ADVANCED_TOGGLE_KEYS = [...PERFORMANCE_TOGGLE_KEYS, ...COMPATIBILITY_TOGGLE_KEYS, ...DEVELOPER_TOGGLE_KEYS]\n    const ALL_TOGGLE_KEYS = [...TOGGLE_KEYS, ...ADVANCED_TOGGLE_KEYS, ...LOCAL_TOGGLE_KEYS, ...PRIVACY_TOGGLE_KEYS]",
+    'local/privacy toggle integration',
 )
 local_group = """              // #98 local vision, adapted to #139 Settings UX v2: one collapsed
               // group on the main surface; existing main controls remain in place.
@@ -60,6 +60,7 @@ local_group = """              // #98 local vision, adapted to #139 Settings UX 
                       localOllamaEditor(),
                       localLmStudioEditor(),
                       describeStyleEditor(),
+                      toggleField('desktopScreenshot'),
                     )
                   : null,
               ),
