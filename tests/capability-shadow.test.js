@@ -33,3 +33,13 @@ test('settings UI keeps shadow routing in developer settings', async () => {
   assert.match(source, /DEVELOPER_TOGGLE_KEYS = \['stealth', 'capabilityRoutingShadow'\]/)
   assert.match(source, /capabilityRoutingStrategyLabel/)
 })
+
+
+test('shadow bootstrap can compare an agent backend hint against the scorer', async () => {
+  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(source, /buildAgentVisionModelReference/)
+  assert.match(source, /preferredBackend/)
+  assert.match(source, /__agentPreferredBackend/)
+  assert.match(source, /agentMatch=%s/)
+  assert.match(source, /这只是影子推荐/)
+})

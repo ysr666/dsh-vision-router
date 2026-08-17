@@ -152,7 +152,7 @@ Advanced settings can expose per-intent preferred/blocked models and raw profile
 
 ### Phase 2 — shadow routing (implemented on this branch)
 
-The scorer is now wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order. The shadow plan includes the current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents. This gives real-world evidence without risking users.
+The scorer is now wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order. The shadow plan includes the current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents. The first bootstrap prompt can also receive a compact evidence-aware model reference and submit a shadow-only `preferredBackend`; logs compare that agent recommendation with the scorer top choice while ignoring it for execution. This gives real-world evidence without risking users.
 
 ### Phase 3 — opt-in runtime routing
 
@@ -165,3 +165,16 @@ Add fixture-based capability measurement, persisted fingerprints, model-pool UI,
 ### Phase 5 — v2 default
 
 Only after telemetry/manual testing shows routing is stable: make capability-aware ordering the normal path and document the old fixed-order chain as compatibility behavior.
+
+
+## Capability knowledge and future models
+
+A permanent hard-coded leaderboard is intentionally not the source of truth. New or renamed models can appear faster than this plugin can ship releases, and the same model name can behave differently across providers, quantization and relays. The routing evidence hierarchy is therefore:
+
+1. exact-endpoint measured/self-benchmark evidence;
+2. explicit user override;
+3. provider/model official claims when available;
+4. conservative family prior;
+5. unknown generic prior.
+
+Unknown models are shown to the agent as **unverified** rather than being assigned invented specialist strengths. `lib/vision-capability-reference.js` also plans a small task-first probe set (`task intent -> structured -> OCR -> grounding -> general`) so a future self-benchmark runner can learn the exact configured endpoint without waiting for a model-name table update.
