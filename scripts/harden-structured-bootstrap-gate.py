@@ -108,7 +108,33 @@ text = text.replace(old_register, new_register, 1)
 
 path.write_text(text)
 
-# Add a focused regression check for the semantic contract. Full CI still runs
-# the real suite; this small test makes the 1+x invariant explicit and cheap.
+# Keep the existing runtime wiring test aligned with the stronger gate.
+runtime_test_path = Path('tests/structured-bootstrap.test.js')
+runtime_test = runtime_test_path.read_text()
+runtime_test = runtime_test.replace(
+    "  assert.equal(index.includes('structuredBootstrapPromptedTurn'), true)\n",
+    "  assert.equal(index.includes('structuredBootstrapTurnState'), true)\n",
+)
+runtime_test = runtime_test.replace(
+    "  assert.equal(index.includes('hasImage &&\\n      toolEnabled() &&\\n      structuredBootstrapEnabled()'), true)\n",
+    "  assert.equal(index.includes('const bootstrapRequired = hasImage && toolEnabled() && structuredBootstrapEnabled()'), true)\n"
+    "  assert.equal(index.includes('STRUCTURED_BOOTSTRAP_REQUIRED'), true)\n",
+)
+runtime_test_path.write_text(runtime_test)
+
+# Focused regression check for the semantic contract. Full CI still runs the
+# real suite; this small test makes the 1+x invariant explicit and cheap.
 test_path = Path('tests/structured-bootstrap-gate.test.js')
-test_path.write_text("""import { test } from 'node:test'\nimport assert from 'node:assert/strict'\nimport { readFile } from 'node:fs/promises'\n\ntest('structured bootstrap mode choice cannot replace the first visual pass', async () => {\n  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')\n  assert.match(source, /structuredBootstrapTurnState/)\n  assert.match(source, /STRUCTURED_BOOTSTRAP_REQUIRED/)\n  assert.match(source, /选择 mode 只是决定第 1 次结构化识别采用什么策略，本身不算视觉识别/)\n  assert.match(source, /if \(bootstrapState\) bootstrapState\.completed = true/)\n  assert.match(source, /def\.name === 'vision_bootstrap'/)\n})\n""")
+test_path.write_text(r"""import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+
+test('structured bootstrap mode choice cannot replace the first visual pass', async () => {
+  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(source, /structuredBootstrapTurnState/)
+  assert.match(source, /STRUCTURED_BOOTSTRAP_REQUIRED/)
+  assert.match(source, /选择 mode 只是决定第 1 次结构化识别采用什么策略，本身不算视觉识别/)
+  assert.match(source, /if \(bootstrapState\) bootstrapState\.completed = true/)
+  assert.match(source, /def\.name === 'vision_bootstrap'/)
+})
+""")
