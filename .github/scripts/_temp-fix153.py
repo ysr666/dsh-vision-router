@@ -140,7 +140,7 @@ if 'vision_materialize exposes an authorized attachment' not in s:
 
 test('vision_materialize exposes an authorized attachment as a workspace file (issue #153)', async () => {
   const artifactsDir = '.tmp-vision-materialize-test'
-  const config = { artifactsDir, freeFallback: false }
+  const config = { artifactsDir, freeFallback: false, progressiveTools: false }
   const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
   apply(ctx, Config(config))
   const tool = captured.tools.find((entry) => entry && entry.name === 'vision_materialize')
