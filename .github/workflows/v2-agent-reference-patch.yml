@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
 
+# One-shot helper for the draft v2 branch; removed after the generated patch lands.
 jobs:
   patch:
     runs-on: ubuntu-latest
