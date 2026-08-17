@@ -1,0 +1,108 @@
+name: Prepare v1.5.0
+
+on:
+  push:
+    branches:
+      - release/v1.5.0
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Apply release metadata
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import json
+
+          p = Path('package.json')
+          pkg = json.loads(p.read_text())
+          assert pkg['version'] == '1.4.5', pkg['version']
+          pkg['version'] = '1.5.0'
+          p.write_text(json.dumps(pkg, ensure_ascii=False, indent=2) + '\n')
+
+          p = Path('README.md')
+          s = p.read_text()
+          pairs = [
+              ('releases/tag/v1.4.5', 'releases/tag/v1.5.0'),
+              ('release-v1.4.5-5B4CF0', 'release-v1.5.0-5B4CF0'),
+              ('alt="Release v1.4.5"', 'alt="Release v1.5.0"'),
+              ('verified-270%20tests-2EA44F', 'verified-348%20tests-2EA44F'),
+              ('alt="Verified: 270 tests"', 'alt="Verified: 348 tests"'),
+          ]
+          for old, new in pairs:
+              assert old in s, old
+              s = s.replace(old, new, 1)
+          old = '> [!WARNING]\n> 📌 **Announcement (v1.4.5)**\n>\n> **v1.4.5:** Adds optional structured 1+x vision pre-scan, refreshes image settings, and fixes Windows log-folder opening.'
+          new = '> [!WARNING]\n> 📌 **Announcement (v1.5.0)**\n>\n> **v1.5.0:** Adds local Ollama / LM Studio vision and desktop screenshots, with stronger Settings and lifecycle reliability.'
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('README.zh.md')
+          s = p.read_text()
+          pairs = [
+              ('releases/tag/v1.4.5', 'releases/tag/v1.5.0'),
+              ('release-v1.4.5-5B4CF0', 'release-v1.5.0-5B4CF0'),
+              ('alt="Release v1.4.5"', 'alt="Release v1.5.0"'),
+              ('verified-270%20tests-2EA44F', 'verified-348%20tests-2EA44F'),
+              ('alt="Verified: 270 tests"', 'alt="Verified: 348 tests"'),
+          ]
+          for old, new in pairs:
+              assert old in s, old
+              s = s.replace(old, new, 1)
+          old = '> [!WARNING]\n> 📌 **公告（v1.4.5）**\n>\n> **v1.4.5：新增可选 1+x 结构化预识别，重做图片识别设置页，并修复 Windows 打开日志文件夹。**'
+          new = '> [!WARNING]\n> 📌 **公告（v1.5.0）**\n>\n> **v1.5.0：新增 Ollama / LM Studio 本地视觉与桌面截图，强化设置和生命周期稳定性。**'
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('CHANGELOG.md')
+          s = p.read_text()
+          marker = '\n## v1.4.5\n'
+          assert marker in s
+          notes = Path('.release-v150-notes.md').read_text().rstrip() + '\n'
+          assert notes.startswith('## v1.5.0\n')
+          p.write_text(s.replace(marker, '\n' + notes + marker, 1))
+          PY
+
+      - name: Install and test
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test
+
+      - name: Verify release contract
+        shell: bash
+        run: |
+          test "$(node -p "require('./package.json').version")" = "1.5.0"
+          grep -q 'v1.5.0' README.md
+          grep -q 'v1.5.0' README.zh.md
+          grep -q '^## v1.5.0$' CHANGELOG.md
+          grep -q '348%20tests' README.md
+          grep -q '348%20tests' README.zh.md
+
+      - name: Commit release preparation
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .release-v150-notes.md .github/workflows/release-prep-v150.yml
+          git add package.json README.md README.zh.md CHANGELOG.md
+          git diff --cached --check
+          git commit -m 'chore: prepare v1.5.0 release'
+          git push origin HEAD:release/v1.5.0
