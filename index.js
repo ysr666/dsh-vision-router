@@ -393,7 +393,7 @@ export const Config = z.object({
   instantDescribe: z.boolean().default(false),
   // ── dsh-vision 并入：本地识别输出风格 ────────────────────────────────────
   // plain = 平铺描述（简洁）；structured = 结构化识别（【初步判断】/【细节】/
-  // 【空间结构】/【原图尺寸】），对截图分析（GUI/文档/聊天记录）质量更高。
+  // 【空间结构】/【输入图尺寸】），对截图分析（GUI/文档/聊天记录）质量更高。
   // 仅影响 instantDescribe 与 vision_screenshot identify 的本地识别提示。
   localDescribeStyle: z.union(['plain', 'structured']).default('plain'),
 })
@@ -2854,8 +2854,12 @@ export function apply(ctx, config = {}) {
   // dsh-vision 并入：即时本地翻译的 provider 列表（仅 instantDescribe 且至少
   // 一个本地后端启用时存在——Ollama 优先、LM Studio 次之，逐级降级尝试；
   // 否则 undefined = 保持静态工具提示标记）。
+  // The main 1+x structured bootstrap owns the first visual pass.
+  // Never stack instantDescribe in front of it (that would silently become 2+x).
   const instantLocalProvider = () =>
-    current().instantDescribe === true ? localProvidersOf(current()) : undefined
+    current().instantDescribe === true && !structuredBootstrapEnabled()
+      ? localProvidersOf(current())
+      : undefined
   const instantLocalStyle = () =>
     current().localDescribeStyle === 'structured' ? 'structured' : 'plain'
   const instantLocalMaxPixels = () =>
@@ -4800,7 +4804,7 @@ export function apply(ctx, config = {}) {
                   '本轮消息包含图片，像素级视觉工具已自动挂载：vision_describe（看图问答）、' +
                   'vision_ground（像素定位）、vision_detect（元素清单）、vision_crop（裁剪放大）、vision_pixel_diff（像素对比）、' +
                   'vision_colors（取色）、vision_ocr（文字识别）、vision_trace（SVG 矢量化）、' +
-                  'vision_extract_foreground（抠图）、vision_present（安全展示图片）、vision_html_screenshot（页面截图）、vision_screenshot（桌面截屏）、vision_long_screenshot_ocr（长截图转写）。' +
+                  'vision_extract_foreground（抠图）、vision_present（安全展示图片）、vision_html_screenshot（页面截图）、vision_long_screenshot_ocr（长截图转写）。' +
                   '如需更精确的定位、裁剪、对比、取色、OCR、矢量化、抠图或截图，可以按需调用对应工具；' +
                   '如果当前模型本身能够直接看图，也可以先直接理解图片，只在需要验证或精细操作时使用这些工具。' +
                   'vision_ocr 只用于读取图片文字，不要把 OCR 当成看图失败的通用重试。' +
@@ -6750,7 +6754,7 @@ export function apply(ctx, config = {}) {
         '视觉深看工具已挂载：vision_bootstrap（结构化预识别）、vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
         'vision_crop（裁剪放大）、vision_pixel_diff（像素对比验证）、vision_colors（取色）、' +
         'vision_ocr（文字识别）、vision_trace（SVG 矢量化）、vision_extract_foreground（抠图）、' +
-        `vision_html_screenshot（页面截图）、${screenshotNote}。现在可以直接调用已启用的工具。` +
+        'vision_html_screenshot（页面截图）。现在可以直接调用已启用的工具。' +
         '注意：vision_ocr 只用于读取图片文字；视觉工具返回 ok:false 后端不可用结果时，不要改问法重复调用，继续文本任务。'
       )
     }
@@ -6760,7 +6764,7 @@ export function apply(ctx, config = {}) {
         description:
           'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_crop / ' +
           'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
-          'vision_extract_foreground / vision_present / vision_html_screenshot / vision_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
+          'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
           'automatically on image turns; call this only when you need them on a text-only turn.',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         output: stringOutput,
@@ -6792,7 +6796,7 @@ export function apply(ctx, config = {}) {
                 'Use these tools for pixel-level vision work. They auto-mount on image turns; on text-only turns call `vision_activate` once if needed. When structured bootstrap is enabled, call `vision_bootstrap` first, then MUST call at least 1 evidence/deepening vision tool before answering; after that use more tools as needed.\n\n' +
                 '1. 定位与细看：`vision_ground` 定位 → `vision_crop` 裁剪放大 → `vision_describe` 细看；盘点页面元素用 `vision_detect`（编号清单+框，可引用“元素 #n”）；\n' +
                 '2. 还原验证循环（本插件招牌流程）：参考图 → 实现 → `vision_html_screenshot` 截图 → `vision_pixel_diff` 度量差异 → 修复 → 再截图，迭代到差异收敛（0% 是常见终点）；长页面用 `fullPage: true` 一次截整页并拿到 `pageHeight`；\n' +
-                '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`（长页面加 `fullPage: true` 截整页）；桌面截屏用 `vision_screenshot`，但该隐私敏感工具默认禁用，只有用户在 Vision Router 设置中显式开启后才可执行；\n' +
+                '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`（长页面加 `fullPage: true` 截整页）；\n' +
                 '4. 展示规则（必须遵守）：当你生成、编辑、截图或导出一张图片，并希望用户看到它时，必须调用 `vision_present`。' +
                 '`read_image` 仅用于你自己读取或检查图片内容，绝不能把 `read_image` 当成向用户展示或发送图片的方法。\n' +
                 '   MANDATORY PRESENTATION RULE: when you generate, edit, screenshot, or export an image and want the user to see it, ' +

@@ -216,10 +216,11 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
   <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
 </p>
 
-图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present`，以及带隐私开关的桌面截屏工具 `vision_screenshot`，完整深看工具集共 13 个。
+图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present` 与可选 1+x 结构化首遍识别的 `vision_bootstrap`，默认深看工具集共 13 个。若启动时显式开启隐私敏感的 `vision_screenshot`，则额外增加为第 14 个工具。
 
 | 工具 | 作用 | 产物 |
 |---|---|---|
+| `vision_bootstrap` | 可选 1+x 结构化首遍视觉识别；先建立任务无关证据底图，再至少进行 1 次后续视觉调用 | — |
 | `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |
 | `vision_ground` | 定位目标 → **原图像素框 x1/y1/x2/y2** | 标注 PNG（可选） |
 | `vision_detect` | 盘点某类元素（按钮/输入框/链接…）→ 编号清单 + 原图像素框 | 编号标注 PNG |
