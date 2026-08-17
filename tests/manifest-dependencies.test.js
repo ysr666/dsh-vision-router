@@ -30,4 +30,6 @@ test('schemastery remains a runtime dependency', async () => {
   const pkg = await manifest()
   assert.equal(typeof pkg.dependencies?.['@deepseek-ai/schemastery'], 'string')
   assert.equal(pkg.peerDependencies?.['@deepseek-ai/schemastery'], undefined)
+  assert.ok(pkg.dsh?.client?.inject?.includes('@deepseek-ai/dsh-client-connection'))
+  assert.ok(pkg.dsh?.client?.inject?.includes('@deepseek-ai/dsh-api-remotes'))
 })

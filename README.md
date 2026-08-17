@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-300%20tests-2EA44F?style=flat-square" alt="Verified: 300 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.5"><img src="https://img.shields.io/badge/release-v1.4.5-5B4CF0?style=flat-square" alt="Release v1.4.5" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-270%20tests-2EA44F?style=flat-square" alt="Verified: 270 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.4.3)**
+> 📌 **Announcement (v1.4.5)**
 >
-> **v1.4.3:** Custom vision backends are runtime-verified instead of blocked by DSH capability metadata, including WebSocket/private transports.
+> **v1.4.5:** Adds optional structured 1+x vision pre-scan, refreshes image settings, and fixes Windows log-folder opening.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -40,6 +40,7 @@
 
 - [Why this exists](#why-this-exists)
 - [How it compares](#how-it-compares)
+- [Design lineage](#design-lineage)
 - [Acknowledgements](#acknowledgements)
 - [Quick start](#quick-start)
 - [Free vision key channels](#free-vision-key-channels)
@@ -88,6 +89,14 @@ Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — los
 | [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | Ten intent-aware visual tools (Q&A/OCR/pixel verification/UI restoration), called explicitly on demand | Broader tool set; this plugin adds whole-turn auto-routing and a keyless free fallback |
 | [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | An `inspect_image` tool plus an `agent/pre-step` waterfall bridge (pasted images become tool hints before entering the log) | Similar waterfall bridge; this plugin adds turn routing, fallback chains, caching and the free endpoint |
 
+## Design lineage
+
+The deep-vision tool layer and UI-restoration workflow in this project were informed by [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) and its native DSH implementation [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit). In particular, this project drew on their intent-driven tool selection, progressive tool exposure, pixel-diff verification loop, and parts of the visual-tool decomposition and naming, including long-screenshot OCR, foreground extraction, and HTML screenshot tooling.
+
+All code in `dsh-vision-router` is independently implemented. On top of those referenced design ideas, this project independently developed its turn-level/tools-first vision routing, DSH admission/wrapper integration, multi-backend provider and failure fallback chains, built-in free vision chain, attachment/image-memory handling, caching, and related runtime resilience mechanisms.
+
+We appreciate Anionex's prior work and the broader DSH community. Clear attribution and independent iteration can coexist; both help keep the DSH ecosystem open, collaborative, and healthy.
+
 ## Acknowledgements
 
 This project borrows ideas from all of the above — especially the keyless free-endpoint
@@ -127,7 +136,6 @@ If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorte
 ### 2. Switch to a “+ Auto Vision” model group in chat
 
 Once loaded, the plugin discovers the model groups enabled under **Settings → Models** and creates same-name auto-vision entries. For example:
-
 ```text
 opencode-go                 ← original model group, unchanged
 opencode-go + Auto Vision   ← choose this when sending images
@@ -445,7 +453,6 @@ Oh-DSH Desktop's built-in plugin marketplace (search → prepare → isolated pr
 - id: vision-router
   disabled: true
 ```
-
 Set it back to `false` to re-enable. Unloading removes the wrapper routes, tools, skill and settings card; cached artifact files remain.
 
 ### Upgrade
@@ -506,6 +513,14 @@ pnpm dsh plugin --profile web remove dsh-vision-router
 This removes the dependency and the bundle layer. If you disabled the stock DeepSeek row manually, re-enable it in your profile patch.
 
 ## Troubleshooting
+
+### Using dsh-web-ui / dsh-web-ui-all together
+
+If `dsh-web-ui` / `@linxin666/dsh-web-ui-all` is installed alongside Vision Router, its `dsh-tool-describe-image` send hook can rewrite image uploads into `describe-image` references before downstream vision plugins receive the original image block.
+
+`dsh-web-ui` now provides an explicit compatibility switch. Go to **Settings → Plugin config → Image understanding** and turn off **“Rewrite images to describe-image references on send”**, or set `interceptImageSend: false`. Image sends will then pass through unchanged so `dsh-vision-router` can receive the original image block. The switch is read on every send, so no hook reinstall or DSH restart is required.
+
+See [dsh-web-ui#301](https://github.com/zhu1090093659/dsh-web-ui/issues/301) for the upstream compatibility change.
 
 ### Startup fails with `Unexpected token ... is not valid JSON` (UTF-8 BOM)
 

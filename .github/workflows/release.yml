@@ -4,12 +4,16 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - package.json
 
 permissions:
   contents: write
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -23,56 +27,72 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      - name: Publish to npm (skip when the version already exists)
+      - name: Resolve and verify release metadata
+        shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          if npm view "dsh-vision-router@$VERSION" version >/dev/null 2>&1; then
-            echo "npm already has $VERSION — skipping publish"
+          EXPECTED_TAG="v$VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "$GITHUB_REF_NAME" != "$EXPECTED_TAG" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+          for f in README.md README.zh.md; do
+            grep -q "$EXPECTED_TAG" "$f" || { echo "$f: announcement/release badge must mention $EXPECTED_TAG" >&2; exit 1; }
+          done
+          awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md || {
+            echo "CHANGELOG.md has no bilingual section for $EXPECTED_TAG" >&2
+            exit 1
+          }
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
+      - name: Create version tag when releasing from main
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already exists — keeping the existing tag"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+      - name: Publish to npm (skip when the version already exists)
+        shell: bash
+        run: |
+          if npm view "dsh-vision-router@$RELEASE_VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $RELEASE_VERSION — skipping publish"
           else
             npm publish --access public
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # The yellow sticky-note announcement at the top of both READMEs must be
-      # updated together with every release; tagging a version that the banner
-      # does not mention fails the run.
-      - name: Verify the README announcement banner matches the version
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          for f in README.md README.zh.md; do
-            grep -q "v$VERSION" "$f" || { echo "$f: the announcement banner must mention v$VERSION — update it before tagging." >&2; exit 1; }
-          done
-      # Release notes must be bilingual (zh + en): the workflow requires a
-      # hand-written CHANGELOG.md section for the tagged version and appends
-      # the commit list as a supplement. Tagging a version without a section
-      # fails the run instead of publishing English-only notes.
       - name: Compose bilingual release notes from CHANGELOG.md
+        shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if ! awk -v v="v$VERSION" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
-            echo "CHANGELOG.md has no section for v$VERSION — add a bilingual entry before tagging." >&2
-            exit 1
-          fi
           {
-            echo "# v$VERSION"
+            echo "# $RELEASE_TAG"
             echo
           } > release-notes.md
-          awk -v v="v$VERSION" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md >> release-notes.md
+          awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md >> release-notes.md
           {
             echo
             echo "## Commits"
             echo
           } >> release-notes.md
-          PREV_TAG=$(git describe --tags --abbrev=0 "v$VERSION"^ 2>/dev/null || true)
+          PREV_TAG=$(git describe --tags --abbrev=0 "$RELEASE_TAG"^ 2>/dev/null || true)
           if [ -n "$PREV_TAG" ]; then
             git log --pretty=format:'- %s' "$PREV_TAG..HEAD" >> release-notes.md
           else
             git log --pretty=format:'- %s' >> release-notes.md
           fi
-      - name: Create GitHub Release
+      - name: Create or refresh GitHub Release
+        shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes-file release-notes.md || true
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "$RELEASE_TAG" --notes-file release-notes.md
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

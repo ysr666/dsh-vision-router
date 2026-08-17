@@ -15,8 +15,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.3"><img src="https://img.shields.io/badge/release-v1.4.3-5B4CF0?style=flat-square" alt="Release v1.4.3" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-300%20tests-2EA44F?style=flat-square" alt="Verified: 300 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.4.5"><img src="https://img.shields.io/badge/release-v1.4.5-5B4CF0?style=flat-square" alt="Release v1.4.5" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-270%20tests-2EA44F?style=flat-square" alt="Verified: 270 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -28,9 +28,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.4.3）**
+> 📌 **公告（v1.4.5）**
 >
-> **v1.4.3：自定义视觉后端改为运行时验证，支持 WebSocket/私有协议。**
+> **v1.4.5：新增可选 1+x 结构化预识别，重做图片识别设置页，并修复 Windows 打开日志文件夹。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -40,6 +40,7 @@
 
 - [为什么做这个](#为什么做这个)
 - [对比同类插件](#对比同类插件)
+- [设计来源](#设计来源)
 - [致谢](#致谢)
 - [快速开始](#快速开始)
 - [免费视觉 Key 渠道](#免费视觉-key-渠道)
@@ -86,6 +87,14 @@
 | [modlens](https://github.com/liustack/modlens) | 最早的 dsh 视觉插件；复用本机 Claude Code/Codex/OpenCode/Pi 等登录态作为视觉引擎 | 引擎复用思路；本插件自带供应商链，不依赖本机其他 CLI |
 | [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | 10 个意图化视觉工具（Q&A/OCR/像素校验/UI 还原），按需显式调用 | 工具集更全；本插件多出整轮自动路由与免 Key 免费兜底 |
 | [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | `inspect_image` 工具 + `agent/pre-step` 瀑布图片桥（粘贴图入日志前转成工具提示） | 瀑布桥思路相近；本插件多出轮次路由、降级链、缓存与免费端点 |
+
+## 设计来源
+
+本项目的深度视觉工具层与 UI restoration 工作流参考并受到 [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) 及其 DSH 原生实现 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) 的设计影响。具体包括意图驱动的工具选择、渐进式工具暴露、pixel-diff 验证闭环，以及部分视觉工具的职责划分与命名，包括长截图 OCR、前景提取和 HTML screenshot 等设计。
+
+`dsh-vision-router` 中相关代码均为独立实现。在这些设计参考基础上，本项目独立发展了 turn-level/tools-first vision routing、DSH 准入/包装集成、多视觉后端与故障 fallback chain、内置免费视觉模型链、附件/图片记忆、缓存与相关运行时容错机制。
+
+感谢 Anionex 的先行工作以及整个 DSH 社区的探索。清晰的设计归因与独立迭代并不冲突；二者都有助于维护开放、协作、健康的 DSH 生态。
 
 ## 致谢
 
@@ -497,6 +506,14 @@ pnpm dsh plugin --profile web remove dsh-vision-router
 同时移除依赖与 bundle 层。若你曾手动禁用官方 DeepSeek 行，记得在 profile 补丁里恢复。
 
 ## 故障排查
+
+### 与 dsh-web-ui / dsh-web-ui-all 共存
+
+如果同时安装了 `dsh-web-ui` / `@linxin666/dsh-web-ui-all`，其中的 `dsh-tool-describe-image` 发送钩子可能会在 Vision Router 拿到原始 image block 之前，先把图片改写成 `describe-image` 引用。
+
+`dsh-web-ui` 现在已经提供显式兼容开关：进入 **设置 → 插件配置 → 图像理解**，关闭「**发送时改写图片为 describe-image 引用**」，或配置 `interceptImageSend: false`。关闭后，带图发送会原样放行，`dsh-vision-router` 就能继续收到原始 image block。该开关每次发送都会动态读取，因此无需重装/卸载 hook，也不需要重启 DSH。
+
+上游兼容改动见 [dsh-web-ui#301](https://github.com/zhu1090093659/dsh-web-ui/issues/301)。
 
 ### 启动报错 `Unexpected token ... is not valid JSON`（UTF-8 BOM）
 
