@@ -11,7 +11,7 @@ on:
 permissions:
   contents: write
 
-# One-shot helper for the draft v2 branch; removed after the generated patch lands.
+# One-shot helper for the draft v2 branch; retry after focused-test alignment.
 jobs:
   patch:
     runs-on: ubuntu-latest
