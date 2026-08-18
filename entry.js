@@ -13,6 +13,7 @@ import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
 import { installWrapperDirectoryAlias } from './lib/wrapper-directory.js'
+import { installAndroidAttachmentCompat } from './lib/android-attachment-compat.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -57,6 +58,11 @@ export function apply(ctx, config = {}) {
     hardenedConfig,
     core,
   )
+  // #182: Android/Termux cannot open /data/data for the attachment-local
+  // durability walk. Keep this workaround private to Vision Router so the
+  // host attachment service and every non-Android runtime retain their normal
+  // semantics. Once DSH accepts the save, the compatibility path is inert.
+  const attachmentCompatCtx = installAndroidAttachmentCompat(stabilizedCtx, logging.logger)
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
   // 启动快照误当成最终设置状态。
@@ -79,13 +85,13 @@ export function apply(ctx, config = {}) {
       ...bootConfig,
       progressiveTools: hardenedConfig.progressiveTools === true,
     }
-    const result = core.apply(stabilizedCtx, runtimeConfig)
+    const result = core.apply(attachmentCompatCtx, runtimeConfig)
     // DSH rc.7's Settings -> Models surface is backed by the configurable
     // provider directory, not by the live adapter registry alone. Publish the
     // main DeepSeek + 自动识图 route as a derived alias of official DeepSeek so
     // a reinstall restores the expected model-group row without making an
     // arbitrary textProvider look like DeepSeek.
-    installWrapperDirectoryAlias(stabilizedCtx, runtimeConfig, logging.logger)
+    installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
         logging.logger.error(
