@@ -63,6 +63,13 @@ import {
 import { planMixedBranches, renderMixedGuidance } from './lib/mixed-router.js'
 import { depthLimitFor, renderDepthGuidance } from './lib/depth-guidance.js'
 import { assertNoRepetitionLoop } from './lib/repetition-guard.js'
+import {
+  boundedOcrTiles,
+  defaultImageResourceGovernor,
+  estimateImageOperationBytes,
+  scaleBox,
+  scaledDimensions,
+} from './lib/image-resource-governor.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
@@ -1158,11 +1165,25 @@ export function boxToSvg(box, width, height) {
 /** Draw one red pixel box onto an image buffer via sharp. */
 export async function annotateBoxBuffer(bytes, box) {
   const sharp = await loadSharp()
-  const image = sharp(bytes, { failOn: 'none' })
-  const meta = await image.metadata()
+  const meta = await sharp(bytes, { failOn: 'none' }).metadata()
   const width = meta.width ?? box.x2
   const height = meta.height ?? box.y2
-  return image.composite([{ input: boxToSvg(box, width, height), top: 0, left: 0 }]).png().toBuffer()
+  const preview = scaledDimensions(width, height, 4_000_000)
+  const displayBox = preview.scale === 1
+    ? box
+    : scaleBox(box, width, height, preview.width, preview.height)
+  return defaultImageResourceGovernor.withBudget(
+    estimateImageOperationBytes('annotation', width, height),
+    {},
+    async () => {
+      let image = sharp(bytes, { failOn: 'none' })
+      if (preview.scale !== 1) image = image.resize(preview.width, preview.height, { fit: 'fill' })
+      return image
+        .composite([{ input: boxToSvg(displayBox, preview.width, preview.height), top: 0, left: 0 }])
+        .png()
+        .toBuffer()
+    },
+  )
 }
 
 /**
@@ -1196,12 +1217,26 @@ export function boxesToSvg(boxes, width, height) {
 /** Draw numbered boxes for a detected-element inventory onto an image buffer. */
 export async function annotateBoxesBuffer(bytes, boxes) {
   const sharp = await loadSharp()
-  const image = sharp(bytes, { failOn: 'none' })
-  const meta = await image.metadata()
+  const meta = await sharp(bytes, { failOn: 'none' }).metadata()
   const width = meta.width ?? 0
   const height = meta.height ?? 0
   if (width <= 0 || height <= 0 || boxes.length === 0) return bytes
-  return image.composite([{ input: boxesToSvg(boxes, width, height), top: 0, left: 0 }]).png().toBuffer()
+  const preview = scaledDimensions(width, height, 4_000_000)
+  const displayBoxes = preview.scale === 1
+    ? boxes
+    : boxes.map((box) => scaleBox(box, width, height, preview.width, preview.height))
+  return defaultImageResourceGovernor.withBudget(
+    estimateImageOperationBytes('annotation', width, height),
+    {},
+    async () => {
+      let image = sharp(bytes, { failOn: 'none' })
+      if (preview.scale !== 1) image = image.resize(preview.width, preview.height, { fit: 'fill' })
+      return image
+        .composite([{ input: boxesToSvg(displayBoxes, preview.width, preview.height), top: 0, left: 0 }])
+        .png()
+        .toBuffer()
+    },
+  )
 }
 
 /**
@@ -1763,21 +1798,46 @@ export async function fullPageHeightOf(page) {
   )
 }
 
-/** Downscale bytes whose intrinsic pixel count exceeds maxPixels; returns original bytes on failure. */
-export async function downscaleImage(bytes, maxPixels) {
+/**
+ * Bound an image to a semantic-processing pixel budget. Metadata probing is
+ * fail-open only until we know the source is oversized. Once oversize is
+ * proven, preprocessing becomes a safety boundary and MUST fail closed.
+ */
+export async function downscaleImage(bytes, maxPixels, options = {}) {
+  let sharp
+  let meta
   try {
-    const sharp = await loadSharp()
-    const image = sharp(bytes, { failOn: 'none' })
-    const meta = await image.metadata()
-    if (!meta.width || !meta.height) return bytes
-    if (meta.width * meta.height <= maxPixels) return bytes
-    const scale = Math.sqrt(maxPixels / (meta.width * meta.height))
-    const width = Math.max(1, Math.round(meta.width * scale))
-    const height = Math.max(1, Math.round(meta.height * scale))
-    const resized = await image.resize({ width, height, fit: 'inside' }).toBuffer()
-    return resized.length > 0 && resized.length < bytes.length ? resized : bytes
+    sharp = await loadSharp()
+    meta = await sharp(bytes, { failOn: 'none' }).metadata()
   } catch {
     return bytes
+  }
+  if (!meta.width || !meta.height) return bytes
+  if (meta.width * meta.height <= maxPixels) return bytes
+  const target = scaledDimensions(meta.width, meta.height, maxPixels)
+  try {
+    return await defaultImageResourceGovernor.withBudget(
+      estimateImageOperationBytes('preview', meta.width, meta.height),
+      { signal: options.signal },
+      async () => {
+        const resized = await sharp(bytes, { failOn: 'none' })
+          .resize({ width: target.width, height: target.height, fit: 'inside' })
+          .toBuffer()
+        if (!resized || resized.length === 0) {
+          throw new Error('image resize produced an empty buffer')
+        }
+        // Pixel count, not compressed byte count, is the execution invariant.
+        // A safe preview may legitimately encode to more bytes than its source.
+        return resized
+      },
+    )
+  } catch (cause) {
+    const error = new Error(
+      'VISION_IMAGE_PREPROCESS_FAILED: oversized image could not be reduced to the safe execution budget',
+    )
+    error.code = 'VISION_IMAGE_PREPROCESS_FAILED'
+    error.cause = cause
+    throw error
   }
 }
 
@@ -6525,8 +6585,9 @@ ctx.logger?.info(
         // grows steeply with pixels — 4MP at 16 levels exceeds 60s on a busy
         // machine, so cap the trace input harder than the general budget.
         let traceBytes = bytes
-        if (downscaleEnabled() && bytes && bytes.length > 0) {
-          traceBytes = await downscaleImage(bytes, Math.min(downscaleMaxPixels(), 1000000))
+        if (bytes && bytes.length > 0) {
+          const traceMaxPixels = Math.min(downscaleEnabled() ? downscaleMaxPixels() : 1_000_000, 1_000_000)
+          traceBytes = await downscaleImage(bytes, traceMaxPixels)
         }
         let svg
         let colorCount = 0
@@ -6575,8 +6636,9 @@ ctx.logger?.info(
         // Same CPU guard as vision_trace: the flood fill is a synchronous
         // pixel walk — cap oversized inputs before it runs.
         let fgBytes = bytes
-        if (downscaleEnabled() && bytes && bytes.length > 0) {
-          fgBytes = await downscaleImage(bytes, downscaleMaxPixels())
+        if (bytes && bytes.length > 0) {
+          const foregroundMaxPixels = Math.min(downscaleEnabled() ? downscaleMaxPixels() : 4_000_000, 4_000_000)
+          fgBytes = await downscaleImage(bytes, foregroundMaxPixels)
         }
         const tolerance = Number.isFinite(args.tolerance) && args.tolerance >= 0 ? Math.round(args.tolerance) : 40
         const sharp = await loadSharp()
