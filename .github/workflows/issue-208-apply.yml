@@ -28,17 +28,16 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: pnpm/action-setup@v6
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          version: 11.20.0
+
       - uses: actions/setup-node@v4
         if: steps.guard.outputs.skip != 'true'
         with:
           node-version: 22
           cache: pnpm
-
-      - name: Enable pnpm
-        if: steps.guard.outputs.skip != 'true'
-        run: |
-          corepack enable
-          corepack prepare pnpm@11.20.0 --activate
 
       - name: Install dependencies
         if: steps.guard.outputs.skip != 'true'
