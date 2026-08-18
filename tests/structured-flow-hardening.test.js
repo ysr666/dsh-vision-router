@@ -227,3 +227,82 @@ test('turn budget stops new visual calls and removes impossible followup reminde
     Date.now = originalNow
   }
 })
+
+test('running structured tool clamps core network/OCR timeouts to remaining turn budget', async () => {
+  const originalNow = Date.now
+  let now = 2_000_000
+  Date.now = () => now
+  try {
+    const handlers = new Map()
+    const defs = new Map()
+    const liveConfig = {
+      visionDepth: 'standard',
+      visionTurnBudgetMs: 10_000,
+      timeoutMs: 120_000,
+      visionTaskTimeoutMs: 45_000,
+      ocrTimeoutMs: 30_000,
+    }
+    const rawScope = {
+      get() { return liveConfig },
+      watch() { return () => {} },
+    }
+    const settingsChild = {
+      settings: {
+        register(namespace) {
+          assert.equal(namespace, 'vision-router')
+          return rawScope
+        },
+      },
+      effect(factory) { return factory() },
+    }
+    const ctx = {
+      on(event, handler) {
+        handlers.set(event, handler)
+        return () => handlers.delete(event)
+      },
+      tools: {
+        register(def) {
+          defs.set(def.name, def)
+          return () => defs.delete(def.name)
+        },
+      },
+      inject(dependencies, callback) {
+        if (dependencies.includes('settings')) callback(settingsChild)
+      },
+    }
+    const wrapped = installStructuredFlowHardening(ctx, liveConfig)
+    let coreScope
+    wrapped.inject(['settings'], (child) => {
+      coreScope = child.settings.register('vision-router', {}, { base: liveConfig })
+    })
+    wrapped.on('agent/pre-step', async (_payload, next) => next())
+
+    let observed
+    wrapped.tools.register({
+      name: 'vision_bootstrap',
+      async execute() {
+        // This is exactly what index.js's current() timeout helpers see while
+        // the tool is running through the wrapped Settings scope.
+        observed = coreScope.get()
+        return bootstrapSuccess({ visual_kind: 'general', mixed_of: [] })
+      },
+    })
+
+    const session = {}
+    const handler = handlers.get('agent/pre-step')
+    await handler(
+      { turn: 1, agent: { session }, messages: [] },
+      async () => ({ kind: 'ok', messages: [] }),
+    )
+    now += 9_750
+    const result = await defs.get('vision_bootstrap').execute({}, { agent: { session } })
+    assert.equal(JSON.parse(result).ok, true)
+    assert.ok(observed)
+    assert.equal(observed.timeoutMs, 250)
+    assert.equal(observed.visionTaskTimeoutMs, 250)
+    assert.equal(observed.ocrTimeoutMs, 250)
+    assert.equal(observed.visionTurnBudgetMs, 10_000, 'policy value itself is not rewritten')
+  } finally {
+    Date.now = originalNow
+  }
+})
