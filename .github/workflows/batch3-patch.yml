@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/apply-batch3-hardening.py'
+      - 'scripts/fix-batch3-test-contracts.py'
       - '.github/workflows/batch3-patch.yml'
       - 'lib/http-body-limit.js'
       - 'lib/artifact-boundary.js'
@@ -31,6 +32,8 @@ jobs:
           cache: pnpm
       - name: Apply exact batch3 patch
         run: python3 scripts/apply-batch3-hardening.py
+      - name: Migrate affected test contracts
+        run: python3 scripts/fix-batch3-test-contracts.py
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Run full test suite
