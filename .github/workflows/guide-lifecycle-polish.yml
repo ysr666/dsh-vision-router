@@ -1,6 +1,8 @@
 name: Polish guide lifecycle refactor
 
 on:
+  push:
+    branches: [fix/guide-lifecycle-architecture]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
@@ -10,12 +12,12 @@ permissions:
 
 jobs:
   polish:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: fix/guide-lifecycle-architecture
           fetch-depth: 0
 
       - name: Fix structural invalidation and add regression coverage
@@ -221,4 +223,4 @@ attributeFilter: ['aria-expanded', 'aria-hidden', 'class'],
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "fix: harden guide lifecycle resolution (#207)"
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:fix/guide-lifecycle-architecture
