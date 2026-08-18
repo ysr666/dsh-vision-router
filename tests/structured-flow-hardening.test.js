@@ -103,6 +103,7 @@ test('guidance overrides are bounded, valid-only and last-wins', () => {
 test('bootstrap is one-shot per turn and repeated calls never hit the backend', async () => {
   const harness = boot({ visionDepth: 'fast' })
   const tools = registerFlowTools(
+    harness,
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
     () => 'evidence',
   )
@@ -124,6 +125,7 @@ test('bootstrap is one-shot per turn and repeated calls never hit the backend', 
 test('standard tier blocks the third successful deep-dive before tool execution', async () => {
   const harness = boot({ visionDepth: 'standard' })
   const tools = registerFlowTools(
+    harness,
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
     () => 'evidence',
   )
@@ -145,6 +147,7 @@ test('mixed flow remains incomplete after only one branch and clears after two',
     guidanceOverrides: [{ kind: 'document', text: 'CUSTOM DOCUMENT CHECK' }],
   })
   const tools = registerFlowTools(
+    harness,
     () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
     () => 'evidence',
   )
@@ -176,6 +179,7 @@ test('mixed flow remains incomplete after only one branch and clears after two',
 test('empty evidence cannot silently complete the required x>=1 step', async () => {
   const harness = boot({ visionDepth: 'standard' })
   const tools = registerFlowTools(
+    harness,
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
     () => '',
   )
@@ -198,6 +202,7 @@ test('turn budget stops new visual calls and removes impossible followup reminde
   try {
     const harness = boot({ visionDepth: 'deep', visionTurnBudgetMs: 10_000 })
     const tools = registerFlowTools(
+      harness,
       () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['ui', 'document'] }),
       () => 'evidence',
     )
