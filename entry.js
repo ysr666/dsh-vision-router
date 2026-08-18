@@ -10,6 +10,7 @@ import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
+import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
@@ -34,17 +35,30 @@ export function apply(ctx, config = {}) {
         ? config.wrapperRoute
         : 'deepseek-vision',
   })
+  // Security/runtime boundary shared by the core and the local-vision shim:
+  // keep artifacts inside the session workspace, make HTML screenshots truly
+  // offline + sandboxed, protect the screenshot-permission side effect, and
+  // make the process-wide fetch cleanup coexist with later plugin patches.
+  const { ctx: hardenedCtx, config: hardenedConfig } = installAdversarialHardening(
+    runtimeCtx,
+    config,
+    core,
+  )
   // #141 stabilization boundary: keep the recently merged local-vision
   // behavior isolated from main's existing provider/router semantics. It
   // normalizes only the local settings/runtime seams before core.apply sees
   // the context (desktop screenshot exposure, instant-local budget/one-pass,
   // local vision-http transport and connection-probe fallback).
-  const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(runtimeCtx, config, core)
+  const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(
+    hardenedCtx,
+    hardenedConfig,
+    core,
+  )
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
   // 启动快照误当成最终设置状态。
   try {
-    const c = config && typeof config === 'object' ? config : {}
+    const c = hardenedConfig && typeof hardenedConfig === 'object' ? hardenedConfig : {}
     const local = c.localOllama && typeof c.localOllama === 'object' ? c.localOllama : {}
     const lms = c.localLmStudio && typeof c.localLmStudio === 'object' ? c.localLmStudio : {}
     logging.logger.info(
@@ -60,7 +74,7 @@ export function apply(ctx, config = {}) {
   try {
     const result = core.apply(stabilizedCtx, {
       ...bootConfig,
-      progressiveTools: config.progressiveTools === true,
+      progressiveTools: hardenedConfig.progressiveTools === true,
     })
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
