@@ -1,11 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_HTTP_ERROR_DETAIL_MAX_BYTES,
   HTTP_PROVIDER_COMPAT_PRESETS,
   appendPromptToImageOnlyMessage,
   fetchWithOpenAICompatibility,
   parseMaxTokensLimit,
   prepareOpenAICompatibleBody,
+  readResponseTextLimited,
   resolveHttpProviderCompatibility,
   shouldUseMaxCompletionTokens,
 } from '../lib/http-compat.js'
@@ -298,4 +300,41 @@ test('compat fetch is inert when explicitly disabled', async () => {
     { active: false },
   )
   assert.equal(body.max_tokens, 4096)
+})
+
+test('bounded compatibility detail reader refuses declared oversized bodies without consuming the original response', async () => {
+  const body = 'x'.repeat(DEFAULT_HTTP_ERROR_DETAIL_MAX_BYTES + 2048)
+  const response = new Response(body, {
+    status: 400,
+    headers: { 'content-length': String(Buffer.byteLength(body)) },
+  })
+  assert.equal(await readResponseTextLimited(response), '')
+  assert.equal((await response.text()).length, body.length, 'original response must remain untouched')
+})
+
+test('oversized compatibility error cannot trigger a retry from text beyond the byte budget', async () => {
+  const bodies = []
+  const huge =
+    'x'.repeat(DEFAULT_HTTP_ERROR_DETAIL_MAX_BYTES + 1024) +
+    ' max_tokens must be less than or equal to 1024'
+  const fakeFetch = async (_input, init) => {
+    bodies.push(JSON.parse(init.body))
+    return new Response(huge, {
+      status: 400,
+      headers: { 'content-length': String(Buffer.byteLength(huge)) },
+    })
+  }
+
+  const response = await fetchWithOpenAICompatibility(
+    fakeFetch,
+    'https://example.test/v1/chat/completions',
+    {
+      method: 'POST',
+      body: JSON.stringify({ model: 'future-vl', messages: [], max_tokens: 4096 }),
+    },
+    { active: true },
+  )
+  assert.equal(response.status, 400)
+  assert.equal(bodies.length, 1)
+  assert.equal((await response.text()).length, huge.length)
 })
