@@ -8,6 +8,7 @@ import {
   scaleBox,
   scaledDimensions,
 } from '../lib/image-resource-governor.js'
+import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 
 test('decoded working-set estimates scale with pixels and operation copies', () => {
   assert.equal(estimateDecodedBytes(100, 50, { channels: 4, copies: 1, safetyFactor: 1 }), 20_000)
@@ -109,6 +110,25 @@ test('aborting a queued request removes it without leaking a permit', async () =
   const controller = new AbortController()
   const queued = governor.acquire(40, { signal: controller.signal })
   assert.equal(governor.stats().queued, 1)
+  controller.abort()
+  await assert.rejects(queued, (error) => error && error.name === 'AbortError')
+  assert.equal(governor.stats().queued, 0)
+  release()
+  assert.equal(governor.stats().activeCount, 0)
+})
+
+test('ambient structured-turn budget aborts queued image work even without an explicit call-site signal', async () => {
+  const governor = new ImageResourceGovernor({ maxBytes: 100, maxConcurrent: 1 })
+  const release = await governor.acquire(40)
+  const controller = new AbortController()
+  let queued
+  await runWithVisionTurnBudget(
+    { deadlineAt: Date.now() + 10_000, signal: controller.signal },
+    async () => {
+      queued = governor.acquire(40)
+      assert.equal(governor.stats().queued, 1)
+    },
+  )
   controller.abort()
   await assert.rejects(queued, (error) => error && error.name === 'AbortError')
   assert.equal(governor.stats().queued, 0)
