@@ -20,8 +20,11 @@ function fakeContext({
       settingsPath: [],
     },
   ],
+  registerError,
 } = {}) {
   const listeners = new Map()
+  const disposals = []
+  const warns = []
   const state = {
     visionConfig,
     liveProviders: [...liveProviders],
@@ -47,6 +50,7 @@ function fakeContext({
     },
     registerConfigurableProviders(entries) {
       state.registerCalls += 1
+      if (registerError) throw registerError
       state.ownedDirectory = entries.map((entry) => ({ ...entry, settingsPath: [...entry.settingsPath] }))
       // rc.7 emits this notification from the directory commit itself. The
       // helper must not recurse into a second registration.
@@ -79,10 +83,23 @@ function fakeContext({
       list.push(listener)
       listeners.set(name, list)
     },
-    logger: { warn() {} },
+    effect(factory) {
+      const cleanup = factory()
+      disposals.push(cleanup)
+      return () => {}
+    },
+    logger: { warn(message) { warns.push(message) } },
   }
 
-  return { ctx, state, emit }
+  return {
+    ctx,
+    state,
+    emit,
+    warns,
+    dispose() {
+      for (const cleanup of disposals.splice(0)) cleanup()
+    },
+  }
 }
 
 test('resolves DeepSeek + auto-vision as an alias of the official provider settings', () => {
@@ -161,4 +178,72 @@ test('is a no-op on older LLM runtimes without the configurable-provider directo
   }
   assert.doesNotThrow(() => installWrapperDirectoryAlias(ctx))
   assert.equal(resolveWrapperDirectoryEntry(ctx), undefined)
+})
+
+test('disposes the directory alias with the plugin fiber and stays inert afterwards', () => {
+  const { ctx, state, emit, dispose } = fakeContext()
+  installWrapperDirectoryAlias(ctx)
+  assert.equal(state.registerCalls, 1)
+  assert.equal(state.ownedDirectory.length, 1)
+
+  dispose()
+  assert.deepEqual(state.ownedDirectory, [])
+
+  state.visionConfig = { wrapperRoute: 'relay-auto-vision' }
+  state.liveProviders.push({ id: 'relay-auto-vision', name: 'DeepSeek + 自动识图' })
+  emit('settings/updated', 'vision-router', state.visionConfig, {}, 'update')
+
+  assert.equal(state.registerCalls, 1)
+  assert.equal(state.replaceCalls, 0)
+  assert.deepEqual(state.ownedDirectory, [])
+})
+
+test('re-registers cleanly after a fiber reload instead of freezing on the stale row', () => {
+  const { ctx, state, dispose } = fakeContext()
+  installWrapperDirectoryAlias(ctx)
+  dispose()
+
+  // Same context object, fresh install: the reloaded instance must see an
+  // empty directory (the old row was disposed with the fiber) and publish.
+  installWrapperDirectoryAlias(ctx)
+  assert.equal(state.registerCalls, 2)
+  assert.equal(state.ownedDirectory.length, 1)
+  assert.equal(state.ownedDirectory[0].provider, 'deepseek-vision')
+})
+
+test('withdrawal records the empty-state key and skips redundant replaces', () => {
+  const { ctx, state, emit } = fakeContext()
+  installWrapperDirectoryAlias(ctx)
+  assert.equal(state.ownedDirectory[0].provider, 'deepseek-vision')
+
+  // An external owner takes over a NEW route the settings now point at.
+  state.visionConfig = { wrapperRoute: 'relay-auto-vision' }
+  state.liveProviders.push({ id: 'relay-auto-vision', name: 'DeepSeek + 自动识图' })
+  state.sourceDirectory.push({
+    provider: 'relay-auto-vision',
+    displayName: 'External',
+    settingsNs: 'external-ns',
+    settingsPath: [],
+  })
+  emit('settings/updated', 'vision-router', state.visionConfig, {}, 'update')
+  assert.equal(state.replaceCalls, 1)
+  assert.deepEqual(state.ownedDirectory, [])
+
+  // The wrapper disappears entirely: the cached empty-state key must make
+  // this a no-op rather than a second redundant replace.
+  state.liveProviders = []
+  emit('llm/adapters-updated')
+  assert.equal(state.replaceCalls, 1)
+})
+
+test('deduplicates identical sync warnings across repeated adapter events', () => {
+  const error = new Error('already declared')
+  error.code = 'DUPLICATE_DIRECTORY'
+  const { ctx, emit, warns } = fakeContext({ registerError: error })
+  installWrapperDirectoryAlias(ctx)
+  emit('llm/adapters-updated')
+  emit('llm/adapters-updated')
+
+  assert.equal(warns.length, 1)
+  assert.match(warns[0], /Models-directory alias sync failed/)
 })
