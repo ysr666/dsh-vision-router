@@ -8,6 +8,7 @@ import {
   classifyProfilePnpmFailure,
   inspectCoexistingVisionPlugins,
 } from '../lib/profile-pnpm-diagnostics.js'
+import { runDshPluginUpdate } from '../lib/self-update.js'
 
 function profileFixture({
   dependencies = {},
@@ -27,6 +28,25 @@ function profileFixture({
     )
   }
   return profileDir
+}
+
+function dshHomeFixture({ dependencies = {}, installed = {} } = {}) {
+  const dshHome = mkdtempSync(path.join(tmpdir(), 'vision-profile-home-'))
+  const profileDir = path.join(dshHome, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  writeFileSync(
+    path.join(profileDir, 'package.json'),
+    JSON.stringify({ dependencies }, null, 2),
+  )
+  for (const [name, version] of Object.entries(installed)) {
+    const dir = path.join(profileDir, 'node_modules', name)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name, version }),
+    )
+  }
+  return { dshHome, profileDir }
 }
 
 test('doctor advisory detects coexisting vision plugins without calling them conflicts', () => {
@@ -118,4 +138,47 @@ test('can attribute another declared profile dependency even without ignored-bui
   assert.equal(result.kind, 'existing-profile-dependency')
   assert.equal(result.blockers[0].name, 'some-existing-plugin')
   assert.equal(result.buildApproval, false)
+})
+
+test('self updater surfaces the existing profile blocker instead of a generic Vision Router failure', async () => {
+  const { dshHome } = dshHomeFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      'dsh-vision-proxy': '0.2.5',
+    },
+    installed: {
+      'dsh-vision-proxy': '0.2.5',
+    },
+  })
+
+  await assert.rejects(
+    () => runDshPluginUpdate(
+      {
+        available: true,
+        method: 'current-dsh-cli',
+        execPath: 'node',
+        cliEntry: '/tmp/dsh.mjs',
+        profile: 'web',
+      },
+      {
+        dshHome,
+        execFileImpl: async () => {
+          const error = new Error('exit 1')
+          error.stderr = [
+            'ERR_PNPM_IGNORED_BUILDS Ignored build scripts: dsh-vision-proxy@0.2.5',
+            'GET https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.34.5.tgz',
+            'UND_ERR_DESTROYED',
+          ].join('\n')
+          throw error
+        },
+      },
+    ),
+    (error) => {
+      assert.match(error.message, /blocked by another dependency already present in profile "web"/)
+      assert.match(error.message, /dsh-vision-proxy@0\.2\.5/)
+      assert.match(error.message, /not evidence that dsh-vision-router itself failed/)
+      assert.match(error.message, /Original pnpm output:/)
+      return true
+    },
+  )
 })
