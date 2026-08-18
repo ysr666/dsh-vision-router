@@ -11,6 +11,7 @@ import {
   normalizeArtifactsDir,
   sameOriginRequest,
 } from '../lib/adversarial-hardening.js'
+import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 
 test('normalizeArtifactsDir keeps artifacts inside the workspace', () => {
   assert.equal(normalizeArtifactsDir('.dsh-vision-router/artifacts'), path.normalize('.dsh-vision-router/artifacts'))
@@ -149,51 +150,64 @@ test('secure HTML screenshot rejects oversized viewport before launching Chrome'
   }
 })
 
-test('hardening wrapper protects screenshot permission POST from cross-origin callers', async () => {
-  let registered
-  let originalCalls = 0
-  const webServer = {
-    register(def) {
-      registered = def
-      return () => {}
-    },
-  }
-  const child = { webServer }
-  const ctx = {
-    tools: { register() {} },
-    inject(_services, callback) { callback(child) },
-  }
-  const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
-  hardened.inject(['webServer'], (ownerCtx) => {
-    ownerCtx.webServer.register({
-      path: '/_dsh/vision-router/request-screenshot-permission',
-      async handler(_req, res) {
-        originalCalls += 1
-        res.writeHead(200)
-        res.end('ok')
+test('real screenshot permission route rejects cross-origin POSTs without proxying the webServer child context', async () => {
+  let route
+  let seenWebChild
+  const webCtx = {
+    webServer: {
+      register(spec) {
+        route = spec
+        return () => {}
       },
-    })
-  })
-  const responses = []
-  const res = {
-    writeHead(status) { responses.push(status) },
-    end() {},
+    },
+    effect(factory) { return factory() },
   }
-  await registered.handler(
-    { method: 'POST', headers: { host: '127.0.0.1:3000', origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' } },
-    res,
+  const ctx = {
+    tools: { register() { return () => {} } },
+    llm: { registerAdapter() { return () => {} } },
+    logger: { warn() {}, info() {}, error() {} },
+    get() { return undefined },
+    inject(deps, callback) {
+      if (deps.includes('webServer')) {
+        seenWebChild = webCtx
+        callback(webCtx)
+      }
+    },
+    effect(factory) { return factory() },
+  }
+  const core = {
+    localProvidersOf() { return [] },
+    classifyVisionFailure() { return { kind: 'other' } },
+    VISION_FAILURE_KINDS: {},
+  }
+  const { ctx: stabilized } = installLocalVisionStabilizer(ctx, { desktopScreenshot: true }, core)
+  let callbackChild
+  stabilized.inject(['webServer'], (child) => { callbackChild = child })
+  assert.equal(callbackChild, seenWebChild)
+  assert.ok(route)
+
+  let status
+  await route.handler(
+    {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:3000',
+        origin: 'https://evil.example',
+        'sec-fetch-site': 'cross-site',
+      },
+    },
+    {
+      setHeader() {},
+      writeHead(code) { status = code },
+      end() {},
+    },
   )
-  assert.equal(responses.at(-1), 403)
-  assert.equal(originalCalls, 0)
-  await registered.handler(
-    { method: 'POST', headers: { host: '127.0.0.1:3000', origin: 'http://127.0.0.1:3000', 'sec-fetch-site': 'same-origin' } },
-    res,
-  )
-  assert.equal(originalCalls, 1)
+  assert.equal(status, 403)
 })
 
 test('proxy fetch cleanup becomes inert under later plugin patches and cannot resurface', () => {
-  const originalFetch = globalThis.fetch
+  const hostFetch = () => 'host'
+  const savedFetch = globalThis.fetch
   const patchA = () => 'a'
   let cleanup
   const ctx = {
@@ -204,10 +218,11 @@ test('proxy fetch cleanup becomes inert under later plugin patches and cannot re
     },
   }
   try {
+    globalThis.fetch = hostFetch
     const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
     hardened.effect(() => {
       globalThis.fetch = patchA
-      return () => { globalThis.fetch = originalFetch },
+      return () => { globalThis.fetch = hostFetch },
     }, 'vision-router: proxy fetch')
     const guardedFetch = globalThis.fetch
     assert.notEqual(guardedFetch, patchA)
@@ -220,9 +235,8 @@ test('proxy fetch cleanup becomes inert under later plugin patches and cannot re
     // Simulate the later plugin unloading and restoring the fetch value it
     // captured. Vision Router's guard must remain inert instead of resurfacing.
     globalThis.fetch = guardedFetch
-    assert.equal(globalThis.fetch, guardedFetch)
-    assert.notEqual(globalThis.fetch(), 'a')
+    assert.equal(globalThis.fetch(), 'host')
   } finally {
-    globalThis.fetch = originalFetch
+    globalThis.fetch = savedFetch
   }
 })
