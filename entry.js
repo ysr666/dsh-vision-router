@@ -26,8 +26,9 @@ export const Config = core.Config
 // Defense in depth for direct/programmatic callers that invoke apply() without
 // first running the Cordis Config resolver: only an explicit true enables the
 // schema-changing progressive mode. The wrapped context changes logger plus a
-// private llm view used only by Vision Router: wrapper -> delegate calls can
-// restore adapter-owned replay identity without mutating the host LLM service.
+// private llm/tools view used only by Vision Router: wrapper -> delegate calls
+// preserve replay identity, while vision-tool network calls are constrained to
+// the exact backends the user selected in Vision Router.
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx, {
@@ -35,6 +36,7 @@ export function apply(ctx, config = {}) {
       typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
         ? config.wrapperRoute
         : 'deepseek-vision',
+    visionConfig: config,
   })
   // Security/runtime boundary shared by the core and the local-vision shim:
   // keep artifacts inside the session workspace, make HTML screenshots truly
@@ -80,9 +82,9 @@ export function apply(ctx, config = {}) {
     const result = core.apply(stabilizedCtx, runtimeConfig)
     // DSH rc.7's Settings -> Models surface is backed by the configurable
     // provider directory, not by the live adapter registry alone. Publish the
-    // main DeepSeek + 自动识图 route as a derived alias of its text provider so
-    // a reinstall restores the expected model-group row without duplicating
-    // provider credentials/configuration.
+    // main DeepSeek + 自动识图 route as a derived alias of official DeepSeek so
+    // a reinstall restores the expected model-group row without making an
+    // arbitrary textProvider look like DeepSeek.
     installWrapperDirectoryAlias(stabilizedCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {

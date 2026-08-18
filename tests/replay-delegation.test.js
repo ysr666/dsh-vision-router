@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  configuredVisionAdapterModels,
   contextWithDelegatedReplay,
   MAX_LIVE_EFFORT_MEMORY,
   rebindDelegatedReplayOptions,
@@ -132,6 +133,31 @@ function liveWrapperHarness({ initialProvider = 'deepseek-official', native = fa
   let registeredAdapter
   const calls = []
   const registrations = new Map()
+  registrations.set('deepseek-official', {
+    retryPolicy: 'deepseek-retry',
+    adapter: {
+      async listModels(provider) {
+        return [
+          { provider, id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text'] },
+          { provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text'] },
+        ]
+      },
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: model, inputModalities: ['text'] }
+      },
+    },
+  })
+  registrations.set('relay-openai', {
+    retryPolicy: 'relay-retry',
+    adapter: {
+      async listModels(provider) {
+        return [{ provider, id: 'k3', name: 'Kimi K3', inputModalities: ['text'] }]
+      },
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: model, inputModalities: ['text'] }
+      },
+    },
+  })
   if (native) registrations.set('deepseek-official-native', {})
   const settings = {
     get(namespace) {
@@ -164,10 +190,20 @@ function liveWrapperHarness({ initialProvider = 'deepseek-official', native = fa
   }
   const wrapped = contextWithDelegatedReplay(ctx)
 
-  // Emulate the core wrapper's legacy stale provider/reasoning caches. The
-  // entry-layer boundary must correct both at the one nested llm.stream call.
+  // Emulate the core wrapper's legacy stale provider/reasoning caches and its
+  // old metadata dependence on textProvider. The entry-layer boundary must
+  // keep the public DeepSeek identity true at both metadata and network time.
   let staleReasoningEffort
   const coreWrapper = {
+    async listModels() {
+      return registrations.get(textProvider)?.adapter?.listModels(textProvider) ?? []
+    },
+    async resolveModel(_provider, model) {
+      return registrations.get(textProvider)?.adapter?.resolveModel(textProvider, model)
+    },
+    providerRetryPolicy() {
+      return registrations.get(textProvider)?.retryPolicy
+    },
     async *stream(options) {
       const explicit =
         typeof options.reasoningEffort === 'string' && options.reasoningEffort !== ''
@@ -178,7 +214,7 @@ function liveWrapperHarness({ initialProvider = 'deepseek-official', native = fa
       yield* wrapped.llm.stream({
         ...options,
         ...(effort === undefined ? {} : { reasoningEffort: effort }),
-        provider: 'deepseek-official',
+        provider: textProvider,
       })
     },
   }
@@ -197,11 +233,12 @@ function liveWrapperHarness({ initialProvider = 'deepseek-official', native = fa
   return {
     calls,
     drain,
+    adapter: () => registeredAdapter,
     setProvider(value) { textProvider = value },
   }
 }
 
-test('main auto-vision wrapper follows live textProvider changes and keeps reasoning memory per delegate', async () => {
+test('main DeepSeek auto-vision wrapper never follows an arbitrary live textProvider', async () => {
   const harness = liveWrapperHarness()
   await harness.drain({ reasoningEffort: 'high' })
   harness.setProvider('relay-openai')
@@ -212,27 +249,43 @@ test('main auto-vision wrapper follows live textProvider changes and keeps reaso
 
   assert.deepEqual(harness.calls.map((call) => call.provider), [
     'deepseek-official',
-    'relay-openai',
-    'relay-openai',
+    'deepseek-official',
+    'deepseek-official',
     'deepseek-official',
   ])
   assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), [
     'high',
-    undefined,
-    'low',
     'high',
+    'low',
+    'low',
   ])
 })
 
-test('hidden native DeepSeek route only substitutes the official selection, never a relay', async () => {
+test('main wrapper metadata stays DeepSeek even when textProvider is a Kimi/relay route', async () => {
+  const harness = liveWrapperHarness({ initialProvider: 'relay-openai' })
+  const adapter = harness.adapter()
+  const listed = await adapter.listModels('deepseek-vision')
+  assert.deepEqual(listed.map((model) => model.id), ['deepseek-v4-pro', 'deepseek-v4-flash'])
+  assert.ok(listed.every((model) => model.provider === 'deepseek-vision'))
+  assert.ok(listed.every((model) => model.inputModalities.includes('image')))
+
+  const resolved = await adapter.resolveModel('deepseek-vision', 'deepseek-v4-pro')
+  assert.equal(resolved.provider, 'deepseek-vision')
+  assert.equal(resolved.id, 'deepseek-v4-pro')
+  assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+  assert.equal(adapter.providerRetryPolicy('deepseek-vision'), 'deepseek-retry')
+})
+
+test('hidden native DeepSeek route owns the main wrapper regardless of textProvider', async () => {
   const harness = liveWrapperHarness({ initialProvider: 'relay-openai', native: true })
   await harness.drain({ reasoningEffort: 'high' })
   harness.setProvider('deepseek-official')
   await harness.drain({})
   assert.deepEqual(harness.calls.map((call) => call.provider), [
-    'relay-openai',
+    'deepseek-official-native',
     'deepseek-official-native',
   ])
+  assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), ['high', 'high'])
 })
 
 test('reasoning effort memory is isolated by DSH sessionId even when core cache is globally stale', async () => {
@@ -262,15 +315,160 @@ test('reasoning effort memory is capped so long-running processes cannot grow it
   for (let i = 0; i < total; i++) {
     await harness.drain({ sessionId: `session-${i}`, reasoningEffort: 'high' })
   }
-  // The first sessions fell out of the cap; their memory is gone, so a
-  // follow-up without an explicit pick must not re-inject anything.
   await harness.drain({ sessionId: 'session-0' })
   const evicted = harness.calls[harness.calls.length - 1]
   assert.equal(evicted.reasoningEffort, undefined)
-  // A session still inside the cap keeps remembering its pick.
   await harness.drain({ sessionId: `session-${total - 1}` })
   const hot = harness.calls[harness.calls.length - 1]
   assert.equal(hot.reasoningEffort, 'high')
+})
+
+test('configuredVisionAdapterModels grants only exact Vision Router rows and row fallbacks', () => {
+  const allowed = configuredVisionAdapterModels({
+    providers: [
+      { provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: ['glm-4v-flash'] },
+      { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] },
+    ],
+  })
+  assert.deepEqual([...allowed.keys()], ['zhipu'])
+  assert.deepEqual([...allowed.get('zhipu')], ['glm-4.6v-flash', 'glm-4v-flash'])
+  assert.equal(allowed.has('vision-http'), false)
+  assert.equal(allowed.has('kimi-coding'), false)
+})
+
+test('vision tools cannot auto-discover or call DSH system models that were not selected in Vision Router', async () => {
+  let visionConfig = {
+    providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }],
+  }
+  const calls = []
+  const registeredTools = new Map()
+  const llm = {
+    listProviders() {
+      return [
+        { id: 'kimi-coding', name: 'Kimi' },
+        { id: 'xiaomi-token-plan-cn', name: 'Xiaomi' },
+        { id: 'zhipu', name: 'Zhipu' },
+      ]
+    },
+    registration(provider) {
+      return {
+        adapter: {
+          async listModels() {
+            return provider === 'kimi-coding'
+              ? [{ id: 'k3', provider, inputModalities: ['text', 'image'] }]
+              : [{ id: 'glm-4.6v-flash', provider, inputModalities: ['text', 'image'] }]
+          },
+        },
+      }
+    },
+    async *stream(options) {
+      calls.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const tools = {
+    register(definition) {
+      registeredTools.set(definition.name, definition)
+      return () => {}
+    },
+  }
+  const ctx = {
+    llm,
+    tools,
+    get(name) {
+      if (name !== 'settings') return undefined
+      return {
+        get(namespace) {
+          return namespace === 'vision-router' ? visionConfig : undefined
+        },
+      }
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx, { visionConfig })
+  assert.deepEqual(wrapped.llm.listProviders().map((entry) => entry.id), [
+    'kimi-coding',
+    'xiaomi-token-plan-cn',
+    'zhipu',
+  ])
+
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      const discoveredInside = wrapped.llm.listProviders()
+      // Mutating settings after the tool starts must not expand this call's
+      // frozen authorization snapshot.
+      visionConfig = {
+        providers: [{ provider: 'kimi-coding', model: 'k3', fallbacks: [] }],
+      }
+      let blocked
+      try {
+        for await (const _chunk of wrapped.llm.stream({
+          provider: 'kimi-coding',
+          model: 'k3',
+          messages: [],
+        })) {
+          // drain
+        }
+      } catch (error) {
+        blocked = error
+      }
+      for await (const _chunk of wrapped.llm.stream({
+        provider: 'zhipu',
+        model: 'glm-4.6v-flash',
+        messages: [],
+      })) {
+        // drain
+      }
+      return { discoveredInside, blocked }
+    },
+  })
+
+  const result = await registeredTools.get('vision_describe').execute()
+  assert.deepEqual(result.discoveredInside, [])
+  assert.equal(result.blocked?.code, 'NO_ADAPTER')
+  assert.match(result.blocked?.message ?? '', /blocked unconfigured vision backend/)
+  assert.deepEqual(calls.map((call) => `${call.provider}/${call.model}`), [
+    'zhipu/glm-4.6v-flash',
+  ])
+})
+
+test('a system model becomes callable by a vision tool only after explicit Vision Router selection', async () => {
+  const calls = []
+  let captured
+  const llm = {
+    listProviders: () => [{ id: 'kimi-coding', name: 'Kimi' }],
+    async *stream(options) {
+      calls.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const tools = {
+    register(definition) {
+      captured = definition
+      return () => {}
+    },
+  }
+  const ctx = { llm, tools }
+  const wrapped = contextWithDelegatedReplay(ctx, {
+    visionConfig: {
+      providers: [{ provider: 'kimi-coding', model: 'k3', fallbacks: [] }],
+    },
+  })
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      for await (const _chunk of wrapped.llm.stream({
+        provider: 'kimi-coding',
+        model: 'k3',
+        messages: [],
+      })) {
+        // drain
+      }
+      return 'ok'
+    },
+  })
+  assert.equal(await captured.execute(), 'ok')
+  assert.deepEqual(calls.map((call) => `${call.provider}/${call.model}`), ['kimi-coding/k3'])
 })
 
 test('delegated replay context cache expires with the Cordis plugin fiber', () => {
@@ -291,13 +489,16 @@ test('delegated replay context cache expires with the Cordis plugin fiber', () =
   assert.notEqual(second, first)
 })
 
-test('only the configured main wrapper route gets live text-provider rewriting', async () => {
+test('only the configured main wrapper route gets fixed DeepSeek delegate rewriting', async () => {
   let registeredAdapter
   let seen
   const llm = {
     registerAdapter(_providers, adapter) {
       registeredAdapter = adapter
       return () => {}
+    },
+    registration() {
+      return undefined
     },
     async *stream(options) {
       seen = options
