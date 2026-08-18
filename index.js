@@ -2908,6 +2908,8 @@ export function apply(ctx, config = {}) {
     attachmentMaxEntries: 256,
   })
   const imageMemory = visionState.descriptionFacade
+  // #208 follow-up complete: session-visible paths use scoped memory; only
+  // session-less adapter boundaries use the ambiguity-safe facade.
   const timeoutMs = () => {
     const value = current().timeoutMs
     return Number.isFinite(value) && value > 0 ? value : 120000
@@ -4584,12 +4586,30 @@ export function apply(ctx, config = {}) {
   const lookupAttachment = (session, id) => {
     let hit = visionState.lookupAttachment(session, id)
     if (hit !== undefined) return hit
-    // Cache eviction is a performance event, never a correctness event: the
-    // durable session log remains authoritative and can repopulate the ref.
+    // Cache eviction is a performance event, never a correctness event. First
+    // consume any newly appended log entries; if the requested ref was older
+    // than the bounded working set, perform a target-only recovery from the
+    // durable session log instead of rebuilding an unbounded index.
     if (session !== undefined) {
       scanSessionEventLog(session)
       hit = visionState.lookupAttachment(session, id)
       if (hit !== undefined) return hit
+      let events
+      try {
+        events = session.events
+      } catch {
+        events = undefined
+      }
+      if (Array.isArray(events) && events.length > 0) {
+        const wanted = String(id)
+        const recovered = collectEventAttachmentRefs(events).find(
+          (ref) => ref && String(ref.attachmentId) === wanted,
+        )
+        if (recovered !== undefined) {
+          visionState.recordAttachments(session, [recovered])
+          return recovered
+        }
+      }
     }
     return undefined
   }
@@ -4737,6 +4757,10 @@ export function apply(ctx, config = {}) {
     if (decision && decision.kind === 'reject') return decision
     const session = payload.agent && payload.agent.session
     if (!session) return decision
+    // #208: every pre-step read/write is scoped to the durable conversation
+    // owner. The global compatibility facade is reserved for adapter stream
+    // boundaries where DSH does not expose a Session object.
+    const sessionImageMemory = visionState.memoryForSession(session)
     // Bind the turn-scoped failure memory for this session+turn: tool calls
     // later in the same turn resolve to the same scope, so an all-backends
     // verdict can short-circuit repeat calls without network attempts.
@@ -4887,7 +4911,7 @@ export function apply(ctx, config = {}) {
           try {
             const instantMap = await buildInstantLocalMap(ctx, messages, localProviders, {
               style: instantLocalStyle(),
-              memory: imageMemory,
+              memory: sessionImageMemory,
               timeoutMs: timeoutMs(),
               downscaleMaxPixels: instantLocalMaxPixels(),
             })
@@ -4948,7 +4972,7 @@ export function apply(ctx, config = {}) {
           const adapterHandlesImages = stealthActive || wrapperRegistered
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
-              ? rewriteHistoryImages(messages, imageMemory).messages
+              ? rewriteHistoryImages(messages, sessionImageMemory).messages
               : messages
           return {
             ...decision,
@@ -4960,7 +4984,7 @@ export function apply(ctx, config = {}) {
       // route, rewrite uploaded image blocks into attachment markers so the
       // text-only model can still query them via vision_describe.
       if (rewriteEnabled() && !routingEnabled() && !stealthActive && !wrapperRegistered) {
-        const rewrittenHistory = rewriteHistoryImages(messages, imageMemory).messages
+        const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
         return {
           ...decision,
           messages: bootstrapReminder ? [...rewrittenHistory, bootstrapReminder] : rewrittenHistory,
@@ -4977,7 +5001,7 @@ export function apply(ctx, config = {}) {
     // Current-turn images are left untouched above so the vision pass runs.
     if (!hasImage && rewriteEnabled()) {
       const base = messages
-      const cleaned = rewriteHistoryImages(base, imageMemory)
+      const cleaned = rewriteHistoryImages(base, sessionImageMemory)
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
           ...decision,
@@ -5632,7 +5656,8 @@ ctx.logger?.info(
         for (const item of Array.isArray(args.paths) ? args.paths : []) {
           if (isAttachmentIdInput(item)) ids.add(String(item).trim())
         }
-        for (const id of ids) imageMemory.set(id, memory)
+        const scopedMemory = session ? visionState.memoryForSession(session) : imageMemory
+        for (const id of ids) scopedMemory.set(id, memory)
         return JSON.stringify({
           ok: true,
           phase: 'structured-bootstrap',
