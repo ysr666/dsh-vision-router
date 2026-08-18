@@ -8,6 +8,13 @@ def replace_once(text, old, new, label):
     return text.replace(old, new, 1)
 
 
+def replace_exact(text, old, new, expected, label):
+    count = text.count(old)
+    if count != expected:
+        raise RuntimeError(f'{label}: expected exactly {expected} matches, found {count}')
+    return text.replace(old, new)
+
+
 # Cache keys are intentionally opaque hashes now. Test the semantic contract,
 # not the old plaintext serialization format.
 path = Path('tests/core.test.js')
@@ -57,31 +64,20 @@ anchor = "} from '../lib/update-check.js'\n\n"
 helper = """} from '../lib/update-check.js'\n\nfunction jsonResponse(value, status = 200) {\n  return new Response(JSON.stringify(value), {\n    status,\n    headers: { 'content-type': 'application/json' },\n  })\n}\n\n"""
 text = replace_once(text, anchor, helper, 'update-check jsonResponse helper')
 
-text = replace_once(
-    text,
-    '''      return {
+registry_response = '''      return {
         ok: true,
         status: 200,
         async json() {
           return { version: '1.2.0' }
         },
       }
-''',
-    "      return jsonResponse({ version: '1.2.0' })\n",
-    'primary registry response',
-)
-text = replace_once(
+'''
+text = replace_exact(
     text,
-    '''      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { version: '1.2.0' }
-        },
-      }
-''',
+    registry_response,
     "      return jsonResponse({ version: '1.2.0' })\n",
-    'fallback registry response',
+    2,
+    'registry 1.2.0 responses',
 )
 text = replace_once(
     text,
