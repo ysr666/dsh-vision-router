@@ -14,6 +14,8 @@ import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
 import { installWrapperDirectoryAlias } from './lib/wrapper-directory.js'
 import { installAndroidAttachmentCompat } from './lib/android-attachment-compat.js'
+import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalescer.js'
+import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -107,6 +109,17 @@ export function apply(ctx, config = {}) {
   // one-shot, enforces fast/standard/deep quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared turn deadline.
   const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
+  // DSH rc.7 publishes llm/adapters-updated synchronously from inside
+  // registerAdapter(). Coalesce only Vision Router's listener: nested events
+  // mark the topology dirty and the outer pass reruns to a fixed point, so we
+  // neither double-register a twin nor lose a provider added mid-pass.
+  const reconciledCtx = contextWithCoalescedAdapterUpdates(structuredCtx)
+  // index.js historically passes image bytes as `options.input` to the async
+  // execFile API. That option is not fed into child stdin, so Tesseract waits
+  // for data until the OCR slice expires. Materialize only this exact
+  // Tesseract-stdin call to a temporary image file; all other execFile calls
+  // keep their native behavior.
+  installTesseractExecFileCompat(reconciledCtx)
 
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
@@ -127,7 +140,7 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(structuredCtx, runtimeConfig)
+    const result = core.apply(reconciledCtx, runtimeConfig)
     // DSH rc.7's Settings -> Models surface is backed by the configurable
     // provider directory, not by the live adapter registry alone. Publish the
     // main DeepSeek + 自动识图 route as a derived alias of official DeepSeek so
