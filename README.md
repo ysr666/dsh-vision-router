@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.6.1)**
+> 📌 **Announcement (v1.6.2)**
 >
-> **v1.6.1:** Deep-dive guidance after the structured pre-scan — mixed-image branch routing, a vision depth tier (quick/standard/thorough) and configurable guidance copy in the main settings; attachment limits for long screenshots restored (rc6/rc7).
+> **v1.6.2:** Stability release — fixes onboarding, OCR, model synchronization and large-image handling, improving long-session and overall runtime reliability.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -154,7 +154,7 @@ The auto-vision group follows the live DSH model catalog. Adding models or chang
 
 ### 3. Paste or upload the image
 
-After choosing the “+ Auto Vision” group, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
+After choosing the “+ Auto Vision” model group, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
 
 The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
