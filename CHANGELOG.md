@@ -5,8 +5,8 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## v1.6.0
 
-> **v1.5.3 → v1.6.0**：视觉后端显式授权（P0）——仅在 DSH Settings→Models 里配置过的付费视觉模型不再被隐式调用，视觉工具只允许调用 Vision Router 中明确选择的 provider/model；「DeepSeek + 自动识图」身份钉死官方 DeepSeek。同时带来 macOS 路径与全页截图修复、rc.7 Models 目录恢复、安装诊断归属修正、设置引导滚动性能、Android/Termux 附件兼容，并消除每个用户安装时都会出现的 pnpm peer 依赖告警。
-> **v1.5.3 → v1.6.0**: explicit vision-backend authorization (P0) — paid visual models merely configured under DSH Settings→Models are no longer callable implicitly; vision tools may only call exact provider/model pairs selected in Vision Router, and the DeepSeek + 自动识图 identity is pinned to official DeepSeek. Plus macOS path and full-page screenshot fixes, rc.7 Models-directory recovery, corrected install diagnostics, settings-guide scroll performance, Android/Termux attachment compatibility, and removal of the pnpm peer-dependency warning shown on every user install.
+> **v1.5.3 → v1.6.0**：视觉后端显式授权（P0）——仅在 DSH Settings→Models 里配置过的付费视觉模型不再被隐式调用，视觉工具只允许调用 Vision Router 中明确选择的 provider/model；「DeepSeek + 自动识图」身份钉死官方 DeepSeek。同时带来 macOS 路径与全页截图修复、rc.7 Models 目录恢复、安装诊断归属修正、设置引导滚动性能、Android/Termux 附件兼容，消除每个用户安装时都会出现的 pnpm peer 依赖告警，并把一键更新彻底改成「从正在运行的插件真实路径反查所属 profile、不确定就拒绝」的安全模型。
+> **v1.5.3 → v1.6.0**: explicit vision-backend authorization (P0) — paid visual models merely configured under DSH Settings→Models are no longer callable implicitly; vision tools may only call exact provider/model pairs selected in Vision Router, and the DeepSeek + 自动识图 identity is pinned to official DeepSeek. Plus macOS path and full-page screenshot fixes, rc.7 Models-directory recovery, corrected install diagnostics, settings-guide scroll performance, Android/Termux attachment compatibility, removal of the pnpm peer-dependency warning shown on every user install, and a fail-closed one-click updater that infers the owning profile from the running plugin's real path instead of defaulting to web.
 
 ### 授权与安全 / Authorization & security
 
@@ -35,6 +35,11 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **profile 级 pnpm 失败归属修正（#186 / #188）**：新增 profile 级安装失败诊断（识别 profile 中其他已装插件的 build 阻断）；修正归属逻辑——`Ignored build scripts` 里只有已声明的 profile 依赖（或已知共存视觉插件）才被当作可移除 blocker，Vision Router 自身的传递依赖（sharp）不再被误判为「别人的插件」并给出有害的 `remove sharp` 建议，而是指向 `pnpm approve-builds`/`onlyBuiltDependencies`；裸名忽略列表与 scoped 包均能解析，失败行匹配改用词边界。
 - **Corrected profile-level pnpm failure attribution (#186 / #188)**: new profile-level install-failure diagnostics that surface build blockers from other installed profile plugins; attribution now only treats declared profile dependencies (or known coexisting vision plugins) as removable blockers — Vision Router's own transitive dependencies (sharp) are no longer misattributed with a harmful `remove sharp` suggestion and instead point at `pnpm approve-builds`/`onlyBuiltDependencies`; bare-name ignore lists and scoped packages parse correctly, and failure-line matching uses word boundaries.
 
+### 更新与自更新 / Update & self-update
+
+- **一键更新绑定到正在运行的 profile（根治，#195）**：彻底删除了「没有 `--profile` 就默认 web」的逻辑——Web、Desktop、任意自定义 profile 一律从当前正在运行的 dsh-vision-router 的真实安装路径（pnpm 软链接/link/workspace 场景经 `realpath` 解析）反查它属于哪个 profile；即便显式传了 `--profile` 也要验证该 profile 确实拥有正在运行的插件。0 个匹配、多个 profile 同时匹配、路径不明、profile 冲突时一律禁止一键更新、绝不猜测；更新真正执行前再做第二次归属校验，防止启动后目录被重链/替换；更新完成后只检查同一个已验证 profile 中的实际安装版本，杜绝「web 更新成功、desktop 其实没动」的假成功。共享 linked 包等极端场景结果也是「拒绝自动更新」，不会更新错 profile。
+- **One-click update bound to the active profile (root-cause fix, #195)**: the "default to web without --profile" behavior is gone — Web, Desktop and any custom profile now infer the owning profile from the real install path of the running plugin (symlink/link/workspace installs resolved via `realpath`); even an explicit `--profile` must be verified to own the running plugin. Zero matches, multiple matches, unknown paths and profile conflicts all refuse the one-click update instead of guessing; a second ownership check runs immediately before mutation, and the post-update version check only inspects the same verified profile — no more "web updated but desktop was untouched" false success. Extreme shared-linked-package layouts also refuse auto-update rather than risk mutating the wrong profile.
+
 ### 平台 / Platform
 
 - **DSH rc.7 Models 目录行恢复（#185）**：deepseek-vision 以官方 DeepSeek 的派生别名发布进 rc.7 的 configurable-provider 目录，重装后 Settings→Models 恢复「DeepSeek + 自动识图」分组行；旧运行时特性检测自动降级。
@@ -50,8 +55,8 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 验证 / Validation
 
-- 全量套件 **424 tests pass**（本批新增 56 个回归测试），Node 22 与 Node 24 均通过。发布由 tag 触发的 immutable Release workflow 再次执行完整验证，并经 npm Trusted Publishing（OIDC）发布。
-- Full suite passes **424 tests** (56 new regression tests in this batch) on Node 22 and Node 24. The immutable tag-based Release workflow re-runs full verification and publishes through npm Trusted Publishing (OIDC).
+- 全量套件 **429 项测试全部通过（0 失败、0 跳过）**，Node 22 与 Node 24 均通过，Windows / macOS / Linux 宿主安装测试全绿。发布由 tag 触发的 immutable Release workflow 再次执行完整验证，并经 npm Trusted Publishing（OIDC）发布。
+- Full suite passes **429 tests (0 failures, 0 skips)** on Node 22 and Node 24, with green Windows / macOS / Linux host-install jobs. The immutable tag-based Release workflow re-runs full verification and publishes through npm Trusted Publishing (OIDC).
 
 ## v1.5.3
 

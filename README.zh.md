@@ -31,7 +31,7 @@
 > [!WARNING]
 > 📌 **公告（v1.6.0）**
 >
-> **v1.6.0：视觉后端显式授权——仅在 DSH 里配置过的付费视觉模型不再可被调用，「DeepSeek + 自动识图」身份钉死官方 DeepSeek；全页截图、rc.7 模型目录、安装诊断、设置引导性能与 Android/Termux 附件全部修复。**
+> **v1.6.0：视觉后端显式授权——仅在 DSH 里配置过的付费视觉模型不再可被调用，「DeepSeek + 自动识图」身份钉死官方 DeepSeek；一键更新改为从运行中插件真实路径反查所属 profile、不确定即拒绝；全页截图、rc.7 模型目录、安装诊断、设置引导性能与 Android/Termux 附件全部修复。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
