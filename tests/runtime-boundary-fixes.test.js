@@ -8,6 +8,10 @@ import {
   createTesseractExecFileCompat,
   installTesseractExecFileCompat,
 } from '../lib/tesseract-exec-compat.js'
+import {
+  installLocalMutationRouteBoundary,
+  isLoopbackAddress,
+} from '../lib/web-capability-boundary.js'
 
 test('coalescing runner reaches a fixed point across synchronous re-entry and mid-pass topology changes', () => {
   const providers = new Set(['alpha'])
@@ -194,4 +198,91 @@ test('tesseract installer unload does not clobber a later process-level execFile
   seenArgs = hostCalls[0]
   assert.equal(seenArgs[1][0], 'stdin')
   assert.equal(seenArgs[2].input, pngBytes)
+})
+
+test('loopback transport detection covers IPv4, IPv6 and IPv4-mapped IPv6 only', () => {
+  assert.equal(isLoopbackAddress('127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('127.99.3.4'), true)
+  assert.equal(isLoopbackAddress('::1'), true)
+  assert.equal(isLoopbackAddress('::ffff:127.0.0.1'), true)
+  assert.equal(isLoopbackAddress('192.168.1.8'), false)
+  assert.equal(isLoopbackAddress('::ffff:192.168.1.8'), false)
+  assert.equal(isLoopbackAddress('localhost'), false, 'headers/names are not transport identity')
+})
+
+test('local mutation boundary preserves injected child identity and rejects remote side effects', async () => {
+  let registered
+  const cleanups = []
+  const child = {
+    webServer: {
+      register(route) {
+        registered = route
+        return () => {}
+      },
+    },
+    effect(factory) {
+      const cleanup = factory()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  const ctx = {
+    inject(_dependencies, callback) { return callback(child) },
+    effect(factory) {
+      const cleanup = factory()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  const wrapped = installLocalMutationRouteBoundary(ctx)
+  let seenChild
+  let calls = 0
+  wrapped.inject(['webServer'], (injected) => {
+    seenChild = injected
+    injected.webServer.register({
+      kind: 'exact',
+      path: '/_dsh/vision-router/self-update',
+      handler(_req, res) {
+        calls += 1
+        res.writeHead(200)
+        res.end('ok')
+      },
+    })
+  })
+  assert.equal(seenChild, child, 'Cordis injection identity must remain exact')
+
+  const response = () => ({
+    status: undefined,
+    body: '',
+    writeHead(status) { this.status = status },
+    end(body) { this.body = String(body ?? '') },
+  })
+
+  let res = response()
+  await registered.handler(
+    { method: 'POST', socket: { remoteAddress: '192.168.1.55' }, headers: {} },
+    res,
+  )
+  assert.equal(res.status, 403)
+  assert.equal(calls, 0)
+
+  res = response()
+  await registered.handler(
+    { method: 'POST', socket: { remoteAddress: '::ffff:127.0.0.1' }, headers: {} },
+    res,
+  )
+  assert.equal(res.status, 200)
+  assert.equal(calls, 1)
+
+  // The boundary is capability+method specific: a read-only request is left to
+  // the real handler instead of making the whole plugin unusable remotely.
+  res = response()
+  await registered.handler(
+    { method: 'GET', socket: { remoteAddress: '10.0.0.8' }, headers: {} },
+    res,
+  )
+  assert.equal(res.status, 200)
+  assert.equal(calls, 2)
+
+  for (const cleanup of cleanups.reverse()) cleanup()
 })
