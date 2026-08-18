@@ -2910,6 +2910,7 @@ export function apply(ctx, config = {}) {
   const imageMemory = visionState.descriptionFacade
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
+  // #208 large-tool follow-up complete: crop is bounded and presentation is compressed passthrough.
   const timeoutMs = () => {
     const value = current().timeoutMs
     return Number.isFinite(value) && value > 0 ? value : 120000
@@ -6144,7 +6145,8 @@ ctx.logger?.info(
       name: 'vision_crop',
       description:
         'Crop a pixel region (x1,y1,x2,y2 in ORIGINAL pixels) out of an image and write the ' +
-        'result as a PNG artifact for a closer look.',
+        'result as a PNG artifact for a closer look. Very large regions are rendered as a bounded ' +
+        'preview; crop a smaller ORIGINAL-pixel region when tiny details must be preserved.',
       parameters: {
         type: 'object',
         properties: {
@@ -6169,10 +6171,27 @@ ctx.logger?.info(
           throw new Error(`vision_crop: region exceeds image bounds (${width}x${height})`)
         }
         const sharp = await loadSharp()
-        const cropped = await sharp(bytes, { failOn: 'none' })
-          .extract({ left: box.x1, top: box.y1, width: box.x2 - box.x1, height: box.y2 - box.y1 })
-          .png()
-          .toBuffer()
+        const sourceWidth = box.x2 - box.x1
+        const sourceHeight = box.y2 - box.y1
+        const preview = scaledDimensions(sourceWidth, sourceHeight, 4_000_000)
+        const releaseCrop = await defaultImageResourceGovernor.acquire(
+          estimateImageOperationBytes('crop', sourceWidth, sourceHeight),
+        )
+        let cropped
+        try {
+          let pipeline = sharp(bytes, { failOn: 'none' }).extract({
+            left: box.x1,
+            top: box.y1,
+            width: sourceWidth,
+            height: sourceHeight,
+          })
+          if (preview.scale !== 1) {
+            pipeline = pipeline.resize(preview.width, preview.height, { fit: 'fill' })
+          }
+          cropped = await pipeline.png().toBuffer()
+        } finally {
+          releaseCrop()
+        }
         const target = await saveArtifact(
           exec,
           `${artifactStem(args.image, `crop-${box.x1}-${box.y1}-${box.x2}-${box.y2}`)}.png`,
@@ -6181,9 +6200,19 @@ ctx.logger?.info(
         const meta = await sharp(cropped).metadata()
         return JSON.stringify({
           path: target,
-          width: meta.width ?? box.x2 - box.x1,
-          height: meta.height ?? box.y2 - box.y1,
+          width: meta.width ?? preview.width,
+          height: meta.height ?? preview.height,
           bytes: cropped.length,
+          ...(preview.scale !== 1
+            ? {
+                preview: true,
+                sourceRegion: box,
+                sourceWidth,
+                sourceHeight,
+                scale: preview.scale,
+                advice: 'This was a bounded preview of a large crop. Use vision_crop again with a smaller ORIGINAL-pixel region for tiny details.',
+              }
+            : {}),
         })
       },
     })
@@ -6210,17 +6239,22 @@ ctx.logger?.info(
         if (attachments === undefined) {
           throw new Error('vision_present: the durable attachment service is not available in this deployment')
         }
-        const { bytes } = await readImageBytes(exec, args.image)
-        const sharp = await loadSharp()
-        const png = await sharp(bytes, { failOn: 'none' }).png().toBuffer()
+        const { bytes, mediaType } = await readImageBytes(exec, args.image)
+        // Publishing is not a pixel-processing operation. Preserve the already
+        // admitted compressed image instead of decoding/re-encoding a 100MP
+        // JPEG/WebP/GIF into a potentially enormous PNG just to show it.
         const label =
           typeof args.label === 'string' && args.label.trim() !== '' ? args.label.trim().slice(0, 200) : 'image'
-        const target = await saveArtifact(exec, `${artifactStem(args.image, 'present')}.png`, png)
+        const extension =
+          mediaType === 'image/jpeg' ? 'jpg' :
+          mediaType === 'image/webp' ? 'webp' :
+          mediaType === 'image/gif' ? 'gif' : 'png'
+        const target = await saveArtifact(exec, `${artifactStem(args.image, 'present')}.${extension}`, bytes)
         let attachment
         try {
           attachment = await attachments.saveImage({
-            data: png,
-            mediaType: 'image/png',
+            data: bytes,
+            mediaType,
             name: label,
           })
         } catch (error) {
