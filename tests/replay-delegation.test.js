@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   contextWithDelegatedReplay,
+  MAX_LIVE_EFFORT_MEMORY,
   rebindDelegatedReplayOptions,
   rebindDelegatedReplaySources,
 } from '../lib/replay-delegation.js'
@@ -253,6 +254,23 @@ test('requests without sessionId do not inherit provider/model reasoning state',
   await harness.drain({ sessionId: undefined, reasoningEffort: 'high' })
   await harness.drain({ sessionId: undefined })
   assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), ['high', undefined])
+})
+
+test('reasoning effort memory is capped so long-running processes cannot grow it without bound', async () => {
+  const harness = liveWrapperHarness()
+  const total = MAX_LIVE_EFFORT_MEMORY + 10
+  for (let i = 0; i < total; i++) {
+    await harness.drain({ sessionId: `session-${i}`, reasoningEffort: 'high' })
+  }
+  // The first sessions fell out of the cap; their memory is gone, so a
+  // follow-up without an explicit pick must not re-inject anything.
+  await harness.drain({ sessionId: 'session-0' })
+  const evicted = harness.calls[harness.calls.length - 1]
+  assert.equal(evicted.reasoningEffort, undefined)
+  // A session still inside the cap keeps remembering its pick.
+  await harness.drain({ sessionId: `session-${total - 1}` })
+  const hot = harness.calls[harness.calls.length - 1]
+  assert.equal(hot.reasoningEffort, 'high')
 })
 
 test('delegated replay context cache expires with the Cordis plugin fiber', () => {
