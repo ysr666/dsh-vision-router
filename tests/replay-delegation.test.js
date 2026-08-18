@@ -125,3 +125,131 @@ test('contextWithDelegatedReplay scopes rebinding to the context view and preser
   assert.equal(ctx.llm, llm)
   assert.equal(contextWithDelegatedReplay(ctx), wrapped)
 })
+
+test('main auto-vision wrapper follows live textProvider changes and isolates reasoning effort per delegate', async () => {
+  let textProvider = 'deepseek-official'
+  let registeredAdapter
+  const calls = []
+  const settings = {
+    get(namespace) {
+      if (namespace !== 'vision-router') return undefined
+      return {
+        wrapperRoute: 'deepseek-vision',
+        textProvider: { provider: textProvider },
+      }
+    },
+  }
+  const llm = {
+    registerAdapter(providers, adapter) {
+      assert.deepEqual(providers, ['deepseek-vision'])
+      registeredAdapter = adapter
+      return () => {}
+    },
+    async *stream(options) {
+      calls.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const ctx = {
+    llm,
+    get(name) {
+      return name === 'settings' ? settings : undefined
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx)
+
+  // Emulate the current core wrapper's two stale captures: its delegate
+  // provider is fixed at apply time, and its own reasoning memory is keyed by
+  // that stale provider. The entry-layer boundary must correct both at the
+  // one nested llm.stream dispatch.
+  let staleReasoningEffort
+  const coreWrapper = {
+    async *stream(options) {
+      const explicit =
+        typeof options.reasoningEffort === 'string' && options.reasoningEffort !== ''
+          ? options.reasoningEffort
+          : undefined
+      if (explicit !== undefined) staleReasoningEffort = explicit
+      const effort = explicit ?? staleReasoningEffort
+      yield* wrapped.llm.stream({
+        ...options,
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+        provider: 'deepseek-official',
+      })
+    },
+  }
+  wrapped.llm.registerAdapter(['deepseek-vision'], coreWrapper)
+
+  const drain = async (options) => {
+    for await (const _chunk of registeredAdapter.stream({
+      model: 'deepseek-v4-pro',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      ...options,
+    })) {
+      // drain
+    }
+  }
+
+  await drain({ reasoningEffort: 'high' })
+  textProvider = 'relay-openai'
+  await drain({})
+  await drain({ reasoningEffort: 'low' })
+  textProvider = 'deepseek-official'
+  await drain({})
+
+  assert.deepEqual(calls.map((call) => call.provider), [
+    'deepseek-official',
+    'relay-openai',
+    'relay-openai',
+    'deepseek-official',
+  ])
+  assert.deepEqual(calls.map((call) => call.reasoningEffort), [
+    'high',
+    undefined,
+    'low',
+    'high',
+  ])
+})
+
+test('only the configured main wrapper route gets live text-provider rewriting', async () => {
+  let registeredAdapter
+  let seen
+  const llm = {
+    registerAdapter(_providers, adapter) {
+      registeredAdapter = adapter
+      return () => {}
+    },
+    async *stream(options) {
+      seen = options
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const ctx = {
+    llm,
+    get(name) {
+      if (name !== 'settings') return undefined
+      return {
+        get(namespace) {
+          return namespace === 'vision-router'
+            ? { wrapperRoute: 'custom-wrapper', textProvider: { provider: 'relay-openai' } }
+            : undefined
+        },
+      }
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx, { wrapperRoute: 'custom-wrapper' })
+  const ordinaryAdapter = {
+    async *stream(options) {
+      yield* wrapped.llm.stream({ ...options, provider: 'original-provider' })
+    },
+  }
+  wrapped.llm.registerAdapter(['some-provider-vision'], ordinaryAdapter)
+
+  for await (const _chunk of registeredAdapter.stream({
+    model: 'm',
+    messages: [{ role: 'user', content: [] }],
+  })) {
+    // drain
+  }
+  assert.equal(seen.provider, 'original-provider')
+})
