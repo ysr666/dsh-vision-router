@@ -15,6 +15,10 @@ import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
 import { installWrapperDirectoryAlias } from './lib/wrapper-directory.js'
 import { installAndroidAttachmentCompat } from './lib/android-attachment-compat.js'
 import {
+  installStructuredFlowHardening,
+  normalizeGuidanceOverrides,
+} from './lib/structured-flow-hardening.js'
+import {
   attachmentContextForContract,
   installRc7SettingsCompatibility,
   isRc7ContractRuntime,
@@ -26,6 +30,10 @@ import {
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
+// Structured 1+x now also has a turn-level wall-clock budget. Individual
+// visionTaskTimeoutMs budgets remain unchanged; this one prevents a deep turn
+// from multiplying them into several minutes of serial waiting.
+core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(90000))
 
 export * from './index.js'
 export {
@@ -73,6 +81,11 @@ export function apply(ctx, config = {}) {
   const runtimeConfig = {
     ...bootConfig,
     progressiveTools: hardenedConfig.progressiveTools === true,
+    guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
+    visionTurnBudgetMs:
+      Number.isFinite(Number(bootConfig.visionTurnBudgetMs))
+        ? Number(bootConfig.visionTurnBudgetMs)
+        : 90000,
   }
   const rc7 = isRc7ContractRuntime(stabilizedCtx)
   const ownershipCtx = rc7 ? protectRc7ProviderOwnership(stabilizedCtx) : stabilizedCtx
@@ -89,6 +102,11 @@ export function apply(ctx, config = {}) {
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
   })
+  // Final structured-flow guard sits closest to core.apply so it sees the
+  // actual tool registrations and pre-step listener. It makes bootstrap
+  // one-shot, enforces fast/standard/deep quotas, tracks mixed branches,
+  // rejects empty/non-evidence results, and applies one shared turn deadline.
+  const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
 
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
@@ -109,7 +127,7 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(attachmentCompatCtx, runtimeConfig)
+    const result = core.apply(structuredCtx, runtimeConfig)
     // DSH rc.7's Settings -> Models surface is backed by the configurable
     // provider directory, not by the live adapter registry alone. Publish the
     // main DeepSeek + 自动识图 route as a derived alias of official DeepSeek so
