@@ -6,7 +6,10 @@ import path from 'node:path'
 import {
   detectDshSelfUpdatePlan,
   findDshPackageRoot,
+  findPluginPackageRoot,
+  inferProfileFromPluginPath,
   profileFromArgv,
+  profileOwnsPlugin,
   runDshPluginUpdate,
   updateTookEffect,
 } from '../lib/self-update.js'
@@ -38,14 +41,19 @@ function profileFixture({
     path.join(profileDir, 'package.json'),
     JSON.stringify({ dependencies: { 'dsh-vision-router': dependencySpec } }),
   )
+  let pluginRoot
+  let moduleEntry
   if (withInstalledManifest) {
-    mkdirSync(path.join(profileDir, 'node_modules', 'dsh-vision-router'), { recursive: true })
+    pluginRoot = path.join(profileDir, 'node_modules', 'dsh-vision-router')
+    mkdirSync(path.join(pluginRoot, 'lib'), { recursive: true })
     writeFileSync(
-      path.join(profileDir, 'node_modules', 'dsh-vision-router', 'package.json'),
+      path.join(pluginRoot, 'package.json'),
       JSON.stringify({ name: 'dsh-vision-router', version: installedVersion }),
     )
+    moduleEntry = path.join(pluginRoot, 'lib', 'self-update.js')
+    writeFileSync(moduleEntry, '// fixture\n')
   }
-  return { dshHome }
+  return { dshHome, profileDir, pluginRoot, moduleEntry }
 }
 
 function planFor(cliEntry, profile = 'web') {
@@ -60,8 +68,8 @@ function planFor(cliEntry, profile = 'web') {
 
 const exitZero = async (_file, _args, _options) => ({ stdout: 'downloaded 0 / added 0\n', stderr: '' })
 
-test('profileFromArgv honors explicit profiles and defaults Web hosts to web', () => {
-  assert.equal(profileFromArgv(['node', 'dsh', 'web']), 'web')
+test('profileFromArgv honors only explicit profiles and never guesses web', () => {
+  assert.equal(profileFromArgv(['node', 'dsh', 'web']), undefined)
   assert.equal(profileFromArgv(['node', 'dsh', '--profile', 'custom-web', 'web']), 'custom-web')
   assert.equal(profileFromArgv(['node', 'dsh', '--profile=lab.1', 'web']), 'lab.1')
   assert.equal(profileFromArgv(['node', 'dsh', '--profile', '../bad', 'web']), undefined)
@@ -76,31 +84,126 @@ test('findDshPackageRoot only trusts an owning @deepseek-ai/dsh manifest', () =>
   assert.equal(findDshPackageRoot(unrelated.cliEntry), undefined)
 })
 
-test('detectDshSelfUpdatePlan reuses a verified packaged DSH CLI', () => {
+test('plugin package ownership identifies Desktop and custom profiles without argv hints', () => {
+  const desktop = profileFixture({ profile: 'desktop' })
+  assert.equal(findPluginPackageRoot(desktop.moduleEntry)?.packageRoot, realpathSync(desktop.pluginRoot))
+  assert.equal(
+    profileOwnsPlugin({
+      dshHome: desktop.dshHome,
+      profile: 'desktop',
+      pluginRoot: desktop.pluginRoot,
+    }),
+    true,
+  )
+  assert.deepEqual(
+    inferProfileFromPluginPath({ dshHome: desktop.dshHome, moduleEntry: desktop.moduleEntry }),
+    {
+      ok: true,
+      profile: 'desktop',
+      pluginRoot: realpathSync(desktop.pluginRoot),
+      pluginVersion: '1.4.0',
+      source: 'plugin-path',
+    },
+  )
+})
+
+test('detectDshSelfUpdatePlan infers the active Desktop profile instead of defaulting to web', () => {
   const { root, cliEntry } = fixture()
+  const desktop = profileFixture({ profile: 'desktop' })
   const plan = detectDshSelfUpdatePlan({
     argv: ['/usr/bin/node', cliEntry, 'web'],
     execPath: '/usr/bin/node',
+    dshHome: desktop.dshHome,
+    moduleEntry: desktop.moduleEntry,
   })
   assert.equal(plan.available, true)
   assert.equal(plan.method, 'current-dsh-cli')
   assert.equal(plan.cliEntry, realpathSync(cliEntry))
   assert.equal(plan.packageRoot, realpathSync(root))
-  assert.equal(plan.profile, 'web')
+  assert.equal(plan.profile, 'desktop')
+  assert.equal(plan.profileSource, 'plugin-path')
+  assert.equal(plan.pluginRoot, realpathSync(desktop.pluginRoot))
   assert.equal(plan.dshVersion, '0.1.0-rc.6')
 })
 
-test('detectDshSelfUpdatePlan refuses unverified or loader-dependent CLI entries', () => {
+test('detectDshSelfUpdatePlan accepts an explicit profile only when it owns this plugin', () => {
+  const { cliEntry } = fixture()
+  const custom = profileFixture({ profile: 'lab.1' })
+  const plan = detectDshSelfUpdatePlan({
+    argv: ['/usr/bin/node', cliEntry, '--profile=lab.1', 'web'],
+    execPath: '/usr/bin/node',
+    dshHome: custom.dshHome,
+    moduleEntry: custom.moduleEntry,
+  })
+  assert.equal(plan.available, true)
+  assert.equal(plan.profile, 'lab.1')
+  assert.equal(plan.profileSource, 'argv+plugin-path')
+
+  const mismatch = detectDshSelfUpdatePlan({
+    argv: ['/usr/bin/node', cliEntry, '--profile', 'web', 'web'],
+    execPath: '/usr/bin/node',
+    dshHome: custom.dshHome,
+    moduleEntry: custom.moduleEntry,
+  })
+  assert.equal(mismatch.available, false)
+  assert.equal(mismatch.reason, 'profile-plugin-mismatch')
+  assert.equal(mismatch.profile, 'web')
+  assert.equal(mismatch.detectedProfile, 'lab.1')
+})
+
+test('detectDshSelfUpdatePlan fails closed when profile ownership cannot be proven', () => {
+  const { cliEntry } = fixture()
+  const active = profileFixture({ profile: 'desktop' })
+  const otherHome = profileFixture({ profile: 'web' })
+  const plan = detectDshSelfUpdatePlan({
+    argv: ['/usr/bin/node', cliEntry, 'web'],
+    execPath: '/usr/bin/node',
+    dshHome: otherHome.dshHome,
+    moduleEntry: active.moduleEntry,
+  })
+  assert.equal(plan.available, false)
+  assert.equal(plan.reason, 'profile-not-owned')
+  // The settings UI will render a non-executable placeholder instead of a
+  // dangerously guessed `--profile web` command.
+  assert.equal(plan.profile, '<profile>')
+})
+
+test('detectDshSelfUpdatePlan preserves verified profiles on other safety failures', () => {
   const unrelated = fixture({ packageName: 'not-dsh' })
+  const active = profileFixture({ profile: 'desktop' })
   assert.deepEqual(
-    detectDshSelfUpdatePlan({ argv: ['node', unrelated.cliEntry, 'web'], execPath: 'node' }),
-    { available: false, reason: 'unverified-dsh-cli' },
+    detectDshSelfUpdatePlan({
+      argv: ['node', unrelated.cliEntry, 'web'],
+      execPath: 'node',
+      dshHome: active.dshHome,
+      moduleEntry: active.moduleEntry,
+    }),
+    { available: false, reason: 'unverified-dsh-cli', profile: 'desktop' },
   )
 
   const source = fixture({ entry: 'src/cli.ts' })
   assert.deepEqual(
-    detectDshSelfUpdatePlan({ argv: ['node', source.cliEntry, 'web'], execPath: 'node' }),
-    { available: false, reason: 'source-cli-needs-loader', profile: 'web' },
+    detectDshSelfUpdatePlan({
+      argv: ['node', source.cliEntry, 'web'],
+      execPath: 'node',
+      dshHome: active.dshHome,
+      moduleEntry: active.moduleEntry,
+    }),
+    { available: false, reason: 'source-cli-needs-loader', profile: 'desktop' },
+  )
+})
+
+test('detectDshSelfUpdatePlan rejects an invalid explicit profile instead of falling back', () => {
+  const { cliEntry } = fixture()
+  const active = profileFixture({ profile: 'desktop' })
+  assert.deepEqual(
+    detectDshSelfUpdatePlan({
+      argv: ['node', cliEntry, '--profile', '../web', 'web'],
+      execPath: 'node',
+      dshHome: active.dshHome,
+      moduleEntry: active.moduleEntry,
+    }),
+    { available: false, reason: 'profile-unresolved', profile: '<profile>' },
   )
 })
 
@@ -143,9 +246,35 @@ test('runDshPluginUpdate installs the confirmed target explicitly and verifies i
   assert.equal(invocation.options.windowsHide, true)
   assert.equal(invocation.options.env.TEST_ENV, '1')
   assert.equal(result.ok, true)
+  assert.equal(result.profile, 'custom-web')
   assert.equal(result.installedVersion, '1.4.0')
   assert.equal(result.verified, true)
   assert.equal(result.restartRequired, true)
+})
+
+test('runDshPluginUpdate re-checks profile ownership immediately before mutation', async () => {
+  const { cliEntry } = fixture()
+  const active = profileFixture({ profile: 'desktop', installedVersion: '1.4.0' })
+  let invoked = false
+  await assert.rejects(
+    () =>
+      runDshPluginUpdate(
+        {
+          ...planFor(cliEntry, 'desktop'),
+          pluginRoot: path.join(active.dshHome, 'not-the-running-plugin'),
+        },
+        {
+          dshHome: active.dshHome,
+          targetVersion: '1.4.0',
+          execFileImpl: async () => {
+            invoked = true
+            return { stdout: 'should not run', stderr: '' }
+          },
+        },
+      ),
+    /no longer owns the running dsh-vision-router package/,
+  )
+  assert.equal(invoked, false)
 })
 
 test('runDshPluginUpdate keeps update semantics without a target and verifies the move', async () => {
