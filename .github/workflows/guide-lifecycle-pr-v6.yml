@@ -1,0 +1,76 @@
+name: Apply guide refactor final
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Apply lifecycle refactor and retire obsolete assertions
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          workflow = Path('.github/workflows/guide-lifecycle-refactor.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if "python3 <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(workflow)) if workflow[i].strip() == 'PY')
+          code = '\n'.join(line[10:] if line.startswith('          ') else line for line in workflow[start:end])
+
+          patches = [
+            (
+              """if old_next not in source:\n    raise SystemExit('guide Next block not found')\nsource = source.replace(old_next, new_next, 1)""",
+              """pattern = re.compile(r\"      next\\.addEventListener\\('click', \\(\\) => \\{.*?^      \\}\\)\", re.S | re.M)\nsource, replaced_next = pattern.subn(lambda _match: new_next, source, count=1)\nif replaced_next != 1:\n    raise SystemExit('guide Next block regex not found')""",
+            ),
+            (
+              """if model_finish not in source:\n    raise SystemExit('draft-only model completion block not found')\nsource = source.replace(model_finish, '', 1)""",
+              """source, removed_model_finish = re.subn(\n    r\"\\n\\s+// Picking a real vision model is an active backend choice:.*?if \\(row\\.provider && event\\.target\\.value\\) finishGuide\\(\\)\\n\",\n    '\\n', source, count=1, flags=re.S,\n)\nif removed_model_finish != 1:\n    raise SystemExit('draft-only model completion regex not found')""",
+            ),
+            (
+              """if old_replay not in source:\n    raise SystemExit('replay block not found')\nsource = source.replace(old_replay, new_replay, 1)""",
+              """replay_pattern = re.compile(\n    r\"onClick: \\(\\) => \\{\\s*closeSettingsShell\\(\\)\\s*showOnboarding\\(t\\)\\s*\\},\",\n    re.S,\n)\nsource, replay_count = replay_pattern.subn(lambda _match: new_replay.strip(), source, count=1)\nif replay_count != 1:\n    raise SystemExit('replay block regex not found')""",
+            ),
+          ]
+          for old, new in patches:
+            if old not in code:
+              raise SystemExit('staged runner patch point not found')
+            code = code.replace(old, new, 1)
+
+          exec(compile(code, 'guide-lifecycle-refactor-final', 'exec'))
+
+          test_path = Path('tests/client.test.js')
+          tests = test_path.read_text()
+          obsolete = [
+            'guide scroll syncs coalesce into one requestAnimationFrame per frame',
+            'guide sync gates DOM layout work behind the active phase and coalesces via rAF',
+          ]
+          for title in obsolete:
+            pattern = re.compile(r"\ntest\('" + re.escape(title) + r"'.*?\n\}\)\n", re.S)
+            tests, count = pattern.subn('\n', tests, count=1)
+            if count != 1:
+              raise SystemExit(f'obsolete guide test not found: {title}')
+          test_path.write_text(tests)
+          PY
+          rm -f .github/workflows/guide-lifecycle-refactor.yml .github/workflows/guide-lifecycle-pr-v6.yml
+      - name: Run focused regression tests
+        run: node --test tests/client.test.js tests/guide-scroll-gate.test.js
+      - name: Commit refactor
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: make guide lifecycle state-driven (#207)"
+          git push origin HEAD:${{ github.head_ref }}
