@@ -4,7 +4,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
-import { createTesseractExecFileCompat } from '../lib/tesseract-exec-compat.js'
+import {
+  createTesseractExecFileCompat,
+  installTesseractExecFileCompat,
+} from '../lib/tesseract-exec-compat.js'
 
 test('coalescing runner reaches a fixed point across synchronous re-entry and mid-pass topology changes', () => {
   const providers = new Set(['alpha'])
@@ -47,6 +50,33 @@ test('coalescing runner reaches a fixed point across synchronous re-entry and mi
   assert.equal(registrations.get('alpha'), 1)
   assert.equal(registrations.get('beta'), 1)
   assert.equal(maxDepth, 1, 'nested notifications must be coalesced, never recursively executed')
+})
+
+test('coalescing runner stops a permanently dirty synchronous event cycle', () => {
+  let passes = 0
+  let reported
+  let reconcile
+  reconcile = createCoalescingRunner(
+    () => {
+      passes += 1
+      // Pathological host/plugin semantics: every reconciliation publishes the
+      // same event again even though no stable fixed point is reachable.
+      reconcile()
+    },
+    {
+      maxPasses: 5,
+      onNonConverging(info) { reported = info },
+    },
+  )
+
+  reconcile()
+
+  assert.equal(passes, 5)
+  assert.equal(reported.passes, 5)
+  // A later real event gets a fresh bounded attempt instead of leaving the
+  // runner permanently wedged in a `running` state.
+  reconcile()
+  assert.equal(passes, 10)
 })
 
 const pngBytes = Buffer.from([
@@ -125,4 +155,43 @@ test('non-tesseract execFile calls are delegated unchanged', () => {
   assert.deepEqual(calls[0][1], ['-NoProfile'])
   assert.equal(calls[0][2], options)
   assert.equal(calls[0][3], callback)
+})
+
+test('tesseract installer unload does not clobber a later process-level execFile patch', () => {
+  const hostCalls = []
+  const hostExecFile = function (...args) {
+    hostCalls.push(args)
+    return { pid: 4 }
+  }
+  const fakeChildProcess = { execFile: hostExecFile }
+  let syncCalls = 0
+  const dispose = installTesseractExecFileCompat(undefined, {
+    childProcessModule: fakeChildProcess,
+    syncBuiltinESMExports() { syncCalls += 1 },
+  })
+  const visionPatch = fakeChildProcess.execFile
+  assert.notEqual(visionPatch, hostExecFile)
+  assert.equal(visionPatch.active, true)
+
+  // A later plugin captures Vision Router then becomes the top-level patch.
+  const laterPatch = function (...args) {
+    return visionPatch.apply(this, args)
+  }
+  fakeChildProcess.execFile = laterPatch
+
+  dispose()
+
+  assert.equal(fakeChildProcess.execFile, laterPatch, 'later patch must remain authoritative')
+  assert.equal(visionPatch.active, false, 'captured Vision Router wrapper becomes inert')
+  assert.ok(syncCalls >= 2, 'ESM binding is resynced to the current authoritative patch')
+
+  // If the later plugin eventually restores what it captured, the old Vision
+  // Router layer must delegate directly instead of re-enabling OCR materialize.
+  let seenArgs
+  const callback = () => {}
+  hostCalls.length = 0
+  visionPatch('tesseract', ['stdin', 'stdout'], { input: pngBytes }, callback)
+  seenArgs = hostCalls[0]
+  assert.equal(seenArgs[1][0], 'stdin')
+  assert.equal(seenArgs[2].input, pngBytes)
 })
