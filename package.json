@@ -64,7 +64,7 @@
     "sharp": "^0.35.3"
   },
   "scripts": {
-    "test": "node --test tests/core.test.js tests/capability-advisory.test.js tests/vision-resilience.test.js tests/client.test.js tests/http-compat.test.js tests/catalog-corrections.test.js tests/update-check.test.js tests/self-update.test.js tests/doctor.test.js tests/doctor-cli.test.js tests/bundle-defaults.test.js tests/file-logger.test.js tests/replay-delegation.test.js tests/adversarial-hardening.test.js tests/logging-ui.test.js tests/manifest-dependencies.test.js tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js tests/local-ollama.test.js tests/zero-regression-gate.test.js tests/runtime-e2e.test.js tests/local-vision-stabilizer.test.js tests/local-connection-probe.test.js tests/repetition-guard.test.js tests/guide-scroll-gate.test.js"
+    "test": "node --test tests/core.test.js tests/capability-advisory.test.js tests/vision-resilience.test.js tests/client.test.js tests/http-compat.test.js tests/catalog-corrections.test.js tests/update-check.test.js tests/self-update.test.js tests/doctor.test.js tests/doctor-cli.test.js tests/bundle-defaults.test.js tests/file-logger.test.js tests/replay-delegation.test.js tests/adversarial-hardening.test.js tests/wrapper-directory.test.js tests/logging-ui.test.js tests/manifest-dependencies.test.js tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js tests/local-ollama.test.js tests/zero-regression-gate.test.js tests/runtime-e2e.test.js tests/local-vision-stabilizer.test.js tests/local-connection-probe.test.js tests/repetition-guard.test.js tests/guide-scroll-gate.test.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
