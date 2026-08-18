@@ -35,3 +35,17 @@ test('high-resolution upload admission remains separate from execution budgets',
   assert.match(source, /if \(pixels <= 4_000_000\)/)
   assert.match(source, /compareRgbaStreams\(originalStream, rebuiltStream/)
 })
+
+test('large crop is a bounded preview with an explicit original-coordinate refinement path', () => {
+  assert.match(source, /const sourceWidth = box\.x2 - box\.x1/)
+  assert.match(source, /scaledDimensions\(sourceWidth, sourceHeight, 4_000_000\)/)
+  assert.match(source, /estimateImageOperationBytes\('crop', sourceWidth, sourceHeight\)/)
+  assert.match(source, /sourceRegion: box/)
+  assert.match(source, /Use vision_crop again with a smaller ORIGINAL-pixel region for tiny details/)
+})
+
+test('vision_present passes admitted compressed image bytes through instead of forced PNG re-encoding', () => {
+  assert.match(source, /const \{ bytes, mediaType \} = await readImageBytes\(exec, args\.image\)/)
+  assert.match(source, /data: bytes,\s*mediaType,/s)
+  assert.doesNotMatch(source, /const png = await sharp\(bytes, \{ failOn: 'none' \}\)\.png\(\)\.toBuffer\(\)/)
+})
