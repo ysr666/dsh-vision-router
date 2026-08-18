@@ -1,0 +1,54 @@
+name: Apply guide refactor v4
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Execute staged refactor robustly
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/guide-lifecycle-refactor.yml').read_text().splitlines()
+          start = next(i for i, line in enumerate(workflow) if "python3 <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(workflow)) if workflow[i].strip() == 'PY')
+          code = '\n'.join(line[10:] if line.startswith('          ') else line for line in workflow[start:end])
+
+          brittle_next = """if old_next not in source:\n    raise SystemExit('guide Next block not found')\nsource = source.replace(old_next, new_next, 1)"""
+          robust_next = """pattern = re.compile(r\"      next\\.addEventListener\\('click', \\(\\) => \\{.*?^      \\}\\)\", re.S | re.M)\nsource, replaced_next = pattern.subn(lambda _match: new_next, source, count=1)\nif replaced_next != 1:\n    raise SystemExit('guide Next block regex not found')"""
+          if brittle_next not in code:
+              raise SystemExit('staged Next patch point not found')
+          code = code.replace(brittle_next, robust_next, 1)
+
+          brittle_model = """if model_finish not in source:\n    raise SystemExit('draft-only model completion block not found')\nsource = source.replace(model_finish, '', 1)"""
+          robust_model = """source, removed_model_finish = re.subn(\n    r\"\\n\\s+// Picking a real vision model is an active backend choice:.*?if \\(row\\.provider && event\\.target\\.value\\) finishGuide\\(\\)\\n\",\n    '\\n',\n    source,\n    count=1,\n    flags=re.S,\n)\nif removed_model_finish != 1:\n    raise SystemExit('draft-only model completion regex not found')"""
+          if brittle_model not in code:
+              raise SystemExit('staged model patch point not found')
+          code = code.replace(brittle_model, robust_model, 1)
+
+          exec(compile(code, 'guide-lifecycle-refactor-v4', 'exec'))
+          PY
+          rm -f .github/workflows/guide-lifecycle-pr.yml .github/workflows/guide-lifecycle-pr-v2.yml .github/workflows/guide-lifecycle-pr-v3.yml .github/workflows/guide-lifecycle-pr-v4.yml
+      - name: Run focused regression tests
+        run: node --test tests/client.test.js tests/guide-scroll-gate.test.js
+      - name: Commit refactor
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: make guide lifecycle state-driven (#207)"
+          git push origin HEAD:${{ github.head_ref }}
