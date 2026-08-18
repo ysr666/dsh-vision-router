@@ -1,0 +1,80 @@
+name: Issue 208 staged refactor
+
+on:
+  push:
+    branches:
+      - agent/issue-208-resource-governor
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[issue208-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate new resource primitives before integration
+        run: node --test tests/session-vision-state.test.js tests/image-resource-governor.test.js tests/pixel-diff-stream.test.js
+
+      - name: Configure commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Phase 1 - session-owned vision state
+        run: |
+          node scripts/issue-208-apply.mjs session
+          node --check index.js
+          node --test tests/session-vision-state.test.js tests/core.test.js
+          git add index.js
+          git commit -m "fix: bind vision memory to bounded session state"
+
+      - name: Phase 2 - execution governor and fail-closed preprocessing
+        run: |
+          node scripts/issue-208-apply.mjs governor
+          node --check index.js
+          node --test tests/image-resource-governor.test.js tests/core.test.js
+          git add index.js
+          git commit -m "fix: govern large image preprocessing"
+
+      - name: Phase 3 - bounded exact pixel diff
+        run: |
+          node scripts/issue-208-apply.mjs pixel
+          node --check index.js
+          node --test tests/pixel-diff-stream.test.js tests/core.test.js
+          git add index.js
+          git commit -m "fix: stream large pixel diffs"
+
+      - name: Phase 4 - bounded long-image OCR tiles
+        run: |
+          node scripts/issue-208-apply.mjs tiles
+          node --check index.js
+          node --test tests/image-resource-governor.test.js tests/core.test.js
+          git add index.js
+          git commit -m "fix: tile large screenshot OCR"
+
+      - name: Full regression suite
+        run: pnpm test
+
+      - name: Push staged refactor
+        run: |
+          git commit --allow-empty -m "chore: complete issue 208 staged refactor [issue208-applied]"
+          git push origin HEAD:agent/issue-208-resource-governor
