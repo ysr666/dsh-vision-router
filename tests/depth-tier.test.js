@@ -9,13 +9,13 @@ import {
 } from '../lib/depth-guidance.js'
 
 // 看图深度档位（移植自 dsh-vision PRECISION）：档位定深挖上限，不参与提示词
-// 组合（模板集合，非矩阵）；默认 standard = 现状逐字节不变。
+// 组合（模板集合，非矩阵）；fast/standard/deep 分别硬限 1/2/4 次。
 
-test('depthLimitFor: fast=1, deep=4, standard undefined (no hard cap)', () => {
+test('depthLimitFor: fast=1, standard=2, deep=4', () => {
   assert.equal(depthLimitFor('fast'), 1)
+  assert.equal(depthLimitFor('standard'), 2)
   assert.equal(depthLimitFor('deep'), 4)
-  assert.equal(depthLimitFor('standard'), undefined)
-  assert.equal(depthLimitFor(undefined), undefined)
+  assert.equal(depthLimitFor(undefined), 2)
 })
 
 test('sceneGuidanceFor: known kinds have guidance, general/unknown/mixed release', () => {
@@ -27,6 +27,8 @@ test('sceneGuidanceFor: known kinds have guidance, general/unknown/mixed release
   assert.equal(sceneGuidanceFor('unknown'), '')
   assert.equal(sceneGuidanceFor('mixed'), '')
   assert.equal(sceneGuidanceFor(undefined), '')
+  assert.equal(sceneGuidanceFor('constructor'), '')
+  assert.equal(sceneGuidanceFor('__proto__'), '')
 })
 
 test('contentGuidanceFor: content kinds have guidance, unknown releases', () => {
@@ -81,6 +83,17 @@ test('guidanceOverrides: user copy wins over built-in for scene kinds', () => {
   assert.match(text, /standard/)
 })
 
+test('guidanceOverrides: duplicate kind is deterministic last-wins and bounded', () => {
+  const overrides = [
+    { kind: 'document', text: 'old' },
+    { kind: 'document', text: 'new' + 'x'.repeat(3000) },
+  ]
+  const text = renderDepthGuidance({ visualKind: 'document', depth: 'standard', guidanceOverrides: overrides })
+  assert.match(text, /^new/)
+  assert.doesNotMatch(text, /^old/)
+  assert.ok(text.length < 2300)
+})
+
 test('guidanceOverrides: user copy wins over built-in for content kinds (general)', () => {
   const overrides = [{ kind: 'food', text: '关注菜品摆盘与食材新鲜度。' }]
   const text = renderDepthGuidance({ visualKind: 'general', contentKind: 'food', depth: 'standard', guidanceOverrides: overrides })
@@ -113,13 +126,11 @@ test('index.js integration: visionDepth wired into Config, bootstrap state and t
 
 test('index.js integration: deep quota consumed only after evidence (mixed x depth fix 2)', () => {
   const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
-  // Blocking 2 修复：配额不在 execute 前预扣（失败调用不烧档位配额），
-  // 只在工具真正产出证据（结果不含 ok:false，对象或 JSON 字符串均兼容）
-  // 后才递增并标记完成，模型因此保有"至少一次证据调用"提醒并可重试。
-  assert.equal(index.includes('state.deepCalls = used + 1'), false) // 预扣已移除
+  // 配额不在 execute 前预扣（失败调用不烧档位配额），只在工具真正产出证据后递增。
+  assert.equal(index.includes('state.deepCalls = used + 1'), false)
   assert.equal(index.includes('state.deepCalls = (state.deepCalls || 0) + 1'), true)
-  assert.equal(index.includes('evidenceFailure'), true) // ok:false 判定（对象或 JSON 字符串）
-  assert.equal(index.includes('state.followupCompleted = true'), true) // 仍在，但移到产出证据分支内
+  assert.equal(index.includes('evidenceFailure'), true)
+  assert.equal(index.includes('state.followupCompleted = true'), true)
 })
 
 test('client.js integration: visionDepth select and custom guidance live in the main deep-dive group', () => {
