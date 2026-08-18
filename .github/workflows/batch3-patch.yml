@@ -1,23 +1,26 @@
 name: Batch3 one-shot patch
 
 on:
-  push:
-    branches:
-      - fix/first-principles-adversarial-batch3
+  pull_request:
+    branches: [main]
     paths:
       - 'scripts/apply-batch3-hardening.py'
       - '.github/workflows/batch3-patch.yml'
+      - 'lib/http-body-limit.js'
+      - 'lib/artifact-boundary.js'
 
 permissions:
   contents: write
 
 jobs:
   patch-and-verify:
+    if: ${{ github.event.pull_request.head.ref == 'fix/first-principles-adversarial-batch3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
@@ -46,4 +49,4 @@ jobs:
             exit 0
           fi
           git commit -m "harden third-batch resource boundaries"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
