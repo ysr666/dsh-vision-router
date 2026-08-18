@@ -3606,7 +3606,7 @@ export function apply(ctx, config = {}) {
       }),
     }
   }
-  const syncTwins = () => {
+  const syncTwinsInner = () => {
     const wanted = new Map()
     // Default path: every live non-router provider gets a twin. The source
     // route remains untouched, including native multimodal models; this adds a
@@ -3650,6 +3650,25 @@ export function apply(ctx, config = {}) {
           error && error.message ? error.message : String(error),
         )
       }
+    }
+  }
+  // DSH core 0.1.0-rc.7 (Desktop 2.0.1): ctx.llm.registerAdapter() commits and
+  // dispatches llm/adapters-updated SYNCHRONOUSLY, so the listener below
+  // re-enters this sync while the outer pass has not yet recorded the twin in
+  // twinHandles; the nested pass then re-registers the same `*-vision` route
+  // and the strict registry throws DUPLICATE_ADAPTER ("twin route ...
+  // registration failed" warnings at every boot). The flag collapses nested
+  // passes: the outer pass already covers its snapshot, and any topology
+  // change that happens mid-pass fires its own llm/adapters-updated after
+  // this pass completes.
+  let syncingTwins = false
+  const syncTwins = () => {
+    if (syncingTwins) return
+    syncingTwins = true
+    try {
+      syncTwinsInner()
+    } finally {
+      syncingTwins = false
     }
   }
   syncTwins()
