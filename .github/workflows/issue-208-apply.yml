@@ -18,11 +18,11 @@ jobs:
           ref: agent/issue-208-resource-governor
           fetch-depth: 0
 
-      - name: Check whether follow-up already landed
+      - name: Check whether large-tool follow-up already landed
         id: guard
         shell: bash
         run: |
-          if grep -q "#208 follow-up complete" index.js; then
+          if grep -q "#208 large-tool follow-up complete" index.js; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -43,12 +43,12 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Apply scoped-state follow-up
+      - name: Apply remaining large-image guards
         if: steps.guard.outputs.skip != 'true'
         run: |
-          node scripts/issue-208-followup.mjs
+          node scripts/issue-208-large-tools.mjs
           node --check index.js
-          node --test tests/session-vision-state.test.js tests/session-vision-state-integration.test.js tests/core.test.js
+          node --test tests/session-vision-state-integration.test.js tests/image-resource-governor.test.js tests/core.test.js
 
       - name: Full regression suite
         if: steps.guard.outputs.skip != 'true'
@@ -60,5 +60,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.js
-          git commit -m "fix: isolate and recover session vision state"
+          git commit -m "fix: bound crop and preserve compressed presentation"
           git push origin HEAD:agent/issue-208-resource-governor
