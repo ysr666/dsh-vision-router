@@ -276,6 +276,157 @@ test('main wrapper metadata stays DeepSeek even when textProvider is a Kimi/rela
   assert.equal(adapter.providerRetryPolicy('deepseek-vision'), 'deepseek-retry')
 })
 
+test('main wrapper listModels restores only config-driven composite rows while pinning DeepSeek mirrors', async () => {
+  let routingEnabled = false
+  let registeredAdapter
+  const registeredTools = new Map()
+  const networkCalls = []
+  const registrations = new Map()
+  registrations.set('deepseek-official', {
+    retryPolicy: 'deepseek-retry',
+    adapter: {
+      async listModels(provider) {
+        return [
+          { provider, id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text'] },
+          { provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text'] },
+        ]
+      },
+    },
+  })
+  registrations.set('kimi-coding', {
+    adapter: {
+      async listModels(provider) {
+        return [{ provider, id: 'k3', name: 'Kimi K3', inputModalities: ['text', 'image'] }]
+      },
+    },
+  })
+  registrations.set('xiaomi-token-plan-cn', {
+    adapter: {
+      async listModels(provider) {
+        return [{ provider, id: 'xiaomi-vision', name: 'Xiaomi Vision', inputModalities: ['text', 'image'] }]
+      },
+    },
+  })
+  const settings = {
+    get(namespace) {
+      if (namespace !== 'vision-router') return undefined
+      return {
+        wrapperRoute: 'deepseek-vision',
+        routing: routingEnabled,
+        textProvider: { provider: 'relay-openai' },
+        providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }],
+      }
+    },
+  }
+  const llm = {
+    registration(provider) {
+      return registrations.get(provider)
+    },
+    listProviders() {
+      // Host-wide DSH catalog: Kimi/Xiaomi are configured in DSH but are NOT
+      // authorized in Vision Router.
+      return [
+        { id: 'kimi-coding', name: 'Kimi' },
+        { id: 'xiaomi-token-plan-cn', name: 'Xiaomi' },
+        { id: 'zhipu', name: 'Zhipu' },
+      ]
+    },
+    registerAdapter(_providers, adapter) {
+      registeredAdapter = adapter
+      return () => {}
+    },
+    async *stream(options) {
+      networkCalls.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const tools = {
+    register(definition) {
+      registeredTools.set(definition.name, definition)
+      return () => {}
+    },
+  }
+  const ctx = {
+    llm,
+    tools,
+    get(name) {
+      return name === 'settings' ? settings : undefined
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx)
+
+  // Core-like wrapper. Like the real core it mirrors only the two DeepSeek
+  // ids from the (stale) relay catalog, and appends config-driven composite
+  // rows only when whole-turn routing is on. It deliberately leaks a stray
+  // non-composite Kimi row to prove the boundary drops it.
+  const coreWrapper = {
+    async listModels() {
+      const rows = [
+        { provider: 'deepseek-vision', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text', 'image'] },
+        { provider: 'deepseek-vision', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text', 'image'] },
+      ]
+      if (routingEnabled) {
+        rows.push(
+          {
+            provider: 'deepseek-vision',
+            id: 'zhipu/glm-4.6v-flash',
+            name: 'zhipu/glm-4.6v-flash（视觉）',
+            inputModalities: ['text', 'image'],
+          },
+          { provider: 'deepseek-vision', id: 'k3', name: 'Kimi K3', inputModalities: ['text', 'image'] },
+        )
+      }
+      return rows
+    },
+    async resolveModel(_provider, model) {
+      return { provider: 'deepseek-vision', id: model, name: model, inputModalities: ['text', 'image'] }
+    },
+    providerRetryPolicy() {
+      return 'deepseek-retry'
+    },
+    async *stream(options) {
+      yield* wrapped.llm.stream(options)
+    },
+  }
+  wrapped.llm.registerAdapter(['deepseek-vision'], coreWrapper)
+
+  // routing=false: pinned official DeepSeek only, no composite noise.
+  const listedOff = await registeredAdapter.listModels('deepseek-vision')
+  assert.deepEqual(listedOff.map((model) => model.id), ['deepseek-v4-pro', 'deepseek-v4-flash'])
+  assert.ok(listedOff.every((model) => model.provider === 'deepseek-vision'))
+  assert.ok(listedOff.every((model) => model.inputModalities.includes('image')))
+
+  // routing=true: the authorized composite row joins the pinned mirrors; the
+  // stray non-composite Kimi row and any DSH-only provider never appear.
+  routingEnabled = true
+  const listedOn = await registeredAdapter.listModels('deepseek-vision')
+  const idsOn = listedOn.map((model) => model.id)
+  assert.ok(idsOn.includes('deepseek-v4-pro') && idsOn.includes('deepseek-v4-flash'))
+  assert.ok(idsOn.includes('zhipu/glm-4.6v-flash'), 'authorized composite row kept')
+  assert.ok(!idsOn.includes('k3'), 'stray non-composite row dropped')
+  assert.ok(!idsOn.some((id) => id.includes('kimi') || id.includes('xiaomi')), 'DSH-only providers never listed')
+
+  // P0 surface stays intact during a vision tool call: host-wide discovery is
+  // hidden, and an unauthorized DSH system model cannot produce a network call.
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      assert.deepEqual(wrapped.llm.listProviders(), [], 'host catalog hidden inside a vision tool')
+      await assert.rejects(
+        (async () => {
+          for await (const _chunk of wrapped.llm.stream({ provider: 'kimi-coding', model: 'k3', messages: [] })) {
+            // drain
+          }
+        })(),
+        (error) => error && error.code === 'NO_ADAPTER',
+        'unauthorized system model must be denied at the stream gate',
+      )
+    },
+  })
+  await registeredTools.get('vision_describe').execute()
+  assert.equal(networkCalls.length, 0, 'no network call for DSH-only providers')
+})
+
 test('hidden native DeepSeek route owns the main wrapper regardless of textProvider', async () => {
   const harness = liveWrapperHarness({ initialProvider: 'relay-openai', native: true })
   await harness.drain({ reasoningEffort: 'high' })
