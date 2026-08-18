@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { doctorProfiles } from '../lib/doctor.js'
 import {
   classifyProfilePnpmFailure,
   inspectCoexistingVisionPlugins,
@@ -76,6 +77,23 @@ test('doctor advisory detects coexisting vision plugins without calling them con
   ])
 })
 
+test('doctorProfiles exposes the advisory without marking an otherwise healthy profile unhealthy', () => {
+  const { dshHome } = dshHomeFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      'dsh-vision-proxy': '0.2.5',
+    },
+    installed: {
+      'dsh-vision-proxy': '0.2.5',
+    },
+  })
+
+  const report = doctorProfiles({ dshHome, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.equal(report.profiles[0].coexistingVisionPlugins.length, 1)
+  assert.equal(report.profiles[0].coexistingVisionPlugins[0].name, 'dsh-vision-proxy')
+})
+
 test('classifies ignored build from an existing plugin as a profile-level blocker', () => {
   const profileDir = profileFixture({
     dependencies: {
@@ -124,7 +142,20 @@ test('does not blame another package when the ignored build is Vision Router its
   assert.equal(classifyProfilePnpmFailure(error, { profileDir }), undefined)
 })
 
-test('can attribute another declared profile dependency even without ignored-build syntax', () => {
+test('does not blame an existing dependency merely because pnpm progress output names it', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      'some-existing-plugin': '2.0.0',
+    },
+  })
+  const error = new Error('network request failed')
+  error.stderr = 'Progress: resolved some-existing-plugin@2.0.0\nERR_PNPM_FETCH_500 registry unavailable'
+
+  assert.equal(classifyProfilePnpmFailure(error, { profileDir, profile: 'web' }), undefined)
+})
+
+test('can attribute another declared profile dependency when its own failure line is explicit', () => {
   const profileDir = profileFixture({
     dependencies: {
       'dsh-vision-router': '1.5.3',
