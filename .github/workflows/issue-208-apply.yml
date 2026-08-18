@@ -18,11 +18,11 @@ jobs:
           ref: agent/issue-208-resource-governor
           fetch-depth: 0
 
-      - name: Check whether large-tool follow-up already landed
+      - name: Check whether final polish already landed
         id: guard
         shell: bash
         run: |
-          if grep -q "#208 large-tool follow-up complete" index.js; then
+          if grep -q "SessionVisionStateStore 管理" index.js; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -43,22 +43,18 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Apply remaining large-image guards
+      - name: Apply final runtime polish
         if: steps.guard.outputs.skip != 'true'
         run: |
-          node scripts/issue-208-large-tools.mjs
+          node scripts/issue-208-polish.mjs
           node --check index.js
-          node --test tests/session-vision-state-integration.test.js tests/image-resource-governor.test.js tests/core.test.js
+          pnpm test
 
-      - name: Full regression suite
-        if: steps.guard.outputs.skip != 'true'
-        run: pnpm test
-
-      - name: Commit and push follow-up
+      - name: Commit and push polish
         if: steps.guard.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.js
-          git commit -m "fix: bound crop and preserve compressed presentation"
+          git commit -m "chore: align vision memory comments with bounded policy"
           git push origin HEAD:agent/issue-208-resource-governor
