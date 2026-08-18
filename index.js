@@ -2366,14 +2366,10 @@ export function localDescribePrompt(style) {
   )
 }
 
-// 跨轮图片描述记忆（attachmentId -> description）：写入跨轮缓存，同图
-// 后续轮次直接命中、不重复识别。保持 main 的无界语义（见 imageMemorySet）。
+// 跨轮图片描述记忆（attachmentId -> description）：调用方传入当前会话的
+// bounded Map view；同图后续轮次直接命中、不重复识别。这个 helper 本身不再
+// 决定生命周期策略，owner / LRU / text budget 统一由 SessionVisionStateStore 管理。
 export function imageMemorySet(map, id, description) {
-  // Keep main's unbounded memory semantics: a global FIFO cap here would make
-  // long sessions of users who never enabled local vision forget earlier
-  // images (a behavior change outside local-vision scope). If memory bounding
-  // is ever wanted, it must be its own explicit policy, not a side effect of
-  // the local backend merge.
   return map.set(id, description)
 }
 
