@@ -3,6 +3,31 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.6.1
+
+> **v1.6.0 → v1.6.1**：新增结构化预识别后的深挖引导（混合图分路识别、看图深度档位 fast/standard/deep、收敛分类、可配置引导文案）；恢复被 #198 误删的附件放宽（超长截图/大图过宿主准入，rc6/rc7 双侧 schema 均有效）；深度档位与自定义引导移到主设置区并配用户友好文案。
+> **v1.6.0 → v1.6.1**: adds deep-dive guidance after the structured pre-scan (mixed-image branch routing, a vision depth tier fast/standard/deep, convergent classification, configurable guidance copy); restores the attachment limit widening #198 had over-cautiously removed (long screenshots / large images pass host admission — valid on both rc6 and rc7); and moves the depth tier + custom guidance into the main settings area with user-friendly copy.
+
+### 识图引导 / Vision guidance
+
+- **1+x 深挖引导（#178，感谢 shaoqiuyuavailable）**：结构化预识别后按场景/内容注入深挖引导——混合图（visual_kind=mixed）拆分为 ≤2 个分支分别引导识别方式（避免漏判/错判另一半内容，成本封顶）；bootstrap schema 新增 `content_kind`（人物/动物/植物/食物/交通工具/机器/建筑/物品/场景/表情包）与 `mixed_of`（混合媒介枚举）收敛分类字段（枚举校验 + 缺失回退，老格式输出照常解析）；看图深度档位 fast（最多再细看 1 次）/ standard（1-2 次，默认，与之前行为一致）/ deep（2-4 次），配额只在工具实际产出证据后递增、失败调用不烧额度；档位与混合分支在 fast 下保持一致（退化为单主分支）；默认配置零回归。
+- **1+x deep-dive guidance (#178, thanks to shaoqiuyuavailable)**: after the structured pre-scan the model now receives scene/content-aware guidance — mixed images (visual_kind=mixed) split into at most 2 guided branches so the other half is never missed (cost capped at 2 extra calls); the bootstrap schema gains `content_kind` (person/animal/plant/food/vehicle/machine/architecture/object/scene/meme) and `mixed_of` (mixed media enum) convergent-classification fields (enum-validated with missing-value fallback — old-format output still parses); a vision depth tier fast (at most 1 more look) / standard (1-2 looks, default, identical to previous behavior) / deep (2-4 looks) caps extra looks, with quota incremented only after a tool actually produces evidence (failed calls do not burn quota); fast tier and mixed branches stay consistent (degrades to a single main branch); default config is zero-regression.
+
+### 设置体验 / Settings UX
+
+- **深度档位与自定义引导移到主设置区（#203）**：两个控件原本埋在「高级设置 → 性能」折叠区导致找不到；现在跟随「结构化预识别」开关显示在主设置区（新分组「识图深度（可选）」），并把「引导文案覆盖」重写为白话「自定义识图引导（可选）」——带具体示例、档位选项改为「快速/标准/细致」、占位符与按钮全部口语化，中英文同步。
+- **Depth tier and custom guidance moved into the main settings (#203)**: both controls were buried inside the collapsed "高级设置 → 性能" group and could not be found; they now appear in the main settings area gated on the "结构化预识别" toggle (new group "识图深度（可选）"), and the jargon "引导文案覆盖" is rewritten in plain language as "自定义识图引导（可选）" with a concrete example, friendlier tier labels (快速/标准/细致), and clearer placeholders/buttons in both languages.
+
+### 平台 / Platform
+
+- **恢复附件放宽（#201）**：#198 移除的 `attachment-local` 补丁被核实为过度谨慎——dsh-base 0.1.0-rc.6/rc.7 两侧 bundle 都保留 `- id: attachment-local` 行，attachment-local 两侧 schema 都有可选 `maxImageBytes?/maxImagePixels?` 字段。恢复 5MB/4000 万像素 → 20MB/1 亿像素的宿主准入放宽：超长聊天记录截图（vision_long_screenshot_ocr 主场景）与大尺寸设计稿/扫描图可正常过审，rc6/rc7 均有效、不破坏 host-neutral。
+- **Attachment widening restored (#201)**: #198's removal of the `attachment-local` patch was verified over-cautious — dsh-base 0.1.0-rc.6/rc.7 both keep the `- id: attachment-local` bundle row, and attachment-local on both runtimes declares optional `maxImageBytes?/maxImagePixels?`. The 5MB/40MP → 20MB/100MP host admission widening is back: long chat-log screenshots (the main vision_long_screenshot_ocr workload) and large design files/scan images pass again, on both rc6 and rc7, without breaking host-neutrality.
+
+### 验证 / Validation
+
+- 全量套件 **476 项测试全部通过（0 失败、0 跳过）**，Node 22 与 Node 24 均通过，Windows / macOS / Linux 宿主安装测试全绿。发布由 tag 触发的 immutable Release workflow 再次执行完整验证，并经 npm Trusted Publishing（OIDC）发布。
+- Full suite passes **476 tests (0 failures, 0 skips)** on Node 22 and Node 24, with green Windows / macOS / Linux host-install jobs. The immutable tag-based Release workflow re-runs full verification and publishes through npm Trusted Publishing (OIDC).
+
 ## v1.6.0
 
 > **v1.5.3 → v1.6.0**：视觉后端显式授权（P0）——仅在 DSH Settings→Models 里配置过的付费视觉模型不再被隐式调用，视觉工具只允许调用 Vision Router 中明确选择的 provider/model；「DeepSeek + 自动识图」身份钉死官方 DeepSeek。同时带来 macOS 路径与全页截图修复、rc.7 Models 目录恢复、安装诊断归属修正、设置引导滚动性能、Android/Termux 附件兼容，消除每个用户安装时都会出现的 pnpm peer 依赖告警，并把一键更新彻底改成「从正在运行的插件真实路径反查所属 profile、不确定就拒绝」的安全模型。

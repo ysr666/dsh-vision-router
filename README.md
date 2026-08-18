@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.6.0)**
+> 📌 **Announcement (v1.6.1)**
 >
-> **v1.6.0:** Explicit vision-backend authorization — paid visual models merely configured in DSH are no longer callable; the DeepSeek + 自动识图 identity is pinned to official DeepSeek; the one-click updater now infers the owning profile and refuses on ambiguity; full-page screenshots, rc.7 Models directory, install diagnostics, guide-scroll performance and Android/Termux attachments all fixed.
+> **v1.6.1:** Deep-dive guidance after the structured pre-scan — mixed-image branch routing, a vision depth tier (quick/standard/thorough) and configurable guidance copy in the main settings; attachment limits for long screenshots restored (rc6/rc7).
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

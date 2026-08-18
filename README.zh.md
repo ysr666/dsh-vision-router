@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.6.0）**
+> 📌 **公告（v1.6.1）**
 >
-> **v1.6.0：视觉后端显式授权——仅在 DSH 里配置过的付费视觉模型不再可被调用，「DeepSeek + 自动识图」身份钉死官方 DeepSeek；一键更新改为从运行中插件真实路径反查所属 profile、不确定即拒绝；全页截图、rc.7 模型目录、安装诊断、设置引导性能与 Android/Termux 附件全部修复。**
+> **v1.6.1：结构化预识别后的深挖引导——混合图分路识别、看图深度档位（快速/标准/细致）、可自定义识图引导（移到主设置区）；恢复超长截图的附件准入放宽（rc6/rc7 均有效）。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
