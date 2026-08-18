@@ -7,10 +7,12 @@ import { pathToFileURL } from 'node:url'
 import {
   createSecureHtmlScreenshotExecute,
   fullPageHeightOf,
+  HtmlScreenshotGovernor,
   htmlRequestAllowed,
   installAdversarialHardening,
   normalizeArtifactsDir,
   sameOriginRequest,
+  wakePageForFullCaptureBounded,
 } from '../lib/adversarial-hardening.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 
@@ -60,7 +62,7 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
     let requestHandler
     let offline = false
     let closed = false
-    const wakeCalls = []
+    const scrollTargets = []
     const page = {
       async setViewport(value) { assert.deepEqual(value, { width: 1200, height: 720 }) },
       async setOfflineMode(value) { offline = value },
@@ -70,7 +72,12 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
         requestHandler = handler
       },
       async goto(url) { assert.equal(url, pathToFileURL(source).href) },
-      async evaluate() { return 1500 },
+      async evaluate(fn, arg) {
+        const sourceText = fn.toString()
+        if (sourceText.includes('scrollHeight')) return 1500
+        if (sourceText.includes('scrollTo') && arg !== undefined) scrollTargets.push(arg)
+        return undefined
+      },
       async screenshot(options) {
         assert.deepEqual(options, { type: 'png', fullPage: true })
         return Buffer.from('png-bytes')
@@ -95,7 +102,6 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
       toRealPath(_fs, value) { return value },
       chromiumCandidates() { return ['/fake/chrome'] },
       artifactStemOf() { return 'page-safe-shot' },
-      wakePageForFullCapture: async (p, h) => { wakeCalls.push([p, h]) },
     }
     const execute = createSecureHtmlScreenshotExecute(
       ctx,
@@ -105,6 +111,7 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
         importPuppeteer: async () => fakePuppeteer,
         existsSync(value) { return value === source || value === '/fake/chrome' },
         realpathSync(value) { return value },
+        sleep: async () => {},
       },
     )
     const result = JSON.parse(await execute(
@@ -117,11 +124,7 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
     assert.equal(typeof requestHandler, 'function')
     assert.equal(closed, true)
     assert.equal(result.pageHeight, 1500)
-    // The full-page wake must run before the height is measured, or
-    // scroll-triggered content below the fold is silently missing.
-    assert.equal(wakeCalls.length, 1)
-    assert.equal(wakeCalls[0][0], page)
-    assert.equal(wakeCalls[0][1], 720)
+    assert.deepEqual(scrollTargets, [0, 720, 1440])
     assert.equal(path.relative(workspace, result.path).startsWith('..'), false)
     assert.equal((await readFile(result.path)).toString(), 'png-bytes')
   } finally {
@@ -142,18 +145,86 @@ test('fullPageHeightOf falls back to the viewport height for empty pages', async
   assert.equal(await fullPageHeightOf(page), 800)
 })
 
+test('full-page wake rejects an oversized static page before the first scroll', async () => {
+  let scrolls = 0
+  const page = {
+    async evaluate(fn, arg) {
+      const sourceText = fn.toString()
+      if (sourceText.includes('scrollHeight')) return 100_000
+      if (sourceText.includes('scrollTo') && arg !== undefined) scrolls += 1
+      return undefined
+    },
+  }
+  await assert.rejects(
+    wakePageForFullCaptureBounded(page, 720, 1200, { sleep: async () => {} }),
+    /pixel safety limit/,
+  )
+  assert.equal(scrolls, 0, 'pixel admission must happen before expensive wake scrolling')
+})
+
+test('full-page wake bounds dynamically growing pages even below the initial pixel ceiling', async () => {
+  let height = 1000
+  let scrolls = 0
+  const page = {
+    async evaluate(fn, arg) {
+      const sourceText = fn.toString()
+      if (sourceText.includes('scrollHeight')) return height
+      if (sourceText.includes('scrollTo') && arg !== undefined) {
+        scrolls += 1
+        height += 720
+      }
+      return undefined
+    },
+  }
+  await assert.rejects(
+    wakePageForFullCaptureBounded(page, 720, 320, {
+      sleep: async () => {},
+      now: () => 0,
+      maxSteps: 3,
+      maxWakeMs: 15_000,
+    }),
+    /3-step/,
+  )
+  assert.equal(scrolls, 3)
+})
+
+test('HTML screenshot governor caps active browser slots and drains FIFO', async () => {
+  const governor = new HtmlScreenshotGovernor({ maxConcurrent: 2 })
+  const releaseA = await governor.acquire()
+  const releaseB = await governor.acquire()
+  assert.deepEqual(governor.stats(), { maxConcurrent: 2, active: 2, queued: 0 })
+
+  let thirdGranted = false
+  const third = governor.acquire().then((release) => {
+    thirdGranted = true
+    return release
+  })
+  await Promise.resolve()
+  assert.equal(thirdGranted, false)
+  assert.equal(governor.stats().queued, 1)
+
+  releaseA()
+  const releaseC = await third
+  assert.equal(thirdGranted, true)
+  assert.equal(governor.stats().active, 2)
+  releaseB()
+  releaseC()
+  assert.equal(governor.stats().active, 0)
+})
+
 test('non-fullPage capture skips the scroll wake', async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), 'vision-html-nofull-'))
   try {
     const source = path.join(workspace, 'page.html')
     await writeFile(source, '<html><body>Hello</body></html>')
-    const wakeCalls = []
+    let evaluateCalls = 0
     const page = {
       async setViewport() {},
       async setOfflineMode() {},
       async setRequestInterception(value) { assert.equal(value, true) },
       on() {},
       async goto(url) { assert.equal(url, pathToFileURL(source).href) },
+      async evaluate() { evaluateCalls += 1 },
       async screenshot(options) {
         assert.deepEqual(options, { type: 'png' })
         return Buffer.from('png-bytes')
@@ -177,7 +248,6 @@ test('non-fullPage capture skips the scroll wake', async () => {
       toRealPath(_fs, value) { return value },
       chromiumCandidates() { return ['/fake/chrome'] },
       artifactStemOf() { return 'page-safe-shot' },
-      wakePageForFullCapture: async (p, h) => { wakeCalls.push([p, h]) },
     }
     const execute = createSecureHtmlScreenshotExecute(
       ctx,
@@ -193,7 +263,7 @@ test('non-fullPage capture skips the scroll wake', async () => {
       { source },
       { agent: { session: { header: { cwd: workspace } } } },
     ))
-    assert.equal(wakeCalls.length, 0)
+    assert.equal(evaluateCalls, 0)
     assert.equal(result.pageHeight, undefined)
   } finally {
     await rm(workspace, { recursive: true, force: true })
