@@ -38,4 +38,4 @@ jobs:
         env:
           STRESS_IMAGE_WIDTH: '10000'
           STRESS_IMAGE_HEIGHT: '10000'
-          STRESS_MAX_DELTA_MIB: '1024'
+          STRESS_MAX_DELTA_MIB: '256'
