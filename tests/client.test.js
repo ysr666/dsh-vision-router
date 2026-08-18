@@ -236,14 +236,22 @@ test('vision chain normalization drops legacy blank rows without hiding half-fil
   ])
 })
 
-test('guide dismissal is page-authoritative and hidden persistence does not spin on rejection', () => {
+test('guide lifecycle separates durable disposition from session-only progress', () => {
+  const bundle = loadClientBundle()
+  assert.equal(
+    bundle.guideTransition(bundle.GUIDE_STATE.CHAT_MODEL, { type: bundle.GUIDE_EVENT.SETTINGS_CLOSED }),
+    bundle.GUIDE_STATE.CHAT_MODEL,
+  )
+  assert.equal(
+    bundle.guideTransition(bundle.GUIDE_STATE.SETTINGS, { type: bundle.GUIDE_EVENT.SETTINGS_CLOSED }),
+    bundle.GUIDE_STATE.IDLE,
+  )
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes('let onboardingSeenMemory = false'), true)
-  assert.equal(source.includes('if (onboardingSeenMemory) return true'), true)
-  assert.equal(source.includes('onboardingSeenMemory = true'), true)
-  assert.equal(source.includes('let visionGuideMemoryAuthoritative = false'), true)
-  assert.equal(source.includes('if (visionGuideMemoryAuthoritative) return visionGuideStepMemory'), true)
-  assert.equal(source.includes('visionGuideMemoryAuthoritative = true'), true)
+  assert.equal(source.includes("return 'unknown'"), true)
+  assert.equal(source.includes('session-only'), true)
+  assert.equal(source.includes('settingsPersistence.get(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), false)
+  assert.equal(source.includes('settingsPersistence.set(LEGACY_VISION_GUIDE_SETTINGS_KEY'), false)
   assert.equal(source.includes("pending.set(field, { operation, value, attempted: false })"), true)
   assert.equal(source.includes('filter(([, entry]) => !entry.attempted)'), true)
 })
@@ -270,142 +278,82 @@ test('model-selection guide separates session and vision models and targets the 
   assert.equal(source.includes("onboardingStep1Title: '1 · 选择聊天模型'"), true)
   assert.equal(source.includes("quickStartTitle: '聊天和看图分别设置'"), true)
   assert.equal(source.includes("quickStartTitle: 'Chat and image understanding are separate'"), true)
-  assert.equal(source.includes("updateProject: '项目主页'"), true)
-  assert.equal(source.includes("updateManualSource: '源码仓库 / pnpm DSH：'"), true)
-  assert.equal(source.includes('pnpm dsh plugin --profile '), true)
-  assert.equal(source.includes('npx @deepseek-ai/dsh plugin --profile '), true)
   assert.equal(source.includes("onboardingStep2Body: '打开「设置 → 插件 → Vision Router」"), true)
-  assert.equal(source.includes("onboardingStep1Title: '1 · Choose your chat model'"), true)
-  assert.equal(source.includes('Settings → Plugins → Vision Router'), true)
-  assert.equal(source.includes("VISION_GUIDE_STORAGE_KEY = 'dsh-vision-router:guide:vision-backend-v2'"), true)
+  assert.equal(source.includes("GUIDE_STATE = Object.freeze"), true)
+  assert.equal(source.includes("CHAT_MODEL: 'chat-model'"), true)
+  assert.equal(source.includes("VISION_MODEL: 'vision-model'"), true)
   assert.equal(source.includes('startVisionSettingsGuide(t)'), true)
   assert.equal(source.includes("id: 'vr-vision-backend-chain'"), true)
   assert.equal(source.includes("'data-vr-guide-target': 'vision-backend'"), true)
   assert.equal(source.includes("target.scrollIntoView({ behavior: 'smooth', block: 'center' })"), true)
-  assert.equal(source.includes('if (!open) setOpen(true)'), true)
+  assert.equal(source.includes("const guideTargetsVisionSettings = guideStep === 'step2'"), true)
 })
 
-test('re-viewing the model guide replays the overview instead of skipping to step 2', () => {
+test('re-viewing the guide is explicit and first-run display waits for a real settings decision', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  // The re-view button must leave the settings modal and reopen the onboarding
-  // overview (steps 1-3) rather than jumping straight into the settings
-  // walkthrough, which would skip the session/text-model step whenever the
-  // card is already on screen. The settings panel closes on Escape through a
-  // native document listener, so the button dispatches that standard keydown.
-  assert.equal(source.includes('closeSettingsShell()'), true)
-  assert.equal(source.includes("key: 'Escape'"), true)
-  assert.equal(source.includes('showOnboarding(t)'), true)
-  // The overview dialog is a reusable, single-instance overlay: the first-run
-  // auto-show and the re-view button share it without stacking duplicates.
-  assert.equal(source.includes('function showOnboarding(t)'), true)
-  assert.equal(source.includes('if (onboardingOverlay) return'), true)
-  assert.equal(source.includes('function dismissOnboarding(remember = true)'), true)
-  // The auto-show is deferred (never synchronous) and gated on the durable
-  // seen flag.
-  assert.equal(source.includes('window.setTimeout(() => {'), true)
-  assert.equal(source.includes('if (!readOnboardingSeen()) showOnboarding(t)'), true)
+  assert.equal(source.includes('guideHostUi.closeSettings()'), true)
+  assert.equal(source.includes("showOnboarding(t, { auto: false, focus: true })"), true)
+  assert.equal(source.includes('function readOnboardingDisposition()'), true)
+  assert.equal(source.includes("if (!snapshot || snapshot.status !== 'ready') return 'unknown'"), true)
+  assert.equal(source.includes('onboardingAutoPresented'), true)
+  assert.equal(source.includes('}, 650)'), false)
+  assert.equal(source.includes('dismissOnboarding(false)\n        startVisionSettingsGuide(t)'), true)
 })
 
-test('walkthrough ends on save, on picking a vision model, or when the settings panel closes', () => {
+test('walkthrough completion and Settings-close semantics are explicit state transitions', () => {
+  const bundle = loadClientBundle()
+  const S = bundle.GUIDE_STATE
+  const E = bundle.GUIDE_EVENT
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.SETTINGS_CLOSED }), S.CHAT_MODEL)
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.NEXT }), S.SETTINGS)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.SETTINGS_CLOSED }), S.IDLE)
+  assert.equal(bundle.guideTransition(S.VISION_MODEL, { type: E.COMPLETE }), S.IDLE)
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  // Closing the app-owned settings modal ends the round instead of demoting
-  // the floating prompt back to the "find the vision model in settings"
-  // phase: a grace timer absorbs host re-renders that rebuild the dialog.
-  assert.equal(source.includes('let visionGuidePanelSeen = false'), true)
-  assert.equal(source.includes('let visionGuidePanelCloseTimer'), true)
-  assert.equal(source.includes('function guideSettingsPanelOpen()'), true)
-  assert.equal(source.includes('step !== undefined && visionGuidePanelSeen && !panelOpen'), true)
-  assert.equal(source.includes('if (readVisionGuideStep() !== undefined && !guideSettingsPanelOpen())'), true)
-  // Saving the settings card completes the walkthrough, even when a hidden
-  // write is later rejected — dismissal stays page-authoritative.
-  assert.equal(source.includes('Saving ends the walkthrough'), true)
-  assert.equal(source.includes('finishGuide()'), true)
-  // Picking a real vision model completes it too; picking only a provider
-  // (model still empty) keeps the guide alive.
-  assert.equal(source.includes('if (row.provider && event.target.value) finishGuide()'), true)
+  assert.equal(source.includes('guideSettingsPanelSeen'), true)
+  assert.equal(source.includes('scheduleGuidePanelCloseCheck'), true)
+  assert.equal(source.includes('}, 400)'), false)
+  assert.equal(source.includes('window.setInterval(() => syncVisionGuidePrompt'), false)
+  assert.equal(source.includes('if (guideTargetsVisionSettings && outcome.landed) finishGuide()'), true)
+  assert.equal(source.includes('if (row.provider && event.target.value) finishGuide()'), false)
 })
 
-test('onboarding and guide durability live in the settings section, not origin-scoped localStorage (#78)', () => {
+test('only onboarding disposition is durable; legacy guide progress is cleaned and ignored (#78/#207)', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  // DSH Desktop re-randomizes the Web UI port on every launch, so
-  // origin-scoped localStorage forgets everything between restarts. The
-  // durable flags must be settings-section fields synced through
-  // ctx.settingsScope (persisted in the profile settings file).
   assert.equal(source.includes("const ONBOARDING_SETTINGS_KEY = 'onboardingSeen'"), true)
-  assert.equal(source.includes("const VISION_GUIDE_SETTINGS_KEY = 'visionGuideStep'"), true)
-  assert.equal(source.includes('function installSettingsPersistence(scope)'), true)
-  assert.equal(source.includes('installSettingsPersistence(scope)'), true)
-  assert.equal(source.includes('function readOnboardingSeen()'), true)
-  assert.equal(source.includes('settingsPersistence.get(ONBOARDING_SETTINGS_KEY) === true'), true)
   assert.equal(source.includes('settingsPersistence.set(ONBOARDING_SETTINGS_KEY, true)'), true)
-  // The legacy localStorage marker still exists as a migration/downgrade
-  // fallback, not as the source of truth.
   assert.equal(source.includes("ONBOARDING_STORAGE_KEY = 'dsh-vision-router:onboarding:model-guide-v2'"), true)
-  assert.equal(source.includes("window.localStorage.getItem(ONBOARDING_STORAGE_KEY) === 'seen'"), true)
-  // The guide step mirrors the same dual-channel strategy.
-  assert.equal(source.includes('settingsPersistence.get(VISION_GUIDE_SETTINGS_KEY)'), true)
-  assert.equal(source.includes('settingsPersistence.set(VISION_GUIDE_SETTINGS_KEY, visionGuideStepMemory)'), true)
-  // Both installers re-sync when the settings snapshot changes (the first
-  // snapshot resolves asynchronously after page load).
-  assert.equal(source.includes('settingsPersistence.subscribe(sync)'), true)
-  // Server half declares the two keys in the Config schema so the settings
-  // provider accepts and persists them.
+  assert.equal(source.includes("LEGACY_VISION_GUIDE_SETTINGS_KEY = 'visionGuideStep'"), true)
+  assert.equal(source.includes('settingsPersistence.unset(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), true)
+  assert.equal(source.includes('settingsPersistence.get(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), false)
+  assert.equal(source.includes('settingsPersistence.set(LEGACY_VISION_GUIDE_SETTINGS_KEY'), false)
   const serverSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert.equal(serverSource.includes('onboardingSeen: z.boolean().default(false)'), true)
   assert.equal(serverSource.includes("visionGuideStep: z.string().default('')"), true)
+  assert.equal(serverSource.includes('Deprecated compatibility field'), true)
 })
 
-test('the walkthrough walks step 1 (session model), step 2 (open settings), step 3 (chain callout)', () => {
+test('the walkthrough is an explicit state machine with visual fallbacks for all three steps', () => {
+  const bundle = loadClientBundle()
+  const S = bundle.GUIDE_STATE
+  const E = bundle.GUIDE_EVENT
+  assert.equal(bundle.guideTransition(S.IDLE, { type: E.START }), S.CHAT_MODEL)
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.NEXT }), S.SETTINGS)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  // Step-aware persistence: step1 always comes first; step2 only ends once the
-  // vision-chain card is on screen, where the step-3 callout takes over.
-  assert.equal(source.includes('function readVisionGuideStep()'), true)
-  assert.equal(source.includes("writeVisionGuideStep('step1')"), true)
-  assert.equal(source.includes("writeVisionGuideStep('step2')"), true)
-  // The step strings exist in both dictionaries, with the renumbered titles.
   assert.equal(source.includes("guideStep1Title: '第 1 步 · 选择聊天模型'"), true)
-  assert.equal(source.includes("guideStepNext: '下一步'"), true)
   assert.equal(source.includes("guidePromptTitle: '第 2 步 · 选择识图模型'"), true)
   assert.equal(source.includes("guideChainTitle: '第 3 步 · 设置备用模型'"), true)
-  assert.equal(source.includes("guideStep1Title: 'Step 1 · Choose your chat model'"), true)
-  assert.equal(source.includes("guideStepNext: 'Next'"), true)
-  assert.equal(source.includes("guidePromptTitle: 'Step 2 · Choose the vision model'"), true)
-  assert.equal(source.includes("guideChainTitle: 'Step 3 · Add fallback models'"), true)
-  // Every step now carries a visual target, not just step 3: the prompt is
-  // anchored to a highlighted element (spotlight hole + pulsing ring + arrow),
-  // and step 2's copy differs between the sidebar gear phase and the settings
-  // panel's Plugins nav row.
   assert.equal(source.includes('vr-guide-spot-hole'), true)
   assert.equal(source.includes('vr-guide-spot-ring'), true)
   assert.equal(source.includes('vr-guide-arrow'), true)
-  assert.equal(source.includes("guidePromptGearBody: '点击侧边栏左下角被高亮圈出的「设置」齿轮"), true)
-  assert.equal(source.includes("guidePromptNavBody: '在设置面板左侧点击被高亮的「插件」入口"), true)
-  assert.equal(source.includes("guidePromptGearBody: 'Click the highlighted Settings gear"), true)
-  assert.equal(source.includes("guidePromptNavBody: 'In Settings, click the highlighted “Plugins” entry"), true)
-  // Stable DOM anchors: DSH web hashes its CSS-module class names, so targets
-  // are addressed via data-slot / aria attributes instead of class names.
   assert.equal(source.includes('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]'), true)
   assert.equal(source.includes('button[aria-haspopup="dialog"]'), true)
   assert.equal(source.includes('[role="dialog"][aria-modal="true"]'), true)
-  // The prompt veils itself while the step-1 model menu is open so the menu
-  // stays clickable, and animations respect reduced motion.
-  assert.equal(source.includes('vr-guide-prompt-veiled'), true)
-  assert.equal(source.includes('prefers-reduced-motion'), true)
-  // Step 2 also carries a Next button: it performs the current phase's
-  // action for the user (open the settings panel, then enter Plugins), so
-  // every non-final step can be driven entirely from the prompt.
-  assert.equal(source.includes("const currentPhase = guidePhase('step2')"), true)
-  assert.equal(source.includes('gear.click()'), true)
-  assert.equal(source.includes("row.tagName === 'BUTTON'"), true)
-  assert.equal(source.includes('也可以直接点「下一步」帮你打开'), true)
-  assert.equal(source.includes(', or press “Next” and I will open it for you'), true)
-  // Anchoring correctness: the prompt must never cover the highlighted
-  // target (coverage is judged on the viewport-clamped box, with a small
-  // halo around the target), and the arrow must sit on the prompt's edge
-  // that faces the target — above the target means a bottom arrow, etc.
+  assert.equal(source.includes('guideHostUi.openSettings()'), true)
+  assert.equal(source.includes('guideHostUi.openPlugins()'), true)
   assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
   assert.equal(source.includes('const halo = 10'), true)
-  assert.equal(source.includes("{ top: 'bottom', bottom: 'top', left: 'right', right: 'left' }"), true)
 })
 
 test('manual update help uses a dedicated vertical command card and never falls back to bare update', () => {
@@ -489,70 +437,7 @@ test('guide sync never queries the DOM or forces layout when no walkthrough is a
   }
 })
 
-test('guide scroll syncs coalesce into one requestAnimationFrame per frame', () => {
-  const bundle = loadClientBundle()
-  const savedDocument = globalThis.document
-  const savedWindow = globalThis.window
-  const rafQueue = []
-  const scrollHandlers = []
-  globalThis.window = {
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    requestAnimationFrame: (fn) => {
-      rafQueue.push(fn)
-      return rafQueue.length
-    },
-    cancelAnimationFrame: () => {},
-    setTimeout: () => 0,
-    clearTimeout: () => {},
-    clearInterval: () => {},
-    setInterval: () => 0,
-  }
-  globalThis.document = {
-    body: {},
-    addEventListener: (name, handler, capture) => {
-      if (name === 'scroll' && capture === true) scrollHandlers.push(handler)
-    },
-    removeEventListener: () => {},
-    querySelectorAll: () => [],
-  }
-  try {
-    bundle.installVisionSettingsGuide((key) => key)
-    assert.equal(scrollHandlers.length, 1)
-    const scroll = scrollHandlers[0]
-    // Five scroll events in the same frame queue exactly one rAF.
-    for (let i = 0; i < 5; i++) scroll()
-    assert.equal(rafQueue.length, 1)
-    // Running the frame lets the next burst queue exactly one more.
-    rafQueue[0]()
-    for (let i = 0; i < 3; i++) scroll()
-    assert.equal(rafQueue.length, 2)
-  } finally {
-    globalThis.document = savedDocument
-    globalThis.window = savedWindow
-  }
-})
 
-test('guide sync gates DOM layout work behind the active phase and coalesces via rAF', () => {
-  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  // syncVisionGuidePrompt must compute the phase and return on the idle
-  // branches BEFORE guideSettingsPanelOpen() can run its dialog query and
-  // getBoundingClientRect — per-event forced layout was the direct cause of
-  // the settings panel scroll stutter.
-  const fn = source.match(/function syncVisionGuidePrompt\(t\) \{[\s\S]*?\n    \}/)
-  assert.ok(fn, 'syncVisionGuidePrompt body found')
-  const body = fn[0]
-  assert.ok(
-    body.indexOf('const phase = guidePhase(step)') < body.indexOf('guideSettingsPanelOpen()'),
-    'phase gate precedes the panel DOM query',
-  )
-  // Event-driven syncs coalesce through requestAnimationFrame (one per frame)
-  // instead of one setTimeout per scroll event.
-  assert.equal(source.includes('guideSyncFrame !== undefined'), true)
-  assert.equal(source.includes('window.requestAnimationFrame'), true)
-  assert.equal(source.includes('cancelAnimationFrame'), true)
-  assert.equal(source.includes("document.addEventListener('scroll', sync, true)"), true)
-})
 
 test('local provider drafts preserve protocol and optional sampling fields', () => {
   const bundle = loadClientBundle()

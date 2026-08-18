@@ -299,14 +299,13 @@ export const Config = z.object({
   // that pair directly over the corrected protocol instead of the harness
   // adapter. Each correction disarms itself once the catalog entry matches.
   catalogCorrections: z.boolean().default(true),
-  // Client-persisted UI state (issue #78): DSH Desktop serves the Web UI from
-  // a random port on every launch, so origin-scoped localStorage forgets the
-  // first-run onboarding dialog and it re-appeared on every boot. These keys
-  // live in the settings section (the profile settings file) instead; the
-  // client still mirrors best-effort copies into localStorage for downgrades.
-  // Both are internal to the client bundle — the settings card renders them
-  // nowhere, and the server half never reads them.
+  // Client-persisted onboarding disposition (#78): Desktop randomizes its Web
+  // port, so the durable "already dismissed/completed" bit must live in the
+  // profile settings file rather than origin-scoped localStorage.
   onboardingSeen: z.boolean().default(false),
+  // Deprecated compatibility field (v1.2-v1.6). The client clears/ignores it:
+  // active guide progress is session-only as of #207, so a half-finished guide
+  // can never resume from stale durable state after restart.
   visionGuideStep: z.string().default(''),
   artifactsDir: z.string().default('.dsh-vision-router/artifacts'),
   rewriteImages: z.boolean().default(true),
