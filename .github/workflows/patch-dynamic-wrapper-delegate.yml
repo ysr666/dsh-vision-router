@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/dynamic-wrapper-delegate
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -104,15 +107,15 @@ test('wrapper resolves delegate provider getter on every stream and partitions r
           git diff --check
           git diff -- index.js tests/runtime-e2e.test.js
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: pnpm
-
       - name: Enable pnpm
         run: |
           corepack enable
           corepack prepare pnpm@11.20.0 --activate
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -120,12 +123,15 @@ test('wrapper resolves delegate provider getter on every stream and partitions r
       - name: Run full test suite
         run: pnpm test
 
-      - name: Commit verified fix and remove one-shot workflow
+      - name: Commit verified fix
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/patch-dynamic-wrapper-delegate.yml
           git add index.js tests/runtime-e2e.test.js
+          if git diff --cached --quiet; then
+            echo "Patch already present; nothing to commit."
+            exit 0
+          fi
           git commit -m "fix: keep auto-vision delegate in sync with text provider"
           git push origin HEAD:fix/dynamic-wrapper-delegate
