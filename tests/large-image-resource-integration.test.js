@@ -37,11 +37,12 @@ test('a high-resolution legal image is reduced to a usable semantic preview, not
   assert.ok((meta.height ?? 0) > 0)
 })
 
-test('once metadata proves an image is oversized, a broken decode cannot fall back to the original', async (t) => {
+test('once metadata proves an image is oversized, damaged input cannot escape as the oversized original', async (t) => {
   const valid = await highResolutionFixture()
   // Keep the PNG signature + IHDR (dimensions) but remove most image data.
-  // libvips can usually inspect the dimensions while the later resize/decode
-  // fails; that is the exact fail-closed boundary #208 protects.
+  // Some libvips builds can still salvage a preview with failOn:none; others
+  // reject the decode. Both outcomes are safe. The forbidden outcome is the
+  // old behavior: returning the proven-oversized source bytes unchanged.
   const truncated = valid.subarray(0, Math.min(128, valid.length))
   let meta
   try {
@@ -55,8 +56,12 @@ test('once metadata proves an image is oversized, a broken decode cannot fall ba
     return
   }
 
-  await assert.rejects(
-    downscaleImage(truncated, SAFE_PIXELS),
-    (error) => error && error.code === 'VISION_IMAGE_PREPROCESS_FAILED',
-  )
+  try {
+    const guarded = await downscaleImage(truncated, SAFE_PIXELS)
+    assert.notStrictEqual(guarded, truncated, 'proven-oversized input must not be returned unchanged')
+    const guardedMeta = await sharp(guarded, { failOn: 'none' }).metadata()
+    assert.ok((guardedMeta.width ?? Infinity) * (guardedMeta.height ?? Infinity) <= SAFE_PIXELS)
+  } catch (error) {
+    assert.equal(error?.code, 'VISION_IMAGE_PREPROCESS_FAILED')
+  }
 })
