@@ -122,10 +122,18 @@ test('index.js integration: deep quota consumed only after evidence (mixed x dep
   assert.equal(index.includes('state.followupCompleted = true'), true) // 仍在，但移到产出证据分支内
 })
 
-test('client.js integration: visionDepth select rendered in Performance group', () => {
+test('client.js integration: visionDepth select and custom guidance live in the main deep-dive group', () => {
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(client.includes("const SELECT_KEYS = ['visionDepth']"), true)
   assert.equal(client.includes('selectField(key, t(LABEL_KEY[key]), t(HINT_KEY[key]), ['), true)
-  assert.equal(client.includes("selectVisionDepth: '看图深度档位'"), true)
-  assert.equal(client.includes("selectVisionDepth: 'Vision depth tier'"), true)
+  assert.equal(client.includes("selectVisionDepth: '看图深度'"), true)
+  assert.equal(client.includes("selectVisionDepth: 'Vision depth'"), true)
+  assert.equal(client.includes("guidanceOverridesLabel: '自定义识图引导（可选）'"), true)
+  assert.equal(client.includes("guidanceOverridesLabel: 'Custom vision guidance (optional)'"), true)
+  // 深度档位与自定义引导跟随结构化预识别开关显示在主设置区（不埋在高级设置）。
+  assert.equal(
+    client.includes("format('structuredVisionBootstrap') === true\n                ? h('div', { className: 'vr-group' }"),
+    true,
+  )
+  assert.equal(client.includes("t('groupDeepDive')"), true)
 })
