@@ -141,7 +141,14 @@ test('manifest keeps the rc6 host peers and does not add an rc7-only package edg
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
-test('bundle patch no longer mutates host attachment-local limits', async () => {
+test('bundle patch widens attachment limits with fields valid on both rc6 and rc7', async () => {
   const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
-  assert.doesNotMatch(patch, /^\s*- id:\s*attachment-local/m)
+  // Long chat-log screenshots (vision_long_screenshot_ocr) and large design
+  // files routinely exceed the host defaults (5MB / 40MP). Both rc6 and rc7
+  // ship `- id: attachment-local` in dsh-base and accept optional
+  // maxImageBytes/maxImagePixels overrides (verified against the released
+  // 0.1.0-rc.6 / 0.1.0-rc.7 schemas), so widening them here stays host-neutral.
+  assert.match(patch, /^\s*- id:\s*attachment-local/m)
+  assert.match(patch, /maxImageBytes:\s*20971520/)
+  assert.match(patch, /maxImagePixels:\s*100000000/)
 })
