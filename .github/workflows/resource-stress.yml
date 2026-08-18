@@ -1,0 +1,41 @@
+name: Large image resource stress
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  stress:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.head_ref == 'agent/issue-208-resource-governor' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/issue-208-resource-governor
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: High-resolution functional regression
+        run: node --test tests/large-image-resource-integration.test.js
+
+      - name: 100MP compressed-image RSS stress (1/2/4 callers)
+        run: node --expose-gc scripts/image-resource-stress.mjs
+        env:
+          STRESS_IMAGE_WIDTH: '10000'
+          STRESS_IMAGE_HEIGHT: '10000'
+          STRESS_MAX_DELTA_MIB: '1024'
