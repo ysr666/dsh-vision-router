@@ -6500,8 +6500,14 @@ ctx.logger?.info(
             ? Math.min(args.overlap, Math.floor(chunkHeight / 2))
             : 120
         const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
-        // Overlapping horizontal windows in reading order.
-        const windows = longOcrWindows(height, chunkHeight, overlap)
+        // Cover the entire ORIGINAL image with bounded tiles. Ordinary
+        // long screenshots remain one full-width strip per row; ultra-wide
+        // images split horizontally instead of allocating an oversized strip.
+        const windows = boundedOcrTiles(width, height, {
+          chunkHeight,
+          overlap,
+          maxTilePixels: 4_000_000,
+        })
         const stem = artifactStem(args.image, 'ocr')
         const dir = path.join(workspaceOf(exec), artifactsRel, stem)
         await mkdir(dir, { recursive: true })
@@ -6515,6 +6521,8 @@ ctx.logger?.info(
           if (deadline.expired()) {
             results.push({
               chunk: i + 1,
+              left: windows[i].left,
+              right: windows[i].right,
               top: windows[i].top,
               bottom: windows[i].bottom,
               engine: 'skipped',
@@ -6524,11 +6532,21 @@ ctx.logger?.info(
             })
             continue
           }
-          const { top, bottom } = windows[i]
-          const chunk = await sharp(bytes, { failOn: 'none' })
-            .extract({ left: 0, top, width, height: bottom - top })
-            .png()
-            .toBuffer()
+          const { left, right, top, bottom } = windows[i]
+          const tileWidth = right - left
+          const tileHeight = bottom - top
+          const releaseTile = await defaultImageResourceGovernor.acquire(
+            estimateImageOperationBytes('tile', tileWidth, tileHeight),
+          )
+          let chunk
+          try {
+            chunk = await sharp(bytes, { failOn: 'none' })
+              .extract({ left, top, width: tileWidth, height: tileHeight })
+              .png()
+              .toBuffer()
+          } finally {
+            releaseTile()
+          }
           const chunkRel = `chunk-${String(i + 1).padStart(2, '0')}.png`
           await writeFile(path.join(dir, chunkRel), chunk)
           let text = ''
@@ -6604,7 +6622,7 @@ ctx.logger?.info(
               )
             }
           }
-          results.push({ chunk: i + 1, top, bottom, engine: used, chars: text.length, text })
+          results.push({ chunk: i + 1, left, right, top, bottom, engine: used, chars: text.length, text })
         }
         const joined = results.map((r) => r.text).filter((t) => t !== '').join('\n\n')
         const engines = {}
