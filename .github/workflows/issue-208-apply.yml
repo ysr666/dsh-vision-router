@@ -1,9 +1,8 @@
 name: Issue 208 staged refactor
 
 on:
-  push:
-    branches:
-      - agent/issue-208-resource-governor
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,35 +10,52 @@ permissions:
 
 jobs:
   apply:
-    if: ${{ github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[issue208-applied]') }}
+    if: ${{ github.event.pull_request.head.ref == 'agent/issue-208-resource-governor' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: agent/issue-208-resource-governor
           fetch-depth: 0
 
+      - name: Check whether integration already landed
+        id: guard
+        shell: bash
+        run: |
+          if grep -q "createSessionVisionStateStore" index.js; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - name: Enable pnpm
+        if: steps.guard.outputs.skip != 'true'
         run: |
           corepack enable
           corepack prepare pnpm@11.20.0 --activate
 
       - name: Install dependencies
+        if: steps.guard.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Validate new resource primitives before integration
+        if: steps.guard.outputs.skip != 'true'
         run: node --test tests/session-vision-state.test.js tests/image-resource-governor.test.js tests/pixel-diff-stream.test.js
 
       - name: Configure commit identity
+        if: steps.guard.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Phase 1 - session-owned vision state
+        if: steps.guard.outputs.skip != 'true'
         run: |
           node scripts/issue-208-apply.mjs session
           node --check index.js
@@ -48,6 +64,7 @@ jobs:
           git commit -m "fix: bind vision memory to bounded session state"
 
       - name: Phase 2 - execution governor and fail-closed preprocessing
+        if: steps.guard.outputs.skip != 'true'
         run: |
           node scripts/issue-208-apply.mjs governor
           node --check index.js
@@ -56,6 +73,7 @@ jobs:
           git commit -m "fix: govern large image preprocessing"
 
       - name: Phase 3 - bounded exact pixel diff
+        if: steps.guard.outputs.skip != 'true'
         run: |
           node scripts/issue-208-apply.mjs pixel
           node --check index.js
@@ -64,6 +82,7 @@ jobs:
           git commit -m "fix: stream large pixel diffs"
 
       - name: Phase 4 - bounded long-image OCR tiles
+        if: steps.guard.outputs.skip != 'true'
         run: |
           node scripts/issue-208-apply.mjs tiles
           node --check index.js
@@ -72,9 +91,9 @@ jobs:
           git commit -m "fix: tile large screenshot OCR"
 
       - name: Full regression suite
+        if: steps.guard.outputs.skip != 'true'
         run: pnpm test
 
       - name: Push staged refactor
-        run: |
-          git commit --allow-empty -m "chore: complete issue 208 staged refactor [issue208-applied]"
-          git push origin HEAD:agent/issue-208-resource-governor
+        if: steps.guard.outputs.skip != 'true'
+        run: git push origin HEAD:agent/issue-208-resource-governor
