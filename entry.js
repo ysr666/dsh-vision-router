@@ -17,6 +17,7 @@ import { installAndroidAttachmentCompat } from './lib/android-attachment-compat.
 import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalescer.js'
 import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
+import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -68,12 +69,16 @@ export function apply(ctx, config = {}) {
         : 'deepseek-vision',
     visionConfig: config,
   })
+  // Filesystem authority is separate from browser rendering safety. Put this
+  // boundary INSIDE adversarial hardening so the secure HTML renderer that the
+  // outer layer installs is itself wrapped by canonical workspace containment.
+  const screenshotSourceCtx = installScreenshotSourceBoundary(runtimeCtx, core)
   // Security/runtime boundary shared by the core and the local-vision shim:
   // keep artifacts inside the session workspace, make HTML screenshots truly
   // offline + sandboxed, protect the screenshot-permission side effect, and
   // make the process-wide fetch cleanup coexist with later plugin patches.
   const { ctx: hardenedCtx, config: hardenedConfig } = installAdversarialHardening(
-    runtimeCtx,
+    screenshotSourceCtx,
     config,
     core,
   )
