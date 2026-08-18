@@ -70,7 +70,10 @@ test('all GitHub Actions dependencies are pinned to immutable commit SHAs', asyn
   const workflows = ['ci.yml', 'release.yml', 'resource-stress.yml', 'star-history.yml']
   for (const name of workflows) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    const refs = [...source.matchAll(/^\s*-\s+uses:\s+[^@\s]+@([^\s#]+)/gm)].map((match) => match[1])
+    // YAML steps may spell this either as `- uses: ...` or as `- name: ...`
+    // followed by an indented `uses: ...`. Match the capability line itself,
+    // not one particular presentation shape.
+    const refs = [...source.matchAll(/^\s*(?:-\s*)?uses:\s+[^@\s]+@([^\s#]+)/gm)].map((match) => match[1])
     assert.ok(refs.length > 0, `${name} must contain at least one external action`)
     for (const ref of refs) {
       assert.match(ref, /^[a-f0-9]{40}$/i, `${name} contains mutable action ref ${ref}`)
