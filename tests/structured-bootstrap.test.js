@@ -10,6 +10,12 @@ test('bootstrap is task-independent and does not default to OCR', () => {
   assert.match(prompt, /Do NOT recommend vision_ocr merely because text is visible/i)
 })
 
+test('bootstrap JSON example stays syntactically clean around mixed_of', () => {
+  const prompt = structuredBootstrapQuestion()
+  assert.match(prompt, /"mixed_of":\[\],"overview"/)
+  assert.doesNotMatch(prompt, /\]\（仅当 visual_kind=mixed/)
+})
+
 test('fallback follow-up avoids OCR unless explicitly recommended', () => {
   const chat = normalizeStructuredBootstrapResult({ visual_kind: 'chat', overview: 'chat', visible_text: [{ region_id: 'r1', text: '你好', uncertain: false }] })
   assert.equal(chat.recommended_followups[0].tool, 'vision_describe')
@@ -23,6 +29,14 @@ test('bootstrap memory has no task/goal tag', () => {
   assert.doesNotMatch(memory, /任务=/)
 })
 
+test('bootstrap visual_kind is strictly enumerated', () => {
+  assert.equal(normalizeStructuredBootstrapResult({ visual_kind: 'ui' }).visual_kind, 'ui')
+  for (const bad of ['Mixed', 'mixed/ui', 'constructor', '__proto__', 'x'.repeat(10000)]) {
+    assert.equal(normalizeStructuredBootstrapResult({ visual_kind: bad }).visual_kind, 'unknown')
+  }
+  assert.equal(normalizeStructuredBootstrapResult({ visual_kind: null }).visual_kind, 'unknown')
+})
+
 test('bootstrap schema carries content_kind and normalizer validates it', () => {
   const prompt = structuredBootstrapQuestion()
   assert.match(prompt, /content_kind/)
@@ -34,22 +48,26 @@ test('bootstrap schema carries content_kind and normalizer validates it', () => 
   assert.equal(normalizeStructuredBootstrapResult({ visual_kind: 'document', content_kind: 'person' }).content_kind, 'person')
 })
 
-test('bootstrap schema carries mixed_of and normalizer validates it', () => {
+test('bootstrap schema carries mixed_of and normalizer validates, prioritizes, then caps it', () => {
   const prompt = structuredBootstrapQuestion()
   assert.match(prompt, /mixed_of/)
-  // 合法混合构成：校验 + 去重 + ≤2
   assert.deepEqual(
     normalizeStructuredBootstrapResult({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }).mixed_of,
-    ['document', 'ui'],
+    ['ui', 'document'],
   )
   assert.deepEqual(
     normalizeStructuredBootstrapResult({ visual_kind: 'mixed', mixed_of: ['ui', 'ui', 'document', 'code'] }).mixed_of,
     ['ui', 'document'],
   )
-  // 非法/缺失 → []
+  // 对抗输出：不能先截断 general/document 再把更高优先级的 ui 丢掉。
+  assert.deepEqual(
+    normalizeStructuredBootstrapResult({ visual_kind: 'mixed', mixed_of: ['general', 'document', 'ui'] }).mixed_of,
+    ['ui', 'document'],
+  )
+  // 非法/缺失/非 mixed → []
   assert.deepEqual(normalizeStructuredBootstrapResult({ visual_kind: 'mixed', mixed_of: ['bogus'] }).mixed_of, [])
   assert.deepEqual(normalizeStructuredBootstrapResult({ visual_kind: 'mixed' }).mixed_of, [])
-  assert.deepEqual(normalizeStructuredBootstrapResult({ visual_kind: 'document', mixed_of: ['ui'] }).mixed_of, ['ui'])
+  assert.deepEqual(normalizeStructuredBootstrapResult({ visual_kind: 'document', mixed_of: ['ui'] }).mixed_of, [])
 })
 
 test('runtime removes goal and makes structured OCR vision-first', () => {
