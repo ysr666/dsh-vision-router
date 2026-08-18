@@ -343,6 +343,11 @@ export const Config = z.object({
   ocrTimeoutMs: z.number().step(1).min(1000).max(120000).default(30000),
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
+  // Remote browsers are intentionally unable to use DSH's broad settings.*
+  // plane. This narrow Vision Router bridge is opt-in and still uses DSH's
+  // trusted-host transport fence. Only a loopback/local settings page may
+  // change this permission; the remote bridge rejects writes to the field.
+  allowRemoteSettings: z.boolean().default(false),
   freeFallback: z.boolean().default(true),
   // 云端免费优先：开启后，云端后端先尝试内置 OVH 免费模型（免注册、免
   // API Key），付费 httpProviders 仅在免费模型全部失败后作为兜底，尽量把
@@ -494,6 +499,23 @@ export function isAttachmentIdInput(input) {
  * artifacts all collapsed onto the same stem and silently overwrote each
  * other. A short fingerprint of the FULL input keeps every input distinct.
  */
+/** Resolve a configured artifact root and refuse lexical workspace escapes. */
+export function resolveArtifactRootPath(workspace, configured) {
+  const root = path.resolve(String(workspace ?? ''))
+  const raw = typeof configured === 'string' && configured.trim() !== ''
+    ? configured.trim()
+    : '.dsh-vision-router/artifacts'
+  if (path.isAbsolute(raw) || path.win32.isAbsolute(raw)) {
+    throw new Error('artifactsDir must be relative to the session workspace')
+  }
+  const target = path.resolve(root, raw)
+  const relative = path.relative(root, target)
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    throw new Error('artifactsDir must stay inside the session workspace')
+  }
+  return target
+}
+
 export function artifactStemOf(imagePath, suffix) {
   const base = String(basenameOf(imagePath) ?? 'image')
     .replace(/\.(png|jpe?g|webp|gif)$/i, '')
