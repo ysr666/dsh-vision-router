@@ -3,6 +3,30 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.6.2
+
+> **v1.6.1 → v1.6.2**：本版本以稳定性为核心：加固 1+x 视觉流程的循环/深度边界，修复 rc.7 模型 twin 同步与 Tesseract OCR 输入链路，重构新手引导生命周期，并为长会话图片状态与超大图处理加入有界资源治理。
+> **v1.6.1 → v1.6.2**: a stability-focused release: hardens loop/depth boundaries in the 1+x vision flow, fixes rc.7 model-twin synchronization and the Tesseract OCR input path, makes onboarding lifecycle state-driven, and adds bounded resource governance for long-session image state and very large images.
+
+### 稳定性与可靠性 / Stability & reliability
+
+- **1+x 流程加固（#206）**：结构化 bootstrap 改为单次执行，fast/standard/deep 深度配额与混合分支均受硬边界约束；空证据不再计为有效深挖，整轮共享预算，分类结果与自定义引导统一做归一化/限长/清洗，避免循环和失控调用。
+- **1+x flow hardening (#206)**: makes the structured bootstrap one-shot, enforces hard fast/standard/deep quotas and mixed-branch bounds, rejects empty evidence, shares one turn budget, and normalizes/bounds custom guidance to prevent loops and runaway calls.
+
+- **rc.7 模型同步 + OCR（#209）**：rc.7 adapter 更新重入改为收敛到固定点，避免 twin 路由重复注册或漏同步；Tesseract OCR 不再依赖不受支持的异步 `execFile` stdin，而是写入临时图片文件并在成功/失败路径都清理。
+- **rc.7 model sync + OCR (#209)**: coalesces adapter-update re-entry to a fixed point so twin routes neither double-register nor miss topology changes; Tesseract OCR now materializes input to temporary image files instead of relying on unsupported async `execFile` stdin, with cleanup on every path.
+
+- **新手引导生命周期（#210）**：Guide/onboarding 改为显式会话状态机；首次状态采用 unknown/unseen/seen 三态，Guide 进度仅存当前会话，运行时观察器按需安装并在结束时释放，修复引导弹出慢、关闭设置后静默消失以及提前标记完成等竞态。
+- **Onboarding lifecycle (#210)**: replaces timer/DOM-inferred state with an explicit session state machine, tri-state first-run readiness, session-only guide progress and lazy/disposable observers, fixing late prompts, silent guide termination and premature completion state.
+
+- **长会话与超大图资源治理（#211）**：图片描述、附件索引与事件游标统一收敛到逐会话有界状态；保留 20MB/100MP 准入，同时把语义识别、OCR、裁剪、标注和 pixel diff 改为受控预览/分块/流式路径，并加入跨平台 100MP RSS 压力验证。
+- **Long-session and large-image resource governance (#211)**: moves descriptions, attachment indexes and event cursors into bounded session-owned state; preserves 20MB/100MP admission while routing semantic vision, OCR, crop, annotation and pixel diff through bounded preview/tile/streaming paths, with cross-platform 100MP RSS stress coverage.
+
+### 验证 / Validation
+
+- 合入前完整 CI 已覆盖 Node 22/24、DSH rc.6/rc.7、Windows/macOS/Linux 宿主安装与 100MP 大图压力测试；tag 触发的 immutable Release workflow 会再次执行完整测试后通过 npm Trusted Publishing（OIDC）发布。
+- Pre-release CI is green across Node 22/24, DSH rc.6/rc.7, Windows/macOS/Linux host-install coverage and the 100MP large-image stress job; the immutable tag-triggered Release workflow re-runs the full suite before npm Trusted Publishing (OIDC).
+
 ## v1.6.1
 
 > **v1.6.0 → v1.6.1**：新增结构化预识别后的深挖引导（混合图分路识别、看图深度档位 fast/standard/deep、收敛分类、可配置引导文案）；恢复被 #198 误删的附件放宽（超长截图/大图过宿主准入，rc6/rc7 双侧 schema 均有效）；深度档位与自定义引导移到主设置区并配用户友好文案。
