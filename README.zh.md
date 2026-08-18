@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.6.1）**
+> 📌 **公告（v1.6.2）**
 >
-> **v1.6.1：结构化预识别后的深挖引导——混合图分路识别、看图深度档位（快速/标准/细致）、可自定义识图引导（移到主设置区）；恢复超长截图的附件准入放宽（rc6/rc7 均有效）。**
+> **v1.6.2：集中修复引导、OCR、模型同步与大图处理问题，提升长会话和整体运行稳定性。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
