@@ -16,6 +16,7 @@ import { installWrapperDirectoryAlias } from './lib/wrapper-directory.js'
 import { installAndroidAttachmentCompat } from './lib/android-attachment-compat.js'
 import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalescer.js'
 import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
+import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -53,7 +54,13 @@ export const Config = core.Config
 // preserve replay identity, while vision-tool network calls are constrained to
 // the exact backends the user selected in Vision Router.
 export function apply(ctx, config = {}) {
-  const logging = installVisionRouterFileLogging(ctx)
+  // DSH's browser WebServer can intentionally bind 0.0.0.0 and carries no
+  // authentication layer of its own. Same-origin headers are only a CSRF
+  // signal, so install a transport-level loopback fence before ANY plugin-owned
+  // route is registered. The wrapper patches only webServer.register and hands
+  // every injection callback the original child context identity unchanged.
+  const localMutationCtx = installLocalMutationRouteBoundary(ctx)
+  const logging = installVisionRouterFileLogging(localMutationCtx)
   const runtimeCtx = contextWithDelegatedReplay(logging.ctx, {
     wrapperRoute:
       typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
