@@ -40,6 +40,7 @@ function harness() {
   const counters = { queries: 0, rects: 0 }
   const listeners = new Map()
   const frames = []
+  let mutationCallback
   const target = fakeElement()
   target.getBoundingClientRect = () => {
     counters.rects += 1
@@ -62,8 +63,14 @@ function harness() {
     },
     querySelector() { counters.queries += 1; return null },
   }
-  const window = {
-    innerWidth: 1280, innerHeight: 800,
+  class FakeMutationObserver {
+constructor(callback) { mutationCallback = callback }
+observe() {}
+disconnect() { mutationCallback = undefined }
+        }
+        const window = {
+innerWidth: 1280, innerHeight: 800,
+MutationObserver: FakeMutationObserver,
     addEventListener(type, fn) { listeners.set('window:' + type, fn) },
     removeEventListener(type) { listeners.delete('window:' + type) }, dispatchEvent() {},
     requestAnimationFrame(fn) { frames.push(fn); return frames.length }, cancelAnimationFrame() {},
@@ -72,6 +79,7 @@ function harness() {
   }
   return { counters, document, window, listeners,
     scroll() { const fn = listeners.get('document:scroll'); if (fn) fn() },
+    mutate() { if (typeof mutationCallback === 'function') mutationCallback([]) },
     frame() { const work = frames.splice(0); for (const fn of work) fn() },
   }
 }
@@ -115,7 +123,25 @@ test('active guide installs listeners lazily and keeps scroll-frame resolution b
   }
 })
 
-test('ending a guide disposes global listeners so later scrolls stay inert', () => {
+test('structural DOM mutations invalidate cached guide target resolution immediately', () => {
+const { h, bundle, dispose } = boot()
+const realNow = Date.now
+Date.now = () => 1000
+try {
+  bundle.startVisionSettingsGuide((key) => key)
+  h.frame()
+  const beforeMutation = h.counters.queries
+  h.mutate()
+  h.frame()
+  assert.ok(h.counters.queries > beforeMutation, 'structural mutation must bypass the target cache')
+} finally {
+  Date.now = realNow
+  bundle.finishVisionSettingsGuide()
+  dispose()
+}
+        })
+
+        test('ending a guide disposes global listeners so later scrolls stay inert', () => {
   const { h, bundle, dispose } = boot()
   try {
     bundle.startVisionSettingsGuide((key) => key)
