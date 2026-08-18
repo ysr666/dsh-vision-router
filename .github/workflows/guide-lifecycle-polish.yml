@@ -1,3 +1,4 @@
+# one-shot branch polish; removed by the job after successful validation
 name: Polish guide lifecycle refactor
 
 on:
