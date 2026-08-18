@@ -28,7 +28,12 @@ export const Config = core.Config
 // restore adapter-owned replay identity without mutating the host LLM service.
 export function apply(ctx, config = {}) {
   const logging = installVisionRouterFileLogging(ctx)
-  const runtimeCtx = contextWithDelegatedReplay(logging.ctx)
+  const runtimeCtx = contextWithDelegatedReplay(logging.ctx, {
+    wrapperRoute:
+      typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
+        ? config.wrapperRoute
+        : 'deepseek-vision',
+  })
   // #141 stabilization boundary: keep the recently merged local-vision
   // behavior isolated from main's existing provider/router semantics. It
   // normalizes only the local settings/runtime seams before core.apply sees
