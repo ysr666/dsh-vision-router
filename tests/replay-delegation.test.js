@@ -126,10 +126,12 @@ test('contextWithDelegatedReplay scopes rebinding to the context view and preser
   assert.equal(contextWithDelegatedReplay(ctx), wrapped)
 })
 
-test('main auto-vision wrapper follows live textProvider changes and isolates reasoning effort per delegate', async () => {
-  let textProvider = 'deepseek-official'
+function liveWrapperHarness({ initialProvider = 'deepseek-official', native = false } = {}) {
+  let textProvider = initialProvider
   let registeredAdapter
   const calls = []
+  const registrations = new Map()
+  if (native) registrations.set('deepseek-official-native', {})
   const settings = {
     get(namespace) {
       if (namespace !== 'vision-router') return undefined
@@ -140,6 +142,9 @@ test('main auto-vision wrapper follows live textProvider changes and isolates re
     },
   }
   const llm = {
+    registration(provider) {
+      return registrations.get(provider)
+    },
     registerAdapter(providers, adapter) {
       assert.deepEqual(providers, ['deepseek-vision'])
       registeredAdapter = adapter
@@ -158,10 +163,8 @@ test('main auto-vision wrapper follows live textProvider changes and isolates re
   }
   const wrapped = contextWithDelegatedReplay(ctx)
 
-  // Emulate the current core wrapper's two stale captures: its delegate
-  // provider is fixed at apply time, and its own reasoning memory is keyed by
-  // that stale provider. The entry-layer boundary must correct both at the
-  // one nested llm.stream dispatch.
+  // Emulate the core wrapper's legacy stale provider/reasoning caches. The
+  // entry-layer boundary must correct both at the one nested llm.stream call.
   let staleReasoningEffort
   const coreWrapper = {
     async *stream(options) {
@@ -180,35 +183,94 @@ test('main auto-vision wrapper follows live textProvider changes and isolates re
   }
   wrapped.llm.registerAdapter(['deepseek-vision'], coreWrapper)
 
-  const drain = async (options) => {
+  const drain = async (options = {}) => {
     for await (const _chunk of registeredAdapter.stream({
       model: 'deepseek-v4-pro',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      sessionId: 'session-a',
       ...options,
     })) {
       // drain
     }
   }
+  return {
+    calls,
+    drain,
+    setProvider(value) { textProvider = value },
+  }
+}
 
-  await drain({ reasoningEffort: 'high' })
-  textProvider = 'relay-openai'
-  await drain({})
-  await drain({ reasoningEffort: 'low' })
-  textProvider = 'deepseek-official'
-  await drain({})
+test('main auto-vision wrapper follows live textProvider changes and keeps reasoning memory per delegate', async () => {
+  const harness = liveWrapperHarness()
+  await harness.drain({ reasoningEffort: 'high' })
+  harness.setProvider('relay-openai')
+  await harness.drain({})
+  await harness.drain({ reasoningEffort: 'low' })
+  harness.setProvider('deepseek-official')
+  await harness.drain({})
 
-  assert.deepEqual(calls.map((call) => call.provider), [
+  assert.deepEqual(harness.calls.map((call) => call.provider), [
     'deepseek-official',
     'relay-openai',
     'relay-openai',
     'deepseek-official',
   ])
-  assert.deepEqual(calls.map((call) => call.reasoningEffort), [
+  assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), [
     'high',
     undefined,
     'low',
     'high',
   ])
+})
+
+test('hidden native DeepSeek route only substitutes the official selection, never a relay', async () => {
+  const harness = liveWrapperHarness({ initialProvider: 'relay-openai', native: true })
+  await harness.drain({ reasoningEffort: 'high' })
+  harness.setProvider('deepseek-official')
+  await harness.drain({})
+  assert.deepEqual(harness.calls.map((call) => call.provider), [
+    'relay-openai',
+    'deepseek-official-native',
+  ])
+})
+
+test('reasoning effort memory is isolated by DSH sessionId even when core cache is globally stale', async () => {
+  const harness = liveWrapperHarness()
+  await harness.drain({ sessionId: 'session-a', reasoningEffort: 'high' })
+  await harness.drain({ sessionId: 'session-b', reasoningEffort: 'low' })
+  await harness.drain({ sessionId: 'session-a' })
+  await harness.drain({ sessionId: 'session-b' })
+  assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), [
+    'high',
+    'low',
+    'high',
+    'low',
+  ])
+})
+
+test('requests without sessionId do not inherit provider/model reasoning state', async () => {
+  const harness = liveWrapperHarness()
+  await harness.drain({ sessionId: undefined, reasoningEffort: 'high' })
+  await harness.drain({ sessionId: undefined })
+  assert.deepEqual(harness.calls.map((call) => call.reasoningEffort), ['high', undefined])
+})
+
+test('delegated replay context cache expires with the Cordis plugin fiber', () => {
+  let cleanup
+  const llm = { registerAdapter() {}, stream() {} }
+  const ctx = {
+    llm,
+    effect(factory) {
+      cleanup = factory()
+      return () => {}
+    },
+  }
+  const first = contextWithDelegatedReplay(ctx)
+  assert.equal(contextWithDelegatedReplay(ctx), first)
+  assert.equal(typeof cleanup, 'function')
+  cleanup()
+  const second = contextWithDelegatedReplay(ctx)
+  assert.notEqual(second, first)
 })
 
 test('only the configured main wrapper route gets live text-provider rewriting', async () => {
