@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  createTransientAttachmentCache,
   installAndroidAttachmentCompat,
   isAndroidTermuxRuntime,
   isPermissionBoundaryError,
@@ -40,6 +41,24 @@ test('non-Android runtime returns the original context unchanged', () => {
     runtime: { platform: 'linux', env: { PREFIX: '/usr' } },
   })
   assert.equal(wrapped, ctx)
+})
+
+test('byte-weighted transient cache evicts oldest entries before memory can grow unbounded', () => {
+  const cache = createTransientAttachmentCache({ maxEntries: 64, maxBytes: 5 })
+  const a = {
+    ref: { attachmentId: 'a' },
+    data: new Uint8Array([1, 2, 3, 4]),
+  }
+  const b = {
+    ref: { attachmentId: 'b' },
+    data: new Uint8Array([5, 6, 7, 8]),
+  }
+  assert.equal(cache.set(a), true)
+  assert.deepEqual(cache.stats(), { entries: 1, bytes: 4, maxEntries: 64, maxBytes: 5 })
+  assert.equal(cache.set(b), true)
+  assert.equal(cache.get('a'), undefined)
+  assert.equal(cache.get('b'), b)
+  assert.deepEqual(cache.stats(), { entries: 1, bytes: 4, maxEntries: 64, maxBytes: 5 })
 })
 
 test('Android permission failure falls back to a process-local content-addressed image', async () => {
@@ -83,6 +102,65 @@ test('Android permission failure falls back to a process-local content-addressed
   assert.equal(stored.data, bytes)
   assert.equal(delegatedReads, 0)
   assert.equal(warnings, 1)
+})
+
+test('Android transient fallback enforces total bytes by evicting old refs', async () => {
+  let delegatedReads = 0
+  const attachments = {
+    async saveImage() {
+      throw permissionFailure('EPERM')
+    },
+    async readImage(ref) {
+      delegatedReads += 1
+      return { ref, data: new Uint8Array([9]) }
+    },
+  }
+  const ctx = { get: (name) => (name === 'attachments' ? attachments : undefined) }
+  const wrapped = installAndroidAttachmentCompat(ctx, undefined, {
+    runtime: { platform: 'android', env: {} },
+    probeImage: async () => ({ width: 1, height: 1 }),
+    maxTransientBytes: 5,
+    maxTransientSingleBytes: 5,
+  })
+  const service = wrapped.get('attachments')
+  const first = await service.saveImage({ data: new Uint8Array([1, 2, 3, 4]), mediaType: 'image/png' })
+  const second = await service.saveImage({ data: new Uint8Array([5, 6, 7, 8]), mediaType: 'image/png' })
+
+  assert.notEqual(first.attachmentId, second.attachmentId)
+  const secondStored = await service.readImage(second)
+  assert.deepEqual([...secondStored.data], [5, 6, 7, 8])
+  const firstAfterEviction = await service.readImage(first)
+  assert.deepEqual([...firstAfterEviction.data], [9])
+  assert.equal(delegatedReads, 1, 'evicted refs fall back to the authoritative host store')
+})
+
+test('Android transient fallback rejects one oversized image before probing/decoding it', async () => {
+  let probeCalls = 0
+  const attachments = {
+    async saveImage() {
+      throw permissionFailure('EACCES')
+    },
+    async readImage() {
+      throw new Error('not reached')
+    },
+  }
+  const ctx = { get: (name) => (name === 'attachments' ? attachments : undefined) }
+  const wrapped = installAndroidAttachmentCompat(ctx, undefined, {
+    runtime: { platform: 'android', env: {} },
+    maxTransientBytes: 8,
+    maxTransientSingleBytes: 4,
+    probeImage: async () => {
+      probeCalls += 1
+      return { width: 1, height: 1 }
+    },
+  })
+  const service = wrapped.get('attachments')
+
+  await assert.rejects(
+    service.saveImage({ data: new Uint8Array([1, 2, 3, 4, 5]), mediaType: 'image/png' }),
+    (error) => error?.code === 'ANDROID_TRANSIENT_ATTACHMENT_TOO_LARGE',
+  )
+  assert.equal(probeCalls, 0)
 })
 
 test('successful host saves and non-permission failures keep native semantics', async () => {
