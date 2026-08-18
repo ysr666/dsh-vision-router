@@ -142,6 +142,98 @@ test('does not blame another package when the ignored build is Vision Router its
   assert.equal(classifyProfilePnpmFailure(error, { profileDir }), undefined)
 })
 
+test('does not frame Vision Router own transitive dependency sharp as a removable blocker', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+    },
+  })
+  const error = new Error('exit 1')
+  error.stderr = [
+    'ERR_PNPM_IGNORED_BUILDS Ignored build scripts: sharp@0.33.5',
+    'Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.',
+  ].join('\n')
+
+  const result = classifyProfilePnpmFailure(error, { profileDir, profile: 'web' })
+  assert.equal(result.kind, 'ignored-build-policy')
+  assert.equal(result.blockers.length, 0)
+  assert.match(result.message, /sharp@0\.33\.5/)
+  assert.match(result.message, /approve-builds/)
+  assert.match(result.message, /approve its build instead of removing it/)
+  assert.doesNotMatch(result.message, /remove sharp/)
+})
+
+test('attributes bare-name ignored build entries for declared plugins', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      esbuild: '0.25.0',
+    },
+  })
+  const error = new Error('exit 1')
+  error.stderr =
+    'Ignored build scripts: esbuild, core-js. Run "pnpm approve-builds" to pick which dependencies should be allowed to run scripts.'
+
+  const result = classifyProfilePnpmFailure(error, { profileDir, profile: 'web' })
+  assert.equal(result.kind, 'existing-profile-dependency')
+  assert.equal(result.blockers.length, 1)
+  assert.equal(result.blockers[0].name, 'esbuild')
+  assert.match(result.message, /remove esbuild/)
+})
+
+test('attributes a scoped dependency named in an ignored build list', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      '@scope/tool': '2.1.0',
+    },
+  })
+  const error = new Error('exit 1')
+  error.stderr = 'Ignored build scripts: @scope/tool@2.1.0'
+
+  const result = classifyProfilePnpmFailure(error, { profileDir, profile: 'web' })
+  assert.equal(result.kind, 'existing-profile-dependency')
+  assert.equal(result.blockers[0].name, '@scope/tool')
+})
+
+test('does not blame a dependency for a same-line substring match', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      'dsh-vision-proxy': '0.2.5',
+    },
+  })
+  const error = new Error('exit 1')
+  error.stderr = 'dsh-vision-proxy-core postinstall failed with exit code 1'
+
+  assert.equal(classifyProfilePnpmFailure(error, { profileDir, profile: 'web' }), undefined)
+})
+
+test('does not blame a dependency named inside a registry URL on the same line', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      foo: '1.0.0',
+    },
+  })
+  const error = new Error('exit 1')
+  error.stderr = 'GET https://registry.npmjs.org/foo/-/foo-1.0.0.tgz ERR_PNPM_FETCH_500 registry unavailable'
+
+  assert.equal(classifyProfilePnpmFailure(error, { profileDir, profile: 'web' }), undefined)
+})
+
+test('does not treat dsh-vision-routers or dsh-vision-router2 as coexisting vision plugins', () => {
+  const profileDir = profileFixture({
+    dependencies: {
+      'dsh-vision-router': '1.5.3',
+      'dsh-vision-routers': '9.9.9',
+      'dsh-vision-router2': '9.9.9',
+    },
+  })
+
+  assert.deepEqual(inspectCoexistingVisionPlugins(profileDir), [])
+})
+
 test('does not blame an existing dependency merely because pnpm progress output names it', () => {
   const profileDir = profileFixture({
     dependencies: {
