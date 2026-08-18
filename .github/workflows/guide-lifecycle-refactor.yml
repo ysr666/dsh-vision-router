@@ -1,0 +1,1201 @@
+name: Apply guide lifecycle refactor
+
+on:
+  push:
+    branches:
+      - fix/guide-lifecycle-architecture
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/guide-lifecycle-architecture
+          fetch-depth: 0
+
+      - name: Refactor guide lifecycle
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          client_path = Path('lib/client.js')
+          source = client_path.read_text()
+
+          def replace_between(text, start, end, replacement):
+              i = text.index(start)
+              j = text.index(end, i)
+              return text[:i] + replacement + text[j:]
+
+          lifecycle = r'''    const ONBOARDING_STORAGE_KEY = 'dsh-vision-router:onboarding:model-guide-v2'
+    // Durable onboarding suppression survives DSH Desktop's random Web port
+    // (#78). Only the disposition is durable; the active walkthrough step is
+    // deliberately session-only so a half-finished guide never resumes from a
+    // stale settings snapshot on the next launch.
+    const ONBOARDING_SETTINGS_KEY = 'onboardingSeen'
+    const LEGACY_VISION_GUIDE_STORAGE_KEY = 'dsh-vision-router:guide:vision-backend-v2'
+    const LEGACY_VISION_GUIDE_SETTINGS_KEY = 'visionGuideStep'
+    const VISION_GUIDE_EVENT = 'dsh-vision-router:vision-settings-guide'
+
+    const GUIDE_STATE = Object.freeze({
+      IDLE: 'idle',
+      OVERVIEW: 'overview',
+      CHAT_MODEL: 'chat-model',
+      SETTINGS: 'settings',
+      VISION_MODEL: 'vision-model',
+    })
+    const GUIDE_EVENT = Object.freeze({
+      SHOW_OVERVIEW: 'show-overview',
+      START: 'start',
+      LATER: 'later',
+      DISMISS: 'dismiss',
+      NEXT: 'next',
+      TARGET_READY: 'target-ready',
+      SETTINGS_CLOSED: 'settings-closed',
+      CANCEL: 'cancel',
+      COMPLETE: 'complete',
+    })
+
+    let guideSessionState = GUIDE_STATE.IDLE
+    let guideTranslator
+    let onboardingSeenMemory = false
+    let onboardingAutoPresented = false
+    let legacyGuideCleanupDone = false
+    let visionGuidePrompt
+    let visionGuideSpotlight
+    let guideSyncFrame
+    let guideRuntimeDispose
+    let guidePanelCloseCancel
+    let guideSettingsPanelSeen = false
+    const GUIDE_RESOLVE_THROTTLE_MS = 250
+    let visionGuideResolved = {
+      state: GUIDE_STATE.IDLE,
+      step: undefined,
+      phase: undefined,
+      panelOpen: false,
+      target: undefined,
+      at: 0,
+    }
+
+    // Installed by apply(): a narrow, defensive view of the settings scope.
+    // Hidden onboarding durability is best-effort and idempotent. Guide
+    // progress no longer flows through this channel at all (#207).
+    let settingsPersistence
+    function installSettingsPersistence(scope) {
+      const pending = new Map()
+      const issued = new Map()
+      let flushing = false
+      const readSnapshot = () => {
+        try {
+          return scope && typeof scope.getSnapshot === 'function' ? scope.getSnapshot() : undefined
+        } catch {
+          return undefined
+        }
+      }
+      const readSection = () => {
+        const snapshot = readSnapshot()
+        return snapshot && snapshot.value ? snapshot.value : undefined
+      }
+      const sameMutation = (left, operation, value) =>
+        !!left && left.operation === operation &&
+        (operation === 'unset' || jsonValueEqual(left.value, value))
+      const alreadyStored = (field, operation, value) => {
+        const snapshot = readSnapshot()
+        const user = snapshot && snapshot.user
+        const stored = !!user && typeof user === 'object' && Object.prototype.hasOwnProperty.call(user, field)
+        return operation === 'unset'
+          ? !stored
+          : stored && jsonValueEqual(user[field], value)
+      }
+      const queue = (field, operation, value) => {
+        if (alreadyStored(field, operation, value)) {
+          pending.delete(field)
+          issued.set(field, { operation, value })
+          return
+        }
+        const previous = pending.get(field)
+        if (sameMutation(previous, operation, value)) return
+        // A rejected hidden-state write is never subscribe-retried forever
+        // (#155). A genuinely different mutation can still be attempted.
+        if (sameMutation(issued.get(field), operation, value)) return
+        pending.set(field, { operation, value, attempted: false })
+        void flush()
+      }
+      const landed = (field, entry) => {
+        const snapshot = readSnapshot()
+        const user = snapshot && snapshot.user
+        const stored = !!user && typeof user === 'object' && Object.prototype.hasOwnProperty.call(user, field)
+        return entry.operation === 'unset'
+          ? !stored
+          : stored && jsonValueEqual(user[field], entry.value)
+      }
+      const flush = async () => {
+        if (flushing) return
+        const snapshot = readSnapshot()
+        if (!snapshot || snapshot.status !== 'ready' || !snapshot.writable) return
+        const work = [...pending.entries()].filter(([, entry]) => !entry.attempted)
+        if (work.length === 0) return
+        flushing = true
+        try {
+          for (const [field, entry] of work) {
+            if (pending.get(field) !== entry) continue
+            entry.attempted = true
+            issued.set(field, { operation: entry.operation, value: entry.value })
+            try {
+              if (entry.operation === 'unset') {
+                if (typeof scope.unset !== 'function') continue
+                await scope.unset(field)
+              } else {
+                if (typeof scope.set !== 'function') continue
+                await scope.set(field, entry.value)
+              }
+            } catch {
+              continue
+            }
+            if (pending.get(field) === entry && landed(field, entry)) pending.delete(field)
+          }
+        } finally {
+          flushing = false
+          if ([...pending.values()].some((entry) => !entry.attempted)) void flush()
+        }
+      }
+      settingsPersistence = {
+        get(field) {
+          const section = readSection()
+          return section ? section[field] : undefined
+        },
+        set(field, value) {
+          queue(field, 'set', value)
+        },
+        unset(field) {
+          queue(field, 'unset')
+        },
+        snapshot() {
+          return readSnapshot()
+        },
+        subscribe(listener) {
+          try {
+            if (!scope || typeof scope.subscribe !== 'function') return undefined
+            return scope.subscribe(() => {
+              void flush()
+              listener()
+            })
+          } catch {
+            return undefined
+          }
+        },
+      }
+      void flush()
+      return settingsPersistence
+    }
+
+    // Tri-state by construction: "unknown" is not silently collapsed into
+    // "unseen" while the settings snapshot is still loading. This removes the
+    // old fixed 650ms guess and the late/flashy first-run race (#207).
+    function readOnboardingDisposition() {
+      if (onboardingSeenMemory) return 'seen'
+      try {
+        if (window.localStorage && window.localStorage.getItem(ONBOARDING_STORAGE_KEY) === 'seen') {
+          onboardingSeenMemory = true
+          if (settingsPersistence) settingsPersistence.set(ONBOARDING_SETTINGS_KEY, true)
+          return 'seen'
+        }
+      } catch {
+        // Continue to the profile-backed source of truth.
+      }
+      const snapshot = settingsPersistence && typeof settingsPersistence.snapshot === 'function'
+        ? settingsPersistence.snapshot()
+        : undefined
+      if (!snapshot || snapshot.status !== 'ready') return 'unknown'
+      try {
+        return settingsPersistence.get(ONBOARDING_SETTINGS_KEY) === true ? 'seen' : 'unseen'
+      } catch {
+        return 'unknown'
+      }
+    }
+    function readOnboardingSeen() {
+      return readOnboardingDisposition() === 'seen'
+    }
+    function rememberOnboardingSeen() {
+      onboardingSeenMemory = true
+      try {
+        if (settingsPersistence) settingsPersistence.set(ONBOARDING_SETTINGS_KEY, true)
+      } catch {
+        // The current page still remains authoritative.
+      }
+      try {
+        if (window.localStorage) window.localStorage.setItem(ONBOARDING_STORAGE_KEY, 'seen')
+      } catch {
+        // Best-effort downgrade marker only.
+      }
+    }
+    function clearLegacyGuidePersistence() {
+      if (legacyGuideCleanupDone) return
+      const snapshot = settingsPersistence && typeof settingsPersistence.snapshot === 'function'
+        ? settingsPersistence.snapshot()
+        : undefined
+      if (!snapshot || snapshot.status !== 'ready') return
+      legacyGuideCleanupDone = true
+      // v1.2-v1.6 persisted the current walkthrough step. New lifecycle state
+      // is session-owned, so remove the stale field once and never read it.
+      try {
+        if (settingsPersistence) settingsPersistence.unset(LEGACY_VISION_GUIDE_SETTINGS_KEY)
+      } catch {
+        // Stale legacy data is harmless because the new runtime ignores it.
+      }
+      try {
+        if (window.localStorage) window.localStorage.removeItem(LEGACY_VISION_GUIDE_STORAGE_KEY)
+      } catch {
+        // Best effort.
+      }
+    }
+
+    function guideTransition(state, event) {
+      const type = event && event.type
+      if (type === GUIDE_EVENT.SHOW_OVERVIEW) return GUIDE_STATE.OVERVIEW
+      if (type === GUIDE_EVENT.COMPLETE) return GUIDE_STATE.IDLE
+      if (type === GUIDE_EVENT.CANCEL) return GUIDE_STATE.IDLE
+      if (state === GUIDE_STATE.IDLE) {
+        return type === GUIDE_EVENT.START ? GUIDE_STATE.CHAT_MODEL : state
+      }
+      if (state === GUIDE_STATE.OVERVIEW) {
+        if (type === GUIDE_EVENT.START) return GUIDE_STATE.CHAT_MODEL
+        if (type === GUIDE_EVENT.LATER || type === GUIDE_EVENT.DISMISS) return GUIDE_STATE.IDLE
+        return state
+      }
+      if (state === GUIDE_STATE.CHAT_MODEL) {
+        if (type === GUIDE_EVENT.NEXT) return GUIDE_STATE.SETTINGS
+        // Closing Settings while step 1 is active is not a guide action: the
+        // user may be closing the panel specifically to reach the chat model.
+        if (type === GUIDE_EVENT.SETTINGS_CLOSED) return GUIDE_STATE.CHAT_MODEL
+        return state
+      }
+      if (state === GUIDE_STATE.SETTINGS) {
+        if (type === GUIDE_EVENT.TARGET_READY) return GUIDE_STATE.VISION_MODEL
+        if (type === GUIDE_EVENT.SETTINGS_CLOSED) return GUIDE_STATE.IDLE
+        return state
+      }
+      if (state === GUIDE_STATE.VISION_MODEL) {
+        if (type === GUIDE_EVENT.SETTINGS_CLOSED) return GUIDE_STATE.IDLE
+        return state
+      }
+      return GUIDE_STATE.IDLE
+    }
+
+    function notifyVisionGuideChanged() {
+      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+      const EventCtor = window.Event
+      if (typeof EventCtor === 'function') window.dispatchEvent(new EventCtor(VISION_GUIDE_EVENT))
+    }
+    function readVisionGuideStep() {
+      if (guideSessionState === GUIDE_STATE.CHAT_MODEL) return 'step1'
+      if (guideSessionState === GUIDE_STATE.SETTINGS || guideSessionState === GUIDE_STATE.VISION_MODEL) return 'step2'
+      return undefined
+    }
+    function guideState() {
+      return guideSessionState
+    }
+    function cancelGuidePanelCloseCheck() {
+      if (typeof guidePanelCloseCancel === 'function') guidePanelCloseCancel()
+      guidePanelCloseCancel = undefined
+    }
+    function clearGuidePromptUI() {
+      if (visionGuidePrompt) visionGuidePrompt.remove()
+      visionGuidePrompt = undefined
+      removeGuideSpotlight()
+    }
+    function removeVisionGuidePrompt() {
+      clearGuidePromptUI()
+    }
+    function removeGuideSpotlight() {
+      if (visionGuideSpotlight) {
+        visionGuideSpotlight.root.remove()
+        visionGuideSpotlight = undefined
+      }
+    }
+    function stopGuideRuntime() {
+      const dispose = guideRuntimeDispose
+      guideRuntimeDispose = undefined
+      if (typeof dispose === 'function') dispose()
+      cancelGuidePanelCloseCheck()
+      if (guideSyncFrame !== undefined && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(guideSyncFrame)
+      }
+      guideSyncFrame = undefined
+      clearGuidePromptUI()
+      visionGuideResolved = {
+        state: guideSessionState,
+        step: readVisionGuideStep(),
+        phase: undefined,
+        panelOpen: false,
+        target: undefined,
+        at: 0,
+      }
+    }
+    function stopGuideSync() {
+      stopGuideRuntime()
+    }
+    function setGuideState(next, t) {
+      if (t) guideTranslator = t
+      if (next === guideSessionState) {
+        if (readVisionGuideStep() !== undefined && guideTranslator) scheduleGuideSync(guideTranslator)
+        return guideSessionState
+      }
+      guideSessionState = next
+      if (next !== GUIDE_STATE.SETTINGS && next !== GUIDE_STATE.VISION_MODEL) {
+        guideSettingsPanelSeen = false
+        cancelGuidePanelCloseCheck()
+      }
+      visionGuideResolved.at = 0
+      notifyVisionGuideChanged()
+      if (readVisionGuideStep() === undefined) {
+        stopGuideRuntime()
+      } else if (guideTranslator) {
+        ensureGuideRuntime(guideTranslator)
+        scheduleGuideSync(guideTranslator)
+      }
+      return guideSessionState
+    }
+    function dispatchGuide(event, t) {
+      return setGuideState(guideTransition(guideSessionState, event), t)
+    }
+    // Compatibility shim for old internal call sites/tests. It is intentionally
+    // session-only: no settings/localStorage writes are allowed here.
+    function writeVisionGuideStep(step) {
+      if (step === 'step1') return setGuideState(GUIDE_STATE.CHAT_MODEL, guideTranslator)
+      if (step === 'step2') return setGuideState(GUIDE_STATE.SETTINGS, guideTranslator)
+      return setGuideState(GUIDE_STATE.IDLE, guideTranslator)
+    }
+
+    // Host UI adapter boundary. The Escape fallback is still necessary because
+    // current DSH exposes no public close-settings API, but lifecycle/business
+    // state never depends on the key event itself.
+    function closeSettingsShell() {
+      if (typeof document === 'undefined' || typeof window === 'undefined') return false
+      try {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        )
+        return true
+      } catch {
+        return false
+      }
+    }
+
+'''
+          source = replace_between(
+              source,
+              "    const ONBOARDING_STORAGE_KEY = 'dsh-vision-router:onboarding:model-guide-v2'",
+              '    // ── walkthrough spotlight: highlight the real UI targets ────────────────',
+              lifecycle,
+          )
+
+          phase_block = r'''    // DOM details are isolated behind a narrow host adapter. A future DSH
+    // settings/navigation API can replace these selectors without touching the
+    // guide state machine.
+    const guideHostUi = Object.freeze({
+      settingsPanel: guideSettingsPanel,
+      settingsOpen: guideSettingsPanelOpen,
+      chatModelTarget: () => guideFindFirstUsable(GUIDE_SELECTOR_TARGETS),
+      settingsButton: guideGearButton,
+      pluginsNav: guidePluginsNav,
+      closeSettings: closeSettingsShell,
+      openSettings() {
+        const gear = guideGearButton()
+        if (!gear || typeof gear.click !== 'function') return false
+        gear.click()
+        return true
+      },
+      openPlugins() {
+        const row = guidePluginsNav()
+        if (!row || row.tagName !== 'BUTTON' || typeof row.click !== 'function') return false
+        row.click()
+        return true
+      },
+    })
+
+    // Presentation phase is derived from the explicit session state. DOM
+    // presence may choose an anchor/fallback, but can no longer decide which
+    // business step the user is in.
+    function guidePhase(_step) {
+      if (guideSessionState === GUIDE_STATE.IDLE) return 'none'
+      if (guideSessionState === GUIDE_STATE.OVERVIEW) return 'suspend'
+      if (guideSessionState === GUIDE_STATE.CHAT_MODEL) {
+        return guideHostUi.chatModelTarget() ? 'selector' : 'corner'
+      }
+      if (guideSessionState === GUIDE_STATE.VISION_MODEL) return 'done'
+      if (typeof document === 'undefined') return 'gear'
+      if (document.querySelector('[data-vr-guide-target="vision-backend"]')) return 'done'
+      if (guideHostUi.settingsPanel()) return 'nav'
+      return 'gear'
+    }
+    function guideTarget(step, phase) {
+      if (step === 'step1') return guideHostUi.chatModelTarget()
+      if (phase === 'nav') return guideHostUi.pluginsNav()
+      return guideHostUi.settingsButton()
+    }
+'''
+          source = replace_between(
+              source,
+              "    // step1 phases: 'selector' (composer model seat found) or 'corner'",
+              '    function ensureGuideSpotlight() {',
+              phase_block,
+          )
+
+          old_next = r'''      next.addEventListener('click', () => {
+        if (step === 'step1') {
+          writeVisionGuideStep('step2')
+        } else {
+          const currentPhase = guidePhase('step2')
+          if (currentPhase === 'gear') {
+            const gear = guideGearButton()
+            if (gear && typeof gear.click === 'function') gear.click()
+          } else if (currentPhase === 'nav') {
+            const row = guidePluginsNav()
+            if (row && row.tagName === 'BUTTON' && typeof row.click === 'function') row.click()
+          }
+        }
+        clearGuidePromptUI()
+        syncVisionGuidePrompt(t)
+        notifyVisionGuideChanged()
+      })'''
+          new_next = r'''      next.addEventListener('click', () => {
+        if (step === 'step1') {
+          dispatchGuide({ type: GUIDE_EVENT.NEXT }, t)
+        } else {
+          const currentPhase = guidePhase('step2')
+          if (currentPhase === 'gear') guideHostUi.openSettings()
+          else if (currentPhase === 'nav') guideHostUi.openPlugins()
+        }
+        clearGuidePromptUI()
+        scheduleGuideSync(t)
+      })'''
+          if old_next not in source:
+              raise SystemExit('guide Next block not found')
+          source = source.replace(old_next, new_next, 1)
+          source = source.replace(
+              "        finishVisionSettingsGuide()\n      })\n      actions.append(cancel)",
+              "        finishVisionSettingsGuide({ remember: true })\n      })\n      actions.append(cancel)",
+              1,
+          )
+
+          runtime = r'''    function refreshGuideResolution(step) {
+      const now = Date.now()
+      const state = guideSessionState
+      const cached = visionGuideResolved
+      if (
+        cached.state === state &&
+        cached.step === step &&
+        now - cached.at < GUIDE_RESOLVE_THROTTLE_MS &&
+        (cached.target === undefined || cached.target.isConnected !== false)
+      ) {
+        return cached
+      }
+      const phase = guidePhase(step)
+      const settingsPhase = state === GUIDE_STATE.SETTINGS || state === GUIDE_STATE.VISION_MODEL
+      const panelOpen = settingsPhase ? guideHostUi.settingsOpen() : false
+      const target =
+        phase === 'none' || phase === 'done' || phase === 'suspend'
+          ? undefined
+          : guideTarget(step, phase)
+      visionGuideResolved = { state, step, phase, panelOpen, target, at: now }
+      return visionGuideResolved
+    }
+
+    function scheduleGuideSync(t = guideTranslator) {
+      if (!t || readVisionGuideStep() === undefined || typeof window === 'undefined') return
+      if (guideSyncFrame !== undefined) return
+      if (typeof window.requestAnimationFrame !== 'function') {
+        window.setTimeout(() => syncVisionGuidePrompt(t), 0)
+        return
+      }
+      guideSyncFrame = window.requestAnimationFrame(() => {
+        guideSyncFrame = undefined
+        syncVisionGuidePrompt(t)
+      })
+    }
+    function scheduleGuidePanelCloseCheck(t = guideTranslator) {
+      if (guidePanelCloseCancel || typeof window === 'undefined') return
+      let cancelled = false
+      const verify = () => {
+        guidePanelCloseCancel = undefined
+        if (cancelled) return
+        const state = guideSessionState
+        const settingsPhase = state === GUIDE_STATE.SETTINGS || state === GUIDE_STATE.VISION_MODEL
+        if (settingsPhase && guideSettingsPanelSeen && !guideHostUi.settingsOpen()) {
+          dispatchGuide({ type: GUIDE_EVENT.SETTINGS_CLOSED }, t)
+        }
+      }
+      if (typeof window.requestAnimationFrame === 'function') {
+        const id = window.requestAnimationFrame(verify)
+        guidePanelCloseCancel = () => {
+          cancelled = true
+          if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(id)
+        }
+      } else {
+        const id = window.setTimeout(verify, 0)
+        guidePanelCloseCancel = () => {
+          cancelled = true
+          if (typeof window.clearTimeout === 'function') window.clearTimeout(id)
+        }
+      }
+    }
+
+    function syncVisionGuidePrompt(t = guideTranslator) {
+      if (typeof document === 'undefined' || typeof window === 'undefined' || !document.body) return
+      const state = guideSessionState
+      const step = readVisionGuideStep()
+      if (step === undefined) {
+        clearGuidePromptUI()
+        return
+      }
+      const { phase, panelOpen, target } = refreshGuideResolution(step)
+      const settingsPhase = state === GUIDE_STATE.SETTINGS || state === GUIDE_STATE.VISION_MODEL
+
+      // Only the settings/vision states care about the Settings panel. Step 1
+      // intentionally ignores a pre-existing panel, so closing Settings to get
+      // back to chat can never kill the guide (#207).
+      if (settingsPhase && guideSettingsPanelSeen && !panelOpen) {
+        clearGuidePromptUI()
+        scheduleGuidePanelCloseCheck(t)
+        return
+      }
+      if (settingsPhase && panelOpen) {
+        guideSettingsPanelSeen = true
+        cancelGuidePanelCloseCheck()
+      }
+
+      if (state === GUIDE_STATE.SETTINGS && phase === 'done') {
+        clearGuidePromptUI()
+        dispatchGuide({ type: GUIDE_EVENT.TARGET_READY }, t)
+        return
+      }
+      if (phase === 'none' || phase === 'done' || phase === 'suspend') {
+        clearGuidePromptUI()
+        return
+      }
+
+      if (!visionGuidePrompt || visionGuidePrompt.dataset.vrStep !== step) {
+        if (visionGuidePrompt) visionGuidePrompt.remove()
+        removeGuideSpotlight()
+        visionGuidePrompt = buildGuidePrompt(t, step, phase)
+        document.body.appendChild(visionGuidePrompt)
+      } else if (visionGuidePrompt.dataset.vrPhase !== phase) {
+        updateGuidePrompt(visionGuidePrompt, t, step, phase)
+      }
+      const rect =
+        target && typeof target.getBoundingClientRect === 'function' ? target.getBoundingClientRect() : undefined
+      applyGuideSpotlight(rect)
+      const menuOpen =
+        phase === 'selector' &&
+        typeof target !== 'undefined' &&
+        typeof target.getAttribute === 'function' &&
+        target.getAttribute('aria-expanded') === 'true'
+      anchorGuidePrompt(visionGuidePrompt, step, phase, rect, menuOpen)
+    }
+
+    function ensureGuideRuntime(t = guideTranslator) {
+      if (guideRuntimeDispose || readVisionGuideStep() === undefined) return
+      if (typeof document === 'undefined' || typeof window === 'undefined' || !document.body) return
+      if (t) guideTranslator = t
+      const sync = () => scheduleGuideSync(guideTranslator)
+      window.addEventListener('popstate', sync)
+      window.addEventListener('resize', sync)
+      document.addEventListener('scroll', sync, true)
+      let observer
+      const Observer = window.MutationObserver || globalThis.MutationObserver
+      if (typeof Observer === 'function') {
+        observer = new Observer(sync)
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['aria-expanded', 'aria-hidden', 'class'],
+        })
+      }
+      guideRuntimeDispose = () => {
+        window.removeEventListener('popstate', sync)
+        window.removeEventListener('resize', sync)
+        document.removeEventListener('scroll', sync, true)
+        if (observer && typeof observer.disconnect === 'function') observer.disconnect()
+      }
+      syncVisionGuidePrompt(guideTranslator)
+    }
+
+    function startVisionSettingsGuide(t) {
+      guideTranslator = t || guideTranslator
+      guideSettingsPanelSeen = false
+      cancelGuidePanelCloseCheck()
+      dispatchGuide({ type: GUIDE_EVENT.START }, guideTranslator)
+    }
+    function finishVisionSettingsGuide(options = {}) {
+      const remember = options.remember === true || options.complete === true
+      if (remember) rememberOnboardingSeen()
+      dispatchGuide(
+        { type: options.complete === true ? GUIDE_EVENT.COMPLETE : GUIDE_EVENT.CANCEL },
+        guideTranslator,
+      )
+    }
+    function installVisionSettingsGuide(t) {
+      if (typeof document === 'undefined' || typeof window === 'undefined') return
+      guideTranslator = t
+      if (readVisionGuideStep() !== undefined) ensureGuideRuntime(t)
+      return () => {
+        if (guideTranslator === t) guideTranslator = undefined
+        stopGuideRuntime()
+      }
+    }
+
+'''
+          source = replace_between(
+              source,
+              '    function refreshGuideResolution(step) {',
+              '    let onboardingOverlay',
+              runtime,
+          )
+
+          onboarding = r'''    let onboardingOverlay
+    let onboardingOverlayAuto = false
+    let onboardingKeyDown
+
+    function dismissOnboarding(remember = true) {
+      if (remember) rememberOnboardingSeen()
+      if (typeof document !== 'undefined' && onboardingKeyDown) {
+        document.removeEventListener('keydown', onboardingKeyDown)
+      }
+      onboardingKeyDown = undefined
+      if (onboardingOverlay) onboardingOverlay.remove()
+      onboardingOverlay = undefined
+      onboardingOverlayAuto = false
+      if (guideSessionState === GUIDE_STATE.OVERVIEW) {
+        dispatchGuide({ type: remember ? GUIDE_EVENT.DISMISS : GUIDE_EVENT.LATER }, guideTranslator)
+      }
+    }
+    function showOnboarding(t, options = {}) {
+      if (typeof document === 'undefined' || !document.body) return
+      if (onboardingOverlay) return
+      guideTranslator = t || guideTranslator
+      onboardingOverlayAuto = options.auto === true
+      if (onboardingOverlayAuto) onboardingAutoPresented = true
+      dispatchGuide({ type: GUIDE_EVENT.SHOW_OVERVIEW }, guideTranslator)
+
+      const onKeyDown = (event) => {
+        if (event && event.key === 'Escape') dismissOnboarding(true)
+      }
+      onboardingKeyDown = onKeyDown
+
+      const overlay = document.createElement('div')
+      overlay.className = 'vr-onboarding-backdrop'
+      overlay.setAttribute('role', 'presentation')
+
+      const dialog = document.createElement('div')
+      dialog.className = 'vr-onboarding-dialog'
+      dialog.setAttribute('role', 'dialog')
+      dialog.setAttribute('aria-modal', 'true')
+      dialog.setAttribute('aria-labelledby', 'vr-onboarding-title')
+
+      const title = document.createElement('h2')
+      title.id = 'vr-onboarding-title'
+      title.className = 'vr-onboarding-title'
+      title.textContent = t('onboardingTitle')
+
+      const body = document.createElement('p')
+      body.className = 'vr-onboarding-text'
+      body.textContent = t('onboardingBody')
+
+      const steps = document.createElement('div')
+      steps.className = 'vr-onboarding-steps'
+      for (const index of [1, 2, 3]) {
+        const step = document.createElement('div')
+        step.className = 'vr-onboarding-step'
+        const stepTitle = document.createElement('div')
+        stepTitle.className = 'vr-onboarding-step-title'
+        stepTitle.textContent = t('onboardingStep' + index + 'Title')
+        const stepBody = document.createElement('p')
+        stepBody.className = 'vr-onboarding-step-body'
+        stepBody.textContent = t('onboardingStep' + index + 'Body')
+        step.append(stepTitle, stepBody)
+        steps.appendChild(step)
+      }
+
+      const close = document.createElement('button')
+      close.type = 'button'
+      close.className = 'vr-onboarding-close'
+      close.setAttribute('aria-label', t('onboardingClose'))
+      close.textContent = '×'
+      close.addEventListener('click', () => dismissOnboarding(true))
+
+      const actions = document.createElement('div')
+      actions.className = 'vr-onboarding-actions'
+      const secondary = document.createElement('button')
+      secondary.type = 'button'
+      secondary.className = 'vr-onboarding-secondary'
+      secondary.textContent = t('onboardingLater')
+      // "Later" really means later: suppress only this automatic presentation
+      // for the current page; do not persist onboardingSeen.
+      secondary.addEventListener('click', () => dismissOnboarding(false))
+      const primary = document.createElement('button')
+      primary.type = 'button'
+      primary.className = 'vr-onboarding-primary'
+      primary.textContent = t('onboardingGuide')
+      primary.addEventListener('click', () => {
+        // Starting the guide is not completion. Remove the overview without
+        // writing durable state, then enter the explicit session state machine.
+        dismissOnboarding(false)
+        startVisionSettingsGuide(t)
+      })
+      actions.append(secondary, primary)
+
+      dialog.append(title, body, steps, close, actions)
+      overlay.appendChild(dialog)
+      document.body.appendChild(overlay)
+      document.addEventListener('keydown', onKeyDown)
+      onboardingOverlay = overlay
+
+      // Never steal focus from a field the user has already started using while
+      // an asynchronous settings snapshot resolves. Manual replay may opt in.
+      const focusWhenSafe = () => {
+        const active = document.activeElement
+        const pageIdle = !active || active === document.body || active === document.documentElement
+        if ((options.focus === true || pageIdle) && typeof primary.focus === 'function') primary.focus()
+      }
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(focusWhenSafe)
+      } else {
+        focusWhenSafe()
+      }
+    }
+    function installOnboarding(t) {
+      if (typeof document === 'undefined' || typeof window === 'undefined') return
+      const sync = () => {
+        const disposition = readOnboardingDisposition()
+        if (disposition === 'unknown') return
+        clearLegacyGuidePersistence()
+        if (disposition === 'seen') {
+          // A late durable read may dismiss only the automatic first-run
+          // overview. A user-requested replay is never killed by background IO.
+          if (onboardingOverlay && onboardingOverlayAuto) dismissOnboarding(false)
+          return
+        }
+        if (
+          !onboardingAutoPresented &&
+          guideSessionState === GUIDE_STATE.IDLE &&
+          !onboardingOverlay
+        ) {
+          showOnboarding(t, { auto: true })
+        }
+      }
+      sync()
+      const unsubscribe = settingsPersistence && settingsPersistence.subscribe(sync)
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe()
+        if (onboardingOverlay) dismissOnboarding(false)
+      }
+    }
+
+'''
+          source = replace_between(source, '    let onboardingOverlay', '    const LABEL_KEY = {', onboarding)
+
+          # Step 1 must never auto-open/scroll the settings card simply because
+          # Settings happened to be open before the guide began.
+          source = source.replace(
+              "      const guideActive = guideStep !== undefined\n",
+              "      const guideTargetsVisionSettings = guideStep === 'step2'\n",
+              1,
+          )
+          source = source.replace(
+              "        if (!guideActive) return\n",
+              "        if (!guideTargetsVisionSettings) return\n",
+              1,
+          )
+          source = source.replace(
+              "      }, [guideActive, open, catalog.status, visionCaps.status])",
+              "      }, [guideTargetsVisionSettings, open, catalog.status, visionCaps.status])",
+              1,
+          )
+
+          # Completion follows a successful settings action, not the start of a
+          # save round-trip and not a draft-only model selection.
+          source = source.replace(
+              "        // Saving ends the walkthrough: the user has reached the settings card\n        // and acted, so the guide must never nag again afterwards — even when\n        // a hidden write is rejected (dismissal stays page-authoritative).\n        finishGuide()\n        setSaving(true)",
+              "        setSaving(true)",
+              1,
+          )
+          source = source.replace(
+              "          if (outcome.landedFields.length > 0) setDrafts(outcome.nextDrafts)\n          if (outcome.failed) reportSettingsSaveFailures(outcome.failures)",
+              "          if (outcome.landedFields.length > 0) setDrafts(outcome.nextDrafts)\n          if (guideTargetsVisionSettings && outcome.landed) finishGuide()\n          if (outcome.failed) reportSettingsSaveFailures(outcome.failures)",
+              1,
+          )
+          model_finish = r'''                  // Picking a real vision model is an active backend choice:
+                  // the walkthrough has done its job, so end it right away
+                  // instead of waiting for the in-card button. Picking only a
+                  // provider (model still empty) does not finish it.
+                  if (row.provider && event.target.value) finishGuide()
+'''
+          if model_finish not in source:
+              raise SystemExit('draft-only model completion block not found')
+          source = source.replace(model_finish, '', 1)
+          source = source.replace(
+              "      const finishGuide = () => {\n        finishVisionSettingsGuide()\n        setGuideStep(undefined)\n      }",
+              "      const finishGuide = () => {\n        finishVisionSettingsGuide({ complete: true })\n        setGuideStep(undefined)\n      }",
+              1,
+          )
+
+          old_replay = r'''                    onClick: () => {
+                      closeSettingsShell()
+                      showOnboarding(t)
+                    },'''
+          new_replay = r'''                    onClick: () => {
+                      guideHostUi.closeSettings()
+                      const reveal = () => showOnboarding(t, { auto: false, focus: true })
+                      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(reveal)
+                      else reveal()
+                    },'''
+          if old_replay not in source:
+              raise SystemExit('replay block not found')
+          source = source.replace(old_replay, new_replay, 1)
+
+          # Clarify the server-side compatibility field: it is accepted for
+          # upgrades/downgrades but no longer stores live guide progress.
+          index_path = Path('index.js')
+          index = index_path.read_text()
+          old_schema_comment = r'''  // Client-persisted UI state (issue #78): DSH Desktop serves the Web UI from
+  // a random port on every launch, so origin-scoped localStorage forgets the
+  // first-run onboarding dialog and it re-appeared on every boot. These keys
+  // live in the settings section (the profile settings file) instead; the
+  // client still mirrors best-effort copies into localStorage for downgrades.
+  // Both are internal to the client bundle — the settings card renders them
+  // nowhere, and the server half never reads them.
+  onboardingSeen: z.boolean().default(false),
+  visionGuideStep: z.string().default(''),'''
+          new_schema_comment = r'''  // Client-persisted onboarding disposition (#78): Desktop randomizes its Web
+  // port, so the durable "already dismissed/completed" bit must live in the
+  // profile settings file rather than origin-scoped localStorage.
+  onboardingSeen: z.boolean().default(false),
+  // Deprecated compatibility field (v1.2-v1.6). The client clears/ignores it:
+  // active guide progress is session-only as of #207, so a half-finished guide
+  // can never resume from stale durable state after restart.
+  visionGuideStep: z.string().default(''),'''
+          if old_schema_comment not in index:
+              raise SystemExit('schema comment block not found')
+          index = index.replace(old_schema_comment, new_schema_comment, 1)
+          index_path.write_text(index)
+
+          # Export the pure machine + lifecycle hooks so tests can validate
+          # transitions without brittle source-string assertions.
+          export_anchor = "    exports.installSettingsPersistence = installSettingsPersistence\n"
+          export_insert = export_anchor + (
+              "    exports.GUIDE_STATE = GUIDE_STATE\n"
+              "    exports.GUIDE_EVENT = GUIDE_EVENT\n"
+              "    exports.guideTransition = guideTransition\n"
+              "    exports.guideState = guideState\n"
+              "    exports.readOnboardingDisposition = readOnboardingDisposition\n"
+              "    exports.startVisionSettingsGuide = startVisionSettingsGuide\n"
+              "    exports.finishVisionSettingsGuide = finishVisionSettingsGuide\n"
+          )
+          if export_anchor not in source:
+              raise SystemExit('export anchor not found')
+          source = source.replace(export_anchor, export_insert, 1)
+
+          client_path.write_text(source)
+
+          # Replace the old persistence/source-string tests with behavioral
+          # state-machine invariants while keeping the rest of client.test.js.
+          test_path = Path('tests/client.test.js')
+          tests = test_path.read_text()
+
+          def replace_test(text, title, replacement):
+              pattern = re.compile(r"test\(" + re.escape(repr(title)) + r",.*?\n\}\)\n", re.S)
+              # repr() uses single quotes for these titles, matching the file.
+              match = pattern.search(text)
+              if not match:
+                  # Fallback: explicit single-quoted title pattern.
+                  pattern = re.compile(r"test\('" + re.escape(title) + r"'.*?\n\}\)\n", re.S)
+                  match = pattern.search(text)
+              if not match:
+                  raise SystemExit(f'test block not found: {title}')
+              return text[:match.start()] + replacement.rstrip() + '\n' + text[match.end():]
+
+          tests = replace_test(tests,
+            'guide dismissal is page-authoritative and hidden persistence does not spin on rejection',
+            r'''test('guide lifecycle separates durable disposition from session-only progress', () => {
+  const bundle = loadClientBundle()
+  assert.equal(
+    bundle.guideTransition(bundle.GUIDE_STATE.CHAT_MODEL, { type: bundle.GUIDE_EVENT.SETTINGS_CLOSED }),
+    bundle.GUIDE_STATE.CHAT_MODEL,
+  )
+  assert.equal(
+    bundle.guideTransition(bundle.GUIDE_STATE.SETTINGS, { type: bundle.GUIDE_EVENT.SETTINGS_CLOSED }),
+    bundle.GUIDE_STATE.IDLE,
+  )
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('let onboardingSeenMemory = false'), true)
+  assert.equal(source.includes("return 'unknown'"), true)
+  assert.equal(source.includes('session-only'), true)
+  assert.equal(source.includes('settingsPersistence.get(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), false)
+  assert.equal(source.includes('settingsPersistence.set(LEGACY_VISION_GUIDE_SETTINGS_KEY'), false)
+  assert.equal(source.includes("pending.set(field, { operation, value, attempted: false })"), true)
+  assert.equal(source.includes('filter(([, entry]) => !entry.attempted)'), true)
+})''')
+
+          tests = replace_test(tests,
+            'model-selection guide separates session and vision models and targets the vision chain',
+            r'''test('model-selection guide separates session and vision models and targets the vision chain', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("onboardingStep1Title: '1 · 选择聊天模型'"), true)
+  assert.equal(source.includes("quickStartTitle: '聊天和看图分别设置'"), true)
+  assert.equal(source.includes("quickStartTitle: 'Chat and image understanding are separate'"), true)
+  assert.equal(source.includes("onboardingStep2Body: '打开「设置 → 插件 → Vision Router」"), true)
+  assert.equal(source.includes("GUIDE_STATE = Object.freeze"), true)
+  assert.equal(source.includes("CHAT_MODEL: 'chat-model'"), true)
+  assert.equal(source.includes("VISION_MODEL: 'vision-model'"), true)
+  assert.equal(source.includes('startVisionSettingsGuide(t)'), true)
+  assert.equal(source.includes("id: 'vr-vision-backend-chain'"), true)
+  assert.equal(source.includes("'data-vr-guide-target': 'vision-backend'"), true)
+  assert.equal(source.includes("target.scrollIntoView({ behavior: 'smooth', block: 'center' })"), true)
+  assert.equal(source.includes("const guideTargetsVisionSettings = guideStep === 'step2'"), true)
+})''')
+
+          tests = replace_test(tests,
+            're-viewing the model guide replays the overview instead of skipping to step 2',
+            r'''test('re-viewing the guide is explicit and first-run display waits for a real settings decision', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('guideHostUi.closeSettings()'), true)
+  assert.equal(source.includes("showOnboarding(t, { auto: false, focus: true })"), true)
+  assert.equal(source.includes('function readOnboardingDisposition()'), true)
+  assert.equal(source.includes("if (!snapshot || snapshot.status !== 'ready') return 'unknown'"), true)
+  assert.equal(source.includes('onboardingAutoPresented'), true)
+  assert.equal(source.includes('}, 650)'), false)
+  // Starting does not persist completion; only an explicit dismiss/complete does.
+  assert.equal(source.includes('dismissOnboarding(false)\n        startVisionSettingsGuide(t)'), true)
+})''')
+
+          tests = replace_test(tests,
+            'walkthrough ends on save, on picking a vision model, or when the settings panel closes',
+            r'''test('walkthrough completion and Settings-close semantics are explicit state transitions', () => {
+  const bundle = loadClientBundle()
+  const S = bundle.GUIDE_STATE
+  const E = bundle.GUIDE_EVENT
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.SETTINGS_CLOSED }), S.CHAT_MODEL)
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.NEXT }), S.SETTINGS)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.SETTINGS_CLOSED }), S.IDLE)
+  assert.equal(bundle.guideTransition(S.VISION_MODEL, { type: E.COMPLETE }), S.IDLE)
+
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('guideSettingsPanelSeen'), true)
+  assert.equal(source.includes('scheduleGuidePanelCloseCheck'), true)
+  assert.equal(source.includes('}, 400)'), false)
+  assert.equal(source.includes('window.setInterval(() => syncVisionGuidePrompt'), false)
+  assert.equal(source.includes('if (guideTargetsVisionSettings && outcome.landed) finishGuide()'), true)
+  assert.equal(source.includes('if (row.provider && event.target.value) finishGuide()'), false)
+})''')
+
+          tests = replace_test(tests,
+            'onboarding and guide durability live in the settings section, not origin-scoped localStorage (#78)',
+            r'''test('only onboarding disposition is durable; legacy guide progress is cleaned and ignored (#78/#207)', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("const ONBOARDING_SETTINGS_KEY = 'onboardingSeen'"), true)
+  assert.equal(source.includes('settingsPersistence.set(ONBOARDING_SETTINGS_KEY, true)'), true)
+  assert.equal(source.includes("ONBOARDING_STORAGE_KEY = 'dsh-vision-router:onboarding:model-guide-v2'"), true)
+  assert.equal(source.includes("LEGACY_VISION_GUIDE_SETTINGS_KEY = 'visionGuideStep'"), true)
+  assert.equal(source.includes('settingsPersistence.unset(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), true)
+  assert.equal(source.includes('settingsPersistence.get(LEGACY_VISION_GUIDE_SETTINGS_KEY)'), false)
+  assert.equal(source.includes('settingsPersistence.set(LEGACY_VISION_GUIDE_SETTINGS_KEY'), false)
+  const serverSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.equal(serverSource.includes('onboardingSeen: z.boolean().default(false)'), true)
+  assert.equal(serverSource.includes("visionGuideStep: z.string().default('')"), true)
+  assert.equal(serverSource.includes('Deprecated compatibility field'), true)
+})''')
+
+          tests = replace_test(tests,
+            'the walkthrough walks step 1 (session model), step 2 (open settings), step 3 (chain callout)',
+            r'''test('the walkthrough is an explicit state machine with visual fallbacks for all three steps', () => {
+  const bundle = loadClientBundle()
+  const S = bundle.GUIDE_STATE
+  const E = bundle.GUIDE_EVENT
+  assert.equal(bundle.guideTransition(S.IDLE, { type: E.START }), S.CHAT_MODEL)
+  assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.NEXT }), S.SETTINGS)
+  assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
+
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("guideStep1Title: '第 1 步 · 选择聊天模型'"), true)
+  assert.equal(source.includes("guidePromptTitle: '第 2 步 · 选择识图模型'"), true)
+  assert.equal(source.includes("guideChainTitle: '第 3 步 · 设置备用模型'"), true)
+  assert.equal(source.includes('vr-guide-spot-hole'), true)
+  assert.equal(source.includes('vr-guide-spot-ring'), true)
+  assert.equal(source.includes('vr-guide-arrow'), true)
+  assert.equal(source.includes('[data-slot="conversation.input.model"] button[aria-haspopup="menu"]'), true)
+  assert.equal(source.includes('button[aria-haspopup="dialog"]'), true)
+  assert.equal(source.includes('[role="dialog"][aria-modal="true"]'), true)
+  assert.equal(source.includes('guideHostUi.openSettings()'), true)
+  assert.equal(source.includes('guideHostUi.openPlugins()'), true)
+  assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
+  assert.equal(source.includes('const halo = 10'), true)
+})''')
+
+          test_path.write_text(tests)
+
+          # Rewrite the performance gate around the new invariant: no guide
+          # listeners/DOM work at all while idle; listeners exist only during
+          # an active session and are disposed at the end.
+          Path('tests/guide-scroll-gate.test.js').write_text(r'''import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+
+function loadClientBundle() {
+  let spec = null
+  globalThis.window = { __ModuleLoader__: { load(s) { spec = s } } }
+  const url = new URL('../lib/client.js', import.meta.url)
+  ;(0, eval)(readFileSync(url, 'utf8'))
+  const ReactStub = {
+    useState: (initial) => [initial, () => {}],
+    useMemo: (fn) => fn(),
+    useSyncExternalStore: () => ({ status: 'ready', writable: true, value: {}, user: {} }),
+  }
+  return spec.factory((name) => {
+    if (name === 'react') return ReactStub
+    if (name === '@deepseek-ai/dsh-client-ui-attachment') return { ImageGallery: () => null }
+    throw new Error('require(' + name + ')')
+  })
+}
+
+function fakeElement() {
+  return {
+    className: '', dataset: {}, children: [], offsetWidth: 360, offsetHeight: 160, isConnected: true,
+    style: { removeProperty() {}, setProperty() {} },
+    classList: { add() {}, remove() {}, toggle() {} },
+    setAttribute() {}, addEventListener() {}, remove() {}, append(...items) { this.children.push(...items) },
+    querySelector(selector) {
+      const cls = selector.match(/^\.([\w-]+)$/)
+      return cls ? this.children.find((child) => String(child.className).split(/\s+/).includes(cls[1])) ?? null : null
+    },
+    getBoundingClientRect() {
+      return { x: 100, y: 100, width: 120, height: 40, left: 100, right: 220, top: 100, bottom: 140 }
+    },
+    getAttribute() { return null },
+    closest() { return null },
+  }
+}
+
+function harness() {
+  const counters = { queries: 0, rects: 0 }
+  const listeners = new Map()
+  const frames = []
+  const target = fakeElement()
+  target.getBoundingClientRect = () => {
+    counters.rects += 1
+    return { x: 100, y: 100, width: 120, height: 40, left: 100, right: 220, top: 100, bottom: 140 }
+  }
+  const gear = fakeElement()
+  const panel = fakeElement()
+  panel.querySelector = () => null
+  const document = {
+    body: { appendChild() {} },
+    documentElement: {},
+    activeElement: null,
+    addEventListener(type, fn) { listeners.set('document:' + type, fn) },
+    removeEventListener(type) { listeners.delete('document:' + type) },
+    dispatchEvent() {},
+    createElement() { return fakeElement() },
+    querySelectorAll(selector) {
+      counters.queries += 1
+      if (selector.includes('conversation.input.model')) return [target]
+      if (selector === 'button[aria-haspopup="dialog"]') return [gear]
+      if (selector === '[role="dialog"][aria-modal="true"]') return [panel]
+      return []
+    },
+    querySelector() { counters.queries += 1; return null },
+  }
+  const window = {
+    innerWidth: 1280, innerHeight: 800,
+    addEventListener(type, fn) { listeners.set('window:' + type, fn) },
+    removeEventListener(type) { listeners.delete('window:' + type) },
+    dispatchEvent() {},
+    requestAnimationFrame(fn) { frames.push(fn); return frames.length },
+    cancelAnimationFrame() {},
+    setTimeout(fn) { frames.push(fn); return frames.length },
+    clearTimeout() {},
+    localStorage: { getItem() { return null }, setItem() {}, removeItem() {} },
+  }
+  return {
+    counters, document, window, listeners,
+    scroll() { const fn = listeners.get('document:scroll'); if (fn) fn() },
+    frame() { const work = frames.splice(0); for (const fn of work) fn() },
+  }
+}
+
+function boot() {
+  const h = harness()
+  const bundle = loadClientBundle()
+  globalThis.document = h.document
+  globalThis.window = h.window
+  const dispose = bundle.installVisionSettingsGuide((key) => key)
+  return { h, bundle, dispose }
+}
+
+test('idle guide runtime installs zero global hot-path listeners and does zero DOM work', () => {
+  const { h, dispose } = boot()
+  try {
+    assert.equal(h.listeners.has('document:scroll'), false)
+    assert.equal(h.listeners.has('window:resize'), false)
+    assert.equal(h.counters.queries, 0)
+    for (let i = 0; i < 20; i++) { h.scroll(); h.frame() }
+    assert.equal(h.counters.queries, 0)
+  } finally { dispose() }
+})
+
+test('active guide installs listeners lazily and keeps scroll-frame resolution bounded', () => {
+  const { h, bundle, dispose } = boot()
+  const realNow = Date.now
+  Date.now = () => 0
+  try {
+    bundle.startVisionSettingsGuide((key) => key)
+    assert.equal(h.listeners.has('document:scroll'), true)
+    const afterStart = h.counters.queries
+    assert.ok(afterStart > 0)
+    for (let i = 0; i < 30; i++) { h.scroll(); h.frame() }
+    assert.equal(h.counters.queries, afterStart, 'cached active frames must not re-query DOM')
+    assert.ok(h.counters.rects > 0)
+  } finally {
+    Date.now = realNow
+    bundle.finishVisionSettingsGuide()
+    dispose()
+  }
+})
+
+test('ending a guide disposes global listeners so later scrolls stay inert', () => {
+  const { h, bundle, dispose } = boot()
+  try {
+    bundle.startVisionSettingsGuide((key) => key)
+    assert.equal(h.listeners.has('document:scroll'), true)
+    bundle.finishVisionSettingsGuide()
+    assert.equal(h.listeners.has('document:scroll'), false)
+    const queries = h.counters.queries
+    for (let i = 0; i < 10; i++) { h.scroll(); h.frame() }
+    assert.equal(h.counters.queries, queries)
+  } finally { dispose() }
+})
+''')
+
+          # Remove this one-shot refactor workflow from the resulting branch.
+          Path('.github/workflows/guide-lifecycle-refactor.yml').unlink()
+          PY
+
+      - name: Run focused regression tests
+        run: node --test tests/client.test.js tests/guide-scroll-gate.test.js
+
+      - name: Commit refactor
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/client.js index.js tests/client.test.js tests/guide-scroll-gate.test.js .github/workflows/guide-lifecycle-refactor.yml
+          git commit -m "refactor: make guide lifecycle state-driven (#207)"
+          git push origin HEAD:fix/guide-lifecycle-architecture
