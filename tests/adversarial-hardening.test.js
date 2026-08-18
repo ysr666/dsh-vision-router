@@ -49,16 +49,18 @@ test('htmlRequestAllowed permits only local-root/data/blob/about resources', asy
   }
 })
 
-test('secure HTML screenshot keeps Chrome sandbox enabled, intercepts requests and writes under workspace', async () => {
+test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode and writes under workspace', async () => {
   const workspace = await mkdtemp(path.join(tmpdir(), 'vision-html-'))
   try {
     const source = path.join(workspace, 'page.html')
     await writeFile(source, '<html><body>Hello</body></html>')
     let launchOptions
     let requestHandler
+    let offline = false
     let closed = false
     const page = {
       async setViewport(value) { assert.deepEqual(value, { width: 1200, height: 720 }) },
+      async setOfflineMode(value) { offline = value },
       async setRequestInterception(value) { assert.equal(value, true) },
       on(event, handler) {
         assert.equal(event, 'request')
@@ -107,6 +109,7 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, intercepts requests a
     ))
     assert.ok(launchOptions)
     assert.equal(launchOptions.args.includes('--no-sandbox'), false)
+    assert.equal(offline, true)
     assert.equal(typeof requestHandler, 'function')
     assert.equal(closed, true)
     assert.equal(result.pageHeight, 1500)
@@ -189,10 +192,9 @@ test('hardening wrapper protects screenshot permission POST from cross-origin ca
   assert.equal(originalCalls, 1)
 })
 
-test('proxy fetch cleanup never removes a later plugin fetch patch', () => {
+test('proxy fetch cleanup becomes inert under later plugin patches and cannot resurface', () => {
   const originalFetch = globalThis.fetch
   const patchA = () => 'a'
-  const patchB = () => 'b'
   let cleanup
   const ctx = {
     tools: { register() {} },
@@ -207,10 +209,19 @@ test('proxy fetch cleanup never removes a later plugin fetch patch', () => {
       globalThis.fetch = patchA
       return () => { globalThis.fetch = originalFetch },
     }, 'vision-router: proxy fetch')
-    assert.equal(globalThis.fetch, patchA)
-    globalThis.fetch = patchB
+    const guardedFetch = globalThis.fetch
+    assert.notEqual(guardedFetch, patchA)
+    assert.equal(guardedFetch(), 'a')
+
+    const laterPatch = (...args) => guardedFetch(...args)
+    globalThis.fetch = laterPatch
     cleanup()
-    assert.equal(globalThis.fetch, patchB)
+    assert.equal(globalThis.fetch, laterPatch)
+    // Simulate the later plugin unloading and restoring the fetch value it
+    // captured. Vision Router's guard must remain inert instead of resurfacing.
+    globalThis.fetch = guardedFetch
+    assert.equal(globalThis.fetch, guardedFetch)
+    assert.notEqual(globalThis.fetch(), 'a')
   } finally {
     globalThis.fetch = originalFetch
   }
