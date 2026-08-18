@@ -63,6 +63,7 @@ import {
 import { planMixedBranches, renderMixedGuidance } from './lib/mixed-router.js'
 import { depthLimitFor, renderDepthGuidance } from './lib/depth-guidance.js'
 import { assertNoRepetitionLoop } from './lib/repetition-guard.js'
+import { compareRgbaStreams } from './lib/pixel-diff-stream.js'
 import {
   boundedOcrTiles,
   defaultImageResourceGovernor,
@@ -6240,20 +6241,95 @@ ctx.logger?.info(
         const height = meta.height ?? 0
         if (width <= 0 || height <= 0) throw new Error('vision_pixel_diff: could not read original dimensions')
         const threshold = Number.isFinite(args.threshold) && args.threshold >= 0 ? Math.round(args.threshold) : 16
-        const originalRaw = await sharp(originalBytes, { failOn: 'none' })
-          .ensureAlpha()
-          .raw()
-          .toBuffer({ resolveWithObject: true })
-        const rebuiltRaw = await sharp(rebuiltBytes, { failOn: 'none' })
-          .resize(width, height, { fit: 'fill' })
-          .ensureAlpha()
-          .raw()
-          .toBuffer({ resolveWithObject: true })
-        const diff = computePixelDiff(originalRaw.data, rebuiltRaw.data, threshold, width, height)
-        const heatmap = renderDiffHeatmap(originalRaw.data, diff.mask, width, height)
-        const heatmapPng = await sharp(heatmap, { raw: { width, height, channels: 4 } })
-          .png()
-          .toBuffer()
+        const pixels = width * height
+        let diff
+        let heatmapPng
+        let heatmapPreview = false
+        let heatmapWidth = width
+        let heatmapHeight = height
+        if (pixels <= 4_000_000) {
+          const release = await defaultImageResourceGovernor.acquire(
+            estimateImageOperationBytes('pixel-diff', width, height),
+          )
+          try {
+            const originalRaw = await sharp(originalBytes, { failOn: 'none' })
+              .ensureAlpha()
+              .raw()
+              .toBuffer({ resolveWithObject: true })
+            const rebuiltRaw = await sharp(rebuiltBytes, { failOn: 'none' })
+              .resize(width, height, { fit: 'fill' })
+              .ensureAlpha()
+              .raw()
+              .toBuffer({ resolveWithObject: true })
+            diff = computePixelDiff(originalRaw.data, rebuiltRaw.data, threshold, width, height)
+            const heatmap = renderDiffHeatmap(originalRaw.data, diff.mask, width, height)
+            heatmapPng = await sharp(heatmap, { raw: { width, height, channels: 4 } })
+              .png()
+              .toBuffer()
+          } finally {
+            release()
+          }
+        } else {
+          // Exact large-image metrics are accumulated from streaming RGBA
+          // output. No complete original/rebuilt framebuffer or full-size mask
+          // is retained in JavaScript memory.
+          const release = await defaultImageResourceGovernor.acquire(
+            estimateImageOperationBytes('pixel-diff', width, height),
+            { exclusive: true },
+          )
+          try {
+            const originalStream = sharp(originalBytes, { failOn: 'none' }).ensureAlpha().raw()
+            const rebuiltStream = sharp(rebuiltBytes, { failOn: 'none' })
+              .resize(width, height, { fit: 'fill' })
+              .ensureAlpha()
+              .raw()
+            diff = await compareRgbaStreams(originalStream, rebuiltStream, { width, height, threshold })
+          } finally {
+            release()
+          }
+
+          // The report stays exact, while the visual heatmap is intentionally
+          // bounded. Build it from a <=4MP representation instead of allocating
+          // another 100MP RGBA heatmap just for display.
+          const preview = scaledDimensions(width, height, 4_000_000)
+          heatmapWidth = preview.width
+          heatmapHeight = preview.height
+          heatmapPreview = true
+          const releasePreview = await defaultImageResourceGovernor.acquire(
+            estimateImageOperationBytes('preview', width, height),
+            { exclusive: true },
+          )
+          try {
+            const originalPreview = await sharp(originalBytes, { failOn: 'none' })
+              .resize(preview.width, preview.height, { fit: 'fill' })
+              .ensureAlpha()
+              .raw()
+              .toBuffer({ resolveWithObject: true })
+            const rebuiltPreview = await sharp(rebuiltBytes, { failOn: 'none' })
+              .resize(preview.width, preview.height, { fit: 'fill' })
+              .ensureAlpha()
+              .raw()
+              .toBuffer({ resolveWithObject: true })
+            const previewDiff = computePixelDiff(
+              originalPreview.data,
+              rebuiltPreview.data,
+              threshold,
+              preview.width,
+              preview.height,
+            )
+            const heatmap = renderDiffHeatmap(
+              originalPreview.data,
+              previewDiff.mask,
+              preview.width,
+              preview.height,
+            )
+            heatmapPng = await sharp(heatmap, {
+              raw: { width: preview.width, height: preview.height, channels: 4 },
+            }).png().toBuffer()
+          } finally {
+            releasePreview()
+          }
+        }
         const worst = diff.cells.slice(0, 5).map((cell) => ({
           x1: cell.x1,
           y1: cell.y1,
@@ -6273,6 +6349,7 @@ ctx.logger?.info(
           totalPixels: diff.total,
           diffRatio: Number(diff.ratio.toFixed(4)),
           worstRegions: worst,
+          ...(heatmapPreview ? { heatmapPreview: true, heatmapWidth, heatmapHeight } : {}),
         }
         const stem = artifactStem(args.original, 'diff')
         const heatmapPath = await saveArtifact(exec, `${stem}-heatmap.png`, heatmapPng)
