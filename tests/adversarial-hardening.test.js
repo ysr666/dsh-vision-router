@@ -222,7 +222,7 @@ test('proxy fetch cleanup becomes inert under later plugin patches and cannot re
     const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
     hardened.effect(() => {
       globalThis.fetch = patchA
-      return () => { globalThis.fetch = hostFetch },
+      return () => { globalThis.fetch = hostFetch }
     }, 'vision-router: proxy fetch')
     const guardedFetch = globalThis.fetch
     assert.notEqual(guardedFetch, patchA)
