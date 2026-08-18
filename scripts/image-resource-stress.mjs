@@ -8,7 +8,7 @@ const HEIGHT = Number(process.env.STRESS_IMAGE_HEIGHT || 10_000)
 const MAX_INPUT_BYTES = 20 * 1024 * 1024
 const MAX_PIXELS = 100_000_000
 const SAFE_PIXELS = 4_000_000
-const MAX_DELTA_MIB = Number(process.env.STRESS_MAX_DELTA_MIB || 1024)
+const MAX_DELTA_MIB = Number(process.env.STRESS_MAX_DELTA_MIB || 256)
 
 if (!Number.isInteger(WIDTH) || !Number.isInteger(HEIGHT) || WIDTH <= 0 || HEIGHT <= 0) {
   throw new Error('STRESS_IMAGE_WIDTH/HEIGHT must be positive integers')
