@@ -12,6 +12,7 @@ import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
+import { installWrapperDirectoryAlias } from './lib/wrapper-directory.js'
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -72,10 +73,17 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(stabilizedCtx, {
+    const runtimeConfig = {
       ...bootConfig,
       progressiveTools: hardenedConfig.progressiveTools === true,
-    })
+    }
+    const result = core.apply(stabilizedCtx, runtimeConfig)
+    // DSH rc.7's Settings -> Models surface is backed by the configurable
+    // provider directory, not by the live adapter registry alone. Publish the
+    // main DeepSeek + 自动识图 route as a derived alias of its text provider so
+    // a reinstall restores the expected model-group row without duplicating
+    // provider credentials/configuration.
+    installWrapperDirectoryAlias(stabilizedCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
         logging.logger.error(
