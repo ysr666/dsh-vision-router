@@ -1,0 +1,39 @@
+name: Apply vision catalog refresh fix
+
+on:
+  push:
+    branches: [fix/vision-catalog-refresh-partial-failures]
+    paths:
+      - .github/workflows/_temp-fix-vision-catalog.yml
+      - scripts/_fix_vision_catalog.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/vision-catalog-refresh-partial-failures
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - run: corepack enable
+      - name: Apply catalog fix
+        run: python scripts/_fix_vision_catalog.py
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile=false
+      - name: Run test suite
+        run: pnpm test
+      - name: Remove staging helpers
+        run: rm scripts/_fix_vision_catalog.py .github/workflows/_temp-fix-vision-catalog.yml
+      - name: Commit validated fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: refresh vision model catalog after provider changes"
+          git push origin HEAD:fix/vision-catalog-refresh-partial-failures
