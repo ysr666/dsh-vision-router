@@ -63,6 +63,7 @@ import {
 import { planMixedBranches, renderMixedGuidance } from './lib/mixed-router.js'
 import { depthLimitFor, renderDepthGuidance } from './lib/depth-guidance.js'
 import { assertNoRepetitionLoop } from './lib/repetition-guard.js'
+import { createSessionVisionStateStore } from './lib/session-vision-state.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -2834,9 +2835,18 @@ export function apply(ctx, config = {}) {
   // section once the settings service mounts (installSettingsSection below).
   let current = () => config
   const pairs = () => providersOf(current())
-  // attachmentId -> description captured from a successful vision turn, so
-  // later text turns can replace stripped image blocks with real knowledge.
-  const imageMemory = new Map()
+  // #208: cross-turn visual knowledge belongs to a bounded session owner,
+  // not to the plugin process. The compatibility facade is used only at
+  // adapter boundaries that do not expose a Session; ambiguous attachment ids
+  // deliberately miss instead of crossing conversations.
+  const visionState = createSessionVisionStateStore({
+    maxSessions: 64,
+    idleTtlMs: 60 * 60 * 1000,
+    descriptionMaxEntries: 64,
+    descriptionMaxChars: 256 * 1024,
+    attachmentMaxEntries: 256,
+  })
+  const imageMemory = visionState.descriptionFacade
   const timeoutMs = () => {
     const value = current().timeoutMs
     return Number.isFinite(value) && value > 0 ? value : 120000
@@ -4408,10 +4418,8 @@ export function apply(ctx, config = {}) {
     },
     'vision-router: reactive routing mounts',
   )
-  // session -> Map<attachmentId, ref> (uploaded images visible to vision_describe)
-  const sessionAttachments = new WeakMap()
-  // secondary index by session id string (agent.session object identity can change across turns)
-  const sessionAttachmentsById = new Map()
+  // #208: attachment refs, description memory and the event-log cursor are
+  // owned by the same bounded SessionVisionStateStore above.
 
   // ── optional fetch proxy for the vision provider hosts ─────────────────────
   //
@@ -4482,32 +4490,8 @@ export function apply(ctx, config = {}) {
   }
 
   const recordUploadedAttachments = (session, attachments) => {
-    if (!session || !Array.isArray(attachments) || attachments.length === 0) return
-    let map = sessionAttachments.get(session)
-    if (!map) {
-      map = new Map()
-      sessionAttachments.set(session, map)
-    }
-    let byId
-    if (session.id !== undefined) {
-      byId = sessionAttachmentsById.get(String(session.id))
-      if (!byId) {
-        byId = new Map()
-        sessionAttachmentsById.set(String(session.id), byId)
-      }
-    }
-    for (const ref of attachments) {
-      if (ref && ref.attachmentId) {
-        map.set(String(ref.attachmentId), ref)
-        byId?.set(String(ref.attachmentId), ref)
-      }
-    }
+    visionState.recordAttachments(session, attachments)
   }
-
-  // session id -> event-log length already scanned for attachment refs.
-  // Mirrors sessionAttachmentsById: sessions are long-lived objects, and only
-  // the id string survives a process resume, so the index is keyed by id.
-  const scannedSessionEventSeqs = new Map()
 
   /**
    * Index image attachments recorded anywhere in the session event log, not
@@ -4529,43 +4513,22 @@ export function apply(ctx, config = {}) {
       return // not a host Session (or the getter is unavailable): nothing to scan
     }
     if (!Array.isArray(events) || events.length === 0) return
-    const key = session.id !== undefined ? String(session.id) : undefined
-    const last = key !== undefined ? (scannedSessionEventSeqs.get(key) ?? 0) : 0
+    const last = visionState.getScannedEventSeq(session)
     if (last >= events.length) return
     const refs = collectEventAttachmentRefs(events.slice(last))
-    if (key !== undefined) scannedSessionEventSeqs.set(key, events.length)
+    visionState.setScannedEventSeq(session, events.length)
     if (refs.length > 0) recordUploadedAttachments(session, refs)
   }
 
   const lookupAttachment = (session, id) => {
-    const byId = session && session.id !== undefined
-      ? sessionAttachmentsById.get(String(session.id))
-      : undefined
-    if (byId !== undefined) {
-      const hit = byId.get(String(id))
-      if (hit !== undefined) return hit
-    }
-    const map = session ? sessionAttachments.get(session) : undefined
-    const hit = map ? map.get(String(id)) : undefined
+    let hit = visionState.lookupAttachment(session, id)
     if (hit !== undefined) return hit
-    // Miss: fall back to the session event log. Ids announced by the harness
-    // for images it persisted itself (read_image re-uploads) live there even
-    // though they never crossed the inbox-claim stream, so this resolves them
-    // exactly like user-uploaded ids (issue #72). Refs from the log carry
-    // full metadata, so a later attachments.readImage(ref) verifies and
-    // returns the bytes.
+    // Cache eviction is a performance event, never a correctness event: the
+    // durable session log remains authoritative and can repopulate the ref.
     if (session !== undefined) {
       scanSessionEventLog(session)
-      const afterById = session.id !== undefined
-        ? sessionAttachmentsById.get(String(session.id))
-        : undefined
-      if (afterById !== undefined) {
-        const after = afterById.get(String(id))
-        if (after !== undefined) return after
-      }
-      const afterMap = sessionAttachments.get(session)
-      const afterHit = afterMap ? afterMap.get(String(id)) : undefined
-      if (afterHit !== undefined) return afterHit
+      hit = visionState.lookupAttachment(session, id)
+      if (hit !== undefined) return hit
     }
     return undefined
   }
