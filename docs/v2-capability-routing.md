@@ -2,6 +2,14 @@
 
 This document is the design target for a major-version routing change. The implementation on `feat/v2-capability-router` keeps the current v1 execution order by default while adding an intent/profile/scoring core and shadow experiments.
 
+## Concept attribution and scope
+
+The **scene-aware routing direction** in this v2 design was informed in part by earlier discussions with [@shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) and his earlier `dsh-vision` work: classify the visual scene/content first, then use that signal to guide a more suitable visual path instead of forcing every image through one undifferentiated chain.
+
+That attribution is intentionally scoped to the concept/direction. The capability-aware backend profile and scoring model, health/cost/privacy weighting, shadow routing, evidence-aware model reference, self-benchmark/fingerprint design, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
+
+Related scene-classification/deep-dive work is currently being developed separately in PR #178. Keep that work on its independent PR until the `content_kind` / `mixed_of` interface is stable; #142 can then consume the stable interface rather than coupling the two branches during active development.
+
 ## Why the v1 chain stops scaling
 
 The current router answers one question well: **which configured vision backend should be tried next when a call fails?**
