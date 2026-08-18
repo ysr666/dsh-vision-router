@@ -1059,7 +1059,7 @@ test('stealth stream keeps the log intact and hands the model a tool-hint marker
 // plugin). These tests apply the full plugin against a harness-shaped mock
 // ctx, so ordering bugs inside apply() fail loudly here instead of at boot.
 
-function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, attachments = false, opencodeGo = false } = {}) {
+function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, attachments = false, opencodeGo = false, syncDispatch = false } = {}) {
   const adapters = new Map() // provider -> adapter
   const registrations = new Map() // provider -> { adapter, retryPolicy }
   const directories = [] // configurable-provider registrations (directory seam)
@@ -1204,6 +1204,13 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
           }
         }
         handle.replace = () => {}
+        // DSH core 0.1.0-rc.7 dispatches llm/adapters-updated synchronously
+        // from inside registerAdapter, before the caller can record the twin
+        // in its own bookkeeping. `syncDispatch` mirrors that, so re-entrancy
+        // bugs in syncTwins reproduce in tests instead of only at boot.
+        if (syncDispatch && captured.on.has('llm/adapters-updated')) {
+          captured.on.get('llm/adapters-updated')()
+        }
         return handle
       },
       registration(provider) {
@@ -1975,6 +1982,40 @@ test('twin sync is idempotent across llm/adapters-updated events', async () => {
   assert.ok(adapters.has('opencode-go-vision'))
   const listed = await adapters.get('opencode-go-vision').listModels('opencode-go-vision')
   assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
+})
+
+test('twin sync survives synchronous llm/adapters-updated re-entry (rc.7 semantics)', async () => {
+  // rc.7 registerAdapter commits and dispatches llm/adapters-updated
+  // synchronously, so the listener re-enters syncTwins while the outer pass
+  // has not recorded the twin in twinHandles yet; without the re-entrancy
+  // guard the nested pass re-registers the same *-vision route and the strict
+  // registry throws DUPLICATE_ADAPTER ("twin route ... registration failed").
+  const { ctx, adapters, captured } = mockHarnessCtx({ syncDispatch: true })
+  const warns = []
+  ctx.logger = { warn: (...args) => warns.push(args), info() {}, error() {} }
+  apply(ctx, Config({ autoWrapProviders: true }))
+  assert.ok(captured.on.has('llm/adapters-updated'), 'expected the adapters-updated listener')
+  const source = {
+    providerInfo: (p) => ({ id: p, name: 'Zhipu GLM' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'glm-4-flash', name: 'GLM-4-Flash', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({
+      provider: p, id: m, name: m, inputModalities: ['text'], context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  // registering the source synchronously re-enters syncTwins (rc.7 dispatch);
+  // the twin must still land exactly once with no duplicate-registration noise
+  ctx.llm.registerAdapter(['zhipu'], source)
+  assert.ok(adapters.has('zhipu-vision'), 'expected the zhipu-vision twin')
+  const failures = warns.filter((args) => String(args[0]).includes('registration failed'))
+  assert.deepEqual(failures, [], 'no twin registration failures expected under synchronous dispatch')
+  const twinListed = await adapters.get('zhipu-vision').listModels('zhipu-vision')
+  assert.deepEqual(twinListed.map((m) => m.id), ['glm-4-flash'])
 })
 
 test('apply falls back to the visible wrapper when the stock route is still active', async () => {
