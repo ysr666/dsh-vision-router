@@ -338,3 +338,31 @@ test('oversized compatibility error cannot trigger a retry from text beyond the 
   assert.equal(bodies.length, 1)
   assert.equal((await response.text()).length, huge.length)
 })
+
+
+test('batch3: bounded HTTP body reader counts streamed bytes and declared length', async () => {
+  const {
+    readResponseJsonBounded,
+  } = await import('../lib/http-body-limit.js')
+
+  const declared = new Response('{"ok":true}', {
+    headers: { 'content-length': '999999' },
+  })
+  await assert.rejects(
+    readResponseJsonBounded(declared, 1024, { label: 'declared test' }),
+    (error) => error && error.code === 'HTTP_RESPONSE_TOO_LARGE',
+  )
+
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(800))
+      controller.enqueue(new Uint8Array(800))
+      controller.close()
+    },
+  })
+  const streamed = new Response(stream)
+  await assert.rejects(
+    readResponseJsonBounded(streamed, 1024, { label: 'stream test' }),
+    (error) => error && error.code === 'HTTP_RESPONSE_TOO_LARGE',
+  )
+})

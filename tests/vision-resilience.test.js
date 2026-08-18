@@ -817,3 +817,29 @@ test('Test 10: a wrapped provider twin delegates with the same request config as
   assert.ok(marker.includes('vision_ocr 只用于读取图中文字'), marker)
   assert.ok(marker.includes('不要改问法重复调用'), marker)
 })
+
+
+test('batch3: circuit breaker and turn/session indexes remain bounded', () => {
+  const breaker = createVisionCircuitBreaker({ maxBackends: 16 })
+  for (let i = 0; i < 10_000; i++) {
+    breaker.record(`provider-${i}/model`, 'fp', { kind: 'AUTH' }, `s:${i}`)
+  }
+  assert.ok(breaker.size() <= 16)
+
+  let now = 0
+  const expiring = createVisionCircuitBreaker({ now: () => now, authTripTtlMs: 10 })
+  expiring.record('old/model', 'fp', { kind: 'AUTH' }, 's:1')
+  assert.equal(expiring.size(), 1)
+  now = 11
+  assert.equal(expiring.inspect('old/model', 'fp', 's:2').blocked, false)
+  assert.equal(expiring.size(), 0, 'expired empty circuit entries should be removed, not tombstoned')
+
+  const memory = createVisionTurnMemory({ maxScopes: 8, maxSessions: 8, maxAttemptsPerScope: 4 })
+  for (let i = 0; i < 10_000; i++) {
+    const scope = `session-${i}:1`
+    memory.bindSession(`session-${i}`, scope)
+    for (let attempt = 0; attempt < 10; attempt++) memory.record(scope, `p/${attempt}`, 'AUTH')
+  }
+  assert.deepEqual(memory.stats(), { scopes: 8, sessions: 8 })
+  assert.equal(memory.attempted('session-9999:1').length, 4)
+})

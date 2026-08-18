@@ -389,3 +389,51 @@ test('proxy fetch cleanup becomes inert under later plugin patches and cannot re
     globalThis.fetch = savedFetch
   }
 })
+
+
+test('batch3: artifact writer rejects symlink escape and never follows final symlinks', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('symlink creation privileges vary on Windows runners')
+    return
+  }
+  const { mkdir, symlink } = await import('node:fs/promises')
+  const { writeArtifactFile } = await import('../lib/artifact-boundary.js')
+  const workspace = await mkdtemp(path.join(tmpdir(), 'vision-artifact-workspace-'))
+  const outside = await mkdtemp(path.join(tmpdir(), 'vision-artifact-outside-'))
+  try {
+    const artifactLink = path.join(workspace, '.dsh-vision-router', 'artifacts')
+    await mkdir(path.dirname(artifactLink), { recursive: true })
+    await symlink(outside, artifactLink, 'dir')
+    await assert.rejects(
+      writeArtifactFile(workspace, '.dsh-vision-router/artifacts', 'escape.png', Buffer.from('bad')),
+      /escapes the session workspace/,
+    )
+    await assert.rejects(readFile(path.join(outside, 'escape.png')), /ENOENT/)
+
+    await rm(artifactLink, { force: true })
+    await mkdir(artifactLink, { recursive: true })
+    const secret = path.join(outside, 'secret.txt')
+    await writeFile(secret, 'secret')
+    const target = path.join(artifactLink, 'safe.png')
+    await symlink(secret, target)
+    const written = await writeArtifactFile(
+      workspace,
+      '.dsh-vision-router/artifacts',
+      'safe.png',
+      Buffer.from('artifact'),
+    )
+    assert.equal((await readFile(secret)).toString(), 'secret', 'final symlink target must never be overwritten')
+    assert.equal((await readFile(written)).toString(), 'artifact')
+  } finally {
+    await rm(workspace, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  }
+})
+
+test('batch3: core and secure screenshot outputs both use the canonical artifact boundary', async () => {
+  const coreSource = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  const hardeningSource = await readFile(new URL('../lib/adversarial-hardening.js', import.meta.url), 'utf8')
+  assert.match(coreSource, /writeArtifactFile\(workspaceOf\(exec\), artifactsRel, relPath, data\)/)
+  assert.doesNotMatch(coreSource, /writeFile\(path\.join\(dir, chunkRel\), chunk\)/)
+  assert.match(hardeningSource, /writeArtifactFile\(workspaceOf\(exec\), config\.artifactsDir, fileName, png\)/)
+})

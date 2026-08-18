@@ -9,6 +9,13 @@ import {
   registryBaseFromEnv,
 } from '../lib/update-check.js'
 
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  })
+}
+
 test('compareSemver follows stable and prerelease precedence', () => {
   assert.equal(compareSemver('1.1.1', '1.1.2'), -1)
   assert.equal(compareSemver('1.2.0', '1.1.9'), 1)
@@ -31,13 +38,7 @@ test('checkPackageUpdate is install-method agnostic and reports a newer npm vers
     registry: 'https://registry.example.test/',
     fetchImpl: async (url, init) => {
       request = { url, init }
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { version: '1.2.0' }
-        },
-      }
+      return jsonResponse({ version: '1.2.0' })
     },
   })
   assert.equal(request.url, 'https://registry.example.test/dsh-vision-router/latest')
@@ -61,13 +62,7 @@ test('checkPackageUpdate falls back to npmjs when an inherited pnpm/npm registry
       if (url.startsWith('https://slow-mirror.example.test/')) {
         throw new Error('The operation was aborted due to timeout')
       }
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { version: '1.2.0' }
-        },
-      }
+      return jsonResponse({ version: '1.2.0' })
     },
   })
   assert.deepEqual(requests, [
@@ -89,13 +84,7 @@ test('checkPackageUpdate uses GitHub Releases to recover an exact target when re
     fetchImpl: async (url) => {
       requests.push(url)
       if (url === GITHUB_LATEST_RELEASE_API) {
-        return {
-          ok: true,
-          status: 200,
-          async json() {
-            return { tag_name: 'v1.5.0' }
-          },
-        }
+        return jsonResponse({ tag_name: 'v1.5.0' })
       }
       throw new Error('registry offline')
     },
@@ -135,13 +124,7 @@ test('checkPackageUpdate reports every attempted registry when all attempts fail
 test('checkPackageUpdate treats a local/source version ahead of npm as not needing downgrade', async () => {
   const result = await checkPackageUpdate({
     currentVersion: '1.3.0-dev.1',
-    fetchImpl: async () => ({
-      ok: true,
-      status: 200,
-      async json() {
-        return { version: '1.2.9' }
-      },
-    }),
+    fetchImpl: async () => jsonResponse({ version: '1.2.9' }),
   })
   assert.equal(result.updateAvailable, false)
   assert.equal(result.aheadOfRegistry, true)
@@ -158,7 +141,7 @@ test('checkPackageUpdate rejects registry failures and malformed versions', asyn
   await assert.rejects(
     () =>
       checkPackageUpdate({
-        fetchImpl: async () => ({ ok: true, status: 200, async json() { return { version: 'latest' } } }),
+        fetchImpl: async () => jsonResponse({ version: 'latest' }),
       }),
     /invalid version/,
   )
@@ -174,7 +157,7 @@ test('cached checker coalesces startup/card-open requests and reuses success', a
     fetchImpl: async () => {
       calls += 1
       await gate
-      return { ok: true, status: 200, async json() { return { version: '1.2.0' } } }
+      return jsonResponse({ version: '1.2.0' })
     },
   })
   const startup = checker.check(false)
@@ -203,4 +186,22 @@ test('cached checker turns registry failures into non-fatal status objects', asy
   assert.equal(result.packageSpec, undefined)
   assert.match(result.error, /offline/)
   assert.match(result.error, /registry\.npmjs\.org/)
+})
+
+
+test('batch3: update metadata cannot exceed the bounded admission size', async () => {
+  const fetchImpl = async () => new Response('{"version":"9.9.9"}', {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'content-length': String(2 * 1024 * 1024) },
+  })
+  await assert.rejects(
+    checkPackageUpdate({
+      fetchImpl,
+      currentVersion: '1.0.0',
+      registry: 'https://registry.example',
+      fallbackRegistry: 'https://registry.example',
+      releaseApi: 'https://release.example/latest',
+    }),
+    /invalid version|invalid tag|response limit|failed/,
+  )
 })

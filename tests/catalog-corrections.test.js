@@ -293,3 +293,24 @@ test('callAnthropicCompatible refuses a missing key and empty content', async ()
     globalThis.fetch = original
   }
 })
+
+
+test('batch3: Anthropic success admission rejects oversized bodies', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response('{"content":[]}', {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'content-length': String(5 * 1024 * 1024) },
+  })
+  try {
+    await assert.rejects(
+      callAnthropicCompatible(
+        { name: 'local', baseURL: 'http://127.0.0.1:1234', model: 'm', apiKeyEnv: '' },
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        { allowKeyless: true },
+      ),
+      (error) => error && error.code === 'HTTP_RESPONSE_TOO_LARGE',
+    )
+  } finally {
+    globalThis.fetch = original
+  }
+})

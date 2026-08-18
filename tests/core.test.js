@@ -391,19 +391,22 @@ test('adapterAvailable reports registered adapters only', () => {
   assert.equal(adapterAvailable(llm, 'nope'), false)
 })
 
-test('cacheKeyFor covers chains, content, mode and question', () => {
+test('cacheKeyFor covers chains, content, mode and question without retaining plaintext', () => {
   const base = {
     pairs: [{ provider: 'p', model: 'm' }],
     httpProviders: [{ name: 'ovh', model: 'qwen' }],
     contentIds: ['b', 'a'],
     wantJson: false,
-    question: 'q',
+    question: 'plain-question-marker',
   }
   const k1 = cacheKeyFor(base)
-  assert.equal(k1, 'p:m,http:ovh/qwen|a,b|text|q')
-  assert.equal(cacheKeyFor({ ...base, wantJson: true }), 'p:m,http:ovh/qwen|a,b|json|q')
-  assert.equal(cacheKeyFor({ ...base, httpProviders: [] }), 'p:m|a,b|text|q')
-  assert.equal(cacheKeyFor({ ...base, contentIds: ['b'] }), 'p:m,http:ovh/qwen|b|text|q')
+  assert.match(k1, /^v2:[a-f0-9]{64}$/)
+  assert.equal(k1, cacheKeyFor({ ...base, contentIds: ['a', 'b'] }))
+  assert.notEqual(k1, cacheKeyFor({ ...base, wantJson: true }))
+  assert.notEqual(k1, cacheKeyFor({ ...base, httpProviders: [] }))
+  assert.notEqual(k1, cacheKeyFor({ ...base, contentIds: ['b'] }))
+  assert.notEqual(k1, cacheKeyFor({ ...base, question: 'different-question' }))
+  assert.equal(k1.includes('plain-question-marker'), false)
 })
 
 test('httpProvidersOf keeps built-in OVH as final fallback unless disabled', () => {
@@ -3133,4 +3136,58 @@ test('vision_describe failure contract points attachment ids at vision_materiali
   assert.match(source, /degradedAccess/)
   assert.match(source, /tool: 'vision_materialize'/)
   assert.match(source, /Do not guess a filename or the attachment store path/)
+})
+
+
+test('batch3: JSON extraction is one-pass and cache retention is byte-bounded', () => {
+  const originalParse = JSON.parse
+  let parses = 0
+  JSON.parse = (...args) => {
+    parses += 1
+    return originalParse(...args)
+  }
+  try {
+    const parsed = extractJson('{"a":[1,{"text":"} ]"}]}'+ 'x'.repeat(200_000))
+    assert.deepEqual(parsed, { a: [1, { text: '} ]' }] })
+    assert.equal(parses, 1, 'one balanced candidate should be parsed once, never one suffix at a time')
+  } finally {
+    JSON.parse = originalParse
+  }
+
+  const cache = createCache(100, 0, { maxBytes: 80, maxEntryBytes: 64 })
+  assert.equal(cache.set('a', 'x'.repeat(40)), true)
+  assert.equal(cache.set('b', 'y'.repeat(40)), true)
+  assert.ok(cache.bytes <= 80)
+  assert.equal(cache.get('a'), undefined, 'byte pressure evicts LRU entries before count pressure')
+  assert.equal(cache.set('too-big', 'z'.repeat(1000)), false)
+  assert.ok(cache.bytes <= 80)
+
+  const key = cacheKeyFor({
+    pairs: [{ provider: 'p', model: 'm' }],
+    httpProviders: [],
+    contentIds: ['sha256:x'],
+    wantJson: false,
+    question: 'secret-question-'.repeat(100_000),
+  })
+  assert.match(key, /^v2:[a-f0-9]{64}$/)
+  assert.equal(key.includes('secret-question'), false)
+})
+
+test('batch3: direct OpenAI success bodies are rejected before oversized JSON allocation', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response('{"choices":[]}', {
+    status: 200,
+    headers: { 'content-type': 'application/json', 'content-length': String(5 * 1024 * 1024) },
+  })
+  try {
+    await assert.rejects(
+      callOpenAICompatible(
+        { name: 'bounded', baseURL: 'https://example.com/v1', model: 'm' },
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      ),
+      (error) => error && error.code === 'HTTP_RESPONSE_TOO_LARGE',
+    )
+  } finally {
+    globalThis.fetch = original
+  }
 })

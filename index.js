@@ -72,6 +72,14 @@ import {
   scaledDimensions,
 } from './lib/image-resource-governor.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
+import {
+  ERROR_RESPONSE_MAX_BYTES,
+  METADATA_RESPONSE_MAX_BYTES,
+  MODEL_RESPONSE_MAX_BYTES,
+  readResponseJsonBounded,
+  readResponseTextBounded,
+} from './lib/http-body-limit.js'
+import { writeArtifactFile } from './lib/artifact-boundary.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -837,34 +845,104 @@ export function collectEventAttachmentRefs(events) {
   return refs
 }
 
-/** Extract a JSON object/array from model output (tolerates fences and prose). */
+export const MAX_EXTRACT_JSON_CHARS = 1024 * 1024
+
+/**
+ * Extract the first complete JSON object/array from model output in one scan.
+ * The previous implementation retried JSON.parse after removing one trailing
+ * character at a time, turning malformed/trailed output into quadratic CPU
+ * and allocation work. This scanner tracks nesting/strings once and parses at
+ * most one balanced candidate.
+ */
 export function extractJson(text) {
   const source = String(text ?? '')
-  const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const candidate = fenced ? fenced[1] : source
+  const bounded = source.length > MAX_EXTRACT_JSON_CHARS
+    ? source.slice(0, MAX_EXTRACT_JSON_CHARS)
+    : source
+  const fenced = bounded.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced ? fenced[1] : bounded
   const start = candidate.search(/[[{]/)
   if (start === -1) return undefined
-  const trimmed = candidate.slice(start)
-  for (let end = trimmed.length; end > 0; end--) {
-    try {
-      const value = JSON.parse(trimmed.slice(0, end))
-      if (typeof value === 'object' && value !== null) return value
-    } catch {
-      /* keep shrinking */
+
+  const stack = []
+  let inString = false
+  let escaped = false
+  for (let index = start; index < candidate.length; index++) {
+    const char = candidate[index]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{') stack.push('}')
+    else if (char === '[') stack.push(']')
+    else if (char === '}' || char === ']') {
+      if (stack.length === 0 || stack.pop() !== char) return undefined
+      if (stack.length === 0) {
+        try {
+          const value = JSON.parse(candidate.slice(start, index + 1))
+          return typeof value === 'object' && value !== null ? value : undefined
+        } catch {
+          return undefined
+        }
+      }
     }
   }
   return undefined
 }
 
-/** Tiny LRU cache with TTL; keys are opaque strings. */
-export function createCache(maxEntries, ttlMs) {
+function cacheWeight(value) {
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value.byteLength
+  if (typeof value === 'string') return Buffer.byteLength(value, 'utf8')
+  try {
+    const encoded = JSON.stringify(value)
+    return Buffer.byteLength(encoded === undefined ? String(value) : encoded, 'utf8')
+  } catch {
+    return Buffer.byteLength(String(value), 'utf8')
+  }
+}
+
+/** LRU+TTL cache bounded by BOTH entry count and retained bytes. */
+export function createCache(maxEntries, ttlMs, options = {}) {
   const entries = new Map()
+  const entryLimit = Math.max(0, Math.floor(Number(maxEntries) || 0))
+  const maxBytes = Number.isFinite(Number(options.maxBytes)) && Number(options.maxBytes) >= 0
+    ? Math.floor(Number(options.maxBytes))
+    : 8 * 1024 * 1024
+  const maxEntryBytes = Number.isFinite(Number(options.maxEntryBytes)) && Number(options.maxEntryBytes) >= 0
+    ? Math.floor(Number(options.maxEntryBytes))
+    : Math.min(maxBytes, 1024 * 1024)
+  let retainedBytes = 0
+
+  const remove = (key) => {
+    const entry = entries.get(key)
+    if (!entry) return
+    retainedBytes = Math.max(0, retainedBytes - entry.weight)
+    entries.delete(key)
+  }
+  const evict = () => {
+    while (entries.size > entryLimit || retainedBytes > maxBytes) {
+      const oldest = entries.keys().next().value
+      if (oldest === undefined) break
+      remove(oldest)
+    }
+  }
+
   return {
     get(key) {
       const entry = entries.get(key)
       if (!entry) return undefined
       if (entry.expiresAt <= Date.now()) {
-        entries.delete(key)
+        remove(key)
         return undefined
       }
       entries.delete(key)
@@ -872,15 +950,24 @@ export function createCache(maxEntries, ttlMs) {
       return entry.value
     },
     set(key, value) {
-      if (entries.has(key)) entries.delete(key)
-      entries.set(key, { value, expiresAt: ttlMs <= 0 ? Infinity : Date.now() + ttlMs })
-      while (entries.size > maxEntries) {
-        const oldest = entries.keys().next().value
-        entries.delete(oldest)
-      }
+      const normalizedKey = String(key)
+      const weight = Buffer.byteLength(normalizedKey, 'utf8') + cacheWeight(value)
+      remove(normalizedKey)
+      if (entryLimit === 0 || maxBytes === 0 || weight > maxEntryBytes || weight > maxBytes) return false
+      entries.set(normalizedKey, {
+        value,
+        weight,
+        expiresAt: ttlMs <= 0 ? Infinity : Date.now() + ttlMs,
+      })
+      retainedBytes += weight
+      evict()
+      return entries.has(normalizedKey)
     },
     get size() {
       return entries.size
+    },
+    get bytes() {
+      return retainedBytes
     },
   }
 }
@@ -895,13 +982,19 @@ export function adapterAvailable(llm, provider) {
   }
 }
 
-/** Stable cache key for vision_describe answers: chains + content + question + mode. */
+/** Stable fixed-size cache key: user prompts are hashed, never retained verbatim as Map keys. */
 export function cacheKeyFor({ pairs, httpProviders, contentIds, wantJson, question }) {
   const chains = [
     ...(pairs ?? []).map((pair) => `${pair.provider}:${pair.model}`),
     ...(httpProviders ?? []).map((provider) => `http:${provider.name}/${provider.model}`),
   ]
-  return `${chains.join(',')}|${[...(contentIds ?? [])].sort().join(',')}|${wantJson ? 'json' : 'text'}|${question}`
+  const payload = JSON.stringify({
+    chains,
+    contentIds: [...(contentIds ?? [])].sort(),
+    mode: wantJson ? 'json' : 'text',
+    question: String(question ?? ''),
+  })
+  return `v2:${createHash('sha256').update(payload).digest('hex')}`
 }
 
 /**
@@ -2186,7 +2279,11 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
     // parsing prose. A 429 is thrown IMMEDIATELY with its Retry-After attached
     // (the circuit breaker applies the cooldown) — never a blind 30-60s wait
     // that stacks up across providers.
-    const detail = (await response.text().catch(() => '')).slice(0, 300)
+    const detail = (await readResponseTextBounded(
+      response,
+      ERROR_RESPONSE_MAX_BYTES,
+      { label: `http provider \"${provider.name}\" error response` },
+    ).catch(() => '')).slice(0, 300)
     const retryAfter = Number(response.headers.get('retry-after'))
     const error = new Error(`http provider "${provider.name}": ${response.status} ${detail}`)
     error.status = response.status
@@ -2198,7 +2295,11 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
     if (keyHint !== '') error.message += keyHint
     throw error
   }
-  const data = await response.json()
+  const data = await readResponseJsonBounded(
+    response,
+    MODEL_RESPONSE_MAX_BYTES,
+    { label: `http provider \"${provider.name}\" response` },
+  )
   const content = data && data.choices && data.choices[0] && data.choices[0].message
     ? data.choices[0].message.content
     : undefined
@@ -2973,6 +3074,7 @@ export function apply(ctx, config = {}) {
   const cache = createCache(
     Number.isFinite(config.cacheMaxEntries) ? config.cacheMaxEntries : 200,
     (Number.isFinite(config.cacheTtlSeconds) ? config.cacheTtlSeconds : 3600) * 1000,
+    { maxBytes: 8 * 1024 * 1024, maxEntryBytes: 1024 * 1024 },
   )
   const httpProviders = () => {
     const raw = orderedHttpProviders(current(), current().freeCloudFirst === true)
@@ -5730,13 +5832,8 @@ ctx.logger?.info(
       return typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd()
     }
 
-    const saveArtifact = async (exec, relPath, data) => {
-      const dir = path.join(workspaceOf(exec), artifactsRel)
-      await mkdir(dir, { recursive: true })
-      const target = path.join(dir, relPath)
-      await writeFile(target, data)
-      return target
-    }
+    const saveArtifact = async (exec, relPath, data) =>
+      writeArtifactFile(workspaceOf(exec), artifactsRel, relPath, data)
 
     const artifactStem = (imagePath, suffix) => artifactStemOf(imagePath, suffix)
 
@@ -6563,8 +6660,7 @@ ctx.logger?.info(
           maxTilePixels: 4_000_000,
         })
         const stem = artifactStem(args.image, 'ocr')
-        const dir = path.join(workspaceOf(exec), artifactsRel, stem)
-        await mkdir(dir, { recursive: true })
+        const workspace = workspaceOf(exec)
         // ONE deadline for the whole long-OCR task: every chunk's tesseract
         // slice and every vision fallback draws from the same budget, so a
         // tall screenshot can never multiply timeouts chunk after chunk.
@@ -6602,7 +6698,7 @@ ctx.logger?.info(
             releaseTile()
           }
           const chunkRel = `chunk-${String(i + 1).padStart(2, '0')}.png`
-          await writeFile(path.join(dir, chunkRel), chunk)
+          await writeArtifactFile(workspace, artifactsRel, path.join(stem, chunkRel), chunk)
           let text = ''
           let used = 'none'
           if (engine !== 'vision') {
@@ -6691,10 +6787,14 @@ ctx.logger?.info(
           engines,
           perChunk: results.map(({ text, ...rest }) => rest),
         }
-        const manifestPath = path.join(dir, 'manifest.json')
-        await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
-        const mdPath = path.join(dir, 'ocr.md')
-        await writeFile(mdPath, joined)
+        const manifestPath = await writeArtifactFile(
+          workspace,
+          artifactsRel,
+          path.join(stem, 'manifest.json'),
+          JSON.stringify(manifest, null, 2),
+        )
+        const mdPath = await writeArtifactFile(workspace, artifactsRel, path.join(stem, 'ocr.md'), joined)
+        const dir = path.dirname(mdPath)
         return JSON.stringify({
           text: joined,
           chunks: results.length,
@@ -7323,7 +7423,11 @@ ctx.logger?.info(
             if (!response.ok) {
               return { ok: false, latencyMs, status: response.status, error: `HTTP ${response.status}` }
             }
-            const data = await response.json().catch(() => undefined)
+            const data = await readResponseJsonBounded(
+              response,
+              METADATA_RESPONSE_MAX_BYTES,
+              { label: 'vision backend /models response' },
+            ).catch(() => undefined)
             const models = data && Array.isArray(data.data) ? data.data : undefined
             const count = models ? models.length : undefined
             if (
