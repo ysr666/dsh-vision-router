@@ -278,7 +278,7 @@ test('model-selection guide separates session and vision models and targets the 
   assert.equal(source.includes("onboardingStep1Title: '1 · 选择聊天模型'"), true)
   assert.equal(source.includes("quickStartTitle: '聊天和看图分别设置'"), true)
   assert.equal(source.includes("quickStartTitle: 'Chat and image understanding are separate'"), true)
-  assert.equal(source.includes("onboardingStep2Body: '打开「设置 → 插件 → Vision Router」"), true)
+  assert.equal(source.includes("onboardingStep2Body: '打开「设置 → Vision Router」"), true)
   assert.equal(source.includes("GUIDE_STATE = Object.freeze"), true)
   assert.equal(source.includes("CHAT_MODEL: 'chat-model'"), true)
   assert.equal(source.includes("VISION_MODEL: 'vision-model'"), true)
@@ -351,7 +351,7 @@ test('the walkthrough is an explicit state machine with visual fallbacks for all
   assert.equal(source.includes('button[aria-haspopup="dialog"]'), true)
   assert.equal(source.includes('[role="dialog"][aria-modal="true"]'), true)
   assert.equal(source.includes('guideHostUi.openSettings()'), true)
-  assert.equal(source.includes('guideHostUi.openPlugins()'), true)
+  assert.equal(source.includes('guideHostUi.openVisionRouter()'), true)
   assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
   assert.equal(source.includes('const halo = 10'), true)
 })
@@ -399,8 +399,10 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   // The card is memoized with a stable props object so app re-renders of the
   // settings panel skip it.
   assert.equal(source.includes('React.memo(VisionRouterCard)'), true)
-  assert.equal(source.includes('const cardInject = { scope, getConnection, t, locale: ctx.locale, remote: ctx.remote, subscribeConnectionReset }'), true)
-  assert.equal(source.includes('inject: () => cardInject'), true)
+  assert.equal(source.includes('const cardInject = { getConnection, t, locale: ctx.locale, remote: ctx.remote, subscribeConnectionReset }'), true)
+  assert.equal(source.includes("const sectionCardInject = Object.freeze({ ...cardInject, scope: primaryScope, surface: 'section' })"), true)
+  assert.equal(source.includes('const legacyEntryInject = Object.freeze({ t })'), true)
+  assert.equal(source.includes('VisionRouterLegacyEntry'), true)
 })
 
 test('guide sync never queries the DOM or forces layout when no walkthrough is active', () => {
@@ -501,7 +503,7 @@ test('local vision settings expose backends only and keep 1+x as the sole first-
   assert.equal(source.includes("toggleDesktopScreenshot: 'Desktop screenshot vision'"), true)
   assert.equal(source.includes('/_dsh/vision-router/request-screenshot-permission'), true)
   assert.equal(source.includes("outcome.landedFields.includes('desktopScreenshot')"), true)
-  assert.equal(source.includes("toggleField('desktopScreenshot'),"), true)
+  assert.equal(source.includes("!remoteMode ? toggleField('desktopScreenshot') : null"), true)
   assert.equal(source.includes("placeholder: t('localTemperaturePlaceholder')"), true)
   assert.equal(source.includes("placeholder: t('localTopPPlaceholder')"), true)
   assert.equal(source.includes("placeholder: t('localLmStudioModelPlaceholder')"), true)
@@ -814,4 +816,225 @@ test('vision catalog invalidates on provider, settings, credential and connectio
   assert.equal(source.includes('catalogGeneration.current += 1'), true)
   assert.equal(source.includes('generation !== catalogGeneration.current'), true)
   assert.equal(source.includes('generation !== visionCapsGeneration.current'), true)
+})
+
+
+test('Vision Router owns one primary Settings section and one legacy compatibility card', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("ctx.slots.inject('settings.section'"), true)
+  assert.equal(source.includes("name: 'settings.section'"), true)
+  assert.equal(source.includes("id: 'vision-router'"), true)
+  assert.equal(source.includes('order: 12'), true)
+  assert.equal(source.includes("label: () => t('settingsNav')"), true)
+  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), true)
+  assert.equal(source.includes('VisionRouterSettingsSection'), true)
+  assert.equal(source.includes("const [open, setOpen] = useState(props.surface === 'section')"), true)
+})
+
+test('beginner guide teaches only the first-class Vision Router settings path', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("onboardingStep2Body: '打开「设置 → Vision Router」"), true)
+  assert.equal(source.includes('设置 → 插件 → Vision Router'), false)
+  assert.equal(source.includes('Settings → Plugins → Vision Router'), false)
+  assert.equal(source.includes('function guideVisionRouterNav()'), true)
+  assert.equal(source.includes('guideHostUi.openVisionRouter()'), true)
+  assert.equal(source.includes('guidePluginsNav'), false)
+  assert.equal(source.includes('openPlugins()'), false)
+})
+
+test('remote settings UI is opt-in, first-class-only, and keeps permission local', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("const REMOTE_SETTINGS_CHANNEL = '/vision-router-settings'"), true)
+  assert.equal(source.includes("const useRemoteSettings = shouldUseRemoteSettings(getConnection)"), true)
+  assert.equal(source.includes('function shouldUseRemoteSettings(getConnection, locationLike)'), true)
+  assert.equal(source.includes("toggleField('allowRemoteSettings')"), true)
+  assert.equal(source.includes("!remoteMode ? h('div', { className: 'vr-group' }"), true)
+  assert.equal(source.includes("scope: primaryScope, surface: 'section'"), true)
+  assert.equal(source.includes('VisionRouterLegacyEntry'), true)
+  assert.equal(source.includes("remoteSettingsDisabledTitle: '远程设置未启用'"), true)
+  assert.equal(source.includes("fetch('/_dsh/vision-router/settings'"), false)
+})
+
+test('remote settings scope reads and writes through the narrow Connection RPC channel', async () => {
+  const bundle = loadClientBundle()
+  let routing = false
+  let revision = 3
+  const calls = []
+  const getConnection = () => ({
+    rpc: {
+      async call(channel, endpoint, payload) {
+        calls.push([channel, endpoint, structuredClone(payload)])
+        assert.equal(channel, '/vision-router-settings')
+        if (endpoint === 'mutate') {
+          assert.equal(payload.expectedRevision, revision)
+          routing = payload.ops[0].value
+          revision += 1
+        }
+        return {
+          ok: true,
+          value: {
+            enabled: true,
+            reason: 'enabled',
+            writable: true,
+            view: {
+              value: { routing },
+              base: { routing: false },
+              user: routing ? { routing: true } : {},
+              revision,
+              applies: 'live',
+            },
+          },
+        }
+      },
+    },
+  })
+  const scope = bundle.createRemoteSettingsScope(getConnection)
+  await scope.load()
+  assert.equal(scope.getSnapshot().status, 'ready')
+  assert.equal(scope.getSnapshot().mode, 'remote')
+  assert.equal(scope.getSnapshot().value.routing, false)
+  await scope.set('routing', true)
+  assert.equal(scope.getSnapshot().value.routing, true)
+  assert.deepEqual(scope.getSnapshot().user, { routing: true })
+  assert.deepEqual(calls.map((call) => call[1]), ['describe', 'mutate'])
+  await scope.dispose()
+})
+
+test('remote settings scope exposes disabled state instead of a blank fake config', async () => {
+  const bundle = loadClientBundle()
+  const scope = bundle.createRemoteSettingsScope(() => ({
+    rpc: { async call() { return { ok: true, value: { enabled: false, reason: 'permission-disabled', writable: false } } } },
+  }))
+  await scope.load()
+  const snapshot = scope.getSnapshot()
+  assert.equal(snapshot.status, 'unavailable')
+  assert.equal(snapshot.mode, 'remote')
+  assert.equal(snapshot.remoteDisabled, true)
+  assert.equal(snapshot.value, undefined)
+  await scope.dispose()
+})
+
+
+test('remote conflict is surfaced and never auto-retried into a lost update', async () => {
+  const bundle = loadClientBundle()
+  let describes = 0
+  let mutates = 0
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    async call(_channel, endpoint, _payload) {
+      if (endpoint === 'describe') {
+        describes += 1
+        const revision = describes === 1 ? 7 : 8
+        return { ok: true, value: { enabled: true, reason: 'enabled', writable: true, view: {
+          value: { routing: describes > 1 }, base: { routing: false }, user: describes > 1 ? { routing: true } : {}, revision, applies: 'live',
+        } } }
+      }
+      mutates += 1
+      return { ok: false, error: { code: 'settings-conflict', message: 'stale', details: { expected: 7, actual: 8 } } }
+    },
+  } }))
+  await scope.load()
+  await assert.rejects(scope.set('routing', false), (error) => error.code === 'settings-conflict')
+  assert.equal(mutates, 1)
+  assert.equal(scope.getSnapshot().revision, 8)
+  const outcome = await bundle.commitSettingsPlan(scope, [{ key: 'routing', run: { value: false } }], { routing: false })
+  assert.equal(outcome.failed, true)
+  assert.equal(outcome.failures[0].reason, 'settings-conflict')
+  assert.equal(mutates, 2, 'one explicit save attempt, never an internal retry')
+  await scope.dispose()
+})
+
+test('remote RPC times out, aborts, and a later healthy retry recovers', async () => {
+  const bundle = loadClientBundle()
+  let mode = 'hang'
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    call(_channel, _endpoint, _payload, signal) {
+      if (mode === 'healthy') return Promise.resolve({ ok: true, value: { enabled: true, reason: 'enabled', writable: true, view: { value: { routing: false }, user: {}, revision: 1, applies: 'live' } } })
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }))
+    },
+  } }), { timeoutMs: 20, initRetryDelays: [] })
+  await scope.load()
+  assert.equal(scope.getSnapshot().remoteErrorCode, 'settings-timeout')
+  mode = 'healthy'
+  await scope.reload()
+  assert.equal(scope.getSnapshot().status, 'ready')
+  await scope.dispose()
+})
+
+test('remote load coalesces retry storms instead of queueing duplicate reads', async () => {
+  const bundle = loadClientBundle()
+  let calls = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    async call() {
+      calls += 1
+      await gate
+      return { ok: true, value: { enabled: true, reason: 'enabled', writable: true, view: { value: { routing: false }, user: {}, revision: 1, applies: 'live' } } }
+    },
+  } }), { timeoutMs: 500 })
+  const loads = Array.from({ length: 50 }, () => scope.load())
+  assert.equal(calls, 1)
+  release()
+  await Promise.all(loads)
+  assert.equal(calls, 1)
+  await scope.dispose()
+})
+
+test('namespace initialization is distinct from permission denial and auto-recovers', async () => {
+  const bundle = loadClientBundle()
+  let calls = 0
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    async call() {
+      calls += 1
+      if (calls === 1) return { ok: true, value: { enabled: false, reason: 'namespace-unavailable', writable: false } }
+      return { ok: true, value: { enabled: true, reason: 'enabled', writable: true, view: { value: { routing: false }, user: {}, revision: 1, applies: 'live' } } }
+    },
+  } }), { timeoutMs: 100, initRetryDelays: [5] })
+  await scope.load()
+  assert.equal(scope.getSnapshot().remoteReason, 'namespace-unavailable')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(scope.getSnapshot().status, 'ready')
+  await scope.dispose()
+})
+
+test('remote writable state comes from Host instead of being hard-coded true', async () => {
+  const bundle = loadClientBundle()
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    async call() { return { ok: true, value: { enabled: true, reason: 'enabled', writable: false, view: { value: { routing: false }, user: {}, revision: 1, applies: 'live' } } } }
+  } }))
+  await scope.load()
+  assert.equal(scope.getSnapshot().writable, false)
+  await assert.rejects(scope.set('routing', true), /read-only/)
+  await scope.dispose()
+})
+
+test('remote-page selection survives Connection arriving after plugin activation', () => {
+  const bundle = loadClientBundle()
+  assert.equal(bundle.shouldUseRemoteSettings(() => undefined, { hostname: '192.168.1.44' }), true)
+  assert.equal(bundle.shouldUseRemoteSettings(() => undefined, { hostname: 'example.internal' }), true)
+  assert.equal(bundle.shouldUseRemoteSettings(() => undefined, { hostname: '127.0.0.1' }), false)
+  assert.equal(bundle.shouldUseRemoteSettings(() => undefined, { hostname: 'localhost' }), false)
+})
+
+test('legacy plugin entry is navigation-only and remote host-only surfaces stay hidden', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('function VisionRouterLegacyEntry(props)'), true)
+  assert.equal(source.includes('VisionRouterLegacyEntry,\n            )'), true)
+  assert.equal(source.includes("!remoteMode ? toggleField('desktopScreenshot') : null"), true)
+  assert.equal(source.includes("!remoteMode ? DEVELOPER_TOGGLE_KEYS.map"), true)
+  assert.equal(source.includes("!remoteMode ? TEXT_KEYS.map"), true)
+  assert.equal(source.includes("remoteSafeScopeHint"), true)
+  assert.equal(source.includes("ctx.remote.$on('settings/document-updated'"), true)
+})
+
+test('reverse-proxy route failures are classified with an actionable UI path', async () => {
+  const bundle = loadClientBundle()
+  const scope = bundle.createRemoteSettingsScope(() => ({ rpc: {
+    async call() { throw new Error('transport failure for /vision-router-settings/describe: HTTP 404') }
+  } }), { timeoutMs: 100, initRetryDelays: [] })
+  await scope.load()
+  assert.equal(scope.getSnapshot().remoteErrorCode, 'remote-route-missing')
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('/vision-router-settings/*'), true)
+  await scope.dispose()
 })

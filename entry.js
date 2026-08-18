@@ -18,6 +18,7 @@ import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalesc
 import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
+import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -102,6 +103,10 @@ export function apply(ctx, config = {}) {
         : 90000,
   }
   const rc7 = isRc7ContractRuntime(stabilizedCtx)
+  // The remote settings bridge uses DSH Connection's trusted-host carrier
+  // fence and its own safe-field capability allow-list. Main's local Web
+  // mutation boundary continues to protect the independent /_dsh write routes.
+  installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
   const ownershipCtx = rc7 ? protectRc7ProviderOwnership(stabilizedCtx) : stabilizedCtx
   const settingsCtx = rc7
     ? installRc7SettingsCompatibility(ownershipCtx, { ...runtimeConfig, stealth: false }, {

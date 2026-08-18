@@ -125,7 +125,7 @@ test('attachment compatibility remains rc6-only and rc7 keeps host-owned refs', 
 
 test('settings card registration is a structural superset of rc6 list and rc7 keyed slots', async () => {
   const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
-  const block = source.match(/name: 'settings\.plugin\.item',[\s\S]{0,260}VisionRouterCardMemoized/)
+  const block = source.match(/name: 'settings\.plugin\.item',[\s\S]{0,320}VisionRouterLegacyEntry/)
   assert.ok(block, 'settings.plugin.item registration must exist')
   assert.match(block[0], /key: 'vision-router'/)
   assert.match(block[0], /id: 'vision-router'/)
