@@ -1,23 +1,24 @@
 name: Batch3 latest-main integration
 
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches:
+      - fix/first-principles-adversarial-batch3
     paths:
       - '.github/workflows/batch3-patch.yml'
+      - '.batch3-integrate-trigger'
 
 permissions:
   contents: write
 
 jobs:
   integrate-and-verify:
-    if: ${{ github.event.pull_request.head.ref == 'fix/first-principles-adversarial-batch3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: fix/first-principles-adversarial-batch3
           fetch-depth: 0
       - name: Merge latest main locally
         shell: bash
@@ -41,4 +42,4 @@ jobs:
       - name: Check merged tree
         run: git diff --check HEAD^ HEAD
       - name: Publish verified integration
-        run: git push origin HEAD:${{ github.event.pull_request.head.ref }}
+        run: git push origin HEAD:fix/first-principles-adversarial-batch3
