@@ -451,7 +451,7 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   // The card is memoized with a stable props object so app re-renders of the
   // settings panel skip it.
   assert.equal(source.includes('React.memo(VisionRouterCard)'), true)
-  assert.equal(source.includes('const cardInject = { scope, getConnection, t, locale: ctx.locale }'), true)
+  assert.equal(source.includes('const cardInject = { scope, getConnection, t, locale: ctx.locale, remote: ctx.remote, subscribeConnectionReset }'), true)
   assert.equal(source.includes('inject: () => cardInject'), true)
 })
 
@@ -876,4 +876,57 @@ test('hidden settings persistence still permits real state transitions', async (
 test('keyed settings.plugin.item requires an explicit slot key', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(source, /name: 'settings\.plugin\.item',\s*key: 'vision-router',\s*id: 'vision-router'/)
+})
+
+
+test('partial model-catalog failures stay visible beside successful providers', () => {
+  const bundle = loadClientBundle()
+  const groups = [{ id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }] }]
+  const failures = [{ id: 'zhipu', name: '智谱', message: 'catalog offline' }]
+  const state = bundle.catalogStateFromValue({ groups, failures }, (key) => key === 'catalogEmpty' ? 'empty: ' : key)
+  assert.equal(state.status, 'ready')
+  assert.deepEqual(state.groups, groups)
+  assert.deepEqual(state.failures, failures)
+  assert.equal(state.error, undefined)
+  assert.match(bundle.catalogFailureDetail(failures), /智谱: catalog offline/)
+
+  const failedOnly = bundle.catalogStateFromValue({ groups: [], failures }, (key) => key === 'catalogEmpty' ? 'empty: ' : key)
+  assert.equal(failedOnly.status, 'error')
+  assert.deepEqual(failedOnly.failures, failures)
+  assert.match(failedOnly.error, /empty: 智谱: catalog offline/)
+
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("catalogPartialFailure: '部分已配置供应商的模型目录加载失败"), true)
+  assert.equal(source.includes("t('catalogPartialFailure', { detail: catalogFailureDetail(catalog.failures) })"), true)
+})
+
+test('vision catalog invalidates on provider, settings, credential and connection changes', () => {
+  const bundle = loadClientBundle()
+  const listeners = new Map()
+  const disposed = []
+  const remote = {
+    $on(name, listener) {
+      listeners.set(name, listener)
+      return () => { disposed.push(name) }
+    },
+  }
+  let invalidations = 0
+  const stop = bundle.subscribeCatalogInvalidations(remote, () => { invalidations += 1 })
+  assert.deepEqual([...listeners.keys()], [
+    'llm/adapters-updated',
+    'settings/document-updated',
+    'credentials/updated',
+  ])
+  listeners.get('llm/adapters-updated')()
+  listeners.get('settings/document-updated')()
+  listeners.get('credentials/updated')()
+  assert.equal(invalidations, 3)
+  stop()
+  assert.deepEqual(disposed.sort(), [...listeners.keys()].sort())
+
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes("const subscribeConnectionReset = (listener) => ctx.on('connection/reset', listener)"), true)
+  assert.equal(source.includes('catalogGeneration.current += 1'), true)
+  assert.equal(source.includes('generation !== catalogGeneration.current'), true)
+  assert.equal(source.includes('generation !== visionCapsGeneration.current'), true)
 })
