@@ -802,8 +802,6 @@ jobs:
 '''
           source = replace_between(source, '    let onboardingOverlay', '    const LABEL_KEY = {', onboarding)
 
-          # Step 1 must never auto-open/scroll the settings card simply because
-          # Settings happened to be open before the guide began.
           source = source.replace(
               "      const guideActive = guideStep !== undefined\n",
               "      const guideTargetsVisionSettings = guideStep === 'step2'\n",
@@ -819,9 +817,6 @@ jobs:
               "      }, [guideTargetsVisionSettings, open, catalog.status, visionCaps.status])",
               1,
           )
-
-          # Completion follows a successful settings action, not the start of a
-          # save round-trip and not a draft-only model selection.
           source = source.replace(
               "        // Saving ends the walkthrough: the user has reached the settings card\n        // and acted, so the guide must never nag again afterwards — even when\n        // a hidden write is rejected (dismissal stays page-authoritative).\n        finishGuide()\n        setSaving(true)",
               "        setSaving(true)",
@@ -861,8 +856,6 @@ jobs:
               raise SystemExit('replay block not found')
           source = source.replace(old_replay, new_replay, 1)
 
-          # Clarify the server-side compatibility field: it is accepted for
-          # upgrades/downgrades but no longer stores live guide progress.
           index_path = Path('index.js')
           index = index_path.read_text()
           old_schema_comment = r'''  // Client-persisted UI state (issue #78): DSH Desktop serves the Web UI from
@@ -887,8 +880,6 @@ jobs:
           index = index.replace(old_schema_comment, new_schema_comment, 1)
           index_path.write_text(index)
 
-          # Export the pure machine + lifecycle hooks so tests can validate
-          # transitions without brittle source-string assertions.
           export_anchor = "    exports.installSettingsPersistence = installSettingsPersistence\n"
           export_insert = export_anchor + (
               "    exports.GUIDE_STATE = GUIDE_STATE\n"
@@ -902,22 +893,14 @@ jobs:
           if export_anchor not in source:
               raise SystemExit('export anchor not found')
           source = source.replace(export_anchor, export_insert, 1)
-
           client_path.write_text(source)
 
-          # Replace the old persistence/source-string tests with behavioral
-          # state-machine invariants while keeping the rest of client.test.js.
           test_path = Path('tests/client.test.js')
           tests = test_path.read_text()
 
           def replace_test(text, title, replacement):
-              pattern = re.compile(r"test\(" + re.escape(repr(title)) + r",.*?\n\}\)\n", re.S)
-              # repr() uses single quotes for these titles, matching the file.
+              pattern = re.compile(r"test\('" + re.escape(title) + r"'.*?\n\}\)\n", re.S)
               match = pattern.search(text)
-              if not match:
-                  # Fallback: explicit single-quoted title pattern.
-                  pattern = re.compile(r"test\('" + re.escape(title) + r"'.*?\n\}\)\n", re.S)
-                  match = pattern.search(text)
               if not match:
                   raise SystemExit(f'test block not found: {title}')
               return text[:match.start()] + replacement.rstrip() + '\n' + text[match.end():]
@@ -972,7 +955,6 @@ jobs:
   assert.equal(source.includes("if (!snapshot || snapshot.status !== 'ready') return 'unknown'"), true)
   assert.equal(source.includes('onboardingAutoPresented'), true)
   assert.equal(source.includes('}, 650)'), false)
-  // Starting does not persist completion; only an explicit dismiss/complete does.
   assert.equal(source.includes('dismissOnboarding(false)\n        startVisionSettingsGuide(t)'), true)
 })''')
 
@@ -987,7 +969,6 @@ jobs:
   assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
   assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.SETTINGS_CLOSED }), S.IDLE)
   assert.equal(bundle.guideTransition(S.VISION_MODEL, { type: E.COMPLETE }), S.IDLE)
-
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes('guideSettingsPanelSeen'), true)
   assert.equal(source.includes('scheduleGuidePanelCloseCheck'), true)
@@ -1023,7 +1004,6 @@ jobs:
   assert.equal(bundle.guideTransition(S.IDLE, { type: E.START }), S.CHAT_MODEL)
   assert.equal(bundle.guideTransition(S.CHAT_MODEL, { type: E.NEXT }), S.SETTINGS)
   assert.equal(bundle.guideTransition(S.SETTINGS, { type: E.TARGET_READY }), S.VISION_MODEL)
-
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes("guideStep1Title: '第 1 步 · 选择聊天模型'"), true)
   assert.equal(source.includes("guidePromptTitle: '第 2 步 · 选择识图模型'"), true)
@@ -1039,12 +1019,8 @@ jobs:
   assert.equal(source.includes('Judge coverage on the CLAMPED box'), true)
   assert.equal(source.includes('const halo = 10'), true)
 })''')
-
           test_path.write_text(tests)
 
-          # Rewrite the performance gate around the new invariant: no guide
-          # listeners/DOM work at all while idle; listeners exist only during
-          # an active session and are disposed at the end.
           Path('tests/guide-scroll-gate.test.js').write_text(r'''import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -1079,8 +1055,7 @@ function fakeElement() {
     getBoundingClientRect() {
       return { x: 100, y: 100, width: 120, height: 40, left: 100, right: 220, top: 100, bottom: 140 }
     },
-    getAttribute() { return null },
-    closest() { return null },
+    getAttribute() { return null }, closest() { return null },
   }
 }
 
@@ -1097,13 +1072,10 @@ function harness() {
   const panel = fakeElement()
   panel.querySelector = () => null
   const document = {
-    body: { appendChild() {} },
-    documentElement: {},
-    activeElement: null,
+    body: { appendChild() {} }, documentElement: {}, activeElement: null,
     addEventListener(type, fn) { listeners.set('document:' + type, fn) },
     removeEventListener(type) { listeners.delete('document:' + type) },
-    dispatchEvent() {},
-    createElement() { return fakeElement() },
+    dispatchEvent() {}, createElement() { return fakeElement() },
     querySelectorAll(selector) {
       counters.queries += 1
       if (selector.includes('conversation.input.model')) return [target]
@@ -1116,16 +1088,12 @@ function harness() {
   const window = {
     innerWidth: 1280, innerHeight: 800,
     addEventListener(type, fn) { listeners.set('window:' + type, fn) },
-    removeEventListener(type) { listeners.delete('window:' + type) },
-    dispatchEvent() {},
-    requestAnimationFrame(fn) { frames.push(fn); return frames.length },
-    cancelAnimationFrame() {},
-    setTimeout(fn) { frames.push(fn); return frames.length },
-    clearTimeout() {},
+    removeEventListener(type) { listeners.delete('window:' + type) }, dispatchEvent() {},
+    requestAnimationFrame(fn) { frames.push(fn); return frames.length }, cancelAnimationFrame() {},
+    setTimeout(fn) { frames.push(fn); return frames.length }, clearTimeout() {},
     localStorage: { getItem() { return null }, setItem() {}, removeItem() {} },
   }
-  return {
-    counters, document, window, listeners,
+  return { counters, document, window, listeners,
     scroll() { const fn = listeners.get('document:scroll'); if (fn) fn() },
     frame() { const work = frames.splice(0); for (const fn of work) fn() },
   }
@@ -1184,7 +1152,6 @@ test('ending a guide disposes global listeners so later scrolls stay inert', () 
 })
 ''')
 
-          # Remove this one-shot refactor workflow from the resulting branch.
           Path('.github/workflows/guide-lifecycle-refactor.yml').unlink()
           PY
 
