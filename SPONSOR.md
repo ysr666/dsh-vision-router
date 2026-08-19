@@ -1,14 +1,18 @@
+<div align="center">
+
 # ❤️ Support dsh-vision-router / 支持项目
 
-<p align="center">
-  <strong>感谢你愿意支持 dsh-vision-router 的持续开发与维护。</strong><br />
-  Thank you for supporting the continued development and maintenance of dsh-vision-router.
-</p>
+<strong>感谢你愿意支持 dsh-vision-router 的持续开发与维护。</strong><br />
+Thank you for supporting the continued development and maintenance of dsh-vision-router.
 
-> [!NOTE]
-> **dsh-vision-router 会持续保持免费、开源。** 赞助完全自愿，不会影响功能可用性，也不会换取 Issue / PR 优先级或功能承诺。
->
-> **dsh-vision-router will remain free and open source.** Sponsorship is entirely optional and does not buy issue/PR priority or feature commitments.
+<br />
+
+<strong>dsh-vision-router 会持续保持免费、开源。</strong><br />
+赞助完全自愿，不会影响功能可用性，也不会换取 Issue / PR 优先级或功能承诺。<br />
+<strong>dsh-vision-router will remain free and open source.</strong><br />
+Sponsorship is entirely optional and does not buy issue/PR priority or feature commitments.
+
+<br />
 
 <table>
   <tr>
@@ -25,12 +29,27 @@
   </tr>
 </table>
 
+<br />
+
 ## 赞助会用于 / What sponsorship helps with
 
-- 视觉模型、API 与兼容性测试 / vision-model, API, and compatibility testing
-- Windows、macOS、Linux 与不同 DSH 版本的回归验证 / cross-platform and DSH-version regression testing
-- 文档、示例与社区维护 / documentation, examples, and community maintenance
+视觉模型、API 与兼容性测试<br />
+Vision-model, API, and compatibility testing
 
-无论是否赞助，**Star、Issue、PR、Discussion、测试反馈和向其他用户推荐项目都同样重要。** 感谢每一种形式的支持。
+Windows、macOS、Linux 与不同 DSH 版本的回归验证<br />
+Cross-platform and DSH-version regression testing
 
-Whether or not you sponsor, **stars, issues, pull requests, discussions, testing feedback, and sharing the project are all valuable forms of support.** Thank you.
+文档、示例与社区维护<br />
+Documentation, examples, and community maintenance
+
+<br />
+
+无论是否赞助，<strong>Star、Issue、PR、Discussion、测试反馈和向其他用户推荐项目都同样重要。</strong><br />
+Whether or not you sponsor, <strong>stars, issues, pull requests, discussions, testing feedback, and sharing the project are all valuable forms of support.</strong>
+
+<br />
+
+感谢每一种形式的支持。<br />
+Thank you for every kind of support.
+
+</div>
