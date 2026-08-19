@@ -164,16 +164,28 @@ test('local revocation blocks the next mutation without restart', async () => {
 
 test('bridge remains behind the DSH trusted-host carrier fence', () => {
   const registrations = []
+  const indexTaps = []
   const ctx = {
     inject(deps, callback) {
-      assert.deepEqual(deps, ['settings', 'connection'])
-      callback({
-        settings: makeSettings().settings,
-        connection: { rpc: { handle(channel, _handler, options) { registrations.push([channel, options]); return () => {} } } },
-        effect(factory) { factory() },
-      })
+      if (deps.length === 2 && deps[0] === 'settings' && deps[1] === 'connection') {
+        callback({
+          settings: makeSettings().settings,
+          connection: { rpc: { handle(channel, _handler, options) { registrations.push([channel, options]); return () => {} } } },
+          effect(factory) { factory() },
+        })
+        return
+      }
+      if (deps.length === 1 && deps[0] === 'webServer') {
+        callback({
+          webServer: { tapIndex(transform) { indexTaps.push(transform); return () => {} } },
+          effect(factory) { factory() },
+        })
+        return
+      }
+      assert.fail(`unexpected injection: ${JSON.stringify(deps)}`)
     },
   }
   installVisionRouterRemoteSettingsBridge(ctx)
   assert.deepEqual(registrations, [[REMOTE_SETTINGS_CHANNEL, { authority: 'trusted-host' }]])
+  assert.equal(indexTaps.length, 1)
 })
