@@ -34,9 +34,14 @@ jobs:
       matrix:
         include:
           - dsh: 0.1.0-rc.6
-            expectedRc7: 'false'
+            expectedBatchAttachments: 'false'
+            expectedDimensionConfig: 'false'
           - dsh: 0.1.0-rc.7
-            expectedRc7: 'true'
+            expectedBatchAttachments: 'true'
+            expectedDimensionConfig: 'false'
+          - dsh: 0.1.0-rc.8
+            expectedBatchAttachments: 'true'
+            expectedDimensionConfig: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -58,7 +63,8 @@ jobs:
         shell: node {0}
         env:
           DSH_VERSION: ${{ matrix.dsh }}
-          EXPECT_RC7: ${{ matrix.expectedRc7 }}
+          EXPECT_BATCH_ATTACHMENTS: ${{ matrix.expectedBatchAttachments }}
+          EXPECT_DIMENSION_CONFIG: ${{ matrix.expectedDimensionConfig }}
         run: |
           const fs = require('node:fs')
           const path = require('node:path')
@@ -80,6 +86,7 @@ jobs:
               dependencies: {
                 'dsh-vision-router': `file:${tarball}`,
                 '@deepseek-ai/dsh-attachment': v,
+                '@deepseek-ai/dsh-attachment-local': v,
                 '@deepseek-ai/dsh-llm-deepseek': v,
                 '@deepseek-ai/dsh-anonymous-user-id': v,
                 '@deepseek-ai/dsh-settings': v,
@@ -96,18 +103,38 @@ jobs:
             const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
             const pluginEntry = hostRequire.resolve('dsh-vision-router')
             const attachmentEntry = hostRequire.resolve('@deepseek-ai/dsh-attachment')
+            const attachmentLocalEntry = hostRequire.resolve('@deepseek-ai/dsh-attachment-local')
             const plugin = await import(pathToFileURL(pluginEntry).href)
             const attachment = await import(pathToFileURL(attachmentEntry).href)
+            const attachmentLocal = await import(pathToFileURL(attachmentLocalEntry).href)
             const store = Object.create(attachment.default.prototype)
-            const detected = plugin.isRc7ContractRuntime({
+            const detected = plugin.hasBatchAttachmentContract({
               get(name) {
                 return name === 'attachments' ? store : undefined
               },
             })
-            const expected = process.env.EXPECT_RC7 === 'true'
+            const expected = process.env.EXPECT_BATCH_ATTACHMENTS === 'true'
             console.log({ version: v, hasSaveImages: typeof store.saveImages === 'function', detected, expected })
             if (detected !== expected) {
-              throw new Error(`contract detector misclassified DSH ${v}: expected rc7=${expected}, got ${detected}`)
+              throw new Error(`contract detector misclassified DSH ${v}: expected batch=${expected}, got ${detected}`)
+            }
+
+            // The bundle patch deliberately carries rc.8's maxImageDimension
+            // through the same attachment-local row used by rc.6/rc.7. Parsing
+            // it against each released schema proves the minimum Host does not
+            // fail merely because the newer optional key is present.
+            const resolvedLimits = attachmentLocal.default.Config({
+              maxImageBytes: 20 * 1024 * 1024,
+              maxImagePixels: 100_000_000,
+              maxImageDimension: 10_000,
+            })
+            const hasDimensionConfig = Object.prototype.hasOwnProperty.call(resolvedLimits, 'maxImageDimension')
+            const expectsDimension = process.env.EXPECT_DIMENSION_CONFIG === 'true'
+            console.log({ version: v, hasDimensionConfig, maxImageDimension: resolvedLimits.maxImageDimension })
+            if (expectsDimension) {
+              if (!hasDimensionConfig || resolvedLimits.maxImageDimension !== 10_000) {
+                throw new Error(`DSH ${v} did not retain maxImageDimension=10000`)
+              }
             }
           })().catch((error) => {
             console.error(error)
@@ -189,7 +216,7 @@ jobs:
                 background: { r: 10, g: 20, b: 30, alpha: 1 },
               },
             }).resize(4, 4).png().toBuffer()
-            if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('sharp pixel smoke test failed')
+            if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('shared sharp pixel smoke test failed')
             console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
           })().catch((error) => {
             console.error(error)
