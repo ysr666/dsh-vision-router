@@ -1,6 +1,28 @@
 # v2 capability-aware vision routing
 
-This document is the design target for a major-version routing change. The implementation on `feat/v2-capability-router` keeps the current v1 execution order by default while adding an intent/profile/scoring core and shadow experiments.
+This document is the design target for a major-version routing change. The implementation on `feat/v2-capability-router` is rebuilt on current `main` (including the DSH rc.8 compatibility work) and keeps the current v1 execution order unchanged while the capability core is validated.
+
+## Current implementation status
+
+After the v1.7.x stabilization cycle, #142 was deliberately rebuilt from current `main` instead of rebasing its old high-conflict runtime files wholesale.
+
+Implemented on the current branch:
+
+- intent/profile/scoring core;
+- evidence-aware model references;
+- privacy-safe synthetic capability fixtures and `ep2_` endpoint fingerprints;
+- exact-backend benchmark runner with fallback forbidden;
+- persisted measured capability profiles under the existing DSH Vision Router cache area;
+- the stable `content_kind` / `mixed_of` scene signals from merged PR #178 are consumed by the capability core;
+- standalone capability/probe tests are part of the normal test command.
+
+Intentionally not restored yet:
+
+- runtime shadow wiring in `index.js`;
+- shadow settings/UI in `lib/client.js`;
+- any execution-changing `capabilityRouting` switch.
+
+Those runtime pieces are being reintroduced against the current v1.7/rc.8 architecture rather than copying the old implementation. The old temporary workflow/script that modified the branch and committed/pushed from GitHub Actions is not part of the rebuilt branch; repository writes follow the normal branch/commit/PR flow.
 
 ## Concept attribution and scope
 
@@ -8,7 +30,7 @@ The **scene-aware routing direction** in this v2 design was informed in part by 
 
 That attribution is intentionally scoped to the concept/direction. The capability-aware backend profile and scoring model, health/cost/privacy weighting, shadow routing, evidence-aware model reference, self-benchmark/fingerprint design, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
 
-Related scene-classification/deep-dive work is currently being developed separately in PR #178. Keep that work on its independent PR until the `content_kind` / `mixed_of` interface is stable; #142 can then consume the stable interface rather than coupling the two branches during active development.
+PR #178 has now merged into `main`. Its normalized structured-bootstrap contract is the stable scene-classification input for v2: `visual_kind`, `content_kind`, and `mixed_of` are consumed rather than reimplemented. `content_kind` remains subject metadata; it does not by itself turn a machine or architecture photo into a `chart_diagram` task.
 
 ## Why the v1 chain stops scaling
 
@@ -23,6 +45,7 @@ DeepSeek/the session agent chooses **what visual capability it needs** by choosi
 ```text
 image
   -> vision_bootstrap (task-independent structured baseline)
+  -> normalized visual_kind / content_kind / mixed_of
   -> DeepSeek reasons over user request + baseline
   -> visual tool intent (ocr / grounding / detection / ui / ...)
   -> capability router ranks the user's vision model pool
@@ -32,6 +55,21 @@ image
 ```
 
 The agent should not receive a long permanent leaderboard. Model selection belongs primarily inside Vision Router.
+
+## Scene signals from #178
+
+The capability router consumes the already-normalized bootstrap result instead of adding another classifier.
+
+Current bridge:
+
+- `document` -> `document`
+- `ui` -> `ui`
+- `chat` -> `ui`
+- `code` -> `code_screenshot`
+- `general` / `unknown` -> `general`
+- `mixed` -> up to two intents from normalized `mixed_of`, preserving the same information priority used by the structured-bootstrap layer (`ui`, `document`, `code`, `chat`, `general`)
+
+An explicit tool/requested operation still wins over the scene fallback. For example, a request to explain a circuit schematic remains `chart_diagram` even when the bootstrap classified the media container as a document.
 
 ## Intent vocabulary
 
@@ -46,7 +84,7 @@ The agent should not receive a long permanent leaderboard. Model selection belon
 - `code_screenshot` — IDE, source, terminal, traceback, logs
 - `visual_compare` — semantic or pixel-oriented multi-image comparison
 
-A tool maps to an intent. `vision_describe` can refine its intent from the requested operation, but it still never chooses a model itself.
+A tool maps to an intent. `vision_describe` can refine its intent from the requested operation and may fall back to the bootstrap scene signal when the question is otherwise generic, but it still never chooses a model itself.
 
 ## Capability profile
 
@@ -66,13 +104,37 @@ Use evidence in this order:
 
 Unknown models are shown to the agent as **unverified** rather than being assigned confident OCR/grounding/UI claims from a generic score.
 
-`lib/vision-capability-reference.js` builds these compact references and also plans a task-first probe set:
+`lib/vision-capability-reference.js` builds compact references and plans a task-first probe set:
 
 ```text
 current task intent -> structured -> OCR -> grounding -> general
 ```
 
-A future self-benchmark runner can execute that small fixture set against the exact provider/model/endpoint fingerprint, so a brand-new model can teach the router what it is good at without waiting for a plugin update.
+## Exact-backend self-benchmark
+
+`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns execution and persistence.
+
+The runner contract is intentionally strict:
+
+- probes are sequential and explicitly request one exact backend;
+- `allowFallback` is false;
+- when the transport reports the backend fingerprint actually used, a mismatch aborts the benchmark instead of recording another backend's output;
+- ordinary provider failures become zero-score evidence for that exact endpoint rather than silently switching models;
+- persisted records contain only the fingerprint, provider/model identity, measured scores, latency summary, fixture count and failure count;
+- endpoint URLs, API keys and arbitrary provider config are not persisted in the capability profile record.
+
+Profile state is stored as an atomic, mode-`0600` JSON cache under the existing `~/.dsh/cache/vision-router/` area. Corrupt and expired cache entries fail soft.
+
+Current generated fixtures cover:
+
+- structured baseline;
+- Latin/UI OCR;
+- Chinese chat screenshot OCR;
+- grounding;
+- document/table reading;
+- general scene understanding.
+
+Future fixture expansion can cover detection, UI relationships, chart/diagram reasoning and code screenshots without changing the evidence contract.
 
 ## Ranking
 
@@ -95,51 +157,41 @@ The existing configured order remains the deterministic tie-breaker.
 
 ## Phase 1 — capability core
 
+Implemented on the rebuilt branch:
+
 - standalone intent vocabulary;
 - tool -> intent mapping;
+- #178 structured-scene -> capability bridge;
 - conservative family priors;
 - measured + override profile merge;
 - policy-aware scorer/ranker;
-- health-aware ordering;
+- health-aware ordering primitives;
 - diagnostics explanation output;
+- exact-backend benchmark/persistence primitives;
 - unit tests.
 
 ## Phase 2 — shadow routing
 
-The scorer is wired into both `vision_describe` and the shared model-backed tool executor. Enable `capabilityRoutingShadow` to log `current order` vs `v2 suggested order`; actual execution still iterates the original v1 candidate order.
+Runtime shadow routing is the next integration step. It will be wired into `vision_describe` and the shared model-backed tool executor on the **current** v1.7/rc.8 runtime.
 
-The shadow plan includes current circuit-breaker state, local/privacy traits and direct HTTP fallbacks. `vision_bootstrap` is explicitly tagged as `structured`, while internal OCR/grounding/detection prompts are classified into their specialist intents.
+When enabled, it will compute and log `current order` vs `v2 suggested order`, while actual execution continues to iterate the original v1 candidate order. The shadow plan will include current circuit-breaker state, local/privacy traits, direct HTTP fallbacks and measured `ep2_` profiles when available.
+
+`vision_bootstrap` remains the `structured` operation. Later follow-up calls can consume #178 scene signals when the requested operation itself is generic.
 
 ### Agent-reference shadow experiment
 
-When shadow mode is enabled, the first bootstrap prompt can also receive a compact evidence-aware model reference. DeepSeek may submit a shadow-only `preferredBackend` chosen from that reference.
+After runtime shadow wiring is restored, the first bootstrap prompt may receive a compact evidence-aware model reference. DeepSeek may submit a shadow-only `preferredBackend` chosen from that reference.
 
-The router logs three things side-by-side:
+The router will compare:
 
 ```text
 actual v1 order
 agent preferred backend
 v2 scorer order
+measured capability evidence
 ```
 
-`preferredBackend` is **diagnostic only** and never changes execution order. This lets us test the community suggestion — "give the text model a capability reference and let it choose" — without handing production routing to an unvalidated prompt heuristic.
-
-The reference explicitly labels evidence provenance (`实测`, `人工确认`, `家族先验`, `未知新模型`) and tells the agent not to invent strengths for unverified future models.
-
-## Planned self-benchmark fixtures
-
-The next major capability-learning step should measure operations rather than subjective chat quality:
-
-- OCR: exact/normalized text match on Chinese + English UI text;
-- grounding: bounding-box IoU / point-in-target;
-- detection: element recall and duplicate rate;
-- structured: JSON validity + required-field coverage;
-- document: reading order / key-value / table structure;
-- UI: element/state relation accuracy;
-- chart/diagram: labeled relation questions;
-- latency: median request wall time.
-
-Benchmark state should be keyed by provider + model + endpoint/config fingerprint so a local quantized model does not inherit cloud results from a similarly named model.
+`preferredBackend` remains **diagnostic only** and must never change execution order during shadow validation.
 
 ## Settings UX target
 
@@ -152,15 +204,21 @@ The main card should eventually replace the mental model of a single **vision fa
 
 Advanced settings can expose per-intent preferred/blocked models and raw profile overrides. Ordinary users should not maintain a capability matrix manually.
 
+The first UI increment should expose **Test model capabilities** without enabling execution-changing routing. It should run the exact-backend benchmark, persist the measured profile, and render evidence provenance/latency/capability tags.
+
 ## Migration phases
 
-### Phase 3 — opt-in runtime routing
+### Phase 2 — shadow validation
+
+Reintroduce runtime shadow scoring on current main and compare fixed-order execution, agent recommendation, scorer ranking and measured endpoint evidence. No execution order changes.
+
+### Phase 3 — benchmark UI
+
+Expose opt-in exact-backend model capability testing and measured profile tags in the settings model pool.
+
+### Phase 4 — opt-in runtime routing
 
 Add `capabilityRouting: true`. Use v2 ordering for tool-side visual calls while preserving the current fallback executor and circuit breaker.
-
-### Phase 4 — self-benchmark and persistence
-
-Add generated privacy-safe fixtures, exact-backend probe execution, persisted endpoint fingerprints, measured capability profiles and UI tags.
 
 ### Phase 5 — v2 default
 
