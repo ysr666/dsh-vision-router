@@ -15,6 +15,7 @@ import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
+import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
@@ -207,6 +208,12 @@ export function apply(ctx, config = {}) {
   // source strictly for diagnostics (`known` vs `live`) without changing the
   // admission decision.
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
+  // rc.8 turns ui-attachment into a dynamic presentation plugin and no longer
+  // exports its React implementation as package values. Install a narrowly
+  // scoped browser boundary that supplies Vision Router's own lightweight
+  // gallery to the legacy 1.7.x client factory, so the official package is
+  // never value-required at runtime and remains free to evolve independently.
+  installClientPresentationBoundary(reconciledCtx)
   // Keep endpoint-discovered ids private to Vision Router's settings client:
   // the prelude wraps this package's browser context rather than changing the
   // global llm.models response (which would expose UNKNOWN_MODEL entries in the
