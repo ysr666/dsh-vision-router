@@ -1,64 +1,68 @@
 # v2 capability-aware vision routing
 
-This document is the design target for a major-version routing change. The implementation on `feat/v2-capability-router` is rebuilt on current `main` (including the DSH rc.8 compatibility work) and keeps the current v1 execution order unchanged while the capability core is validated.
+This document is the design target for the v2 routing architecture. The implementation on `feat/v2-capability-router` was rebuilt on current `main` after the v1.7.x stabilization cycle, including the DSH rc.8 compatibility work. The branch deliberately keeps the current v1 execution order authoritative while capability routing is measured in shadow mode.
 
 ## Current implementation status
 
-After the v1.7.x stabilization cycle, #142 was deliberately rebuilt from current `main` instead of rebasing its old high-conflict runtime files wholesale.
+PR #142 was rebuilt from current `main` instead of copying its old high-conflict `index.js`, `lib/client.js`, and `package.json` changes wholesale. The pre-rebuild head remains preserved on `backup/v2-capability-router-pre-rebase-20260820` for history/recovery.
 
-Implemented on the current branch:
+Implemented on the rebuilt branch:
 
-- intent/profile/scoring core;
-- evidence-aware model references;
-- privacy-safe synthetic capability fixtures and `ep2_` endpoint fingerprints;
-- exact-backend benchmark runner with fallback forbidden;
-- persisted measured capability profiles under the existing DSH Vision Router cache area;
-- the stable `content_kind` / `mixed_of` scene signals from merged PR #178 are consumed by the capability core;
-- standalone capability/probe tests are part of the normal test command.
+- stable visual intent vocabulary and tool -> intent mapping;
+- capability profiles, conservative family priors, measured evidence, user overrides, and policy-aware scoring;
+- the stable scene signals from merged PR #178 (`visual_kind`, `content_kind`, `mixed_of`) are consumed rather than reimplemented;
+- evidence-aware model reference generation;
+- privacy-safe generated benchmark fixtures and secret-safe `ep2_` endpoint fingerprints;
+- exact-backend benchmark execution with Vision Router fallback explicitly disabled;
+- atomic persisted measured profiles under the existing DSH Vision Router cache area;
+- default-off runtime shadow observation at the visual-tool boundary;
+- a per-model **Test capabilities / 测试能力** control in Vision Router's existing model rows;
+- measured capability/latency summaries shown next to the tested model;
+- all v2 suites are included in the normal package test command.
 
-Intentionally not restored yet:
+Not implemented yet:
 
-- runtime shadow wiring in `index.js`;
-- shadow settings/UI in `lib/client.js`;
-- any execution-changing `capabilityRouting` switch.
+- execution-changing `capabilityRouting`;
+- making v2 ordering the actual fallback order;
+- exposing the current v1 circuit-breaker state to the outer shadow layer;
+- the agent `preferredBackend` experiment from the original prototype.
 
-Those runtime pieces are being reintroduced against the current v1.7/rc.8 architecture rather than copying the old implementation. The old temporary workflow/script that modified the branch and committed/pushed from GitHub Actions is not part of the rebuilt branch; repository writes follow the normal branch/commit/PR flow.
+The old temporary workflow/script that modified the branch and committed/pushed from GitHub Actions is not part of the rebuilt branch. Repository writes use the normal branch -> commit -> PR flow.
 
 ## Concept attribution and scope
 
 The **scene-aware routing direction** in this v2 design was informed in part by earlier discussions with [@shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) and his earlier `dsh-vision` work: classify the visual scene/content first, then use that signal to guide a more suitable visual path instead of forcing every image through one undifferentiated chain.
 
-That attribution is intentionally scoped to the concept/direction. The capability-aware backend profile and scoring model, health/cost/privacy weighting, shadow routing, evidence-aware model reference, self-benchmark/fingerprint design, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
+That attribution is scoped to the concept/direction. The capability-aware backend profile/scoring model, health/cost/privacy weighting, shadow observation, evidence-aware model reference, self-benchmark/fingerprint design, persistence, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
 
-PR #178 has now merged into `main`. Its normalized structured-bootstrap contract is the stable scene-classification input for v2: `visual_kind`, `content_kind`, and `mixed_of` are consumed rather than reimplemented. `content_kind` remains subject metadata; it does not by itself turn a machine or architecture photo into a `chart_diagram` task.
+PR #178 has merged into `main`. Its normalized structured-bootstrap contract is now the stable scene-classification input for v2. `content_kind` remains subject metadata; it does not by itself turn a machine or architecture photo into a `chart_diagram` task.
 
 ## Why the v1 chain stops scaling
 
 The current router answers one question well: **which configured vision backend should be tried next when a call fails?**
 
-A v2 router needs to answer a different question first: **which backend is best suited to this visual operation?** OCR, document parsing, UI understanding, grounding, detection, diagram reading and general scene understanding are different capabilities. A single top-to-bottom chain cannot express that without forcing one model to be the default specialist for every task.
+A v2 router needs to answer a different question first: **which backend is best suited to this visual operation?** OCR, document parsing, UI understanding, grounding, detection, diagram reading and general scene understanding are different capabilities. A single fixed order cannot express that without forcing one backend to be the default specialist for every task.
 
 ## Core contract
 
-DeepSeek/the session agent chooses **what visual capability it needs** by choosing a tool. Vision Router chooses **which visual model should execute that capability**.
+DeepSeek/the session agent chooses **what visual capability it needs**. Vision Router chooses **which vision backend is best suited to execute it**.
 
 ```text
 image
   -> vision_bootstrap (task-independent structured baseline)
   -> normalized visual_kind / content_kind / mixed_of
-  -> DeepSeek reasons over user request + baseline
+  -> DeepSeek reasons over the user's request + baseline
   -> visual tool intent (ocr / grounding / detection / ui / ...)
-  -> capability router ranks the user's vision model pool
-  -> best healthy backend executes
-  -> result returns to DeepSeek
-  -> repeat as needed
+  -> capability router scores the current backend pool
+  -> shadow: compare recommendation with current v1 order
+  -> future opt-in runtime: best healthy backend executes first
 ```
 
-The agent should not receive a long permanent leaderboard. Model selection belongs primarily inside Vision Router.
+The agent should not receive a permanent hard-coded leaderboard. Model selection belongs primarily inside Vision Router and should be backed by evidence from the exact endpoint the user configured.
 
 ## Scene signals from #178
 
-The capability router consumes the already-normalized bootstrap result instead of adding another classifier.
+The capability router consumes the already-normalized bootstrap result instead of adding a second classifier.
 
 Current bridge:
 
@@ -69,7 +73,7 @@ Current bridge:
 - `general` / `unknown` -> `general`
 - `mixed` -> up to two intents from normalized `mixed_of`, preserving the same information priority used by the structured-bootstrap layer (`ui`, `document`, `code`, `chat`, `general`)
 
-An explicit tool/requested operation still wins over the scene fallback. For example, a request to explain a circuit schematic remains `chart_diagram` even when the bootstrap classified the media container as a document.
+An explicit requested operation still wins over scene fallback. A request to explain a circuit schematic is `chart_diagram` even if the bootstrap classified its media container as `document`.
 
 ## Intent vocabulary
 
@@ -84,46 +88,38 @@ An explicit tool/requested operation still wins over the scene fallback. For exa
 - `code_screenshot` — IDE, source, terminal, traceback, logs
 - `visual_compare` — semantic or pixel-oriented multi-image comparison
 
-A tool maps to an intent. `vision_describe` can refine its intent from the requested operation and may fall back to the bootstrap scene signal when the question is otherwise generic, but it still never chooses a model itself.
+`vision_describe` may refine its intent from the requested operation and can use the bootstrap scene signal only when the question itself is generic.
 
-## Capability profile
+## Capability evidence hierarchy
 
-Each backend gets a normalized profile containing per-intent scores, confidence and traits such as latency/cost/locality. Ranking is per visual call, not per conversation.
+A permanent hard-coded leaderboard is intentionally **not** the source of truth. New or renamed models can appear faster than the plugin ships, and the same model name can behave differently across providers, relays, quantization and endpoint configuration.
 
-### Capability evidence hierarchy
+Evidence order:
 
-A permanent hard-coded leaderboard is intentionally **not** the source of truth. New or renamed models can appear faster than this plugin can ship releases, and the same model name can behave differently across providers, quantization and relays.
+1. **exact-endpoint measured/self-benchmark evidence**;
+2. **explicit user override**;
+3. **official provider/model capability claims** when available;
+4. **conservative family prior**;
+5. **unknown generic prior** so future models remain routable without invented specialist strengths.
 
-Use evidence in this order:
-
-1. **exact-endpoint measured/self-benchmark evidence** — strongest long-term source;
-2. **explicit user override** — exact configured backend knowledge;
-3. **provider/model official claims** when available — useful seeding, not final truth;
-4. **conservative family prior** — weak bootstrap evidence only;
-5. **unknown generic prior** — keeps future models routable without inventing specialist strengths.
-
-Unknown models are shown to the agent as **unverified** rather than being assigned confident OCR/grounding/UI claims from a generic score.
-
-`lib/vision-capability-reference.js` builds compact references and plans a task-first probe set:
-
-```text
-current task intent -> structured -> OCR -> grounding -> general
-```
+Unknown models stay explicitly unverified until stronger evidence exists.
 
 ## Exact-backend self-benchmark
 
-`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns execution and persistence.
+`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns sequential execution and persisted profile records. `lib/vision-capability-benchmark-service.js` binds those primitives to the current executable backend pool.
 
-The runner contract is intentionally strict:
+The benchmark contract is intentionally strict:
 
-- probes are sequential and explicitly request one exact backend;
-- `allowFallback` is false;
-- when the transport reports the backend fingerprint actually used, a mismatch aborts the benchmark instead of recording another backend's output;
-- ordinary provider failures become zero-score evidence for that exact endpoint rather than silently switching models;
-- persisted records contain only the fingerprint, provider/model identity, measured scores, latency summary, fixture count and failure count;
-- endpoint URLs, API keys and arbitrary provider config are not persisted in the capability profile record.
+- fixtures run sequentially against one selected backend;
+- Vision Router fallback is disabled;
+- direct `vision-http` entries call exactly the selected provider entry once;
+- registered DSH adapters are called with the exact provider/model rather than the Vision Router fallback walk;
+- a changed/mismatched endpoint fingerprint is rejected before persistence;
+- ordinary provider failures become zero-score evidence for that endpoint rather than silently switching to another model;
+- persisted records contain fingerprint, provider/model identity, scores, latency summary, fixture/failure counts and timestamp only;
+- endpoint URLs, API keys and arbitrary provider configuration are not persisted in the capability profile record or returned to the browser.
 
-Profile state is stored as an atomic, mode-`0600` JSON cache under the existing `~/.dsh/cache/vision-router/` area. Corrupt and expired cache entries fail soft.
+Profile state is stored as an atomic mode-`0600` JSON cache under `~/.dsh/cache/vision-router/`. Corrupt and expired entries fail soft.
 
 Current generated fixtures cover:
 
@@ -136,12 +132,22 @@ Current generated fixtures cover:
 
 Future fixture expansion can cover detection, UI relationships, chart/diagram reasoning and code screenshots without changing the evidence contract.
 
+## Test model capabilities UI
+
+Vision Router's existing model rows receive a small **测试能力 / Test capabilities** control through a separate browser prelude. This avoids rewriting the v1.7 settings component or its save/readback path.
+
+The browser can see only the public candidate key, provider/model identity, locality, fingerprint, benchmarkability and measured score summary. It cannot see the endpoint URL or credentials. Clicking the control starts the exact benchmark service; while running, the UI explicitly reports that fallback is disabled. A successful run immediately updates the shared measured-profile store and the displayed score/latency summary.
+
+The DOM observer is scoped to insertion of `.vr-chain-row` settings nodes, so normal streaming chat DOM updates do not continuously trigger settings-row scans.
+
+This UI does **not** mutate Vision Router settings.
+
 ## Ranking
 
-A candidate score combines:
+A candidate score can combine:
 
 - capability match for the current intent;
-- backend health (circuit breaker, recent failures, rate limiting);
+- backend health;
 - latency;
 - cost/free status;
 - local/privacy preference.
@@ -155,71 +161,52 @@ User-facing policies:
 
 The existing configured order remains the deterministic tie-breaker.
 
-## Phase 1 — capability core
+### Current health caveat
 
-Implemented on the rebuilt branch:
+The scoring core already supports circuit-open/rate-limit/recent-failure health input. The current v1 circuit breaker, however, is internal to `index.js`; the rebuilt outer shadow layer intentionally does not reach through that private closure.
 
-- standalone intent vocabulary;
-- tool -> intent mapping;
-- #178 structured-scene -> capability bridge;
-- conservative family priors;
-- measured + override profile merge;
-- policy-aware scorer/ranker;
-- health-aware ordering primitives;
-- diagnostics explanation output;
-- exact-backend benchmark/persistence primitives;
-- unit tests.
+Therefore the **current shadow runtime treats health as neutral/default** while comparing capability/latency/cost/privacy evidence. Actual v1 execution still applies its real circuit breaker normally. Before any execution-changing v2 routing is enabled, the next runtime seam should expose a narrow read-only breaker snapshot to shadow scoring rather than copying or replacing the v1 breaker implementation.
 
-## Phase 2 — shadow routing
+## Runtime shadow routing
 
-Runtime shadow routing is the next integration step. It will be wired into `vision_describe` and the shared model-backed tool executor on the **current** v1.7/rc.8 runtime.
-
-When enabled, it will compute and log `current order` vs `v2 suggested order`, while actual execution continues to iterate the original v1 candidate order. The shadow plan will include current circuit-breaker state, local/privacy traits, direct HTTP fallbacks and measured `ep2_` profiles when available.
-
-`vision_bootstrap` remains the `structured` operation. Later follow-up calls can consume #178 scene signals when the requested operation itself is generic.
-
-### Agent-reference shadow experiment
-
-After runtime shadow wiring is restored, the first bootstrap prompt may receive a compact evidence-aware model reference. DeepSeek may submit a shadow-only `preferredBackend` chosen from that reference.
-
-The router will compare:
+`capabilityRoutingShadow` defaults to `false`. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, enumerates the current candidate pool, loads measured `ep2_` profiles where available, and logs:
 
 ```text
-actual v1 order
-agent preferred backend
-v2 scorer order
-measured capability evidence
+intent / strategy
+current candidate order
+v2 suggested order
+which candidates have measured evidence
 ```
 
-`preferredBackend` remains **diagnostic only** and must never change execution order during shadow validation.
+The wrapper then invokes the original tool implementation unchanged. It does **not** reorder, skip, retry or replace any backend. With shadow disabled it does no candidate enumeration for tool calls.
 
-## Settings UX target
+The bootstrap evidence is remembered per session only for shadow intent fallback, allowing a later generic `vision_describe` to reuse #178's normalized scene classification without changing the actual tool result.
 
-The main card should eventually replace the mental model of a single **vision fallback chain** with a **vision model pool**:
+## Migration plan
 
-- Smart vision routing: on/off
-- Policy: Quality / Balanced / Speed / Local privacy
-- Model pool rows with evidence-aware capability tags
-- One-click `Test model capabilities`
+### Phase 1 — capability/evidence core
 
-Advanced settings can expose per-intent preferred/blocked models and raw profile overrides. Ordinary users should not maintain a capability matrix manually.
-
-The first UI increment should expose **Test model capabilities** without enabling execution-changing routing. It should run the exact-backend benchmark, persist the measured profile, and render evidence provenance/latency/capability tags.
-
-## Migration phases
+Implemented: intent mapping, #178 scene bridge, profiles, priors, measured evidence merge, policies, scorer, diagnostics, fixtures, endpoint fingerprints and persistence.
 
 ### Phase 2 — shadow validation
 
-Reintroduce runtime shadow scoring on current main and compare fixed-order execution, agent recommendation, scorer ranking and measured endpoint evidence. No execution order changes.
+Implemented in default-off form: compare the current candidate order with v2 scoring while v1 remains authoritative.
+
+Next work inside this phase:
+
+- expose a narrow read-only snapshot of v1 breaker health to shadow scoring;
+- collect/inspect shadow diagnostics across real provider combinations;
+- expand fixtures where the current six-fixture set is too weak;
+- only after validation, consider the agent `preferredBackend` comparison experiment.
 
 ### Phase 3 — benchmark UI
 
-Expose opt-in exact-backend model capability testing and measured profile tags in the settings model pool.
+Implemented experimentally: per-model exact capability testing plus persisted measured tags/latency. It still needs real DSH browser/provider validation before being considered stable UX.
 
 ### Phase 4 — opt-in runtime routing
 
-Add `capabilityRouting: true`. Use v2 ordering for tool-side visual calls while preserving the current fallback executor and circuit breaker.
+Not implemented. Add `capabilityRouting: true` only after shadow/benchmark evidence is trustworthy. It should reuse the existing v1 executor and circuit breaker while changing only candidate ordering.
 
 ### Phase 5 — v2 default
 
-Only after shadow and benchmark evidence show stable routing: make capability-aware ordering the normal path and keep the old fixed chain as compatibility behavior.
+Only after opt-in runtime evidence is stable should capability-aware ordering become the normal path. The old fixed chain remains a compatibility behavior during migration.
