@@ -1,13 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
 import {
-  createTesseractExecFileCompat,
+  createTesseractPromisifyCompat,
   installTesseractExecFileCompat,
 } from '../lib/tesseract-exec-compat.js'
+import {
+  configuredVisionAdapterModels,
+  contextWithDelegatedReplay,
+} from '../lib/replay-delegation.js'
+import {
+  MAX_RUNTIME_FALLBACKS_PER_ROW,
+  MAX_RUNTIME_MODEL_ID_CHARS,
+  MAX_RUNTIME_PROVIDER_ROWS,
+  normalizeRuntimeVisionConfig,
+} from '../lib/runtime-config-normalizer.js'
+import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
+import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 import {
   installLocalMutationRouteBoundary,
   isLocalUiRequest,
@@ -78,112 +89,252 @@ const pngBytes = Buffer.from([
   0x00, 0x00, 0x00, 0x00,
 ])
 
-test('tesseract execFile compatibility materializes input bytes and preserves promisify shape', async () => {
-  let materializedPath
+test('tesseract promisify compatibility materializes asynchronously and cleans up', async () => {
+  const events = []
+  let delegatedArgs
   let delegatedOptions
+  let eventLoopYielded = false
 
-  const fakeExecFile = (_file, args, options, callback) => {
-    materializedPath = args[0]
-    delegatedOptions = options
-    assert.notEqual(materializedPath, 'stdin')
-    assert.match(materializedPath, /input\.png$/)
-    assert.equal(existsSync(materializedPath), true)
-    assert.deepEqual(readFileSync(materializedPath), pngBytes)
-    callback(null, 'OCR_OK', '')
-    return { pid: 1 }
+  const fakeExecFile = () => {
+    throw new Error('callback execFile must not be used when a native custom promisify exists')
   }
+  const originalCustom = async (_file, args, options) => {
+    events.push('delegate')
+    delegatedArgs = args
+    delegatedOptions = options
+    return { stdout: 'OCR_OK', stderr: '' }
+  }
+  const wrapped = createTesseractPromisifyCompat(fakeExecFile, originalCustom, {
+    tempDir: '/virtual-tmp',
+    async mkdtemp(prefix) {
+      events.push('mkdir')
+      assert.match(prefix, /dsh-vision-router-ocr-$/)
+      return '/virtual-tmp/ocr-123'
+    },
+    async writeFile(file, bytes) {
+      events.push('write-start')
+      assert.equal(file, '/virtual-tmp/ocr-123/input.png')
+      assert.equal(bytes, pngBytes, 'Buffer input should not be copied before async materialization')
+      await new Promise((resolve) => setImmediate(() => {
+        eventLoopYielded = true
+        resolve()
+      }))
+      events.push('write-end')
+    },
+    async rm(dir, options) {
+      events.push('rm')
+      assert.equal(dir, '/virtual-tmp/ocr-123')
+      assert.equal(options.recursive, true)
+      assert.equal(options.force, true)
+    },
+  })
 
-  const wrapped = createTesseractExecFileCompat(fakeExecFile)
-  const result = await promisify(wrapped)(
+  const result = await wrapped(
     'tesseract',
     ['stdin', 'stdout', '-l', 'chi_sim+eng', '--psm', '6'],
     { timeout: 1500, maxBuffer: 1024, input: pngBytes },
   )
 
   assert.deepEqual(result, { stdout: 'OCR_OK', stderr: '' })
+  assert.equal(eventLoopYielded, true, 'large OCR staging must yield instead of blocking the event loop')
+  assert.deepEqual(events, ['mkdir', 'write-start', 'write-end', 'delegate', 'rm'])
+  assert.equal(delegatedArgs[0], '/virtual-tmp/ocr-123/input.png')
   assert.equal(Object.prototype.hasOwnProperty.call(delegatedOptions, 'input'), false)
   assert.equal(delegatedOptions.timeout, 1500)
   assert.equal(delegatedOptions.windowsHide, true)
-  assert.equal(existsSync(materializedPath), false, 'temporary OCR input must be removed after success')
 })
 
-test('tesseract execFile compatibility removes materialized input after failure', async () => {
-  let materializedPath
-
-  const fakeExecFile = (_file, args, _options, callback) => {
-    materializedPath = args[0]
-    assert.equal(existsSync(materializedPath), true)
-    assert.deepEqual(readFileSync(materializedPath), pngBytes)
-    callback(new Error('fake tesseract failure'), '', 'boom')
-    return { pid: 2 }
-  }
-
-  const wrapped = createTesseractExecFileCompat(fakeExecFile)
-  await assert.rejects(
-    promisify(wrapped)(
-      'tesseract',
-      ['stdin', 'stdout', '-l', 'chi_sim+eng', '--psm', '6'],
-      { timeout: 1500, maxBuffer: 1024, input: pngBytes },
-    ),
-    /fake tesseract failure/,
+test('tesseract promisify compatibility cleans up after delegated failure', async () => {
+  const events = []
+  const wrapped = createTesseractPromisifyCompat(
+    () => {},
+    async () => {
+      events.push('delegate')
+      throw new Error('fake tesseract failure')
+    },
+    {
+      tempDir: '/virtual-tmp',
+      async mkdtemp() { events.push('mkdir'); return '/virtual-tmp/ocr-fail' },
+      async writeFile() { events.push('write') },
+      async rm() { events.push('rm') },
+    },
   )
 
-  assert.equal(existsSync(materializedPath), false, 'temporary OCR input must be removed after failure')
+  await assert.rejects(
+    wrapped('tesseract', ['stdin', 'stdout'], { input: pngBytes }),
+    /fake tesseract failure/,
+  )
+  assert.deepEqual(events, ['mkdir', 'write', 'delegate', 'rm'])
 })
 
-test('non-tesseract execFile calls are delegated unchanged', () => {
+test('non-tesseract promisified execFile calls keep native semantics', async () => {
   const calls = []
-  const fakeExecFile = function (...args) {
-    calls.push(args)
-    return { pid: 3 }
-  }
-  const wrapped = createTesseractExecFileCompat(fakeExecFile)
-  const callback = () => {}
   const options = { timeout: 99, input: Buffer.from('not for us') }
+  const wrapped = createTesseractPromisifyCompat(
+    () => {},
+    async (...args) => {
+      calls.push(args)
+      return { stdout: 'native', stderr: '' }
+    },
+    {
+      async mkdtemp() { throw new Error('must not materialize non-tesseract calls') },
+    },
+  )
 
-  const child = wrapped('powershell.exe', ['-NoProfile'], options, callback)
-
-  assert.deepEqual(child, { pid: 3 })
+  const result = await wrapped('powershell.exe', ['-NoProfile'], options)
+  assert.deepEqual(result, { stdout: 'native', stderr: '' })
   assert.equal(calls.length, 1)
   assert.equal(calls[0][0], 'powershell.exe')
   assert.deepEqual(calls[0][1], ['-NoProfile'])
   assert.equal(calls[0][2], options)
-  assert.equal(calls[0][3], callback)
 })
 
-test('tesseract installer unload does not clobber a later process-level execFile patch', () => {
-  const hostCalls = []
-  const hostExecFile = function (...args) {
-    hostCalls.push(args)
-    return { pid: 4 }
-  }
-  const fakeChildProcess = { execFile: hostExecFile }
-  let syncCalls = 0
+test('tesseract installer never replaces execFile and unload preserves a later custom promisify patch', async () => {
+  const originalCallbackExecFile = function () { return { pid: 4 } }
+  const originalCustom = async () => ({ stdout: 'original', stderr: '' })
+  originalCallbackExecFile[promisify.custom] = originalCustom
+  const fakeChildProcess = { execFile: originalCallbackExecFile }
+
   const dispose = installTesseractExecFileCompat(undefined, {
     childProcessModule: fakeChildProcess,
-    syncBuiltinESMExports() { syncCalls += 1 },
+    tempDir: '/virtual-tmp',
+    async mkdtemp() { return '/virtual-tmp/ocr-installer' },
+    async writeFile() {},
+    async rm() {},
   })
-  const visionPatch = fakeChildProcess.execFile
-  assert.notEqual(visionPatch, hostExecFile)
-  assert.equal(visionPatch.active, true)
 
-  const laterPatch = function (...args) {
-    return visionPatch.apply(this, args)
-  }
-  fakeChildProcess.execFile = laterPatch
+  assert.equal(fakeChildProcess.execFile, originalCallbackExecFile, 'callback API identity must stay native')
+  const visionCustom = originalCallbackExecFile[promisify.custom]
+  assert.notEqual(visionCustom, originalCustom)
+  assert.equal(visionCustom.active, true)
 
+  const laterCustom = async () => ({ stdout: 'later', stderr: '' })
+  originalCallbackExecFile[promisify.custom] = laterCustom
   dispose()
 
-  assert.equal(fakeChildProcess.execFile, laterPatch, 'later patch must remain authoritative')
-  assert.equal(visionPatch.active, false, 'captured Vision Router wrapper becomes inert')
-  assert.ok(syncCalls >= 2, 'ESM binding is resynced to the current authoritative patch')
+  assert.equal(originalCallbackExecFile[promisify.custom], laterCustom, 'later plugin custom promisify remains authoritative')
+  assert.equal(visionCustom.active, false, 'captured Vision Router custom promisify becomes inert')
+  assert.deepEqual(await visionCustom('node', ['--version'], {}), { stdout: 'original', stderr: '' })
+})
 
-  const callback = () => {}
-  hostCalls.length = 0
-  visionPatch('tesseract', ['stdin', 'stdout'], { input: pngBytes }, callback)
-  const seenArgs = hostCalls[0]
-  assert.equal(seenArgs[1][0], 'stdin')
-  assert.equal(seenArgs[2].input, pngBytes)
+test('one shared wrapper adapter never captures another DSH context', async () => {
+  const sharedAdapter = {
+    async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+    async listModels() { return [] },
+    async resolveModel(_provider, model) { return { provider: 'core-wrapper', id: model } },
+  }
+
+  function harness(route, retryPolicy) {
+    let registered
+    const officialAdapter = {
+      async listModels(provider) {
+        return [{ provider, id: 'deepseek-v4-pro', name: route, inputModalities: ['text'] }]
+      },
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: route, inputModalities: ['text'] }
+      },
+    }
+    const ctx = {
+      get(name) {
+        if (name !== 'settings') return undefined
+        return { get: () => ({ wrapperRoute: route }) }
+      },
+      llm: {
+        registration(provider) {
+          return provider === 'deepseek-official' ? { retryPolicy, adapter: officialAdapter } : undefined
+        },
+        registerAdapter(_providers, adapter) { registered = adapter; return () => {} },
+        async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+      },
+    }
+    const wrapped = contextWithDelegatedReplay(ctx, { wrapperRoute: route })
+    wrapped.llm.registerAdapter([route], sharedAdapter)
+    return () => registered
+  }
+
+  const adapterA = harness('alpha-vision', 'alpha-retry')()
+  const adapterB = harness('beta-vision', 'beta-retry')()
+
+  assert.notEqual(adapterA, adapterB, 'the same source adapter needs one proxy per owning context')
+  assert.equal(adapterA.providerRetryPolicy(), 'alpha-retry')
+  assert.equal(adapterB.providerRetryPolicy(), 'beta-retry')
+  assert.equal((await adapterA.listModels())[0].provider, 'alpha-vision')
+  assert.equal((await adapterB.listModels())[0].provider, 'beta-vision')
+})
+
+test('runtime vision config normalization is bounded and makes malformed fallbacks non-iterable-safe', () => {
+  const tooLong = 'x'.repeat(MAX_RUNTIME_MODEL_ID_CHARS + 1)
+  const rows = Array.from({ length: MAX_RUNTIME_PROVIDER_ROWS + 10 }, (_, i) => ({
+    provider: `provider-${i}`,
+    model: `model-${i}`,
+    fallbacks: Array.from({ length: MAX_RUNTIME_FALLBACKS_PER_ROW + 10 }, (_x, j) => `fallback-${j}`),
+  }))
+  rows.unshift({ provider: 'bad', model: tooLong, fallbacks: ['must-not-survive'] })
+  const normalized = normalizeRuntimeVisionConfig({ providers: rows, fallbacks: { malformed: true } })
+
+  assert.equal(normalized.providers.length, MAX_RUNTIME_PROVIDER_ROWS)
+  assert.ok(normalized.providers.every((row) => row.fallbacks.length <= MAX_RUNTIME_FALLBACKS_PER_ROW))
+  assert.deepEqual(normalized.fallbacks, [])
+  assert.ok(normalized.providers.every((row) => row.model !== tooLong))
+
+  assert.doesNotThrow(() => configuredVisionAdapterModels({
+    providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: { malformed: true } }],
+    fallbacks: { malformed: true },
+  }))
+  const allowed = configuredVisionAdapterModels({
+    providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: { malformed: true } }],
+  })
+  assert.deepEqual([...allowed.get('zhipu')], ['glm-4.6v-flash'])
+})
+
+test('live Settings values are normalized before the core can iterate the vision chain', () => {
+  const rawScope = {
+    get() {
+      return {
+        providers: [{ provider: 'zhipu', model: 'glm', fallbacks: { malformed: true } }],
+        fallbacks: { malformed: true },
+      }
+    },
+    watch() { return () => {} },
+  }
+  const child = {
+    settings: {
+      register() { return rawScope },
+    },
+  }
+  const ctx = {
+    tools: { register() { return () => {} } },
+    llm: {},
+    inject(_deps, callback) { return callback(child) },
+    effect() { return () => {} },
+  }
+  const { ctx: stabilized, bootConfig } = installLocalVisionStabilizer(
+    ctx,
+    { providers: [{ provider: 'p', model: 'm', fallbacks: { malformed: true } }] },
+    {},
+  )
+  assert.deepEqual(bootConfig.providers[0].fallbacks, [])
+
+  let scope
+  stabilized.inject(['settings'], (injected) => {
+    scope = injected.settings.register('vision-router', {}, {})
+  })
+  assert.deepEqual(scope.get().providers[0].fallbacks, [])
+  assert.deepEqual(scope.get().fallbacks, [])
+})
+
+test('apply-level vision state stores isolate identical session ids across DSH contexts', () => {
+  const first = createSessionVisionStateStore()
+  const second = createSessionVisionStateStore()
+  const sessionA = { id: 'session-1' }
+  const sessionB = { id: 'session-1' }
+
+  first.setDescription(sessionA, 'sha256:image', 'only in first apply')
+  first.recordAttachments(sessionA, [{ attachmentId: 'sha256:image', marker: 'A' }])
+
+  assert.equal(first.getDescription(sessionA, 'sha256:image'), 'only in first apply')
+  assert.equal(second.getDescription(sessionB, 'sha256:image'), undefined)
+  assert.equal(second.lookupAttachment(sessionB, 'sha256:image'), undefined)
 })
 
 test('loopback transport detection covers IPv4, IPv6 and IPv4-mapped IPv6 only', () => {
@@ -289,8 +440,6 @@ test('local mutation boundary preserves injected child identity and rejects remo
   assert.equal(res.status, 403, 'reverse-proxy-local transport with an external Host stays remote')
   assert.equal(calls, 1)
 
-  // Capability+method specific: GET on the mutation route itself is still the
-  // real handler's responsibility.
   res = responseRecorder()
   await registered.handler(
     { method: 'GET', socket: { remoteAddress: '10.0.0.8' }, headers: { host: 'router.example.com' } },
