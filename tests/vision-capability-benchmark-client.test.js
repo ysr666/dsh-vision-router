@@ -24,6 +24,14 @@ test('capability benchmark client is scoped to Vision Router chain rows and exac
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /fallback is disabled/)
 })
 
+test('capability UI observer ignores unrelated streaming DOM mutations', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function mutationTouchesRows\(records\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\('\.vr-chain-row'\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.querySelector\('\.vr-chain-row'\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if \(mutationTouchesRows\(records \|\| \[\]\)\) scheduleScan\(false\)/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /new MutationObserver\(function\(\)\{ scheduleScan\(false\); \}\)/)
+})
+
 test('capability benchmark client never mutates Vision Router settings', () => {
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /settings\.mutate/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /allowRemoteSettings/)
