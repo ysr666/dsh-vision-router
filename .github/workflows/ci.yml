@@ -135,6 +135,37 @@ jobs:
               if (!hasDimensionConfig || resolvedLimits.maxImageDimension !== 10_000) {
                 throw new Error(`DSH ${v} did not retain maxImageDimension=10000`)
               }
+
+              // Prove the value is not merely present in the schema: exercise
+              // rc.8's real image admission at the exact configured boundary.
+              // A 10k x 1 PNG is cheap to create while still testing the side
+              // dimension independently from the 100M total-pixel policy.
+              const sharp = hostRequire('sharp')
+              const png = async (width) => new Uint8Array(await sharp({
+                create: {
+                  width,
+                  height: 1,
+                  channels: 4,
+                  background: { r: 1, g: 2, b: 3, alpha: 1 },
+                },
+              }).png().toBuffer())
+              await attachmentLocal.validateImageFile(
+                { data: await png(10_000), mediaType: 'image/png' },
+                resolvedLimits,
+              )
+              let rejected = false
+              try {
+                await attachmentLocal.validateImageFile(
+                  { data: await png(10_001), mediaType: 'image/png' },
+                  resolvedLimits,
+                )
+              } catch (error) {
+                rejected = error?.code === 'IMAGE_DIMENSION_TOO_LARGE'
+                if (!rejected) throw error
+              }
+              if (!rejected) {
+                throw new Error(`DSH ${v} admitted 10001px despite maxImageDimension=10000`)
+              }
             }
           })().catch((error) => {
             console.error(error)
