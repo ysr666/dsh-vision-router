@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/release-v1.7.0-5B4CF0?style=flat-square" alt="Release v1.7.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.1"><img src="https://img.shields.io/badge/release-v1.7.1-5B4CF0?style=flat-square" alt="Release v1.7.1" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.7.0)**
+> 📌 **Announcement (v1.7.1)**
 >
-> **v1.7.0:** Live model discovery, stronger settings, session recovery, and Ollama cold-start fixes.
+> **v1.7.1:** Remote settings can now be enabled after an explicit risk confirmation.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
