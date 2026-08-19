@@ -35,10 +35,17 @@ import {
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
-// Structured 1+x now also has a turn-level wall-clock budget. Individual
+// Structured 1+x also has a turn-level wall-clock budget. Individual
 // visionTaskTimeoutMs budgets remain unchanged; this one prevents a deep turn
 // from multiplying them into several minutes of serial waiting.
 core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(90000))
+
+// Both visible entry points — Settings > Vision Router and the legacy
+// Settings > Plugins compatibility card — edit the same Host-owned namespace.
+// Keep the depth enum and custom cap on this final public contract so either
+// entry serializes exactly the same shape and rc.7 Host persistence accepts it.
+core.Config.set('visionDepth', z.union(['fast', 'standard', 'deep', 'custom']).default('standard'))
+core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).default(0))
 
 // Settings surfaces and Host persistence must agree on this field. Keep the
 // permission on the public entry contract as well as index.js so a packaged
@@ -51,7 +58,7 @@ core.Config.set('allowRemoteSettings', z.boolean().default(false))
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. Tests pin this alongside the schema so a
 // future release cannot ship a new client against an indistinguishable Host.
-export const SETTINGS_CONTRACT_REVISION = 2
+export const SETTINGS_CONTRACT_REVISION = 3
 
 export * from './index.js'
 export {
@@ -136,8 +143,8 @@ export function apply(ctx, config = {}) {
   })
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
-  // one-shot, enforces fast/standard/deep quotas, tracks mixed branches,
-  // rejects empty/non-evidence results, and applies one shared turn deadline.
+  // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
+  // rejects empty/non-evidence results, and applies one shared visual deadline.
   const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
   // DSH rc.7 publishes llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
