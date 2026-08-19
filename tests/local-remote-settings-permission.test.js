@@ -102,15 +102,24 @@ test('local permission prelude is ordered after existing live-model prelude', ()
   assert.ok(next.includes(LOCAL_REMOTE_SETTINGS_PERMISSION_PATH))
 })
 
-test('client shim bypasses stock rc6 scope only for local allowRemoteSettings', async () => {
+test('client shim normalizes the v1.6.4 stringified toggle while Host storage stays boolean', async () => {
   const loaded = []
   const loader = { load(spec) { loaded.push(spec) } }
   const fetchCalls = []
+  let revision = 7
   const context = {
     window: { __ModuleLoader__: loader },
     fetch: async (url, options) => {
-      fetchCalls.push([url, options])
-      return { ok: true, status: 200, async json() { return { ok: true, value: { operation: 'set', present: true, value: true, revision: 8 } } } }
+      const payload = JSON.parse(options.body)
+      fetchCalls.push([url, options, payload])
+      revision += 1
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, value: { operation: payload.operation, present: payload.operation === 'set', ...(payload.operation === 'set' ? { value: payload.value } : {}), revision } }
+        },
+      }
     },
     Proxy, Reflect, Object, Array, WeakMap, TypeError, Error, JSON, Number, console,
   }
@@ -131,18 +140,27 @@ test('client shim bypasses stock rc6 scope only for local allowRemoteSettings', 
   exports.apply({ settingsScope: { bind() { return rawScope } } })
   const scope = appliedCtx.settingsScope.bind({ namespace: 'vision-router' })
 
-  await scope.set('allowRemoteSettings', true)
+  // v1.6.4's generic parser turns the checkbox draft true into the string "true".
+  await scope.set('allowRemoteSettings', 'true')
   assert.equal(fetchCalls.length, 1)
   assert.equal(fetchCalls[0][0], LOCAL_REMOTE_SETTINGS_PERMISSION_PATH)
+  assert.equal(fetchCalls[0][2].value, true, 'Host endpoint must receive a real boolean')
   assert.equal(normalWrites.length, 0)
   assert.equal(loads, 1)
-  assert.equal(scope.getSnapshot().user.allowRemoteSettings, true)
+  assert.equal(scope.getSnapshot().user.allowRemoteSettings, 'true', 'client readback must match the stringified save plan')
+  assert.equal(scope.getSnapshot().value.allowRemoteSettings, 'true', 'legacy formatter must render the enabled checkbox as checked')
+
+  await scope.set('allowRemoteSettings', 'false')
+  assert.equal(fetchCalls.length, 2)
+  assert.equal(fetchCalls[1][2].value, false, 'Host endpoint must receive boolean false')
+  assert.equal(scope.getSnapshot().user.allowRemoteSettings, 'false', 'readback must match the stringified false save plan')
+  assert.equal(scope.getSnapshot().value.allowRemoteSettings, '', 'legacy formatter must render false as unchecked')
 
   await scope.set('routing', true)
   assert.deepEqual(normalWrites, [['set', 'routing', true]])
 
   snapshot.mode = 'remote'
   await scope.set('allowRemoteSettings', false)
-  assert.equal(fetchCalls.length, 1)
+  assert.equal(fetchCalls.length, 2)
   assert.deepEqual(normalWrites.at(-1), ['set', 'allowRemoteSettings', false])
 })
