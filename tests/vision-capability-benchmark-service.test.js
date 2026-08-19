@@ -81,6 +81,54 @@ test('exact invoker sends one selected vision-http provider directly and never e
   assert.equal(result.usedFingerprint, backend.fingerprint)
 })
 
+test('exact adapter benchmark awaits Promise<AsyncIterable> from llm.stream', async () => {
+  const ctx = {
+    get(name) {
+      if (name === 'attachments') {
+        return {
+          async saveImage() {
+            return { attachmentId: 'synthetic-fixture', mediaType: 'image/png', name: 'fixture.png' }
+          },
+        }
+      }
+      return undefined
+    },
+  }
+  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
+  const candidate = { provider: 'custom-provider', model: 'vision-model' }
+  const calls = []
+  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
+    renderFixture: async () => Buffer.from('png'),
+    streamExact: async (options) => {
+      calls.push(options)
+      return (async function* () {
+        yield { type: 'text', text: 'hello ' }
+        yield { type: 'text', text: 'vision' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
+  })
+  const backend = {
+    provider: candidate.provider,
+    model: candidate.model,
+    endpoint: 'https://adapter.example/v1',
+    config: { api: 'openai-completions' },
+  }
+  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
+  const result = await invoke({
+    backend,
+    fixture: { id: 'adapter', svg: '<svg/>', prompt: 'describe' },
+    exactBackend: true,
+    allowFallback: false,
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].provider, 'custom-provider')
+  assert.equal(calls[0].model, 'vision-model')
+  assert.equal(calls[0].messages[0].content[0].type, 'image')
+  assert.equal(result.output, 'hello vision')
+  assert.equal(result.usedFingerprint, backend.fingerprint)
+})
+
 test('exact invoker rejects a caller that tries to enable fallback semantics', async () => {
   const core = fakeCore()
   const invoke = createExactCapabilityInvoker(fakeCtx(), core, {
