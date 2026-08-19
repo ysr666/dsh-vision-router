@@ -113,7 +113,7 @@ test('tesseract promisify compatibility materializes asynchronously and cleans u
     },
     async writeFile(file, bytes) {
       events.push('write-start')
-      assert.equal(file, '/virtual-tmp/ocr-123/input.png')
+      assert.match(file, /ocr-123[\\/]input\.png$/)
       assert.equal(bytes, pngBytes, 'Buffer input should not be copied before async materialization')
       await new Promise((resolve) => setImmediate(() => {
         eventLoopYielded = true
@@ -138,7 +138,7 @@ test('tesseract promisify compatibility materializes asynchronously and cleans u
   assert.deepEqual(result, { stdout: 'OCR_OK', stderr: '' })
   assert.equal(eventLoopYielded, true, 'large OCR staging must yield instead of blocking the event loop')
   assert.deepEqual(events, ['mkdir', 'write-start', 'write-end', 'delegate', 'rm'])
-  assert.equal(delegatedArgs[0], '/virtual-tmp/ocr-123/input.png')
+  assert.match(delegatedArgs[0], /ocr-123[\\/]input\.png$/)
   assert.equal(Object.prototype.hasOwnProperty.call(delegatedOptions, 'input'), false)
   assert.equal(delegatedOptions.timeout, 1500)
   assert.equal(delegatedOptions.windowsHide, true)
