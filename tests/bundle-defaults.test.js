@@ -13,6 +13,14 @@ test('installed bundle keeps the full vision tool schema stable by default', asy
   )
 })
 
+test('bundle declares the rc8 large-image admission policy for clean profiles', async () => {
+  const text = await readFile(bundlePatch, 'utf8')
+  assert.match(
+    text,
+    /- id: attachment-local[\s\S]*?maxImageBytes: 20971520[\s\S]*?maxImagePixels: 100000000[\s\S]*?maxImageDimension: 10000/,
+  )
+})
+
 test('public plugin config defaults progressive tools off', () => {
   assert.equal(Config({}).progressiveTools, false)
 })
@@ -38,7 +46,7 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('release line stays on package identity 1.7.1', async () => {
+test('release line stays on package identity 1.7.2', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '1.7.1')
+  assert.equal(pkg.version, '1.7.2')
 })
