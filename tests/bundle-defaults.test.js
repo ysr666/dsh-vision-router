@@ -22,9 +22,19 @@ test('progressive tools remain an explicit opt-in', () => {
 })
 
 test('entry contract always exposes the local remote-settings permission', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 2)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 3)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
+})
+
+test('entry contract exposes the custom depth tier to every settings entry point', () => {
+  const defaults = Config({})
+  assert.equal(defaults.visionDepth, 'standard')
+  assert.equal(defaults.visionDepthMaxCalls, 0)
+
+  const custom = Config({ visionDepth: 'custom', visionDepthMaxCalls: 7 })
+  assert.equal(custom.visionDepth, 'custom')
+  assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
 test('post-release development no longer reuses the published 1.6.2 identity', async () => {
