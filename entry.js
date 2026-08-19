@@ -34,6 +34,13 @@ import {
   protectRc7ProviderOwnership,
 } from './lib/dsh-contract-compat.js'
 
+// Increment whenever the browser-visible settings contract gains a field whose
+// absence changes write semantics. This revision is also exposed as a resolved
+// schema default so a newer browser client can distinguish a genuinely updated
+// Host from a stale in-process plugin module instead of reporting a generic
+// readback mismatch after the old Host rejects a newly visible field.
+export const SETTINGS_CONTRACT_REVISION = 4
+
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
 // for the settings namespace, so composition config and settings validation
@@ -59,10 +66,13 @@ core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).defaul
 // loaded by Cordis and therefore the right place to close client/Host drift.
 core.Config.set('allowRemoteSettings', z.boolean().default(false))
 
-// Increment whenever the browser-visible settings contract gains a field whose
-// absence changes write semantics. Tests pin this alongside the schema so a
-// future release cannot ship a new client against an indistinguishable Host.
-export const SETTINGS_CONTRACT_REVISION = 3
+// Internal read-only-by-convention handshake. It is not rendered by Vision
+// Router's settings UI and is not in the remote mutable allow-list; its resolved
+// default lets diagnostics prove which schema the running Host actually loaded.
+core.Config.set(
+  'settingsContractRevision',
+  z.number().step(1).min(1).max(SETTINGS_CONTRACT_REVISION).default(SETTINGS_CONTRACT_REVISION),
+)
 
 export * from './index.js'
 export {
