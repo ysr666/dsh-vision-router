@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.3"><img src="https://img.shields.io/badge/release-v1.5.3-5B4CF0?style=flat-square" alt="Release v1.5.3" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-368%20tests-2EA44F?style=flat-square" alt="Verified: 368 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/release-v1.7.0-5B4CF0?style=flat-square" alt="Release v1.7.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.6.2)**
+> 📌 **Announcement (v1.7.0)**
 >
-> **v1.6.2:** Stability release — fixes onboarding, OCR, model synchronization and large-image handling, improving long-session and overall runtime reliability.
+> **v1.7.0:** Live model discovery, stronger settings, session recovery, and Ollama cold-start fixes.
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -265,7 +265,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 The vision tools try backends in order and surface an error only after all of them fail:
 
-1. **User vision models**: one per settings row, top to bottom; only models under **Settings → Models** that explicitly declare image input are shown;
+1. **User vision models**: one per settings row, top to bottom; active providers remain visible even when model enumeration is partial, callable generative models stay selectable, image metadata is advisory, and actual support is verified at runtime;
 2. **Local Ollama (optional, off by default)**: `localOllama.enabled` adds keyless, offline recognition through your local Ollama (for example qwen2.5vl);
 3. **Local LM Studio (optional, off by default)**: `localLmStudio.enabled` follows Ollama and requires the real model identifier shown in LM Studio Developer or returned by `/v1/models`;
 4. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the local backends;
@@ -345,7 +345,7 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
 | `desktopScreenshot` | `false` | privacy opt-in for the model-callable `vision_screenshot` desktop-capture tool; checked live before every capture |
 | `freeFallback` | `true` | append the anonymous OVH models after explicit local/custom HTTP backends; turning this off never disables an explicitly configured local backend |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **Local vision backend (merged from dsh-vision)**: when enabled, `local-ollama` leads the HTTP vision chain; skipped automatically when Ollama is down; `format` selects `openai` (`/chat/completions`) or `anthropic` (`/messages`); optional `temperature` / `top_p` are sent only when explicitly set, otherwise the local server default is respected |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **Local vision backend (merged from dsh-vision)**: when enabled, `local-ollama` leads the HTTP vision chain; skipped automatically when Ollama is down; `format` selects `openai` (`/chat/completions`) or `anthropic` (`/messages`); optional `temperature` / `top_p` are sent only when explicitly set. v1.7 prewarms loopback models and renews a 30-minute residency so cold loading is not charged to the normal inference deadline |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | **Local LM Studio backend (merged from dsh-vision)**: follows Ollama and precedes custom/cloud HTTP backends; enabling it requires the real model identifier shown in LM Studio Developer or returned by `/v1/models`; supports the same optional sampling fields, while `format: 'anthropic'` requires LM Studio 0.4.1+ |
 | `instantDescribe` | `false` | **Instant local translation (merged from dsh-vision)**: when on and at least one local backend is usable, uncached image blocks are recognized before the first model step; Ollama is tried before LM Studio with a shared timeout budget, multi-image batches run concurrently (up to 3), and failures fall back to the static tool-hint marker |
 | `localDescribeStyle` | `plain` | **Local recognition output style (merged from dsh-vision)**: `plain` = flat description; `structured` = structured recognition (【初步判断】/【细节】/【空间结构】/【原图尺寸】), better for screenshot analysis |
@@ -393,6 +393,7 @@ ollama pull qwen2.5vl
 **3. What happens**
 
 - When enabled, `local-ollama` heads the HTTP vision chain. For a strict local-only setup, remove cloud vision rows/custom HTTP endpoints and turn off `freeFallback`.
+- **v1.7 cold-start handling:** the selected loopback Ollama model is prewarmed through Ollama's native API and kept resident for 30 minutes. If it is cold when Ollama is the primary image backend, loading completes before the normal vision-task budget starts; a short `/api/ps` probe keeps a dead service on the fast fallback path. Remote Ollama URLs are never auto-warmed.
 - **LM Studio works the same way** — enable `localLmStudio` in the same "Local vision" group with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`) and enter the exact model identifier shown in Developer or `/v1/models`. It sits after `local-ollama` and before custom/cloud HTTP backends.
 - Each local backend can speak **OpenAI or Anthropic format** via `format` (default `openai`). Anthropic mode routes to `/v1/messages` with `anthropic-version` and base64 image sources; `x-api-key` is sent only when a key is configured. LM Studio needs version 0.4.1 or newer for this endpoint.
 - If a local backend is down or the call times out, its entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
