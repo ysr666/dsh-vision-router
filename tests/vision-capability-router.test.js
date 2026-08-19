@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   VISION_INTENTS,
   VISION_STRATEGIES,
+  inferBootstrapVisionIntents,
   inferToolVisionIntent,
   inferBuiltinCapabilityPrior,
   buildVisionCapabilityProfile,
@@ -47,6 +48,55 @@ test('vision_describe infers a specialist intent only from the requested operati
     'visual_compare',
   )
   assert.equal(inferToolVisionIntent('vision_describe', { question: 'what is in this photo?' }), 'general')
+})
+
+test('#178 structured scene signals bridge into capability intents without reclassifying content_kind', () => {
+  assert.deepEqual(
+    inferBootstrapVisionIntents({ visual_kind: 'document', content_kind: 'unknown', mixed_of: [] }),
+    {
+      primary: 'document',
+      secondary: [],
+      all: ['document'],
+      visualKind: 'document',
+      contentKind: 'unknown',
+      mixedOf: [],
+    },
+  )
+  assert.equal(inferBootstrapVisionIntents({ visual_kind: 'chat' }).primary, 'ui')
+  assert.equal(inferBootstrapVisionIntents({ visual_kind: 'code' }).primary, 'code_screenshot')
+
+  const mixed = inferBootstrapVisionIntents({
+    visual_kind: 'mixed',
+    content_kind: 'machine',
+    mixed_of: ['general', 'document', 'ui', 'ui'],
+  })
+  assert.deepEqual(mixed.all, ['ui', 'document'])
+  assert.deepEqual(mixed.mixedOf, ['ui', 'document'])
+  assert.equal(mixed.contentKind, 'machine')
+
+  // content_kind remains metadata: a machine photo is not silently relabelled
+  // as a chart/diagram just because the physical subject is a machine.
+  assert.equal(
+    inferBootstrapVisionIntents({ visual_kind: 'general', content_kind: 'machine' }).primary,
+    'general',
+  )
+  assert.equal(
+    inferToolVisionIntent(
+      'vision_describe',
+      { question: 'check the important details' },
+      { bootstrap: { visual_kind: 'code', content_kind: 'unknown' } },
+    ),
+    'code_screenshot',
+  )
+  assert.equal(
+    inferToolVisionIntent(
+      'vision_describe',
+      { question: 'Explain the circuit architecture in this schematic' },
+      { bootstrap: { visual_kind: 'document' } },
+    ),
+    'chart_diagram',
+  )
+  assert.equal(inferBootstrapVisionIntents({ visual_kind: '__proto__', content_kind: 'constructor' }).primary, 'general')
 })
 
 test('family priors are conservative and unknown models remain routable', () => {
