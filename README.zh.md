@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.5.3"><img src="https://img.shields.io/badge/release-v1.5.3-5B4CF0?style=flat-square" alt="Release v1.5.3" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-368%20tests-2EA44F?style=flat-square" alt="Verified: 368 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/release-v1.7.0-5B4CF0?style=flat-square" alt="Release v1.7.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.6.2）**
+> 📌 **公告（v1.7.0）**
 >
-> **v1.6.2：集中修复引导、OCR、模型同步与大图处理问题，提升长会话和整体运行稳定性。**
+> **v1.7.0：模型发现、设置、会话恢复与 Ollama 冷启动全面升级。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -264,7 +264,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 视觉工具按顺序逐个尝试，全部失败才报错：
 
-1. **用户视觉模型**：设置卡里一行一个，从上到下；只显示 **设置 → 模型** 中明确声明支持 image 输入的模型；
+1. **用户视觉模型**：设置卡里一行一个，从上到下；已启用供应商即使模型枚举部分失败也会保留在下拉中，可调用的生成式模型继续可选，图片能力声明只作提示，最终以运行时实际调用为准；
 2. **本地 Ollama（可选，默认关）**：`localOllama.enabled` 开启后，通过本机 Ollama 做免 Key、离线识别（例如 qwen2.5vl）；
 3. **本地 LM Studio（可选，默认关）**：`localLmStudio.enabled` 排在 Ollama 之后，模型名必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实标识；
 4. **高级自定义 HTTP 视觉端点**：旧配置/高级配置中的 `httpProviders` 排在本地后端之后；
@@ -344,7 +344,7 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
 | `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；关闭它不会停用用户明确配置的本地后端 |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排在 HTTP 视觉链最前；Ollama 未运行会自动跳过；`format` 可选 `openai`（`/chat/completions`）或 `anthropic`（`/messages`）；可选的 `temperature` / `top_p` 只在显式填写时发送，留空尊重本地服务默认值 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排在 HTTP 视觉链最前；Ollama 未运行会自动跳过；`format` 可选 `openai`（`/chat/completions`）或 `anthropic`（`/messages`）；可选的 `temperature` / `top_p` 只在显式填写时发送。v1.7 会预热本机 loopback 模型并续期 30 分钟驻留，冷加载时间不再计入正常识图截止时间 |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | **本地 LM Studio 后端（并入自 dsh-vision）**：排在 Ollama 之后、自定义/云 HTTP 后端之前；开启时必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实模型标识；可选采样参数同 Ollama，`format: 'anthropic'` 需 LM Studio 0.4.1+ |
 | `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启且至少一个本地后端可用时，在第一模型步之前识别无缓存图片块；Ollama → LM Studio 共用总超时预算，多图并发上限 3，失败则回退静态工具标记 |
 | `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
@@ -388,6 +388,7 @@ ollama pull qwen2.5vl
 **3. 行为说明**
 
 - 开启后 `local-ollama` 排在 HTTP 视觉链最前。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
+- **v1.7 冷启动处理：**选中的本机 loopback Ollama 模型会通过原生 API 预热并保持 30 分钟驻留。如果模型在 Ollama 作为首个图片后端时已经冷却，加载会在正常视觉任务预算开始之前完成；短 `/api/ps` 探测保证服务未运行/挂死时仍快速进入 fallback。远程 Ollama URL 不会自动预热。
 - **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
 - 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）。Anthropic 模式走 `/v1/messages`，带 `anthropic-version` 并把图片转为 base64 source；只有配置了 Key 才发送 `x-api-key`。LM Studio 需 0.4.1 或更高版本才提供该端点。
 - 任一本地后端未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
