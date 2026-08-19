@@ -3,6 +3,21 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## v1.7.1
+
+> **v1.7.0 → v1.7.1 hotfix**：远程 Web 部署不再必须先访问 loopback 页面才能开启远程设置；首次开启改为明确风险确认，确认后仅写入 `allowRemoteSettings=true`，取消则保持只读。既有远程字段 allow-list 与敏感配置本机专属边界不变。
+> **v1.7.0 → v1.7.1 hotfix**: remote-only Web deployments no longer need loopback access to opt into remote settings. Enabling now requires an explicit risk confirmation and writes only `allowRemoteSettings=true`; canceling leaves the page read-only. The existing remote field allow-list and local-only sensitive-setting boundary remain unchanged.
+
+### 设置与安全 / Settings & security
+
+- **风险确认后允许远程开启设置（#255）**：远程 Settings 在权限关闭时显示中英双语风险提示，并明确说明 `trustedHosts` 不是身份认证。用户确认后通过同一 `trusted-host` RPC 通道仅开启 `allowRemoteSettings` 并重新读取设置；取消不产生任何写入。API Key、HTTP provider 凭据、本地 Ollama / LM Studio、产物路径、桌面截图等仍不对远程开放。
+- **Risk-confirmed remote settings opt-in (#255)**: when remote permission is disabled, Settings shows a bilingual warning that `trustedHosts` is not authentication. Confirming enables only `allowRemoteSettings` through the same `trusted-host` RPC channel and refreshes the settings view; canceling makes no write. API keys, HTTP-provider credentials, local Ollama / LM Studio, artifact paths, desktop capture, and other excluded fields remain unavailable remotely.
+
+### 验证 / Validation
+
+- 新增远程授权、确认/取消、client shim 组合与幂等注入回归覆盖；Node 22/24 CI、DSH rc.6/rc.7 contract、三平台 host-sharp、native multimodal cold resume 与 100MP 大图资源压力继续作为发布门禁。
+- Adds regression coverage for remote authorization, confirm/cancel behavior, client-shim composition, and idempotent injection; Node 22/24 CI, DSH rc.6/rc.7 contracts, cross-platform host-sharp, native multimodal cold resume, and 100MP image stress remain release gates.
+
 ## v1.7.0
 
 > **v1.6.2 → v1.7.0**：这是一次集中式 minor release：把 Vision Router 升级为一级设置能力，重做视觉模型发现与 provider 目录兼容，补齐旧会话修复与 rc.7 冷重启/replay 契约，解决 Ollama 大模型冷启动误超时，并把此前对抗式审查发现的资源、网络、文件系统、生命周期与并发边界系统性收紧。
@@ -53,7 +68,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 验证 / Validation
 
-- 发布分支覆盖 **657 项测试**；主 CI 在 Node 22 / Node 24 下运行，并继续验证 DSH `0.1.0-rc.6` / `0.1.0-rc.7`、Ubuntu/macOS/Windows 宿主打包与 shared-sharp、真实 native multimodal cold-resume，以及 100MP 大图资源压力。最终 tag 触发的 immutable Release workflow 会再次执行完整测试后通过 npm Trusted Publishing（OIDC）发布并核对 tarball 身份。
+- 发布分支覆盖 **657 项测试**；主 CI 在 Node 22 / Node 24 下运行，并继续验证 DSH `0.1.0-rc.6` / `0.1.0-rc.7`、Ubuntu/macOS/Windows 宿主打包与 shared-sharp、真实 native multimodal cold-resume，以及 100MP 大图资源压力。最终 tag 触发的 immutable Release workflow 会再次执行完整测试后通过 npm Trusted Publishing（OIDC）发布并核对 tarball身份。
 - The release branch covers **657 tests**. Main CI runs on Node 22/24 and continues to verify DSH `0.1.0-rc.6` / `0.1.0-rc.7`, Ubuntu/macOS/Windows packed-host + shared-sharp integration, real native-multimodal cold resume, and 100MP large-image resource stress. The immutable tag-triggered Release workflow re-runs the full suite, publishes through npm Trusted Publishing (OIDC), and verifies the exact tarball identity.
 
 ## v1.6.2
@@ -127,7 +142,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **Settings-guide scroll gate (#174)**: cached walkthrough resolution with a 250ms throttle and a 600ms keep-alive; scroll frames now only read one small element's rect and write spotlight/prompt styles instead of per-frame querySelectorAll forced layout. Regression tests assert zero DOM queries per scroll frame and bounded refreshes.
 
 - **Models-directory 别名生命周期（#189 / #192）**：rc.7 可配置 provider 目录的注册清理现在挂在插件自身 fiber 上——插件 reload 后旧目录行被正确回收、新实例正常重发布，不再出现「目录行被误判为外部所有而永久冻结」；撤回路径记录空集状态键避免多余 replace，重复告警去重。
-- **Models-directory alias lifecycle (#189 / #192)**: the rc.7 configurable-provider registration is now disposed with the plugin's own fiber — a reload withdraws the old row and re-publishes cleanly instead of freezing on a stale row misread as externally owned; the withdrawal path records the empty-state key to avoid redundant replaces, and identical warnings are deduplicated.
+- **Models-directory alias lifecycle (#189 / #192)**: the rc.7 configurable-provider registration is now disposed with the plugin's own fiber — a reload withdraws the old row and re-publishes cleanly instead of freezing on a stale row misread as externally owned; the withdrawal path records the empty-state key to avoid redundant replace, and identical warnings are deduplicated.
 
 - **逐会话推理强度记忆上限（#190）**：按 sessionId 键控的 reasoning-effort 记忆加上限（512 条，FIFO 淘汰 + 读取刷新热度），长驻进程不再无界增长。
 - **Bounded per-session reasoning-effort memory (#190)**: the sessionId-keyed reasoning-effort memory is capped (512 entries, FIFO eviction with read-refreshed recency), so long-running processes cannot grow it without bound.
@@ -279,7 +294,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **Host HTTPS proxy is preserved (#149)**: userland Undici is no longer imported at plugin load time, remains pinned to 7.x, and `ProxyAgent` is lazy-loaded only when Vision Router’s own selective proxy is actually needed. When plugin proxying is disabled or the request host is outside `proxyHosts`, the host’s original `fetch` path remains untouched.
 
 - **Windows 打开日志文件夹兼容（来自 v1.4.5，#112）**：`explorer.exe` shell relay 的数字退出码按成功交接处理；真正 spawn 失败时回退到 `cmd /c start`，两条路径都失败时返回机器可读错误码；macOS / Linux 继续严格处理原生非零退出。
-- **Windows “Open log folder” compatibility (from v1.4.5, #112)**: numeric `explorer.exe` shell-relay exit codes count as a successful hand-off; real spawn failures fall back to `cmd /c start`, both-path failure returns a machine-readable code, and macOS/Linux retain strict native non-zero handling.
+- **Windows “Open log folder” compatibility (from v1.4.5, #112)**: numeric `explorer.exe` shell-relay exit codes count as a successful hand-off; real spawn failures fall back to `cmd /c start`, both-path failure returns a machine-readable error code, and macOS/Linux retain strict native non-zero handling.
 
 ### 文档、兼容与发布工程 / Docs, Compatibility & Release Engineering
 
