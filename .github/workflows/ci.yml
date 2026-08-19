@@ -136,10 +136,6 @@ jobs:
                 throw new Error(`DSH ${v} did not retain maxImageDimension=10000`)
               }
 
-              // Prove the value is not merely present in the schema: exercise
-              // rc.8's real image admission at the exact configured boundary.
-              // A 10k x 1 PNG is cheap to create while still testing the side
-              // dimension independently from the 100M total-pixel policy.
               const sharp = hostRequire('sharp')
               const png = async (width) => new Uint8Array(await sharp({
                 create: {
@@ -149,22 +145,49 @@ jobs:
                   background: { r: 1, g: 2, b: 3, alpha: 1 },
                 },
               }).png().toBuffer())
+
+              // Reproduce the real upgrade failure: an older profile-local
+              // Vision Router patch replaces the whole attachment-local config
+              // with the historical 20MiB/100MP pair, omitting rc.8's new
+              // dimension field. Schema resolution therefore restores 2000.
+              const staleResolved = attachmentLocal.default.Config({
+                maxImageBytes: 20 * 1024 * 1024,
+                maxImagePixels: 100_000_000,
+              })
+              if (staleResolved.maxImageDimension !== 2000) {
+                throw new Error(`DSH ${v} no longer reproduces the stale-overlay 2000px default`)
+              }
+              const staleStore = Object.create(attachment.default.prototype)
+              staleStore.imageLimits = Object.freeze({
+                ...staleResolved,
+                mediaTypes: Object.freeze(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+              })
+              const migrated = plugin.ensureVisionAttachmentAdmissionPolicy({
+                get(name) { return name === 'attachments' ? staleStore : undefined },
+              })
+              if (migrated.changed !== true || staleStore.imageLimits.maxImageDimension !== 10_000) {
+                throw new Error(`Vision Router did not repair the DSH ${v} stale profile overlay`)
+              }
+
+              // Exercise the official rc.8 validator with the migrated live
+              // store limits, not a hand-written comparison. 10000px must pass
+              // and 10001px must still hit the configured safety boundary.
               await attachmentLocal.validateImageFile(
                 { data: await png(10_000), mediaType: 'image/png' },
-                resolvedLimits,
+                staleStore.imageLimits,
               )
               let rejected = false
               try {
                 await attachmentLocal.validateImageFile(
                   { data: await png(10_001), mediaType: 'image/png' },
-                  resolvedLimits,
+                  staleStore.imageLimits,
                 )
               } catch (error) {
                 rejected = error?.code === 'IMAGE_DIMENSION_TOO_LARGE'
                 if (!rejected) throw error
               }
               if (!rejected) {
-                throw new Error(`DSH ${v} admitted 10001px despite maxImageDimension=10000`)
+                throw new Error(`DSH ${v} admitted 10001px after the migrated maxImageDimension=10000 policy`)
               }
             }
           })().catch((error) => {
