@@ -32,6 +32,7 @@ import {
 } from './lib/structured-flow-hardening.js'
 import {
   attachmentContextForContract,
+  ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
   protectHostProviderOwnership,
@@ -80,6 +81,7 @@ core.Config.set(
 export * from './index.js'
 export {
   attachmentContextForContract,
+  ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
   protectHostProviderOwnership,
@@ -161,6 +163,14 @@ export function apply(ctx, config = {}) {
   // generation. Keep the branch named after that observable capability rather
   // than a release number so rc.8+ naturally follows the same public contract.
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
+  // DSH profile overlays replace an attachment-local config object wholesale.
+  // A stale pre-rc.8 Vision Router profile row can therefore erase the newer
+  // bundle's maxImageDimension and silently restore rc.8's 2000px default even
+  // after the plugin package itself has updated. Repair only that historical
+  // 20MiB/100MP fingerprint; explicit deployment policies remain authoritative.
+  if (batchAttachmentHost) {
+    ensureVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
+  }
   // The remote settings bridge uses DSH Connection's trusted-host carrier
   // fence and its own safe-field capability allow-list. Main's local Web
   // mutation boundary continues to protect the independent /_dsh write routes.
