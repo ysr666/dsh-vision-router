@@ -174,7 +174,8 @@ test('remote risk confirmation composes with the existing local permission clien
   const harness = runRiskPrelude(true, { localPrelude: true })
   const connection = harness.appliedCtx.get('connection')
   assert.ok(connection)
-  assert.equal(harness.appliedCtx.settingsScope.bind({ namespace: 'vision-router' }), harness.rawScope)
+  const scope = harness.appliedCtx.settingsScope.bind({ namespace: 'vision-router' })
+  assert.equal(scope.getSnapshot().mode, 'remote')
 
   const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
   assert.equal(result.value.enabled, true)
