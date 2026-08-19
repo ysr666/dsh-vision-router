@@ -31,9 +31,9 @@ import {
 } from './lib/structured-flow-hardening.js'
 import {
   attachmentContextForContract,
-  installRc7SettingsCompatibility,
-  isRc7ContractRuntime,
-  protectRc7ProviderOwnership,
+  hasBatchAttachmentContract,
+  installHostSettingsCompatibility,
+  protectHostProviderOwnership,
 } from './lib/dsh-contract-compat.js'
 
 // Increment whenever the browser-visible settings contract gains a field whose
@@ -56,7 +56,7 @@ core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(60000
 // Both visible entry points — Settings > Vision Router and the legacy
 // Settings > Plugins compatibility card — edit the same Host-owned namespace.
 // Keep the depth enum and custom cap on this final public contract so either
-// entry serializes exactly the same shape and rc.7 Host persistence accepts it.
+// entry serializes exactly the same shape on every supported Host generation.
 core.Config.set('visionDepth', z.union(['fast', 'standard', 'deep', 'custom']).default('standard'))
 core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).default(0))
 
@@ -79,6 +79,11 @@ core.Config.set(
 export * from './index.js'
 export {
   attachmentContextForContract,
+  hasBatchAttachmentContract,
+  installHostSettingsCompatibility,
+  protectHostProviderOwnership,
+  // Transitional public aliases retained for callers/tests written during the
+  // rc.7 compatibility pass. Runtime code below no longer branches on names.
   installRc7SettingsCompatibility,
   isRc7ContractRuntime,
   protectRc7ProviderOwnership,
@@ -106,7 +111,7 @@ export function apply(ctx, config = {}) {
         : 'deepseek-vision',
     visionConfig: config,
   })
-  // DSH rc.7 pi-ai replay v2 stores the real producer under
+  // Newer pi-ai replay envelopes store the real producer under
   // replayState.response.{provider,model}; the older delegated-replay shim
   // recognizes the pre-v2 top-level shape. Layer a narrow private compatibility
   // view so resumed wrapper history keeps provider-native replay metadata rather
@@ -150,21 +155,27 @@ export function apply(ctx, config = {}) {
         ? Number(bootConfig.visionTurnBudgetMs)
         : 90000,
   }
-  const rc7 = isRc7ContractRuntime(stabilizedCtx)
+  // The batch-attachment API is the released, non-incidental discriminator
+  // between the minimum Host contract and the newer Host-owned integration
+  // generation. Keep the branch named after that observable capability rather
+  // than a release number so rc.8+ naturally follows the same public contract.
+  const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   // The remote settings bridge uses DSH Connection's trusted-host carrier
   // fence and its own safe-field capability allow-list. Main's local Web
   // mutation boundary continues to protect the independent /_dsh write routes.
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
-  const ownershipCtx = rc7 ? protectRc7ProviderOwnership(stabilizedCtx) : stabilizedCtx
-  const settingsCtx = rc7
-    ? installRc7SettingsCompatibility(ownershipCtx, { ...runtimeConfig, stealth: false }, {
+  const ownershipCtx = batchAttachmentHost
+    ? protectHostProviderOwnership(stabilizedCtx)
+    : stabilizedCtx
+  const settingsCtx = batchAttachmentHost
+    ? installHostSettingsCompatibility(ownershipCtx, { ...runtimeConfig, stealth: false }, {
         namespace: 'vision-router',
         Config: core.Config,
       })
     : ownershipCtx
-  // rc.6/Termux keeps the narrow process-local fallback that was required by
-  // the old attachment-local durability walk. rc.7 formalizes AttachmentId as
-  // store-owned, so never synthesize one there: host persistence errors remain
+  // The minimum Host keeps the narrow process-local fallback required by the
+  // old attachment-local durability walk. Batch-capable hosts keep AttachmentId
+  // store-owned, so never fabricate one there: host persistence errors remain
   // authoritative and diagnosable instead of creating a false durable ref.
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
@@ -174,7 +185,7 @@ export function apply(ctx, config = {}) {
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
   const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
-  // DSH rc.7 publishes llm/adapters-updated synchronously from inside
+  // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
   // mark the topology dirty and the outer pass reruns to a fixed point, so we
   // neither double-register a twin nor lose a provider added mid-pass.
@@ -229,7 +240,7 @@ export function apply(ctx, config = {}) {
     const lms = c.localLmStudio && typeof c.localLmStudio === 'object' ? c.localLmStudio : {}
     logging.logger.info(
       'vision-router: base config summary — contract=%s instantDescribe=%s localDescribeStyle=%s localOllama=%s localLmStudio=%s',
-      rc7 ? 'rc7' : 'rc6',
+      batchAttachmentHost ? 'batch-attachments' : 'single-attachment',
       c.instantDescribe === true ? 'on' : 'off',
       c.localDescribeStyle === 'structured' ? 'structured' : 'plain',
       local.enabled === true ? 'on' : 'off',
@@ -240,11 +251,10 @@ export function apply(ctx, config = {}) {
   }
   try {
     const result = core.apply(executionCtx, runtimeConfig)
-    // DSH rc.7's Settings -> Models surface is backed by the configurable
-    // provider directory, not by the live adapter registry alone. Publish the
-    // main DeepSeek + 自动识图 route as a derived alias of official DeepSeek so
-    // a reinstall restores the expected model-group row without making an
-    // arbitrary textProvider look like DeepSeek. On rc.6 the helper is inert.
+    // On newer Hosts the Settings -> Models surface is backed by the
+    // configurable-provider directory, not by the live adapter registry alone.
+    // Publish the main DeepSeek + 自动识图 route as a derived alias of official
+    // DeepSeek. On older Hosts the helper feature-detects and stays inert.
     installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
