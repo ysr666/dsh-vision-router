@@ -27,6 +27,9 @@ import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
 import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
+import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
+import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
+import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -115,6 +118,7 @@ export function apply(ctx, config = {}) {
   // every injection callback the original child context identity unchanged.
   const localMutationCtx = installLocalMutationRouteBoundary(ctx)
   const logging = installVisionRouterFileLogging(localMutationCtx)
+  const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
   const delegatedReplayCtx = contextWithDelegatedReplay(logging.ctx, {
     wrapperRoute:
       typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
@@ -204,7 +208,7 @@ export function apply(ctx, config = {}) {
     structuredCtx,
     runtimeConfig,
     core,
-    { logger: logging.logger },
+    { logger: logging.logger, store: capabilityStore },
   )
   // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
@@ -240,6 +244,10 @@ export function apply(ctx, config = {}) {
   // ordinary chat model picker). The existing classic client bundle stays the
   // DSH module-system artifact, including HMR/source-map behavior.
   installLiveModelClientPrelude(reconciledCtx)
+  // Add an experimental per-row capability test control without modifying the
+  // controlled settings form itself. It talks only to the exact benchmark
+  // service below and never writes Vision Router settings.
+  installCapabilityBenchmarkClient(reconciledCtx)
   // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
   // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
   // backed by exact private-registry evidence. Record the same provenance in
@@ -250,6 +258,13 @@ export function apply(ctx, config = {}) {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+  })
+  // Serve the generated-fixture benchmark through the same local web-capability
+  // boundary as the rest of Vision Router. The manager and shadow scorer share
+  // one persisted profile store so new measurements are visible immediately.
+  installCapabilityBenchmarkService(executionCtx, runtimeConfig, core, {
+    logger: logging.logger,
+    store: capabilityStore,
   })
   // index.js historically passes image bytes as `options.input` to the async
   // execFile API. That option is not fed into child stdin, so Tesseract waits
