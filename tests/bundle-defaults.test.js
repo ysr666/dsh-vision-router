@@ -38,7 +38,7 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('post-1.6.3 development has a distinct package identity', async () => {
+test('the rc6 permission persistence fix has a distinct package identity', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '1.6.4')
+  assert.equal(pkg.version, '1.6.5')
 })
