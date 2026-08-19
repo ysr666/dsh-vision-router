@@ -6,10 +6,20 @@ import {
   CLIENT_PRESENTATION_PRELUDE,
   injectClientPresentationBoundary,
 } from '../lib/client-presentation-boundary.js'
+import { LIVE_MODEL_CLIENT_PRELUDE } from '../lib/live-model-client-prelude.js'
 
 const LEGACY_ATTACHMENT_VALUE = '@deepseek-ai/dsh-client-ui-attachment'
 
-test('presentation prelude owns the legacy ImageGallery value without requiring DSH ui-attachment', () => {
+function fakeReact() {
+  return {
+    createElement() {},
+    useState() { return [undefined, () => {}] },
+    useEffect() {},
+    Fragment: Symbol('Fragment'),
+  }
+}
+
+function materializePresentation(order) {
   let registered
   const loader = {
     load(spec) {
@@ -18,15 +28,23 @@ test('presentation prelude owns the legacy ImageGallery value without requiring 
     },
   }
   const window = { __ModuleLoader__: loader }
-  vm.runInNewContext(CLIENT_PRESENTATION_PRELUDE, { window, Object, Promise, Array, String })
+  const context = {
+    window,
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    Math,
+    setTimeout() { return 1 },
+    clearTimeout() {},
+  }
+  for (const source of order) vm.runInNewContext(source, context)
 
   const requested = []
-  const React = {
-    createElement() {},
-    useState() { return [undefined, () => {}] },
-    useEffect() {},
-    Fragment: Symbol('Fragment'),
-  }
+  const React = fakeReact()
   loader.load({
     id: 'dsh-vision-router',
     factory(require) {
@@ -44,13 +62,30 @@ test('presentation prelude owns the legacy ImageGallery value without requiring 
     if (id === 'react') return React
     throw new Error(`unexpected host value request: ${id}`)
   })
+  return { exports, requested }
+}
+
+test('presentation prelude owns the legacy ImageGallery value without requiring DSH ui-attachment', () => {
+  const { exports, requested } = materializePresentation([CLIENT_PRESENTATION_PRELUDE])
   assert.equal(typeof exports.ImageGallery, 'function')
   assert.equal(exports.empty, null)
   assert.deepEqual(requested, ['react'])
   assert.ok(!requested.includes(LEGACY_ATTACHMENT_VALUE))
 })
 
-test('presentation prelude composes with an already wrapped loader and injects once', () => {
+test('presentation and live-model preludes compose in either installation order', () => {
+  for (const order of [
+    [CLIENT_PRESENTATION_PRELUDE, LIVE_MODEL_CLIENT_PRELUDE],
+    [LIVE_MODEL_CLIENT_PRELUDE, CLIENT_PRESENTATION_PRELUDE],
+  ]) {
+    const { exports, requested } = materializePresentation(order)
+    assert.equal(typeof exports.ImageGallery, 'function')
+    assert.equal(exports.empty, null)
+    assert.ok(!requested.includes(LEGACY_ATTACHMENT_VALUE))
+  }
+})
+
+test('presentation prelude is idempotent, leaves other plugins alone, and injects once', () => {
   const originalCalls = []
   const loader = {
     load(spec) {
