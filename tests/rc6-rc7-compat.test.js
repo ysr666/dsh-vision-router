@@ -133,10 +133,13 @@ test('rc7 registers the final entry settings contract including remote permissio
     namespace: 'vision-router',
   })
 
-  assert.equal(SETTINGS_CONTRACT_REVISION, 2)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 3)
   assert.equal(registeredConfig, EntryConfig)
   assert.equal(registeredConfig({}).allowRemoteSettings, false)
   assert.equal(registeredConfig({ allowRemoteSettings: true }).allowRemoteSettings, true)
+  assert.equal(registeredConfig({}).visionDepth, 'standard')
+  assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepth, 'custom')
+  assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepthMaxCalls, 7)
 })
 
 test('attachment compatibility remains rc6-only and rc7 keeps host-owned refs', () => {
