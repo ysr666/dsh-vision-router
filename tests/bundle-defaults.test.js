@@ -21,10 +21,11 @@ test('progressive tools remain an explicit opt-in', () => {
   assert.equal(Config({ progressiveTools: true }).progressiveTools, true)
 })
 
-test('entry contract always exposes the local remote-settings permission', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 3)
+test('entry contract always exposes the local remote-settings permission and handshake', () => {
+  assert.equal(SETTINGS_CONTRACT_REVISION, 4)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
+  assert.equal(Config({}).settingsContractRevision, 4)
 })
 
 test('entry contract exposes the custom depth tier to every settings entry point', () => {
@@ -37,7 +38,7 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('post-release development no longer reuses the published 1.6.2 identity', async () => {
+test('post-1.6.3 development has a distinct package identity', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '1.6.3')
+  assert.equal(pkg.version, '1.6.4')
 })
