@@ -1,13 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import { Readable } from 'node:stream'
+import { REMOTE_SETTINGS_PERMISSION } from '../lib/remote-settings-bridge.js'
 import {
   LOCAL_PERMISSION_CLIENT_PRELUDE,
   LOCAL_REMOTE_SETTINGS_PERMISSION_PATH,
-  REMOTE_SETTINGS_PERMISSION,
+  createVisionRouterLocalPermissionHttpHandler,
   injectLocalPermissionClientPrelude,
   mutateLocalRemoteSettingsPermission,
-} from '../lib/remote-settings-bridge.js'
+} from '../lib/local-remote-settings-permission.js'
 
 function settingsFixture() {
   const resolved = { [REMOTE_SETTINGS_PERMISSION]: false, routing: false }
@@ -43,6 +45,25 @@ function settingsFixture() {
     },
   }
   return { settings, resolved, user, calls, revision: () => revision }
+}
+
+function request(body, { remoteAddress = '127.0.0.1', host = 'localhost:3000', origin = 'http://localhost:3000' } = {}) {
+  const req = Readable.from([Buffer.from(JSON.stringify(body))])
+  req.method = 'POST'
+  req.headers = { host, origin, 'content-type': 'application/json' }
+  req.socket = { remoteAddress }
+  return req
+}
+
+function response() {
+  const headers = {}
+  let body = ''
+  return {
+    headers,
+    get body() { return body },
+    setHeader(name, value) { headers[String(name).toLowerCase()] = value },
+    end(value = '') { body += String(value) },
+  }
 }
 
 test('loopback permission mutation verifies the Host user layer before reporting success', async () => {
@@ -85,12 +106,39 @@ test('loopback permission mutation refuses malformed values and surfaces a real 
   assert.match(rejected.error.message, /schema rejected/)
 })
 
+test('HTTP bootstrap endpoint is loopback + localhost + same-origin only', async () => {
+  for (const options of [
+    { remoteAddress: '203.0.113.8' },
+    { host: 'example.com:3000', origin: 'http://example.com:3000' },
+    { origin: 'http://evil.example' },
+  ]) {
+    const fixture = settingsFixture()
+    const res = response()
+    await createVisionRouterLocalPermissionHttpHandler(fixture.settings)(
+      request({ operation: 'set', value: true, expectedRevision: 7 }, options),
+      res,
+    )
+    assert.equal(res.statusCode, 403)
+    assert.equal(fixture.calls.length, 0)
+  }
+
+  const fixture = settingsFixture()
+  const res = response()
+  await createVisionRouterLocalPermissionHttpHandler(fixture.settings)(
+    request({ operation: 'set', value: true, expectedRevision: 7 }),
+    res,
+  )
+  assert.equal(res.statusCode, 200)
+  assert.equal(JSON.parse(res.body).value.value, true)
+  assert.equal(fixture.user.allowRemoteSettings, true)
+})
+
 test('local permission prelude is ordered after the existing live-model prelude', () => {
   const html = '<html><head><script data-vision-router-live-models>/* live */</script></head><body></body></html>'
   const next = injectLocalPermissionClientPrelude(html)
   assert.ok(next.indexOf('data-vision-router-live-models') < next.indexOf('data-vision-router-local-settings-permission'))
   assert.equal(injectLocalPermissionClientPrelude(next), next)
-  assert.match(next, new RegExp(LOCAL_REMOTE_SETTINGS_PERMISSION_PATH.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.ok(next.includes(LOCAL_REMOTE_SETTINGS_PERMISSION_PATH))
 })
 
 test('client shim bypasses stock rc6 SettingsScope only for the local permission field', async () => {
