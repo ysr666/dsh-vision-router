@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildCapabilityShadowPlan,
+  generatedCapabilityRoute,
   installCapabilityShadowRuntime,
 } from '../lib/vision-capability-shadow.js'
 
@@ -49,6 +50,17 @@ function fakeCtx(settingsValue = {}) {
   }
   return { ctx, registered, logs }
 }
+
+test('only the two router-owned generated routes are filtered', () => {
+  assert.equal(generatedCapabilityRoute('deepseek-vision', {}), true)
+  assert.equal(generatedCapabilityRoute('vision-chain', {}), true)
+  assert.equal(generatedCapabilityRoute('custom-vision', {}), false)
+  assert.equal(generatedCapabilityRoute('zhipu-vision', {}), false)
+  assert.equal(
+    generatedCapabilityRoute('my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }),
+    true,
+  )
+})
 
 test('shadow plan mirrors the current candidate order but may recommend a different capability specialist', async () => {
   const ctx = fakeCtx().ctx
