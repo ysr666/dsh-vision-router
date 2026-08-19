@@ -10,11 +10,12 @@ permissions:
 
 jobs:
   cold-resume:
-    name: DSH rc.7 / Node ${{ matrix.node }}
+    name: DSH ${{ matrix.dsh }} / Node ${{ matrix.node }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        dsh: ['0.1.0-rc.7', '0.1.0-rc.8']
         node: ['22', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -36,7 +37,7 @@ jobs:
       - name: Reproduce image turns across DSH cold and process restarts
         shell: node {0}
         env:
-          DSH_VERSION: 0.1.0-rc.7
+          DSH_VERSION: ${{ matrix.dsh }}
         run: |
           const fs = require('node:fs')
           const path = require('node:path')
@@ -45,7 +46,10 @@ jobs:
           const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
           if (!tgz) throw new Error('packed plugin tarball not found')
           const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
-          const hostDir = path.join(process.env.RUNNER_TEMP, `native-mm-cold-resume-node-${process.versions.node}`)
+          const hostDir = path.join(
+            process.env.RUNNER_TEMP,
+            `native-mm-cold-resume-${process.env.DSH_VERSION}-node-${process.versions.node}`,
+          )
           fs.rmSync(hostDir, { recursive: true, force: true })
           fs.mkdirSync(hostDir, { recursive: true })
           const v = process.env.DSH_VERSION
@@ -69,10 +73,10 @@ jobs:
               sharp: '0.35.3',
             },
           }, null, 2))
-          // Released rc.7's transitive provider stack includes a small set of
-          // packages whose own install scripts pnpm 11 blocks by default.
-          // Approve only those exact released dependencies instead of disabling
-          // build safety for the temporary contract host.
+          // Released provider stacks include a small set of packages whose own
+          // install scripts pnpm 11 blocks by default. Approve only those exact
+          // dependencies instead of disabling build safety for the temporary
+          // contract host.
           fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
             'packages:',
             '  - .',
