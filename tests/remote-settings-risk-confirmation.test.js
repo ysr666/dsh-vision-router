@@ -6,6 +6,7 @@ import {
   REMOTE_SETTINGS_CHANNEL,
   createVisionRouterRemoteSettingsHandler,
 } from '../lib/remote-settings-bridge.js'
+import { LOCAL_PERMISSION_CLIENT_PRELUDE } from '../lib/local-remote-settings-permission.js'
 import {
   REMOTE_SETTINGS_RISK_CLIENT_PRELUDE,
   injectRemoteSettingsRiskConfirmationPrelude,
@@ -73,7 +74,7 @@ test('remote authorization requires explicit risk acceptance and only enables th
   assert.equal(enabled.value.view.value.routing, false)
 })
 
-function runRiskPrelude(confirmResult) {
+function runRiskPrelude(confirmResult, { localPrelude = false } = {}) {
   const loaded = []
   const loader = { load(spec) { loaded.push(spec) } }
   const calls = []
@@ -93,7 +94,7 @@ function runRiskPrelude(confirmResult) {
         }
       }
       if (endpoint === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT) {
-        assert.deepEqual(payload, { acceptedRisk: true })
+        assert.equal(payload?.acceptedRisk, true)
         enabled = true
         return {
           ok: true,
@@ -104,6 +105,14 @@ function runRiskPrelude(confirmResult) {
     },
   }
   const connection = { rpc }
+  const rawScope = {
+    getSnapshot() {
+      return { status: 'ready', writable: true, mode: 'remote', revision: 5, value: {}, user: {} }
+    },
+    async load() {},
+    async set() {},
+    async unset() {},
+  }
   const window = {
     __ModuleLoader__: loader,
     confirm(message) {
@@ -117,9 +126,11 @@ function runRiskPrelude(confirmResult) {
     window,
     document: { documentElement: { lang: 'zh-CN' } },
     navigator: { language: 'zh-CN' },
-    Proxy, Reflect, Object, Array, WeakMap, Promise, String, Error, TypeError, console,
+    fetch: async () => ({ ok: false, status: 403, async json() { return {} } }),
+    Proxy, Reflect, Object, Array, WeakMap, Promise, String, Error, TypeError, JSON, Number, console,
   }
   vm.runInNewContext(REMOTE_SETTINGS_RISK_CLIENT_PRELUDE, context)
+  if (localPrelude) vm.runInNewContext(LOCAL_PERMISSION_CLIENT_PRELUDE, context)
   loader.load({
     id: 'dsh-vision-router',
     factory() {
@@ -131,8 +142,9 @@ function runRiskPrelude(confirmResult) {
   const exports = loaded[0].factory(() => undefined)
   exports.apply({
     get(name) { return name === 'connection' ? connection : undefined },
+    settingsScope: { bind() { return rawScope } },
   })
-  return { appliedCtx, calls, get confirms() { return confirms } }
+  return { appliedCtx, calls, rawScope, get confirms() { return confirms } }
 }
 
 test('remote client confirmation authorizes once and refreshes the disabled describe', async () => {
@@ -156,6 +168,18 @@ test('canceling the risk prompt leaves remote settings disabled and performs no 
   assert.equal(result.value.reason, 'permission-disabled')
   assert.equal(harness.confirms, 1)
   assert.deepEqual(harness.calls.map((entry) => entry[1]), ['describe'])
+})
+
+test('remote risk confirmation composes with the existing local permission client shim', async () => {
+  const harness = runRiskPrelude(true, { localPrelude: true })
+  const connection = harness.appliedCtx.get('connection')
+  assert.ok(connection)
+  assert.equal(harness.appliedCtx.settingsScope.bind({ namespace: 'vision-router' }), harness.rawScope)
+
+  const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  assert.equal(result.value.enabled, true)
+  assert.equal(harness.confirms, 1)
+  assert.deepEqual(harness.calls.map((entry) => entry[1]), ['describe', 'authorize', 'describe'])
 })
 
 test('risk confirmation prelude injection is idempotent', () => {
