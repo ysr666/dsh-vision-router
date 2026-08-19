@@ -67,11 +67,19 @@ const bootstrapSuccess = (evidence) => JSON.stringify({
   next: 'continue',
 })
 
-test('structured depth limits are hard: fast=1, standard=2, deep=4', () => {
+test('structured depth limits are hard: fast=1, standard=2, deep=4, custom=N', () => {
   assert.equal(structuredDepthLimit('fast'), 1)
   assert.equal(structuredDepthLimit('standard'), 2)
   assert.equal(structuredDepthLimit('deep'), 4)
   assert.equal(structuredDepthLimit('bogus'), 2)
+  assert.equal(structuredDepthLimit('custom', 1), 1)
+  assert.equal(structuredDepthLimit('custom', 6), 6)
+  assert.equal(structuredDepthLimit('custom', 101), 100)
+  assert.equal(structuredDepthLimit('custom', 0), undefined)
+  assert.equal(structuredDepthLimit('custom', undefined), undefined)
+  assert.equal(structuredDepthLimit('fast', 9), 1)
+  assert.equal(structuredDepthLimit('standard', 9), 2)
+  assert.equal(structuredDepthLimit('deep', 9), 4)
 })
 
 test('evidence classifier rejects empty and ok:false results', () => {
@@ -139,6 +147,53 @@ test('standard tier blocks the third successful deep-dive before tool execution'
   assert.equal(blocked.ok, false)
   assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
   assert.equal(tools.counts().evidenceCalls, 2)
+})
+
+test('custom tier uses its own N and can exceed the built-in deep=4 cap', async () => {
+  const harness = boot({ visionDepth: 'custom', visionDepthMaxCalls: 6 })
+  const tools = registerFlowTools(
+    harness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const session = {}
+  const exec = { agent: { session } }
+  await preStep(harness, session, 1)
+  await tools.bootstrap().execute({}, exec)
+  for (let i = 0; i < 6; i++) assert.equal(await tools.describe().execute({}, exec), 'evidence')
+  const blocked = JSON.parse(await tools.describe().execute({}, exec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
+  assert.equal(tools.counts().evidenceCalls, 6)
+})
+
+test('custom zero is unlimited while retained custom values are inactive on built-in tiers', async () => {
+  const customHarness = boot({ visionDepth: 'custom', visionDepthMaxCalls: 0 })
+  const customTools = registerFlowTools(
+    customHarness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const customSession = {}
+  const customExec = { agent: { session: customSession } }
+  await preStep(customHarness, customSession, 1)
+  await customTools.bootstrap().execute({}, customExec)
+  for (let i = 0; i < 7; i++) assert.equal(await customTools.describe().execute({}, customExec), 'evidence')
+  assert.equal(customTools.counts().evidenceCalls, 7)
+
+  const deepHarness = boot({ visionDepth: 'deep', visionDepthMaxCalls: 2 })
+  const deepTools = registerFlowTools(
+    deepHarness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const deepSession = {}
+  const deepExec = { agent: { session: deepSession } }
+  await preStep(deepHarness, deepSession, 1)
+  await deepTools.bootstrap().execute({}, deepExec)
+  for (let i = 0; i < 4; i++) assert.equal(await deepTools.describe().execute({}, deepExec), 'evidence')
+  const deepBlocked = JSON.parse(await deepTools.describe().execute({}, deepExec))
+  assert.equal(deepBlocked.code, 'VISION_DEPTH_LIMIT')
+  assert.equal(deepTools.counts().evidenceCalls, 4)
 })
 
 test('mixed flow remains incomplete after only one branch and clears after two', async () => {
@@ -281,8 +336,6 @@ test('running structured tool clamps core network/OCR timeouts to remaining turn
     wrapped.tools.register({
       name: 'vision_bootstrap',
       async execute() {
-        // The budget starts when visual work actually begins. Advance inside
-        // the tool to verify the core sees only the remaining visual budget.
         now += 9_750
         observed = coreScope.get()
         return bootstrapSuccess({ visual_kind: 'general', mixed_of: [] })
