@@ -6,7 +6,10 @@ import {
   CLIENT_PRESENTATION_PRELUDE,
   injectClientPresentationBoundary,
 } from '../lib/client-presentation-boundary.js'
-import { LIVE_MODEL_CLIENT_PRELUDE } from '../lib/live-model-client-prelude.js'
+import {
+  LIVE_MODEL_CLIENT_PRELUDE,
+  injectLiveModelClientPrelude,
+} from '../lib/live-model-client-prelude.js'
 
 const LEGACY_ATTACHMENT_VALUE = '@deepseek-ai/dsh-client-ui-attachment'
 
@@ -82,6 +85,30 @@ test('presentation and live-model preludes compose in either installation order'
     assert.equal(typeof exports.ImageGallery, 'function')
     assert.equal(exports.empty, null)
     assert.ok(!requested.includes(LEGACY_ATTACHMENT_VALUE))
+  }
+})
+
+test('index transforms run after the DSH module-loader bootstrap and before shell startup', () => {
+  // This is the ordering produced by rc.8 client-modules before out-of-tree
+  // bundle taps run. Both Vision Router preludes must come AFTER this script;
+  // otherwise DSH assigns a new window.__ModuleLoader__ and erases our wrappers.
+  const dshBootstrapped = [
+    '<!doctype html><html><head>',
+    '<script data-dsh-module-bootstrap>window.__ModuleLoader__={load(){}}</script>',
+    '</head><body><script type="module" src="/assets/app.js"></script></body></html>',
+  ].join('')
+
+  for (const [inject, marker] of [
+    [injectLiveModelClientPrelude, 'data-vision-router-live-models'],
+    [injectClientPresentationBoundary, 'data-vision-router-presentation-boundary'],
+  ]) {
+    const output = inject(dshBootstrapped)
+    const bootstrapAt = output.indexOf('data-dsh-module-bootstrap')
+    const preludeAt = output.indexOf(marker)
+    const closeHeadAt = output.indexOf('</head>')
+    assert.ok(bootstrapAt !== -1)
+    assert.ok(preludeAt > bootstrapAt, `${marker} must run after DSH creates its loader`)
+    assert.ok(preludeAt < closeHeadAt, `${marker} must still run before the shell in body`)
   }
 })
 
