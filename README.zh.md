@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/release-v1.7.0-5B4CF0?style=flat-square" alt="Release v1.7.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.1"><img src="https://img.shields.io/badge/release-v1.7.1-5B4CF0?style=flat-square" alt="Release v1.7.1" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.7.0）**
+> 📌 **公告（v1.7.1）**
 >
-> **v1.7.0：模型发现、设置、会话恢复与 Ollama 冷启动全面升级。**
+> **v1.7.1：远程设置现可在风险确认后开启。**
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -178,7 +178,7 @@ opencode-go + 自动识图       ← 发图片时选这个
 | Intern AI（上海AI实验室） | `internvl-latest` · `internvl3.5-latest` | 30 RPM，**9000 万 token/月** | ✅ | chat.intern-ai.org.cn |
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
 | Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
-| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
+| NVIDIA NIM | `meta-llama/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
 | OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
 | OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
 
