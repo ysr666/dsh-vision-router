@@ -25,16 +25,18 @@ import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalesc
 import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
+import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
+import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
 } from './lib/structured-flow-hardening.js'
 import {
   attachmentContextForContract,
-  ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
+  installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
 } from './lib/dsh-contract-compat.js'
 
@@ -84,6 +86,7 @@ export {
   ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
+  installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
   // Transitional public aliases retained for callers/tests written during the
   // rc.7 compatibility pass. Runtime code below no longer branches on names.
@@ -120,10 +123,15 @@ export function apply(ctx, config = {}) {
   // view so resumed wrapper history keeps provider-native replay metadata rather
   // than degrading to foreign history at the delegate boundary.
   const runtimeCtx = contextWithReplayEnvelopeV2Compat(delegatedReplayCtx)
+  // Establish per-tool cwd/cancellation/cache context before the screenshot
+  // authority and browser hardening wrappers are composed. The later wrappers
+  // therefore authorize first, while the final renderer's bare fs.resolve()
+  // still resolves against the same active session workspace.
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(runtimeCtx)
   // Filesystem authority is separate from browser rendering safety. Put this
   // boundary INSIDE adversarial hardening so the secure HTML renderer that the
   // outer layer installs is itself wrapped by canonical workspace containment.
-  const screenshotSourceCtx = installScreenshotSourceBoundary(runtimeCtx, core)
+  const screenshotSourceCtx = installScreenshotSourceBoundary(toolRuntimeCtx, core)
   // Security/runtime boundary shared by the core and the local-vision shim:
   // keep artifacts inside the session workspace, make HTML screenshots truly
   // offline + sandboxed, protect the screenshot-permission side effect, and
@@ -163,18 +171,20 @@ export function apply(ctx, config = {}) {
   // generation. Keep the branch named after that observable capability rather
   // than a release number so rc.8+ naturally follows the same public contract.
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
-  // DSH profile overlays replace an attachment-local config object wholesale.
-  // A stale pre-rc.8 Vision Router profile row can therefore erase the newer
-  // bundle's maxImageDimension and silently restore rc.8's 2000px default even
-  // after the plugin package itself has updated. Repair only that historical
-  // 20MiB/100MP fingerprint; explicit deployment policies remain authoritative.
+  // DSH may reconstruct attachment-local after a profile/home patch reload.
+  // Keep the historical rc.8 overlay migration attached to that service
+  // lifecycle instead of healing only the instance present during apply().
   if (batchAttachmentHost) {
-    ensureVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
+    installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
   }
   // The remote settings bridge uses DSH Connection's trusted-host carrier
   // fence and its own safe-field capability allow-list. Main's local Web
   // mutation boundary continues to protect the independent /_dsh write routes.
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
+  // rc.8 swaps ModuleLoader.load() while entering live mode. The older local
+  // permission/risk shims still own rc.6/rc.7; this narrow lifecycle shim
+  // re-installs both contexts after rc.8's queue -> live transition.
+  installSettingsRc8ClientLifecycle(stabilizedCtx)
   const ownershipCtx = batchAttachmentHost
     ? protectHostProviderOwnership(stabilizedCtx)
     : stabilizedCtx
