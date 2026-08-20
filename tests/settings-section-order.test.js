@@ -13,13 +13,31 @@ function runPreludeRegistration(existingEntries = [], registration = {
   let registeredOptions
   let registeredDictionaries
 
+  // Model the exact rc.8 loader lifecycle that exposed the production bug:
+  // parser boot installs queue-mode load(), our prelude wraps it, then the
+  // shell's create() transition replaces load() with a fresh live sink before
+  // lazy community bundles such as dsh-vision-router are fetched.
+  const pendingQueue = []
   const loader = {
+    mode: 'queue',
+    pendingQueue,
     load(spec) {
-      loadedSpec = spec
+      pendingQueue.push(spec)
+    },
+    create() {
+      assert.equal(this.mode, 'queue')
+      const pending = this.pendingQueue.splice(0)
+      this.mode = 'live'
+      this.load = (spec) => {
+        loadedSpec = spec
+      }
+      for (const spec of pending) this.load(spec)
+      return { mode: 'live' }
     },
   }
   const window = { __ModuleLoader__: loader }
   vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, { window })
+  loader.create()
 
   loader.load({
     id: 'dsh-vision-router',
@@ -46,6 +64,7 @@ function runPreludeRegistration(existingEntries = [], registration = {
     },
   })
 
+  assert.ok(loadedSpec, 'lazy Vision Router bundle must reach the live registration sink')
   const exported = loadedSpec.factory(() => undefined)
   const ctx = {
     remote: {},
@@ -68,17 +87,18 @@ function runPreludeRegistration(existingEntries = [], registration = {
     get() { return undefined },
   }
   exported.apply(ctx)
-  return { registeredOptions, registeredDictionaries }
+  return { registeredOptions, registeredDictionaries, loader }
 }
 
-test('Vision Router settings section is moved after DSH built-ins into a stable extension band', () => {
-  const { registeredOptions } = runPreludeRegistration([
+test('Vision Router settings section survives rc8 loader.create and moves after DSH built-ins', () => {
+  const { registeredOptions, loader } = runPreludeRegistration([
     { options: { id: 'general', order: 0 } },
     { options: { id: 'models', order: 10 } },
     { options: { id: 'plugins', order: 15 } },
     { options: { id: 'agent-presets', order: 20 } },
   ])
 
+  assert.equal(loader.mode, 'live')
   assert.equal(registeredOptions.id, 'vision-router')
   assert.ok(registeredOptions.order >= 1_000_000)
   assert.notEqual(registeredOptions.order, 12)
@@ -103,7 +123,7 @@ test('settings order wrapper does not rewrite other plugin section registrations
   assert.equal(registeredOptions.order, 12)
 })
 
-test('client copy keeps standard capped at 2 while custom zero remains unlimited', () => {
+test('client copy keeps standard capped at 2 while custom zero remains unlimited after live transition', () => {
   const { registeredDictionaries } = runPreludeRegistration()
 
   assert.match(registeredDictionaries.zh.hintVisionDepthMaxCalls, /留空或填 0 = 不限制/)
