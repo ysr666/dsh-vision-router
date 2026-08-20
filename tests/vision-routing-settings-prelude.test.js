@@ -47,9 +47,11 @@ test('Auto preview is GET-only, read-only and explicitly does not claim live exe
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /只使用7天内的直接Benchmark结果/)
 })
 
-test('routing product panel stays scoped to the existing Vision Router chain UI', () => {
+test('routing product panel stays scoped to the existing Vision Router chain UI without observer self-refresh', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /CHAIN_ROOT = '#vr-vision-backend-chain'/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /data-vr-routing-settings-panel/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /chain\.insertBefore\(panel, chain\.firstChild\)/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /MutationObserver/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.panel\.isConnected === false/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /new MutationObserver\(schedule\)/)
 })
