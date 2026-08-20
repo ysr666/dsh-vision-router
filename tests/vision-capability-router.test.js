@@ -1,23 +1,29 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  AUTO_MEASURED_MAX_AGE_MS,
+  AUTO_REORDER_MIN_ADVANTAGE,
+  BENCHMARK_AXES,
   VISION_INTENTS,
   VISION_STRATEGIES,
+  benchmarkAxisForVisionIntent,
   inferBootstrapVisionIntents,
   inferToolVisionIntent,
-  inferBuiltinCapabilityPrior,
   buildVisionCapabilityProfile,
   scoreVisionCandidate,
   rankVisionCandidates,
+  suggestVisionOrder,
   visionCapabilityTags,
   explainVisionRoute,
 } from '../lib/vision-capability-router.js'
 
-test('intent vocabulary is stable and tool calls map to capabilities rather than model names', () => {
+test('task vocabulary stays broad while benchmark axes stay explicit and measurement-only', () => {
   assert.deepEqual(VISION_STRATEGIES, ['quality', 'balanced', 'speed', 'privacy'])
-  assert.ok(VISION_INTENTS.includes('structured'))
-  assert.ok(VISION_INTENTS.includes('ocr'))
-  assert.ok(VISION_INTENTS.includes('grounding'))
+  assert.deepEqual(BENCHMARK_AXES, ['structured', 'ocr', 'document', 'grounding', 'general'])
+  assert.ok(VISION_INTENTS.includes('ui'))
+  assert.ok(VISION_INTENTS.includes('visual_compare'))
+  assert.equal(benchmarkAxisForVisionIntent('ocr'), 'ocr')
+  assert.equal(benchmarkAxisForVisionIntent('ui'), undefined)
   assert.equal(inferToolVisionIntent('vision_bootstrap'), 'structured')
   assert.equal(inferToolVisionIntent('vision_ocr'), 'ocr')
   assert.equal(inferToolVisionIntent('vision_long_screenshot_ocr'), 'document')
@@ -26,7 +32,7 @@ test('intent vocabulary is stable and tool calls map to capabilities rather than
   assert.equal(inferToolVisionIntent('vision_pixel_diff'), 'visual_compare')
 })
 
-test('vision_describe infers a specialist intent only from the requested operation', () => {
+test('vision_describe infers a specialist task only from the requested operation', () => {
   assert.equal(
     inferToolVisionIntent('vision_describe', { question: 'Explain the circuit architecture in this schematic' }),
     'chart_diagram',
@@ -50,7 +56,7 @@ test('vision_describe infers a specialist intent only from the requested operati
   assert.equal(inferToolVisionIntent('vision_describe', { question: 'what is in this photo?' }), 'general')
 })
 
-test('#178 structured scene signals bridge into capability intents without reclassifying content_kind', () => {
+test('#178 structured scene signals bridge into task intents without reclassifying content_kind', () => {
   assert.deepEqual(
     inferBootstrapVisionIntents({ visual_kind: 'document', content_kind: 'unknown', mixed_of: [] }),
     {
@@ -73,75 +79,55 @@ test('#178 structured scene signals bridge into capability intents without recla
   assert.deepEqual(mixed.all, ['ui', 'document'])
   assert.deepEqual(mixed.mixedOf, ['ui', 'document'])
   assert.equal(mixed.contentKind, 'machine')
-
-  // content_kind remains metadata: a machine photo is not silently relabelled
-  // as a chart/diagram just because the physical subject is a machine.
   assert.equal(
     inferBootstrapVisionIntents({ visual_kind: 'general', content_kind: 'machine' }).primary,
     'general',
   )
-  assert.equal(
-    inferToolVisionIntent(
-      'vision_describe',
-      { question: 'check the important details' },
-      { bootstrap: { visual_kind: 'code', content_kind: 'unknown' } },
-    ),
-    'code_screenshot',
-  )
-  assert.equal(
-    inferToolVisionIntent(
-      'vision_describe',
-      { question: 'Explain the circuit architecture in this schematic' },
-      { bootstrap: { visual_kind: 'document' } },
-    ),
-    'chart_diagram',
-  )
   assert.equal(inferBootstrapVisionIntents({ visual_kind: '__proto__', content_kind: 'constructor' }).primary, 'general')
 })
 
-test('family priors are conservative and unknown models remain routable', () => {
-  const qwen = inferBuiltinCapabilityPrior('openrouter', 'qwen3-vl-235b')
-  const glm = inferBuiltinCapabilityPrior('zhipu', 'glm-4.6v-flash')
-  const gemini = inferBuiltinCapabilityPrior('google', 'gemini-2.5-flash')
-  const unknown = inferBuiltinCapabilityPrior('custom', 'my-private-model')
-  assert.equal(qwen.family, 'qwen-vl')
-  assert.ok(qwen.scores.ocr > qwen.scores.general - 0.1)
-  assert.equal(glm.family, 'glm-v')
-  assert.equal(gemini.family, 'gemini')
-  assert.equal(unknown.family, 'generic-vision')
-  assert.equal(unknown.source, 'generic-prior')
-  assert.ok(unknown.scores.general > 0)
+test('unmeasured model names never create capability scores or change configured order', () => {
+  const candidates = [
+    { provider: 'google', model: 'gemini-9-ultra' },
+    { provider: 'openrouter', model: 'qwen99-vl' },
+    { provider: 'zhipu', model: 'glm-99v' },
+    { provider: 'future-ai', model: 'unknown-vision-model' },
+  ]
+  for (const candidate of candidates) {
+    const profile = buildVisionCapabilityProfile(candidate)
+    assert.deepEqual(profile.scores, {})
+    assert.equal(profile.provenance.measured, false)
+  }
+  assert.deepEqual(
+    rankVisionCandidates({ intent: 'ocr', strategy: 'quality', candidates }).map((row) => row.model),
+    candidates.map((row) => row.model),
+  )
 })
 
-test('measured capability dominates prior and explicit override wins last', () => {
+test('measured profile preserves exact benchmark scores without prior blending or manual overrides', () => {
   const profile = buildVisionCapabilityProfile({
     provider: 'custom',
     model: 'm',
-    measured: { ocr: 0.95, grounding: 0.2 },
-    override: { grounding: 0.99 },
+    measured: { ocr: 0.95, grounding: 0.2, detection: 0.99 },
   })
-  assert.ok(profile.scores.ocr > 0.85)
-  assert.equal(profile.scores.grounding, 0.99)
-  assert.equal(profile.confidence.ocr, 0.9)
-  assert.equal(profile.confidence.grounding, 1)
+  assert.deepEqual(profile.scores, { ocr: 0.95, grounding: 0.2 })
   assert.equal(profile.provenance.measured, true)
-  assert.equal(profile.provenance.override, true)
+  assert.equal(Object.prototype.hasOwnProperty.call(profile, 'family'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(profile, 'confidence'), false)
 })
 
-test('quality strategy prefers stronger capability while speed can prefer a faster model', () => {
+test('quality uses measured capability while speed can use measured latency', () => {
   const strong = buildVisionCapabilityProfile({
     provider: 'p',
     model: 'strong',
     measured: { ocr: 0.98 },
     latencyMs: 7000,
-    cost: 0.6,
   })
   const fast = buildVisionCapabilityProfile({
     provider: 'p',
     model: 'fast',
     measured: { ocr: 0.78 },
     latencyMs: 300,
-    cost: 0.2,
   })
   const qualityStrong = scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'quality' })
   const qualityFast = scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'quality' })
@@ -151,73 +137,156 @@ test('quality strategy prefers stronger capability while speed can prefer a fast
   assert.ok(speedFast.score > speedStrong.score)
 })
 
-test('privacy strategy can route to a local model even when cloud capability is slightly higher', () => {
+test('a single measured backend cannot leapfrog an unmeasured user preference', () => {
+  const ranked = rankVisionCandidates({
+    intent: 'ocr',
+    strategy: 'quality',
+    candidates: [
+      { provider: 'p', model: 'unknown-first' },
+      { provider: 'p', model: 'measured-second' },
+    ],
+    measured: {
+      'p/measured-second': { ocr: 0.99 },
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/unknown-first', 'p/measured-second'])
+})
+
+test('an unmeasured backend is an ordering barrier for measured candidates behind it', () => {
+  const ranked = rankVisionCandidates({
+    intent: 'ocr',
+    strategy: 'quality',
+    candidates: [
+      { provider: 'p', model: 'measured-a' },
+      { provider: 'p', model: 'unknown-b' },
+      { provider: 'p', model: 'measured-c' },
+    ],
+    measured: {
+      'p/measured-a': { ocr: 0.6 },
+      'p/measured-c': { ocr: 0.99 },
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/measured-a', 'p/unknown-b', 'p/measured-c'])
+})
+
+test('small measured deltas preserve user order while a material delta can reorder adjacent peers', () => {
+  assert.equal(AUTO_REORDER_MIN_ADVANTAGE, 0.08)
+  const candidates = [
+    { provider: 'p', model: 'a' },
+    { provider: 'p', model: 'b' },
+  ]
+  const small = suggestVisionOrder({
+    intent: 'ocr',
+    strategy: 'quality',
+    candidates,
+    measured: {
+      'p/a': { ocr: 0.91 },
+      'p/b': { ocr: 0.94 },
+    },
+  })
+  assert.deepEqual(small.ranked.map((row) => row.key), ['p/a', 'p/b'])
+  assert.deepEqual(small.decisions, [])
+
+  const large = suggestVisionOrder({
+    intent: 'ocr',
+    strategy: 'quality',
+    candidates,
+    measured: {
+      'p/a': { ocr: 0.61 },
+      'p/b': { ocr: 0.94 },
+    },
+  })
+  assert.deepEqual(large.ranked.map((row) => row.key), ['p/b', 'p/a'])
+  assert.equal(large.decisions[0].reason, 'measured-advantage')
+  assert.equal(large.decisions[0].delta, 0.33)
+})
+
+test('tasks without a direct benchmark axis never reorder from capability measurements', () => {
+  const ranked = rankVisionCandidates({
+    intent: 'ui',
+    strategy: 'quality',
+    candidates: [
+      { provider: 'p', model: 'a' },
+      { provider: 'p', model: 'b' },
+    ],
+    measured: {
+      'p/a': { structured: 0.2, ocr: 0.2 },
+      'p/b': { structured: 1, ocr: 1 },
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/a', 'p/b'])
+  assert.ok(ranked.every((row) => row.comparable === false))
+})
+
+test('stale measurements do not participate in auto reordering', () => {
+  const now = 2_000_000_000_000
+  const ranked = rankVisionCandidates({
+    intent: 'ocr',
+    strategy: 'quality',
+    now,
+    candidates: [
+      { provider: 'p', model: 'a', measuredAt: now - AUTO_MEASURED_MAX_AGE_MS - 1 },
+      { provider: 'p', model: 'b', measuredAt: now - AUTO_MEASURED_MAX_AGE_MS - 1 },
+    ],
+    measured: {
+      'p/a': { ocr: 0.2 },
+      'p/b': { ocr: 1 },
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/a', 'p/b'])
+  assert.ok(ranked.every((row) => row.comparable === false))
+})
+
+test('local preference is an explicit policy and may cross unmeasured cloud backends', () => {
   const ranked = rankVisionCandidates({
     intent: 'general',
     strategy: 'privacy',
     candidates: [
-      { provider: 'cloud', model: 'great', profile: buildVisionCapabilityProfile({ provider: 'cloud', model: 'great', measured: { general: 0.96 }, privacy: 'cloud', latencyMs: 600 }) },
-      { provider: 'vision-http', model: 'local-ollama/qwen2.5vl', profile: buildVisionCapabilityProfile({ provider: 'vision-http', model: 'local-ollama/qwen2.5vl', measured: { general: 0.86 }, local: true, latencyMs: 900 }) },
+      { provider: 'cloud', model: 'a' },
+      { provider: 'vision-http', model: 'local-b', local: true, privacy: 'local' },
+      { provider: 'cloud', model: 'c' },
+      { provider: 'vision-http', model: 'local-d', local: true, privacy: 'local' },
     ],
   })
-  assert.equal(ranked[0].provider, 'vision-http')
-  assert.equal(ranked[0].profile.traits.local, true)
+  assert.deepEqual(ranked.map((row) => row.model), ['local-b', 'local-d', 'a', 'c'])
 })
 
-test('health state pushes circuit-open and rate-limited models to the bottom', () => {
+test('runtime health is an availability gate, not a capability-score penalty', () => {
   const candidates = [
-    { provider: 'p', model: 'best', latencyMs: 500 },
-    { provider: 'p', model: 'healthy', latencyMs: 700 },
+    { provider: 'p', model: 'best' },
+    { provider: 'p', model: 'unknown' },
   ]
-  const ranked = rankVisionCandidates({
-    intent: 'structured',
+  const result = suggestVisionOrder({
+    intent: 'ocr',
+    strategy: 'quality',
     candidates,
-    measured: {
-      'p/best': { structured: 1 },
-      'p/healthy': { structured: 0.75 },
-    },
-    health: {
-      'p/best': { circuitOpen: true },
-      'p/healthy': { recentSuccess: true },
-    },
+    measured: { 'p/best': { ocr: 1 } },
+    health: { 'p/best': { circuitOpen: true } },
   })
-  assert.equal(ranked[0].key, 'p/healthy')
-  assert.equal(ranked[1].components.health, 0)
+  assert.deepEqual(result.ranked.map((row) => row.key), ['p/unknown', 'p/best'])
+  assert.deepEqual(result.blockedBackends, ['p/best'])
+  assert.equal(result.ranked[1].profile.scores.ocr, 1)
+  assert.equal(result.ranked[1].blocked, true)
 })
 
-test('ranking is per-intent: the same pool can choose different specialists', () => {
-  const candidates = [
-    { provider: 'p', model: 'reader' },
-    { provider: 'p', model: 'locator' },
-  ]
-  const measured = {
-    'p/reader': { ocr: 0.98, grounding: 0.45 },
-    'p/locator': { ocr: 0.65, grounding: 0.97 },
-  }
-  const ocr = rankVisionCandidates({ intent: 'ocr', candidates, measured, strategy: 'quality' })
-  const grounding = rankVisionCandidates({ intent: 'grounding', candidates, measured, strategy: 'quality' })
-  assert.equal(ocr[0].key, 'p/reader')
-  assert.equal(grounding[0].key, 'p/locator')
-})
-
-test('capability tags and route explanation are UI/diagnostics-ready', () => {
+test('capability tags and route explanation expose only measured benchmark axes', () => {
   const profile = buildVisionCapabilityProfile({
     provider: 'p',
     model: 'specialist',
     measured: { ocr: 0.99, document: 0.96, grounding: 0.4 },
   })
   const tags = visionCapabilityTags(profile, 0.85)
-  assert.ok(tags.includes('ocr'))
-  assert.ok(tags.includes('document'))
-  assert.ok(!tags.includes('grounding'))
+  assert.deepEqual(tags, ['ocr', 'document'])
 
   const ranked = rankVisionCandidates({
     intent: 'ocr',
-    strategy: 'balanced',
+    strategy: 'quality',
     candidates: [{ provider: 'p', model: 'specialist', profile }],
   })
   const explanation = explainVisionRoute(ranked)
   assert.deepEqual(explanation.map((x) => x.backend), ['p/specialist'])
   assert.equal(explanation[0].intent, 'ocr')
-  assert.equal(typeof explanation[0].score, 'number')
+  assert.equal(explanation[0].axis, 'ocr')
+  assert.equal(explanation[0].capability, 0.99)
+  assert.equal(explanation[0].health, 1)
 })
