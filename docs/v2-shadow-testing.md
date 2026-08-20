@@ -1,110 +1,261 @@
 # v2 shadow routing test guide
 
-The rebuilt capability router is deliberately **shadow-only**. It computes an intent-aware suggested backend order but never changes the order actually executed by the current v1 fallback chain.
+The v2 capability router is deliberately **shadow-only**. It computes an `autoPreviewOrder`, but the current v1 fallback chain remains the actual execution order.
 
-## Current enablement
+## Enablement
 
-The rebuilt branch intentionally does **not** patch the v1.7 settings component to add a shadow-routing toggle. The schema/runtime fields exist, but the user-facing UI in this phase is the independent capability-benchmark queue.
-
-For development testing, set:
+For development testing:
 
 ```text
 capabilityRoutingShadow: true
-capabilityRoutingStrategy: balanced
 ```
 
-Valid strategies are `balanced`, `quality`, `speed`, and `privacy`. `balanced` is the default.
+The product fields are:
 
-Before comparing shadow rankings, benchmark relevant model rows where possible so the scorer has endpoint-specific measured evidence instead of only priors.
+```text
+routingMode: ordered | auto
+routingPreference: balanced | quality | speed | local
+```
+
+`routingMode: auto` is not execution-changing on this draft branch. Shadow mode remains observational.
 
 ## Benchmark first
 
-Each model row now keeps the main settings UI compact: it shows a concise capability summary plus one **测评 / Benchmark** entry. Open that panel to choose **快速测试 / Quick test** or **完整测试 / Full test**.
+The router does not infer capability from model names or families. Benchmark the routes you want to compare.
 
-- Quick: 3 sequential requests — Latin/UI OCR, Chinese chat OCR, general scene. This is low-confidence evidence.
-- Full: 6 sequential requests — structured, two OCR fixtures, grounding, document/table, general scene. This is currently medium-confidence evidence.
-- Multiple models may be queued. Only one benchmark actually executes at a time; later models show a FIFO queue position.
-- Browser refresh recovers the in-process running/queued state. A DSH process restart intentionally does not resume chargeable benchmark jobs.
-- While active, the one normal Benchmark button temporarily becomes **Stop** or **Cancel** on the model row; quick/full/force/diagnostic actions do not permanently crowd the row.
-- Auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures fail fast rather than consuming the remaining fixture requests.
-- A failed retest does not overwrite the last valid profile, and a quick retest cannot downgrade a richer full profile.
-- Results older than 7 days are marked stale; results older than 30 days are not used as measured shadow evidence.
-- Cloud models show an in-panel note because quick/full tests send about 3/6 generated-image requests and may incur provider charges.
-- Models explicitly declared text-only by DSH expose **Force verify image support** only inside the benchmark panel.
-- Older full profiles that have a grounding score but no persisted grounding diagnostic expose a one-request **Diagnose grounding** action. A successful repair updates only grounding evidence while retaining the rest of the richer full profile.
+Quick benchmark:
 
-Grounding scores normalize common pixel, 0..1, percent, and 0..1000 coordinate conventions before IoU. Common GLM box wrappers/arrays are accepted. Grounding details are shown in the in-app benchmark panel; parser/coordinate internals are collapsed under **Developer details** rather than shown through a native browser alert.
+- 3 sequential requests;
+- Latin/UI OCR;
+- Chinese chat OCR;
+- general scene;
+- coverage: `ocr`, `general`.
 
-## What to test
+Full benchmark:
 
-Use a pool with at least two different vision backends when possible. Try several tasks so the same pool is evaluated under different intents:
+- 6 sequential requests;
+- structured baseline;
+- two OCR fixtures;
+- grounding;
+- document/table;
+- general scene;
+- coverage: `structured`, `ocr`, `document`, `grounding`, `general`.
 
-- structured baseline: enable structured 1+x and send a normal screenshot/image;
-- OCR: ask for exact transcription of dense Chinese/English text;
-- grounding: ask where one button/object is located;
-- detection: ask to list all buttons/inputs/elements;
-- UI: ask about selected states, controls, or page structure;
-- document: ask about a form/table/invoice/long screenshot;
-- chart/diagram: ask about a chart, circuit, schematic, or architecture diagram;
-- code screenshot: ask about terminal output, traceback, IDE, or source-code screenshot;
-- general: ask an ordinary photo/scene question.
+There are no low/medium/high confidence tiers. The product records **coverage and freshness** instead.
 
-For a generic follow-up `vision_describe`, verify that a preceding successful `vision_bootstrap` can feed the normalized #178 scene signal into shadow intent selection without changing the tool result.
+Freshness rules:
 
-For breaker validation, deliberately trip one configured backend with an auth/rate-limit/turn-scoped deterministic failure, then make a later visual tool call in the relevant scope. Shadow should report that backend in `blocked=[...]` and rank it below healthy candidates while v1 still performs the actual skip through its existing breaker.
+- `<=7 days`: fresh and eligible for Auto comparison;
+- `7–30 days`: stale, still visible in the Benchmark UI, not eligible for Auto comparison;
+- `>30 days`: expired and not exposed as current measured product data.
+
+The Benchmark panel displays each measured axis with its score and per-axis median latency. Missing axes remain `— 未测`.
+
+## Queue behavior
+
+- multiple models may be queued;
+- one benchmark actually runs at a time;
+- active duplicate requests are de-duplicated;
+- running jobs show progress/current axis/elapsed time;
+- queued jobs show queue position;
+- running and queued jobs can be cancelled;
+- browser refresh recovers in-process state;
+- DSH restart intentionally does not resume chargeable jobs.
+
+Auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures fail fast. A failed retest preserves the previous valid profile. A lower-coverage Quick retest cannot replace a richer Full profile.
+
+Cloud models show an in-panel request-count/cost note. Force verification for DSH-declared text-only models and one-request legacy grounding repair also remain inside the Benchmark panel.
+
+## What capability routing is allowed to compare
+
+Current direct benchmark axes are only:
+
+```text
+structured
+ocr
+document
+grounding
+general
+```
+
+Tasks such as `ui`, `detection`, `chart_diagram`, `code_screenshot`, and `visual_compare` do not currently have direct benchmark axes. Shadow must preserve configured order for capability comparison on those tasks instead of inventing proxy scores.
+
+## Order-preservation cases
+
+### No measurements
+
+```text
+configured: Gemini -> Qwen -> GLM -> Unknown
+measured:   none
+preview:    Gemini -> Qwen -> GLM -> Unknown
+```
+
+Model names must have zero effect.
+
+### One-sided measurement
+
+```text
+A: unmeasured
+B: OCR 99
+```
+
+Preview remains `A -> B` because A is unknown.
+
+### Unmeasured barrier
+
+```text
+A: OCR 60
+B: unmeasured
+C: OCR 99
+```
+
+Preview remains `A -> B -> C`. C cannot cross B without evidence about B.
+
+### Small measured difference
+
+```text
+A: OCR 91
+B: OCR 94
+```
+
+Preview remains `A -> B` because the 3-point delta is below the current 8-point reorder threshold.
+
+### Material measured difference
+
+```text
+A: OCR 61
+B: OCR 94
+```
+
+A fresh comparison may preview `B -> A`.
+
+### Stale measurements
+
+If either route's relevant measurement is older than 7 days, that measurement is not eligible for Auto comparison. The user order remains the capability-routing baseline.
+
+## Routing preferences
+
+### Quality
+
+Compare the directly measured capability score for the task axis.
+
+### Balanced
+
+Compare measured capability plus corresponding measured median latency.
+
+### Speed
+
+Give more weight to corresponding measured median latency, while still requiring measured capability on both sides.
+
+### Local
+
+Local-first is explicit user policy. It may stably move healthy local routes ahead of cloud routes even when capability is unmeasured. Within local/cloud groups, capability reordering remains measurement-only and conservative.
+
+## Candidate pool checks
+
+Verify that the routing pool contains only:
+
+- configured provider/model rows and fallbacks;
+- explicitly enabled local backends;
+- explicitly configured HTTP visual backends;
+- the built-in free tier as `fallback-only` when enabled.
+
+Arbitrary DSH-discovered models that the user did not select must not enter `autoPreviewOrder`.
+
+A built-in `fallback-only` route must never promote above user routes because of Benchmark. If the user explicitly selects that route in the chain, it becomes a normal user route.
+
+## Breaker validation
+
+Shadow reads the **same live v1 circuit breaker** through side-effect-free `peek()`.
+
+Deliberately trip one configured backend with an auth/rate-limit/turn-scoped deterministic failure, then run another relevant visual tool call.
+
+Expected behavior:
+
+- the backend appears in `blockedBackends`;
+- it moves behind healthy routes in `autoPreviewOrder`;
+- its Benchmark capability scores do not change;
+- v1 remains responsible for the real execution skip/fallback.
+
+`peek()` must not prune cooldowns, touch LRU state, clear credential trips or record a new breaker event. Health-observation failures are neutral.
+
+## Shadow plan fields
+
+The plan exposes:
+
+```text
+currentOrder
+autoPreviewOrder
+suggestedOrder        # transitional alias of autoPreviewOrder
+decisions
+incomparableBackends
+measuredBackends
+unmeasuredBackends
+healthBackends
+blockedBackends
+```
+
+`decisions` contains structured reasons for actual preview movement, such as:
+
+- `measured-advantage`;
+- `rate-limited`;
+- `circuit-open`.
+
+This is the future source for a "why this model?" UI. The browser should not reimplement routing logic.
 
 ## Log format
 
-Search the server log for `v2 shadow`. A line currently looks like:
+Search logs for `v2 shadow`.
+
+A compact line resembles:
 
 ```text
 vision-router: v2 shadow mode=ordered preference=balanced intent=ocr strategy=balanced current=[A -> B -> C] suggested=[B -> A -> C] measured=[A, B] blocked=[C]
 ```
 
-- `mode` / `preference`: resolved product routing contract;
-- `intent`: capability inferred for the observed visual tool call;
-- `strategy`: internal scorer policy derived from the product preference;
-- `current`: candidate order observed by the outer v2 layer;
-- `suggested`: capability-aware ranking;
-- `measured`: candidates whose non-expired exact `ep2_` profile was found in the shared benchmark store;
-- `blocked`: candidates that the same live v1 breaker currently reports as circuit-open/rate-limited through its read-only `peek()` path.
-
-The full scorer explanation is available inside the shadow plan for tests/diagnostics even though the normal log line stays compact.
+`measured` means **fresh, directly usable routing measurements**, not merely any profile retained in the 30-day UI cache.
 
 ## Safety contract
 
-Shadow mode must not alter results merely by being enabled. The wrapper computes/logs a plan and then calls the original visual tool implementation unchanged. It does not reorder, skip, retry, or replace a backend. With shadow disabled it does no per-tool candidate enumeration or breaker-health reads.
+Shadow enablement must not change the visual tool result.
 
-Actual v1 execution continues to apply its existing fallback logic, circuit breaker, deadlines, resource governance, local-model stabilization, and compatibility bridges.
+The wrapper does:
 
-Benchmark execution is a separate explicit user action. Its exact invoker disables Vision Router fallback. Normal DSH providers are attempted through their exact registered adapter/provider/model first; only a v1-compatible bridge condition may bridge to the same provider/model's exact HTTP endpoint. Plugin-owned `vision-http` routes use their exact configured HTTP backend directly. Benchmark failures must never silently fall through to another visual backend.
+```text
+observe
+-> build preview
+-> log diagnostics
+-> call original v1 tool implementation unchanged
+```
 
-## Read-only breaker health seam
+It does not reorder, skip, retry or replace an actual backend.
 
-Shadow health now reads the **same live v1 circuit breaker** rather than duplicating it. `createVisionCircuitBreaker()` exposes a side-effect-free `peek()` operation: unlike execution-time `inspect()`, it does not prune expired entries, refresh LRU order, or otherwise mutate breaker state.
+Actual v1 execution continues to own:
 
-The breaker instance is captured only inside the async scope in which `core.apply()` constructs it. There is no process-global "latest breaker" singleton, so multiple plugin/profile construction paths cannot accidentally share health state. The outer bridge reconstructs the same session+turn scope and credential fingerprint class used by v1, then maps `peek()` into shadow health evidence.
+- fallback walking;
+- circuit breaker;
+- deadlines/timeouts;
+- cancellation;
+- resource governance;
+- local-model stabilization;
+- compatibility bridges;
+- error classification.
 
-This seam remains observational. A circuit-open result can change only `suggestedOrder`; it cannot skip, reorder, retry, clear, or record anything in v1. If health observation itself fails, the candidate is treated as neutral rather than unhealthy and the original tool call proceeds unchanged.
+Benchmark execution is a separate explicit action and disables Vision Router fallback. It must never silently benchmark a backup model.
 
-Regression tests lock the key invariants:
+## Gate before real Auto
 
-- peeking with a changed credential does not clear the old auth trip;
-- peeking an expired cooldown does not prune stored state;
-- peeking does not refresh breaker LRU order;
-- async scoped construction captures the correct breaker without a global singleton;
-- the bridge maps the actual session turn and credential fingerprint into health;
-- disabled shadow performs zero health reads.
+Before wiring `autoPreviewOrder` into execution, collect real-provider shadow samples and answer:
 
-## Evidence gate for real routing
+1. Do unmeasured routes always preserve user order regardless of model name?
+2. Do Quick results affect only OCR/general tasks?
+3. Do Full results affect only the five directly measured axes?
+4. Are stale results visible but absent from Auto comparison?
+5. Are suggested large differences stable across repeated fresh runs?
+6. Does the 8-point threshold suppress small benchmark noise?
+7. Does local-first behave as explicit policy rather than a capability claim?
+8. Do breaker-blocked routes match v1's actual availability behavior?
+9. Do fallback-only built-ins stay behind user routes?
+10. Does enabling shadow leave actual output and execution unchanged?
 
-The useful questions before opt-in runtime routing are:
-
-1. Does the suggested first backend consistently make more sense for OCR vs grounding vs UI/document/general tasks than the fixed first backend?
-2. Do endpoint-specific measured profiles improve those choices compared with family priors?
-3. Are quick/full generated fixtures discriminative enough, or do some intents need stronger fixtures?
-4. Are score differences stable across repeat full runs rather than artifacts of one synthetic example?
-5. When v1 considers a backend unhealthy, does shadow consistently demote the same backend without changing execution behavior?
-6. Does enabling shadow leave tool outputs/latency within the expected observational overhead?
-
-If these are not convincing, improve evidence/scoring first. Do not enable real routing to compensate for weak shadow results.
+If those answers are not convincing, improve Benchmark or shadow logic. Do not enable real routing to compensate for weak validation.
