@@ -12,6 +12,13 @@ function fakeCtx(settingsValue = {}, image = true) {
   return {
     get(name) {
       if (name === 'settings') return { get: () => settingsValue }
+      if (name === 'attachments') {
+        return {
+          async saveImage() {
+            return { id: 'benchmark-image', mediaType: 'image/png' }
+          },
+        }
+      }
       return undefined
     },
     llm: {
@@ -45,6 +52,31 @@ function fakeCore(image = true) {
     local,
     http,
   }
+}
+
+function runtimeBridgeCore(image = true) {
+  return {
+    ...fakeCore(image),
+    VISION_FAILURE_KINDS: {
+      INVALID_REQUEST: 'invalid-request',
+      NETWORK: 'network',
+      OTHER: 'other',
+      AUTH: 'auth',
+    },
+    classifyVisionFailure(error) {
+      if (/invalid/i.test(String(error?.message ?? error))) return { kind: 'invalid-request' }
+      if (/network/i.test(String(error?.message ?? error))) return { kind: 'network' }
+      if (/auth/i.test(String(error?.message ?? error))) return { kind: 'auth' }
+      return { kind: 'other' }
+    },
+  }
+}
+
+function asyncTextStream(text) {
+  return (async function* () {
+    yield { text }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })()
 }
 
 function memoryStore(initial = []) {
@@ -95,6 +127,7 @@ test('exact invoker sends one selected vision-http provider directly and never e
       calls.push({ provider, messages })
       return 'exact answer'
     },
+    streamExact: async () => { throw new Error('vision-http must not enter DSH adapter path') },
   })
   const backend = {
     provider: candidate.provider,
@@ -112,34 +145,120 @@ test('exact invoker sends one selected vision-http provider directly and never e
   assert.equal(calls.length, 1)
   assert.equal(calls[0].messages[0].content[0].type, 'image_url')
   assert.equal(result.output, 'exact answer')
+  assert.equal(result.transport, 'http-direct')
 })
 
-test('endpoint-scoped pi-ai provider benchmarks its exact HTTP endpoint rather than its DSH adapter', async () => {
-  const calls = []
+test('endpoint-scoped DSH provider uses its exact registered adapter before considering HTTP bridge', async () => {
+  const adapterCalls = []
+  let directCalls = 0
   const invoke = createExactCapabilityInvoker(fakeCtx(), fakeCore(), {
-    key: 'zhipu-glm/glm-4.6v-flash',
+    key: 'zhipu-glm/glm-4.6v',
     provider: 'zhipu-glm',
-    model: 'glm-4.6v-flash',
+    model: 'glm-4.6v',
     endpoint: 'https://open.bigmodel.cn/api/paas/v4',
     endpointConfig: { api: 'openai-completions' },
     endpointCredentialRef: 'ZHIPU_API_KEY',
     evidenceScope: 'endpoint',
   }, {}, {
     renderFixture: async () => Buffer.from('png'),
-    callDirect: async (provider) => { calls.push(provider); return 'vision ok' },
-    streamExact: async () => { throw new Error('adapter path must not run') },
+    streamExact: (call) => {
+      adapterCalls.push(call)
+      return asyncTextStream('[672,672,901,813]')
+    },
+    callDirect: async () => {
+      directCalls += 1
+      throw new Error('HTTP bridge must not run after successful adapter call')
+    },
   })
   const backend = {
     provider: 'zhipu-glm',
-    model: 'glm-4.6v-flash',
+    model: 'glm-4.6v',
     endpoint: 'https://open.bigmodel.cn/api/paas/v4',
     config: { api: 'openai-completions' },
   }
   backend.fingerprint = capabilityBenchmarkFingerprint(backend)
-  await invoke({ backend, fixture: { id: 'f', prompt: 'x' }, exactBackend: true, allowFallback: false })
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].model, 'glm-4.6v-flash')
-  assert.equal(calls[0].apiKeyEnv, 'ZHIPU_API_KEY')
+  const result = await invoke({
+    backend,
+    fixture: { id: 'grounding', intent: 'grounding', prompt: 'locate SAVE' },
+    exactBackend: true,
+    allowFallback: false,
+  })
+  assert.equal(adapterCalls.length, 1)
+  assert.equal(adapterCalls[0].provider, 'zhipu-glm')
+  assert.equal(adapterCalls[0].model, 'glm-4.6v')
+  assert.equal(adapterCalls[0].messages[0].content[0].type, 'image')
+  assert.equal(directCalls, 0)
+  assert.equal(result.output, '[672,672,901,813]')
+  assert.equal(result.transport, 'adapter')
+})
+
+test('DSH provider uses exact HTTP bridge only after a v1-compatible adapter failure', async () => {
+  const directCalls = []
+  const core = runtimeBridgeCore()
+  const invoke = createExactCapabilityInvoker(fakeCtx(), core, {
+    key: 'zhipu-glm/glm-4.6v',
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    endpointConfig: { api: 'openai-completions' },
+    endpointCredentialRef: 'ZHIPU_API_KEY',
+    evidenceScope: 'endpoint',
+  }, {}, {
+    renderFixture: async () => Buffer.from('png'),
+    streamExact: async () => { throw new Error('invalid request from adapter') },
+    callDirect: async (provider) => {
+      directCalls.push(provider)
+      return '[672,672,901,813]'
+    },
+  })
+  const backend = {
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    config: { api: 'openai-completions' },
+  }
+  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
+  const result = await invoke({
+    backend,
+    fixture: { id: 'grounding', intent: 'grounding', prompt: 'locate SAVE' },
+    exactBackend: true,
+    allowFallback: false,
+  })
+  assert.equal(directCalls.length, 1)
+  assert.equal(directCalls[0].name, 'zhipu-glm')
+  assert.equal(directCalls[0].model, 'glm-4.6v')
+  assert.equal(directCalls[0].apiKeyEnv, 'ZHIPU_API_KEY')
+  assert.equal(result.transport, 'adapter-bridge')
+})
+
+test('non-bridgeable adapter failure never falls through to HTTP', async () => {
+  let directCalls = 0
+  const core = runtimeBridgeCore()
+  const invoke = createExactCapabilityInvoker(fakeCtx(), core, {
+    key: 'zhipu-glm/glm-4.6v',
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    endpointConfig: { api: 'openai-completions' },
+    endpointCredentialRef: 'ZHIPU_API_KEY',
+    evidenceScope: 'endpoint',
+  }, {}, {
+    renderFixture: async () => Buffer.from('png'),
+    streamExact: async () => { throw new Error('auth failure') },
+    callDirect: async () => { directCalls += 1; return 'must not run' },
+  })
+  const backend = {
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    config: { api: 'openai-completions' },
+  }
+  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
+  await assert.rejects(
+    invoke({ backend, fixture: { id: 'f', prompt: 'x' }, exactBackend: true, allowFallback: false }),
+    /auth failure/,
+  )
+  assert.equal(directCalls, 0)
 })
 
 test('fatal transport error fails fast after the first fixture and never persists a partial profile', async () => {
@@ -195,6 +314,51 @@ test('FIFO queue runs one benchmark at a time and exposes queue position/progres
   assert.deepEqual(order, ['local-ollama/qwen2.5vl', 'ovh-free/qwen3-vl'])
   const done = await manager.snapshot()
   assert.equal(done.jobs.filter((job) => job.state === 'completed').length, 2)
+})
+
+test('completed full job exposes bounded grounding diagnostics without raw model text', async () => {
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store: memoryStore(),
+    runBenchmark: async ({ backend }) => ({
+      record: {
+        ...successfulResult(backend, CAPABILITY_BENCHMARK_MODE_REQUESTS.full).record,
+        scores: { structured: 1, ocr: 0.5, document: 1, grounding: 0, general: 0.75 },
+        fixtureCount: CAPABILITY_BENCHMARK_MODE_REQUESTS.full,
+      },
+      results: [{
+        fixture: 'grounding-target-v1',
+        intent: 'grounding',
+        score: 0,
+        details: {
+          iou: 0,
+          parseSource: 'bracket-array',
+          parsed: [10, 20, 30, 40],
+          normalized: { x1: 7.68, y1: 10.24, x2: 23.04, y2: 20.48 },
+          coordinateSpace: 'normalized-1000',
+          responseShape: 'array',
+          formatValid: true,
+          candidateSpaces: ['normalized-1000', 'pixels'],
+        },
+      }],
+    }),
+  })
+  await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'full')
+  await manager.waitForIdle()
+  const snapshot = await manager.snapshot()
+  const job = snapshot.jobs.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl')
+  assert.equal(job.state, 'completed')
+  assert.deepEqual(job.groundingDiagnostic, {
+    score: 0,
+    iou: 0,
+    formatValid: true,
+    parseSource: 'bracket-array',
+    coordinateSpace: 'normalized-1000',
+    responseShape: 'array',
+    normalized: { x1: 7.68, y1: 10.24, x2: 23.04, y2: 20.48 },
+    parsed: [10, 20, 30, 40],
+    candidateSpaces: ['normalized-1000', 'pixels'],
+  })
+  assert.equal(JSON.stringify(job.groundingDiagnostic).includes('raw model'), false)
 })
 
 test('duplicate click does not enqueue the same backend twice', async () => {
