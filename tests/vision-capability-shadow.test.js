@@ -157,7 +157,7 @@ test('shadow scorer drops measured profiles older than 30 days', async () => {
   assert.ok(freshRows.some((row) => row.measured?.general === 1))
 })
 
-test('shadow plan mirrors the current candidate order but may recommend a different capability specialist', async () => {
+test('shadow plan reports product mode/preference while reusing the internal scorer strategy', async () => {
   const ctx = fakeCtx().ctx
   const core = fakeCore()
   const store = { async get() { return undefined } }
@@ -167,12 +167,16 @@ test('shadow plan mirrors the current candidate order but may recommend a differ
     store,
     config: {
       providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
-      capabilityRoutingStrategy: 'quality',
+      routingMode: 'auto',
+      routingPreference: 'local',
     },
     toolName: 'vision_describe',
     args: { question: 'read all text exactly' },
   })
   assert.equal(plan.intent, 'ocr')
+  assert.equal(plan.routingMode, 'auto')
+  assert.equal(plan.routingPreference, 'local')
+  assert.equal(plan.strategy, 'privacy')
   assert.deepEqual(plan.currentOrder, [
     'custom/generic',
     'vision-http/local-ollama/qwen2.5vl',
@@ -182,10 +186,28 @@ test('shadow plan mirrors the current candidate order but may recommend a differ
   assert.equal(new Set(plan.suggestedOrder).size, plan.currentOrder.length)
 })
 
+test('legacy prototype strategy remains readable when the product preference is absent', async () => {
+  const plan = await buildCapabilityShadowPlan({
+    ctx: fakeCtx().ctx,
+    core: fakeCore(),
+    store: { async get() { return undefined } },
+    config: {
+      capabilityRoutingStrategy: 'privacy',
+      providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+    },
+    toolName: 'vision_describe',
+    args: { question: 'what is in this photo?' },
+  })
+  assert.equal(plan.routingMode, 'ordered')
+  assert.equal(plan.routingPreference, 'local')
+  assert.equal(plan.strategy, 'privacy')
+})
+
 test('shadow wrapper logs a plan but returns the original tool result byte-for-byte', async () => {
   const settings = {
     capabilityRoutingShadow: true,
-    capabilityRoutingStrategy: 'balanced',
+    routingMode: 'ordered',
+    routingPreference: 'balanced',
     providers: [{ provider: 'custom', model: 'm', fallbacks: [] }],
   }
   const { ctx, registered, logs } = fakeCtx(settings)
@@ -224,7 +246,8 @@ test('disabled shadow performs zero planning work and leaves execution untouched
 test('bootstrap evidence is remembered only for shadow intent fallback on the same session', async () => {
   const settings = {
     capabilityRoutingShadow: true,
-    capabilityRoutingStrategy: 'balanced',
+    routingMode: 'ordered',
+    routingPreference: 'balanced',
     providers: [{ provider: 'custom', model: 'm', fallbacks: [] }],
   }
   const { ctx, registered, logs } = fakeCtx(settings)
@@ -253,6 +276,6 @@ test('bootstrap evidence is remembered only for shadow intent fallback on the sa
   )
   const shadowLogs = logs.filter((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow'))
   assert.equal(shadowLogs.length, 2)
-  assert.equal(shadowLogs[0][2], 'structured')
-  assert.equal(shadowLogs[1][2], 'code_screenshot')
+  assert.equal(shadowLogs[0][4], 'structured')
+  assert.equal(shadowLogs[1][4], 'code_screenshot')
 })
