@@ -4,7 +4,7 @@ The rebuilt capability router is deliberately **shadow-only**. It computes an in
 
 ## Current enablement
 
-The rebuilt branch intentionally does **not** patch the v1.7 settings component to add a shadow-routing toggle. The schema/runtime fields exist, but the user-facing UI work in this phase is limited to the independent **测试能力 / Test capabilities** action.
+The rebuilt branch intentionally does **not** patch the v1.7 settings component to add a shadow-routing toggle. The schema/runtime fields exist, but the user-facing UI in this phase is the independent capability-benchmark queue.
 
 For development testing, set:
 
@@ -15,7 +15,24 @@ capabilityRoutingStrategy: balanced
 
 Valid strategies are `balanced`, `quality`, `speed`, and `privacy`. `balanced` is the default.
 
-Before comparing shadow rankings, use **Test capabilities** on relevant model rows where possible so the scorer has endpoint-specific measured evidence instead of only priors.
+Before comparing shadow rankings, benchmark relevant model rows where possible so the scorer has endpoint-specific measured evidence instead of only priors.
+
+## Benchmark first
+
+Use **快速测试 / Quick test** for a cheap basic profile and **完整测试 / Full test** when the shadow comparison needs structured/document/grounding evidence.
+
+- Quick: 3 sequential requests — Latin/UI OCR, Chinese chat OCR, general scene. This is low-confidence evidence.
+- Full: 6 sequential requests — structured, two OCR fixtures, grounding, document/table, general scene. This is currently medium-confidence evidence.
+- Multiple models may be queued. Only one benchmark actually executes at a time; later models show a FIFO queue position.
+- Browser refresh recovers the in-process running/queued state. A DSH process restart intentionally does not resume chargeable benchmark jobs.
+- Running and queued jobs can be stopped/cancelled.
+- Auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures fail fast rather than consuming the remaining fixture requests.
+- A failed retest does not overwrite the last valid profile, and a quick retest cannot downgrade a richer full profile.
+- Results older than 7 days are marked stale; results older than 30 days are not used as measured shadow evidence.
+- Cloud models may prompt for confirmation because quick/full tests send about 3/6 generated-image requests and may incur provider charges.
+- Models explicitly declared text-only by DSH require **强制验证 / Force verify** rather than a normal benchmark action.
+
+Grounding scores normalize common pixel, 0..1, percent, and 0..1000 coordinate conventions before IoU. A strict JSON/coordinate-format mismatch should therefore not be interpreted automatically as zero localization ability.
 
 ## What to test
 
@@ -45,7 +62,7 @@ vision-router: v2 shadow intent=ocr strategy=balanced current=[A -> B -> C] sugg
 - `strategy`: active shadow policy;
 - `current`: candidate order observed by the outer v2 layer;
 - `suggested`: capability-aware ranking;
-- `measured`: candidates whose exact `ep2_` profile was found in the shared benchmark store.
+- `measured`: candidates whose non-expired exact `ep2_` profile was found in the shared benchmark store.
 
 The full scorer explanation is available inside the shadow plan for tests/diagnostics even though the normal log line stays compact.
 
@@ -54,6 +71,8 @@ The full scorer explanation is available inside the shadow plan for tests/diagno
 Shadow mode must not alter results merely by being enabled. The wrapper computes/logs a plan and then calls the original visual tool implementation unchanged. It does not reorder, skip, retry, or replace a backend. With shadow disabled it does no per-tool candidate enumeration.
 
 Actual v1 execution continues to apply its existing fallback logic, circuit breaker, deadlines, resource governance, local-model stabilization, and compatibility bridges.
+
+Benchmark execution is a separate explicit user action. Its exact invoker disables Vision Router fallback and either targets a supported exact HTTP endpoint/model or the exact registered DSH adapter/provider/model. Benchmark failures must never silently fall through to another visual backend.
 
 ## Current breaker limitation
 
@@ -69,8 +88,9 @@ The useful questions before opt-in runtime routing are:
 
 1. Does the suggested first backend consistently make more sense for OCR vs grounding vs UI/document/general tasks than the fixed first backend?
 2. Do endpoint-specific measured profiles improve those choices compared with family priors?
-3. Are the generated fixtures discriminative enough, or do some intents need stronger fixtures?
-4. After breaker health is exposed, does shadow avoid backends v1 correctly considers unhealthy?
-5. Does enabling shadow leave tool outputs/latency within the expected observational overhead?
+3. Are quick/full generated fixtures discriminative enough, or do some intents need stronger fixtures?
+4. Are score differences stable across repeat full runs rather than artifacts of one synthetic example?
+5. After breaker health is exposed, does shadow avoid backends v1 correctly considers unhealthy?
+6. Does enabling shadow leave tool outputs/latency within the expected observational overhead?
 
 If these are not convincing, improve evidence/scoring first. Do not enable real routing to compensate for weak shadow results.
