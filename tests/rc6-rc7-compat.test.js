@@ -118,7 +118,7 @@ test('host settings bridge uses the common public SettingsProvider seam and mask
   assert.equal(installRc7SettingsCompatibility, installHostSettingsCompatibility)
 })
 
-test('host settings bridge registers the final entry settings contract including remote permission', () => {
+test('host settings bridge registers the final entry settings contract including v2 routing fields', () => {
   let registeredConfig
   const scope = { get() { return EntryConfig({}) }, watch() { return () => {} } }
   const ctx = {
@@ -142,14 +142,16 @@ test('host settings bridge registers the final entry settings contract including
     namespace: 'vision-router',
   })
 
-  assert.equal(SETTINGS_CONTRACT_REVISION, 4)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 5)
   assert.equal(registeredConfig, EntryConfig)
   assert.equal(registeredConfig({}).allowRemoteSettings, false)
   assert.equal(registeredConfig({ allowRemoteSettings: true }).allowRemoteSettings, true)
-  assert.equal(registeredConfig({}).settingsContractRevision, 4)
+  assert.equal(registeredConfig({}).settingsContractRevision, SETTINGS_CONTRACT_REVISION)
   assert.equal(registeredConfig({}).visionDepth, 'standard')
   assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepth, 'custom')
   assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepthMaxCalls, 7)
+  assert.equal(registeredConfig({}).routingMode, 'ordered')
+  assert.equal(registeredConfig({}).routingPreference, 'balanced')
 })
 
 test('attachment compatibility follows the batch-attachment seam', () => {
