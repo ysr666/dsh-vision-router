@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildCapabilityShadowPlan,
+  collectCapabilityShadowCandidates,
   generatedCapabilityRoute,
   installCapabilityShadowRuntime,
 } from '../lib/vision-capability-shadow.js'
@@ -39,6 +40,9 @@ function fakeCtx(settingsValue = {}) {
     },
     llm: {
       listProviders: () => [],
+      registration() {
+        return { adapter: { constructor: { name: 'FakeRegisteredAdapter' } } }
+      },
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
     },
     tools: {
@@ -60,6 +64,25 @@ test('only the two router-owned generated routes are filtered', () => {
     generatedCapabilityRoute('my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }),
     true,
   )
+})
+
+test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route benchmark identity', async () => {
+  const config = {
+    providers: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', fallbacks: [] }],
+  }
+  const ctx = fakeCtx(config).ctx
+  const rows = await collectCapabilityShadowCandidates(
+    ctx,
+    config,
+    fakeCore(),
+    { async get() { return undefined } },
+  )
+  const candidate = rows.find((row) => row.provider === 'deepseek-official' && row.model === 'deepseek-v4-flash')
+  assert.ok(candidate)
+  assert.equal(candidate.benchmarkable, true)
+  assert.equal(candidate.evidenceScope, 'adapter-route')
+  assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
+  assert.match(candidate.endpoint, /^dsh-adapter:\/\/registered\/deepseek-official$/)
 })
 
 test('shadow plan mirrors the current candidate order but may recommend a different capability specialist', async () => {
