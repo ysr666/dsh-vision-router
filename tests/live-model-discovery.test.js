@@ -86,7 +86,7 @@ test('OpenAI-compatible listing normalization proves existence only and de-dupli
     }),
     [
       { id: 'glm-4v-flash', name: 'GLM-4V-Flash' },
-      { id: 'glm-4.6v-flash' },
+      { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
     ],
   )
   assert.throws(
