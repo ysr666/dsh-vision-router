@@ -83,7 +83,7 @@ test('exact benchmark probes one backend sequentially with fallback forbidden', 
   })
 
   assert.equal(maxActive, 1)
-  assert.equal(calls.length, 4) // OCR has Latin/UI + Chinese chat fixtures.
+  assert.equal(calls.length, 4)
   assert.equal(results.length, 4)
   assert.match(record.fingerprint, /^ep2_[0-9a-f]{32}$/)
   assert.equal(record.provider, 'custom-provider')
@@ -229,6 +229,72 @@ test('quick retest cannot downgrade a richer full benchmark profile', async () =
   assert.deepEqual(await store.get(fingerprint), full)
   assert.equal(returned.groundingDiagnostic.iou, 0.7)
   assert.equal(mem.writes.length, writesAfterFull)
+})
+
+test('single grounding diagnostic repairs only grounding evidence inside a richer full profile', async () => {
+  const mem = memoryFs()
+  const cacheFile = '/virtual/capability-profiles.json'
+  const store = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => 120_000 })
+  const fingerprint = 'ep2_1234567890abcdef1234567890abcdef'
+  const measuredAt = 90_000
+  await store.put({
+    fingerprint,
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    measuredAt,
+    scores: { structured: 1, ocr: 0.5, document: 1, grounding: 0, general: 0.75 },
+    medianLatencyMs: { structured: 3000, ocr: 2500, document: 2800, grounding: 2600, general: 2400 },
+    latencyMs: 2600,
+    fixtureCount: 6,
+    failureCount: 0,
+  })
+
+  const repaired = await store.put({
+    fingerprint,
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    measuredAt: 120_000,
+    scores: { grounding: 0.9473 },
+    medianLatencyMs: { grounding: 5324 },
+    latencyMs: 5324,
+    fixtureCount: 1,
+    failureCount: 0,
+    groundingDiagnostic: {
+      score: 0.9473,
+      iou: 0.9473,
+      formatValid: true,
+      parseSource: 'json',
+      coordinateSpace: 'normalized-1000',
+      responseShape: 'array',
+      parsed: ['670,668,903,814'],
+      normalized: { x1: 514.56, y1: 342.016, x2: 693.504, y2: 416.768 },
+      candidateSpaces: ['normalized-1000'],
+    },
+  })
+
+  assert.deepEqual(repaired.scores, {
+    structured: 1,
+    ocr: 0.5,
+    document: 1,
+    grounding: 0.9473,
+    general: 0.75,
+  })
+  assert.equal(repaired.medianLatencyMs.grounding, 5324)
+  assert.equal(repaired.medianLatencyMs.document, 2800)
+  assert.equal(repaired.fixtureCount, 6)
+  assert.equal(repaired.failureCount, 0)
+  assert.equal(repaired.measuredAt, measuredAt)
+  assert.equal(repaired.latencyMs, 2600)
+  assert.equal(repaired.groundingDiagnostic.iou, 0.9473)
+  assert.deepEqual(repaired.groundingDiagnostic.normalized, {
+    x1: 514.56,
+    y1: 342.016,
+    x2: 693.504,
+    y2: 416.768,
+  })
+  await store.flush()
+  const reloaded = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => 120_000 })
+  assert.deepEqual(await reloaded.get(fingerprint), repaired)
 })
 
 test('corrupt or stale capability cache fails soft instead of poisoning routing', async () => {
