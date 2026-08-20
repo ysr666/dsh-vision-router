@@ -129,6 +129,51 @@ test('exact adapter benchmark awaits Promise<AsyncIterable> from llm.stream', as
   assert.equal(result.usedFingerprint, backend.fingerprint)
 })
 
+test('generated fixture rendering works when the core namespace has no loadSharp export', async () => {
+  let savedPng
+  const ctx = {
+    get(name) {
+      if (name === 'attachments') {
+        return {
+          async saveImage(value) {
+            savedPng = value?.data
+            return { attachmentId: 'generated-fixture', mediaType: 'image/png', name: 'fixture.png' }
+          },
+        }
+      }
+      return undefined
+    },
+  }
+  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
+  const candidate = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
+    streamExact: async () => (async function* () {
+      yield { type: 'text', text: 'fixture rendered' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })(),
+  })
+  const backend = {
+    provider: candidate.provider,
+    model: candidate.model,
+    endpoint: 'dsh-adapter://deepseek-official',
+    config: { route: 'registered-adapter', provider: candidate.provider },
+  }
+  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
+  const result = await invoke({
+    backend,
+    fixture: {
+      id: 'render-regression',
+      prompt: 'describe',
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><rect width="32" height="24" fill="white"/><text x="2" y="16">VR</text></svg>',
+    },
+    exactBackend: true,
+    allowFallback: false,
+  })
+  assert.ok(Buffer.isBuffer(savedPng))
+  assert.deepEqual([...savedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10])
+  assert.equal(result.output, 'fixture rendered')
+})
+
 test('exact invoker rejects a caller that tries to enable fallback semantics', async () => {
   const core = fakeCore()
   const invoke = createExactCapabilityInvoker(fakeCtx(), core, {
@@ -197,6 +242,46 @@ test('manager persists only a result whose fingerprint still matches the selecte
   assert.equal(result.ok, true)
   assert.equal(result.record.fingerprint, expected)
   assert.equal(persisted.length, 1)
+})
+
+test('manager rejects all-failure runs and removes stale zero-score evidence instead of persisting it', async () => {
+  const config = { providers: [] }
+  const ctx = fakeCtx(config)
+  const core = fakeCore()
+  let writes = 0
+  const removed = []
+  const manager = createCapabilityBenchmarkManager(ctx, config, core, {
+    store: {
+      async get() { return undefined },
+      async put(record) { writes += 1; return record },
+      async remove(fingerprint) { removed.push(fingerprint); return true },
+    },
+    runBenchmark: async ({ backend }) => ({
+      record: {
+        fingerprint: capabilityBenchmarkFingerprint(backend),
+        provider: backend.provider,
+        model: backend.model,
+        measuredAt: 123,
+        source: 'self-benchmark',
+        scores: { structured: 0, general: 0 },
+        medianLatencyMs: { structured: 0, general: 0 },
+        latencyMs: 0,
+        fixtureCount: 2,
+        failureCount: 2,
+      },
+      results: [
+        { fixture: 'a', intent: 'structured', score: 0, details: { error: 'sharp renderer is unavailable' } },
+        { fixture: 'b', intent: 'general', score: 0, details: { error: 'sharp renderer is unavailable' } },
+      ],
+    }),
+  })
+  await assert.rejects(
+    manager.run('vision-http/local-ollama/qwen2.5vl'),
+    (error) => error?.code === 'CAPABILITY_BENCHMARK_NO_USABLE_EVIDENCE' && /sharp renderer/.test(error.message),
+  )
+  assert.equal(writes, 0)
+  assert.equal(removed.length, 1)
+  assert.match(removed[0], /^ep2_[0-9a-f]{32}$/)
 })
 
 test('manager refuses to persist a stale/mismatched endpoint result', async () => {
