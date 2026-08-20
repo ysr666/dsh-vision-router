@@ -94,6 +94,9 @@ test('exact benchmark probes one backend sequentially with fallback forbidden', 
   assert.equal(record.scores.grounding, 1)
   assert.equal(record.scores.general, 1)
   assert.ok(record.latencyMs >= 0)
+  assert.equal(record.groundingDiagnostic.formatValid, true)
+  assert.equal(record.groundingDiagnostic.iou, 1)
+  assert.equal(record.groundingDiagnostic.coordinateSpace, 'pixels')
   assert.equal('endpoint' in record, false)
   assert.equal('config' in record, false)
 })
@@ -138,11 +141,23 @@ test('capability profile store uses the DSH cache area, atomic 0600 writes, and 
     provider: 'provider-a',
     model: 'model-a',
     measuredAt: 50_000,
-    scores: { ocr: 0.91, general: 0.82, constructor: 1 },
-    medianLatencyMs: { ocr: 123, general: 456 },
+    scores: { ocr: 0.91, grounding: 0.4, general: 0.82, constructor: 1 },
+    medianLatencyMs: { ocr: 123, grounding: 222, general: 456 },
     latencyMs: 289.5,
-    fixtureCount: 3,
+    fixtureCount: 6,
     failureCount: 0,
+    groundingDiagnostic: {
+      score: 0.4,
+      iou: 0.4,
+      formatValid: true,
+      parseSource: 'glm-box-markers',
+      coordinateSpace: 'normalized-1000',
+      responseShape: 'array',
+      parsed: [672, 672, 901, 813],
+      normalized: { x1: 516.096, y1: 344.064, x2: 691.968, y2: 416.256 },
+      candidateSpaces: ['normalized-1000'],
+      rawOutput: 'SECRET MUST NOT PERSIST',
+    },
     endpoint: 'https://secret.example/v1',
     apiKey: 'never-persist-me',
     config: { token: 'never-persist-me' },
@@ -150,16 +165,22 @@ test('capability profile store uses the DSH cache area, atomic 0600 writes, and 
   await store.flush()
 
   assert.equal(record.provider, 'provider-a')
+  assert.equal(record.groundingDiagnostic.parseSource, 'glm-box-markers')
+  assert.equal(record.groundingDiagnostic.coordinateSpace, 'normalized-1000')
+  assert.deepEqual(record.groundingDiagnostic.parsed, [672, 672, 901, 813])
+  assert.equal('rawOutput' in record.groundingDiagnostic, false)
   assert.ok(mem.writes.length >= 1)
   assert.equal(mem.writes.at(-1).options.mode, 0o600)
   assert.ok(mem.files.has(cacheFile))
   const persistedText = mem.files.get(cacheFile)
   assert.equal(persistedText.includes('never-persist-me'), false)
   assert.equal(persistedText.includes('secret.example'), false)
+  assert.equal(persistedText.includes('SECRET MUST NOT PERSIST'), false)
   const persisted = JSON.parse(persistedText)
   assert.equal(persisted.version, 1)
   assert.equal(persisted.profiles.length, 1)
-  assert.deepEqual(Object.keys(persisted.profiles[0].scores).sort(), ['general', 'ocr'])
+  assert.deepEqual(Object.keys(persisted.profiles[0].scores).sort(), ['general', 'grounding', 'ocr'])
+  assert.equal(persisted.profiles[0].groundingDiagnostic.parseSource, 'glm-box-markers')
 
   const reloaded = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now })
   assert.deepEqual(await reloaded.get(record.fingerprint), record)
@@ -182,6 +203,16 @@ test('quick retest cannot downgrade a richer full benchmark profile', async () =
     medianLatencyMs: { general: 500 },
     fixtureCount: 6,
     failureCount: 0,
+    groundingDiagnostic: {
+      score: 0.7,
+      iou: 0.7,
+      formatValid: true,
+      parseSource: 'flat-four-tuple',
+      coordinateSpace: 'normalized-1000',
+      responseShape: 'array',
+      parsed: [672, 672, 901, 813],
+      candidateSpaces: ['normalized-1000'],
+    },
   })
   const writesAfterFull = mem.writes.length
   const returned = await store.put({
@@ -196,6 +227,7 @@ test('quick retest cannot downgrade a richer full benchmark profile', async () =
   })
   assert.deepEqual(returned, full)
   assert.deepEqual(await store.get(fingerprint), full)
+  assert.equal(returned.groundingDiagnostic.iou, 0.7)
   assert.equal(mem.writes.length, writesAfterFull)
 })
 
