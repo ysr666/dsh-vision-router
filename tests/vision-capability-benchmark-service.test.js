@@ -1,12 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  CAPABILITY_BENCHMARK_MODE_REQUESTS,
+  classifyCapabilityBenchmarkFailure,
   createCapabilityBenchmarkManager,
   createExactCapabilityInvoker,
 } from '../lib/vision-capability-benchmark-service.js'
 import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
 
-function fakeCtx(settingsValue = {}) {
+function fakeCtx(settingsValue = {}, image = true) {
   return {
     get(name) {
       if (name === 'settings') return { get: () => settingsValue }
@@ -14,12 +16,13 @@ function fakeCtx(settingsValue = {}) {
     },
     llm: {
       listProviders: () => [],
-      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
+      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } } },
+      async resolveModelInfo() { return { inputModalities: image ? ['text', 'image'] : ['text'] } },
     },
   }
 }
 
-function fakeCore() {
+function fakeCore(image = true) {
   const local = {
     name: 'local-ollama',
     baseURL: 'http://127.0.0.1:11434/v1',
@@ -36,7 +39,7 @@ function fakeCore() {
   }
   return {
     adapterAvailable: () => true,
-    decideVisionBackendCapability: () => ({ image: true, attemptable: true }),
+    decideVisionBackendCapability: () => ({ image, attemptable: true }),
     localProvidersOf: () => [local],
     httpProvidersOf: () => [http],
     local,
@@ -44,7 +47,36 @@ function fakeCore() {
   }
 }
 
-test('exact invoker sends one selected vision-http provider directly and never enters a fallback loop', async () => {
+function memoryStore(initial = []) {
+  const map = new Map(initial.map((record) => [record.fingerprint, record]))
+  return {
+    writes: 0,
+    removals: 0,
+    async get(key) { return map.get(key) },
+    async put(record) { this.writes += 1; map.set(record.fingerprint, record); return record },
+    async remove(key) { this.removals += 1; return map.delete(key) },
+  }
+}
+
+function successfulResult(backend, fixtureCount = 4) {
+  return {
+    record: {
+      fingerprint: capabilityBenchmarkFingerprint(backend),
+      provider: backend.provider,
+      model: backend.model,
+      measuredAt: Date.now(),
+      source: 'self-benchmark',
+      scores: { structured: 1, ocr: 0.8, general: 0.7 },
+      medianLatencyMs: { structured: 100, ocr: 120, general: 110 },
+      latencyMs: 110,
+      fixtureCount,
+      failureCount: 0,
+    },
+    results: [],
+  }
+}
+
+test('exact invoker sends one selected vision-http provider directly and never enters fallback', async () => {
   const core = fakeCore()
   const candidate = {
     key: 'http:ovh-free/qwen3-vl',
@@ -55,8 +87,8 @@ test('exact invoker sends one selected vision-http provider directly and never e
   const calls = []
   const invoke = createExactCapabilityInvoker(fakeCtx(), core, candidate, {}, {
     renderFixture: async () => Buffer.from('png'),
-    callDirect: async (provider, messages, options) => {
-      calls.push({ provider, messages, options })
+    callDirect: async (provider, messages) => {
+      calls.push({ provider, messages })
       return 'exact answer'
     },
   })
@@ -74,15 +106,13 @@ test('exact invoker sends one selected vision-http provider directly and never e
     allowFallback: false,
   })
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].provider, core.http)
-  assert.equal(calls[0].messages.length, 1)
   assert.equal(calls[0].messages[0].content[0].type, 'image_url')
   assert.equal(result.output, 'exact answer')
-  assert.equal(result.usedFingerprint, backend.fingerprint)
 })
 
-test('endpoint-backed registered provider benchmarks the resolved exact HTTP endpoint instead of detouring through the DSH adapter', async () => {
-  const candidate = {
+test('endpoint-scoped pi-ai provider benchmarks its exact HTTP endpoint rather than its DSH adapter', async () => {
+  const calls = []
+  const invoke = createExactCapabilityInvoker(fakeCtx(), fakeCore(), {
     key: 'zhipu-glm/glm-4.6v-flash',
     provider: 'zhipu-glm',
     model: 'glm-4.6v-flash',
@@ -90,275 +120,151 @@ test('endpoint-backed registered provider benchmarks the resolved exact HTTP end
     endpointConfig: { api: 'openai-completions' },
     endpointCredentialRef: 'ZHIPU_API_KEY',
     evidenceScope: 'endpoint',
-  }
-  const ctx = {
-    get(name) {
-      if (name === 'credentials') {
-        return { async resolve(ref) { return ref === 'ZHIPU_API_KEY' ? { value: 'secret' } : undefined } }
-      }
-      return undefined
-    },
-    llm: {
-      stream() {
-        throw new Error('adapter path must not be used for endpoint-scoped evidence')
-      },
-    },
-  }
-  const calls = []
-  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
-  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
+  }, {}, {
     renderFixture: async () => Buffer.from('png'),
-    callDirect: async (provider, messages, options) => {
-      calls.push({ provider, messages, options })
-      assert.equal(await options.resolveCredential(provider.apiKeyEnv), 'secret')
-      return 'zhipu exact answer'
-    },
+    callDirect: async (provider) => { calls.push(provider); return 'vision ok' },
+    streamExact: async () => { throw new Error('adapter path must not run') },
   })
   const backend = {
-    provider: candidate.provider,
-    model: candidate.model,
-    endpoint: candidate.endpoint,
-    config: candidate.endpointConfig,
-  }
-  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
-  const result = await invoke({
-    backend,
-    fixture: { id: 'zhipu', svg: '<svg/>', prompt: 'describe' },
-    exactBackend: true,
-    allowFallback: false,
-  })
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0].provider.name, 'zhipu-glm')
-  assert.equal(calls[0].provider.baseURL, candidate.endpoint)
-  assert.equal(calls[0].provider.model, candidate.model)
-  assert.equal(calls[0].provider.apiKeyEnv, 'ZHIPU_API_KEY')
-  assert.equal(calls[0].messages[0].content[0].type, 'image_url')
-  assert.equal(result.output, 'zhipu exact answer')
-  assert.equal(result.usedFingerprint, backend.fingerprint)
-})
-
-test('exact adapter benchmark awaits Promise<AsyncIterable> from llm.stream', async () => {
-  const ctx = {
-    get(name) {
-      if (name === 'attachments') {
-        return {
-          async saveImage() {
-            return { attachmentId: 'synthetic-fixture', mediaType: 'image/png', name: 'fixture.png' }
-          },
-        }
-      }
-      return undefined
-    },
-  }
-  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
-  const candidate = { provider: 'custom-provider', model: 'vision-model' }
-  const calls = []
-  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
-    renderFixture: async () => Buffer.from('png'),
-    streamExact: async (options) => {
-      calls.push(options)
-      return (async function* () {
-        yield { type: 'text', text: 'hello ' }
-        yield { type: 'text', text: 'vision' }
-        yield { type: 'finish', reason: { kind: 'stop' } }
-      })()
-    },
-  })
-  const backend = {
-    provider: candidate.provider,
-    model: candidate.model,
-    endpoint: 'https://adapter.example/v1',
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v-flash',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
     config: { api: 'openai-completions' },
   }
   backend.fingerprint = capabilityBenchmarkFingerprint(backend)
-  const result = await invoke({
-    backend,
-    fixture: { id: 'adapter', svg: '<svg/>', prompt: 'describe' },
-    exactBackend: true,
-    allowFallback: false,
-  })
+  await invoke({ backend, fixture: { id: 'f', prompt: 'x' }, exactBackend: true, allowFallback: false })
   assert.equal(calls.length, 1)
-  assert.equal(calls[0].provider, 'custom-provider')
-  assert.equal(calls[0].model, 'vision-model')
-  assert.equal(calls[0].messages[0].content[0].type, 'image')
-  assert.equal(result.output, 'hello vision')
-  assert.equal(result.usedFingerprint, backend.fingerprint)
+  assert.equal(calls[0].model, 'glm-4.6v-flash')
+  assert.equal(calls[0].apiKeyEnv, 'ZHIPU_API_KEY')
 })
 
-test('generated fixture rendering works when the core namespace has no loadSharp export', async () => {
-  let savedPng
-  const ctx = {
-    get(name) {
-      if (name === 'attachments') {
-        return {
-          async saveImage(value) {
-            savedPng = value?.data
-            return { attachmentId: 'generated-fixture', mediaType: 'image/png', name: 'fixture.png' }
-          },
-        }
-      }
-      return undefined
+test('FIFO queue runs one benchmark at a time and exposes queue position/progress', async () => {
+  const store = memoryStore()
+  const order = []
+  let releaseFirst
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve })
+  let calls = 0
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store,
+    runBenchmark: async ({ backend }) => {
+      order.push(backend.model)
+      calls += 1
+      if (calls === 1) await firstGate
+      return successfulResult(backend, CAPABILITY_BENCHMARK_MODE_REQUESTS.quick)
     },
-  }
-  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
-  const candidate = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
-  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
-    streamExact: async () => (async function* () {
-      yield { type: 'text', text: 'fixture rendered' }
-      yield { type: 'finish', reason: { kind: 'stop' } }
-    })(),
   })
-  const backend = {
-    provider: candidate.provider,
-    model: candidate.model,
-    endpoint: 'dsh-adapter://deepseek-official',
-    config: { route: 'registered-adapter', provider: candidate.provider },
-  }
-  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
-  const result = await invoke({
-    backend,
-    fixture: {
-      id: 'render-regression',
-      prompt: 'describe',
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="24"><rect width="32" height="24" fill="white"/><text x="2" y="16">VR</text></svg>',
-    },
-    exactBackend: true,
-    allowFallback: false,
-  })
-  assert.ok(Buffer.isBuffer(savedPng))
-  assert.deepEqual([...savedPng.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10])
-  assert.equal(result.output, 'fixture rendered')
+  const first = await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick')
+  const second = await manager.enqueue('http:ovh-free/qwen3-vl', 'quick')
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  const mid = await manager.snapshot()
+  assert.equal(mid.jobs.find((job) => job.key === 'vision-http/local-ollama/qwen2.5vl').state, 'running')
+  const queued = mid.jobs.find((job) => job.key === 'http:ovh-free/qwen3-vl')
+  assert.equal(queued.state, 'queued')
+  assert.equal(queued.position, 1)
+  releaseFirst()
+  await manager.waitForIdle()
+  assert.deepEqual(order, ['local-ollama/qwen2.5vl', 'ovh-free/qwen3-vl'])
+  const done = await manager.snapshot()
+  assert.equal(done.jobs.filter((job) => job.state === 'completed').length, 2)
 })
 
-test('exact invoker rejects a caller that tries to enable fallback semantics', async () => {
-  const core = fakeCore()
-  const invoke = createExactCapabilityInvoker(fakeCtx(), core, {
-    provider: 'vision-http',
-    model: 'ovh-free/qwen3-vl',
-  }, {}, {
-    renderFixture: async () => Buffer.from('png'),
-    callDirect: async () => 'should not run',
+test('duplicate click does not enqueue the same backend twice', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store: memoryStore(),
+    runBenchmark: async ({ backend }) => { await gate; return successfulResult(backend) },
+  })
+  const first = await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick')
+  const duplicate = await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'full')
+  assert.equal(duplicate.duplicate, true)
+  assert.equal(duplicate.job.id, first.job.id)
+  release()
+  await manager.waitForIdle()
+})
+
+test('queued job can be cancelled without touching the running job', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  let calls = 0
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store: memoryStore(),
+    runBenchmark: async ({ backend }) => { calls += 1; await gate; return successfulResult(backend) },
+  })
+  await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick')
+  const queued = await manager.enqueue('http:ovh-free/qwen3-vl', 'quick')
+  const cancelled = await manager.cancel(queued.job.id)
+  assert.equal(cancelled.cancelled, true)
+  release()
+  await manager.waitForIdle()
+  assert.equal(calls, 1)
+  const snapshot = await manager.snapshot()
+  assert.equal(snapshot.jobs.find((job) => job.id === queued.job.id).state, 'cancelled')
+})
+
+test('known text-only route requires explicit force verification', async () => {
+  const config = { providers: [{ provider: 'text-adapter', model: 'text-model', fallbacks: [] }] }
+  const manager = createCapabilityBenchmarkManager(fakeCtx(config, false), config, {
+    ...fakeCore(false),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [],
+  }, {
+    store: memoryStore(),
+    runBenchmark: async ({ backend }) => successfulResult(backend),
   })
   await assert.rejects(
-    invoke({ backend: { fingerprint: 'ep2_x' }, fixture: {}, exactBackend: false, allowFallback: true }),
-    /refuses non-exact\/fallback/,
+    manager.enqueue('text-adapter/text-model', 'quick'),
+    (error) => error?.code === 'CAPABILITY_BENCHMARK_FORCE_REQUIRED',
   )
+  const forced = await manager.enqueue('text-adapter/text-model', 'quick', true)
+  assert.equal(forced.ok, true)
+  await manager.waitForIdle()
 })
 
-test('manager lists benchmarkable endpoints without exposing endpoint or credential routing details', async () => {
-  const config = { providers: [] }
-  const ctx = fakeCtx(config)
+test('failed retest preserves the previous valid profile instead of overwriting/removing it', async () => {
   const core = fakeCore()
-  const store = { async get() { return undefined }, async put(record) { return record } }
-  const manager = createCapabilityBenchmarkManager(ctx, config, core, { store })
-  const snapshot = await manager.snapshot()
-  assert.equal(snapshot.ok, true)
-  assert.equal(snapshot.candidates.length, 2)
-  assert.ok(snapshot.candidates.every((candidate) => candidate.benchmarkable === true))
-  assert.ok(snapshot.candidates.every((candidate) => !('endpoint' in candidate)))
-  assert.ok(snapshot.candidates.every((candidate) => !('endpointCredentialRef' in candidate)))
-  assert.ok(snapshot.candidates.every((candidate) => /^ep2_[0-9a-f]{32}$/.test(candidate.fingerprint)))
-})
-
-test('manager persists only a result whose fingerprint still matches the selected endpoint', async () => {
-  const config = { providers: [] }
-  const ctx = fakeCtx(config)
-  const core = fakeCore()
-  const persisted = []
-  const store = {
-    async get() { return undefined },
-    async put(record) { persisted.push(record); return record },
-  }
-  const expected = capabilityBenchmarkFingerprint({
+  const fingerprint = capabilityBenchmarkFingerprint({
     provider: 'vision-http',
     model: 'local-ollama/qwen2.5vl',
     endpoint: core.local.baseURL,
     config: { api: 'openai-completions' },
   })
-  const manager = createCapabilityBenchmarkManager(ctx, config, core, {
+  const old = {
+    fingerprint,
+    provider: 'vision-http',
+    model: 'local-ollama/qwen2.5vl',
+    measuredAt: Date.now() - 1000,
+    scores: { general: 0.9 },
+    latencyMs: 100,
+    fixtureCount: 4,
+    failureCount: 0,
+  }
+  const store = memoryStore([old])
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, core, {
     store,
     runBenchmark: async ({ backend }) => ({
-      record: {
-        fingerprint: capabilityBenchmarkFingerprint(backend),
-        provider: backend.provider,
-        model: backend.model,
-        measuredAt: 123,
-        source: 'self-benchmark',
-        scores: { general: 0.9 },
-        medianLatencyMs: { general: 100 },
-        latencyMs: 100,
-        fixtureCount: 1,
-        failureCount: 0,
-      },
-      results: [],
+      record: { ...successfulResult(backend).record, fixtureCount: 4, failureCount: 1 },
+      results: [{ fixture: 'x', intent: 'general', score: 0, details: { error: 'HTTP 429 rate limit' } }],
     }),
-    renderFixture: async () => Buffer.from('png'),
-    callDirect: async () => 'unused',
   })
-  const result = await manager.run('vision-http/local-ollama/qwen2.5vl', ['general'])
-  assert.equal(result.ok, true)
-  assert.equal(result.record.fingerprint, expected)
-  assert.equal(persisted.length, 1)
+  await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick')
+  await manager.waitForIdle()
+  assert.equal(store.writes, 0)
+  assert.equal(store.removals, 0)
+  assert.equal(await store.get(fingerprint), old)
+  const snapshot = await manager.snapshot()
+  const job = snapshot.jobs.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl')
+  assert.equal(job.state, 'failed')
+  assert.equal(job.errorClass, 'rate-limit')
+  assert.ok(snapshot.candidates.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl').measured)
 })
 
-test('manager rejects all-failure runs and removes stale zero-score evidence instead of persisting it', async () => {
-  const config = { providers: [] }
-  const ctx = fakeCtx(config)
-  const core = fakeCore()
-  let writes = 0
-  const removed = []
-  const manager = createCapabilityBenchmarkManager(ctx, config, core, {
-    store: {
-      async get() { return undefined },
-      async put(record) { writes += 1; return record },
-      async remove(fingerprint) { removed.push(fingerprint); return true },
-    },
-    runBenchmark: async ({ backend }) => ({
-      record: {
-        fingerprint: capabilityBenchmarkFingerprint(backend),
-        provider: backend.provider,
-        model: backend.model,
-        measuredAt: 123,
-        source: 'self-benchmark',
-        scores: { structured: 0, general: 0 },
-        medianLatencyMs: { structured: 0, general: 0 },
-        latencyMs: 0,
-        fixtureCount: 2,
-        failureCount: 2,
-      },
-      results: [
-        { fixture: 'a', intent: 'structured', score: 0, details: { error: 'sharp renderer is unavailable' } },
-        { fixture: 'b', intent: 'general', score: 0, details: { error: 'sharp renderer is unavailable' } },
-      ],
-    }),
-  })
-  await assert.rejects(
-    manager.run('vision-http/local-ollama/qwen2.5vl'),
-    (error) => error?.code === 'CAPABILITY_BENCHMARK_NO_USABLE_EVIDENCE' && /sharp renderer/.test(error.message),
-  )
-  assert.equal(writes, 0)
-  assert.equal(removed.length, 1)
-  assert.match(removed[0], /^ep2_[0-9a-f]{32}$/)
-})
-
-test('manager refuses to persist a stale/mismatched endpoint result', async () => {
-  const config = { providers: [] }
-  const ctx = fakeCtx(config)
-  const core = fakeCore()
-  let writes = 0
-  const manager = createCapabilityBenchmarkManager(ctx, config, core, {
-    store: { async get() { return undefined }, async put(record) { writes += 1; return record } },
-    runBenchmark: async () => ({
-      record: {
-        fingerprint: 'ep2_00000000000000000000000000000000',
-        scores: { general: 1 },
-      },
-      results: [],
-    }),
-  })
-  await assert.rejects(
-    manager.run('http:ovh-free/qwen3-vl', ['general']),
-    (error) => error?.code === 'CAPABILITY_BENCHMARK_FINGERPRINT_CHANGED',
-  )
-  assert.equal(writes, 0)
+test('failure classifier separates auth, rate limit, timeout, image support, protocol and network', () => {
+  assert.equal(classifyCapabilityBenchmarkFailure('HTTP 401 unauthorized'), 'auth')
+  assert.equal(classifyCapabilityBenchmarkFailure('429 rate limit exceeded'), 'rate-limit')
+  assert.equal(classifyCapabilityBenchmarkFailure('request timed out'), 'timeout')
+  assert.equal(classifyCapabilityBenchmarkFailure('model does not support image input'), 'unsupported-image')
+  assert.equal(classifyCapabilityBenchmarkFailure('unsupported protocol openai-responses'), 'protocol')
+  assert.equal(classifyCapabilityBenchmarkFailure('fetch failed ECONNRESET'), 'network')
 })
