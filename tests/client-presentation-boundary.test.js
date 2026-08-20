@@ -24,10 +24,27 @@ function fakeReact() {
 
 function materializePresentation(order) {
   let registered
+  const pendingQueue = []
   const loader = {
+    mode: 'queue',
+    pendingQueue,
     load(spec) {
-      registered = spec
+      pendingQueue.push(spec)
       return spec
+    },
+    create() {
+      assert.equal(this.mode, 'queue')
+      const pending = this.pendingQueue.splice(0)
+      this.mode = 'live'
+      // This assignment is what rc.8 ClientModuleSystem performs. It used to
+      // erase both Vision Router parser-time load wrappers before our lazy
+      // bundle arrived.
+      this.load = (spec) => {
+        registered = spec
+        return spec
+      }
+      for (const spec of pending) this.load(spec)
+      return { mode: 'live' }
     },
   }
   const window = { __ModuleLoader__: loader }
@@ -45,6 +62,7 @@ function materializePresentation(order) {
     clearTimeout() {},
   }
   for (const source of order) vm.runInNewContext(source, context)
+  loader.create()
 
   const requested = []
   const React = fakeReact()
@@ -59,6 +77,7 @@ function materializePresentation(order) {
     },
   })
 
+  assert.equal(loader.mode, 'live')
   assert.equal(typeof registered.factory, 'function')
   const exports = registered.factory((id) => {
     requested.push(id)
@@ -68,7 +87,7 @@ function materializePresentation(order) {
   return { exports, requested }
 }
 
-test('presentation prelude owns the legacy ImageGallery value without requiring DSH ui-attachment', () => {
+test('presentation prelude survives rc8 loader.create without requiring DSH ui-attachment', () => {
   const { exports, requested } = materializePresentation([CLIENT_PRESENTATION_PRELUDE])
   assert.equal(typeof exports.ImageGallery, 'function')
   assert.equal(exports.empty, null)
@@ -76,7 +95,7 @@ test('presentation prelude owns the legacy ImageGallery value without requiring 
   assert.ok(!requested.includes(LEGACY_ATTACHMENT_VALUE))
 })
 
-test('presentation and live-model preludes compose in either installation order', () => {
+test('presentation and live-model preludes compose across rc8 loader.create in either order', () => {
   for (const order of [
     [CLIENT_PRESENTATION_PRELUDE, LIVE_MODEL_CLIENT_PRELUDE],
     [LIVE_MODEL_CLIENT_PRELUDE, CLIENT_PRESENTATION_PRELUDE],
@@ -88,13 +107,14 @@ test('presentation and live-model preludes compose in either installation order'
   }
 })
 
-test('index transforms run after the DSH module-loader bootstrap and before shell startup', () => {
-  // This is the ordering produced by rc.8 client-modules before out-of-tree
-  // bundle taps run. Both Vision Router preludes must come AFTER this script;
-  // otherwise DSH assigns a new window.__ModuleLoader__ and erases our wrappers.
+test('index transforms run after the DSH queue-loader bootstrap and before shell startup', () => {
+  // rc.8 first creates the parser queue facade in <head>; the shell later
+  // calls its create(), which replaces load() while retaining the same object.
+  // Both Vision Router preludes must run after the parser bootstrap so they can
+  // wrap create() as well as the initial queue-mode load().
   const dshBootstrapped = [
     '<!doctype html><html><head>',
-    '<script data-dsh-module-bootstrap>window.__ModuleLoader__={load(){}}</script>',
+    '<script data-dsh-module-bootstrap>window.__ModuleLoader__={mode:"queue",load(){},create(){}}</script>',
     '</head><body><script type="module" src="/assets/app.js"></script></body></html>',
   ].join('')
 
@@ -107,7 +127,7 @@ test('index transforms run after the DSH module-loader bootstrap and before shel
     const preludeAt = output.indexOf(marker)
     const closeHeadAt = output.indexOf('</head>')
     assert.ok(bootstrapAt !== -1)
-    assert.ok(preludeAt > bootstrapAt, `${marker} must run after DSH creates its loader`)
+    assert.ok(preludeAt > bootstrapAt, `${marker} must run after DSH creates its queue loader`)
     assert.ok(preludeAt < closeHeadAt, `${marker} must still run before the shell in body`)
   }
 })
