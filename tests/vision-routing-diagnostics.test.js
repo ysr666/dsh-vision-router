@@ -205,6 +205,27 @@ test('local preference diagnostics show policy movement without pretending it is
   assert.ok(general.diagnostics.configuredPairChecks.some((entry) => entry.outcome === 'local-policy-promotes-right'))
 })
 
+test('diagnostic payload exposes only the secret-safe endpoint fingerprint, not raw endpoint material', async () => {
+  const now = Date.now()
+  const settings = config()
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings),
+    config: settings,
+    core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now - DAY, { general: 0.75 }, { general: 700 }),
+    ]),
+    now,
+  })
+
+  const serialized = JSON.stringify(preview)
+  assert.doesNotMatch(serialized, /dsh-adapter:\/\/registered/)
+  assert.doesNotMatch(serialized, /baseURL|apiKey|credential/i)
+  const general = row(preview, 'general')
+  const alpha = candidate(general, 'alpha/vision-a')
+  assert.match(alpha.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
+})
+
 test('diagnostics browser layer is GET-only, copyable, refreshable and benchmark-aware', () => {
   const html = '<!doctype html><html><head></head><body></body></html>'
   const injected = injectVisionRoutingDiagnosticsPrelude(html)
