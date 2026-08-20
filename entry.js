@@ -123,15 +123,10 @@ export function apply(ctx, config = {}) {
   // view so resumed wrapper history keeps provider-native replay metadata rather
   // than degrading to foreign history at the delegate boundary.
   const runtimeCtx = contextWithReplayEnvelopeV2Compat(delegatedReplayCtx)
-  // Establish per-tool cwd/cancellation/cache context before the screenshot
-  // authority and browser hardening wrappers are composed. The later wrappers
-  // therefore authorize first, while the final renderer's bare fs.resolve()
-  // still resolves against the same active session workspace.
-  const toolRuntimeCtx = installVisionToolRuntimeBoundary(runtimeCtx)
   // Filesystem authority is separate from browser rendering safety. Put this
   // boundary INSIDE adversarial hardening so the secure HTML renderer that the
   // outer layer installs is itself wrapped by canonical workspace containment.
-  const screenshotSourceCtx = installScreenshotSourceBoundary(toolRuntimeCtx, core)
+  const screenshotSourceCtx = installScreenshotSourceBoundary(runtimeCtx, core)
   // Security/runtime boundary shared by the core and the local-vision shim:
   // keep artifacts inside the session workspace, make HTML screenshots truly
   // offline + sandboxed, protect the screenshot-permission side effect, and
@@ -201,11 +196,16 @@ export function apply(ctx, config = {}) {
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
   })
+  // Put per-tool cwd/cancellation/cache policy AFTER Host settings compatibility
+  // so rc.7/rc.8's synthetic settings injection is visible to the boundary.
+  // The secure screenshot renderer owns its exact FsTarget and active browser
+  // cancellation directly, so it does not depend on this placement.
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
-  const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
+  const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)
   // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
   // mark the topology dirty and the outer pass reruns to a fixed point, so we
