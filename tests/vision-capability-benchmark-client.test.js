@@ -46,7 +46,7 @@ test('benchmark modal contains quick/full choices instead of exposing them on th
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整重测/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · OCR与通用视觉 · 低置信度/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /约6次请求 · 包含结构、文档与定位 · 中置信度/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /data\.modalAction/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /dataset\.modalAction/)
 })
 
 test('scores render in fixed order while latency/freshness/confidence stay secondary', () => {
