@@ -269,6 +269,22 @@ test('runtime health is an availability gate, not a capability-score penalty', (
   assert.equal(result.ranked[1].blocked, true)
 })
 
+test('fallback-only backends never leapfrog user-selected routes even with stronger measurements', () => {
+  const ranked = rankVisionCandidates({
+    intent: 'ocr',
+    strategy: 'quality',
+    candidates: [
+      { provider: 'p', model: 'user-a' },
+      { provider: 'vision-http', model: 'ovh/free', routeRole: 'fallback-only' },
+    ],
+    measured: {
+      'p/user-a': { ocr: 0.3 },
+      'vision-http/ovh/free': { ocr: 1 },
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/user-a', 'vision-http/ovh/free'])
+})
+
 test('capability tags and route explanation expose only measured benchmark axes', () => {
   const profile = buildVisionCapabilityProfile({
     provider: 'p',

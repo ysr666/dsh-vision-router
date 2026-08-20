@@ -7,8 +7,16 @@ import {
   installCapabilityShadowRuntime,
 } from '../lib/vision-capability-shadow.js'
 
+const OVH = {
+  name: 'ovh-free',
+  baseURL: 'https://example.test/v1',
+  model: 'qwen3-vl',
+  apiKeyEnv: '',
+}
+
 function fakeCore() {
   return {
+    DEFAULT_HTTP_PROVIDERS: [OVH],
     adapterAvailable: () => true,
     decideVisionBackendCapability: () => ({ image: true, attemptable: true }),
     localProvidersOf: () => [{
@@ -17,12 +25,7 @@ function fakeCore() {
       model: 'qwen2.5vl',
       apiKeyEnv: '',
     }],
-    httpProvidersOf: () => [{
-      name: 'ovh-free',
-      baseURL: 'https://example.test/v1',
-      model: 'qwen3-vl',
-      apiKeyEnv: '',
-    }],
+    httpProvidersOf: () => [OVH],
   }
 }
 
@@ -81,6 +84,7 @@ test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route
   assert.ok(candidate)
   assert.equal(candidate.benchmarkable, true)
   assert.equal(candidate.evidenceScope, 'adapter-route')
+  assert.equal(candidate.routeRole, 'user')
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
   assert.match(candidate.endpoint, /^dsh-adapter:\/\/registered\/deepseek-official$/)
 })
@@ -131,30 +135,70 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('shadow scorer drops measured profiles older than 30 days', async () => {
+test('shadow auto evidence is fresh-only while older benchmark data stays out of routing', async () => {
   const ctx = fakeCtx().ctx
-  const oldRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
+  const staleRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
     async get() {
       return {
-        measuredAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        measuredAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
         scores: { general: 1 },
         medianLatencyMs: { general: 100 },
       }
     },
   })
-  assert.ok(oldRows.length > 0)
-  assert.ok(oldRows.every((row) => row.measured === undefined))
+  assert.ok(staleRows.length > 0)
+  assert.ok(staleRows.every((row) => row.measured === undefined))
 
   const freshRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
     async get() {
       return {
-        measuredAt: Date.now() - 29 * 24 * 60 * 60 * 1000,
+        measuredAt: Date.now() - 6 * 24 * 60 * 60 * 1000,
         scores: { general: 1 },
         medianLatencyMs: { general: 100 },
       }
     },
   })
   assert.ok(freshRows.some((row) => row.measured?.general === 1))
+  assert.ok(freshRows.some((row) => row.medianLatencyMs?.general === 100))
+})
+
+test('arbitrary DSH-discovered vision models never enter the automatic routing pool', async () => {
+  const config = { providers: [{ provider: 'custom', model: 'chosen', fallbacks: [] }] }
+  const { ctx } = fakeCtx(config)
+  ctx.llm.listProviders = () => [{ id: 'auto-discovered' }]
+  ctx.llm.registration = (provider) => ({
+    adapter: {
+      constructor: { name: 'FakeRegisteredAdapter' },
+      listModels: async () => provider === 'auto-discovered'
+        ? [{ id: 'not-selected', inputModalities: ['text', 'image'] }]
+        : [],
+    },
+  })
+  const rows = await collectCapabilityShadowCandidates(ctx, config, fakeCore(), { async get() { return undefined } })
+  assert.ok(rows.some((row) => row.key === 'custom/chosen'))
+  assert.ok(rows.every((row) => !row.key.includes('auto-discovered') && !row.key.includes('not-selected')))
+})
+
+test('explicit vision-http rows preserve their configured position and are not treated as fallback-only', async () => {
+  const config = {
+    providers: [
+      { provider: 'vision-http', model: 'ovh-free/qwen3-vl', fallbacks: [] },
+      { provider: 'custom', model: 'chosen', fallbacks: [] },
+    ],
+  }
+  const core = { ...fakeCore(), localProvidersOf: () => [] }
+  const rows = await collectCapabilityShadowCandidates(fakeCtx(config).ctx, config, core, { async get() { return undefined } })
+  assert.deepEqual(rows.slice(0, 2).map((row) => row.key), ['http:ovh-free/qwen3-vl', 'custom/chosen'])
+  assert.equal(rows[0].routeRole, 'user')
+})
+
+test('unselected built-in HTTP tier is fixed fallback-only', async () => {
+  const config = { providers: [{ provider: 'custom', model: 'chosen', fallbacks: [] }] }
+  const core = { ...fakeCore(), localProvidersOf: () => [] }
+  const rows = await collectCapabilityShadowCandidates(fakeCtx(config).ctx, config, core, { async get() { return undefined } })
+  const fallback = rows.find((row) => row.key === 'http:ovh-free/qwen3-vl')
+  assert.ok(fallback)
+  assert.equal(fallback.routeRole, 'fallback-only')
 })
 
 test('shadow plan reports product mode/preference while reusing the internal scorer strategy', async () => {
@@ -182,8 +226,14 @@ test('shadow plan reports product mode/preference while reusing the internal sco
     'vision-http/local-ollama/qwen2.5vl',
     'http:ovh-free/qwen3-vl',
   ])
-  assert.equal(plan.suggestedOrder.length, plan.currentOrder.length)
-  assert.equal(new Set(plan.suggestedOrder).size, plan.currentOrder.length)
+  assert.deepEqual(plan.autoPreviewOrder, [
+    'vision-http/local-ollama/qwen2.5vl',
+    'custom/generic',
+    'http:ovh-free/qwen3-vl',
+  ])
+  assert.deepEqual(plan.suggestedOrder, plan.autoPreviewOrder)
+  assert.ok(Array.isArray(plan.decisions))
+  assert.ok(Array.isArray(plan.incomparableBackends))
 })
 
 test('legacy prototype strategy remains readable when the product preference is absent', async () => {
