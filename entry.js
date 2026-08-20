@@ -30,6 +30,7 @@ import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.j
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
+import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -47,7 +48,7 @@ import {
 // schema default so a newer browser client can distinguish a genuinely updated
 // Host from a stale in-process plugin module instead of reporting a generic
 // readback mismatch after the old Host rejects a newly visible field.
-export const SETTINGS_CONTRACT_REVISION = 4
+export const SETTINGS_CONTRACT_REVISION = 5
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -66,9 +67,20 @@ core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(60000
 core.Config.set('visionDepth', z.union(['fast', 'standard', 'deep', 'custom']).default('standard'))
 core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).default(0))
 
-// v2 shadow controls are deliberately runtime-neutral. The default is off;
-// when enabled the outer tool boundary only computes/logs a candidate ranking
-// and never reorders, skips, retries or replaces the v1 execution chain.
+// Product semantics: users choose whether Vision Router may select a backend
+// automatically or must obey the configured order, plus a plain-language
+// routing preference. This draft keeps `ordered` as the safe default because
+// execution-changing auto routing is not wired yet. A future stable 2.0 can
+// change the new-install default only after the executor passes its gates.
+core.Config.set('routingMode', z.union(['ordered', 'auto']).default('ordered'))
+core.Config.set(
+  'routingPreference',
+  z.union(['balanced', 'quality', 'speed', 'local']).default('balanced'),
+)
+
+// Internal development controls. Shadow remains observational and is not the
+// user-facing product switch. capabilityRoutingStrategy is retained only for
+// prototype/backward compatibility; routingPreference is the product contract.
 core.Config.set('capabilityRoutingShadow', z.boolean().default(false))
 core.Config.set(
   'capabilityRoutingStrategy',
@@ -163,8 +175,11 @@ export function apply(ctx, config = {}) {
     hardenedConfig,
     core,
   )
+  const routingProduct = resolveVisionRoutingProduct(bootConfig)
   const runtimeConfig = {
     ...bootConfig,
+    routingMode: routingProduct.mode,
+    routingPreference: routingProduct.preference,
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
     visionTurnBudgetMs:
