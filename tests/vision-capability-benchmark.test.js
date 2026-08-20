@@ -98,7 +98,7 @@ test('grounding scorer accepts GLM-style prose and bracket coordinates in 0-1000
   const output = 'The position of the SAVE button is [672,672,901,813].'
   const scored = scoreCapabilityBenchmarkResult(fixture, output, 300)
   assert.ok(scored.score > 0.99)
-  assert.equal(scored.details.parseSource, 'bracket-array')
+  assert.equal(scored.details.parseSource, 'flat-four-tuple')
   assert.equal(scored.details.coordinateSpace, 'normalized-1000')
   assert.equal(scored.details.responseShape, 'array')
   assert.equal(scored.details.formatValid, true)
@@ -111,6 +111,22 @@ test('grounding scorer accepts nested arrays, point-pair tokens and min/max keys
     '<|box_start|>(672,672),(901,813)<|box_end|>',
     '{"xmin":672,"ymin":672,"xmax":901,"ymax":813}',
     '{"coordinates":[[672,672],[901,813]]}',
+  ]
+  for (const output of outputs) {
+    const scored = scoreCapabilityBenchmarkResult(fixture, output, 300)
+    assert.ok(scored.score > 0.99, output)
+    assert.equal(scored.details.coordinateSpace, 'normalized-1000')
+    assert.equal(scored.details.formatValid, true)
+  }
+})
+
+test('grounding scorer accepts native GLM box markers and tuple wrappers', () => {
+  const fixture = capabilityBenchmarkFixture('grounding')
+  const outputs = [
+    '<|begin_of_box|><672,672,901,813><|end_of_box|>',
+    '(672,672,901,813)',
+    '<672,672,901,813>',
+    '672,672,901,813',
   ]
   for (const output of outputs) {
     const scored = scoreCapabilityBenchmarkResult(fixture, output, 300)
