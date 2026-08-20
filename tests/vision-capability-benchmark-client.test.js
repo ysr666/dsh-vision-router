@@ -65,6 +65,16 @@ test('completed full benchmark can surface bounded grounding diagnostics without
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /endpointCredentialRef/)
 })
 
+test('legacy full profile with grounding score exposes a one-request grounding diagnostic repair', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /hasGroundingScore/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /needsGroundingDiagnostic/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /诊断定位/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /action === 'diagnose'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /enqueue\(row, control, 'grounding', false\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /mode === 'grounding' \? 1/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /定位诊断待补/)
+})
+
 test('incomplete selection removes benchmark controls and observer ignores unrelated streaming mutations', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function completeSelection\(selected\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /removeControl\(row\)/)
