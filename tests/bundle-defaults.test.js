@@ -29,11 +29,20 @@ test('progressive tools remain an explicit opt-in', () => {
   assert.equal(Config({ progressiveTools: true }).progressiveTools, true)
 })
 
+test('entry contract exposes routing product semantics without enabling auto execution by default', () => {
+  assert.equal(SETTINGS_CONTRACT_REVISION, 5)
+  const defaults = Config({})
+  assert.equal(defaults.routingMode, 'ordered')
+  assert.equal(defaults.routingPreference, 'balanced')
+  assert.equal(Config({ routingMode: 'auto', routingPreference: 'local' }).routingMode, 'auto')
+  assert.equal(Config({ routingMode: 'auto', routingPreference: 'local' }).routingPreference, 'local')
+})
+
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 4)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 5)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
-  assert.equal(Config({}).settingsContractRevision, 4)
+  assert.equal(Config({}).settingsContractRevision, 5)
 })
 
 test('entry contract exposes the custom depth tier to every settings entry point', () => {
