@@ -32,6 +32,8 @@ import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.j
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
+import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
+import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import { withVisionCircuitBreakerObserver } from './lib/vision-breaker-observer.js'
 import { createVisionBreakerShadowHealth } from './lib/vision-breaker-shadow-health.js'
@@ -289,7 +291,12 @@ export function apply(ctx, config = {}) {
   // ordinary chat model picker). The existing classic client bundle stays the
   // DSH module-system artifact, including HMR/source-map behavior.
   installLiveModelClientPrelude(reconciledCtx)
-  // Add an experimental per-row capability test control without modifying the
+  // Productize v2 routing settings without forking the stabilized v1.7 form.
+  // The prelude decorates only this package's client apply(), reusing its
+  // SettingsScope/remote-RPC/readback helpers and rendering next to the vision
+  // backend chain. It never opens an HTTP settings-write path.
+  installVisionRoutingSettingsPrelude(reconciledCtx)
+  // Add a per-row exact capability test control without modifying the
   // controlled settings form itself. It talks only to the exact benchmark
   // service below and never writes Vision Router settings.
   installCapabilityBenchmarkClient(reconciledCtx)
@@ -305,9 +312,14 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
   })
   // Serve the generated-fixture benchmark through the same local web-capability
-  // boundary as the rest of Vision Router. The manager and shadow scorer share
-  // one persisted profile store so new measurements are visible immediately.
+  // boundary as the rest of Vision Router. The manager, settings preview and
+  // shadow scorer share one persisted profile store so new measurements are
+  // visible immediately without duplicating measurement state.
   installCapabilityBenchmarkService(executionCtx, runtimeConfig, core, {
+    logger: logging.logger,
+    store: capabilityStore,
+  })
+  installVisionRoutingPreviewService(executionCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
   })
