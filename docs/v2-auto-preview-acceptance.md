@@ -112,7 +112,9 @@ Do not paste API keys, endpoint credentials, or raw provider config into the run
 | E-R08 | fresh capability + materially different latency | Auto + Speed | formula shown as `0.55*capability + 0.45*speed`; no movement unless weighted delta reaches 0.08 | copied JSON + manual calculation |
 | E-R09 | cloud route configured before enabled local route, no measurements required | Auto + Local | local route may move first; reason `local-preference`; pair `local-policy-promotes-right`; no claim of measured superiority | screenshot + copied JSON |
 | E-R10 | built-in anonymous fallback present but not explicitly selected | any Auto preference | fallback stays behind user routes; diagnostics show `fallback-only` role/boundary where applicable | copied JSON |
-| E-R11 | benchmark a backend, then change the exact endpoint/model/credential identity | refresh diagnostics | old profile must not become fresh evidence for the new fingerprint; new identity is unmeasured until benchmarked | old/new copied JSON with safe fingerprint |
+| E-R11 | benchmark a backend, then change provider/model/endpoint/API contract so the `ep2_` identity changes | refresh diagnostics | old profile must not become fresh evidence for the new fingerprint; new identity is unmeasured until benchmarked | old/new copied JSON with safe fingerprint |
+
+Changing only a credential value does not by itself define a new `ep2_` fingerprint. Credential-change handling is validated separately by the exact benchmark job revalidation/runtime credential path; this matrix must not claim otherwise.
 
 ## Settings/UI matrix
 
