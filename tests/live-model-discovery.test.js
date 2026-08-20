@@ -86,7 +86,7 @@ test('OpenAI-compatible listing normalization proves existence only and de-dupli
     }),
     [
       { id: 'glm-4v-flash', name: 'GLM-4V-Flash' },
-      { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
+      { id: 'glm-4.6v-flash' },
     ],
   )
   assert.throws(
@@ -298,11 +298,12 @@ test('client prelude wraps only Vision Router and appends live-only models witho
   if (typeof ctx.dispose === 'function') ctx.dispose()
 })
 
-test('index prelude injection is idempotent and runs from head before lazy client bundles', () => {
+test('index prelude injection is idempotent and runs after head boot scripts but before body shell', () => {
   const html = '<html><head><script src="/shell.js"></script></head><body></body></html>'
   const once = injectLiveModelClientPrelude(html)
   const twice = injectLiveModelClientPrelude(once)
   assert.equal(once, twice)
   assert.match(once, /data-vision-router-live-models/)
-  assert.ok(once.indexOf('data-vision-router-live-models') < once.indexOf('/shell.js'))
+  assert.ok(once.indexOf('data-vision-router-live-models') > once.indexOf('/shell.js'))
+  assert.ok(once.indexOf('data-vision-router-live-models') < once.indexOf('</head>'))
 })
