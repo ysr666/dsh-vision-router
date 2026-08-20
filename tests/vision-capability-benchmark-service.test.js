@@ -58,7 +58,7 @@ function memoryStore(initial = []) {
   }
 }
 
-function successfulResult(backend, fixtureCount = 4) {
+function successfulResult(backend, fixtureCount = CAPABILITY_BENCHMARK_MODE_REQUESTS.quick) {
   return {
     record: {
       fingerprint: capabilityBenchmarkFingerprint(backend),
@@ -66,8 +66,8 @@ function successfulResult(backend, fixtureCount = 4) {
       model: backend.model,
       measuredAt: Date.now(),
       source: 'self-benchmark',
-      scores: { structured: 1, ocr: 0.8, general: 0.7 },
-      medianLatencyMs: { structured: 100, ocr: 120, general: 110 },
+      scores: { ocr: 0.8, general: 0.7 },
+      medianLatencyMs: { ocr: 120, general: 110 },
       latencyMs: 110,
       fixtureCount,
       failureCount: 0,
@@ -75,6 +75,10 @@ function successfulResult(backend, fixtureCount = 4) {
     results: [],
   }
 }
+
+test('quick benchmark is three requests while full remains six', () => {
+  assert.deepEqual(CAPABILITY_BENCHMARK_MODE_REQUESTS, { quick: 3, full: 6 })
+})
 
 test('exact invoker sends one selected vision-http provider directly and never enters fallback', async () => {
   const core = fakeCore()
@@ -136,6 +140,30 @@ test('endpoint-scoped pi-ai provider benchmarks its exact HTTP endpoint rather t
   assert.equal(calls.length, 1)
   assert.equal(calls[0].model, 'glm-4.6v-flash')
   assert.equal(calls[0].apiKeyEnv, 'ZHIPU_API_KEY')
+})
+
+test('fatal transport error fails fast after the first fixture and never persists a partial profile', async () => {
+  const store = memoryStore()
+  let calls = 0
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store,
+    renderFixture: async () => Buffer.from('png'),
+    callDirect: async () => {
+      calls += 1
+      const error = new Error('HTTP 401 unauthorized')
+      error.status = 401
+      throw error
+    },
+  })
+  await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick')
+  await manager.waitForIdle()
+  assert.equal(calls, 1)
+  assert.equal(store.writes, 0)
+  assert.equal(store.removals, 0)
+  const snapshot = await manager.snapshot()
+  const job = snapshot.jobs.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl')
+  assert.equal(job.state, 'failed')
+  assert.equal(job.errorClass, 'auth')
 })
 
 test('FIFO queue runs one benchmark at a time and exposes queue position/progress', async () => {
@@ -237,14 +265,14 @@ test('failed retest preserves the previous valid profile instead of overwriting/
     measuredAt: Date.now() - 1000,
     scores: { general: 0.9 },
     latencyMs: 100,
-    fixtureCount: 4,
+    fixtureCount: CAPABILITY_BENCHMARK_MODE_REQUESTS.quick,
     failureCount: 0,
   }
   const store = memoryStore([old])
   const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, core, {
     store,
     runBenchmark: async ({ backend }) => ({
-      record: { ...successfulResult(backend).record, fixtureCount: 4, failureCount: 1 },
+      record: { ...successfulResult(backend).record, failureCount: 1 },
       results: [{ fixture: 'x', intent: 'general', score: 0, details: { error: 'HTTP 429 rate limit' } }],
     }),
   })
