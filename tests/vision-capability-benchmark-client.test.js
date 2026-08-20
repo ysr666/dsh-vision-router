@@ -56,6 +56,14 @@ test('all-fixture failure is rendered as no evidence rather than a fake zero-sco
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /status\.title = detail \|\| message \|\| ''/)
 })
 
+test('terminal benchmark result is not immediately overwritten by a forced rescan', () => {
+  const terminalFinally = CAPABILITY_BENCHMARK_CLIENT.match(
+    /finally \{([\s\S]*?)\n    \}\n  \}\n\n  function makeControl/,
+  )?.[1] ?? ''
+  assert.match(terminalFinally, /syncRunningControls\(''\)/)
+  assert.doesNotMatch(terminalFinally, /scheduleScan\(true\)/)
+})
+
 test('capability UI observer ignores unrelated streaming DOM mutations', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain\(node\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\(CHAIN_ROOT\)/)
