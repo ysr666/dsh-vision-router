@@ -1,283 +1,356 @@
 # v2 capability-aware vision routing
 
-This document is the design target for the v2 routing architecture. The implementation on `feat/v2-capability-router` was rebuilt on current `main` after the v1.7.x stabilization cycle, including the DSH rc.8 compatibility work. The branch deliberately keeps the current v1 execution order authoritative while capability routing is measured in shadow mode.
+This document describes the current v2 routing target on `feat/v2-capability-router`. The branch remains **shadow-only**: v1.7.x execution order is still authoritative, and `routingMode: auto` is not connected to the real executor yet.
 
-## Product contract first
+## Product contract
 
-Vision Router should not ask normal users whether they want to "enable v2" or "enable capability routing". Those are implementation concepts. The user-facing decision is:
+Normal users choose two things:
 
-- **Routing mode**: `auto` or `ordered`;
+- **Routing mode**: `ordered` or `auto`;
 - **Routing preference**: `balanced`, `quality`, `speed`, or `local`.
 
-In UI language these become **自动选择 / Auto select**, **固定顺序 / Fixed order**, **均衡 / Balanced**, **效果优先 / Quality**, **速度优先 / Speed**, and **本地优先 / Local first**.
+`capabilityRoutingShadow` is an internal validation flag, not the product switch.
 
-`capabilityRoutingShadow` remains an internal development/validation control. It is not the product switch. The scorer's historical internal `privacy` strategy is mapped from the clearer user-facing `local` preference rather than exposed directly.
+The key product rule is:
 
-The current draft defaults to `routingMode: ordered` because execution-changing auto routing is not wired yet. This avoids presenting a switch that the runtime cannot honestly honor. Once auto execution has passed shadow, breaker-health, cost/locality and real-provider validation gates, the stable 2.0 release can make `auto` the default for new installations while keeping `ordered` permanently available for deterministic behavior.
+> **The user decides preference; Benchmark provides facts; Vision Router does not guess model capability.**
 
-A configured model order is not disposable metadata. It can encode cost, privacy/locality, speed and personal preference. Auto routing therefore must be conservative: weak or missing evidence should preserve the configured order; only sufficiently strong evidence or health constraints should justify moving away from it.
+Model names, provider names, model families and popularity do not create capability scores. An unmeasured model is simply unmeasured.
 
-## Current implementation status
+## Two inputs only
 
-PR #142 was rebuilt from current `main` instead of copying its old high-conflict `index.js`, `lib/client.js`, and `package.json` changes wholesale. The pre-rebuild heads remain preserved on backup branches for history/recovery.
+The router intentionally has only two capability-selection inputs:
 
-Implemented on the rebuilt branch:
+1. **User intent**
+   - configured model order;
+   - routing preference;
+   - explicit locality choice (`local`).
+2. **Exact-endpoint measurements**
+   - self-benchmark scores;
+   - per-axis benchmark latency;
+   - benchmark timestamp/freshness.
 
-- stable visual intent vocabulary and tool -> intent mapping;
-- explicit product semantics for `routingMode` and `routingPreference`, with old prototype strategy names kept only as compatibility input;
-- capability profiles, conservative family priors, measured evidence, user overrides, and policy-aware scoring;
-- the stable scene signals from merged PR #178 (`visual_kind`, `content_kind`, `mixed_of`) are consumed rather than reimplemented;
-- evidence-aware model reference generation;
-- privacy-safe generated benchmark fixtures and secret-safe `ep2_` endpoint fingerprints;
-- exact-backend benchmark execution with Vision Router fallback explicitly disabled;
-- atomic persisted measured profiles under the existing DSH Vision Router cache area;
-- default-off runtime shadow observation at the visual-tool boundary;
-- a compact per-model benchmark entry that opens quick/full/force/diagnostic actions in a secondary panel instead of crowding the settings row;
-- a server-side FIFO benchmark queue with de-duplication, progress, browser-refresh recovery, cancellation, and one actual benchmark running at a time;
-- measured capability/latency summaries with fixed score order, freshness and confidence labels;
-- operational failure classification and fail-fast behavior for auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures;
-- grounding-coordinate normalization before IoU scoring, plus one-request repair for legacy full profiles that lack grounding diagnostics;
-- all v2 suites are included in the normal package test command.
+Runtime availability is a separate gate. Circuit-breaker state and rate limits can temporarily move an unavailable backend out of the way, but they never change its measured capability.
 
-Not implemented yet:
+There is no capability evidence hierarchy. In particular, v2 does **not** use:
 
-- execution-changing `routingMode: auto`;
-- a conservative evidence threshold/order-prior policy for real auto routing;
-- exposing the current v1 circuit-breaker state to the outer shadow layer;
-- the agent `preferredBackend` experiment from the original prototype.
+- family priors;
+- generic priors;
+- model-name inference;
+- manual capability scores;
+- provider/model reputation scores;
+- measured/prior score blending.
 
-The old temporary workflow/script that modified the branch and committed/pushed from GitHub Actions is not part of the rebuilt branch. Repository writes use the normal branch -> commit -> PR flow.
+## User order is the default truth
 
-## Concept attribution and scope
+Auto routing starts from the user's configured order. It is not a global leaderboard sort.
 
-The **scene-aware routing direction** in this v2 design was informed in part by earlier discussions with [@shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) and his earlier `dsh-vision` work: classify the visual scene/content first, then use that signal to guide a more suitable visual path instead of forcing every image through one undifferentiated chain.
-
-That attribution is scoped to the concept/direction. The capability-aware backend profile/scoring model, health/cost/privacy weighting, shadow observation, evidence-aware model reference, self-benchmark/fingerprint design, persistence, queueing, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
-
-PR #178 has merged into `main`. Its normalized structured-bootstrap contract is now the stable scene-classification input for v2. `content_kind` remains subject metadata; it does not by itself turn a machine or architecture photo into a `chart_diagram` task.
-
-## Why the v1 chain stops scaling
-
-The current router answers one question well: **which configured vision backend should be tried next when a call fails?**
-
-A v2 router needs to answer a different question first: **which backend is best suited to this visual operation?** OCR, document parsing, UI understanding, grounding, detection, diagram reading and general scene understanding are different capabilities. A single fixed order cannot express that without forcing one backend to be the default specialist for every task.
-
-## Core contract
-
-DeepSeek/the session agent chooses **what visual capability it needs**. Vision Router chooses **which vision backend is best suited to execute it**.
+If the configured order is:
 
 ```text
-image
-  -> vision_bootstrap (task-independent structured baseline)
-  -> normalized visual_kind / content_kind / mixed_of
-  -> DeepSeek reasons over the user's request + baseline
-  -> visual tool intent (ocr / grounding / detection / ui / ...)
-  -> capability router evaluates the current backend pool
-  -> shadow: compare recommendation with current ordered execution
-  -> future auto mode: reorder only when evidence/health justifies it
+A -> B -> C
 ```
 
-The agent should not receive a permanent hard-coded leaderboard. Model selection belongs primarily inside Vision Router and should be backed by evidence from the exact endpoint the user configured.
+and there is no directly comparable fresh measurement, the result stays:
 
-## Scene signals from #178
+```text
+A -> B -> C
+```
 
-The capability router consumes the already-normalized bootstrap result instead of adding a second classifier.
+A measured backend may not jump over an unmeasured backend merely because its own score is high. Doing so would implicitly claim that it is better than the unmeasured backend, which the router cannot know.
 
-Current bridge:
+Example:
 
-- `document` -> `document`
-- `ui` -> `ui`
-- `chat` -> `ui`
-- `code` -> `code_screenshot`
-- `general` / `unknown` -> `general`
-- `mixed` -> up to two intents from normalized `mixed_of`, preserving the same information priority used by the structured-bootstrap layer (`ui`, `document`, `code`, `chat`, `general`)
+```text
+A OCR 60
+B unmeasured
+C OCR 99
+```
 
-An explicit requested operation still wins over scene fallback. A request to explain a circuit schematic is `chart_diagram` even if the bootstrap classified its media container as `document`.
+Auto preview remains:
 
-## Intent vocabulary
+```text
+A -> B -> C
+```
 
-- `structured` — task-independent first-pass visual map (`vision_bootstrap`)
-- `ocr` — exact text transcription
-- `document` — documents, forms, tables, long screenshots
-- `ui` — web/app/chat UI semantic understanding
-- `grounding` — locate one requested target
-- `detection` — enumerate/localize a class of elements
-- `general` — ordinary scene/image understanding
-- `chart_diagram` — charts, architecture diagrams, schematics, circuits
-- `code_screenshot` — IDE, source, terminal, traceback, logs
-- `visual_compare` — semantic or pixel-oriented multi-image comparison
+`B` is an information barrier.
 
-`vision_describe` may refine its intent from the requested operation and can use the bootstrap scene signal only when the question itself is generic.
+## Task intents and benchmark axes are different types
 
-## Capability evidence hierarchy
+The visual task vocabulary is broader than the current benchmark suite.
 
-A permanent hard-coded leaderboard is intentionally **not** the source of truth. New or renamed models can appear faster than the plugin ships, and the same model name can behave differently across providers, relays, quantization and endpoint configuration.
+Current task intents:
 
-Evidence order:
+- `structured`
+- `ocr`
+- `document`
+- `ui`
+- `grounding`
+- `detection`
+- `general`
+- `chart_diagram`
+- `code_screenshot`
+- `visual_compare`
 
-1. **exact-endpoint measured/self-benchmark evidence**;
-2. **explicit user override**;
-3. **official provider/model capability claims** when available;
-4. **conservative family prior**;
-5. **unknown generic prior** so future models remain routable without invented specialist strengths.
+Current directly measured benchmark axes:
 
-Unknown models stay explicitly unverified until stronger evidence exists. Benchmarking is an enhancement, not an initialization requirement: unmeasured models remain usable and auto routing must fall back conservatively toward configured order when evidence is weak.
+- `structured`
+- `ocr`
+- `document`
+- `grounding`
+- `general`
 
-## Exact-backend self-benchmark
+Only tasks with a direct measured axis can currently trigger a capability-based reorder.
 
-`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns sequential fixture execution and persisted profile records. `lib/vision-capability-benchmark-service.js` owns the current executable pool, queue, exact invoker, job state, failure policy and browser API.
+The current router deliberately does **not** manufacture proxy formulas such as `ui = ocr + structured` or `detection = grounding + general`. For `ui`, `detection`, `chart_diagram`, `code_screenshot`, and `visual_compare`, the user's configured order remains intact until a dedicated measurement contract exists.
 
-The benchmark contract is intentionally strict:
+## Conservative reorder rule
 
-- only one actual benchmark runs at a time; additional models join a FIFO queue;
-- duplicate clicks for an already queued/running backend are de-duplicated;
-- a queued job revalidates the selected provider/model/fingerprint before it starts, so settings changes cannot write evidence under the wrong route;
-- the in-memory active queue is bounded (32 jobs) and is intentionally not resumed after a DSH process restart; browser refreshes do recover the live queue/job state;
-- fixtures for one backend run sequentially, keeping latency comparable and avoiding local GPU/API concurrency distortion;
-- Vision Router fallback is disabled;
-- normal DSH providers are called through their exact registered adapter/provider/model first; if that exact adapter fails with an error class that v1 itself permits to bridge, the benchmark may bridge to the same provider/model's exact HTTP endpoint, never to a backup model;
-- plugin-owned `vision-http` routes use their exact configured HTTP backend directly;
-- a changed/mismatched endpoint fingerprint is rejected before persistence;
-- auth, rate-limit, timeout, network, unsupported-image, unsupported-protocol and benchmark-infrastructure errors fail fast on the first affected fixture instead of spending the rest of the request budget;
-- operational failures never overwrite an existing valid profile;
-- a lower-coverage quick retest never replaces a richer full profile for the same fingerprint;
-- a one-request grounding diagnostic repair may update only the stored grounding score/latency/diagnostic of an existing richer profile while retaining its other scores, full fixture coverage, and original full-suite timestamp;
-- persisted records contain fingerprint, provider/model identity, scores, latency summary, fixture/failure counts, timestamp and bounded safe diagnostic fields only;
-- endpoint URLs, API keys, raw model replies and arbitrary provider configuration are not persisted in the capability profile record or returned to the browser.
+Capability-based movement uses stable adjacent comparison, not full-array sorting.
 
-Profile state is stored as an atomic mode-`0600` JSON cache under `~/.dsh/cache/vision-router/`. The default profile retention is 30 days. In the UI, results are `fresh` for 7 days, marked stale from 7–30 days, and no longer exposed as measured routing evidence after 30 days. Shadow scoring uses the same 30-day hard cutoff.
+Two adjacent user routes are comparable only when both have a fresh measurement for the task's direct benchmark axis. If either side is not comparable, no capability swap occurs across that boundary.
 
-### Quick vs full benchmark
+A reorder also requires a minimum measured advantage:
 
-The default **Quick test** is deliberately small:
+```text
+AUTO_REORDER_MIN_ADVANTAGE = 0.08
+```
+
+So:
+
+```text
+A OCR 91
+B OCR 94
+```
+
+stays `A -> B`, while a materially larger difference such as `61 -> 94` may produce `B -> A` in shadow preview.
+
+The threshold is a stability guard against benchmark noise. It is not an evidence grade.
+
+## Routing preferences
+
+### Quality
+
+`quality` uses the directly measured capability score for the current benchmark axis.
+
+### Balanced
+
+`balanced` combines directly measured capability with the corresponding measured median latency. No default/model-derived latency is invented when direct data is unavailable.
+
+### Speed
+
+`speed` gives more weight to the corresponding measured median latency while still requiring measured capability on both compared routes.
+
+### Local
+
+`local` is an explicit user policy, not a capability score. Healthy local routes are stably grouped ahead of cloud routes. Capability comparison is then conservative within those groups.
+
+Because locality is user intent, this policy may cross an unmeasured cloud route. That is different from claiming one model has better visual ability.
+
+## Runtime health is an availability gate
+
+The shadow layer reads the same live v1 circuit breaker through a side-effect-free `peek()` seam.
+
+A backend reported as circuit-open or rate-limited is temporarily moved behind healthy candidates. Its benchmark scores are not edited or penalized.
+
+This gives explanations such as:
+
+```text
+planned: A -> B
+A: rate limited
+preview: B -> A
+```
+
+rather than pretending that A's visual capability became worse.
+
+The read-only health seam must remain non-mutating:
+
+- no cooldown pruning;
+- no LRU touch;
+- no credential-state clearing;
+- no breaker recording;
+- observation failures are neutral.
+
+## Candidate pool
+
+Automatic routing is limited to routes that belong to the user's Vision Router configuration or are explicitly enabled by the user.
+
+Eligible user routes include:
+
+- configured provider/model rows and fallbacks;
+- explicitly enabled local backends;
+- explicitly configured HTTP vision backends.
+
+Arbitrary DSH-discovered vision models may appear in model pickers, but they do not silently enter the automatic routing pool.
+
+The built-in anonymous free tier is marked `fallback-only` unless the user explicitly selected that route. A fallback-only backend cannot be promoted ahead of user routes by Benchmark.
+
+## Exact-endpoint self-benchmark
+
+Benchmarking uses generated fixtures, not user images.
+
+The exactness contract remains strict:
+
+- the selected provider/model/endpoint is fingerprinted with a secret-safe `ep2_` identity;
+- Vision Router fallback is disabled during a benchmark;
+- normal DSH providers use their exact registered adapter/provider/model first;
+- a v1-compatible bridge may only reach the same provider/model's exact HTTP endpoint;
+- plugin-owned `vision-http` routes use their exact configured HTTP backend;
+- a fingerprint mismatch aborts persistence;
+- endpoint URLs, credentials and raw model responses are not persisted in the profile or returned to the browser.
+
+Profiles are stored atomically at:
+
+```text
+~/.dsh/cache/vision-router/capability-profiles.json
+```
+
+with mode `0600`.
+
+## Coverage, not confidence tiers
+
+Benchmark does not label results as low/medium/high confidence.
+
+The product contract reports what was actually measured.
+
+### Quick benchmark
+
+Three sequential requests:
 
 - Latin/UI OCR;
 - Chinese chat OCR;
-- general scene understanding.
+- general scene.
 
-That is three model requests and produces a **low-confidence basic profile**. It does not claim to have measured structure, document parsing or grounding.
+Coverage:
 
-The **Full test** runs six requests:
+```text
+OCR / General
+```
+
+A fresh Quick result may participate in an OCR or general comparison because those axes were directly measured. It cannot participate in structured/document/grounding comparison.
+
+### Full benchmark
+
+Six sequential requests:
 
 - structured baseline;
 - Latin/UI OCR;
 - Chinese chat OCR;
 - grounding;
-- document/table reading;
-- general scene understanding.
+- document/table;
+- general scene.
 
-A successful six-fixture profile is currently labeled **medium confidence**. The fixture set is intentionally small and must not be presented as an external/authoritative benchmark.
-
-For old full profiles that already contain a grounding score but predate persisted grounding diagnostics, the UI offers **Diagnose grounding**. It sends one grounding request, repairs the grounding score/latency/diagnostic in that existing profile, and leaves the other capability scores and full-suite timestamp untouched.
-
-### Grounding normalization
-
-Grounding is scored on geometric accuracy, not strict output syntax alone. Before IoU is computed, the scorer accepts common response shapes (`x1/y1/x2/y2`, `left/top/right/bottom`, `x/y/width/height`, nested `bbox`/`box`, four-number arrays, common GLM box markers, and similar wrappers) and normalizes common coordinate spaces:
-
-- image pixels;
-- normalized `0..1`;
-- percentages `0..100`;
-- common normalized `0..1000` coordinates.
-
-The score details retain `formatValid`, response shape and detected coordinate space so a formatting issue is distinguishable from poor localization.
-
-## Benchmark queue and UI
-
-Vision Router's existing model rows receive an independent second-line benchmark control through a separate browser prelude. This avoids rewriting the v1.7 settings component or its save/readback path.
-
-The main settings row is intentionally compact:
+Coverage:
 
 ```text
-measured: 实测能力 · 结构 100 · OCR 50 · 文档 100 · 定位 95 · 通用 75   [测评]
-untested: 尚未测评                                                   [测评]
-running:  正在测评 2/3 · OCR · 8.4s                                  [停止]
-queued:   排队中 · 第2位 · 快速测试                                   [取消]
+Structured / OCR / Document / Grounding / General
 ```
 
-There is only one normal **Benchmark / 测评** entry point on the row. Opening it shows a secondary in-app panel containing the actions that used to crowd the main row:
+The UI also receives `medianLatencyMs` per measured axis, so speed/balanced routing can use the latency from the same task class rather than a generic guessed speed.
 
-- Quick test / quick retest;
-- Full test / full retest;
-- force-verify image support for DSH-declared text-only models;
-- one-request grounding diagnostic repair when an older full profile needs it;
-- current measured score/meta information;
-- grounding result summary where available.
+### Grounding diagnostic repair
 
-Grounding engineering fields (`parseSource`, response shape, coordinate space, normalized box, candidate spaces) live under a collapsed **Developer details / 开发者信息** section in the panel. The benchmark UI no longer uses native browser `alert()` or `confirm()` dialogs for normal results/cost messaging.
+Older rich profiles that have a grounding score but no stored grounding diagnostic can run one grounding request. The repair updates only grounding score/latency/diagnostic while preserving the richer profile's other axes, coverage and original full-suite timestamp.
 
-Cloud backends that are not known-free show an unobtrusive note in the panel explaining the approximate request counts (quick ≈3, full ≈6, grounding repair ≈1) and that API charges may apply. Local/known-free backends do not need that warning.
+## Freshness is eligibility, not evidence quality
 
-The browser polls while work is active, so refreshing the settings page restores running/queued progress. It can cancel queued work or abort the currently running job. Failure labels distinguish authentication, rate limit, timeout, image rejection, unsupported benchmark protocol, benchmark infrastructure, network, generic provider failures and cancellation.
+Freshness is a time gate:
 
-If a retest fails while a previous valid profile exists, the UI keeps the previous scores and reports the new failure separately.
+- `<= 7 days`: `fresh`, visible and eligible for Auto comparison;
+- `7–30 days`: `stale`, still visible in UI but **not** eligible for Auto comparison;
+- `> 30 days`: expired and not exposed as current measured product data.
 
-The browser can see only public candidate identity/locality/protocol/fingerprint/benchmarkability, job state and measured summary. It cannot see endpoint URLs or credentials. The DOM observer is scoped to Vision Router's model-chain rows, so normal streaming chat DOM updates do not continuously trigger settings-row scans. The benchmark UI never mutates Vision Router settings.
+The Benchmark API exposes:
 
-### Adapter-route attachment note
+```text
+scores
+coverage
+coverageKind
+measuredAt
+freshness
+autoEligible
+medianLatencyMs
+```
 
-Exact HTTP endpoint tests send the generated fixture as request-local image data and do not create DSH attachments. An adapter-route test may need `ctx.attachments.saveImage()` because that is how the DSH adapter receives an image. DSH's public attachment service is immutable and currently exposes validate/save/read rather than deletion. The benchmark fixtures are deterministic/content-addressed, so repeat runs reuse a finite fixture set instead of intentionally creating unique test images each time; a future upstream retention seam can be used if one becomes available.
+It does not expose a `confidence` tier.
 
-## Ranking and conservative auto-routing
+## Benchmark queue and failure behavior
 
-The scoring core can combine:
+- FIFO queue;
+- one actual benchmark executes at a time;
+- duplicate active jobs are de-duplicated;
+- maximum 32 active jobs;
+- queued jobs revalidate provider/model/fingerprint before execution;
+- running progress exposes completed/total/current axis/elapsed time;
+- queued and running jobs can be cancelled;
+- browser refresh restores in-process queue state;
+- DSH restart intentionally does not resume chargeable jobs.
 
-- capability match for the current intent;
-- backend health;
-- latency;
-- cost/free status;
-- local/private execution.
+Auth, rate-limit, timeout, network, unsupported-image, protocol and benchmark-infrastructure failures fail fast. Operational failures do not overwrite the previous valid profile. A lower-coverage Quick retest cannot downgrade an existing richer Full profile.
 
-The product preferences map to those weights as follows:
+## Benchmark UI contract
 
-- `balanced` — balanced capability, health, latency and cost;
-- `quality` — place more weight on measured capability;
-- `speed` — place more weight on latency;
-- `local` — strongly prefer local/private execution (currently mapped internally to the historical `privacy` scoring strategy).
+The model row stays compact and has one normal **Benchmark / 测评** entry.
 
-The current shadow scorer still uses configured order only as a deterministic tie-breaker. **That is not the final auto-routing policy.** Before `routingMode: auto` may alter execution, configured order must become an explicit preference prior / conservative gate: small score differences or low-confidence evidence keep the user's order; meaningful measured differences or unhealthy backends can justify a reorder. Auto mode must also avoid silently escalating from local/free choices to paid cloud merely because a cloud model has a slightly higher capability prior.
+Examples:
 
-## Current health caveat
+```text
+部分测评 · OCR / 通用 · 2天前                  [测评]
+完整测评 · 结构化 / OCR / 文档 / 定位 / 通用    [测评]
+测评已陈旧 · 暂不参与自动选择                    [重新测评]
+尚未测评 · 自动选择不会推断此模型能力             [测评]
+```
 
-The scoring core already supports circuit-open/rate-limit/recent-failure health input. The current v1 circuit breaker, however, is internal to `index.js`; the rebuilt outer shadow layer intentionally does not reach through that private closure.
+The modal shows the five fixed axes with score and corresponding median latency. Missing axes display `— 未测`; they are never filled with inferred numbers.
 
-Therefore the **current shadow runtime treats health as neutral/default** while comparing capability/latency/cost/privacy evidence. Actual v1 execution still applies its real circuit breaker normally. Before any execution-changing auto routing is enabled, the next runtime seam should expose a narrow read-only breaker snapshot to shadow scoring rather than copying or replacing the v1 breaker implementation.
+Cloud cost notices, force-verification for DSH-declared text-only models, and grounding developer diagnostics remain inside the secondary panel rather than crowding the main row.
 
-## Runtime shadow routing
+## Shadow output
 
-`capabilityRoutingShadow` defaults to `false`. It is a developer validation flag, not a user-facing routing mode. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, resolves the product `routingMode` / `routingPreference`, enumerates the current candidate pool, loads non-expired measured `ep2_` profiles where available, and logs the current order against the scorer's suggested order.
+When `capabilityRoutingShadow: true`, the planner returns diagnostics including:
 
-The wrapper then invokes the original tool implementation unchanged. It does **not** reorder, skip, retry or replace any backend. With shadow disabled it does no per-tool candidate enumeration for tool calls.
+```text
+currentOrder
+autoPreviewOrder
+decisions
+incomparableBackends
+measuredBackends
+unmeasuredBackends
+blockedBackends
+```
 
-The bootstrap evidence is remembered per session only for shadow intent fallback, allowing a later generic `vision_describe` to reuse #178's normalized scene classification without changing the actual tool result.
+`currentOrder` remains the actual v1 order. `autoPreviewOrder` is observational only.
 
-## Migration plan
+`decisions` explains concrete movement, for example a measured advantage or an availability block. This structure is intended to power the future "why this model?" UI without making the browser reimplement routing logic.
 
-### Phase 1 — capability/evidence core
+## Safety boundary
 
-Implemented: intent mapping, #178 scene bridge, profiles, priors, measured evidence merge, product routing vocabulary, policies, scorer, diagnostics, fixtures, endpoint fingerprints and persistence.
+Nothing in this document authorizes execution-changing auto routing yet.
 
-### Phase 2 — shadow validation
+The current runtime still does:
 
-Implemented in default-off form: compare the current candidate order with v2 scoring while ordered v1 execution remains authoritative.
+```text
+shadow plan
+  -> log/inspect only
+  -> invoke original v1 visual tool unchanged
+```
 
-Next work inside this phase:
+It does not reorder, skip, retry or replace a backend in actual execution.
 
-- make configured order an explicit conservative preference signal rather than only a tie-breaker;
-- expose a narrow read-only snapshot of v1 breaker health to shadow scoring;
-- collect/inspect shadow diagnostics across real provider combinations;
-- expand fixtures where the current quick/full set is too weak;
-- only after validation, consider the agent `preferredBackend` comparison experiment.
+After shadow behavior is stable across real provider combinations, the eventual executor integration should only change the starting candidate order when `routingMode === 'auto'`. The existing v1 fallback, breaker, timeout, cancellation, resource-governance and error-classification paths should remain the execution engine.
 
-### Phase 3 — benchmark UI
+## Validation gates before real Auto
 
-Implemented experimentally: compact one-entry benchmark UI, secondary quick/full/force/diagnostic panel, FIFO queue, progress/cancel, failure classification, freshness/confidence and persisted measured tags/latency. It still needs one final real DSH browser pass before being considered stable UX.
+Before connecting `autoPreviewOrder` to execution, verify:
 
-### Phase 4 — auto execution
+1. unmeasured model names never alter order;
+2. one-sided measurement never claims superiority over an unmeasured neighbor;
+3. small measured differences remain stable under the configured order;
+4. repeated fresh measurements produce stable large differences where reorder is suggested;
+5. stale data never reorders;
+6. local preference behaves as explicit policy, not inferred capability;
+7. breaker/rate-limit state temporarily demotes the same backend v1 would avoid;
+8. fallback-only built-ins never promote above user routes;
+9. shadow enablement leaves the actual tool result and v1 execution unchanged.
 
-Not implemented. Once the conservative order prior and read-only breaker health seam are validated, `routingMode: auto` may reorder candidates while reusing the existing v1 executor and breaker. `routingMode: ordered` must continue to execute strictly in the configured order.
-
-There should be no separate user-facing "enable v2" or `capabilityRouting` switch.
-
-### Phase 5 — 2.0 default
-
-Only after auto execution evidence is stable should **new 2.0 installations** default to `routingMode: auto`. Fixed/ordered mode remains a permanent compatibility and deterministic-control option. Upgrade behavior should be chosen separately and conservatively so an update cannot unexpectedly increase paid-cloud usage or violate a user's local-first intent.
+Only after those gates are convincing should opt-in execution-changing `routingMode: auto` be considered.
