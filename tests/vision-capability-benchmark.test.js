@@ -6,6 +6,7 @@ import {
   capabilityBenchmarkFingerprint,
   capabilityBenchmarkFixture,
   listCapabilityBenchmarkFixtures,
+  normalizeGroundingBox,
   scoreCapabilityBenchmarkResult,
 } from '../lib/vision-capability-benchmark.js'
 
@@ -59,6 +60,46 @@ test('grounding scorer uses IoU in original fixture pixels', () => {
   const loose = scoreCapabilityBenchmarkResult(fixture, '{"x1":450,"y1":300,"x2":740,"y2":470}', 300)
   assert.equal(exact.score, 1)
   assert.ok(loose.score > 0 && loose.score < 1)
+})
+
+test('grounding scorer normalizes common 0-1, percentage and 0-1000 coordinate spaces before IoU', () => {
+  const fixture = capabilityBenchmarkFixture('grounding')
+  const box = fixture.expected.box
+  const ratio = {
+    x1: box.x1 / 768,
+    y1: box.y1 / 512,
+    x2: box.x2 / 768,
+    y2: box.y2 / 512,
+  }
+  const percent = {
+    x1: box.x1 / 768 * 100,
+    y1: box.y1 / 512 * 100,
+    x2: box.x2 / 768 * 100,
+    y2: box.y2 / 512 * 100,
+  }
+  const thousand = {
+    x1: box.x1 / 768 * 1000,
+    y1: box.y1 / 512 * 1000,
+    x2: box.x2 / 768 * 1000,
+    y2: box.y2 / 512 * 1000,
+  }
+  for (const [space, value] of [['normalized-1', ratio], ['percent-100', percent], ['normalized-1000', thousand]]) {
+    const normalized = normalizeGroundingBox(value)
+    assert.equal(normalized.coordinateSpace, space)
+    const scored = scoreCapabilityBenchmarkResult(fixture, JSON.stringify(value), 300)
+    assert.ok(scored.score > 0.99)
+    assert.equal(scored.details.coordinateSpace, space)
+    assert.equal(scored.details.formatValid, true)
+  }
+})
+
+test('grounding normalizer accepts nested bbox arrays and xywh response shapes', () => {
+  const bbox = normalizeGroundingBox({ bbox: [516, 344, 692, 416] })
+  assert.deepEqual(bbox.box, { x1: 516, y1: 344, x2: 692, y2: 416 })
+  assert.equal(bbox.shape, 'array')
+  const xywh = normalizeGroundingBox({ x: 516, y: 344, width: 176, height: 72 })
+  assert.deepEqual(xywh.box, { x1: 516, y1: 344, x2: 692, y2: 416 })
+  assert.equal(xywh.shape, 'xywh')
 })
 
 test('structured scorer requires both schema coverage and visible evidence', () => {
