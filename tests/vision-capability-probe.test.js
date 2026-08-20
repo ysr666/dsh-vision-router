@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS,
   capabilityProfileCachePath,
   createCapabilityProfileStore,
   runExactCapabilityBenchmark,
@@ -127,6 +128,7 @@ test('ordinary probe failures score zero but remain bounded evidence for the exa
 
 test('capability profile store uses the DSH cache area, atomic 0600 writes, and strips secrets/extras', async () => {
   assert.match(capabilityProfileCachePath('/tmp/dsh-home'), /cache[\\/]vision-router[\\/]capability-profiles\.json$/)
+  assert.equal(DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS, 30 * 24 * 60 * 60 * 1000)
   const mem = memoryFs()
   const cacheFile = '/virtual/capability-profiles.json'
   const now = () => 50_000
@@ -161,6 +163,40 @@ test('capability profile store uses the DSH cache area, atomic 0600 writes, and 
 
   const reloaded = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now })
   assert.deepEqual(await reloaded.get(record.fingerprint), record)
+})
+
+test('quick retest cannot downgrade a richer full benchmark profile', async () => {
+  const mem = memoryFs()
+  const store = createCapabilityProfileStore({
+    cacheFile: '/virtual/capability-profiles.json',
+    fsOps: mem.ops,
+    now: () => 100_000,
+  })
+  const fingerprint = 'ep2_1234567890abcdef1234567890abcdef'
+  const full = await store.put({
+    fingerprint,
+    provider: 'p',
+    model: 'm',
+    measuredAt: 90_000,
+    scores: { structured: 1, ocr: 0.8, grounding: 0.7, document: 0.9, general: 0.8 },
+    medianLatencyMs: { general: 500 },
+    fixtureCount: 6,
+    failureCount: 0,
+  })
+  const writesAfterFull = mem.writes.length
+  const returned = await store.put({
+    fingerprint,
+    provider: 'p',
+    model: 'm',
+    measuredAt: 100_000,
+    scores: { ocr: 1, general: 1 },
+    medianLatencyMs: { general: 400 },
+    fixtureCount: 3,
+    failureCount: 0,
+  })
+  assert.deepEqual(returned, full)
+  assert.deepEqual(await store.get(fingerprint), full)
+  assert.equal(mem.writes.length, writesAfterFull)
 })
 
 test('corrupt or stale capability cache fails soft instead of poisoning routing', async () => {
