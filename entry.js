@@ -31,6 +31,8 @@ import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
+import { withVisionCircuitBreakerObserver } from './lib/vision-breaker-observer.js'
+import { createVisionBreakerShadowHealth } from './lib/vision-breaker-shadow-health.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -225,6 +227,10 @@ export function apply(ctx, config = {}) {
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
   const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
+  // Capture the exact private v1 breaker only while core.apply constructs it.
+  // Shadow receives a peek-only view, so observation cannot mutate cleanup/LRU
+  // state or change the configured v1 fallback walk.
+  const breakerShadowHealth = createVisionBreakerShadowHealth(structuredCtx)
   // The v2 shadow layer is observational only. It wraps the tool-registration
   // seam outside the structured guard, reads the current candidate pool and
   // measured endpoint profiles, logs a suggested order, then calls the exact
@@ -233,7 +239,11 @@ export function apply(ctx, config = {}) {
     structuredCtx,
     runtimeConfig,
     core,
-    { logger: logging.logger, store: capabilityStore },
+    {
+      logger: logging.logger,
+      store: capabilityStore,
+      healthForCandidate: breakerShadowHealth.healthForCandidate,
+    },
   )
   // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
@@ -317,7 +327,10 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(executionCtx, runtimeConfig)
+    const result = withVisionCircuitBreakerObserver(
+      breakerShadowHealth.capture,
+      () => core.apply(executionCtx, runtimeConfig),
+    )
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
     // Publish the main DeepSeek + 自动识图 route as a derived alias of official
