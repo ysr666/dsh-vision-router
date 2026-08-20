@@ -53,6 +53,16 @@ test('cloud benchmark warns about request count/cost and text-only model uses ex
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /force:\s*force === true/)
 })
 
+test('completed full benchmark can surface bounded grounding diagnostics without exposing endpoint secrets', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /定位详情/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /groundingDiagnostic/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /parse=/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidateSpaces=/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /window\.alert\(groundingDiagnosticText/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /apiKeyEnv/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /endpointCredentialRef/)
+})
+
 test('incomplete selection removes benchmark controls and observer ignores unrelated streaming mutations', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function completeSelection\(selected\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /removeControl\(row\)/)
