@@ -85,6 +85,52 @@ test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route
   assert.match(candidate.endpoint, /^dsh-adapter:\/\/registered\/deepseek-official$/)
 })
 
+test('configured pi-ai provider keeps its exact endpoint credential ref private for benchmark execution', async () => {
+  const config = {
+    providers: [{ provider: 'zhipu-glm', model: 'glm-4.6v-flash', fallbacks: [] }],
+  }
+  const ctx = {
+    get(name) {
+      if (name !== 'settings') return undefined
+      return {
+        get(namespace) {
+          if (namespace === 'vision-router') return config
+          if (namespace === 'llm-pi-ai') {
+            return {
+              providers: {
+                'zhipu-glm': {
+                  baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+                  api: 'openai-completions',
+                  apiKeyEnv: 'ZHIPU_API_KEY',
+                },
+              },
+            }
+          }
+          return undefined
+        },
+      }
+    },
+    llm: {
+      listProviders: () => [],
+      registration() { return { adapter: { constructor: { name: 'PiAiAdapter' } } } },
+      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
+    },
+  }
+  const rows = await collectCapabilityShadowCandidates(
+    ctx,
+    config,
+    { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
+    { async get() { return undefined } },
+  )
+  const candidate = rows.find((row) => row.provider === 'zhipu-glm' && row.model === 'glm-4.6v-flash')
+  assert.ok(candidate)
+  assert.equal(candidate.evidenceScope, 'endpoint')
+  assert.equal(candidate.endpoint, 'https://open.bigmodel.cn/api/paas/v4')
+  assert.equal(candidate.endpointConfig.api, 'openai-completions')
+  assert.equal(candidate.endpointCredentialRef, 'ZHIPU_API_KEY')
+  assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
+})
+
 test('shadow plan mirrors the current candidate order but may recommend a different capability specialist', async () => {
   const ctx = fakeCtx().ctx
   const core = fakeCore()
