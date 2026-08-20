@@ -51,37 +51,50 @@ Use a pool with at least two different vision backends when possible. Try severa
 
 For a generic follow-up `vision_describe`, verify that a preceding successful `vision_bootstrap` can feed the normalized #178 scene signal into shadow intent selection without changing the tool result.
 
+For breaker validation, deliberately trip one configured backend with an auth/rate-limit/turn-scoped deterministic failure, then make a later visual tool call in the relevant scope. Shadow should report that backend in `blocked=[...]` and rank it below healthy candidates while v1 still performs the actual skip through its existing breaker.
+
 ## Log format
 
 Search the server log for `v2 shadow`. A line currently looks like:
 
 ```text
-vision-router: v2 shadow intent=ocr strategy=balanced current=[A -> B -> C] suggested=[B -> A -> C] measured=[A, B]
+vision-router: v2 shadow mode=ordered preference=balanced intent=ocr strategy=balanced current=[A -> B -> C] suggested=[B -> A -> C] measured=[A, B] blocked=[C]
 ```
 
+- `mode` / `preference`: resolved product routing contract;
 - `intent`: capability inferred for the observed visual tool call;
-- `strategy`: active shadow policy;
+- `strategy`: internal scorer policy derived from the product preference;
 - `current`: candidate order observed by the outer v2 layer;
 - `suggested`: capability-aware ranking;
-- `measured`: candidates whose non-expired exact `ep2_` profile was found in the shared benchmark store.
+- `measured`: candidates whose non-expired exact `ep2_` profile was found in the shared benchmark store;
+- `blocked`: candidates that the same live v1 breaker currently reports as circuit-open/rate-limited through its read-only `peek()` path.
 
 The full scorer explanation is available inside the shadow plan for tests/diagnostics even though the normal log line stays compact.
 
 ## Safety contract
 
-Shadow mode must not alter results merely by being enabled. The wrapper computes/logs a plan and then calls the original visual tool implementation unchanged. It does not reorder, skip, retry, or replace a backend. With shadow disabled it does no per-tool candidate enumeration.
+Shadow mode must not alter results merely by being enabled. The wrapper computes/logs a plan and then calls the original visual tool implementation unchanged. It does not reorder, skip, retry, or replace a backend. With shadow disabled it does no per-tool candidate enumeration or breaker-health reads.
 
 Actual v1 execution continues to apply its existing fallback logic, circuit breaker, deadlines, resource governance, local-model stabilization, and compatibility bridges.
 
 Benchmark execution is a separate explicit user action. Its exact invoker disables Vision Router fallback. Normal DSH providers are attempted through their exact registered adapter/provider/model first; only a v1-compatible bridge condition may bridge to the same provider/model's exact HTTP endpoint. Plugin-owned `vision-http` routes use their exact configured HTTP backend directly. Benchmark failures must never silently fall through to another visual backend.
 
-## Current breaker limitation
+## Read-only breaker health seam
 
-The v2 scoring core supports circuit-open/rate-limit/recent-failure health input, but the live v1 breaker is private inside `index.js`. The rebuilt outer shadow layer intentionally does not duplicate or reach through that closure.
+Shadow health now reads the **same live v1 circuit breaker** rather than duplicating it. `createVisionCircuitBreaker()` exposes a side-effect-free `peek()` operation: unlike execution-time `inspect()`, it does not prune expired entries, refresh LRU order, or otherwise mutate breaker state.
 
-Therefore **shadow health is currently neutral/default**. Do not interpret a recommendation for a backend that v1 subsequently skips as evidence that the breaker is wrong; it means shadow has not yet been given the read-only breaker snapshot.
+The breaker instance is captured only inside the async scope in which `core.apply()` constructs it. There is no process-global "latest breaker" singleton, so multiple plugin/profile construction paths cannot accidentally share health state. The outer bridge reconstructs the same session+turn scope and credential fingerprint class used by v1, then maps `peek()` into shadow health evidence.
 
-Before any execution-changing `capabilityRouting` switch is added, expose a narrow read-only health snapshot from the existing v1 breaker and feed that into shadow scoring.
+This seam remains observational. A circuit-open result can change only `suggestedOrder`; it cannot skip, reorder, retry, clear, or record anything in v1. If health observation itself fails, the candidate is treated as neutral rather than unhealthy and the original tool call proceeds unchanged.
+
+Regression tests lock the key invariants:
+
+- peeking with a changed credential does not clear the old auth trip;
+- peeking an expired cooldown does not prune stored state;
+- peeking does not refresh breaker LRU order;
+- async scoped construction captures the correct breaker without a global singleton;
+- the bridge maps the actual session turn and credential fingerprint into health;
+- disabled shadow performs zero health reads.
 
 ## Evidence gate for real routing
 
@@ -91,7 +104,7 @@ The useful questions before opt-in runtime routing are:
 2. Do endpoint-specific measured profiles improve those choices compared with family priors?
 3. Are quick/full generated fixtures discriminative enough, or do some intents need stronger fixtures?
 4. Are score differences stable across repeat full runs rather than artifacts of one synthetic example?
-5. After breaker health is exposed, does shadow avoid backends v1 correctly considers unhealthy?
+5. When v1 considers a backend unhealthy, does shadow consistently demote the same backend without changing execution behavior?
 6. Does enabling shadow leave tool outputs/latency within the expected observational overhead?
 
 If these are not convincing, improve evidence/scoring first. Do not enable real routing to compensate for weak shadow results.
