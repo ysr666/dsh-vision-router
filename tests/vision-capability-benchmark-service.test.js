@@ -81,6 +81,62 @@ test('exact invoker sends one selected vision-http provider directly and never e
   assert.equal(result.usedFingerprint, backend.fingerprint)
 })
 
+test('endpoint-backed registered provider benchmarks the resolved exact HTTP endpoint instead of detouring through the DSH adapter', async () => {
+  const candidate = {
+    key: 'zhipu-glm/glm-4.6v-flash',
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v-flash',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    endpointConfig: { api: 'openai-completions' },
+    endpointCredentialRef: 'ZHIPU_API_KEY',
+    evidenceScope: 'endpoint',
+  }
+  const ctx = {
+    get(name) {
+      if (name === 'credentials') {
+        return { async resolve(ref) { return ref === 'ZHIPU_API_KEY' ? { value: 'secret' } : undefined } }
+      }
+      return undefined
+    },
+    llm: {
+      stream() {
+        throw new Error('adapter path must not be used for endpoint-scoped evidence')
+      },
+    },
+  }
+  const calls = []
+  const core = { localProvidersOf: () => [], httpProvidersOf: () => [] }
+  const invoke = createExactCapabilityInvoker(ctx, core, candidate, {}, {
+    renderFixture: async () => Buffer.from('png'),
+    callDirect: async (provider, messages, options) => {
+      calls.push({ provider, messages, options })
+      assert.equal(await options.resolveCredential(provider.apiKeyEnv), 'secret')
+      return 'zhipu exact answer'
+    },
+  })
+  const backend = {
+    provider: candidate.provider,
+    model: candidate.model,
+    endpoint: candidate.endpoint,
+    config: candidate.endpointConfig,
+  }
+  backend.fingerprint = capabilityBenchmarkFingerprint(backend)
+  const result = await invoke({
+    backend,
+    fixture: { id: 'zhipu', svg: '<svg/>', prompt: 'describe' },
+    exactBackend: true,
+    allowFallback: false,
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].provider.name, 'zhipu-glm')
+  assert.equal(calls[0].provider.baseURL, candidate.endpoint)
+  assert.equal(calls[0].provider.model, candidate.model)
+  assert.equal(calls[0].provider.apiKeyEnv, 'ZHIPU_API_KEY')
+  assert.equal(calls[0].messages[0].content[0].type, 'image_url')
+  assert.equal(result.output, 'zhipu exact answer')
+  assert.equal(result.usedFingerprint, backend.fingerprint)
+})
+
 test('exact adapter benchmark awaits Promise<AsyncIterable> from llm.stream', async () => {
   const ctx = {
     get(name) {
@@ -189,7 +245,7 @@ test('exact invoker rejects a caller that tries to enable fallback semantics', a
   )
 })
 
-test('manager lists benchmarkable endpoints without exposing the endpoint URL', async () => {
+test('manager lists benchmarkable endpoints without exposing endpoint or credential routing details', async () => {
   const config = { providers: [] }
   const ctx = fakeCtx(config)
   const core = fakeCore()
@@ -200,6 +256,7 @@ test('manager lists benchmarkable endpoints without exposing the endpoint URL', 
   assert.equal(snapshot.candidates.length, 2)
   assert.ok(snapshot.candidates.every((candidate) => candidate.benchmarkable === true))
   assert.ok(snapshot.candidates.every((candidate) => !('endpoint' in candidate)))
+  assert.ok(snapshot.candidates.every((candidate) => !('endpointCredentialRef' in candidate)))
   assert.ok(snapshot.candidates.every((candidate) => /^ep2_[0-9a-f]{32}$/.test(candidate.fingerprint)))
 })
 
