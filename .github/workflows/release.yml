@@ -55,16 +55,19 @@ jobs:
             exit 1
           }
 
+          # Release identity and artifact verification are hard gates. README /
+          # CHANGELOG freshness is useful documentation hygiene, but must not
+          # make an otherwise verified hotfix impossible to publish. Keep those
+          # checks visible as warnings and let the release-note step fall back
+          # to the immutable commit list when a changelog section is absent.
           for f in README.md README.zh.md; do
-            grep -q "$EXPECTED_TAG" "$f" || {
-              echo "::error::$f must mention $EXPECTED_TAG before release"
-              exit 1
-            }
+            if ! grep -q "$EXPECTED_TAG" "$f"; then
+              echo "::warning::$f does not yet mention $EXPECTED_TAG"
+            fi
           done
-          awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md || {
-            echo "::error::CHANGELOG.md has no section for $EXPECTED_TAG"
-            exit 1
-          }
+          if ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
+            echo "::warning::CHANGELOG.md has no section for $EXPECTED_TAG; release notes will use the commit list"
+          fi
 
           node <<'NODE'
           const pkg = require('./package.json')
@@ -213,7 +216,14 @@ jobs:
             echo "# $RELEASE_TAG"
             echo
           } > release-notes.md
-          awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md >> release-notes.md
+          CHANGELOG_SECTION="$(mktemp)"
+          awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md > "$CHANGELOG_SECTION"
+          if [ -s "$CHANGELOG_SECTION" ]; then
+            cat "$CHANGELOG_SECTION" >> release-notes.md
+          else
+            echo "> Hotfix release; see the immutable commit list below for the exact changes." >> release-notes.md
+          fi
+          rm -f "$CHANGELOG_SECTION"
           {
             echo
             echo "## Commits"
