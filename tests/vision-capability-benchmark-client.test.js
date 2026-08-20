@@ -56,6 +56,8 @@ test('cloud benchmark warns about request count/cost and text-only model uses ex
 test('completed full benchmark can surface bounded grounding diagnostics without exposing endpoint secrets', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /定位详情/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /groundingDiagnostic/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidate\.measured && candidate\.measured\.groundingDiagnostic/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /groundingDiagnostic \? groundingDiagnosticText\(groundingDiagnostic\) : measuredText/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /parse=/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidateSpaces=/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /window\.alert\(groundingDiagnosticText/)
