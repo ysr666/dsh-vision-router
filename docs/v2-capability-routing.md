@@ -4,7 +4,7 @@ This document is the design target for the v2 routing architecture. The implemen
 
 ## Current implementation status
 
-PR #142 was rebuilt from current `main` instead of copying its old high-conflict `index.js`, `lib/client.js`, and `package.json` changes wholesale. The pre-rebuild head remains preserved on `backup/v2-capability-router-pre-rebase-20260820` for history/recovery.
+PR #142 was rebuilt from current `main` instead of copying its old high-conflict `index.js`, `lib/client.js`, and `package.json` changes wholesale. The pre-rebuild heads remain preserved on backup branches for history/recovery.
 
 Implemented on the rebuilt branch:
 
@@ -16,8 +16,11 @@ Implemented on the rebuilt branch:
 - exact-backend benchmark execution with Vision Router fallback explicitly disabled;
 - atomic persisted measured profiles under the existing DSH Vision Router cache area;
 - default-off runtime shadow observation at the visual-tool boundary;
-- a per-model **Test capabilities / 测试能力** control in Vision Router's existing model rows;
-- measured capability/latency summaries shown next to the tested model;
+- per-model **快速测试 / Quick test**, **完整测试 / Full test**, and text-only **强制验证 / Force verify** controls;
+- a server-side FIFO benchmark queue with de-duplication, progress, browser-refresh recovery, cancellation, and one actual benchmark running at a time;
+- measured capability/latency summaries with fixed score order, freshness and confidence labels;
+- operational failure classification and fail-fast behavior for auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures;
+- grounding-coordinate normalization before IoU scoring;
 - all v2 suites are included in the normal package test command.
 
 Not implemented yet:
@@ -33,7 +36,7 @@ The old temporary workflow/script that modified the branch and committed/pushed 
 
 The **scene-aware routing direction** in this v2 design was informed in part by earlier discussions with [@shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) and his earlier `dsh-vision` work: classify the visual scene/content first, then use that signal to guide a more suitable visual path instead of forcing every image through one undifferentiated chain.
 
-That attribution is scoped to the concept/direction. The capability-aware backend profile/scoring model, health/cost/privacy weighting, shadow observation, evidence-aware model reference, self-benchmark/fingerprint design, persistence, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
+That attribution is scoped to the concept/direction. The capability-aware backend profile/scoring model, health/cost/privacy weighting, shadow observation, evidence-aware model reference, self-benchmark/fingerprint design, persistence, queueing, and the concrete v2 router architecture in this document are engineered for `dsh-vision-router`.
 
 PR #178 has merged into `main`. Its normalized structured-bootstrap contract is now the stable scene-classification input for v2. `content_kind` remains subject metadata; it does not by itself turn a machine or architecture photo into a `chart_diagram` task.
 
@@ -106,41 +109,96 @@ Unknown models stay explicitly unverified until stronger evidence exists.
 
 ## Exact-backend self-benchmark
 
-`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns sequential execution and persisted profile records. `lib/vision-capability-benchmark-service.js` binds those primitives to the current executable backend pool.
+`lib/vision-capability-benchmark.js` owns generated privacy-safe fixtures, scoring, aggregation and `ep2_` fingerprints. `lib/vision-capability-probe.js` owns sequential fixture execution and persisted profile records. `lib/vision-capability-benchmark-service.js` owns the current executable pool, queue, exact invoker, job state, failure policy and browser API.
 
 The benchmark contract is intentionally strict:
 
-- fixtures run sequentially against one selected backend;
+- only one actual benchmark runs at a time; additional models join a FIFO queue;
+- duplicate clicks for an already queued/running backend are de-duplicated;
+- a queued job revalidates the selected provider/model/fingerprint before it starts, so settings changes cannot write evidence under the wrong route;
+- the in-memory active queue is bounded (32 jobs) and is intentionally not resumed after a DSH process restart; browser refreshes do recover the live queue/job state;
+- fixtures for one backend run sequentially, keeping latency comparable and avoiding local GPU/API concurrency distortion;
 - Vision Router fallback is disabled;
-- direct `vision-http` entries call exactly the selected provider entry once;
-- registered DSH adapters are called with the exact provider/model rather than the Vision Router fallback walk;
+- endpoint-scoped OpenAI Chat Completions providers call the exact endpoint/model directly;
+- routes without a supported exact HTTP path use the exact registered DSH adapter/provider/model rather than the Vision Router fallback walk;
 - a changed/mismatched endpoint fingerprint is rejected before persistence;
-- ordinary provider failures become zero-score evidence for that endpoint rather than silently switching to another model;
+- auth, rate-limit, timeout, network, unsupported-image, unsupported-protocol and benchmark-infrastructure errors fail fast on the first affected fixture instead of spending the rest of the request budget;
+- operational failures never overwrite an existing valid profile;
+- a lower-coverage quick retest never replaces a richer full profile for the same fingerprint;
 - persisted records contain fingerprint, provider/model identity, scores, latency summary, fixture/failure counts and timestamp only;
 - endpoint URLs, API keys and arbitrary provider configuration are not persisted in the capability profile record or returned to the browser.
 
-Profile state is stored as an atomic mode-`0600` JSON cache under `~/.dsh/cache/vision-router/`. Corrupt and expired entries fail soft.
+Profile state is stored as an atomic mode-`0600` JSON cache under `~/.dsh/cache/vision-router/`. The default profile retention is 30 days. In the UI, results are `fresh` for 7 days, marked stale from 7–30 days, and no longer exposed as measured routing evidence after 30 days. Shadow scoring uses the same 30-day hard cutoff.
 
-Current generated fixtures cover:
+### Quick vs full benchmark
+
+The default **Quick test** is deliberately small:
+
+- Latin/UI OCR;
+- Chinese chat OCR;
+- general scene understanding.
+
+That is three model requests and produces a **low-confidence basic profile**. It does not claim to have measured structure, document parsing or grounding.
+
+The **Full test** runs six requests:
 
 - structured baseline;
 - Latin/UI OCR;
-- Chinese chat screenshot OCR;
+- Chinese chat OCR;
 - grounding;
 - document/table reading;
 - general scene understanding.
 
-Future fixture expansion can cover detection, UI relationships, chart/diagram reasoning and code screenshots without changing the evidence contract.
+A successful six-fixture profile is currently labeled **medium confidence**. The fixture set is intentionally small and must not be presented as an external/authoritative benchmark.
 
-## Test model capabilities UI
+### Grounding normalization
 
-Vision Router's existing model rows receive a small **测试能力 / Test capabilities** control through a separate browser prelude. This avoids rewriting the v1.7 settings component or its save/readback path.
+Grounding is scored on geometric accuracy, not strict output syntax alone. Before IoU is computed, the scorer accepts common response shapes (`x1/y1/x2/y2`, `left/top/right/bottom`, `x/y/width/height`, nested `bbox`/`box`, or a four-number array) and normalizes common coordinate spaces:
 
-The browser can see only the public candidate key, provider/model identity, locality, fingerprint, benchmarkability and measured score summary. It cannot see the endpoint URL or credentials. Clicking the control starts the exact benchmark service; while running, the UI explicitly reports that fallback is disabled. A successful run immediately updates the shared measured-profile store and the displayed score/latency summary.
+- image pixels;
+- normalized `0..1`;
+- percentages `0..100`;
+- common normalized `0..1000` coordinates.
 
-The DOM observer is scoped to insertion of `.vr-chain-row` settings nodes, so normal streaming chat DOM updates do not continuously trigger settings-row scans.
+The score details retain `formatValid`, response shape and detected coordinate space so a formatting issue is distinguishable from poor localization.
 
-This UI does **not** mutate Vision Router settings.
+## Benchmark queue and UI
+
+Vision Router's existing model rows receive an independent second-line benchmark control through a separate browser prelude. This avoids rewriting the v1.7 settings component or its save/readback path.
+
+Normal rows expose **快速测试 / Quick test** and **完整测试 / Full test**. Models that DSH explicitly declares text-only do not present a normal capability test; they expose **强制验证 / Force verify** so users can explicitly test providers whose catalog metadata is known to be wrong.
+
+Queue UX:
+
+```text
+running:  测试中 1/3 · OCR · 5.2s                 [停止测试]
+queued:   排队中 · 第1位 · 快速测试               [取消排队]
+finished: OCR 82 · 通用 91 · 中位 4.8s · 刚刚 · 低置信度
+```
+
+The browser polls while work is active, so refreshing the settings page restores running/queued progress. It can cancel queued work or abort the currently running job.
+
+Cloud backends that are not known-free show a confirmation explaining the approximate number of generated-image requests (quick ≈3, full ≈6) and that API charges may apply. Local/known-free backends do not show that cost warning.
+
+Failure labels distinguish at least:
+
+- authentication failure;
+- rate limit;
+- timeout;
+- image input rejected;
+- benchmark protocol unsupported;
+- benchmark infrastructure failure;
+- network failure;
+- generic provider failure;
+- cancellation.
+
+If a retest fails while a previous valid profile exists, the UI keeps the previous scores and reports the new failure separately.
+
+The browser can see only public candidate identity/locality/protocol/fingerprint/benchmarkability, job state and measured summary. It cannot see endpoint URLs or credentials. The DOM observer is scoped to Vision Router's model-chain rows, so normal streaming chat DOM updates do not continuously trigger settings-row scans. The benchmark UI never mutates Vision Router settings.
+
+### Adapter-route attachment note
+
+Exact HTTP endpoint tests send the generated fixture as request-local image data and do not create DSH attachments. A forced adapter-route test may need `ctx.attachments.saveImage()` because that is how the DSH adapter receives an image. DSH's public attachment service is immutable and currently exposes validate/save/read rather than deletion. The benchmark fixtures are deterministic/content-addressed, so repeat runs reuse a finite fixture set instead of intentionally creating unique test images each time; a future upstream retention seam can be used if one becomes available.
 
 ## Ranking
 
@@ -169,7 +227,7 @@ Therefore the **current shadow runtime treats health as neutral/default** while 
 
 ## Runtime shadow routing
 
-`capabilityRoutingShadow` defaults to `false`. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, enumerates the current candidate pool, loads measured `ep2_` profiles where available, and logs:
+`capabilityRoutingShadow` defaults to `false`. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, enumerates the current candidate pool, loads non-expired measured `ep2_` profiles where available, and logs:
 
 ```text
 intent / strategy
@@ -196,12 +254,12 @@ Next work inside this phase:
 
 - expose a narrow read-only snapshot of v1 breaker health to shadow scoring;
 - collect/inspect shadow diagnostics across real provider combinations;
-- expand fixtures where the current six-fixture set is too weak;
+- expand fixtures where the current quick/full set is too weak;
 - only after validation, consider the agent `preferredBackend` comparison experiment.
 
 ### Phase 3 — benchmark UI
 
-Implemented experimentally: per-model exact capability testing plus persisted measured tags/latency. It still needs real DSH browser/provider validation before being considered stable UX.
+Implemented experimentally: quick/full exact capability testing, FIFO queue, progress/cancel, failure classification, freshness/confidence and persisted measured tags/latency. It still needs real DSH browser/provider validation before being considered stable UX.
 
 ### Phase 4 — opt-in runtime routing
 
