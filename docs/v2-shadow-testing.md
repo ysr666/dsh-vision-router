@@ -19,20 +19,21 @@ Before comparing shadow rankings, benchmark relevant model rows where possible s
 
 ## Benchmark first
 
-Use **快速测试 / Quick test** for a cheap basic profile and **完整测试 / Full test** when the shadow comparison needs structured/document/grounding evidence.
+Each model row now keeps the main settings UI compact: it shows a concise capability summary plus one **测评 / Benchmark** entry. Open that panel to choose **快速测试 / Quick test** or **完整测试 / Full test**.
 
 - Quick: 3 sequential requests — Latin/UI OCR, Chinese chat OCR, general scene. This is low-confidence evidence.
 - Full: 6 sequential requests — structured, two OCR fixtures, grounding, document/table, general scene. This is currently medium-confidence evidence.
 - Multiple models may be queued. Only one benchmark actually executes at a time; later models show a FIFO queue position.
 - Browser refresh recovers the in-process running/queued state. A DSH process restart intentionally does not resume chargeable benchmark jobs.
-- Running and queued jobs can be stopped/cancelled.
+- While active, the one normal Benchmark button temporarily becomes **Stop** or **Cancel** on the model row; quick/full/force/diagnostic actions do not permanently crowd the row.
 - Auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures fail fast rather than consuming the remaining fixture requests.
 - A failed retest does not overwrite the last valid profile, and a quick retest cannot downgrade a richer full profile.
 - Results older than 7 days are marked stale; results older than 30 days are not used as measured shadow evidence.
-- Cloud models may prompt for confirmation because quick/full tests send about 3/6 generated-image requests and may incur provider charges.
-- Models explicitly declared text-only by DSH require **强制验证 / Force verify** rather than a normal benchmark action.
+- Cloud models show an in-panel note because quick/full tests send about 3/6 generated-image requests and may incur provider charges.
+- Models explicitly declared text-only by DSH expose **Force verify image support** only inside the benchmark panel.
+- Older full profiles that have a grounding score but no persisted grounding diagnostic expose a one-request **Diagnose grounding** action. A successful repair updates only grounding evidence while retaining the rest of the richer full profile.
 
-Grounding scores normalize common pixel, 0..1, percent, and 0..1000 coordinate conventions before IoU. A strict JSON/coordinate-format mismatch should therefore not be interpreted automatically as zero localization ability.
+Grounding scores normalize common pixel, 0..1, percent, and 0..1000 coordinate conventions before IoU. Common GLM box wrappers/arrays are accepted. Grounding details are shown in the in-app benchmark panel; parser/coordinate internals are collapsed under **Developer details** rather than shown through a native browser alert.
 
 ## What to test
 
@@ -72,7 +73,7 @@ Shadow mode must not alter results merely by being enabled. The wrapper computes
 
 Actual v1 execution continues to apply its existing fallback logic, circuit breaker, deadlines, resource governance, local-model stabilization, and compatibility bridges.
 
-Benchmark execution is a separate explicit user action. Its exact invoker disables Vision Router fallback and either targets a supported exact HTTP endpoint/model or the exact registered DSH adapter/provider/model. Benchmark failures must never silently fall through to another visual backend.
+Benchmark execution is a separate explicit user action. Its exact invoker disables Vision Router fallback. Normal DSH providers are attempted through their exact registered adapter/provider/model first; only a v1-compatible bridge condition may bridge to the same provider/model's exact HTTP endpoint. Plugin-owned `vision-http` routes use their exact configured HTTP backend directly. Benchmark failures must never silently fall through to another visual backend.
 
 ## Current breaker limitation
 
