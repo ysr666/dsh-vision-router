@@ -2,6 +2,21 @@
 
 This document is the design target for the v2 routing architecture. The implementation on `feat/v2-capability-router` was rebuilt on current `main` after the v1.7.x stabilization cycle, including the DSH rc.8 compatibility work. The branch deliberately keeps the current v1 execution order authoritative while capability routing is measured in shadow mode.
 
+## Product contract first
+
+Vision Router should not ask normal users whether they want to "enable v2" or "enable capability routing". Those are implementation concepts. The user-facing decision is:
+
+- **Routing mode**: `auto` or `ordered`;
+- **Routing preference**: `balanced`, `quality`, `speed`, or `local`.
+
+In UI language these become **自动选择 / Auto select**, **固定顺序 / Fixed order**, **均衡 / Balanced**, **效果优先 / Quality**, **速度优先 / Speed**, and **本地优先 / Local first**.
+
+`capabilityRoutingShadow` remains an internal development/validation control. It is not the product switch. The scorer's historical internal `privacy` strategy is mapped from the clearer user-facing `local` preference rather than exposed directly.
+
+The current draft defaults to `routingMode: ordered` because execution-changing auto routing is not wired yet. This avoids presenting a switch that the runtime cannot honestly honor. Once auto execution has passed shadow, breaker-health, cost/locality and real-provider validation gates, the stable 2.0 release can make `auto` the default for new installations while keeping `ordered` permanently available for deterministic behavior.
+
+A configured model order is not disposable metadata. It can encode cost, privacy/locality, speed and personal preference. Auto routing therefore must be conservative: weak or missing evidence should preserve the configured order; only sufficiently strong evidence or health constraints should justify moving away from it.
+
 ## Current implementation status
 
 PR #142 was rebuilt from current `main` instead of copying its old high-conflict `index.js`, `lib/client.js`, and `package.json` changes wholesale. The pre-rebuild heads remain preserved on backup branches for history/recovery.
@@ -9,6 +24,7 @@ PR #142 was rebuilt from current `main` instead of copying its old high-conflict
 Implemented on the rebuilt branch:
 
 - stable visual intent vocabulary and tool -> intent mapping;
+- explicit product semantics for `routingMode` and `routingPreference`, with old prototype strategy names kept only as compatibility input;
 - capability profiles, conservative family priors, measured evidence, user overrides, and policy-aware scoring;
 - the stable scene signals from merged PR #178 (`visual_kind`, `content_kind`, `mixed_of`) are consumed rather than reimplemented;
 - evidence-aware model reference generation;
@@ -25,8 +41,8 @@ Implemented on the rebuilt branch:
 
 Not implemented yet:
 
-- execution-changing `capabilityRouting`;
-- making v2 ordering the actual fallback order;
+- execution-changing `routingMode: auto`;
+- a conservative evidence threshold/order-prior policy for real auto routing;
 - exposing the current v1 circuit-breaker state to the outer shadow layer;
 - the agent `preferredBackend` experiment from the original prototype.
 
@@ -56,9 +72,9 @@ image
   -> normalized visual_kind / content_kind / mixed_of
   -> DeepSeek reasons over the user's request + baseline
   -> visual tool intent (ocr / grounding / detection / ui / ...)
-  -> capability router scores the current backend pool
-  -> shadow: compare recommendation with current v1 order
-  -> future opt-in runtime: best healthy backend executes first
+  -> capability router evaluates the current backend pool
+  -> shadow: compare recommendation with current ordered execution
+  -> future auto mode: reorder only when evidence/health justifies it
 ```
 
 The agent should not receive a permanent hard-coded leaderboard. Model selection belongs primarily inside Vision Router and should be backed by evidence from the exact endpoint the user configured.
@@ -105,7 +121,7 @@ Evidence order:
 4. **conservative family prior**;
 5. **unknown generic prior** so future models remain routable without invented specialist strengths.
 
-Unknown models stay explicitly unverified until stronger evidence exists.
+Unknown models stay explicitly unverified until stronger evidence exists. Benchmarking is an enhancement, not an initialization requirement: unmeasured models remain usable and auto routing must fall back conservatively toward configured order when evidence is weak.
 
 ## Exact-backend self-benchmark
 
@@ -201,43 +217,36 @@ The browser can see only public candidate identity/locality/protocol/fingerprint
 
 Exact HTTP endpoint tests send the generated fixture as request-local image data and do not create DSH attachments. An adapter-route test may need `ctx.attachments.saveImage()` because that is how the DSH adapter receives an image. DSH's public attachment service is immutable and currently exposes validate/save/read rather than deletion. The benchmark fixtures are deterministic/content-addressed, so repeat runs reuse a finite fixture set instead of intentionally creating unique test images each time; a future upstream retention seam can be used if one becomes available.
 
-## Ranking
+## Ranking and conservative auto-routing
 
-A candidate score can combine:
+The scoring core can combine:
 
 - capability match for the current intent;
 - backend health;
 - latency;
 - cost/free status;
-- local/privacy preference.
+- local/private execution.
 
-User-facing policies:
+The product preferences map to those weights as follows:
 
-- `quality`
-- `balanced`
-- `speed`
-- `privacy`
+- `balanced` — balanced capability, health, latency and cost;
+- `quality` — place more weight on measured capability;
+- `speed` — place more weight on latency;
+- `local` — strongly prefer local/private execution (currently mapped internally to the historical `privacy` scoring strategy).
 
-The existing configured order remains the deterministic tie-breaker.
+The current shadow scorer still uses configured order only as a deterministic tie-breaker. **That is not the final auto-routing policy.** Before `routingMode: auto` may alter execution, configured order must become an explicit preference prior / conservative gate: small score differences or low-confidence evidence keep the user's order; meaningful measured differences or unhealthy backends can justify a reorder. Auto mode must also avoid silently escalating from local/free choices to paid cloud merely because a cloud model has a slightly higher capability prior.
 
-### Current health caveat
+## Current health caveat
 
 The scoring core already supports circuit-open/rate-limit/recent-failure health input. The current v1 circuit breaker, however, is internal to `index.js`; the rebuilt outer shadow layer intentionally does not reach through that private closure.
 
-Therefore the **current shadow runtime treats health as neutral/default** while comparing capability/latency/cost/privacy evidence. Actual v1 execution still applies its real circuit breaker normally. Before any execution-changing v2 routing is enabled, the next runtime seam should expose a narrow read-only breaker snapshot to shadow scoring rather than copying or replacing the v1 breaker implementation.
+Therefore the **current shadow runtime treats health as neutral/default** while comparing capability/latency/cost/privacy evidence. Actual v1 execution still applies its real circuit breaker normally. Before any execution-changing auto routing is enabled, the next runtime seam should expose a narrow read-only breaker snapshot to shadow scoring rather than copying or replacing the v1 breaker implementation.
 
 ## Runtime shadow routing
 
-`capabilityRoutingShadow` defaults to `false`. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, enumerates the current candidate pool, loads non-expired measured `ep2_` profiles where available, and logs:
+`capabilityRoutingShadow` defaults to `false`. It is a developer validation flag, not a user-facing routing mode. When enabled, the outer tool boundary observes supported visual tool calls, derives the intent, resolves the product `routingMode` / `routingPreference`, enumerates the current candidate pool, loads non-expired measured `ep2_` profiles where available, and logs the current order against the scorer's suggested order.
 
-```text
-intent / strategy
-current candidate order
-v2 suggested order
-which candidates have measured evidence
-```
-
-The wrapper then invokes the original tool implementation unchanged. It does **not** reorder, skip, retry or replace any backend. With shadow disabled it does no candidate enumeration for tool calls.
+The wrapper then invokes the original tool implementation unchanged. It does **not** reorder, skip, retry or replace any backend. With shadow disabled it does no per-tool candidate enumeration for tool calls.
 
 The bootstrap evidence is remembered per session only for shadow intent fallback, allowing a later generic `vision_describe` to reuse #178's normalized scene classification without changing the actual tool result.
 
@@ -245,14 +254,15 @@ The bootstrap evidence is remembered per session only for shadow intent fallback
 
 ### Phase 1 — capability/evidence core
 
-Implemented: intent mapping, #178 scene bridge, profiles, priors, measured evidence merge, policies, scorer, diagnostics, fixtures, endpoint fingerprints and persistence.
+Implemented: intent mapping, #178 scene bridge, profiles, priors, measured evidence merge, product routing vocabulary, policies, scorer, diagnostics, fixtures, endpoint fingerprints and persistence.
 
 ### Phase 2 — shadow validation
 
-Implemented in default-off form: compare the current candidate order with v2 scoring while v1 remains authoritative.
+Implemented in default-off form: compare the current candidate order with v2 scoring while ordered v1 execution remains authoritative.
 
 Next work inside this phase:
 
+- make configured order an explicit conservative preference signal rather than only a tie-breaker;
 - expose a narrow read-only snapshot of v1 breaker health to shadow scoring;
 - collect/inspect shadow diagnostics across real provider combinations;
 - expand fixtures where the current quick/full set is too weak;
@@ -262,10 +272,12 @@ Next work inside this phase:
 
 Implemented experimentally: compact one-entry benchmark UI, secondary quick/full/force/diagnostic panel, FIFO queue, progress/cancel, failure classification, freshness/confidence and persisted measured tags/latency. It still needs one final real DSH browser pass before being considered stable UX.
 
-### Phase 4 — opt-in runtime routing
+### Phase 4 — auto execution
 
-Not implemented. Add `capabilityRouting: true` only after shadow/benchmark evidence is trustworthy. It should reuse the existing v1 executor and circuit breaker while changing only candidate ordering.
+Not implemented. Once the conservative order prior and read-only breaker health seam are validated, `routingMode: auto` may reorder candidates while reusing the existing v1 executor and breaker. `routingMode: ordered` must continue to execute strictly in the configured order.
 
-### Phase 5 — v2 default
+There should be no separate user-facing "enable v2" or `capabilityRouting` switch.
 
-Only after opt-in runtime evidence is stable should capability-aware ordering become the normal path. The old fixed chain remains a compatibility behavior during migration.
+### Phase 5 — 2.0 default
+
+Only after auto execution evidence is stable should **new 2.0 installations** default to `routingMode: auto`. Fixed/ordered mode remains a permanent compatibility and deterministic-control option. Upgrade behavior should be chosen separately and conservatively so an update cannot unexpectedly increase paid-cloud usage or violate a user's local-first intent.
