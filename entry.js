@@ -26,6 +26,10 @@ import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
+import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
+import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
+import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
+import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -61,6 +65,15 @@ core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(60000
 // entry serializes exactly the same shape on every supported Host generation.
 core.Config.set('visionDepth', z.union(['fast', 'standard', 'deep', 'custom']).default('standard'))
 core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).default(0))
+
+// v2 shadow controls are deliberately runtime-neutral. The default is off;
+// when enabled the outer tool boundary only computes/logs a candidate ranking
+// and never reorders, skips, retries or replaces the v1 execution chain.
+core.Config.set('capabilityRoutingShadow', z.boolean().default(false))
+core.Config.set(
+  'capabilityRoutingStrategy',
+  z.union(['quality', 'balanced', 'speed', 'privacy']).default('balanced'),
+)
 
 // Settings surfaces and Host persistence must agree on this field. Keep the
 // permission on the public entry contract as well as index.js so a packaged
@@ -107,6 +120,7 @@ export function apply(ctx, config = {}) {
   // every injection callback the original child context identity unchanged.
   const localMutationCtx = installLocalMutationRouteBoundary(ctx)
   const logging = installVisionRouterFileLogging(localMutationCtx)
+  const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
   const delegatedReplayCtx = contextWithDelegatedReplay(logging.ctx, {
     wrapperRoute:
       typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
@@ -196,11 +210,21 @@ export function apply(ctx, config = {}) {
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
   const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
+  // The v2 shadow layer is observational only. It wraps the tool-registration
+  // seam outside the structured guard, reads the current candidate pool and
+  // measured endpoint profiles, logs a suggested order, then calls the exact
+  // original tool implementation. No v1 execution order changes here.
+  const capabilityShadowCtx = installCapabilityShadowRuntime(
+    structuredCtx,
+    runtimeConfig,
+    core,
+    { logger: logging.logger, store: capabilityStore },
+  )
   // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
   // mark the topology dirty and the outer pass reruns to a fixed point, so we
   // neither double-register a twin nor lose a provider added mid-pass.
-  const reconciledCtx = contextWithCoalescedAdapterUpdates(structuredCtx)
+  const reconciledCtx = contextWithCoalescedAdapterUpdates(capabilityShadowCtx)
   // Discover the provider's actual /models list independently of DSH's static
   // catalog. The Host owns credentials/networking/cache; the browser receives
   // model ids only. A live hit is also the evidence required before an
@@ -230,6 +254,10 @@ export function apply(ctx, config = {}) {
   // ordinary chat model picker). The existing classic client bundle stays the
   // DSH module-system artifact, including HMR/source-map behavior.
   installLiveModelClientPrelude(reconciledCtx)
+  // Add an experimental per-row capability test control without modifying the
+  // controlled settings form itself. It talks only to the exact benchmark
+  // service below and never writes Vision Router settings.
+  installCapabilityBenchmarkClient(reconciledCtx)
   // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
   // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
   // backed by exact private-registry evidence. Record the same provenance in
@@ -240,6 +268,13 @@ export function apply(ctx, config = {}) {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+  })
+  // Serve the generated-fixture benchmark through the same local web-capability
+  // boundary as the rest of Vision Router. The manager and shadow scorer share
+  // one persisted profile store so new measurements are visible immediately.
+  installCapabilityBenchmarkService(executionCtx, runtimeConfig, core, {
+    logger: logging.logger,
+    store: capabilityStore,
   })
   // index.js historically passes image bytes as `options.input` to the async
   // execFile API. That option is not fed into child stdin, so Tesseract waits
