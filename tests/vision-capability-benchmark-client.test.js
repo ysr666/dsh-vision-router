@@ -39,6 +39,23 @@ test('capability result occupies a second flex line and does not squeeze provide
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /control\.appendChild\(status\);\s*control\.appendChild\(button\)/)
 })
 
+test('one running benchmark disables every capability button and uses server runningKey after reload', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /var activeRunKey = ''/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function runningKeyOf\(body\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function syncRunningControls\(key\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /button\.disabled = state === 'running' \|\| !!activeRunKey/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /syncRunningControls\(runningKeyOf\(body\)\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /另一个识图模型正在测试，请等待完成/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /Another vision model is being tested; wait for it to finish/)
+})
+
+test('all-fixture failure is rendered as no evidence rather than a fake zero-score profile', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /CAPABILITY_BENCHMARK_NO_USABLE_EVIDENCE/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /未获得有效能力数据；该模型未接受测试图片或所有测试调用失败/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /No usable capability evidence; the model rejected test images or every test call failed/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /status\.title = detail \|\| message \|\| ''/)
+})
+
 test('capability UI observer ignores unrelated streaming DOM mutations', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain\(node\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\(CHAIN_ROOT\)/)
