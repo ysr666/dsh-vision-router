@@ -38,13 +38,13 @@ function fakeCtx(settingsValue) {
   }
 }
 
-function fakeCore(localProviders = []) {
+function fakeCore(localProviders = [], httpProviders = []) {
   return {
     DEFAULT_HTTP_PROVIDERS: [],
     adapterAvailable: () => true,
     decideVisionBackendCapability: () => ({ image: true, attemptable: true }),
     localProvidersOf: () => localProviders,
-    httpProvidersOf: () => [],
+    httpProvidersOf: () => httpProviders,
   }
 }
 
@@ -205,25 +205,50 @@ test('local preference diagnostics show policy movement without pretending it is
   assert.ok(general.diagnostics.configuredPairChecks.some((entry) => entry.outcome === 'local-policy-promotes-right'))
 })
 
-test('diagnostic payload exposes only the secret-safe endpoint fingerprint, not raw endpoint material', async () => {
+test('HTTP diagnostics expose only the secret-safe fingerprint, never raw endpoint or credential-ref material', async () => {
   const now = Date.now()
-  const settings = config()
+  const httpBackend = {
+    name: 'private-cloud',
+    model: 'model-x',
+    baseURL: 'https://private.example.invalid/v1',
+    apiKeyEnv: 'VERY_SECRET_KEY_ENV',
+  }
+  const settings = config({
+    providers: [{ provider: 'vision-http', model: 'private-cloud/model-x', fallbacks: [] }],
+    httpProviders: [httpBackend],
+  })
+  const fingerprint = capabilityBenchmarkFingerprint({
+    provider: 'vision-http',
+    model: 'private-cloud/model-x',
+    endpoint: httpBackend.baseURL,
+    config: { api: 'openai-completions' },
+  })
   const preview = await buildVisionRoutingPreview({
     ctx: fakeCtx(settings),
     config: settings,
-    core: fakeCore(),
-    store: store([
-      profile('alpha', 'vision-a', now - DAY, { general: 0.75 }, { general: 700 }),
-    ]),
+    core: fakeCore([], [httpBackend]),
+    store: store([{
+      fingerprint,
+      provider: 'vision-http',
+      model: 'private-cloud/model-x',
+      measuredAt: now - DAY,
+      source: 'self-benchmark',
+      scores: { general: 0.75 },
+      medianLatencyMs: { general: 700 },
+      fixtureCount: 1,
+      failureCount: 0,
+    }]),
     now,
   })
 
   const serialized = JSON.stringify(preview)
-  assert.doesNotMatch(serialized, /dsh-adapter:\/\/registered/)
-  assert.doesNotMatch(serialized, /baseURL|apiKey|credential/i)
+  assert.doesNotMatch(serialized, /private\.example\.invalid/)
+  assert.doesNotMatch(serialized, /VERY_SECRET_KEY_ENV/)
+  assert.doesNotMatch(serialized, /baseURL|apiKeyEnv|endpointConfig|credential/i)
   const general = row(preview, 'general')
-  const alpha = candidate(general, 'alpha/vision-a')
-  assert.match(alpha.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
+  const entry = candidate(general, 'http:private-cloud/model-x')
+  assert.equal(entry.measuredAxisScore, 0.75)
+  assert.match(entry.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
 test('diagnostics browser layer is GET-only, copyable, refreshable and benchmark-aware', () => {
