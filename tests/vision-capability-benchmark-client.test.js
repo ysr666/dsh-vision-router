@@ -47,7 +47,7 @@ test('scores render in a fixed order with freshness and confidence instead of so
 
 test('cloud benchmark warns about request count/cost and text-only model uses explicit force verification', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /可能产生API费用/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /Quick ≈4 requests; full ≈6 requests/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /Quick ≈3 requests; full ≈6 requests/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /DSH标记为仅文本/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /强制验证/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /force:\s*force === true/)
