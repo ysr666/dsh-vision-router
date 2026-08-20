@@ -14,9 +14,11 @@ test('capability benchmark client injects once into the document head', () => {
   assert.ok(once.indexOf('data-vision-router-capability-benchmark') < once.indexOf('<title>DSH</title>'))
 })
 
-test('capability benchmark client is scoped to Vision Router chain rows and exact benchmark endpoint', () => {
+test('capability benchmark client is scoped only to the actual Vision Router model chain', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /\/_dsh\/vision-router\/capability-benchmark/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /\.vr-chain-row/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /var CHAIN_ROOT = '#vr-vision-backend-chain'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /var ROW_SELECTOR = CHAIN_ROOT \+ ' \.vr-chain-row'/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /document\.querySelectorAll\('\.vr-chain-row'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /method:\s*'POST'/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /JSON\.stringify\(\{ key: candidate\.key \}\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /测试能力/)
@@ -24,11 +26,24 @@ test('capability benchmark client is scoped to Vision Router chain rows and exac
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /fallback is disabled/)
 })
 
+test('incomplete provider/model selection removes the benchmark control instead of showing a dead button', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function completeSelection\(selected\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /selected\.model !== MANUAL_MODEL_ID/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if \(!completeSelection\(selected\)\) \{\s*removeControl\(row\);\s*return;/)
+})
+
+test('capability result occupies a second flex line and does not squeeze provider/model selectors', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /row\.style\.flexWrap = 'wrap'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /control\.style\.flex = '1 0 100%'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /control\.style\.width = '100%'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /control\.appendChild\(status\);\s*control\.appendChild\(button\)/)
+})
+
 test('capability UI observer ignores unrelated streaming DOM mutations', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function mutationTouchesRows\(records\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\('\.vr-chain-row'\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.querySelector\('\.vr-chain-row'\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if \(mutationTouchesRows\(records \|\| \[\]\)\) scheduleScan\(false\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain\(node\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\(CHAIN_ROOT\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.matches\(ROW_SELECTOR\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.closest\(CHAIN_ROOT\)/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /new MutationObserver\(function\(\)\{ scheduleScan\(false\); \}\)/)
 })
 
