@@ -37,6 +37,13 @@ test('routing choices reuse the stabilized SettingsScope and readback-safe save 
   assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /settings\.mutate/)
 })
 
+test('remote routing controls refresh on connection resets and settings document changes', () => {
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /ctx\.on\('connection\/reset', reloadRemote\)/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /ctx\.remote\.\$on\('settings\/document-updated'/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /namespace === 'vision-router'/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.remoteDisposers/)
+})
+
 test('Auto preview is GET-only, read-only and explicitly does not claim live execution', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /PREVIEW_ENDPOINT = '\/_dsh\/vision-router\/routing-preview'/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /method: 'GET'/)
