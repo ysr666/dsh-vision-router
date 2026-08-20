@@ -16,11 +16,11 @@ Implemented on the rebuilt branch:
 - exact-backend benchmark execution with Vision Router fallback explicitly disabled;
 - atomic persisted measured profiles under the existing DSH Vision Router cache area;
 - default-off runtime shadow observation at the visual-tool boundary;
-- per-model **快速测试 / Quick test**, **完整测试 / Full test**, and text-only **强制验证 / Force verify** controls;
+- a compact per-model benchmark entry that opens quick/full/force/diagnostic actions in a secondary panel instead of crowding the settings row;
 - a server-side FIFO benchmark queue with de-duplication, progress, browser-refresh recovery, cancellation, and one actual benchmark running at a time;
 - measured capability/latency summaries with fixed score order, freshness and confidence labels;
 - operational failure classification and fail-fast behavior for auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures;
-- grounding-coordinate normalization before IoU scoring;
+- grounding-coordinate normalization before IoU scoring, plus one-request repair for legacy full profiles that lack grounding diagnostics;
 - all v2 suites are included in the normal package test command.
 
 Not implemented yet:
@@ -119,14 +119,15 @@ The benchmark contract is intentionally strict:
 - the in-memory active queue is bounded (32 jobs) and is intentionally not resumed after a DSH process restart; browser refreshes do recover the live queue/job state;
 - fixtures for one backend run sequentially, keeping latency comparable and avoiding local GPU/API concurrency distortion;
 - Vision Router fallback is disabled;
-- endpoint-scoped OpenAI Chat Completions providers call the exact endpoint/model directly;
-- routes without a supported exact HTTP path use the exact registered DSH adapter/provider/model rather than the Vision Router fallback walk;
+- normal DSH providers are called through their exact registered adapter/provider/model first; if that exact adapter fails with an error class that v1 itself permits to bridge, the benchmark may bridge to the same provider/model's exact HTTP endpoint, never to a backup model;
+- plugin-owned `vision-http` routes use their exact configured HTTP backend directly;
 - a changed/mismatched endpoint fingerprint is rejected before persistence;
 - auth, rate-limit, timeout, network, unsupported-image, unsupported-protocol and benchmark-infrastructure errors fail fast on the first affected fixture instead of spending the rest of the request budget;
 - operational failures never overwrite an existing valid profile;
 - a lower-coverage quick retest never replaces a richer full profile for the same fingerprint;
-- persisted records contain fingerprint, provider/model identity, scores, latency summary, fixture/failure counts and timestamp only;
-- endpoint URLs, API keys and arbitrary provider configuration are not persisted in the capability profile record or returned to the browser.
+- a one-request grounding diagnostic repair may update only the stored grounding score/latency/diagnostic of an existing richer profile while retaining its other scores, full fixture coverage, and original full-suite timestamp;
+- persisted records contain fingerprint, provider/model identity, scores, latency summary, fixture/failure counts, timestamp and bounded safe diagnostic fields only;
+- endpoint URLs, API keys, raw model replies and arbitrary provider configuration are not persisted in the capability profile record or returned to the browser.
 
 Profile state is stored as an atomic mode-`0600` JSON cache under `~/.dsh/cache/vision-router/`. The default profile retention is 30 days. In the UI, results are `fresh` for 7 days, marked stale from 7–30 days, and no longer exposed as measured routing evidence after 30 days. Shadow scoring uses the same 30-day hard cutoff.
 
@@ -151,9 +152,11 @@ The **Full test** runs six requests:
 
 A successful six-fixture profile is currently labeled **medium confidence**. The fixture set is intentionally small and must not be presented as an external/authoritative benchmark.
 
+For old full profiles that already contain a grounding score but predate persisted grounding diagnostics, the UI offers **Diagnose grounding**. It sends one grounding request, repairs the grounding score/latency/diagnostic in that existing profile, and leaves the other capability scores and full-suite timestamp untouched.
+
 ### Grounding normalization
 
-Grounding is scored on geometric accuracy, not strict output syntax alone. Before IoU is computed, the scorer accepts common response shapes (`x1/y1/x2/y2`, `left/top/right/bottom`, `x/y/width/height`, nested `bbox`/`box`, or a four-number array) and normalizes common coordinate spaces:
+Grounding is scored on geometric accuracy, not strict output syntax alone. Before IoU is computed, the scorer accepts common response shapes (`x1/y1/x2/y2`, `left/top/right/bottom`, `x/y/width/height`, nested `bbox`/`box`, four-number arrays, common GLM box markers, and similar wrappers) and normalizes common coordinate spaces:
 
 - image pixels;
 - normalized `0..1`;
@@ -166,31 +169,29 @@ The score details retain `formatValid`, response shape and detected coordinate s
 
 Vision Router's existing model rows receive an independent second-line benchmark control through a separate browser prelude. This avoids rewriting the v1.7 settings component or its save/readback path.
 
-Normal rows expose **快速测试 / Quick test** and **完整测试 / Full test**. Models that DSH explicitly declares text-only do not present a normal capability test; they expose **强制验证 / Force verify** so users can explicitly test providers whose catalog metadata is known to be wrong.
-
-Queue UX:
+The main settings row is intentionally compact:
 
 ```text
-running:  测试中 1/3 · OCR · 5.2s                 [停止测试]
-queued:   排队中 · 第1位 · 快速测试               [取消排队]
-finished: OCR 82 · 通用 91 · 中位 4.8s · 刚刚 · 低置信度
+measured: 实测能力 · 结构 100 · OCR 50 · 文档 100 · 定位 95 · 通用 75   [测评]
+untested: 尚未测评                                                   [测评]
+running:  正在测评 2/3 · OCR · 8.4s                                  [停止]
+queued:   排队中 · 第2位 · 快速测试                                   [取消]
 ```
 
-The browser polls while work is active, so refreshing the settings page restores running/queued progress. It can cancel queued work or abort the currently running job.
+There is only one normal **Benchmark / 测评** entry point on the row. Opening it shows a secondary in-app panel containing the actions that used to crowd the main row:
 
-Cloud backends that are not known-free show a confirmation explaining the approximate number of generated-image requests (quick ≈3, full ≈6) and that API charges may apply. Local/known-free backends do not show that cost warning.
+- Quick test / quick retest;
+- Full test / full retest;
+- force-verify image support for DSH-declared text-only models;
+- one-request grounding diagnostic repair when an older full profile needs it;
+- current measured score/meta information;
+- grounding result summary where available.
 
-Failure labels distinguish at least:
+Grounding engineering fields (`parseSource`, response shape, coordinate space, normalized box, candidate spaces) live under a collapsed **Developer details / 开发者信息** section in the panel. The benchmark UI no longer uses native browser `alert()` or `confirm()` dialogs for normal results/cost messaging.
 
-- authentication failure;
-- rate limit;
-- timeout;
-- image input rejected;
-- benchmark protocol unsupported;
-- benchmark infrastructure failure;
-- network failure;
-- generic provider failure;
-- cancellation.
+Cloud backends that are not known-free show an unobtrusive note in the panel explaining the approximate request counts (quick ≈3, full ≈6, grounding repair ≈1) and that API charges may apply. Local/known-free backends do not need that warning.
+
+The browser polls while work is active, so refreshing the settings page restores running/queued progress. It can cancel queued work or abort the currently running job. Failure labels distinguish authentication, rate limit, timeout, image rejection, unsupported benchmark protocol, benchmark infrastructure, network, generic provider failures and cancellation.
 
 If a retest fails while a previous valid profile exists, the UI keeps the previous scores and reports the new failure separately.
 
@@ -198,7 +199,7 @@ The browser can see only public candidate identity/locality/protocol/fingerprint
 
 ### Adapter-route attachment note
 
-Exact HTTP endpoint tests send the generated fixture as request-local image data and do not create DSH attachments. A forced adapter-route test may need `ctx.attachments.saveImage()` because that is how the DSH adapter receives an image. DSH's public attachment service is immutable and currently exposes validate/save/read rather than deletion. The benchmark fixtures are deterministic/content-addressed, so repeat runs reuse a finite fixture set instead of intentionally creating unique test images each time; a future upstream retention seam can be used if one becomes available.
+Exact HTTP endpoint tests send the generated fixture as request-local image data and do not create DSH attachments. An adapter-route test may need `ctx.attachments.saveImage()` because that is how the DSH adapter receives an image. DSH's public attachment service is immutable and currently exposes validate/save/read rather than deletion. The benchmark fixtures are deterministic/content-addressed, so repeat runs reuse a finite fixture set instead of intentionally creating unique test images each time; a future upstream retention seam can be used if one becomes available.
 
 ## Ranking
 
@@ -259,7 +260,7 @@ Next work inside this phase:
 
 ### Phase 3 — benchmark UI
 
-Implemented experimentally: quick/full exact capability testing, FIFO queue, progress/cancel, failure classification, freshness/confidence and persisted measured tags/latency. It still needs real DSH browser/provider validation before being considered stable UX.
+Implemented experimentally: compact one-entry benchmark UI, secondary quick/full/force/diagnostic panel, FIFO queue, progress/cancel, failure classification, freshness/confidence and persisted measured tags/latency. It still needs one final real DSH browser pass before being considered stable UX.
 
 ### Phase 4 — opt-in runtime routing
 
