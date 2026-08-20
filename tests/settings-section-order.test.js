@@ -123,6 +123,28 @@ test('settings order wrapper does not rewrite other plugin section registrations
   assert.equal(registeredOptions.order, 12)
 })
 
+test('legacy Settings > Plugins compatibility entry is no longer registered', () => {
+  const { registeredOptions } = runPreludeRegistration([], {
+    name: 'settings.plugin.item',
+    key: 'vision-router',
+    id: 'vision-router',
+    order: 30,
+  })
+
+  assert.equal(registeredOptions, undefined)
+})
+
+test('legacy-entry filter does not suppress another plugin item', () => {
+  const { registeredOptions } = runPreludeRegistration([], {
+    name: 'settings.plugin.item',
+    key: 'another-plugin',
+    id: 'another-plugin',
+    order: 30,
+  })
+
+  assert.equal(registeredOptions.id, 'another-plugin')
+})
+
 test('client copy keeps standard capped at 2 while custom zero remains unlimited after live transition', () => {
   const { registeredDictionaries } = runPreludeRegistration()
 
