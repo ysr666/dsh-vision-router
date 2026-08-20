@@ -25,7 +25,9 @@ import { contextWithCoalescedAdapterUpdates } from './lib/adapter-update-coalesc
 import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
+import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
+import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
 import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
@@ -39,9 +41,9 @@ import {
 } from './lib/structured-flow-hardening.js'
 import {
   attachmentContextForContract,
-  ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
+  installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
 } from './lib/dsh-contract-compat.js'
 
@@ -111,6 +113,7 @@ export {
   ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   installHostSettingsCompatibility,
+  installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
   // Transitional public aliases retained for callers/tests written during the
   // rc.7 compatibility pass. Runtime code below no longer branches on names.
@@ -194,18 +197,20 @@ export function apply(ctx, config = {}) {
   // generation. Keep the branch named after that observable capability rather
   // than a release number so rc.8+ naturally follows the same public contract.
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
-  // DSH profile overlays replace an attachment-local config object wholesale.
-  // A stale pre-rc.8 Vision Router profile row can therefore erase the newer
-  // bundle's maxImageDimension and silently restore rc.8's 2000px default even
-  // after the plugin package itself has updated. Repair only that historical
-  // 20MiB/100MP fingerprint; explicit deployment policies remain authoritative.
+  // DSH may reconstruct attachment-local after a profile/home patch reload.
+  // Keep the historical rc.8 overlay migration attached to that service
+  // lifecycle instead of healing only the instance present during apply().
   if (batchAttachmentHost) {
-    ensureVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
+    installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
   }
   // The remote settings bridge uses DSH Connection's trusted-host carrier
   // fence and its own safe-field capability allow-list. Main's local Web
   // mutation boundary continues to protect the independent /_dsh write routes.
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
+  // rc.8 swaps ModuleLoader.load() while entering live mode. The older local
+  // permission/risk shims still own rc.6/rc.7; this narrow lifecycle shim
+  // re-installs both contexts after rc.8's queue -> live transition.
+  installSettingsRc8ClientLifecycle(stabilizedCtx)
   const ownershipCtx = batchAttachmentHost
     ? protectHostProviderOwnership(stabilizedCtx)
     : stabilizedCtx
@@ -222,11 +227,16 @@ export function apply(ctx, config = {}) {
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
   })
+  // Put per-tool cwd/cancellation/cache policy AFTER Host settings compatibility
+  // so rc.7/rc.8's synthetic settings injection is visible to the boundary.
+  // The secure screenshot renderer owns its exact FsTarget and active browser
+  // cancellation directly, so it does not depend on this placement.
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
-  const structuredCtx = installStructuredFlowHardening(attachmentCompatCtx, runtimeConfig)
+  const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)
   // Capture the exact private v1 breaker only while core.apply constructs it.
   // Shadow receives a peek-only view, so observation cannot mutate cleanup/LRU
   // state or change the configured v1 fallback walk.
