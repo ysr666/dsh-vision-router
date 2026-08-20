@@ -131,6 +131,32 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
+test('shadow scorer drops measured profiles older than 30 days', async () => {
+  const ctx = fakeCtx().ctx
+  const oldRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
+    async get() {
+      return {
+        measuredAt: Date.now() - 31 * 24 * 60 * 60 * 1000,
+        scores: { general: 1 },
+        medianLatencyMs: { general: 100 },
+      }
+    },
+  })
+  assert.ok(oldRows.length > 0)
+  assert.ok(oldRows.every((row) => row.measured === undefined))
+
+  const freshRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
+    async get() {
+      return {
+        measuredAt: Date.now() - 29 * 24 * 60 * 60 * 1000,
+        scores: { general: 1 },
+        medianLatencyMs: { general: 100 },
+      }
+    },
+  })
+  assert.ok(freshRows.some((row) => row.measured?.general === 1))
+})
+
 test('shadow plan mirrors the current candidate order but may recommend a different capability specialist', async () => {
   const ctx = fakeCtx().ctx
   const core = fakeCore()
