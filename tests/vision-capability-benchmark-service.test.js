@@ -90,6 +90,22 @@ function memoryStore(initial = []) {
   }
 }
 
+function richerProfileStore(initial = []) {
+  const map = new Map(initial.map((record) => [record.fingerprint, record]))
+  return {
+    writes: 0,
+    async get(key) { return map.get(key) },
+    async put(record) {
+      this.writes += 1
+      const existing = map.get(record.fingerprint)
+      if (existing && Number(existing.fixtureCount) > Number(record.fixtureCount)) return existing
+      map.set(record.fingerprint, record)
+      return record
+    },
+    async remove(key) { return map.delete(key) },
+  }
+}
+
 function successfulResult(backend, fixtureCount = CAPABILITY_BENCHMARK_MODE_REQUESTS.quick) {
   return {
     record: {
@@ -108,8 +124,8 @@ function successfulResult(backend, fixtureCount = CAPABILITY_BENCHMARK_MODE_REQU
   }
 }
 
-test('quick benchmark is three requests while full remains six', () => {
-  assert.deepEqual(CAPABILITY_BENCHMARK_MODE_REQUESTS, { quick: 3, full: 6 })
+test('quick/full/grounding request counts stay bounded', () => {
+  assert.deepEqual(CAPABILITY_BENCHMARK_MODE_REQUESTS, { quick: 3, full: 6, grounding: 1 })
 })
 
 test('exact invoker sends one selected vision-http provider directly and never enters fallback', async () => {
@@ -359,6 +375,85 @@ test('completed full job exposes bounded grounding diagnostics without raw model
     candidateSpaces: ['normalized-1000', 'pixels'],
   })
   assert.equal(JSON.stringify(job.groundingDiagnostic).includes('raw model'), false)
+})
+
+test('one-shot grounding diagnostic repairs a legacy full profile without replacing its scores', async () => {
+  const core = fakeCore()
+  const backend = {
+    provider: 'vision-http',
+    model: 'local-ollama/qwen2.5vl',
+    endpoint: core.local.baseURL,
+    config: { api: 'openai-completions' },
+  }
+  const fingerprint = capabilityBenchmarkFingerprint(backend)
+  const old = {
+    fingerprint,
+    provider: backend.provider,
+    model: backend.model,
+    measuredAt: Date.now() - 1000,
+    source: 'self-benchmark',
+    scores: { structured: 1, ocr: 0.5, document: 1, grounding: 0, general: 0.75 },
+    medianLatencyMs: { structured: 100, ocr: 110, document: 120, grounding: 130, general: 140 },
+    latencyMs: 120,
+    fixtureCount: CAPABILITY_BENCHMARK_MODE_REQUESTS.full,
+    failureCount: 0,
+  }
+  const store = richerProfileStore([old])
+  const manager = createCapabilityBenchmarkManager(fakeCtx({ providers: [] }), { providers: [] }, core, {
+    store,
+    runBenchmark: async ({ backend: selected, intents }) => {
+      assert.deepEqual(intents, ['grounding'])
+      return {
+        record: {
+          fingerprint: capabilityBenchmarkFingerprint(selected),
+          provider: selected.provider,
+          model: selected.model,
+          measuredAt: Date.now(),
+          source: 'self-benchmark',
+          scores: { grounding: 0 },
+          medianLatencyMs: { grounding: 90 },
+          latencyMs: 90,
+          fixtureCount: 1,
+          failureCount: 0,
+        },
+        results: [{
+          fixture: 'grounding-target-v1',
+          intent: 'grounding',
+          score: 0,
+          latencyMs: 90,
+          details: {
+            iou: 0,
+            parseSource: 'bracket-array',
+            parsed: [120, 140, 180, 210],
+            normalized: { x1: 92.16, y1: 71.68, x2: 138.24, y2: 107.52 },
+            coordinateSpace: 'normalized-1000',
+            responseShape: 'array',
+            formatValid: true,
+            candidateSpaces: ['normalized-1000', 'pixels'],
+          },
+        }],
+      }
+    },
+  })
+  const queued = await manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'grounding')
+  assert.equal(queued.job.total, 1)
+  await manager.waitForIdle()
+
+  const saved = await store.get(fingerprint)
+  assert.deepEqual(saved.scores, old.scores)
+  assert.equal(saved.fixtureCount, CAPABILITY_BENCHMARK_MODE_REQUESTS.full)
+  assert.equal(saved.measuredAt, old.measuredAt)
+  assert.equal(saved.groundingDiagnostic.parseSource, 'bracket-array')
+  assert.equal(saved.groundingDiagnostic.iou, 0)
+
+  const snapshot = await manager.snapshot()
+  const candidate = snapshot.candidates.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl')
+  assert.deepEqual(candidate.measured.scores, old.scores)
+  assert.equal(candidate.measured.groundingDiagnostic.parseSource, 'bracket-array')
+  const job = snapshot.jobs.find((entry) => entry.key === 'vision-http/local-ollama/qwen2.5vl')
+  assert.equal(job.state, 'completed')
+  assert.equal(job.mode, 'grounding')
+  assert.equal(job.total, 1)
 })
 
 test('duplicate click does not enqueue the same backend twice', async () => {
