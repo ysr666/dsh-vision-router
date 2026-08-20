@@ -274,6 +274,8 @@ medianLatencyMs
 
 It does not expose a `confidence` tier.
 
+The shadow router's `measuredBackends` list is fresh-only. A stale profile can remain visible in the Benchmark UI for human reference, but it is treated as unmeasured for capability-based Auto reordering.
+
 ## Benchmark queue and failure behavior
 
 - FIFO queue;
