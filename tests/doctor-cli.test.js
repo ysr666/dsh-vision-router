@@ -18,6 +18,20 @@ import { isCliEntry } from '../lib/doctor-cli.js'
 const modulePath = fileURLToPath(new URL('../lib/doctor-cli.js', import.meta.url))
 const moduleUrl = pathToFileURL(modulePath).href
 
+function materializeHealthyProfile(profileDir) {
+  writeFileSync(path.join(profileDir, 'package.json'), JSON.stringify({
+    dependencies: { 'dsh-vision-router': '^1.7.4' },
+    dsh: { profile: { bundles: ['dsh-vision-router'] } },
+  }, null, 2))
+  const pluginDir = path.join(profileDir, 'node_modules', 'dsh-vision-router')
+  mkdirSync(pluginDir, { recursive: true })
+  writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify({
+    name: 'dsh-vision-router', version: '1.7.4', main: 'entry.js', dsh: { bundle: { patch: './cordis.patch.yml' } },
+  }))
+  writeFileSync(path.join(pluginDir, 'entry.js'), 'export default {}\n')
+  writeFileSync(path.join(pluginDir, 'cordis.patch.yml'), '- insert: []\n')
+}
+
 test('isCliEntry matches direct invocation paths only', () => {
   assert.equal(isCliEntry(modulePath, moduleUrl), true)
   assert.equal(isCliEntry(path.join(path.dirname(modulePath), 'other.js'), moduleUrl), false)
@@ -29,17 +43,17 @@ test('doctor CLI prints a report when invoked through a symlinked bin (npx shim 
   const home = mkdtempSync(path.join(tmpdir(), 'dsh-cli-'))
   const profileDir = path.join(home, 'profiles', 'web')
   mkdirSync(profileDir, { recursive: true })
-  writeFileSync(path.join(profileDir, 'package.json'), '{}\n')
+  materializeHealthyProfile(profileDir)
 
   const binDir = mkdtempSync(path.join(tmpdir(), 'dsh-bin-'))
   const link = path.join(binDir, 'dsh-vision-router')
   symlinkSync(modulePath, link)
 
-  const result = spawnSync(process.execPath, [link, 'doctor'], {
+  const result = spawnSync(process.execPath, [link, 'doctor', '--no-runtime'], {
     encoding: 'utf8',
     env: { ...process.env, DSH_HOME: home },
   })
-  assert.equal(result.status, 0)
+  assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /DSH home:/)
   assert.match(result.stdout, /✓ web/)
   rmSync(binDir, { recursive: true, force: true })
@@ -51,34 +65,18 @@ test('repair-sessions CLI repairs the exact legacy reminder and prints the backu
   mkdirSync(sessionDir, { recursive: true })
   const sessionPath = path.join(sessionDir, 'session.jsonl')
   const lines = [
-    JSON.stringify({
-      type: 'session',
-      version: 0,
-      id: 'broken-session',
-      createdAt: 1,
-      delegationDepth: 0,
-    }),
+    JSON.stringify({ type: 'session', version: 0, id: 'broken-session', createdAt: 1, delegationDepth: 0 }),
     JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
     JSON.stringify({
-      type: 'user/message',
-      seq: 1,
-      time: 2,
+      type: 'user/message', seq: 1, time: 2,
       data: {
         role: 'user',
-        content: [{
-          type: 'text',
-          text: '视觉深看工具已挂载：vision_describe。现在可以直接调用已启用的工具。',
-        }],
+        content: [{ type: 'text', text: '视觉深看工具已挂载：vision_describe。现在可以直接调用已启用的工具。' }],
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
       },
       surfaceOp: 'append',
     }),
-    JSON.stringify({
-      type: 'turn/end',
-      seq: 2,
-      time: 3,
-      data: { turn: 1, reason: { kind: 'completed' } },
-    }),
+    JSON.stringify({ type: 'turn/end', seq: 2, time: 3, data: { turn: 1, reason: { kind: 'completed' } } }),
     '',
   ]
   writeFileSync(sessionPath, lines.join('\n'))
