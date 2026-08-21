@@ -12,6 +12,8 @@ import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-compat.js'
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
+import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
+import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
@@ -203,11 +205,17 @@ export function apply(ctx, config = {}) {
   // The secure screenshot renderer owns its exact FsTarget and active browser
   // cancellation directly, so it does not depend on this placement.
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)
+  // DSH 0.1.1 publishes an exact native image-capable DeepSeek model. Do not
+  // put it ahead of Vision Router's own configured chain: only when the user
+  // has explicitly selected any Host-native image route, preserve raw pixels
+  // and skip the hidden instant-local caption pass for that turn. The override
+  // is AsyncLocalStorage-scoped and never mutates settings or provider order.
+  const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
-  const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)
+  const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)
   // Newer DSH releases publish llm/adapters-updated synchronously from inside
   // registerAdapter(). Coalesce only Vision Router's listener: nested events
   // mark the topology dirty and the outer pass reruns to a fixed point, so we
@@ -246,6 +254,11 @@ export function apply(ctx, config = {}) {
   // Keep it out of the controlled React form so the v2 capability-benchmark
   // client can take ownership later without forking the stable settings UI.
   installExactVisionTestClient(reconciledCtx)
+  // DSH 0.1.1 adds per-route/model pi-ai wire compatibility. The legacy
+  // direct image bridge is non-streaming and predates that surface, so preserve
+  // maxTokensField + route headers at its final fetch boundary. Ordinary DSH
+  // streams and unrelated Vision Router HTTP providers remain byte-identical.
+  installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
   // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
   // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
   // backed by exact private-registry evidence. Record the same provenance in
@@ -291,7 +304,7 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(executionCtx, runtimeConfig)
+    const result = core.apply(executionCtx, nativeImageCompat.config)
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
     // Publish the main DeepSeek + 自动识图 route as a derived alias of official
