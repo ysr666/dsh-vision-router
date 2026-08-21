@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  CAPABILITY_BENCHMARK_RENDERER_SCOPE,
+  CAPABILITY_BENCHMARK_SUITE_REVISION,
   CORE_BENCHMARK_INTENTS,
   aggregateCapabilityBenchmark,
   capabilityBenchmarkFingerprint,
@@ -9,29 +11,42 @@ import {
   normalizeGroundingBox,
   scoreCapabilityBenchmarkResult,
 } from '../lib/vision-capability-benchmark.js'
+import { renderCapabilityBenchmarkFixturePng } from '../lib/vision-capability-benchmark-service.js'
 
-test('core benchmark fixtures are generated locally and include bilingual OCR coverage', () => {
+test('core benchmark suite v2 is generated locally and includes bilingual OCR coverage', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 2)
+  assert.match(CAPABILITY_BENCHMARK_RENDERER_SCOPE, /^[^/]+\/[^/]+$/)
   assert.deepEqual(CORE_BENCHMARK_INTENTS, ['structured', 'ocr', 'grounding', 'document', 'general'])
   const fixtures = listCapabilityBenchmarkFixtures()
   assert.equal(fixtures.length, 6)
   assert.deepEqual(fixtures.map((fixture) => fixture.id), [
-    'structured-dashboard-v1',
-    'ocr-latin-ui-v1',
-    'ocr-zh-chat-v1',
-    'grounding-target-v1',
-    'document-table-v1',
-    'general-scene-v1',
+    'structured-dashboard-v2',
+    'ocr-latin-ui-v2',
+    'ocr-zh-chat-v2',
+    'grounding-target-v2',
+    'document-table-v2',
+    'general-scene-v2',
   ])
   for (const fixture of fixtures) {
     assert.match(fixture.svg, /^<svg/)
     assert.ok(fixture.prompt.length > 20)
-    assert.ok(fixture.id.includes('-v1'))
+    assert.ok(fixture.id.includes('-v2'))
+    assert.doesNotMatch(fixture.svg, /<text\b[^>]*\bfill="[^"]+"[^>]*\bfill="[^"]+"/i)
   }
-  const zhChat = fixtures.find((fixture) => fixture.id === 'ocr-zh-chat-v1')
+  const zhChat = fixtures.find((fixture) => fixture.id === 'ocr-zh-chat-v2')
   assert.equal(zhChat.intent, 'ocr')
   assert.match(zhChat.svg, /项目讨论/)
   assert.match(zhChat.expected.text, /引用：先别合并/)
   assert.match(zhChat.expected.text, /20:30/)
+})
+
+test('every benchmark fixture actually rasterizes through sharp before real-machine testing', async () => {
+  for (const fixture of listCapabilityBenchmarkFixtures()) {
+    const png = await renderCapabilityBenchmarkFixturePng({}, fixture)
+    assert.ok(Buffer.isBuffer(png), fixture.id)
+    assert.ok(png.length > 100, fixture.id)
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10], fixture.id)
+  }
 })
 
 test('OCR scorer rewards exact transcription and degrades for errors', () => {
@@ -43,7 +58,7 @@ test('OCR scorer rewards exact transcription and degrades for errors', () => {
 })
 
 test('Chinese chat OCR fixture uses the same exact-order scorer', () => {
-  const fixture = listCapabilityBenchmarkFixtures(['ocr']).find((item) => item.id === 'ocr-zh-chat-v1')
+  const fixture = listCapabilityBenchmarkFixtures(['ocr']).find((item) => item.id === 'ocr-zh-chat-v2')
   const exact = scoreCapabilityBenchmarkResult(fixture, fixture.expected.text, 620)
   const missingQuote = scoreCapabilityBenchmarkResult(
     fixture,
@@ -52,6 +67,37 @@ test('Chinese chat OCR fixture uses the same exact-order scorer', () => {
   )
   assert.equal(exact.score, 1)
   assert.ok(missingQuote.score < 1)
+})
+
+test('document scorer requires valid JSON, row order, pairing, total and order id', () => {
+  const fixture = capabilityBenchmarkFixture('document')
+  const exact = scoreCapabilityBenchmarkResult(fixture, JSON.stringify({
+    title: 'Order Summary',
+    rows: [
+      { item: 'Camera', amount: '$120' },
+      { item: 'Cable', amount: '$15' },
+    ],
+    total: '$135',
+    order_id: 'R-4821',
+  }), 400)
+  const swapped = scoreCapabilityBenchmarkResult(fixture, JSON.stringify({
+    title: 'Order Summary',
+    rows: [
+      { item: 'Cable', amount: '$15' },
+      { item: 'Camera', amount: '$120' },
+    ],
+    total: '$135',
+    order_id: 'R-4821',
+  }), 400)
+  const tokenSoup = scoreCapabilityBenchmarkResult(
+    fixture,
+    'Order Summary Camera $120 Cable $15 Total $135 R-4821',
+    400,
+  )
+  assert.equal(exact.score, 1)
+  assert.ok(swapped.score < exact.score)
+  assert.equal(tokenSoup.score, 0)
+  assert.equal(tokenSoup.details.jsonValid, false)
 })
 
 test('grounding scorer uses IoU in original fixture pixels', () => {
@@ -160,8 +206,8 @@ test('structured scorer requires both schema coverage and visible evidence', () 
   assert.ok(shallow.score < 0.3)
 })
 
-test('endpoint fingerprint is secret-safe, canonical, recursive, and endpoint-specific', () => {
-  const a = capabilityBenchmarkFingerprint({
+test('endpoint fingerprint stays secret-safe but binds suite, renderer and credential identity', () => {
+  const common = {
     provider: ' p ',
     model: ' m ',
     endpoint: 'HTTPS://A.TEST/v1/?b=2&a=1&token=SECRET-1',
@@ -171,8 +217,9 @@ test('endpoint fingerprint is secret-safe, canonical, recursive, and endpoint-sp
       transport: { timeoutMs: 5000, authorization: 'Bearer SECRET-1' },
       gateway: { baseUrl: 'https://relay.test/v1/?z=9&key=SECRET-1' },
     },
-  })
-  const b = capabilityBenchmarkFingerprint({
+  }
+  const a = capabilityBenchmarkFingerprint({ ...common, credentialFingerprint: 'cred_aaa' })
+  const sameSanitized = capabilityBenchmarkFingerprint({
     provider: 'p',
     model: 'm',
     endpoint: 'https://a.test/v1?a=1&b=2&token=SECRET-2',
@@ -182,11 +229,14 @@ test('endpoint fingerprint is secret-safe, canonical, recursive, and endpoint-sp
       apiKey: 'SECRET-2',
       temperature: 0,
     },
+    credentialFingerprint: 'cred_aaa',
   })
-  const changedPath = capabilityBenchmarkFingerprint({ provider: 'p', model: 'm', endpoint: 'https://a.test/v2?a=1&b=2', config: { temperature: 0, transport: { timeoutMs: 5000 }, gateway: { baseUrl: 'https://relay.test/v1?z=9' } } })
-  const changedNestedConfig = capabilityBenchmarkFingerprint({ provider: 'p', model: 'm', endpoint: 'https://a.test/v1?a=1&b=2', config: { temperature: 0, transport: { timeoutMs: 9000 }, gateway: { baseUrl: 'https://relay.test/v1?z=9' } } })
-  const changedModel = capabilityBenchmarkFingerprint({ provider: 'p', model: 'm2', endpoint: 'https://a.test/v1?a=1&b=2', config: { temperature: 0, transport: { timeoutMs: 5000 }, gateway: { baseUrl: 'https://relay.test/v1?z=9' } } })
-  assert.equal(a, b)
+  const changedCredential = capabilityBenchmarkFingerprint({ ...common, credentialFingerprint: 'cred_bbb' })
+  const changedPath = capabilityBenchmarkFingerprint({ ...common, endpoint: 'https://a.test/v2?a=1&b=2', credentialFingerprint: 'cred_aaa' })
+  const changedNestedConfig = capabilityBenchmarkFingerprint({ ...common, config: { temperature: 0, transport: { timeoutMs: 9000 } }, credentialFingerprint: 'cred_aaa' })
+  const changedModel = capabilityBenchmarkFingerprint({ ...common, model: 'm2', credentialFingerprint: 'cred_aaa' })
+  assert.equal(a, sameSanitized)
+  assert.notEqual(a, changedCredential)
   assert.notEqual(a, changedPath)
   assert.notEqual(a, changedNestedConfig)
   assert.notEqual(a, changedModel)
