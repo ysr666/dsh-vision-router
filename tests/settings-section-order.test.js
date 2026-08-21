@@ -46,12 +46,14 @@ function runPreludeRegistration(existingEntries = [], registration = {
         apply(ctx) {
           ctx.locale.register('vision-router', {
             zh: {
+              chainHint: 'old zh chain hint',
               hintVisionDepthMaxCalls: 'old zh',
               hintVisionDepth: 'old zh depth',
               visionDepthStandard: 'old zh standard',
               visionDepthDeep: 'old zh deep',
             },
             en: {
+              chainHint: 'old en chain hint',
               hintVisionDepthMaxCalls: 'old en',
               hintVisionDepth: 'old en depth',
               visionDepthStandard: 'old en standard',
@@ -121,6 +123,37 @@ test('settings order wrapper does not rewrite other plugin section registrations
   })
 
   assert.equal(registeredOptions.order, 12)
+})
+
+test('legacy Settings > Plugins compatibility entry is no longer registered', () => {
+  const { registeredOptions } = runPreludeRegistration([], {
+    name: 'settings.plugin.item',
+    key: 'vision-router',
+    id: 'vision-router',
+    order: 30,
+  })
+
+  assert.equal(registeredOptions, undefined)
+})
+
+test('legacy-entry filter does not suppress another plugin item', () => {
+  const { registeredOptions } = runPreludeRegistration([], {
+    name: 'settings.plugin.item',
+    key: 'another-plugin',
+    id: 'another-plugin',
+    order: 30,
+  })
+
+  assert.equal(registeredOptions.id, 'another-plugin')
+})
+
+test('client copy tells users to configure models in DSH before choosing a vision chain', () => {
+  const { registeredDictionaries } = runPreludeRegistration()
+
+  assert.match(registeredDictionaries.zh.chainHint, /设置 → 模型/)
+  assert.match(registeredDictionaries.zh.chainHint, /先.*配置可用模型/)
+  assert.match(registeredDictionaries.en.chainHint, /Settings → Models/)
+  assert.match(registeredDictionaries.en.chainHint, /Configure the model first/i)
 })
 
 test('client copy keeps standard capped at 2 while custom zero remains unlimited after live transition', () => {
