@@ -1,12 +1,17 @@
 # v2 Auto preview acceptance matrix
 
-This is the manual real-machine gate for Commit E + Commit F on `feat/v2-capability-router`.
+This is the manual real-machine gate for Commits E + F + G on `feat/v2-capability-router`.
 
-The goal is not to prove that Auto routing is ready to execute. The goal is to make the current **read-only Auto preview** explainable enough that a human can verify every suggested movement, while Commit F makes Benchmark evidence trustworthy enough to use for that preview.
+The goal is **not** to prove that Auto routing is ready to execute. The goal is to verify that:
+
+1. read-only Auto preview is explainable;
+2. Benchmark evidence is trustworthy;
+3. Commit G can build that evidence gradually in the background without surprising cost or foreground interference;
+4. actual v1 execution remains unchanged.
 
 ## Safety invariant
 
-Every captured preview must still report:
+Every Settings preview must still report:
 
 ```json
 {
@@ -16,85 +21,101 @@ Every captured preview must still report:
 }
 ```
 
-`routingMode: auto` is a persisted product setting and a preview input only. v1 remains the actual execution engine and configured execution order remains authoritative.
+`routingMode: auto` is a persisted product setting and a preview/background-profiling input only. It is **not** connected to the real v1 executor.
 
-## What Commit E adds to manual inspection
-
-Under **Settings → Vision Router → Vision model**, the existing Auto preview is followed by **Auto acceptance diagnostics / Auto验收诊断**.
-
-For every directly measured task axis it exposes:
-
-- configured order;
-- preview order;
-- configured rank and preview rank for every candidate;
-- exact candidate key;
-- Benchmark evidence state;
-- raw measured score for the current axis;
-- measured median latency for the current axis;
-- whether that evidence is actually Auto-comparable;
-- the product scoring formula;
-- the `0.08` reorder threshold;
-- configured adjacent-pair checks explaining why movement is or is not allowed.
-
-The **Copy JSON / 复制JSON** action copies the same sanitized read-only payload returned by:
+## Current measurement contract
 
 ```text
-GET /_dsh/vision-router/routing-preview
+CAPABILITY_BENCHMARK_SUITE_REVISION = 2
+CAPABILITY_PROFILE_CACHE_VERSION = 3
 ```
 
-The payload may include the secret-safe `ep2_...` endpoint fingerprint. It must never include endpoint URLs, API keys, credential values, credential references, raw Benchmark model output, or arbitrary provider config.
+Cache v3 stores independent axis timestamps/counts:
 
-## What Commit F adds to Benchmark trust
+```text
+measuredAtByAxis
+fixtureCountByAxis
+```
 
-Commit F hardens the evidence path before any real-machine provider spend:
+Legacy cache-v2 evidence from the current suite may migrate, but each migrated axis inherits the old record timestamp. Wrong-suite evidence remains invalid.
 
-- Benchmark suite revision is `2`;
-- capability profile cache envelope version is `2`;
-- old/wrong-suite profiles are ignored;
-- all selected fixtures preflight before request 1;
-- every fixture is rasterized through the real Sharp/libvips path;
-- adapter attachment materialization happens during preflight, outside the latency window;
-- preflight failure sends zero model requests;
-- measured latency is transport-only;
-- Balanced/Speed use only same-axis measured latency;
-- actual credential value changes rotate the secret-safe Benchmark identity;
-- credential-required-but-unresolved is distinct from genuinely keyless;
-- invocation failures fail fast and cannot persist partial evidence;
-- timeout is `failed/timeout`, not `cancelled`;
-- document scoring checks structure/relationships rather than token presence;
-- the six Full fixtures render successfully in the Ubuntu/macOS/Windows CI host matrix.
+Freshness is per-axis:
 
-CI passing is necessary, but real provider/UI behavior still requires the manual rows below.
-
-## Evidence-state vocabulary
-
-| State | Meaning | Auto effect |
+| Axis state | Meaning | Auto effect |
 | --- | --- | --- |
-| `fresh-measured` | profile is <= 7 days old and contains this axis | may participate in comparison |
-| `axis-unmeasured` | fresh profile exists but this axis was not measured | not comparable on this task |
-| `stale` | retained profile is > 7 and <= 30 days old | visible to human, excluded from Auto |
-| `unmeasured` | no retained current profile | not comparable |
-| `unbenchmarkable` | backend cannot currently be benchmarked exactly | not comparable |
+| fresh | <=7 days | may compare on that direct axis |
+| stale | >7 and <=30 days | visible, not comparable |
+| expired | >30 days | removed from retained current profile data |
+| unmeasured | no direct score/timestamp | not comparable |
 
-The profile store itself retains at most 30 days, so a profile older than that may be indistinguishable from `unmeasured` after normal cache loading. A record without a valid positive `measuredAt` is never treated as fresh.
+A mixed-age profile is expected and must remain mixed.
 
-## Pair-check vocabulary
+## Preview diagnostics vocabulary
 
-The diagnostics evaluate each adjacent pair in the configured order so a reviewer can understand the information barriers before looking at the final preview order.
+For each direct axis, Settings diagnostics expose configured/preview order, ranks, measured score/latency, comparable state, scoring formula, `0.08` threshold and adjacent-pair checks.
 
-| Outcome | Meaning |
-| --- | --- |
-| `measured-promotable` | right-side score advantage is >= `0.08` |
-| `below-threshold` | both sides are comparable, but the advantage is < `0.08` |
-| `incomparable` | at least one side lacks fresh comparable evidence |
-| `local-policy-promotes-right` | explicit `Local` policy allows a local route to move ahead of a cloud route |
-| `fallback-only-boundary` | a fallback-only route cannot be promoted by Benchmark |
+Pair outcomes include:
 
-These pair checks are an audit view of the configured chain. The actual preview order is still produced by the shared `suggestVisionOrder()` scorer; the browser does not reimplement routing.
+- `measured-promotable`;
+- `below-threshold`;
+- `incomparable`;
+- `local-policy-promotes-right`;
+- `fallback-only-boundary`.
+
+The browser does not reimplement ranking. It displays the shared planner's output.
+
+## Benchmark trust requirements
+
+Manual Quick/Full remain available but are advanced operations rather than an Auto prerequisite.
+
+- Quick: ~3 requests; OCR + General.
+- Full: ~6 requests; Structured + OCR + Document + Grounding + General.
+
+Before request 1, every selected fixture must preflight through generated SVG -> Sharp/libvips PNG -> adapter attachment materialization where required.
+
+Required invariants:
+
+- preflight failure sends zero provider requests;
+- latency is model transport only;
+- same-axis latency only for Balanced/Speed;
+- exact endpoint/credential fingerprint identity;
+- invocation failures fail fast and cannot persist partial evidence;
+- timeout is failed/timeout, not user cancellation;
+- explicit Stop/Cancel is cancelled;
+- failed retest leaves prior valid evidence untouched;
+- raw keys, credential refs, endpoint URLs and raw model responses do not enter persisted/browser diagnostics.
+
+## Commit G background profiling contract
+
+Product setting:
+
+```text
+backgroundBenchmarking: local-free | all | off
+```
+
+Expected semantics:
+
+- `local-free` (default): background requests only for local or explicitly known-free user routes;
+- `all`: explicit authorization to background-profile configured benchmarkable cloud user routes that may incur API charges;
+- `off`: no background profiling;
+- `routingMode: ordered`: no background profiling;
+- `fallback-only`: never background-profiled.
+
+One background work unit is one candidate + one missing/stale direct axis. It must not run a hidden Full suite.
+
+Priority:
+
+```text
+real visual tool
+> manual Benchmark queue/run
+> background profiler
+```
+
+Real visual/manual activity must abort/yield background work. That yield is not a provider failure and must not trigger provider-failure backoff. Genuine provider failure should back off that candidate+axis instead of tight-looping.
 
 ## Result-capture template
 
-For each row below, record:
+For each manual row, record:
 
 ```text
 Case ID:
@@ -104,134 +125,158 @@ Node:
 DSH version:
 Plugin commit:
 Benchmark suite revision:
+Profile cache version:
 Profile name:
 Access: loopback / trusted-host remote
 Configured chain:
 Routing mode:
 Preference:
-Benchmark state per candidate:
+Background profiling mode:
+Benchmark state per axis/candidate:
 Expected preview:
 Observed preview:
 Copied diagnostics JSON attached: yes/no
-Relevant shadow log attached: yes/no/not applicable
+Relevant log attached: yes/no/not applicable
 Actual v1 execution order unchanged: yes/no
 PASS / FAIL:
 Notes:
 ```
 
-Do not paste API keys, endpoint credentials, credential references, or raw provider config into the run record.
+Never attach raw keys, credential references, endpoint secrets or user image content.
 
 ## Core routing matrix
 
-| ID | Setup | Action | Expected diagnostic result | Required evidence |
-| --- | --- | --- | --- | --- |
-| E-R01 | two configured backends, neither measured | Auto + Quality | configured first remains first; both candidates `unmeasured`; pair `incomparable` | screenshot + copied JSON |
-| E-R02 | two fresh measurements on same axis, right beats left by >= 0.08 | Auto + Quality | right is promoted; reason `measured-advantage`; pair `measured-promotable` | Benchmark cards + copied JSON |
-| E-R03 | fresh same-axis scores differ by 0.01–0.07 | Auto + Quality | configured order preserved; pair `below-threshold` with numeric delta and threshold | copied JSON |
-| E-R04 | A measured, B unmeasured, C strongly measured | Auto + Quality | C cannot silently jump across B; B appears as information barrier | screenshot + copied JSON |
-| E-R05 | both profiles 8–30 days old | Auto + Quality | raw scores remain human-visible as `stale`; effective capability is absent; no capability reorder | copied JSON |
-| E-R06 | Quick profile covers OCR/general only | inspect OCR, General, Document | OCR/general may compare; Document reports `axis-unmeasured` and preserves order | Benchmark modal + copied JSON |
-| E-R07 | fresh capability + same-axis latency on both sides | Auto + Balanced | formula shown as `0.80*capability + 0.20*speed`; displayed preview matches computed shared scorer result | copied JSON + manual calculation |
-| E-R08 | fresh capability + materially different same-axis latency | Auto + Speed | formula shown as `0.55*capability + 0.45*speed`; no movement unless weighted delta reaches 0.08 | copied JSON + manual calculation |
-| E-R09 | cloud route configured before enabled local route, no measurements required | Auto + Local | local route may move first; reason `local-preference`; pair `local-policy-promotes-right`; no claim of measured superiority | screenshot + copied JSON |
-| E-R10 | built-in anonymous fallback present but not explicitly selected | any Auto preference | fallback stays behind user routes; diagnostics show `fallback-only` role/boundary where applicable | copied JSON |
-| E-R11 | benchmark a backend, then change provider/model/endpoint/API contract so the `ep2_` identity changes | refresh diagnostics | old profile must not become fresh evidence for the new fingerprint; new identity is unmeasured until benchmarked | old/new copied JSON with safe fingerprint |
-| F-R12 | fresh capability exists for OCR but OCR latency missing; another axis has latency | Auto + Balanced/Speed | OCR remains incomparable for latency-aware preference; no aggregate/other-axis latency substitution | copied JSON |
-| F-R13 | profile record lacks valid `measuredAt` | refresh diagnostics | record is not fresh and cannot reorder | copied JSON |
+| ID | Setup/action | Expected result |
+| --- | --- | --- |
+| R01 | two unmeasured backends, Auto + Quality | configured order; pair incomparable |
+| R02 | two fresh same-axis measurements; right leads >=0.08 | right may promote; measured-advantage |
+| R03 | same-axis delta 0.01–0.07 | configured order; below-threshold |
+| R04 | A measured, B unmeasured, C strongly measured | C cannot cross B |
+| R05 | relevant axis 8–30 days old | stale visible; no capability reorder |
+| R06 | Quick covers OCR/general only | OCR/general may compare; other axes unmeasured |
+| R07 | Balanced with fresh same-axis latency | formula 0.80 capability + 0.20 speed |
+| R08 | Speed with fresh same-axis latency | formula 0.55 capability + 0.45 speed |
+| R09 | cloud before enabled local, Auto + Local | local may move first as policy, not superiority |
+| R10 | unselected built-in free fallback | fallback-only stays behind user routes |
+| R11 | endpoint/model/API/credential identity changes | old `ep2_` evidence not reused |
+| R12 | relevant axis latency missing but another axis has latency | Balanced/Speed remain incomparable; no borrowing |
+| R13 | relevant axis lacks valid timestamp | not fresh, cannot reorder |
+| G-R14 | OCR 8d stale + General today on same backend | OCR stale while General fresh; General refresh does not refresh OCR |
+| G-R15 | one axis >30d, another axis fresh | expired axis disappears while fresh axis/profile remains |
 
-## Benchmark preflight / evidence matrix
+## Benchmark matrix
 
-| ID | Setup | Action | Expected result | Required evidence |
-| --- | --- | --- | --- | --- |
-| F-B01 | clean profile after upgrading to Commit F | open Benchmark | legacy suite/cache evidence is not treated as current fresh evidence; backend requires suite-v2 retest | Benchmark UI + copied JSON |
-| F-B02 | Full benchmark on a healthy backend | start Full | all 6 fixtures preflight before first model request; then exactly 6 sequential model requests | log/request counter if available + completed card |
-| F-B03 | intentionally break one synthetic fixture/renderer in a dev build | start Full | job fails `infrastructure`; provider request count remains 0; prior profile untouched | test/dev log |
-| F-B04 | adapter backend with noticeable local attachment write delay | run repeated benchmark | displayed/stored latency tracks model transport rather than local attachment persistence cost | benchmark JSON + local timing notes |
-| F-B05 | same provider/model/URL/protocol with Key A, then rotate to Key B | refresh/retest | secret-safe `ep2_` identity changes; Key A evidence does not become fresh evidence for Key B | old/new safe fingerprint only |
-| F-B06 | configured credential ref exists but DSH credential service cannot currently resolve it | refresh candidates | identity is unresolved/key-required, not keyless; no old keyless profile is reused | copied JSON/log without ref/value |
-| F-B07 | DSH credential service exists and returns a miss while same-name `process.env` is populated in a dev setup | benchmark/preflight | no silent ambient fallback; configured DSH credential seam remains authoritative | dev log/test evidence |
-| F-B08 | provider returns auth/rate-limit/network/protocol/unsupported-image/provider exception on request 1 | run Quick/Full | job fails immediately; later fixture requests are not sent; previous valid profile remains | request count + Benchmark UI |
-| F-B09 | force benchmark timeout without user stop | run benchmark | state is `failed`, class/code is timeout; UI must not say user cancelled | Benchmark UI + job JSON |
-| F-B10 | explicitly press Stop/Cancel during a running job | cancel | state is `cancelled`; distinct from F-B09 | Benchmark UI + job JSON |
-| F-B11 | custom/dev runner returns a record with `failureCount > 0` | execute dev regression | service refuses persistence; previous valid record remains | automated/dev test evidence |
-| F-B12 | document fixture returns token-complete but malformed/reordered/mispaired content | score fixture | materially loses score / fails structural expectations; cannot score like valid ordered JSON | scorer test evidence |
+| ID | Setup/action | Expected result |
+| --- | --- | --- |
+| B01 | old cache-v2 current-suite profile | conservative migration to cache-v3 per-axis timestamps |
+| B02 | Full on healthy backend | all fixtures preflight, then exactly sequential requests |
+| B03 | break one fixture renderer in dev | infrastructure failure; zero model requests; old profile untouched |
+| B04 | slow attachment persistence + normal model | recorded latency tracks transport, not attachment work |
+| B05 | rotate credential value | safe endpoint fingerprint changes; old evidence not reused |
+| B06 | credential-required but unresolved | distinct from genuinely keyless identity |
+| B07 | DSH credential seam misses while same-name env exists | no silent ambient fallback |
+| B08 | provider/auth/rate-limit/network/protocol failure request 1 | fail fast; later fixture requests not sent |
+| B09 | force timeout without user Stop | failed/timeout |
+| B10 | explicit Stop/Cancel | cancelled |
+| B11 | custom/dev runner returns failureCount >0 | persistence refused |
+| B12 | document answer token-complete but structurally wrong | score materially reduced |
+| G-B13 | remeasure only General on a richer mixed-age profile | only General score/latency/timestamp/count changes |
+| G-B14 | remeasure Grounding diagnostic only | other axes retain values and timestamps |
+
+## Background profiler matrix
+
+| ID | Setup/action | Expected result |
+| --- | --- | --- |
+| G-P01 | Auto + default `local-free`, local backend missing OCR | after idle, one OCR work item may run |
+| G-P02 | Auto + `local-free`, chargeable cloud backend only | zero background cloud benchmark requests |
+| G-P03 | Auto + `all`, configured chargeable cloud backend missing axis | background may run; UI has explicit cost warning |
+| G-P04 | Auto + `off` | zero background benchmark requests |
+| G-P05 | Ordered + any background mode | zero background benchmark requests |
+| G-P06 | background axis running, then send real image task | background aborts/yields; real task proceeds normally |
+| G-P07 | background axis running, then enqueue manual Benchmark | background aborts/yields until manual queue is idle |
+| G-P08 | foreground/manual yield | no provider-failure backoff for yielded work |
+| G-P09 | real background provider failure | candidate+axis gets retry backoff; no tight retry loop |
+| G-P10 | recent Document visual task then idle | next eligible work prefers direct Document axis when missing/stale |
+| G-P11 | unsupported UI/detection task then idle | no fabricated direct capability axis |
+| G-P12 | unselected fallback-only backend missing all axes | background profiler ignores it |
+| G-P13 | exit short-lived test/doctor process with profiler timer pending | timer does not keep process alive |
 
 ## Settings/UI matrix
 
-| ID | Environment | Action | Expected result |
+| ID | Environment/action | Expected result |
+| --- | --- | --- |
+| U01 | local: Fixed order <-> Auto | routingMode persists/readbacks |
+| U02 | cycle Balanced/Quality/Speed/Local | routingPreference persists |
+| U03 | cycle background local-free/all/off | backgroundBenchmarking persists |
+| U04 | trusted-host remote, permission enabled | same settings RPC/readback path; no new HTTP settings-write route |
+| U05 | two clients, change settings on A | B refreshes controls correctly |
+| U06 | diagnostics Refresh | one new read-only GET state, no mutation |
+| U07 | Copy JSON | sanitized diagnosticVersion payload |
+| U08 | Benchmark finishes without closing Settings | new evidence becomes visible |
+| U09 | rc.8 remount/reopen repeatedly | one product panel, one diagnostics panel; no loop/duplicates |
+| G-U10 | mixed-age profile open in Benchmark modal | every axis shows its own score, median latency, age and Auto/stale state |
+| G-U11 | choose `all` | potentially chargeable background behavior is clearly disclosed |
+
+## Runtime separation matrix
+
+| ID | Setup/action | Expected result |
+| --- | --- | --- |
+| X01 | Auto preview recommends B>A; run real image | actual v1 starts from configured A |
+| X02 | inspect Settings preview | healthIncluded:false |
+| X03 | induce live breaker/rate-limit and compare | turn shadow may demote; Settings remains health-neutral |
+| X04 | manual Benchmark queued/running; restart DSH | jobs do not auto-resume; persisted evidence remains by freshness rules |
+| X05 | diagnostics open during chat | GET/DOM activity changes no tool result/retry/timeout/breaker/fallback |
+| G-X06 | background profiler active then real visual task | v1 output/order identical to background-profiler-off baseline |
+
+## Host/runtime compatibility minimum
+
+Before executor work, exercise at least:
+
+| DSH | Node | OS | Required checks |
 | --- | --- | --- | --- |
-| E-U01 | local loopback | switch Fixed order ↔ Auto | persisted `routingMode` survives close/reopen and DSH settings readback |
-| E-U02 | local loopback | cycle Balanced / Quality / Speed / Local | persisted `routingPreference` matches selected control after reopen |
-| E-U03 | trusted-host remote with permission enabled | change mode/preference remotely | write uses remote settings RPC; local page sees the same value; no HTTP settings mutation endpoint appears |
-| E-U04 | two clients open | change Vision Router settings on client A | client B refreshes selected routing controls after settings update/reset |
-| E-U05 | diagnostics open | click Refresh diagnostics | one fresh GET result replaces the displayed audit state without changing settings |
-| E-U06 | diagnostics open | click Copy JSON | clipboard contains sanitized diagnostic payload with `diagnosticVersion: 1` |
-| E-U07 | Benchmark job finishes while Settings remains open | do not close/reopen Settings | diagnostics refresh after Benchmark controls leave active job state; new evidence becomes visible |
-| E-U08 | rc.8 client loader enters live mode / Settings remounts | reopen Settings repeatedly | product panel and diagnostics panel reappear once each; no duplicate panels or self-refresh CPU loop |
+| rc.6 | supported Node 22 | Linux/macOS | settings persistence, preview, v1 order unchanged |
+| rc.7 | supported Node 22 | Linux/macOS | same |
+| rc.8 | Node 24 | macOS | loader/remount, Benchmark, background local/free, real image |
+| rc.8 | Node 24 | Windows | UI/Benchmark controls, no duplicate panels |
+| rc.8 | Node 24 | Linux | local + trusted-host settings synchronization |
 
-## Runtime-separation matrix
-
-| ID | Setup | Action | Expected result | Required evidence |
-| --- | --- | --- | --- | --- |
-| E-X01 | `routingMode: auto`, preview recommends B before A | run a real image tool call | actual v1 executor still starts from configured A; Auto preview remains observational | copied JSON + vision-router log |
-| E-X02 | Settings preview open | inspect response | `healthIncluded:false`; no fake session breaker state appears in Settings diagnostics | copied JSON |
-| E-X03 | induce breaker/rate-limit on A in a real visual turn with shadow enabled | compare Settings preview vs turn shadow | Settings remains health-neutral; turn shadow may demote A using live breaker `peek()` | copied JSON + shadow log |
-| E-X04 | Benchmark job queued/running | restart DSH | chargeable job does not resume; previously persisted valid profile remains available according to freshness/suite rules | before/after Benchmark UI |
-| E-X05 | Auto diagnostics open during normal chat | send non-image and image turns | diagnostics GET/DOM activity never changes tool result, retry, timeout, breaker, or fallback behavior | logs + functional result |
-
-## Host/runtime compatibility matrix
-
-At minimum execute these combinations before executor work begins:
-
-| ID | DSH | Node | OS | Required checks |
-| --- | --- | --- | --- | --- |
-| E-H01 | 0.1.0-rc.6 | supported Node 22 | Linux or macOS | settings load/save, diagnostics GET, copied JSON, actual v1 order unchanged |
-| E-H02 | 0.1.0-rc.7 | supported Node 22 | Linux or macOS | same as E-H01 |
-| E-H03 | 0.1.0-rc.8 | Node 24 | macOS | loader/remount survival, local Settings, Benchmark completion refresh, real Full benchmark |
-| E-H04 | 0.1.0-rc.8 | Node 24 | Windows | diagnostics rendering, Benchmark controls, no duplicate panels |
-| E-H05 | 0.1.0-rc.8 | Node 24 | Linux | local + trusted-host remote synchronization |
-
-CI contract passes are necessary but do **not** count as these real-machine rows. Commit F's CI now additionally proves that the six synthetic fixtures rasterize through Sharp on Ubuntu/macOS/Windows; E-Hxx still exists to observe the actual browser settings surface and at least one real v1 image execution path.
+CI is necessary but does not replace these real-machine rows.
 
 ## Security/privacy checks
 
-For at least one cloud backend and one local backend, inspect the copied JSON and browser Network response.
+Inspect copied JSON and browser Network for one cloud and one local route.
 
 Must be absent:
 
-- API key / bearer token;
-- credential value;
-- credential reference / environment variable name;
+- API key/bearer token;
+- credential value/ref/environment variable name;
 - raw endpoint URL;
 - arbitrary provider config;
-- raw Benchmark model response;
-- user image content or path.
+- raw Benchmark response;
+- user image content/path.
 
-Allowed diagnostic identity:
+Allowed:
 
 - provider/model candidate key already visible in Settings;
 - secret-safe `ep2_[0-9a-f]{32}` fingerprint;
-- measured score/latency/timestamp/coverage;
+- measured score/latency/per-axis timestamp/coverage/freshness;
 - suite revision;
 - local/fallback-only/benchmarkable flags.
 
-## Commit E + F exit gate
+## Exit gate before execution-changing Auto
 
-The preview/Benchmark gate is considered manually accepted only when:
+Do not connect Auto preview to the executor until real-machine evidence shows:
 
-1. E-R01 through E-R11 and F-R12/F-R13 have no unexplained movement;
-2. all `below-threshold` cases preserve configured order;
-3. all unmeasured/stale/timestamp-less barriers are visible rather than silently inferred;
-4. Balanced/Speed never borrow aggregate or another-axis latency;
-5. Local movement is clearly labeled as policy, never measured superiority;
-6. F-B01 through F-B12 show suite-v2/preflight/failure/identity semantics behaving as documented;
-7. credential rotation changes the safe Benchmark identity without exposing the credential/ref;
-8. preflight infrastructure failure produces zero provider requests;
-9. timeout and explicit cancellation remain distinguishable;
-10. failed/incomplete retests leave previous valid evidence intact;
-11. E-X01 proves `routingMode:auto` still does not change real v1 execution;
-12. E-X02/E-X03 prove Settings health neutrality versus live-turn breaker diagnostics;
-13. no secrets or raw user image data appear in the diagnostic payload;
-14. the minimum host/runtime matrix is exercised without duplicate panels or settings readback failures.
+1. all unmeasured/stale barriers are visible and preserve order;
+2. mixed-age per-axis freshness behaves correctly;
+3. Quick/Full preflight/failure/identity rules hold on real adapter + HTTP routes;
+4. default `local-free` produces no chargeable cloud background requests;
+5. `all` is explicit and clearly disclosed;
+6. foreground and manual Benchmark always preempt background profiling;
+7. background failures back off safely;
+8. no secret/raw user image data enters diagnostics;
+9. Local remains labeled as policy;
+10. `routingMode:auto` and background profiling still leave actual v1 execution order/result unchanged;
+11. minimum rc.6/rc.7/rc.8 host matrix passes.
 
-Only after this matrix has real PASS evidence should the project discuss an execution-changing Auto commit.
+Only after those gates have real PASS evidence should an opt-in execution-changing Auto commit be discussed.
