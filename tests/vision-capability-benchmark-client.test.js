@@ -40,34 +40,32 @@ test('running and queued jobs temporarily replace benchmark button with stop/can
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.elapsedMs/)
 })
 
-test('benchmark product vocabulary is coverage-based and has no confidence tier', () => {
+test('benchmark product vocabulary is coverage-based and has no confidence or stale tier', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageOf/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageKindText/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · 覆盖 OCR 和通用/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /约6次请求 · 覆盖结构化、OCR、文档、定位、通用/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /低置信度|中置信度|low confidence|medium confidence/i)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /confidence/i)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /已陈旧|已过期|stale|expired/i)
 })
 
-test('freshness is tracked per axis instead of refreshing the whole profile', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function axisFreshness/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.freshnessByAxis/)
+test('measurement timestamps are shown as provenance without creating an age validity judgement', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function axisMeasuredAt/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.measuredAtByAxis/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /部分能力可用于自动选择/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /已测能力均已陈旧 · 暂不参与自动选择/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /可用于Auto/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /已陈旧/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function ageText/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /测评时间仅作记录，不会因时间经过自动失效/)
 })
 
-test('benchmark modal renders five fixed axes with score latency age and per-axis auto eligibility', () => {
+test('benchmark modal renders five fixed axes with score latency and measurement time', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /var SCORE_ORDER = \['structured', 'ocr', 'document', 'grounding', 'general'\]/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /var scores=measured\.scores\|\|\{\}, latencies=measured\.medianLatencyMs\|\|\{\}/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /SCORE_ORDER\.forEach/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /— 未测/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /seconds\(latency\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /axisStateText\(measured,axis\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('新鲜度','Freshness'\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评时间','Measured'\)/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /text\('新鲜度','Freshness'\)/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /entries\.sort/)
 })
 
