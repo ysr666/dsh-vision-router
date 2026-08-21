@@ -90,10 +90,12 @@ test('diagnostic payload explains the active product policy and remains preview-
       profile('beta', 'vision-b', now - DAY, { ocr: 0.82 }, { ocr: 600 }),
     ]), now,
   })
-  assert.equal(preview.diagnosticVersion, 1)
+  assert.equal(preview.diagnosticVersion, 2)
   assert.equal(preview.policy.preference, 'balanced')
   assert.equal(preview.policy.formula, '0.80*capability + 0.20*speed')
   assert.equal(preview.policy.minAdvantage, 0.08)
+  assert.equal(preview.policy.measurementAgePolicy, 'informational-only')
+  assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
   assert.equal(preview.policy.configuredOrderIsBaseline, true)
   assert.equal(preview.autoPreviewOnly, true)
   assert.equal(preview.executionActive, false)
@@ -132,29 +134,31 @@ test('unmeasured configured routes expose the exact information barrier and cand
   const beta = candidate(ocr, 'beta/vision-b')
   assert.equal(alpha.evidenceState, 'unmeasured')
   assert.equal(alpha.autoComparable, false)
-  assert.equal(beta.evidenceState, 'fresh-measured')
+  assert.equal(beta.evidenceState, 'measured')
   assert.equal(beta.measuredAxisScore, 0.99)
   assert.equal(ocr.diagnostics.configuredPairChecks[0].outcome, 'incomparable')
   assert.deepEqual(ocr.diagnostics.configuredPairChecks[0].missing, ['alpha/vision-a'])
 })
 
-test('stale retained profiles are visible to humans but remain excluded from Auto comparison', async () => {
+test('old measurements remain auditable and comparable while age stays informational', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
     ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
-      profile('alpha', 'vision-a', now - 8 * DAY, { ocr: 0.40 }, { ocr: 300 }),
-      profile('beta', 'vision-b', now - 8 * DAY, { ocr: 0.95 }, { ocr: 200 }),
+      profile('alpha', 'vision-a', now - 365 * DAY, { ocr: 0.40 }, { ocr: 300 }),
+      profile('beta', 'vision-b', now - 365 * DAY, { ocr: 0.95 }, { ocr: 200 }),
     ]), now,
   })
   const ocr = row(preview, 'ocr')
-  assert.deepEqual(preview.freshMeasuredBackends, [])
-  assert.equal(candidate(ocr, 'alpha/vision-a').evidenceState, 'stale')
-  assert.equal(candidate(ocr, 'beta/vision-b').evidenceState, 'stale')
+  assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
+  assert.equal(candidate(ocr, 'alpha/vision-a').evidenceState, 'measured')
+  assert.equal(candidate(ocr, 'beta/vision-b').evidenceState, 'measured')
   assert.equal(candidate(ocr, 'beta/vision-b').measuredAxisScore, 0.95)
-  assert.equal(candidate(ocr, 'beta/vision-b').effectiveCapability, null)
-  assert.equal(ocr.diagnostics.configuredPairChecks[0].outcome, 'incomparable')
+  assert.equal(candidate(ocr, 'beta/vision-b').effectiveCapability, 0.95)
+  assert.ok(candidate(ocr, 'beta/vision-b').ageMs >= 364 * DAY)
+  assert.equal(ocr.diagnostics.configuredPairChecks[0].outcome, 'measured-promotable')
+  assert.equal(ocr.first, 'beta/vision-b')
 })
 
 test('local preference diagnostics show policy movement without pretending it is measured superiority', async () => {
@@ -203,7 +207,7 @@ test('HTTP diagnostics expose only the secret-safe fingerprint, never raw endpoi
   assert.match(entry.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('diagnostics browser layer is GET-only, copyable, refreshable and benchmark-aware', () => {
+test('diagnostics browser layer is GET-only, copyable, refreshable, benchmark-aware and age-neutral', () => {
   const html = '<!doctype html><html><head></head><body></body></html>'
   const injected = injectVisionRoutingDiagnosticsPrelude(html)
   assert.match(injected, /data-vision-router-routing-diagnostics/)
@@ -216,4 +220,6 @@ test('diagnostics browser layer is GET-only, copyable, refreshable and benchmark
   assert.doesNotMatch(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /method:'POST'/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /data-vr-capability-control/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /data-job-id/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /测评时间：仅作记录，不按天数失效/)
+  assert.doesNotMatch(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /已陈旧|已过期|Stale|Expired|新鲜窗口/)
 })
