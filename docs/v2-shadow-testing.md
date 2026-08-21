@@ -25,7 +25,7 @@ The router does not infer capability from model names or families. Benchmark the
 
 Quick benchmark:
 
-- 3 sequential requests;
+- 3 sequential model requests;
 - Latin/UI OCR;
 - Chinese chat OCR;
 - general scene;
@@ -33,7 +33,7 @@ Quick benchmark:
 
 Full benchmark:
 
-- 6 sequential requests;
+- 6 sequential model requests;
 - structured baseline;
 - two OCR fixtures;
 - grounding;
@@ -47,9 +47,80 @@ Freshness rules:
 
 - `<=7 days`: fresh and eligible for Auto comparison;
 - `7–30 days`: stale, still visible in the Benchmark UI, not eligible for Auto comparison;
-- `>30 days`: expired and not exposed as current measured product data.
+- `>30 days`: expired and not exposed as current measured product data;
+- missing/invalid `measuredAt`: incomparable, never treated as fresh.
 
-The Benchmark panel displays each measured axis with its score and per-axis median latency. Missing axes remain `— 未测`.
+The Benchmark panel displays each measured axis with its score and per-axis median transport latency. Missing axes remain `— 未测`.
+
+## Commit F Benchmark preflight gate
+
+Current Benchmark evidence belongs to:
+
+```text
+suite revision: 2
+profile cache version: 2
+```
+
+Old cache envelopes or records from another suite revision must not become current Auto evidence.
+
+Before request 1, every selected fixture must complete preflight:
+
+```text
+synthetic SVG
+-> Sharp/libvips PNG render
+-> adapter attachment materialization when required
+-> only then model request 1
+```
+
+If any selected fixture fails preflight:
+
+- the job fails as infrastructure;
+- zero provider/model requests are sent;
+- no partial profile is persisted;
+- an older valid profile remains intact.
+
+The Full suite's six fixtures must rasterize through the real Sharp path in CI on Ubuntu, macOS and Windows.
+
+### Timing boundary
+
+Measured latency must include only the actual model transport. Do not count:
+
+- SVG generation;
+- Sharp rendering;
+- attachment persistence/materialization.
+
+Balanced/Speed must use the median latency for the **same measured axis**. Do not substitute aggregate latency or another axis's latency.
+
+### Credential identity
+
+Exact Benchmark identity binds provider/model/endpoint/protocol plus a one-way fingerprint of the resolved credential value when the route requires a key.
+
+Expected checks:
+
+```text
+same route + Key A != same route + Key B
+keyless != credential-required-but-unresolved
+```
+
+Neither the raw API key nor the credential reference may appear in the browser diagnostic payload or persisted profile.
+
+When the DSH credential seam exists, a miss must not silently fall through to a same-name ambient environment variable.
+
+### Failure boundary
+
+A wrong but valid model answer may score poorly and the benchmark can continue. A model invocation failure must fail fast.
+
+Invocation failures include auth, rate limit, timeout, network, protocol, unsupported-image, provider exceptions and infrastructure failures.
+
+Expected job states:
+
+```text
+explicit user stop -> cancelled
+fixture/run timeout -> failed / timeout
+provider failure -> failed / classified failure
+```
+
+A failed or incomplete retest must never overwrite/remove a previous valid profile.
 
 ## Queue behavior
 
@@ -62,7 +133,7 @@ The Benchmark panel displays each measured axis with its score and per-axis medi
 - browser refresh recovers in-process state;
 - DSH restart intentionally does not resume chargeable jobs.
 
-Auth/rate-limit/timeout/network/protocol/image-support/infrastructure failures fail fast. A failed retest preserves the previous valid profile. A lower-coverage Quick retest cannot replace a richer Full profile.
+A lower-coverage Quick retest cannot replace a richer Full profile.
 
 Cloud models show an in-panel request-count/cost note. Force verification for DSH-declared text-only models and one-request legacy grounding repair also remain inside the Benchmark panel.
 
@@ -141,11 +212,11 @@ Compare the directly measured capability score for the task axis.
 
 ### Balanced
 
-Compare measured capability plus corresponding measured median latency.
+Compare measured capability plus the corresponding measured median transport latency for that same axis.
 
 ### Speed
 
-Give more weight to corresponding measured median latency, while still requiring measured capability on both sides.
+Give more weight to the corresponding measured median transport latency, while still requiring measured capability on both sides.
 
 ### Local
 
@@ -250,12 +321,16 @@ Before wiring `autoPreviewOrder` into execution, collect real-provider shadow sa
 1. Do unmeasured routes always preserve user order regardless of model name?
 2. Do Quick results affect only OCR/general tasks?
 3. Do Full results affect only the five directly measured axes?
-4. Are stale results visible but absent from Auto comparison?
+4. Are stale/timestamp-less results absent from Auto comparison?
 5. Are suggested large differences stable across repeated fresh runs?
 6. Does the 8-point threshold suppress small benchmark noise?
-7. Does local-first behave as explicit policy rather than a capability claim?
-8. Do breaker-blocked routes match v1's actual availability behavior?
-9. Do fallback-only built-ins stay behind user routes?
-10. Does enabling shadow leave actual output and execution unchanged?
+7. Do Balanced/Speed use only same-axis measured latency?
+8. Does local-first behave as explicit policy rather than a capability claim?
+9. Do breaker-blocked routes match v1's actual availability behavior?
+10. Do fallback-only built-ins stay behind user routes?
+11. Does every Benchmark job preflight all selected fixtures before the first model request?
+12. Do suite revision and credential rotation invalidate old evidence?
+13. Do provider/infrastructure failures leave the previous profile untouched?
+14. Does enabling shadow leave actual output and execution unchanged?
 
 If those answers are not convincing, improve Benchmark or shadow logic. Do not enable real routing to compensate for weak validation.
