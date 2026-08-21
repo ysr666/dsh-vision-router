@@ -49,19 +49,25 @@ test('benchmark product vocabulary is coverage-based and has no confidence tier'
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /confidence/i)
 })
 
-test('freshness is an auto-eligibility gate rather than an evidence grade', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.freshness === 'stale'/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.autoEligible === true/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /测评已陈旧 · 暂不参与自动选择/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /可用于自动选择/)
+test('freshness is tracked per axis instead of refreshing the whole profile', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function axisFreshness/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.freshnessByAxis/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function axisMeasuredAt/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.measuredAtByAxis/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /部分能力可用于自动选择/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /已测能力均已陈旧 · 暂不参与自动选择/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /可用于Auto/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /已陈旧/)
 })
 
-test('benchmark modal renders five fixed axes with score and per-axis median latency', () => {
+test('benchmark modal renders five fixed axes with score latency age and per-axis auto eligibility', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /var SCORE_ORDER = \['structured', 'ocr', 'document', 'grounding', 'general'\]/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /var scores=measured\.scores\|\|\{\}, latencies=measured\.medianLatencyMs\|\|\{\}/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /SCORE_ORDER\.forEach/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /— 未测/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /seconds\(latency\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /axisStateText\(measured,axis\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('新鲜度','Freshness'\)/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /entries\.sort/)
 })
 
