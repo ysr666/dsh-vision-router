@@ -35,13 +35,9 @@ profile cache version: 3
 
 Cache v3 stores `measuredAtByAxis` and `fixtureCountByAxis`. Legacy cache-v2 records from the current suite migrate with the legacy record timestamp copied to each retained measured axis.
 
-### Per-axis freshness
+### Measurement time is provenance only
 
-Each axis is independent:
-
-- <=7 days: fresh, may participate in Auto;
-- 7–30 days: stale, still visible, excluded from Auto;
-- >30 days: dropped from retained current profile data.
+Each axis keeps its own timestamp so the UI can truthfully say when that capability was measured.
 
 Required regression:
 
@@ -53,11 +49,15 @@ General measured today
 must yield:
 
 ```text
-OCR      stale / not comparable
-General  fresh / comparable when the task is General
+OCR      measured / comparable for OCR
+General  measured / comparable for General
 ```
 
-Refreshing General must never refresh OCR.
+The old OCR date must remain 8 days ago when General is refreshed. It must **not** become invalid merely because it is older, and it must not be rewritten as newly measured.
+
+The same rule applies at 80 days or a year: age alone does not invalidate identity-valid, current-suite evidence.
+
+Evidence should disappear/rebind when the exact endpoint/model/API/credential identity or Benchmark suite changes, not when a calendar threshold passes.
 
 ## Manual Benchmark
 
@@ -81,11 +81,13 @@ Preflight failure means zero model requests and no partial persistence. Latency 
 
 Wrong-but-valid answers may score low; invocation/auth/rate-limit/network/protocol/timeout/infrastructure failures fail fast. Explicit user cancellation remains distinct from timeout/provider failure.
 
+A user may manually retest whenever newer evidence is desired; the system must not invent a periodic retest requirement from age alone.
+
 ## Commit G background profiler
 
-When `routingMode: auto`, the profiler may gradually fill one axis at a time after an idle window.
+When `routingMode: auto`, the profiler may gradually fill one **missing** axis at a time after an idle window.
 
-It must never behave like a hidden Full benchmark.
+It must never behave like a hidden Full benchmark and must never periodically remeasure completed axes merely because their timestamps are old.
 
 ### Eligibility
 
@@ -119,16 +121,18 @@ With `routingMode: ordered`, background profiling is also inactive.
 One work item is:
 
 ```text
-one candidate + one missing/stale axis
+one candidate + one unmeasured direct axis
 ```
 
 After success, only that axis's score, latency, timestamp and fixture count are merged. Richer evidence on other axes must remain untouched.
+
+A complete five-axis profile should generate **zero** background Benchmark requests even if all five timestamps are months old.
 
 ### Axis priority
 
 A recent foreground visual task may raise its direct benchmark axis to the front of the next background scan. Otherwise the background priority order is conservative and deterministic.
 
-A recent Document task therefore makes a stale/missing `document` axis a preferred next target, without inventing evidence for UI/detection/etc. tasks that lack a direct axis.
+A recent Document task therefore makes a **missing** `document` axis a preferred next target, without inventing evidence for UI/detection/etc. tasks that lack a direct axis.
 
 ### Yield/preemption contract
 
@@ -174,15 +178,17 @@ B: OCR 99
 
 remains `A -> B`.
 
-### Unmeasured/stale barrier
+### Unmeasured barrier
 
 ```text
-A: OCR 60 fresh
-B: OCR unmeasured or stale
-C: OCR 99 fresh
+A: OCR 60 measured
+B: OCR unmeasured
+C: OCR 99 measured
 ```
 
 remains `A -> B -> C`. C cannot cross B using capability evidence.
+
+An old but valid measurement is **not** an information barrier.
 
 ### Small vs material difference
 
@@ -195,7 +201,7 @@ The threshold remains 0.08.
 
 ## Preference checks
 
-- **Quality**: direct fresh capability only.
+- **Quality**: direct measured capability only.
 - **Balanced**: 0.80 capability + 0.20 same-axis speed.
 - **Speed**: 0.55 capability + 0.45 same-axis speed.
 - **Local**: explicit local-first policy, then conservative capability comparison inside locality groups.
@@ -235,18 +241,18 @@ The main model row remains compact with one Benchmark entry.
 The modal must show five fixed axes, each with:
 
 ```text
-score | median latency | own age | own freshness/Auto state
+score | median latency | measurement time
 ```
 
-A mixed profile must be visibly mixed, for example:
+For example:
 
 ```text
-OCR      91 | 500ms | 8天前 | 已陈旧
-General  88 | 420ms | 刚刚  | 可用于Auto
+OCR      91 | 500ms | 8天前
+General  88 | 420ms | 刚刚
 Document — 未测
 ```
 
-No whole-profile age/fresh label may hide this distinction.
+The age is factual provenance only. The UI must not label a result `stale`, `expired`, `已陈旧`, or `已过期` because N days passed.
 
 ## Shadow output
 
@@ -264,7 +270,7 @@ healthBackends
 blockedBackends
 ```
 
-`measuredBackends` means a backend has at least routing-usable fresh evidence in the relevant shadow context; retained stale data is not silently promoted.
+`measuredBackends` means a backend has routing-usable direct measured evidence. There is no time-age qualifier.
 
 ## Safety contract
 
@@ -284,17 +290,20 @@ Actual v1 execution still owns fallback walking, breaker, timeouts, cancellation
 
 Before connecting `autoPreviewOrder` to execution, verify on real providers:
 
-1. unmeasured/stale barriers always preserve capability order;
-2. mixed-age profiles use only the current axis timestamp;
-3. background default never spends chargeable cloud quota;
-4. `all` only runs after explicit user selection;
-5. foreground visual activity reliably preempts background work;
-6. manual Benchmark reliably preempts background work;
-7. provider failures back off without tight loops;
-8. Quick/Full preflight/failure rules remain intact;
-9. repeated large measured differences remain stable;
-10. Balanced/Speed use same-axis latency only;
-11. Local remains explicit policy;
-12. real v1 output/order remains unchanged.
+1. old identity-valid measurements remain usable irrespective of age;
+2. refreshing one axis never rewrites another axis's measurement timestamp;
+3. unmeasured barriers always preserve capability order;
+4. endpoint/model/API/credential or suite changes stop old evidence from being reused;
+5. background default never spends chargeable cloud quota;
+6. a complete old profile is not periodically background-retested;
+7. `all` only runs after explicit user selection;
+8. foreground visual activity reliably preempts background work;
+9. manual Benchmark reliably preempts background work;
+10. provider failures back off without tight loops;
+11. Quick/Full preflight/failure rules remain intact;
+12. repeated large measured differences remain stable;
+13. Balanced/Speed use same-axis latency only;
+14. Local remains explicit policy;
+15. real v1 output/order remains unchanged.
 
 If those are not convincing, improve measurement/shadow behavior. Do not wire execution-changing Auto to compensate for weak evidence.
