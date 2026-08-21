@@ -59,7 +59,7 @@ function ctx(settings = {}, options = {}) {
     },
     llm: {
       listProviders: () => [],
-      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } } },
+      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } },
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
       stream: options.stream ?? (() => (async function* () {
         yield { text: 'ok' }
@@ -93,15 +93,11 @@ test('full benchmark preflights every fixture before making the first provider r
       }
       return Buffer.from('png')
     },
-    callDirect: async () => {
-      providerCalls += 1
-      return 'must not run'
-    },
+    callDirect: async () => { providerCalls += 1; return 'must not run' },
   })
   await manager.enqueue('vision-http/local-test/vision-model', 'full')
   await manager.waitForIdle()
-  const snapshot = await manager.snapshot()
-  const job = snapshot.jobs.find((entry) => entry.key === 'vision-http/local-test/vision-model')
+  const job = (await manager.snapshot()).jobs.find((entry) => entry.key === 'vision-http/local-test/vision-model')
   assert.equal(renders, 4)
   assert.equal(providerCalls, 0)
   assert.equal(job.state, 'failed')
@@ -121,11 +117,9 @@ test('adapter benchmark latency excludes fixture rendering and durable attachmen
   })
   const invoke = createExactCapabilityInvoker(runtime, core({ local: [], http: [] }), {
     key: 'adapter-x/vision-x',
-    provider: 'adapter-x',
-    model: 'vision-x',
+    provider: 'adapter-x', model: 'vision-x',
     endpoint: 'dsh-adapter://registered/adapter-x',
-    endpointConfig: { api: 'dsh-adapter' },
-    evidenceScope: 'adapter-route',
+    endpointConfig: { api: 'dsh-adapter' }, evidenceScope: 'adapter-route',
   }, settings, {
     now: () => clock,
     renderFixture: async () => { clock += 500; return Buffer.from('png') },
@@ -135,9 +129,7 @@ test('adapter benchmark latency excludes fixture rendering and durable attachmen
   assert.equal(clock, 1200)
   const result = await invoke({
     backend: { fingerprint: 'ep2_00000000000000000000000000000000' },
-    fixture,
-    exactBackend: true,
-    allowFallback: false,
+    fixture, exactBackend: true, allowFallback: false,
   })
   assert.equal(result.transport, 'adapter')
   assert.equal(result.latencyMs, 100)
@@ -163,7 +155,7 @@ test('benchmark timeout is a failed timeout, never a user cancellation', async (
   assert.equal(job.errorCode, 'CAPABILITY_BENCHMARK_TIMEOUT')
 })
 
-test('configured but unresolved credential never aliases no-auth identity or falls through the credentials seam', async () => {
+test('configured but unresolved credential stays distinct access state and never falls through the credentials seam', async () => {
   const previous = process.env.TEST_KEY
   process.env.TEST_KEY = 'ambient-secret-that-must-not-be-used'
   try {
@@ -181,7 +173,7 @@ test('configured but unresolved credential never aliases no-auth identity or fal
   }
 })
 
-test('rotating the actual credential behind the same ref changes benchmark fingerprint without exposing the key', async () => {
+test('rotating an API key changes access identity but not capability evidence identity', async () => {
   const backend = httpBackend('TEST_KEY')
   const settings = {
     providers: [{ provider: 'vision-http', model: 'cloud-test/vision-model', fallbacks: [] }],
@@ -195,9 +187,13 @@ test('rotating the actual credential behind the same ref changes benchmark finge
   const [b] = await collectCapabilityShadowCandidates(runtimeB, settings, c, store)
   assert.ok(a)
   assert.ok(b)
-  assert.notEqual(a.endpointFingerprint, b.endpointFingerprint)
-  assert.notEqual(a.credentialFingerprint, b.credentialFingerprint)
-  const serialized = JSON.stringify({ fingerprint: a.endpointFingerprint, credentialFingerprint: a.credentialFingerprint })
-  assert.doesNotMatch(serialized, /key-A-secret|key-B-secret/)
-  assert.match(a.credentialFingerprint, /^cred_[0-9a-f]{24}$/)
+  assert.equal(a.endpointFingerprint, b.endpointFingerprint)
+  assert.equal(Object.hasOwn(a, 'credentialFingerprint'), false)
+  assert.equal(Object.hasOwn(b, 'credentialFingerprint'), false)
+
+  const accessA = await resolveVisionCredential(runtimeA, 'TEST_KEY')
+  const accessB = await resolveVisionCredential(runtimeB, 'TEST_KEY')
+  assert.notEqual(accessA.fingerprint, accessB.fingerprint)
+  assert.match(accessA.fingerprint, /^cred_[0-9a-f]{24}$/)
+  assert.doesNotMatch(JSON.stringify({ capability: a.endpointFingerprint, access: accessA.fingerprint }), /key-A-secret|key-B-secret/)
 })
