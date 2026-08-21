@@ -73,6 +73,14 @@ function store(records = []) {
   return { async get(key) { return map.get(key) } }
 }
 
+function runtimeStore(records = {}) {
+  return {
+    maxAgeMs: 3_600_000,
+    minSamples: 2,
+    get(key) { return records[key] },
+  }
+}
+
 function row(preview, intent) {
   return preview.previews.find((item) => item.intent === intent)
 }
@@ -108,6 +116,71 @@ test('diagnostic v3 explains capability/performance/access separation and remain
   assert.ok(ocr.diagnostics.candidates.every((entry) => entry.benchmarkLatencyMs !== null))
   assert.ok(ocr.diagnostics.candidates.every((entry) => entry.runtimeLatencyMs === null))
   assert.ok(ocr.diagnostics.candidates.every((entry) => entry.runtimePerformanceObserved === false))
+})
+
+test('runtime diagnostics expose warming sample count separately from routing eligibility', async () => {
+  const now = Date.now()
+  const settings = config({ routingPreference: 'speed' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now, { ocr: 0.8 }, { ocr: 20 }),
+      profile('beta', 'vision-b', now, { ocr: 0.8 }, { ocr: 9000 }),
+    ]),
+    runtimePerformanceStore: runtimeStore({
+      'alpha/vision-a': {
+        runtimeLatencyMsByAxis: {}, observedLatencyMsByAxis: { ocr: 700 },
+        sampleCountByAxis: { ocr: 1 }, observedAtByAxis: { ocr: now - 1000 }, maxAgeMs: 3_600_000, minSamples: 2,
+      },
+      'beta/vision-b': {
+        runtimeLatencyMsByAxis: {}, observedLatencyMsByAxis: { ocr: 100 },
+        sampleCountByAxis: { ocr: 1 }, observedAtByAxis: { ocr: now - 500 }, maxAgeMs: 3_600_000, minSamples: 2,
+      },
+    }),
+    now,
+  })
+  const ocr = row(preview, 'ocr')
+  assert.equal(ocr.changed, false)
+  assert.equal(preview.policy.runtimePerformanceMaxAgeMs, 3_600_000)
+  assert.equal(preview.policy.runtimePerformanceMinSamples, 2)
+  const alpha = candidate(ocr, 'alpha/vision-a')
+  assert.equal(alpha.runtimeObservedLatencyMs, 700)
+  assert.equal(alpha.runtimeLatencyMs, null)
+  assert.equal(alpha.runtimeSampleCount, 1)
+  assert.equal(alpha.runtimeMinSamples, 2)
+  assert.equal(alpha.runtimePerformanceObserved, true)
+  assert.equal(alpha.runtimePerformanceEligible, false)
+  assert.ok(alpha.runtimeAgeMs >= 1000)
+})
+
+test('warmed runtime diagnostics become routing-eligible without using Benchmark latency', async () => {
+  const now = Date.now()
+  const settings = config({ routingPreference: 'speed' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now, { ocr: 0.8 }, { ocr: 10 }),
+      profile('beta', 'vision-b', now, { ocr: 0.8 }, { ocr: 9999 }),
+    ]),
+    runtimePerformanceStore: runtimeStore({
+      'alpha/vision-a': {
+        runtimeLatencyMsByAxis: { ocr: 5000 }, observedLatencyMsByAxis: { ocr: 5000 },
+        sampleCountByAxis: { ocr: 2 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3_600_000, minSamples: 2,
+      },
+      'beta/vision-b': {
+        runtimeLatencyMsByAxis: { ocr: 100 }, observedLatencyMsByAxis: { ocr: 100 },
+        sampleCountByAxis: { ocr: 2 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3_600_000, minSamples: 2,
+      },
+    }),
+    now,
+  })
+  const ocr = row(preview, 'ocr')
+  assert.equal(ocr.first, 'beta/vision-b')
+  const beta = candidate(ocr, 'beta/vision-b')
+  assert.equal(beta.runtimeLatencyMs, 100)
+  assert.equal(beta.runtimePerformanceEligible, true)
+  assert.equal(beta.benchmarkLatencyMs, 9999)
+  assert.ok(beta.speedScore > candidate(ocr, 'alpha/vision-a').speedScore)
 })
 
 test('small Quality differences remain auditable as below-threshold', async () => {
@@ -223,5 +296,6 @@ test('diagnostics browser layer is GET-only, v3, copyable and explicit about ben
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /凭据不定义能力身份/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /测评耗时/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /运行速度/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /预热/)
   assert.doesNotMatch(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /已陈旧|已过期|Stale|Expired|新鲜窗口/)
 })
