@@ -5,6 +5,11 @@ import {
   contextWithCoalescedAdapterUpdates,
   ensureAdapterPrepareCall,
 } from '../lib/adapter-update-coalescer.js'
+import {
+  contextWithVisionRuntimePerformance,
+  createVisionRuntimePerformanceStore,
+  withVisionRuntimePerformanceScope,
+} from '../lib/vision-runtime-performance.js'
 
 test('legacy Vision Router adapter gains DSH 0.1.1 prepareCall semantics', async () => {
   const calls = []
@@ -99,4 +104,39 @@ test('coalesced Vision Router context adapts only registrations made through its
   const foreignAdapter = { async *stream() {} }
   llm.registerAdapter(['foreign'], foreignAdapter)
   assert.equal(typeof registrations[1].adapter.prepareCall, 'undefined')
+})
+
+test('DSH 0.1.1 prepareCall compatibility composes with runtime performance observation', async () => {
+  let time = 1_000
+  const now = () => time
+  const registrations = []
+  const base = {
+    on() { return () => {} },
+    llm: {
+      registerAdapter(providers, adapter) {
+        registrations.push({ providers, adapter })
+        return () => {}
+      },
+      async *stream() {
+        time += 240
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }
+  const coalesced = contextWithCoalescedAdapterUpdates(base)
+  const store = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
+  const observed = contextWithVisionRuntimePerformance(coalesced, store, { now })
+
+  observed.llm.registerAdapter(['deepseek-vision'], {
+    async resolveModel(provider, model) { return { provider, id: model, name: model } },
+    async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+  })
+  assert.equal(typeof registrations[0].adapter.prepareCall, 'function')
+
+  await withVisionRuntimePerformanceScope('vision_ocr', {}, async () => {
+    for await (const _chunk of observed.llm.stream({ provider: 'p', model: 'm' })) {
+      // consume exact observed stream
+    }
+  })
+  assert.equal(store.get('p/m').runtimeLatencyMsByAxis.ocr, 240)
 })
