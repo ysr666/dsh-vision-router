@@ -18,12 +18,14 @@ test('vision tool runtime boundary never proxies unrelated injected child contex
   assert.equal(seen, webChild, 'rc6 route/effect ownership depends on exact child identity')
 })
 
-test('entry installs tool runtime after host settings compatibility and before structured hardening', async () => {
+test('entry installs tool runtime before native-image coexistence and structured hardening', async () => {
   const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const settingsAt = source.indexOf('const settingsCtx = batchAttachmentHost')
   const runtimeAt = source.indexOf('const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)')
-  const structuredAt = source.indexOf('const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)')
+  const nativeAt = source.indexOf('const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)')
+  const structuredAt = source.indexOf('const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)')
   assert.ok(settingsAt >= 0)
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
-  assert.ok(structuredAt > runtimeAt, 'structured deadlines must run inside the runtime cancellation boundary')
+  assert.ok(nativeAt > runtimeAt, 'native-image coexistence must remain inside the runtime cancellation boundary')
+  assert.ok(structuredAt > nativeAt, 'structured deadlines must wrap the final native-image-aware runtime view')
 })
