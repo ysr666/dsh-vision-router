@@ -15,6 +15,8 @@ import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
+import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
+import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
@@ -240,6 +242,10 @@ export function apply(ctx, config = {}) {
   // ordinary chat model picker). The existing classic client bundle stays the
   // DSH module-system artifact, including HMR/source-map behavior.
   installLiveModelClientPrelude(reconciledCtx)
+  // #266: 1.7.x gets one exact, no-fallback image smoke test per visible row.
+  // Keep it out of the controlled React form so the v2 capability-benchmark
+  // client can take ownership later without forking the stable settings UI.
+  installExactVisionTestClient(reconciledCtx)
   // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
   // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
   // backed by exact private-registry evidence. Record the same provenance in
@@ -249,6 +255,12 @@ export function apply(ctx, config = {}) {
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
+    logger: logging.logger,
+  })
+  // The smoke-test route sends only a built-in probe image to the exact selected
+  // backend. It never walks the configured fallback chain, so a healthy OVH
+  // fallback can no longer make a broken custom model look healthy.
+  installVisionBackendSmokeTest(executionCtx, runtimeConfig, core, {
     logger: logging.logger,
   })
   // index.js historically passes image bytes as `options.input` to the async
