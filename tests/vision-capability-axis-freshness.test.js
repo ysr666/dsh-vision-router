@@ -38,7 +38,7 @@ function config() {
   }
 }
 
-test('measurement age is metadata: eight-day-old OCR remains Auto-eligible', async () => {
+test('measurement age is metadata: eight-day-old OCR remains usable by Quality', async () => {
   const now = Date.now()
   const records = new Map()
   const store = {
@@ -49,7 +49,7 @@ test('measurement age is metadata: eight-day-old OCR remains Auto-eligible', asy
           measuredAt: now,
           measuredAtByAxis: { ocr: now - 8 * DAY, general: now },
           scores: { ocr: index === 0 ? 0.2 : 0.99, general: index === 0 ? 0.7 : 0.8 },
-          medianLatencyMs: { ocr: 100, general: 200 },
+          benchmarkMedianLatencyMsByAxis: { ocr: 100, general: 200 },
         })
       }
       return records.get(fingerprint)
@@ -59,7 +59,8 @@ test('measurement age is metadata: eight-day-old OCR remains Auto-eligible', asy
   assert.equal(rows.length, 2)
   assert.ok(rows.every((row) => Number.isFinite(row.measured?.ocr)))
   assert.ok(rows.every((row) => Number.isFinite(row.measured?.general)))
-  assert.ok(rows.every((row) => row.medianLatencyMs?.ocr === 100))
+  assert.ok(rows.every((row) => row.benchmarkMedianLatencyMsByAxis?.ocr === 100))
+  assert.ok(rows.every((row) => row.runtimeLatencyMsByAxis === undefined))
 
   const ocr = await buildCapabilityShadowPlan({
     ctx: ctx(config()), config: config(), core: core(), store,
@@ -71,7 +72,7 @@ test('measurement age is metadata: eight-day-old OCR remains Auto-eligible', asy
   assert.deepEqual(ocr.incomparableBackends, [])
 })
 
-test('per-axis timestamps remain independent metadata without creating a TTL', async () => {
+test('per-axis timestamps remain independent provenance without creating a TTL', async () => {
   const now = Date.now()
   const store = {
     async get() {
@@ -79,7 +80,7 @@ test('per-axis timestamps remain independent metadata without creating a TTL', a
         measuredAt: now,
         measuredAtByAxis: { ocr: now - 8 * DAY, general: now },
         scores: { ocr: 0.9, general: 0.8 },
-        medianLatencyMs: { ocr: 100, general: 200 },
+        benchmarkMedianLatencyMsByAxis: { ocr: 100, general: 200 },
       }
     },
   }
