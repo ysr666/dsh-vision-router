@@ -18,6 +18,7 @@ import {
 } from '../lib/vision-capability-router.js'
 
 const NOW = 2_000_000_000_000
+const DAY = 24 * 60 * 60 * 1000
 
 function measured(scores, medianLatencyMs = {}, measuredAt = NOW) {
   return { scores, medianLatencyMs, measuredAt }
@@ -85,7 +86,7 @@ test('measured profile preserves exact benchmark scores without prior blending o
   assert.equal(Object.prototype.hasOwnProperty.call(profile, 'confidence'), false)
 })
 
-test('quality uses fresh measured capability while speed uses only same-axis measured latency', () => {
+test('quality uses measured capability while speed uses only same-axis measured latency', () => {
   const strong = buildVisionCapabilityProfile({ provider: 'p', model: 'strong', measured: measured({ ocr: 0.98 }, { ocr: 7000 }) })
   const fast = buildVisionCapabilityProfile({ provider: 'p', model: 'fast', measured: measured({ ocr: 0.78 }, { ocr: 300 }) })
   const qualityStrong = scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'quality', measuredAt: NOW, now: NOW })
@@ -108,7 +109,7 @@ test('balanced and speed never substitute aggregate or another-axis latency', ()
   assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'speed', measuredAt: NOW, now: NOW }).comparable, false)
 })
 
-test('measurement without a valid measuredAt timestamp is never auto-comparable', () => {
+test('measurement without a valid measuredAt timestamp is rejected as malformed provenance, not as old evidence', () => {
   const candidates = [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }]
   const result = suggestVisionOrder({
     intent: 'ocr',
@@ -180,8 +181,9 @@ test('tasks without a direct benchmark axis never reorder from capability measur
   assert.ok(ranked.every((row) => row.comparable === false))
 })
 
-test('stale measurements do not participate in auto reordering', () => {
-  const old = NOW - AUTO_MEASURED_MAX_AGE_MS - 1
+test('measurement age alone never invalidates Auto evidence', () => {
+  assert.equal(AUTO_MEASURED_MAX_AGE_MS, Number.MAX_SAFE_INTEGER)
+  const old = NOW - 365 * DAY
   const ranked = rankVisionCandidates({
     intent: 'ocr', strategy: 'quality', now: NOW,
     candidates: [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }],
@@ -190,8 +192,8 @@ test('stale measurements do not participate in auto reordering', () => {
       'p/b': measured({ ocr: 1 }, {}, old),
     },
   })
-  assert.deepEqual(ranked.map((row) => row.key), ['p/a', 'p/b'])
-  assert.ok(ranked.every((row) => row.comparable === false))
+  assert.deepEqual(ranked.map((row) => row.key), ['p/b', 'p/a'])
+  assert.ok(ranked.every((row) => row.comparable === true))
 })
 
 test('local preference is an explicit policy and may cross unmeasured cloud backends', () => {
