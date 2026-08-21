@@ -1,73 +1,51 @@
 # v2 capability-aware vision routing
 
-This document describes the current v2 routing target on `feat/v2-capability-router`. The branch remains **shadow-only**: v1.7.x execution order is still authoritative, and `routingMode: auto` is not connected to the real executor yet.
+This document describes the current v2 routing target on `feat/v2-capability-router`. The branch remains **preview/shadow-only**: v1.7.x execution order is still authoritative, and `routingMode: auto` is not connected to the real executor yet.
 
-## Product contract
-
-Normal users choose two things:
-
-- **Routing mode**: `ordered` or `auto`;
-- **Routing preference**: `balanced`, `quality`, `speed`, or `local`.
-
-`capabilityRoutingShadow` is an internal validation flag, not the product switch.
-
-The key product rule is:
+## Product rule
 
 > **The user decides preference; Benchmark provides facts; Vision Router does not guess model capability.**
 
-Model names, provider names, model families and popularity do not create capability scores. An unmeasured model is simply unmeasured.
+Normal users choose:
 
-## Two inputs only
+- **Routing mode**: `ordered` or `auto`;
+- **Routing preference**: `balanced`, `quality`, `speed`, or `local`;
+- **Background profiling**: `local-free`, `all`, or `off`.
 
-The router intentionally has only two capability-selection inputs:
+Model names, provider names, model families and popularity never create capability scores. An unmeasured axis is simply unmeasured.
 
-1. **User intent**
+`capabilityRoutingShadow` remains an internal validation flag, not the product switch.
+
+## Inputs and boundaries
+
+Capability routing uses only:
+
+1. **User policy**
    - configured model order;
    - routing preference;
-   - explicit locality choice (`local`).
+   - explicit locality preference.
 2. **Exact-endpoint measurements**
-   - self-benchmark scores;
-   - per-axis benchmark transport latency;
-   - benchmark timestamp/freshness.
+   - directly measured per-axis capability score;
+   - the same axis's measured median transport latency;
+   - that axis's own measurement timestamp/freshness.
 
-Runtime availability is a separate gate. Circuit-breaker state and rate limits can temporarily move an unavailable backend out of the way, but they never change its measured capability.
+Runtime breaker/rate-limit state is a separate availability gate. It may temporarily move an unavailable backend behind healthy candidates, but it never edits capability scores.
 
-There is no capability evidence hierarchy. In particular, v2 does **not** use:
+There are no family priors, generic priors, reputation scores, manual capability scores, model-name inference, or prior/measurement blending.
 
-- family priors;
-- generic priors;
-- model-name inference;
-- manual capability scores;
-- provider/model reputation scores;
-- measured/prior score blending.
+## User order is the baseline
 
-## User order is the default truth
+Auto preview starts from the configured order. It is not a global leaderboard sort.
 
-Auto routing starts from the user's configured order. It is not a global leaderboard sort.
-
-If the configured order is:
-
-```text
-A -> B -> C
-```
-
-and there is no directly comparable fresh measurement, the result stays:
-
-```text
-A -> B -> C
-```
-
-A measured backend may not jump over an unmeasured backend merely because its own score is high. Doing so would implicitly claim that it is better than the unmeasured backend, which the router cannot know.
-
-Example:
+A measured backend cannot jump over an unmeasured neighbor merely because its own score is high. Example:
 
 ```text
 A OCR 60
-B unmeasured
+B OCR unmeasured
 C OCR 99
 ```
 
-Auto preview remains:
+remains:
 
 ```text
 A -> B -> C
@@ -75,133 +53,84 @@ A -> B -> C
 
 `B` is an information barrier.
 
-## Task intents and benchmark axes are different types
-
-The visual task vocabulary is broader than the current benchmark suite.
-
-Current task intents:
-
-- `structured`
-- `ocr`
-- `document`
-- `ui`
-- `grounding`
-- `detection`
-- `general`
-- `chart_diagram`
-- `code_screenshot`
-- `visual_compare`
-
-Current directly measured benchmark axes:
-
-- `structured`
-- `ocr`
-- `document`
-- `grounding`
-- `general`
-
-Only tasks with a direct measured axis can currently trigger a capability-based reorder.
-
-The current router deliberately does **not** manufacture proxy formulas such as `ui = ocr + structured` or `detection = grounding + general`. For `ui`, `detection`, `chart_diagram`, `code_screenshot`, and `visual_compare`, the user's configured order remains intact until a dedicated measurement contract exists.
-
-## Conservative reorder rule
-
-Capability-based movement uses stable adjacent comparison, not full-array sorting.
-
-Two adjacent user routes are comparable only when both have a fresh measurement for the task's direct benchmark axis. If either side is not comparable, no capability swap occurs across that boundary.
-
-A reorder also requires a minimum measured advantage:
+Capability movement is adjacent and conservative. Both neighbors must have fresh directly comparable evidence for the current axis, and the right side must lead by at least:
 
 ```text
 AUTO_REORDER_MIN_ADVANTAGE = 0.08
 ```
 
-So:
+So `91 -> 94` stays in configured order, while `61 -> 94` may preview a swap.
+
+## Direct task axes
+
+Current directly measured axes are:
 
 ```text
-A OCR 91
-B OCR 94
+structured
+ocr
+document
+grounding
+general
 ```
 
-stays `A -> B`, while a materially larger difference such as `61 -> 94` may produce `B -> A` in shadow preview.
+Tasks such as `ui`, `detection`, `chart_diagram`, `code_screenshot`, and `visual_compare` do not receive proxy formulas. Until they have their own direct measurement contract, capability-based Auto preserves configured order for them.
 
-The threshold is a stability guard against benchmark noise. It is not an evidence grade.
-
-## Routing preferences
+## Preferences
 
 ### Quality
 
-`quality` uses the directly measured capability score for the current benchmark axis.
+Uses the fresh directly measured capability score for the current axis.
 
 ### Balanced
 
-`balanced` combines directly measured capability with the **same axis's** measured median transport latency. It never substitutes an aggregate latency or the latency of another benchmark axis.
+Uses:
+
+```text
+0.80 * capability + 0.20 * speed
+```
+
+where speed comes only from the **same axis's** measured median transport latency.
 
 ### Speed
 
-`speed` gives more weight to the **same axis's** measured median transport latency while still requiring measured capability on both compared routes. If that axis has no measured latency, the candidate is not comparable for Balanced/Speed.
+Uses:
+
+```text
+0.55 * capability + 0.45 * speed
+```
+
+and still requires fresh measured capability. Another axis's latency or an aggregate latency is never substituted.
 
 ### Local
 
-`local` is an explicit user policy, not a capability score. Healthy local routes are stably grouped ahead of cloud routes. Capability comparison is then conservative within those groups.
-
-Because locality is user intent, this policy may cross an unmeasured cloud route. That is different from claiming one model has better visual ability.
-
-## Runtime health is an availability gate
-
-The shadow layer reads the same live v1 circuit breaker through a side-effect-free `peek()` seam.
-
-A backend reported as circuit-open or rate-limited is temporarily moved behind healthy candidates. Its benchmark scores are not edited or penalized.
-
-This gives explanations such as:
-
-```text
-planned: A -> B
-A: rate limited
-preview: B -> A
-```
-
-rather than pretending that A's visual capability became worse.
-
-The read-only health seam must remain non-mutating:
-
-- no cooldown pruning;
-- no LRU touch;
-- no credential-state clearing;
-- no breaker recording;
-- observation failures are neutral.
+`local` is explicit user policy, not measured superiority. Healthy local routes are stably grouped before cloud routes; conservative measured comparison then applies inside locality groups.
 
 ## Candidate pool
 
-Automatic routing is limited to routes that belong to the user's Vision Router configuration or are explicitly enabled by the user.
-
-Eligible user routes include:
+Auto preview is limited to routes that belong to Vision Router's user configuration:
 
 - configured provider/model rows and fallbacks;
 - explicitly enabled local backends;
 - explicitly configured HTTP vision backends.
 
-Arbitrary DSH-discovered vision models may appear in model pickers, but they do not silently enter the automatic routing pool.
+Arbitrary DSH-discovered visual models do not silently enter the routing pool.
 
-The built-in anonymous free tier is marked `fallback-only` unless the user explicitly selected that route. A fallback-only backend cannot be promoted ahead of user routes by Benchmark.
+An unselected built-in free HTTP tier is `fallback-only` and cannot be Benchmark-promoted over user routes. If the user explicitly selects it, it becomes a normal user route.
 
-## Exact-endpoint self-benchmark
+## Exact-endpoint Benchmark
 
-Benchmarking uses generated fixtures, not user images.
+Benchmark uses generated fixtures, never user images.
 
-The exactness contract is strict:
+The exactness contract includes:
 
-- the selected provider/model/endpoint/protocol is fingerprinted with a secret-safe `ep2_` identity;
-- credential-bearing routes additionally bind the **resolved credential value's one-way fingerprint** into that identity, never the raw API key;
-- changing the actual credential value therefore invalidates old Benchmark evidence even when provider/model/URL stay unchanged;
-- configured credential references that are temporarily unresolved use a distinct `unresolved` identity and never alias a genuinely keyless backend;
-- when DSH exposes a credential service, a credential miss does not silently fall through to an unrelated same-name ambient environment variable;
-- Vision Router fallback is disabled during a benchmark;
-- normal DSH providers use their exact registered adapter/provider/model first;
-- a v1-compatible bridge may only reach the same provider/model's exact HTTP endpoint;
-- plugin-owned `vision-http` routes use their exact configured HTTP backend;
-- a fingerprint mismatch aborts persistence;
-- endpoint URLs, credential references, credentials and raw model responses are not persisted in the profile or returned to the browser.
+- exact provider/model/endpoint/protocol identity;
+- secret-safe `ep2_...` fingerprint;
+- one-way fingerprint of the resolved credential value when required;
+- credential rotation invalidates the old endpoint identity;
+- unresolved credential-required routes do not alias genuinely keyless routes;
+- fallback disabled during Benchmark;
+- fingerprint mismatch aborts persistence;
+- endpoint URLs, raw keys, credential references and raw model output are excluded from persisted/browser evidence.
 
 Profiles are stored atomically at:
 
@@ -211,171 +140,173 @@ Profiles are stored atomically at:
 
 with mode `0600`.
 
-### Benchmark suite revision and cache compatibility
+## Suite and profile cache revisions
 
-Commit F defines:
+Current measurement contract:
 
 ```text
 CAPABILITY_BENCHMARK_SUITE_REVISION = 2
-CAPABILITY_PROFILE_CACHE_VERSION = 2
+CAPABILITY_PROFILE_CACHE_VERSION = 3
 ```
 
-A persisted record is usable only when it belongs to the current suite revision. Legacy cache envelopes and records from a different suite revision are ignored instead of being promoted as fresh Auto evidence.
-
-This is intentional: changing fixture generation, scoring semantics, timing semantics, or identity semantics must not silently reuse scores produced under an older contract.
-
-### Preflight before the first provider request
-
-Quick/Full/Grounding jobs prepare **all selected fixtures before making request 1**.
-
-Preflight includes:
-
-1. generating the synthetic SVG fixture;
-2. rasterizing every selected SVG through the same Sharp/libvips path used by the real Benchmark;
-3. for adapter routes, persisting the generated PNG attachment references needed by the exact DSH adapter path.
-
-If any fixture fails to generate, rasterize, or materialize, the job fails as `infrastructure` and **zero model requests are sent**.
-
-The regression suite renders all six Full fixtures through Sharp, and the native-host CI matrix runs that fixture-rendering test on Ubuntu, macOS and Windows.
-
-### Transport-only latency
-
-Benchmark latency is intended to compare the model/backend, not local preprocessing overhead.
-
-Therefore the measured latency window starts immediately before the actual adapter/HTTP transport and ends when that transport returns. It excludes:
-
-- SVG generation;
-- Sharp/libvips rasterization;
-- DSH attachment persistence/materialization.
-
-If an adapter falls back through the allowed exact HTTP bridge, the recorded latency is the HTTP bridge transport latency rather than the failed adapter-preparation time.
-
-## Coverage, not confidence tiers
-
-Benchmark does not label results as low/medium/high confidence.
-
-The product contract reports what was actually measured.
-
-### Quick benchmark
-
-Three sequential requests:
-
-- Latin/UI OCR;
-- Chinese chat OCR;
-- general scene.
-
-Coverage:
+Cache v3 adds **per-axis timestamps and fixture counts**:
 
 ```text
-OCR / General
+measuredAtByAxis
+fixtureCountByAxis
 ```
 
-A fresh Quick result may participate in an OCR or general comparison because those axes were directly measured. It cannot participate in structured/document/grounding comparison.
+Legacy cache-v2 records from the current suite are migrated conservatively: each retained score inherits the old record timestamp. Wrong-suite records remain unusable.
 
-### Full benchmark
+The reason for cache v3 is important: refreshing one axis must not refresh every other axis.
 
-Six sequential requests:
-
-- structured baseline;
-- Latin/UI OCR;
-- Chinese chat OCR;
-- grounding;
-- document/table;
-- general scene.
-
-Coverage:
+Example:
 
 ```text
-Structured / OCR / Document / Grounding / General
+OCR      measured 8 days ago
+General  measured today
 ```
 
-The UI also receives `medianLatencyMs` per measured axis, so speed/balanced routing uses the latency from the same task class rather than a generic guessed speed.
+means:
 
-### Document scoring contract
+```text
+OCR      stale -> excluded from Auto
+General  fresh -> Auto-eligible
+```
 
-The Document fixture is not scored as token soup. A strong result must parse as the requested JSON structure and preserve the document relationships being tested, including:
+A new General measurement cannot make the old OCR measurement fresh.
 
-- expected title/summary identity;
-- row count and row order;
-- item-to-amount pairing;
-- total;
-- order ID.
+## Per-axis freshness
 
-Malformed JSON, reordered/mispaired rows, or an answer that merely mentions the expected tokens must lose credit instead of receiving a near-perfect document score.
+Freshness belongs to each measured axis independently:
 
-### Grounding diagnostic repair
+- `<= 7 days`: fresh and Auto-eligible;
+- `7–30 days`: stale, still human-visible, excluded from Auto;
+- `> 30 days`: removed from retained current profile data.
 
-Older rich profiles that have a grounding score but no stored grounding diagnostic can run one grounding request. The repair updates only grounding score/latency/diagnostic while preserving the richer profile's other axes, coverage and original full-suite timestamp.
+A mixed-age profile is valid. The Benchmark product may therefore expose, for one backend:
 
-## Freshness is eligibility, not evidence quality
+```text
+OCR       91 · 8天前 · 已陈旧
+General   88 · 刚刚 · 可用于Auto
+Document  — 未测
+```
 
-Freshness is a time gate:
-
-- `<= 7 days`: `fresh`, visible and eligible for Auto comparison;
-- `7–30 days`: `stale`, still visible in UI but **not** eligible for Auto comparison;
-- `> 30 days`: expired and not exposed as current measured product data.
-
-A measurement without a valid positive `measuredAt` is not fresh by default. It is incomparable and cannot participate in Auto selection.
-
-The Benchmark API exposes:
+The browser/API contract includes per-axis fields:
 
 ```text
 scores
+medianLatencyMs
+measuredAtByAxis
+fixtureCountByAxis
+freshnessByAxis
+autoEligibleAxes
+staleAxes
 coverage
 coverageKind
-measuredAt
-freshness
-autoEligible
-medianLatencyMs
-suiteRevision
 ```
 
-It does not expose a `confidence` tier.
+Aggregate `measuredAt`, `freshness` and `autoEligible` remain summary/compatibility fields; Auto scoring itself uses the current axis's timestamp.
 
-The shadow router's `measuredBackends` list is fresh-only. A stale profile can remain visible in the Benchmark UI for human reference, but it is treated as unmeasured for capability-based Auto reordering.
+There is no confidence tier.
 
-## Benchmark queue and failure behavior
+## Manual Quick / Full Benchmark
 
-- FIFO queue;
-- one actual benchmark executes at a time;
-- duplicate active jobs are de-duplicated;
-- maximum 32 active jobs;
-- queued jobs revalidate provider/model/fingerprint before execution;
-- running progress exposes completed/total/current axis/elapsed time;
-- queued and running jobs can be cancelled;
-- browser refresh restores in-process queue state;
-- DSH restart intentionally does not resume chargeable jobs.
+Manual Benchmark remains available as an advanced operation, but it is **not a prerequisite for normal Auto setup**.
 
-The failure boundary is deliberately strict:
+Quick:
 
-- a **normal model answer** that is wrong may score poorly or zero and the suite continues;
-- an **invocation failure** (auth, rate-limit, timeout, network, protocol, unsupported-image, provider exception, or Benchmark infrastructure failure) fails the run immediately;
-- a timed-out run is reported as `failed / timeout`, never as a user cancellation;
-- only an explicit cancel request produces the `cancelled` job state;
-- a run with any failed fixture cannot be persisted as a new profile even if a custom/legacy benchmark runner returns a partial record;
-- a failed retest never overwrites or removes the previous valid profile;
-- a lower-coverage Quick retest cannot downgrade an existing richer Full profile.
+- about 3 sequential requests;
+- covers OCR + General.
 
-## Benchmark UI contract
+Full:
 
-The model row stays compact and has one normal **Benchmark / 测评** entry.
+- about 6 sequential requests;
+- covers Structured + OCR + Document + Grounding + General.
 
-Examples:
+Every selected fixture preflights before request 1:
 
 ```text
-部分测评 · OCR / 通用 · 2天前                  [测评]
-完整测评 · 结构化 / OCR / 文档 / 定位 / 通用    [测评]
-测评已陈旧 · 暂不参与自动选择                    [重新测评]
-尚未测评 · 自动选择不会推断此模型能力             [测评]
+synthetic SVG
+-> Sharp/libvips PNG render
+-> adapter attachment materialization when required
+-> model request 1
 ```
 
-The modal shows the five fixed axes with score and corresponding median latency. Missing axes display `— 未测`; they are never filled with inferred numbers.
+Preflight failure sends zero model requests and persists no partial evidence. Measured latency covers model transport only, excluding fixture render and attachment persistence.
 
-Cloud cost notices, force-verification for DSH-declared text-only models, and grounding developer diagnostics remain inside the secondary panel rather than crowding the main row.
+Invocation failures fail fast; explicit user Stop/Cancel is distinct from timeout/provider failure. A failed retest never overwrites valid prior evidence.
 
-## Shadow output
+## Commit G: background progressive profiling
 
-When `capabilityRoutingShadow: true`, the planner returns diagnostics including:
+When `routingMode: auto`, Vision Router can gradually fill missing/stale axes while the user is idle. It does **not** run a hidden Full benchmark.
+
+The profiler performs one backend + one axis at a time:
+
+```text
+idle
+-> choose one eligible backend
+-> choose one missing/stale axis
+-> preflight that axis
+-> run its exact generated fixture(s)
+-> merge only that axis into the profile
+```
+
+A completed axis becomes available to Auto preview immediately without waiting for five-axis coverage.
+
+### Background modes
+
+```text
+backgroundBenchmarking: local-free | all | off
+```
+
+- `local-free` — default; background work is limited to local routes or routes explicitly known to be free;
+- `all` — explicit authorization to background-profile all configured benchmarkable user routes, including cloud routes that may incur API charges;
+- `off` — no background capability profiling.
+
+`fallback-only` routes are not background-profiled.
+
+### Priority and yielding
+
+Background profiling is deliberately lowest priority:
+
+```text
+real visual task
+> manual Benchmark queue/run
+> background progressive profiling
+```
+
+A real visual tool call aborts an active background measurement and restarts the idle window. Enqueuing a manual Benchmark likewise makes background work yield until the manual queue is idle.
+
+Foreground/manual preemption is not treated as provider failure. Real provider failures receive per-backend/per-axis backoff before another background attempt.
+
+The background timer is `unref()`-ed when supported, so it cannot keep DSH, doctor, tests, or another short-lived process alive by itself.
+
+Background profiling never changes a real visual tool result or execution order.
+
+## Runtime health
+
+Shadow reads the live v1 circuit breaker through a side-effect-free observation seam. Circuit-open/rate-limited routes may be demoted for that live turn's shadow plan.
+
+Observation must not prune cooldowns, touch LRU state, clear credential trips, or record a new breaker event. Settings preview intentionally remains health-neutral because it has no real turn scope.
+
+## Benchmark UI
+
+The model row stays compact with one **Benchmark / 测评** entry. The modal presents all five fixed axes and shows, independently for each axis:
+
+- score;
+- median transport latency;
+- age;
+- fresh/stale state;
+- whether it may participate in Auto.
+
+Missing axes display `— 未测`; no inferred values are filled in.
+
+Cloud-cost notices, text-only force verification and grounding developer diagnostics remain in the secondary Benchmark panel.
+
+## Shadow output and safety boundary
+
+Shadow/preview exposes structures such as:
 
 ```text
 currentOrder
@@ -387,42 +318,27 @@ unmeasuredBackends
 blockedBackends
 ```
 
-`currentOrder` remains the actual v1 order. `autoPreviewOrder` is observational only.
-
-`decisions` explains concrete movement, for example a measured advantage or an availability block. This structure is intended to power the future "why this model?" UI without making the browser reimplement routing logic.
-
-## Safety boundary
-
-Nothing in this document authorizes execution-changing auto routing yet.
-
-The current runtime still does:
+Current runtime behavior is still:
 
 ```text
-shadow plan
-  -> log/inspect only
-  -> invoke original v1 visual tool unchanged
+build preview/shadow plan
+-> log/display only
+-> invoke original v1 visual execution unchanged
 ```
 
-It does not reorder, skip, retry or replace a backend in actual execution.
+`routingMode: auto` does **not** reorder the real v1 executor yet.
 
-After shadow behavior is stable across real provider combinations, the eventual executor integration should only change the starting candidate order when `routingMode === 'auto'`. The existing v1 fallback, breaker, timeout, cancellation, resource-governance and error-classification paths should remain the execution engine.
+Before any future execution-changing Auto commit, real-provider validation must prove:
 
-## Validation gates before real Auto
+1. per-axis freshness cannot be accidentally refreshed by another axis;
+2. unmeasured/stale information barriers preserve order;
+3. repeated measurements produce stable material differences;
+4. Balanced/Speed use same-axis latency only;
+5. Local is policy, not a capability claim;
+6. foreground/manual activity reliably preempts background work;
+7. default `local-free` never spends chargeable cloud API quota;
+8. `all` requires explicit user selection and is clearly labeled as potentially chargeable;
+9. breaker behavior remains the v1 availability source of truth;
+10. actual v1 execution remains unchanged.
 
-Before connecting `autoPreviewOrder` to execution, verify:
-
-1. unmeasured model names never alter order;
-2. one-sided measurement never claims superiority over an unmeasured neighbor;
-3. small measured differences remain stable under the configured order;
-4. repeated fresh measurements produce stable large differences where reorder is suggested;
-5. stale or timestamp-less data never reorders;
-6. Balanced/Speed never borrow aggregate or another-axis latency;
-7. local preference behaves as explicit policy, not inferred capability;
-8. breaker/rate-limit state temporarily demotes the same backend v1 would avoid;
-9. fallback-only built-ins never promote above user routes;
-10. every selected Benchmark fixture preflights successfully before request 1;
-11. suite/cache revision or actual credential changes invalidate old evidence;
-12. invocation failures never persist partial Benchmark evidence;
-13. shadow enablement leaves the actual tool result and v1 execution unchanged.
-
-Only after those gates are convincing should opt-in execution-changing `routingMode: auto` be considered.
+Only after those gates have convincing real-machine evidence should an execution-changing Auto commit be discussed.
