@@ -10,6 +10,7 @@ import {
   EXACT_VISION_TEST_CLIENT,
   injectExactVisionTestClient,
 } from '../lib/vision-backend-smoke-test-client.js'
+import { isLocalMutationRoute } from '../lib/web-capability-boundary.js'
 
 test('normalizes exact smoke-test selection without accepting empty or oversized rows', () => {
   assert.deepEqual(normalizeVisionSmokeSelection({ provider: ' kimi ', model: ' moonshot-v1-vision ' }), {
@@ -223,6 +224,14 @@ test('exact vision-http smoke test uses only the requested configured backend', 
   assert.equal(calls[0].provider.name, 'custom')
   assert.match(calls[0].messages[0].content[0].image_url.url, /^data:image\/png;base64,/)
   assert.equal(calls[0].options.maxTokens, 64)
+})
+
+test('model-invoking diagnostic routes are transport-fenced on main and future v2', () => {
+  assert.equal(isLocalMutationRoute('/_dsh/vision-router/test-vision-backend', 'POST'), true)
+  assert.equal(isLocalMutationRoute('/_dsh/vision-router/test-vision-backend', 'GET'), false)
+  assert.equal(isLocalMutationRoute('/_dsh/vision-router/capability-benchmark', 'POST'), true)
+  assert.equal(isLocalMutationRoute('/_dsh/vision-router/capability-benchmark', 'DELETE'), true)
+  assert.equal(isLocalMutationRoute('/_dsh/vision-router/capability-benchmark', 'GET'), false)
 })
 
 test('client prelude is idempotent and yields to the v2 capability benchmark', () => {
