@@ -38,7 +38,7 @@ function config() {
   }
 }
 
-test('fresh General does not make stale OCR evidence Auto-eligible', async () => {
+test('measurement age is metadata: eight-day-old OCR remains Auto-eligible', async () => {
   const now = Date.now()
   const records = new Map()
   const store = {
@@ -57,21 +57,21 @@ test('fresh General does not make stale OCR evidence Auto-eligible', async () =>
   }
   const rows = await collectCapabilityShadowCandidates(ctx(config()), config(), core(), store)
   assert.equal(rows.length, 2)
-  assert.ok(rows.every((row) => row.measured?.ocr === undefined))
+  assert.ok(rows.every((row) => Number.isFinite(row.measured?.ocr)))
   assert.ok(rows.every((row) => Number.isFinite(row.measured?.general)))
-  assert.ok(rows.every((row) => row.medianLatencyMs?.ocr === undefined))
+  assert.ok(rows.every((row) => row.medianLatencyMs?.ocr === 100))
 
   const ocr = await buildCapabilityShadowPlan({
     ctx: ctx(config()), config: config(), core: core(), store,
     toolName: 'vision_ocr', args: {},
   })
   assert.deepEqual(ocr.currentOrder, ['alpha/vision-a', 'beta/vision-b'])
-  assert.deepEqual(ocr.autoPreviewOrder, ocr.currentOrder)
+  assert.deepEqual(ocr.autoPreviewOrder, ['beta/vision-b', 'alpha/vision-a'])
   assert.deepEqual(ocr.measuredBackends.sort(), ['alpha/vision-a', 'beta/vision-b'])
-  assert.deepEqual(ocr.incomparableBackends.sort(), ['alpha/vision-a', 'beta/vision-b'])
+  assert.deepEqual(ocr.incomparableBackends, [])
 })
 
-test('fresh axis remains independently usable when another axis is stale', async () => {
+test('per-axis timestamps remain independent metadata without creating a TTL', async () => {
   const now = Date.now()
   const store = {
     async get() {
@@ -84,6 +84,8 @@ test('fresh axis remains independently usable when another axis is stale', async
     },
   }
   const rows = await collectCapabilityShadowCandidates(ctx(config()), config(), core(), store)
+  assert.ok(rows.every((row) => row.measured?.ocr === 0.9))
   assert.ok(rows.every((row) => row.measured?.general === 0.8))
+  assert.ok(rows.every((row) => row.measuredAtByAxis?.ocr === now - 8 * DAY))
   assert.ok(rows.every((row) => row.measuredAtByAxis?.general === now))
 })
