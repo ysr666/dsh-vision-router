@@ -28,12 +28,8 @@ function fakeCtx(settingsValue) {
       return undefined
     },
     llm: {
-      registration() {
-        return { adapter: { constructor: { name: 'FakeRegisteredAdapter' } } }
-      },
-      async resolveModelInfo() {
-        return { inputModalities: ['text', 'image'] }
-      },
+      registration() { return { adapter: { constructor: { name: 'FakeRegisteredAdapter' } } } },
+      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
     },
   }
 }
@@ -88,16 +84,12 @@ test('diagnostic payload explains the active product policy and remains preview-
   const now = Date.now()
   const settings = config({ routingPreference: 'balanced' })
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
       profile('alpha', 'vision-a', now - DAY, { ocr: 0.80 }, { ocr: 800 }),
       profile('beta', 'vision-b', now - DAY, { ocr: 0.82 }, { ocr: 600 }),
-    ]),
-    now,
+    ]), now,
   })
-
   assert.equal(preview.diagnosticVersion, 1)
   assert.equal(preview.policy.preference, 'balanced')
   assert.equal(preview.policy.formula, '0.80*capability + 0.20*speed')
@@ -112,28 +104,19 @@ test('small measured differences are auditable as below-threshold instead of vag
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
       profile('alpha', 'vision-a', now - DAY, { ocr: 0.84 }, { ocr: 400 }),
       profile('beta', 'vision-b', now - DAY, { ocr: 0.89 }, { ocr: 400 }),
-    ]),
-    now,
+    ]), now,
   })
-
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.changed, false)
   assert.equal(ocr.first, 'alpha/vision-a')
   assert.equal(ocr.diagnostics.configuredPairChecks.length, 1)
   assert.deepEqual(ocr.diagnostics.configuredPairChecks[0], {
-    left: 'alpha/vision-a',
-    right: 'beta/vision-b',
-    outcome: 'below-threshold',
-    threshold: 0.08,
-    leftScore: 0.84,
-    rightScore: 0.89,
-    delta: 0.05,
+    left: 'alpha/vision-a', right: 'beta/vision-b', outcome: 'below-threshold', threshold: 0.08,
+    leftScore: 0.84, rightScore: 0.89, delta: 0.05,
   })
 })
 
@@ -141,15 +124,9 @@ test('unmeasured configured routes expose the exact information barrier and cand
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
-    store: store([
-      profile('beta', 'vision-b', now - DAY, { ocr: 0.99 }, { ocr: 100 }),
-    ]),
-    now,
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([profile('beta', 'vision-b', now - DAY, { ocr: 0.99 }, { ocr: 100 })]), now,
   })
-
   const ocr = row(preview, 'ocr')
   const alpha = candidate(ocr, 'alpha/vision-a')
   const beta = candidate(ocr, 'beta/vision-b')
@@ -165,16 +142,12 @@ test('stale retained profiles are visible to humans but remain excluded from Aut
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
       profile('alpha', 'vision-a', now - 8 * DAY, { ocr: 0.40 }, { ocr: 300 }),
       profile('beta', 'vision-b', now - 8 * DAY, { ocr: 0.95 }, { ocr: 200 }),
-    ]),
-    now,
+    ]), now,
   })
-
   const ocr = row(preview, 'ocr')
   assert.deepEqual(preview.freshMeasuredBackends, [])
   assert.equal(candidate(ocr, 'alpha/vision-a').evidenceState, 'stale')
@@ -187,17 +160,10 @@ test('stale retained profiles are visible to humans but remain excluded from Aut
 test('local preference diagnostics show policy movement without pretending it is measured superiority', async () => {
   const settings = config({ routingPreference: 'local' })
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore([{
-      name: 'ollama',
-      model: 'qwen-vl',
-      baseURL: 'http://127.0.0.1:11434/v1',
-      apiKeyEnv: '',
-    }]),
+    ctx: fakeCtx(settings), config: settings,
+    core: fakeCore([{ name: 'ollama', model: 'qwen-vl', baseURL: 'http://127.0.0.1:11434/v1', apiKeyEnv: '' }]),
     store: store(),
   })
-
   const general = row(preview, 'general')
   assert.equal(general.first, 'vision-http/ollama/qwen-vl')
   assert.equal(general.reason, 'local-preference')
@@ -208,39 +174,25 @@ test('local preference diagnostics show policy movement without pretending it is
 test('HTTP diagnostics expose only the secret-safe fingerprint, never raw endpoint or credential-ref material', async () => {
   const now = Date.now()
   const httpBackend = {
-    name: 'private-cloud',
-    model: 'model-x',
-    baseURL: 'https://private.example.invalid/v1',
-    apiKeyEnv: 'VERY_SECRET_KEY_ENV',
+    name: 'private-cloud', model: 'model-x', baseURL: 'https://private.example.invalid/v1', apiKeyEnv: 'VERY_SECRET_KEY_ENV',
   }
   const settings = config({
     providers: [{ provider: 'vision-http', model: 'private-cloud/model-x', fallbacks: [] }],
     httpProviders: [httpBackend],
   })
+  // fakeCtx has no credentials/launch-environment seam, so the candidate uses
+  // the safe unresolved credential identity until the real key becomes available.
   const fingerprint = capabilityBenchmarkFingerprint({
-    provider: 'vision-http',
-    model: 'private-cloud/model-x',
-    endpoint: httpBackend.baseURL,
-    config: { api: 'openai-completions' },
+    provider: 'vision-http', model: 'private-cloud/model-x', endpoint: httpBackend.baseURL,
+    config: { api: 'openai-completions' }, credentialFingerprint: 'unresolved',
   })
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore([], [httpBackend]),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore([], [httpBackend]),
     store: store([{
-      fingerprint,
-      provider: 'vision-http',
-      model: 'private-cloud/model-x',
-      measuredAt: now - DAY,
-      source: 'self-benchmark',
-      scores: { general: 0.75 },
-      medianLatencyMs: { general: 700 },
-      fixtureCount: 1,
-      failureCount: 0,
-    }]),
-    now,
+      fingerprint, provider: 'vision-http', model: 'private-cloud/model-x', measuredAt: now - DAY,
+      source: 'self-benchmark', scores: { general: 0.75 }, medianLatencyMs: { general: 700 }, fixtureCount: 1, failureCount: 0,
+    }]), now,
   })
-
   const serialized = JSON.stringify(preview)
   assert.doesNotMatch(serialized, /private\.example\.invalid/)
   assert.doesNotMatch(serialized, /VERY_SECRET_KEY_ENV/)
