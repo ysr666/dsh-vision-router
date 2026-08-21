@@ -17,10 +17,10 @@ None of these fields authorize execution-changing Auto in this Draft.
 Shadow planning may combine four separated inputs:
 
 ```text
-Capability  -> direct Benchmark scores
-Performance -> separate runtime observations, when available
+Capability   -> direct Benchmark scores
+Performance  -> recent successful real visual-call observations
 Availability -> turn-scoped breaker/rate-limit/access facts
-Policy -> configured order + routingPreference
+Policy       -> configured order + routingPreference
 ```
 
 It must never reinterpret one input as another.
@@ -54,7 +54,24 @@ benchmarkMedianLatencyMsByAxis
 
 Shadow routing must not use those fields as current speed.
 
-`Balanced` and `Speed` require a separate same-axis runtime performance observation. Without it, the candidate remains incomparable for those preferences and configured order is preserved.
+Runtime performance is process-local and currently observed only from successful real visual-tool DSH adapter streams. The tool wrapper supplies the direct axis through `AsyncLocalStorage`; the `ctx.llm.stream` wrapper measures full-response elapsed time.
+
+Current defaults:
+
+```text
+window: 1 hour
+max samples per backend+axis: 8
+minimum samples for routing: 2
+aggregation: median
+```
+
+One successful sample is diagnostics-only warming evidence. Two recent successful same-axis samples expose `runtimeLatencyMsByAxis[axis]` and may make the candidate comparable for Balanced/Speed.
+
+Failed or aborted streams never count. Samples older than the runtime window disappear. Restarting DSH clears runtime observations.
+
+Benchmark, background capability profiling and exact smoke tests run outside the visual-tool runtime scope and must create zero runtime-performance samples.
+
+Direct HTTP compatibility/fallback calls that bypass `ctx.llm.stream` are currently left without runtime speed evidence. Do not substitute Benchmark latency or a different timing metric.
 
 ## Expected preference behavior
 
@@ -64,23 +81,23 @@ Two adjacent candidates with direct same-axis capability evidence can reorder on
 
 ### Balanced
 
-Requires both capability and runtime speed facts:
+Requires both capability and eligible recent runtime speed facts:
 
 ```text
 0.80 * capability + 0.20 * runtime-speed
 ```
 
-No runtime speed -> no weighted comparison.
+No runtime speed, or only one warming sample -> no weighted comparison.
 
 ### Speed
 
-Requires both capability and runtime speed facts:
+Requires both capability and eligible recent runtime speed facts:
 
 ```text
 0.55 * capability + 0.45 * runtime-speed
 ```
 
-No runtime speed -> no weighted comparison.
+No runtime speed, or only one warming sample -> no weighted comparison.
 
 ### Local
 
@@ -94,10 +111,70 @@ Test these explicitly:
 2. A and B measured with delta below `0.08` -> keep configured order.
 3. A/B capability measured but no runtime performance under Balanced/Speed -> keep configured order.
 4. A/B have only Benchmark latency under Balanced/Speed -> keep configured order.
-5. `fallback-only` candidate with excellent Benchmark score -> cannot promote over user routes.
-6. unsupported task intent -> no proxy reorder.
+5. A/B each have one runtime sample -> diagnostics show warming, still keep configured order.
+6. A/B each have at least two recent same-axis samples -> weighted comparison may occur.
+7. `fallback-only` candidate with excellent Benchmark score -> cannot promote over user routes.
+8. unsupported task intent -> no proxy reorder.
 
-## Age-neutral evidence
+## Runtime observer isolation cases
+
+### Successful real tool call
+
+Run a real `vision_ocr` adapter-backed call successfully twice on the same backend.
+
+Expected after first success:
+
+```text
+runtimePerformanceObserved: true
+runtimePerformanceEligible: false
+runtimeSampleCount: 1
+```
+
+Expected after second recent success:
+
+```text
+runtimePerformanceObserved: true
+runtimePerformanceEligible: true
+runtimeSampleCount: 2
+runtimeLatencyMs: <median>
+```
+
+### Failure / cancellation
+
+Make the stream fail or abort.
+
+Expected:
+
+```text
+no new runtime sample
+```
+
+### Scope isolation
+
+Run manual Benchmark, background capability profiling, exact smoke test, and a non-direct-axis visual task.
+
+Expected:
+
+```text
+no runtime performance sample created by those operations
+```
+
+Runtime observation must remain active even when `capabilityRoutingShadow:false`; the development log flag must not control product performance collection.
+
+### Runtime recency
+
+Advance beyond the one-hour runtime window without a newer successful sample.
+
+Expected:
+
+```text
+runtime performance disappears / candidate becomes incomparable for Balanced or Speed
+capability Benchmark score remains measured and unchanged
+```
+
+This is the intentional distinction between dynamic performance and persistent capability.
+
+## Age-neutral capability evidence
 
 Exercise capability records measured:
 
@@ -113,8 +190,8 @@ With unchanged identity/suite, all remain measured capability evidence.
 Expected diagnostics:
 
 - factual age remains visible;
-- no `fresh / stale / expired` validity tier;
-- background profiler does not schedule a retest only because evidence is old.
+- no `fresh / stale / expired` capability validity tier;
+- background profiler does not schedule a capability retest only because evidence is old.
 
 ## Credential rotation boundary
 
@@ -151,6 +228,8 @@ Already measured axes must not be periodically refreshed based on age.
 
 Real visual work and manual Benchmark must preempt background profiling.
 
+Background capability profiling must never populate runtime speed.
+
 ## Breaker / availability checks
 
 Turn-level shadow may observe the real v1 breaker through a side-effect-free peek seam.
@@ -175,6 +254,9 @@ measurementAgePolicy: informational-only
 credentialAffectsCapabilityIdentity: false
 benchmarkLatencyAffectsRouting: false
 performanceSource: runtime-observation-only
+runtimePerformanceCoverage: real visual-tool adapter streams
+runtimePerformanceMaxAgeMs: 3600000
+runtimePerformanceMinSamples: 2
 autoPreviewOnly: true
 executionActive: false
 healthIncluded: false
@@ -185,8 +267,12 @@ For a candidate/axis, verify the copied JSON distinguishes:
 - `measuredAxisScore`;
 - `measuredAt` / `ageMs`;
 - `benchmarkLatencyMs`;
-- `runtimeLatencyMs`;
+- `runtimeObservedLatencyMs`;
+- `runtimeSampleCount` / `runtimeMinSamples`;
+- `runtimeLatencyMs` only after warming threshold;
 - `runtimePerformanceObserved`;
+- `runtimePerformanceEligible`;
+- `runtimeAgeMs`;
 - `autoComparable`.
 
 No endpoint URL, API key, credential ref or raw model output should appear.
@@ -209,6 +295,8 @@ actual execution starts from A
 ```
 
 If actual execution starts from B, the Draft safety boundary has been crossed and the test fails regardless of preview quality.
+
+Repeat under Balanced/Speed after runtime observations exist. Preview may change, but actual v1 execution must still start from configured A.
 
 ## Exit condition
 
