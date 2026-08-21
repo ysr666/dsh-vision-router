@@ -8,7 +8,7 @@ async function manifest() {
   return JSON.parse(await readFile(manifestPath, 'utf8'))
 }
 
-test('host-provided DSH packages are peers and mirrored for development', async () => {
+test('host-provided DSH packages are peers while development stays on an installable released line', async () => {
   const pkg = await manifest()
   const hostPeers = [
     '@deepseek-ai/dsh-anonymous-user-id',
@@ -17,12 +17,16 @@ test('host-provided DSH packages are peers and mirrored for development', async 
 
   for (const name of hostPeers) {
     assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
-    assert.equal(typeof pkg.peerDependencies?.[name], 'string', `${name} must be a peerDependency`)
-    assert.equal(
-      pkg.devDependencies?.[name],
-      pkg.peerDependencies?.[name],
-      `${name} devDependency must mirror the peer range`,
-    )
+    const peer = pkg.peerDependencies?.[name]
+    assert.equal(typeof peer, 'string', `${name} must be a peerDependency`)
+    assert.match(peer, /\^0\.1\.0-rc\.6/, `${name} must keep the supported 0.1.0 prerelease line`)
+    assert.match(peer, /\^0\.1\.1-rc\.1/, `${name} must admit the DSH 0.1.1-rc.1 contract`)
+    // 0.1.1-rc.1 can land in the source/tag before every npm package is
+    // published. Keep CI's development fixture on an actually installable
+    // 0.1.0 prerelease until the full rc.1 package set exists; the optional
+    // peer is the compatibility declaration consumed by a real Host.
+    assert.equal(typeof pkg.devDependencies?.[name], 'string', `${name} must remain available for tests`)
+    assert.match(pkg.devDependencies[name], /\^0\.1\.0-rc\.6/)
   }
 })
 
