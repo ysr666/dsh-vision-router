@@ -214,8 +214,8 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Run cross-platform runtime regression tests
-        run: node --test tests/file-logger.test.js tests/logging-ui.test.js tests/runtime-boundary-fixes.test.js
+      - name: Run cross-platform runtime and benchmark fixture regression tests
+        run: node --test tests/file-logger.test.js tests/logging-ui.test.js tests/runtime-boundary-fixes.test.js tests/vision-capability-benchmark.test.js
       - name: Prepare pack directory
         shell: node {0}
         run: |
