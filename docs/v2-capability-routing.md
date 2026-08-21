@@ -27,7 +27,7 @@ The router intentionally has only two capability-selection inputs:
    - explicit locality choice (`local`).
 2. **Exact-endpoint measurements**
    - self-benchmark scores;
-   - per-axis benchmark latency;
+   - per-axis benchmark transport latency;
    - benchmark timestamp/freshness.
 
 Runtime availability is a separate gate. Circuit-breaker state and rate limits can temporarily move an unavailable backend out of the way, but they never change its measured capability.
@@ -135,11 +135,11 @@ The threshold is a stability guard against benchmark noise. It is not an evidenc
 
 ### Balanced
 
-`balanced` combines directly measured capability with the corresponding measured median latency. No default/model-derived latency is invented when direct data is unavailable.
+`balanced` combines directly measured capability with the **same axis's** measured median transport latency. It never substitutes an aggregate latency or the latency of another benchmark axis.
 
 ### Speed
 
-`speed` gives more weight to the corresponding measured median latency while still requiring measured capability on both compared routes.
+`speed` gives more weight to the **same axis's** measured median transport latency while still requiring measured capability on both compared routes. If that axis has no measured latency, the candidate is not comparable for Balanced/Speed.
 
 ### Local
 
@@ -189,15 +189,19 @@ The built-in anonymous free tier is marked `fallback-only` unless the user expli
 
 Benchmarking uses generated fixtures, not user images.
 
-The exactness contract remains strict:
+The exactness contract is strict:
 
-- the selected provider/model/endpoint is fingerprinted with a secret-safe `ep2_` identity;
+- the selected provider/model/endpoint/protocol is fingerprinted with a secret-safe `ep2_` identity;
+- credential-bearing routes additionally bind the **resolved credential value's one-way fingerprint** into that identity, never the raw API key;
+- changing the actual credential value therefore invalidates old Benchmark evidence even when provider/model/URL stay unchanged;
+- configured credential references that are temporarily unresolved use a distinct `unresolved` identity and never alias a genuinely keyless backend;
+- when DSH exposes a credential service, a credential miss does not silently fall through to an unrelated same-name ambient environment variable;
 - Vision Router fallback is disabled during a benchmark;
 - normal DSH providers use their exact registered adapter/provider/model first;
 - a v1-compatible bridge may only reach the same provider/model's exact HTTP endpoint;
 - plugin-owned `vision-http` routes use their exact configured HTTP backend;
 - a fingerprint mismatch aborts persistence;
-- endpoint URLs, credentials and raw model responses are not persisted in the profile or returned to the browser.
+- endpoint URLs, credential references, credentials and raw model responses are not persisted in the profile or returned to the browser.
 
 Profiles are stored atomically at:
 
@@ -206,6 +210,45 @@ Profiles are stored atomically at:
 ```
 
 with mode `0600`.
+
+### Benchmark suite revision and cache compatibility
+
+Commit F defines:
+
+```text
+CAPABILITY_BENCHMARK_SUITE_REVISION = 2
+CAPABILITY_PROFILE_CACHE_VERSION = 2
+```
+
+A persisted record is usable only when it belongs to the current suite revision. Legacy cache envelopes and records from a different suite revision are ignored instead of being promoted as fresh Auto evidence.
+
+This is intentional: changing fixture generation, scoring semantics, timing semantics, or identity semantics must not silently reuse scores produced under an older contract.
+
+### Preflight before the first provider request
+
+Quick/Full/Grounding jobs prepare **all selected fixtures before making request 1**.
+
+Preflight includes:
+
+1. generating the synthetic SVG fixture;
+2. rasterizing every selected SVG through the same Sharp/libvips path used by the real Benchmark;
+3. for adapter routes, persisting the generated PNG attachment references needed by the exact DSH adapter path.
+
+If any fixture fails to generate, rasterize, or materialize, the job fails as `infrastructure` and **zero model requests are sent**.
+
+The regression suite renders all six Full fixtures through Sharp, and the native-host CI matrix runs that fixture-rendering test on Ubuntu, macOS and Windows.
+
+### Transport-only latency
+
+Benchmark latency is intended to compare the model/backend, not local preprocessing overhead.
+
+Therefore the measured latency window starts immediately before the actual adapter/HTTP transport and ends when that transport returns. It excludes:
+
+- SVG generation;
+- Sharp/libvips rasterization;
+- DSH attachment persistence/materialization.
+
+If an adapter falls back through the allowed exact HTTP bridge, the recorded latency is the HTTP bridge transport latency rather than the failed adapter-preparation time.
 
 ## Coverage, not confidence tiers
 
@@ -246,7 +289,19 @@ Coverage:
 Structured / OCR / Document / Grounding / General
 ```
 
-The UI also receives `medianLatencyMs` per measured axis, so speed/balanced routing can use the latency from the same task class rather than a generic guessed speed.
+The UI also receives `medianLatencyMs` per measured axis, so speed/balanced routing uses the latency from the same task class rather than a generic guessed speed.
+
+### Document scoring contract
+
+The Document fixture is not scored as token soup. A strong result must parse as the requested JSON structure and preserve the document relationships being tested, including:
+
+- expected title/summary identity;
+- row count and row order;
+- item-to-amount pairing;
+- total;
+- order ID.
+
+Malformed JSON, reordered/mispaired rows, or an answer that merely mentions the expected tokens must lose credit instead of receiving a near-perfect document score.
 
 ### Grounding diagnostic repair
 
@@ -260,6 +315,8 @@ Freshness is a time gate:
 - `7–30 days`: `stale`, still visible in UI but **not** eligible for Auto comparison;
 - `> 30 days`: expired and not exposed as current measured product data.
 
+A measurement without a valid positive `measuredAt` is not fresh by default. It is incomparable and cannot participate in Auto selection.
+
 The Benchmark API exposes:
 
 ```text
@@ -270,6 +327,7 @@ measuredAt
 freshness
 autoEligible
 medianLatencyMs
+suiteRevision
 ```
 
 It does not expose a `confidence` tier.
@@ -288,7 +346,15 @@ The shadow router's `measuredBackends` list is fresh-only. A stale profile can r
 - browser refresh restores in-process queue state;
 - DSH restart intentionally does not resume chargeable jobs.
 
-Auth, rate-limit, timeout, network, unsupported-image, protocol and benchmark-infrastructure failures fail fast. Operational failures do not overwrite the previous valid profile. A lower-coverage Quick retest cannot downgrade an existing richer Full profile.
+The failure boundary is deliberately strict:
+
+- a **normal model answer** that is wrong may score poorly or zero and the suite continues;
+- an **invocation failure** (auth, rate-limit, timeout, network, protocol, unsupported-image, provider exception, or Benchmark infrastructure failure) fails the run immediately;
+- a timed-out run is reported as `failed / timeout`, never as a user cancellation;
+- only an explicit cancel request produces the `cancelled` job state;
+- a run with any failed fixture cannot be persisted as a new profile even if a custom/legacy benchmark runner returns a partial record;
+- a failed retest never overwrites or removes the previous valid profile;
+- a lower-coverage Quick retest cannot downgrade an existing richer Full profile.
 
 ## Benchmark UI contract
 
@@ -349,10 +415,14 @@ Before connecting `autoPreviewOrder` to execution, verify:
 2. one-sided measurement never claims superiority over an unmeasured neighbor;
 3. small measured differences remain stable under the configured order;
 4. repeated fresh measurements produce stable large differences where reorder is suggested;
-5. stale data never reorders;
-6. local preference behaves as explicit policy, not inferred capability;
-7. breaker/rate-limit state temporarily demotes the same backend v1 would avoid;
-8. fallback-only built-ins never promote above user routes;
-9. shadow enablement leaves the actual tool result and v1 execution unchanged.
+5. stale or timestamp-less data never reorders;
+6. Balanced/Speed never borrow aggregate or another-axis latency;
+7. local preference behaves as explicit policy, not inferred capability;
+8. breaker/rate-limit state temporarily demotes the same backend v1 would avoid;
+9. fallback-only built-ins never promote above user routes;
+10. every selected Benchmark fixture preflights successfully before request 1;
+11. suite/cache revision or actual credential changes invalidate old evidence;
+12. invocation failures never persist partial Benchmark evidence;
+13. shadow enablement leaves the actual tool result and v1 execution unchanged.
 
 Only after those gates are convincing should opt-in execution-changing `routingMode: auto` be considered.
