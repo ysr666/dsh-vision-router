@@ -135,31 +135,20 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('shadow auto evidence is fresh-only while older benchmark data stays out of routing', async () => {
+test('shadow keeps identity-valid benchmark evidence regardless of measurement age', async () => {
   const ctx = fakeCtx().ctx
-  const staleRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
+  const oldRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
     async get() {
       return {
-        measuredAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+        measuredAt: Date.now() - 365 * 24 * 60 * 60 * 1000,
         scores: { general: 1 },
         medianLatencyMs: { general: 100 },
       }
     },
   })
-  assert.ok(staleRows.length > 0)
-  assert.ok(staleRows.every((row) => row.measured === undefined))
-
-  const freshRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
-    async get() {
-      return {
-        measuredAt: Date.now() - 6 * 24 * 60 * 60 * 1000,
-        scores: { general: 1 },
-        medianLatencyMs: { general: 100 },
-      }
-    },
-  })
-  assert.ok(freshRows.some((row) => row.measured?.general === 1))
-  assert.ok(freshRows.some((row) => row.medianLatencyMs?.general === 100))
+  assert.ok(oldRows.length > 0)
+  assert.ok(oldRows.some((row) => row.measured?.general === 1))
+  assert.ok(oldRows.some((row) => row.medianLatencyMs?.general === 100))
 })
 
 test('arbitrary DSH-discovered vision models never enter the automatic routing pool', async () => {
