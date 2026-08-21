@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { run } from '../lib/doctor-cli.js'
+
+const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 function fixture({ good = true } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), 'vr-cli-'))
@@ -55,7 +57,7 @@ test('doctor JSON report is parseable and healthy for a good bundle install', as
   assert.equal(code, 0)
   const report = JSON.parse(cap.stdout.join('\n'))
   assert.equal(report.ok, true)
-  assert.equal(report.doctorVersion, '1.7.4')
+  assert.equal(report.doctorVersion, packageVersion)
   assert.equal(report.profiles[0].installedVersion, '1.7.4')
   assert.equal(report.profiles[0].installation.mode, 'bundle')
 })
