@@ -13,7 +13,7 @@ The architecture deliberately separates four domains that must not be collapsed 
 | Domain | Question | Source of truth |
 | --- | --- | --- |
 | Capability | What can this exact model deployment do? | direct Benchmark axes |
-| Performance | How fast is it now? | separate runtime observations |
+| Performance | How fast is it now? | recent successful real visual calls |
 | Availability / access | Can it be used for this turn? | credentials, breaker, rate-limit, timeout, live transport state |
 | Policy | What does the user prefer? | configured order + routing preference |
 
@@ -128,13 +128,45 @@ benchmarkMedianLatencyMsByAxis
 
 Those fields do **not** feed routing performance scoring.
 
-Runtime performance must come from a separate observation channel such as:
+Runtime performance uses a separate process-local observation channel:
 
 ```text
 runtimeLatencyMsByAxis
 ```
 
 No implementation may substitute Benchmark latency, aggregate latency, another task's latency, or a generic provider latency when runtime speed is required.
+
+## Runtime performance observer
+
+Runtime speed is a dynamic fact, so unlike capability it deliberately has recency semantics.
+
+Current observer contract:
+
+```text
+source: successful real visual-tool adapter streams
+window: 1 hour
+samples retained per backend+axis: up to 8
+minimum samples before routing eligibility: 2
+aggregation: median full-response latency
+persistence: none; process-local only
+```
+
+The direct visual tool establishes the task axis through `AsyncLocalStorage`; `ctx.llm.stream` records the elapsed time only when that exact real stream finishes successfully.
+
+This means:
+
+- one successful sample is visible in diagnostics as **warming**, but cannot affect Balanced/Speed;
+- after two recent successful samples for the same backend + direct axis, the median becomes `runtimeLatencyMsByAxis[axis]` and may participate in Balanced/Speed;
+- error, abort and failed streams are never performance samples;
+- samples older than the runtime window are removed;
+- restarting DSH clears runtime-performance evidence;
+- Benchmark, background capability profiling and exact smoke tests run outside the visual-tool runtime scope and cannot contaminate speed evidence.
+
+Capability does **not** inherit this one-hour window. An OCR capability score may remain valid for months while its runtime speed observation disappears after the recent-performance window.
+
+The current observer covers the real DSH adapter-stream path. A direct HTTP compatibility/fallback request that bypasses `ctx.llm.stream` is intentionally left without runtime speed evidence instead of fabricating a different timing metric. Such a candidate stays incomparable for Balanced/Speed until a precise equivalent observation seam exists.
+
+Because the current executor still follows configured v1 order, alternate backends may naturally have little or no runtime performance history. That is acceptable: missing performance is an information barrier, not permission to guess.
 
 ## Preference semantics
 
@@ -156,23 +188,23 @@ Smaller differences preserve configured order.
 
 ### Balanced
 
-Balanced is intended to combine capability with **runtime** performance:
+Balanced combines capability with **eligible recent runtime** performance:
 
 ```text
 Balanced score = 0.80 * capability + 0.20 * runtime-speed
 ```
 
-If runtime performance is missing, the candidate is incomparable for Balanced and configured order is preserved.
+If runtime performance is missing or still warming, the candidate is incomparable for Balanced and configured order is preserved.
 
 ### Speed
 
-Speed likewise requires runtime performance:
+Speed likewise requires eligible recent runtime performance:
 
 ```text
 Speed score = 0.55 * capability + 0.45 * runtime-speed
 ```
 
-If runtime performance is missing, configured order is preserved. Benchmark latency is not a substitute.
+If runtime performance is missing or still warming, configured order is preserved. Benchmark latency is not a substitute.
 
 ### Local
 
@@ -271,6 +303,8 @@ real visual execution
 
 Foreground/manual activity makes background work yield. Genuine background provider failure receives retry backoff.
 
+Background capability runs do not populate runtime speed.
+
 ## Diagnostics contract
 
 Current read-only diagnostics version:
@@ -286,6 +320,9 @@ measurementAgePolicy: informational-only
 credentialAffectsCapabilityIdentity: false
 benchmarkLatencyAffectsRouting: false
 performanceSource: runtime-observation-only
+runtimePerformanceCoverage: real visual-tool adapter streams
+runtimePerformanceMaxAgeMs: 3600000
+runtimePerformanceMinSamples: 2
 ```
 
 Per candidate/axis diagnostics keep these concepts separate:
@@ -293,7 +330,8 @@ Per candidate/axis diagnostics keep these concepts separate:
 - capability score;
 - measurement timestamp/age;
 - Benchmark latency observation;
-- runtime performance observation, if present;
+- raw/warming runtime observation and sample count;
+- routing-eligible runtime median, when warmed;
 - availability/health only when the relevant surface has a real turn scope;
 - active user policy and reorder threshold.
 
@@ -306,6 +344,7 @@ Current v2 work may:
 - persist routing settings;
 - collect capability Benchmark evidence;
 - fill missing capability axes in the background under cost policy;
+- passively observe recent successful real visual-call performance;
 - compute Auto preview/shadow plans;
 - expose sanitized diagnostics.
 
@@ -316,6 +355,7 @@ Current v2 work must **not**:
 - infer unsupported capability axes;
 - use Benchmark latency as current speed;
 - use credentials as capability identity;
-- silently authorize paid background profiling.
+- silently authorize paid background profiling;
+- create synthetic runtime speed for paths that are not precisely observed.
 
 The executor should only be connected after the acceptance matrix in `docs/v2-auto-preview-acceptance.md` has convincing real-machine PASS evidence.
