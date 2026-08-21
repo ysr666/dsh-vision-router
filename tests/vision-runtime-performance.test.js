@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { installCapabilityShadowRuntime } from '../lib/vision-capability-shadow.js'
 import {
   contextWithVisionRuntimePerformance,
   createVisionRuntimePerformanceStore,
@@ -125,4 +126,61 @@ test('runtime samples are isolated by backend and direct axis', async () => {
   assert.equal(store.get('p/fast').runtimeLatencyMsByAxis.ocr, 100)
   assert.equal(store.get('p/fast').runtimeLatencyMsByAxis.document, undefined)
   assert.equal(store.get('p/slow').runtimeLatencyMsByAxis.document, 900)
+})
+
+test('real visual tool execution establishes runtime scope even when shadow logging is disabled', async () => {
+  const now = clock()
+  const runtimeStore = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
+  const registered = new Map()
+  const base = {
+    logger: { debug() {}, info() {}, warn() {} },
+    get(name) {
+      if (name === 'settings') {
+        return {
+          get() {
+            return {
+              capabilityRoutingShadow: false,
+              routingMode: 'ordered',
+              providers: [{ provider: 'p', model: 'm', fallbacks: [] }],
+            }
+          },
+        }
+      }
+      return undefined
+    },
+    llm: {
+      stream: finishStream({ delay: 350, now }),
+      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } } },
+      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
+    },
+    tools: {
+      register(def) {
+        registered.set(def.name, def)
+        return () => registered.delete(def.name)
+      },
+    },
+  }
+  const capabilityStore = { async get() { return undefined } }
+  const core = {
+    DEFAULT_HTTP_PROVIDERS: [],
+    adapterAvailable: () => true,
+    decideVisionBackendCapability: () => ({ image: true, attemptable: true }),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [],
+  }
+  const shadow = installCapabilityShadowRuntime(base, {}, core, {
+    store: capabilityStore,
+    runtimePerformanceStore: runtimeStore,
+  })
+  const observed = contextWithVisionRuntimePerformance(shadow, runtimeStore, { now })
+
+  observed.tools.register({
+    name: 'vision_ocr',
+    async execute() {
+      await drain(observed.llm.stream({ provider: 'p', model: 'm' }))
+      return 'ok'
+    },
+  })
+  assert.equal(await registered.get('vision_ocr').execute({}, { agent: { session: {} } }), 'ok')
+  assert.equal(runtimeStore.get('p/m').runtimeLatencyMsByAxis.ocr, 350)
 })
