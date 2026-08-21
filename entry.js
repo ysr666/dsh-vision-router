@@ -37,6 +37,7 @@ import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settin
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import { withVisionCircuitBreakerObserver } from './lib/vision-breaker-observer.js'
 import { createVisionBreakerShadowHealth } from './lib/vision-breaker-shadow-health.js'
+import { installBackgroundCapabilityProfiling } from './lib/vision-background-benchmark.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -54,7 +55,7 @@ import {
 // schema default so a newer browser client can distinguish a genuinely updated
 // Host from a stale in-process plugin module instead of reporting a generic
 // readback mismatch after the old Host rejects a newly visible field.
-export const SETTINGS_CONTRACT_REVISION = 5
+export const SETTINGS_CONTRACT_REVISION = 6
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -82,6 +83,13 @@ core.Config.set('routingMode', z.union(['ordered', 'auto']).default('ordered'))
 core.Config.set(
   'routingPreference',
   z.union(['balanced', 'quality', 'speed', 'local']).default('balanced'),
+)
+// Background profiling never gates normal use. By default it only spends idle
+// time on local/free routes; `all` is the explicit user authorization boundary
+// for potentially chargeable cloud endpoints, and `off` disables it entirely.
+core.Config.set(
+  'backgroundBenchmarking',
+  z.union(['local-free', 'all', 'off']).default('local-free'),
 )
 
 // Internal development controls. Shadow remains observational and is not the
@@ -187,6 +195,10 @@ export function apply(ctx, config = {}) {
     ...bootConfig,
     routingMode: routingProduct.mode,
     routingPreference: routingProduct.preference,
+    backgroundBenchmarking:
+      ['local-free', 'all', 'off'].includes(bootConfig.backgroundBenchmarking)
+        ? bootConfig.backgroundBenchmarking
+        : 'local-free',
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
     visionTurnBudgetMs:
@@ -239,16 +251,26 @@ export function apply(ctx, config = {}) {
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
   const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)
+  // Background capability profiling is outside the v1 tool implementation: it
+  // only observes foreground vision activity so idle measurements can yield.
+  // The profiler defaults to local/free routes and never changes tool results.
+  const backgroundProfiling = installBackgroundCapabilityProfiling(
+    structuredCtx,
+    runtimeConfig,
+    core,
+    capabilityStore,
+    { logger: logging.logger },
+  )
   // Capture the exact private v1 breaker only while core.apply constructs it.
   // Shadow receives a peek-only view, so observation cannot mutate cleanup/LRU
   // state or change the configured v1 fallback walk.
-  const breakerShadowHealth = createVisionBreakerShadowHealth(structuredCtx)
+  const breakerShadowHealth = createVisionBreakerShadowHealth(backgroundProfiling.ctx)
   // The v2 shadow layer is observational only. It wraps the tool-registration
   // seam outside the structured guard, reads the current candidate pool and
   // measured endpoint profiles, logs a suggested order, then calls the exact
   // original tool implementation. No v1 execution order changes here.
   const capabilityShadowCtx = installCapabilityShadowRuntime(
-    structuredCtx,
+    backgroundProfiling.ctx,
     runtimeConfig,
     core,
     {
@@ -312,9 +334,9 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
   })
   // Serve the generated-fixture benchmark through the same local web-capability
-  // boundary as the rest of Vision Router. The manager, settings preview and
-  // shadow scorer share one persisted profile store so new measurements are
-  // visible immediately without duplicating measurement state.
+  // boundary as the rest of Vision Router. The manager, settings preview,
+  // background profiler and shadow scorer share one persisted profile store so
+  // each completed axis becomes visible immediately.
   installCapabilityBenchmarkService(executionCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
