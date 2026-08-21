@@ -22,9 +22,6 @@ function runtimeWithAttachments(attachments, llm = {}) {
 }
 
 test('contract detection follows the released attachment API, not unrelated LLM methods', () => {
-  // Official rc.6 already shipped registerConfigurableProviders(); using that
-  // as a version probe would incorrectly route every rc.6 host through the
-  // batch-attachment contract. saveImages() is the released observable seam.
   const single = runtimeWithAttachments(
     { saveImage() {}, readImage() {}, validateImage() {} },
     { registerConfigurableProviders() {} },
@@ -36,8 +33,6 @@ test('contract detection follows the released attachment API, not unrelated LLM 
   assert.equal(hasBatchAttachmentContract(single), false)
   assert.equal(hasBatchAttachmentContract(batch), true)
   assert.equal(hasBatchAttachmentContract({ llm: { registerConfigurableProviders() {} } }), false)
-  // Transitional rc.7-era alias must remain behaviorally identical for callers
-  // while runtime code migrates to the capability-named export.
   assert.equal(isRc7ContractRuntime, hasBatchAttachmentContract)
 })
 
@@ -178,15 +173,14 @@ test('settings card registration is a structural superset of rc6 list and newer 
   assert.ok(block, 'settings.plugin.item registration must exist')
   assert.match(block[0], /key: 'vision-router'/)
   assert.match(block[0], /id: 'vision-router'/)
-  // rc.7+ requires key; rc.6 requires id. The slot runtime ignores the
-  // non-applicable extra metadata rather than rejecting it.
 })
 
-test('manifest keeps the minimum rc6 host peers and adds no newer-only package edge', async () => {
+test('manifest keeps the minimum rc6 host peers while admitting the rc1 host line', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const expectedHostPeerRange = '^0.1.0-rc.6 || ^0.1.1-rc.1'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], '^0.1.0-rc.6')
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], '^0.1.0-rc.6')
+  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
+  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
@@ -196,8 +190,5 @@ test('bundle patch defines Vision Router attachment storage admission including 
   assert.match(patch, /maxImageBytes:\s*20971520/)
   assert.match(patch, /maxImagePixels:\s*100000000/)
   assert.match(patch, /maxImageDimension:\s*10000/)
-  // Dimension is intentionally bounded rather than disabled: attachment-local
-  // is Host-global and also feeds native multimodal providers outside Vision
-  // Router's request-normalization boundary.
   assert.doesNotMatch(patch, /maxImageDimension:\s*(?:32768|65535|99999)/)
 })
