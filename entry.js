@@ -12,9 +12,13 @@ import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-compat.js'
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
+import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
+import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
+import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
+import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
@@ -246,11 +250,16 @@ export function apply(ctx, config = {}) {
   // The secure screenshot renderer owns its exact FsTarget and active browser
   // cancellation directly, so it does not depend on this placement.
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)
+  // DSH 0.1.1 publishes an exact native image-capable DeepSeek model. Do not
+  // put it ahead of Vision Router's configured chain: only when the user has
+  // explicitly selected a Host-native image route, preserve raw pixels and skip
+  // the hidden instant-local caption path for that turn.
+  const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
-  const structuredCtx = installStructuredFlowHardening(toolRuntimeCtx, runtimeConfig)
+  const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)
   // Background capability profiling is outside the v1 tool implementation: it
   // only observes foreground vision activity so idle measurements can yield.
   // The profiler defaults to local/free routes and never changes tool results.
@@ -313,6 +322,9 @@ export function apply(ctx, config = {}) {
   // ordinary chat model picker). The existing classic client bundle stays the
   // DSH module-system artifact, including HMR/source-map behavior.
   installLiveModelClientPrelude(reconciledCtx)
+  // Mainline #266 fallback: one exact no-fallback smoke test per row. The v2
+  // capability Benchmark client intentionally takes ownership when present.
+  installExactVisionTestClient(reconciledCtx)
   // Productize v2 routing settings without forking the stabilized v1.7 form.
   // The prelude decorates only this package's client apply(), reusing its
   // SettingsScope/remote-RPC/readback helpers and rendering next to the vision
@@ -322,6 +334,9 @@ export function apply(ctx, config = {}) {
   // controlled settings form itself. It talks only to the exact benchmark
   // service below and never writes Vision Router settings.
   installCapabilityBenchmarkClient(reconciledCtx)
+  // DSH 0.1.1 adds per-route/model pi-ai wire compatibility. Preserve those
+  // exact wire facts at the legacy direct compatibility bridge boundary.
+  installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
   // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
   // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
   // backed by exact private-registry evidence. Record the same provenance in
@@ -332,6 +347,12 @@ export function apply(ctx, config = {}) {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+  })
+  // Mainline #266 exact smoke-test route. It tests only the selected backend and
+  // never walks the configured fallback chain.
+  installVisionBackendSmokeTest(executionCtx, runtimeConfig, core, {
+    logger: logging.logger,
+    isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
   // Serve the generated-fixture benchmark through the same local web-capability
   // boundary as the rest of Vision Router. The manager, settings preview,
@@ -373,7 +394,7 @@ export function apply(ctx, config = {}) {
   try {
     const result = withVisionCircuitBreakerObserver(
       breakerShadowHealth.capture,
-      () => core.apply(executionCtx, runtimeConfig),
+      () => core.apply(executionCtx, nativeImageCompat.config),
     )
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
