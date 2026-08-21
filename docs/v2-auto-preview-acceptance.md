@@ -6,8 +6,9 @@ The goal is **not** to prove that Auto routing is ready to execute. The goal is 
 
 1. read-only Auto preview is explainable;
 2. Benchmark evidence is trustworthy;
-3. Commit G can build that evidence gradually in the background without surprising cost or foreground interference;
-4. actual v1 execution remains unchanged.
+3. Commit G can build missing evidence gradually in the background without surprising cost or foreground interference;
+4. measurement age is provenance rather than an arbitrary validity TTL;
+5. actual v1 execution remains unchanged.
 
 ## Safety invariant
 
@@ -39,20 +40,47 @@ fixtureCountByAxis
 
 Legacy cache-v2 evidence from the current suite may migrate, but each migrated axis inherits the old record timestamp. Wrong-suite evidence remains invalid.
 
-Freshness is per-axis:
+### Age policy
 
-| Axis state | Meaning | Auto effect |
-| --- | --- | --- |
-| fresh | <=7 days | may compare on that direct axis |
-| stale | >7 and <=30 days | visible, not comparable |
-| expired | >30 days | removed from retained current profile data |
-| unmeasured | no direct score/timestamp | not comparable |
+Measurement age is informational only.
 
-A mixed-age profile is expected and must remain mixed.
+```text
+8 days old   -> still measured
+80 days old  -> still measured
+1 year old   -> still measured
+```
+
+provided the exact backend identity and Benchmark suite still match.
+
+A timestamp tells the reviewer **when** the measurement was made. It does not authorize the router to decide that the model's capability expired.
+
+Evidence is invalidated by measurement-contract changes such as:
+
+- exact provider/model/endpoint/API identity changes;
+- resolved credential identity changes;
+- Benchmark suite revision changes;
+- explicit removal/replacement/retest.
+
+A positive per-axis timestamp remains required as provenance integrity for persisted evidence; missing/invalid timestamp data should not be silently manufactured.
 
 ## Preview diagnostics vocabulary
 
-For each direct axis, Settings diagnostics expose configured/preview order, ranks, measured score/latency, comparable state, scoring formula, `0.08` threshold and adjacent-pair checks.
+The read-only payload uses:
+
+```text
+diagnosticVersion: 2
+measurementAgePolicy: informational-only
+evidenceInvalidation: endpoint-identity, benchmark-suite
+```
+
+For each direct axis, Settings diagnostics expose configured/preview order, ranks, measured score/latency, measurement age, comparable state, scoring formula, `0.08` threshold and adjacent-pair checks.
+
+Candidate evidence states are:
+
+- `measured`;
+- `axis-unmeasured`;
+- `unmeasured`;
+- `unbenchmarkable`.
 
 Pair outcomes include:
 
@@ -101,7 +129,7 @@ Expected semantics:
 - `routingMode: ordered`: no background profiling;
 - `fallback-only`: never background-profiled.
 
-One background work unit is one candidate + one missing/stale direct axis. It must not run a hidden Full suite.
+One background work unit is one candidate + one **unmeasured direct axis**. It must not run a hidden Full suite and must not periodically refresh an already measured axis because its timestamp is old.
 
 Priority:
 
@@ -149,20 +177,20 @@ Never attach raw keys, credential references, endpoint secrets or user image con
 | ID | Setup/action | Expected result |
 | --- | --- | --- |
 | R01 | two unmeasured backends, Auto + Quality | configured order; pair incomparable |
-| R02 | two fresh same-axis measurements; right leads >=0.08 | right may promote; measured-advantage |
-| R03 | same-axis delta 0.01–0.07 | configured order; below-threshold |
+| R02 | two measured same-axis results; right leads >=0.08 | right may promote; `measured-advantage` |
+| R03 | same-axis delta 0.01–0.07 | configured order; `below-threshold` |
 | R04 | A measured, B unmeasured, C strongly measured | C cannot cross B |
-| R05 | relevant axis 8–30 days old | stale visible; no capability reorder |
-| R06 | Quick covers OCR/general only | OCR/general may compare; other axes unmeasured |
-| R07 | Balanced with fresh same-axis latency | formula 0.80 capability + 0.20 speed |
-| R08 | Speed with fresh same-axis latency | formula 0.55 capability + 0.45 speed |
+| R05 | both relevant-axis measurements are 80 days old | still comparable; age alone does not block measured reorder |
+| R06 | Quick covers OCR/general only | OCR/general may compare; other axes remain unmeasured |
+| R07 | Balanced with same-axis measured latency | formula 0.80 capability + 0.20 speed |
+| R08 | Speed with same-axis measured latency | formula 0.55 capability + 0.45 speed |
 | R09 | cloud before enabled local, Auto + Local | local may move first as policy, not superiority |
 | R10 | unselected built-in free fallback | fallback-only stays behind user routes |
 | R11 | endpoint/model/API/credential identity changes | old `ep2_` evidence not reused |
 | R12 | relevant axis latency missing but another axis has latency | Balanced/Speed remain incomparable; no borrowing |
-| R13 | relevant axis lacks valid timestamp | not fresh, cannot reorder |
-| G-R14 | OCR 8d stale + General today on same backend | OCR stale while General fresh; General refresh does not refresh OCR |
-| G-R15 | one axis >30d, another axis fresh | expired axis disappears while fresh axis/profile remains |
+| R13 | persisted relevant-axis record lacks a valid timestamp | rejected as malformed provenance; no invented timestamp/evidence |
+| G-R14 | OCR measured 8d ago + General today on same backend | both measured/usable; independent timestamps remain 8d/today |
+| G-R15 | OCR measured 1y ago + General today | both remain retained/usable by default; age alone removes neither |
 
 ## Benchmark matrix
 
@@ -180,8 +208,9 @@ Never attach raw keys, credential references, endpoint secrets or user image con
 | B10 | explicit Stop/Cancel | cancelled |
 | B11 | custom/dev runner returns failureCount >0 | persistence refused |
 | B12 | document answer token-complete but structurally wrong | score materially reduced |
-| G-B13 | remeasure only General on a richer mixed-age profile | only General score/latency/timestamp/count changes |
+| G-B13 | manually remeasure only General on a richer profile | only General score/latency/timestamp/count changes |
 | G-B14 | remeasure Grounding diagnostic only | other axes retain values and timestamps |
+| G-B15 | complete five-axis profile is 365d old | opening/idle Auto does not automatically retest any axis |
 
 ## Background profiler matrix
 
@@ -196,10 +225,11 @@ Never attach raw keys, credential references, endpoint secrets or user image con
 | G-P07 | background axis running, then enqueue manual Benchmark | background aborts/yields until manual queue is idle |
 | G-P08 | foreground/manual yield | no provider-failure backoff for yielded work |
 | G-P09 | real background provider failure | candidate+axis gets retry backoff; no tight retry loop |
-| G-P10 | recent Document visual task then idle | next eligible work prefers direct Document axis when missing/stale |
-| G-P11 | unsupported UI/detection task then idle | no fabricated direct capability axis |
-| G-P12 | unselected fallback-only backend missing all axes | background profiler ignores it |
-| G-P13 | exit short-lived test/doctor process with profiler timer pending | timer does not keep process alive |
+| G-P10 | recent Document visual task then idle and Document is unmeasured | next eligible work prefers direct Document axis |
+| G-P11 | recent Document task but Document already measured months ago | no Document retest merely because of age; another missing axis may be chosen |
+| G-P12 | unsupported UI/detection task then idle | no fabricated direct capability axis |
+| G-P13 | unselected fallback-only backend missing all axes | background profiler ignores it |
+| G-P14 | exit short-lived test/doctor process with profiler timer pending | timer does not keep process alive |
 
 ## Settings/UI matrix
 
@@ -211,20 +241,21 @@ Never attach raw keys, credential references, endpoint secrets or user image con
 | U04 | trusted-host remote, permission enabled | same settings RPC/readback path; no new HTTP settings-write route |
 | U05 | two clients, change settings on A | B refreshes controls correctly |
 | U06 | diagnostics Refresh | one new read-only GET state, no mutation |
-| U07 | Copy JSON | sanitized diagnosticVersion payload |
+| U07 | Copy JSON | sanitized `diagnosticVersion: 2` payload |
 | U08 | Benchmark finishes without closing Settings | new evidence becomes visible |
 | U09 | rc.8 remount/reopen repeatedly | one product panel, one diagnostics panel; no loop/duplicates |
-| G-U10 | mixed-age profile open in Benchmark modal | every axis shows its own score, median latency, age and Auto/stale state |
-| G-U11 | choose `all` | potentially chargeable background behavior is clearly disclosed |
+| G-U10 | mixed-age profile open in Benchmark modal | every measured axis shows score, median latency and its own measurement age only |
+| G-U11 | inspect an 8d/80d/1y measurement | no `已陈旧`, `已过期`, `stale` or `expired` validity label |
+| G-U12 | choose `all` | potentially chargeable background behavior is clearly disclosed |
 
 ## Runtime separation matrix
 
 | ID | Setup/action | Expected result |
 | --- | --- | --- |
 | X01 | Auto preview recommends B>A; run real image | actual v1 starts from configured A |
-| X02 | inspect Settings preview | healthIncluded:false |
+| X02 | inspect Settings preview | `healthIncluded:false` |
 | X03 | induce live breaker/rate-limit and compare | turn shadow may demote; Settings remains health-neutral |
-| X04 | manual Benchmark queued/running; restart DSH | jobs do not auto-resume; persisted evidence remains by freshness rules |
+| X04 | manual Benchmark queued/running; restart DSH | jobs do not auto-resume; persisted evidence remains according to identity/suite contract |
 | X05 | diagnostics open during chat | GET/DOM activity changes no tool result/retry/timeout/breaker/fallback |
 | G-X06 | background profiler active then real visual task | v1 output/order identical to background-profiler-off baseline |
 
@@ -259,7 +290,8 @@ Allowed:
 
 - provider/model candidate key already visible in Settings;
 - secret-safe `ep2_[0-9a-f]{32}` fingerprint;
-- measured score/latency/per-axis timestamp/coverage/freshness;
+- measured score/latency/per-axis timestamp/coverage;
+- factual measurement age;
 - suite revision;
 - local/fallback-only/benchmarkable flags.
 
@@ -267,16 +299,19 @@ Allowed:
 
 Do not connect Auto preview to the executor until real-machine evidence shows:
 
-1. all unmeasured/stale barriers are visible and preserve order;
-2. mixed-age per-axis freshness behaves correctly;
-3. Quick/Full preflight/failure/identity rules hold on real adapter + HTTP routes;
-4. default `local-free` produces no chargeable cloud background requests;
-5. `all` is explicit and clearly disclosed;
-6. foreground and manual Benchmark always preempt background profiling;
-7. background failures back off safely;
-8. no secret/raw user image data enters diagnostics;
-9. Local remains labeled as policy;
-10. `routingMode:auto` and background profiling still leave actual v1 execution order/result unchanged;
-11. minimum rc.6/rc.7/rc.8 host matrix passes.
+1. measurement age alone never invalidates evidence;
+2. refreshing one axis never rewrites another axis's timestamp;
+3. unmeasured barriers are visible and preserve order;
+4. exact identity/suite changes invalidate old evidence correctly;
+5. Quick/Full preflight/failure/identity rules hold on real adapter + HTTP routes;
+6. default `local-free` produces no chargeable cloud background requests;
+7. complete old profiles are not periodically background-retested;
+8. `all` is explicit and clearly disclosed;
+9. foreground and manual Benchmark always preempt background profiling;
+10. background failures back off safely;
+11. no secret/raw user image data enters diagnostics;
+12. Local remains labeled as policy;
+13. `routingMode:auto` and background profiling still leave actual v1 execution order/result unchanged;
+14. minimum rc.6/rc.7/rc.8 host matrix passes.
 
 Only after those gates have real PASS evidence should an opt-in execution-changing Auto commit be discussed.
