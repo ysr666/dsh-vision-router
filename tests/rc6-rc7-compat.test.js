@@ -177,11 +177,12 @@ test('settings card registration is a structural superset of rc6 list and newer 
   // non-applicable extra metadata rather than rejecting it.
 })
 
-test('manifest keeps the minimum rc6 host peers and adds no newer-only package edge', async () => {
+test('manifest keeps the minimum rc6 host peers while admitting the rc1 host line', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  const expectedHostPeerRange = '^0.1.0-rc.6 || ^0.1.1-rc.1'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], '^0.1.0-rc.6')
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], '^0.1.0-rc.6')
+  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
+  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
