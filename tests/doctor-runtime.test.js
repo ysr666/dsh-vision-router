@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { probeRuntime, supportReport } from '../lib/doctor-runtime.js'
+
+const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 function response(status, headers = {}) {
   const normalized = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))
@@ -103,7 +106,7 @@ test('support report is schema-versioned, identifies doctor version, and omits r
   })
   const json = JSON.stringify(report)
   assert.equal(report.schemaVersion, 1)
-  assert.equal(report.doctorVersion, '1.7.4')
+  assert.equal(report.doctorVersion, packageVersion)
   assert.equal(json.includes('file:/Users/alice'), false)
   assert.equal(json.includes('/Users/alice/private'), false)
   assert.equal(json.includes('secret@'), false)
