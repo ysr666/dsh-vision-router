@@ -4,6 +4,7 @@ import {
   createCapabilityBenchmarkManager,
   createExactCapabilityInvoker,
 } from '../lib/vision-capability-benchmark-service.js'
+import { resolveVisionCredential } from '../lib/vision-capability-identity.js'
 import { collectCapabilityShadowCandidates } from '../lib/vision-capability-shadow.js'
 
 function localBackend() {
@@ -160,6 +161,24 @@ test('benchmark timeout is a failed timeout, never a user cancellation', async (
   assert.equal(job.state, 'failed')
   assert.equal(job.errorClass, 'timeout')
   assert.equal(job.errorCode, 'CAPABILITY_BENCHMARK_TIMEOUT')
+})
+
+test('configured but unresolved credential never aliases no-auth identity or falls through the credentials seam', async () => {
+  const previous = process.env.TEST_KEY
+  process.env.TEST_KEY = 'ambient-secret-that-must-not-be-used'
+  try {
+    const noAuth = await resolveVisionCredential(ctx(), '')
+    const unresolved = await resolveVisionCredential(ctx({}, { credentials: {} }), 'TEST_KEY')
+    assert.equal(noAuth.fingerprint, 'none')
+    assert.equal(noAuth.required, false)
+    assert.equal(unresolved.required, true)
+    assert.equal(unresolved.value, undefined)
+    assert.equal(unresolved.fingerprint, 'unresolved')
+    assert.equal(unresolved.source, 'credentials-miss')
+  } finally {
+    if (previous === undefined) delete process.env.TEST_KEY
+    else process.env.TEST_KEY = previous
+  }
 })
 
 test('rotating the actual credential behind the same ref changes benchmark fingerprint without exposing the key', async () => {
