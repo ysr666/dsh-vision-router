@@ -11,12 +11,13 @@ import {
   injectExactVisionTestClient,
 } from '../lib/vision-backend-smoke-test-client.js'
 
-test('normalizes exact smoke-test selection without accepting empty rows', () => {
+test('normalizes exact smoke-test selection without accepting empty or oversized rows', () => {
   assert.deepEqual(normalizeVisionSmokeSelection({ provider: ' kimi ', model: ' moonshot-v1-vision ' }), {
     provider: 'kimi',
     model: 'moonshot-v1-vision',
   })
   assert.equal(normalizeVisionSmokeSelection({ provider: 'kimi', model: '' }), undefined)
+  assert.equal(normalizeVisionSmokeSelection({ provider: 'x'.repeat(161), model: 'vision' }), undefined)
   assert.equal(normalizeVisionSmokeSelection(undefined), undefined)
 })
 
@@ -75,6 +76,121 @@ test('exact adapter smoke test sends one attachment and never invokes a fallback
   assert.equal(seen[0].messages[0].content[0].type, 'image')
   assert.equal(saved.mediaType, 'image/png')
   assert.ok(Buffer.isBuffer(saved.data))
+})
+
+test('exact adapter smoke test mirrors the safe pre-wire image bridge without model fallback', async () => {
+  let adapterAttempts = 0
+  const bridgeCalls = []
+  const admission = Object.assign(
+    new Error('pi-ai model "manual-vl" does not support image input'),
+    { code: 'UNSUPPORTED_CONTENT' },
+  )
+  const ctx = {
+    get(name) {
+      if (name === 'attachments') {
+        return {
+          async saveImage() { return { id: 'probe-image' } },
+        }
+      }
+      return undefined
+    },
+    llm: {
+      registration(provider) {
+        return provider === 'custom' ? { adapter: {} } : undefined
+      },
+      stream() {
+        adapterAttempts += 1
+        return {
+          async *[Symbol.asyncIterator]() {
+            throw admission
+          },
+        }
+      },
+    },
+  }
+  const core = {
+    resolveChannelBridgeTransport() {
+      return { baseURL: 'https://example.invalid/v1', api: 'openai-completions' }
+    },
+    isOpenAIHttpBridgeTransport() { return true },
+    async callOpenAICompatible(provider, messages, options) {
+      bridgeCalls.push({ provider, messages, options })
+      return VISION_BACKEND_SMOKE_TEST_CODE
+    },
+  }
+  const result = await runExactVisionBackendSmokeTest({
+    ctx,
+    core,
+    config: {},
+    provider: 'custom',
+    model: 'manual-vl',
+    signal: new AbortController().signal,
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.verified, true)
+  assert.equal(result.fallbackUsed, false)
+  assert.equal(result.transport, 'adapter-bridge')
+  assert.equal(adapterAttempts, 1)
+  assert.equal(bridgeCalls.length, 1)
+  assert.equal(bridgeCalls[0].provider.model, 'manual-vl')
+})
+
+test('UNKNOWN_MODEL bridge requires explicit live-discovery evidence', async () => {
+  const unknown = Object.assign(
+    new Error('pi-ai provider "custom" has no configured model "fresh-vl"'),
+    { code: 'UNKNOWN_MODEL' },
+  )
+  let bridgeCalls = 0
+  const ctx = {
+    get(name) {
+      if (name === 'attachments') return { async saveImage() { return { id: 'probe-image' } } }
+      return undefined
+    },
+    llm: {
+      registration() { return { adapter: {} } },
+      stream() {
+        return {
+          async *[Symbol.asyncIterator]() { throw unknown },
+        }
+      },
+    },
+  }
+  const core = {
+    resolveChannelBridgeTransport() {
+      return { baseURL: 'https://example.invalid/v1', api: 'openai-completions' }
+    },
+    isOpenAIHttpBridgeTransport() { return true },
+    async callOpenAICompatible() {
+      bridgeCalls += 1
+      return VISION_BACKEND_SMOKE_TEST_CODE
+    },
+  }
+  await assert.rejects(
+    runExactVisionBackendSmokeTest({
+      ctx,
+      core,
+      config: {},
+      provider: 'custom',
+      model: 'fresh-vl',
+      signal: new AbortController().signal,
+      isBridgeEvidence: () => false,
+    }),
+    (error) => error === unknown,
+  )
+  assert.equal(bridgeCalls, 0)
+
+  const result = await runExactVisionBackendSmokeTest({
+    ctx,
+    core,
+    config: {},
+    provider: 'custom',
+    model: 'fresh-vl',
+    signal: new AbortController().signal,
+    isBridgeEvidence: (provider, model) => provider === 'custom' && model === 'fresh-vl',
+  })
+  assert.equal(result.verified, true)
+  assert.equal(result.transport, 'adapter-bridge')
+  assert.equal(bridgeCalls, 1)
 })
 
 test('exact vision-http smoke test uses only the requested configured backend', async () => {
