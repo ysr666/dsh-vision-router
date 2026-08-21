@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  AUTO_MEASURED_MAX_AGE_MS,
   AUTO_REORDER_MIN_ADVANTAGE,
   BENCHMARK_AXES,
   VISION_INTENTS,
@@ -20,8 +19,8 @@ import {
 const NOW = 2_000_000_000_000
 const DAY = 24 * 60 * 60 * 1000
 
-function measured(scores, medianLatencyMs = {}, measuredAt = NOW) {
-  return { scores, medianLatencyMs, measuredAt }
+function measured(scores, benchmarkMedianLatencyMs = {}, measuredAt = NOW) {
+  return { scores, medianLatencyMs: benchmarkMedianLatencyMs, measuredAt }
 }
 
 test('task vocabulary stays broad while benchmark axes stay explicit and measurement-only', () => {
@@ -75,7 +74,7 @@ test('unmeasured model names never create capability scores or change configured
     assert.deepEqual(profile.scores, {})
     assert.equal(profile.provenance.measured, false)
   }
-  assert.deepEqual(rankVisionCandidates({ intent: 'ocr', strategy: 'quality', candidates, now: NOW }).map((row) => row.model), candidates.map((row) => row.model))
+  assert.deepEqual(rankVisionCandidates({ intent: 'ocr', strategy: 'quality', candidates }).map((row) => row.model), candidates.map((row) => row.model))
 })
 
 test('measured profile preserves exact benchmark scores without prior blending or manual overrides', () => {
@@ -86,36 +85,50 @@ test('measured profile preserves exact benchmark scores without prior blending o
   assert.equal(Object.prototype.hasOwnProperty.call(profile, 'confidence'), false)
 })
 
-test('quality uses measured capability while speed uses only same-axis measured latency', () => {
-  const strong = buildVisionCapabilityProfile({ provider: 'p', model: 'strong', measured: measured({ ocr: 0.98 }, { ocr: 7000 }) })
-  const fast = buildVisionCapabilityProfile({ provider: 'p', model: 'fast', measured: measured({ ocr: 0.78 }, { ocr: 300 }) })
-  const qualityStrong = scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'quality', measuredAt: NOW, now: NOW })
-  const qualityFast = scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'quality', measuredAt: NOW, now: NOW })
-  assert.ok(qualityStrong.score > qualityFast.score)
-  const speedStrong = scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'speed', measuredAt: NOW, now: NOW })
-  const speedFast = scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'speed', measuredAt: NOW, now: NOW })
-  assert.ok(speedFast.score > speedStrong.score)
-})
-
-test('balanced and speed never substitute aggregate or another-axis latency', () => {
+test('benchmark latency is retained as an observation but never becomes runtime speed evidence', () => {
   const profile = buildVisionCapabilityProfile({
     provider: 'p',
     model: 'm',
-    measured: measured({ ocr: 0.9 }, { document: 50 }),
-    latencyMs: 100,
+    measured: measured({ ocr: 0.9 }, { ocr: 50 }),
+    latencyMs: 50,
   })
-  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'quality', measuredAt: NOW, now: NOW }).comparable, true)
-  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'balanced', measuredAt: NOW, now: NOW }).comparable, false)
-  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'speed', measuredAt: NOW, now: NOW }).comparable, false)
+  assert.equal(profile.observations.benchmarkMedianLatencyMs.ocr, 50)
+  assert.equal(profile.observations.benchmarkLatencyMs, 50)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'quality', measuredAt: NOW }).comparable, true)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'balanced', measuredAt: NOW }).comparable, false)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'speed', measuredAt: NOW }).comparable, false)
 })
 
-test('measurement without a valid measuredAt timestamp is rejected as malformed provenance, not as old evidence', () => {
+test('balanced and speed use only same-axis runtime performance observations', () => {
+  const strong = buildVisionCapabilityProfile({
+    provider: 'p', model: 'strong', measured: measured({ ocr: 0.98 }, { ocr: 100 }),
+    runtimeLatencyMsByAxis: { ocr: 7000 },
+  })
+  const fast = buildVisionCapabilityProfile({
+    provider: 'p', model: 'fast', measured: measured({ ocr: 0.78 }, { ocr: 9000 }),
+    runtimeLatencyMsByAxis: { ocr: 300 },
+  })
+  assert.ok(scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'quality', measuredAt: NOW }).score >
+    scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'quality', measuredAt: NOW }).score)
+  assert.ok(scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'speed', measuredAt: NOW }).score >
+    scoreVisionCandidate({ intent: 'ocr', profile: strong, strategy: 'speed', measuredAt: NOW }).score)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile: fast, strategy: 'speed', measuredAt: NOW }).components.latencySource, 'runtime')
+})
+
+test('balanced and speed never borrow another-axis runtime latency', () => {
+  const profile = buildVisionCapabilityProfile({
+    provider: 'p', model: 'm', measured: measured({ ocr: 0.9 }),
+    runtimeLatencyMsByAxis: { document: 50 },
+  })
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'quality', measuredAt: NOW }).comparable, true)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'balanced', measuredAt: NOW }).comparable, false)
+  assert.equal(scoreVisionCandidate({ intent: 'ocr', profile, strategy: 'speed', measuredAt: NOW }).comparable, false)
+})
+
+test('measurement without a valid measuredAt timestamp is rejected as malformed provenance', () => {
   const candidates = [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }]
   const result = suggestVisionOrder({
-    intent: 'ocr',
-    strategy: 'quality',
-    now: NOW,
-    candidates,
+    intent: 'ocr', strategy: 'quality', candidates,
     measured: {
       'p/a': { scores: { ocr: 0.2 } },
       'p/b': { scores: { ocr: 1 } },
@@ -127,7 +140,7 @@ test('measurement without a valid measuredAt timestamp is rejected as malformed 
 
 test('a single measured backend cannot leapfrog an unmeasured user preference', () => {
   const ranked = rankVisionCandidates({
-    intent: 'ocr', strategy: 'quality', now: NOW,
+    intent: 'ocr', strategy: 'quality',
     candidates: [{ provider: 'p', model: 'unknown-first' }, { provider: 'p', model: 'measured-second' }],
     measured: { 'p/measured-second': measured({ ocr: 0.99 }) },
   })
@@ -136,7 +149,7 @@ test('a single measured backend cannot leapfrog an unmeasured user preference', 
 
 test('an unmeasured backend is an ordering barrier for measured candidates behind it', () => {
   const ranked = rankVisionCandidates({
-    intent: 'ocr', strategy: 'quality', now: NOW,
+    intent: 'ocr', strategy: 'quality',
     candidates: [
       { provider: 'p', model: 'measured-a' },
       { provider: 'p', model: 'unknown-b' },
@@ -154,13 +167,13 @@ test('small measured deltas preserve user order while a material delta can reord
   assert.equal(AUTO_REORDER_MIN_ADVANTAGE, 0.08)
   const candidates = [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }]
   const small = suggestVisionOrder({
-    intent: 'ocr', strategy: 'quality', candidates, now: NOW,
+    intent: 'ocr', strategy: 'quality', candidates,
     measured: { 'p/a': measured({ ocr: 0.91 }), 'p/b': measured({ ocr: 0.94 }) },
   })
   assert.deepEqual(small.ranked.map((row) => row.key), ['p/a', 'p/b'])
   assert.deepEqual(small.decisions, [])
   const large = suggestVisionOrder({
-    intent: 'ocr', strategy: 'quality', candidates, now: NOW,
+    intent: 'ocr', strategy: 'quality', candidates,
     measured: { 'p/a': measured({ ocr: 0.61 }), 'p/b': measured({ ocr: 0.94 }) },
   })
   assert.deepEqual(large.ranked.map((row) => row.key), ['p/b', 'p/a'])
@@ -170,7 +183,7 @@ test('small measured deltas preserve user order while a material delta can reord
 
 test('tasks without a direct benchmark axis never reorder from capability measurements', () => {
   const ranked = rankVisionCandidates({
-    intent: 'ui', strategy: 'quality', now: NOW,
+    intent: 'ui', strategy: 'quality',
     candidates: [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }],
     measured: {
       'p/a': measured({ structured: 0.2, ocr: 0.2 }),
@@ -182,10 +195,9 @@ test('tasks without a direct benchmark axis never reorder from capability measur
 })
 
 test('measurement age alone never invalidates Auto evidence', () => {
-  assert.equal(AUTO_MEASURED_MAX_AGE_MS, Number.MAX_SAFE_INTEGER)
   const old = NOW - 365 * DAY
   const ranked = rankVisionCandidates({
-    intent: 'ocr', strategy: 'quality', now: NOW,
+    intent: 'ocr', strategy: 'quality',
     candidates: [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }],
     measured: {
       'p/a': measured({ ocr: 0.2 }, {}, old),
@@ -196,9 +208,22 @@ test('measurement age alone never invalidates Auto evidence', () => {
   assert.ok(ranked.every((row) => row.comparable === true))
 })
 
+test('balanced preserves configured order until runtime performance exists', () => {
+  const ranked = rankVisionCandidates({
+    intent: 'ocr', strategy: 'balanced',
+    candidates: [{ provider: 'p', model: 'a' }, { provider: 'p', model: 'b' }],
+    measured: {
+      'p/a': measured({ ocr: 0.2 }, { ocr: 10 }),
+      'p/b': measured({ ocr: 1 }, { ocr: 9999 }),
+    },
+  })
+  assert.deepEqual(ranked.map((row) => row.key), ['p/a', 'p/b'])
+  assert.ok(ranked.every((row) => row.comparable === false))
+})
+
 test('local preference is an explicit policy and may cross unmeasured cloud backends', () => {
   const ranked = rankVisionCandidates({
-    intent: 'general', strategy: 'privacy', now: NOW,
+    intent: 'general', strategy: 'privacy',
     candidates: [
       { provider: 'cloud', model: 'a' },
       { provider: 'vision-http', model: 'local-b', local: true, privacy: 'local' },
@@ -212,7 +237,7 @@ test('local preference is an explicit policy and may cross unmeasured cloud back
 test('runtime health is an availability gate, not a capability-score penalty', () => {
   const candidates = [{ provider: 'p', model: 'best' }, { provider: 'p', model: 'unknown' }]
   const result = suggestVisionOrder({
-    intent: 'ocr', strategy: 'quality', candidates, now: NOW,
+    intent: 'ocr', strategy: 'quality', candidates,
     measured: { 'p/best': measured({ ocr: 1 }) },
     health: { 'p/best': { circuitOpen: true } },
   })
@@ -224,7 +249,7 @@ test('runtime health is an availability gate, not a capability-score penalty', (
 
 test('fallback-only backends never leapfrog user-selected routes even with stronger measurements', () => {
   const ranked = rankVisionCandidates({
-    intent: 'ocr', strategy: 'quality', now: NOW,
+    intent: 'ocr', strategy: 'quality',
     candidates: [
       { provider: 'p', model: 'user-a' },
       { provider: 'vision-http', model: 'ovh/free', routeRole: 'fallback-only' },
@@ -237,12 +262,16 @@ test('fallback-only backends never leapfrog user-selected routes even with stron
   assert.deepEqual(ranked.map((row) => row.key), ['p/user-a', 'vision-http/ovh/free'])
 })
 
-test('capability tags and route explanation expose only measured benchmark axes', () => {
-  const profile = buildVisionCapabilityProfile({ provider: 'p', model: 'specialist', measured: measured({ ocr: 0.99, document: 0.96, grounding: 0.4 }) })
+test('capability tags and route explanation expose only measured capability and runtime performance facts', () => {
+  const profile = buildVisionCapabilityProfile({
+    provider: 'p', model: 'specialist',
+    measured: measured({ ocr: 0.99, document: 0.96, grounding: 0.4 }),
+    runtimeLatencyMsByAxis: { ocr: 500 },
+  })
   const tags = visionCapabilityTags(profile, 0.85)
   assert.deepEqual(tags, ['ocr', 'document'])
   const ranked = rankVisionCandidates({
-    intent: 'ocr', strategy: 'quality', now: NOW,
+    intent: 'ocr', strategy: 'speed',
     candidates: [{ provider: 'p', model: 'specialist', profile, measuredAt: NOW }],
   })
   const explanation = explainVisionRoute(ranked)
@@ -250,5 +279,7 @@ test('capability tags and route explanation expose only measured benchmark axes'
   assert.equal(explanation[0].intent, 'ocr')
   assert.equal(explanation[0].axis, 'ocr')
   assert.equal(explanation[0].capability, 0.99)
+  assert.equal(explanation[0].latencySource, 'runtime')
+  assert.equal(explanation[0].performanceObserved, true)
   assert.equal(explanation[0].health, 1)
 })
