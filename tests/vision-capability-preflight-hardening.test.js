@@ -59,7 +59,7 @@ function ctx(settings = {}, options = {}) {
     },
     llm: {
       listProviders: () => [],
-      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } },
+      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } } },
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
       stream: options.stream ?? (() => (async function* () {
         yield { text: 'ok' }
