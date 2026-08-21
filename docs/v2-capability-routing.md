@@ -14,6 +14,19 @@ Normal users choose:
 
 Model names, provider names, model families and popularity never create capability scores. An unmeasured axis is simply unmeasured.
 
+A second rule is equally important:
+
+> **Measurement time is provenance, not capability validity.**
+
+A result measured 8 days, 80 days, or a year ago does not become invalid merely because time passed. Vision Router records when each axis was measured, but does not assign an arbitrary TTL to model capability.
+
+Evidence is invalidated when its measurement contract no longer matches, principally when:
+
+- exact provider/model/endpoint/API identity changes;
+- the resolved credential identity changes;
+- the Benchmark suite revision changes;
+- the user explicitly replaces/removes/retests that evidence.
+
 `capabilityRoutingShadow` remains an internal validation flag, not the product switch.
 
 ## Inputs and boundaries
@@ -27,7 +40,7 @@ Capability routing uses only:
 2. **Exact-endpoint measurements**
    - directly measured per-axis capability score;
    - the same axis's measured median transport latency;
-   - that axis's own measurement timestamp/freshness.
+   - that axis's own measurement timestamp as provenance.
 
 Runtime breaker/rate-limit state is a separate availability gate. It may temporarily move an unavailable backend behind healthy candidates, but it never edits capability scores.
 
@@ -53,7 +66,7 @@ A -> B -> C
 
 `B` is an information barrier.
 
-Capability movement is adjacent and conservative. Both neighbors must have fresh directly comparable evidence for the current axis, and the right side must lead by at least:
+Capability movement is adjacent and conservative. Both neighbors must have directly comparable evidence for the current axis, and the right side must lead by at least:
 
 ```text
 AUTO_REORDER_MIN_ADVANTAGE = 0.08
@@ -79,7 +92,7 @@ Tasks such as `ui`, `detection`, `chart_diagram`, `code_screenshot`, and `visual
 
 ### Quality
 
-Uses the fresh directly measured capability score for the current axis.
+Uses the directly measured capability score for the current axis.
 
 ### Balanced
 
@@ -99,7 +112,7 @@ Uses:
 0.55 * capability + 0.45 * speed
 ```
 
-and still requires fresh measured capability. Another axis's latency or an aggregate latency is never substituted.
+and still requires measured capability. Another axis's latency or an aggregate latency is never substituted.
 
 ### Local
 
@@ -158,7 +171,7 @@ fixtureCountByAxis
 
 Legacy cache-v2 records from the current suite are migrated conservatively: each retained score inherits the old record timestamp. Wrong-suite records remain unusable.
 
-The reason for cache v3 is important: refreshing one axis must not refresh every other axis.
+The reason for per-axis timestamps is truthful provenance, not expiry. Refreshing one axis must not rewrite the date of every other axis.
 
 Example:
 
@@ -167,48 +180,17 @@ OCR      measured 8 days ago
 General  measured today
 ```
 
-means:
+means exactly that. Both measurements remain usable under the same current identity and suite. A new General measurement does not pretend OCR was remeasured today.
+
+The Benchmark UI may therefore show:
 
 ```text
-OCR      stale -> excluded from Auto
-General  fresh -> Auto-eligible
-```
-
-A new General measurement cannot make the old OCR measurement fresh.
-
-## Per-axis freshness
-
-Freshness belongs to each measured axis independently:
-
-- `<= 7 days`: fresh and Auto-eligible;
-- `7–30 days`: stale, still human-visible, excluded from Auto;
-- `> 30 days`: removed from retained current profile data.
-
-A mixed-age profile is valid. The Benchmark product may therefore expose, for one backend:
-
-```text
-OCR       91 · 8天前 · 已陈旧
-General   88 · 刚刚 · 可用于Auto
+OCR       91 · 8天前
+General   88 · 刚刚
 Document  — 未测
 ```
 
-The browser/API contract includes per-axis fields:
-
-```text
-scores
-medianLatencyMs
-measuredAtByAxis
-fixtureCountByAxis
-freshnessByAxis
-autoEligibleAxes
-staleAxes
-coverage
-coverageKind
-```
-
-Aggregate `measuredAt`, `freshness` and `autoEligible` remain summary/compatibility fields; Auto scoring itself uses the current axis's timestamp.
-
-There is no confidence tier.
+There is no confidence tier and no age-based `fresh/stale/expired` product tier.
 
 ## Manual Quick / Full Benchmark
 
@@ -237,22 +219,26 @@ Preflight failure sends zero model requests and persists no partial evidence. Me
 
 Invocation failures fail fast; explicit user Stop/Cancel is distinct from timeout/provider failure. A failed retest never overwrites valid prior evidence.
 
+Manual retest is always available when a user wants newer evidence. It is a user/developer decision, not an automatic consequence of a timestamp.
+
 ## Commit G: background progressive profiling
 
-When `routingMode: auto`, Vision Router can gradually fill missing/stale axes while the user is idle. It does **not** run a hidden Full benchmark.
+When `routingMode: auto`, Vision Router can gradually fill **missing axes** while the user is idle. It does **not** run a hidden Full benchmark and it does not periodically remeasure completed axes just because they are old.
 
-The profiler performs one backend + one axis at a time:
+The profiler performs one backend + one missing axis at a time:
 
 ```text
 idle
 -> choose one eligible backend
--> choose one missing/stale axis
+-> choose one unmeasured direct axis
 -> preflight that axis
 -> run its exact generated fixture(s)
 -> merge only that axis into the profile
 ```
 
 A completed axis becomes available to Auto preview immediately without waiting for five-axis coverage.
+
+A backend with all five axes measured receives no background Benchmark requests merely because those measurements are weeks or months old.
 
 ### Background modes
 
@@ -290,17 +276,31 @@ Shadow reads the live v1 circuit breaker through a side-effect-free observation 
 
 Observation must not prune cooldowns, touch LRU state, clear credential trips, or record a new breaker event. Settings preview intentionally remains health-neutral because it has no real turn scope.
 
-## Benchmark UI
+## Benchmark UI and diagnostics
 
-The model row stays compact with one **Benchmark / 测评** entry. The modal presents all five fixed axes and shows, independently for each axis:
+The model row stays compact with one **Benchmark / 测评** entry. The modal presents all five fixed axes and shows independently for each axis:
 
 - score;
 - median transport latency;
-- age;
-- fresh/stale state;
-- whether it may participate in Auto.
+- measurement time.
 
 Missing axes display `— 未测`; no inferred values are filled in.
+
+The UI explicitly states that measurement time is informational and does not make a capability result expire after N days.
+
+Routing diagnostics use:
+
+```text
+measurementAgePolicy: informational-only
+evidenceInvalidation: endpoint-identity, benchmark-suite
+```
+
+Candidate evidence states are measurement states rather than time grades:
+
+- `measured`;
+- `axis-unmeasured`;
+- `unmeasured`;
+- `unbenchmarkable`.
 
 Cloud-cost notices, text-only force verification and grounding developer diagnostics remain in the secondary Benchmark panel.
 
@@ -330,15 +330,16 @@ build preview/shadow plan
 
 Before any future execution-changing Auto commit, real-provider validation must prove:
 
-1. per-axis freshness cannot be accidentally refreshed by another axis;
-2. unmeasured/stale information barriers preserve order;
-3. repeated measurements produce stable material differences;
-4. Balanced/Speed use same-axis latency only;
-5. Local is policy, not a capability claim;
-6. foreground/manual activity reliably preempts background work;
-7. default `local-free` never spends chargeable cloud API quota;
-8. `all` requires explicit user selection and is clearly labeled as potentially chargeable;
-9. breaker behavior remains the v1 availability source of truth;
-10. actual v1 execution remains unchanged.
+1. measurement age alone never invalidates or silently refreshes another axis;
+2. unmeasured information barriers preserve order;
+3. identity/suite changes invalidate old evidence correctly;
+4. repeated manual measurements produce stable material differences where expected;
+5. Balanced/Speed use same-axis latency only;
+6. Local is policy, not a capability claim;
+7. foreground/manual activity reliably preempts background work;
+8. default `local-free` never spends chargeable cloud API quota;
+9. `all` requires explicit user selection and is clearly labeled as potentially chargeable;
+10. breaker behavior remains the v1 availability source of truth;
+11. actual v1 execution remains unchanged.
 
 Only after those gates have convincing real-machine evidence should an execution-changing Auto commit be discussed.
