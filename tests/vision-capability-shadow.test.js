@@ -43,9 +43,7 @@ function fakeCtx(settingsValue = {}) {
     },
     llm: {
       listProviders: () => [],
-      registration() {
-        return { adapter: { constructor: { name: 'FakeRegisteredAdapter' } } }
-      },
+      registration() { return { adapter: { constructor: { name: 'FakeRegisteredAdapter' } } } },
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
     },
     tools: {
@@ -63,22 +61,13 @@ test('only the two router-owned generated routes are filtered', () => {
   assert.equal(generatedCapabilityRoute('vision-chain', {}), true)
   assert.equal(generatedCapabilityRoute('custom-vision', {}), false)
   assert.equal(generatedCapabilityRoute('zhipu-vision', {}), false)
-  assert.equal(
-    generatedCapabilityRoute('my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }),
-    true,
-  )
+  assert.equal(generatedCapabilityRoute('my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }), true)
 })
 
 test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route benchmark identity', async () => {
-  const config = {
-    providers: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', fallbacks: [] }],
-  }
-  const ctx = fakeCtx(config).ctx
+  const config = { providers: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', fallbacks: [] }] }
   const rows = await collectCapabilityShadowCandidates(
-    ctx,
-    config,
-    fakeCore(),
-    { async get() { return undefined } },
+    fakeCtx(config).ctx, config, fakeCore(), { async get() { return undefined } },
   )
   const candidate = rows.find((row) => row.provider === 'deepseek-official' && row.model === 'deepseek-v4-flash')
   assert.ok(candidate)
@@ -89,10 +78,8 @@ test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route
   assert.match(candidate.endpoint, /^dsh-adapter:\/\/registered\/deepseek-official$/)
 })
 
-test('configured pi-ai provider keeps its exact endpoint credential ref private for benchmark execution', async () => {
-  const config = {
-    providers: [{ provider: 'zhipu-glm', model: 'glm-4.6v-flash', fallbacks: [] }],
-  }
+test('configured pi-ai provider keeps its credential ref only for benchmark execution, not capability identity', async () => {
+  const config = { providers: [{ provider: 'zhipu-glm', model: 'glm-4.6v-flash', fallbacks: [] }] }
   const ctx = {
     get(name) {
       if (name !== 'settings') return undefined
@@ -100,15 +87,7 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
         get(namespace) {
           if (namespace === 'vision-router') return config
           if (namespace === 'llm-pi-ai') {
-            return {
-              providers: {
-                'zhipu-glm': {
-                  baseURL: 'https://open.bigmodel.cn/api/paas/v4',
-                  api: 'openai-completions',
-                  apiKeyEnv: 'ZHIPU_API_KEY',
-                },
-              },
-            }
+            return { providers: { 'zhipu-glm': { baseURL: 'https://open.bigmodel.cn/api/paas/v4', api: 'openai-completions', apiKeyEnv: 'ZHIPU_API_KEY' } } }
           }
           return undefined
         },
@@ -121,9 +100,7 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
     },
   }
   const rows = await collectCapabilityShadowCandidates(
-    ctx,
-    config,
-    { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
+    ctx, config, { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
     { async get() { return undefined } },
   )
   const candidate = rows.find((row) => row.provider === 'zhipu-glm' && row.model === 'glm-4.6v-flash')
@@ -132,23 +109,25 @@ test('configured pi-ai provider keeps its exact endpoint credential ref private 
   assert.equal(candidate.endpoint, 'https://open.bigmodel.cn/api/paas/v4')
   assert.equal(candidate.endpointConfig.api, 'openai-completions')
   assert.equal(candidate.endpointCredentialRef, 'ZHIPU_API_KEY')
+  assert.equal(Object.hasOwn(candidate, 'credentialFingerprint'), false)
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('shadow keeps identity-valid benchmark evidence regardless of measurement age', async () => {
-  const ctx = fakeCtx().ctx
-  const oldRows = await collectCapabilityShadowCandidates(ctx, {}, fakeCore(), {
+test('shadow keeps old capability evidence and labels Benchmark latency as non-routing observation', async () => {
+  const oldRows = await collectCapabilityShadowCandidates(fakeCtx().ctx, {}, fakeCore(), {
     async get() {
       return {
         measuredAt: Date.now() - 365 * 24 * 60 * 60 * 1000,
         scores: { general: 1 },
-        medianLatencyMs: { general: 100 },
+        benchmarkLatencyMs: 100,
+        benchmarkMedianLatencyMsByAxis: { general: 100 },
       }
     },
   })
   assert.ok(oldRows.length > 0)
   assert.ok(oldRows.some((row) => row.measured?.general === 1))
-  assert.ok(oldRows.some((row) => row.medianLatencyMs?.general === 100))
+  assert.ok(oldRows.some((row) => row.benchmarkMedianLatencyMsByAxis?.general === 100))
+  assert.ok(oldRows.every((row) => row.runtimeLatencyMsByAxis === undefined))
 })
 
 test('arbitrary DSH-discovered vision models never enter the automatic routing pool', async () => {
@@ -158,9 +137,7 @@ test('arbitrary DSH-discovered vision models never enter the automatic routing p
   ctx.llm.registration = (provider) => ({
     adapter: {
       constructor: { name: 'FakeRegisteredAdapter' },
-      listModels: async () => provider === 'auto-discovered'
-        ? [{ id: 'not-selected', inputModalities: ['text', 'image'] }]
-        : [],
+      listModels: async () => provider === 'auto-discovered' ? [{ id: 'not-selected', inputModalities: ['text', 'image'] }] : [],
     },
   })
   const rows = await collectCapabilityShadowCandidates(ctx, config, fakeCore(), { async get() { return undefined } })
@@ -191,13 +168,10 @@ test('unselected built-in HTTP tier is fixed fallback-only', async () => {
 })
 
 test('shadow plan reports product mode/preference while reusing the internal scorer strategy', async () => {
-  const ctx = fakeCtx().ctx
-  const core = fakeCore()
-  const store = { async get() { return undefined } }
   const plan = await buildCapabilityShadowPlan({
-    ctx,
-    core,
-    store,
+    ctx: fakeCtx().ctx,
+    core: fakeCore(),
+    store: { async get() { return undefined } },
     config: {
       providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
       routingMode: 'auto',
@@ -210,16 +184,8 @@ test('shadow plan reports product mode/preference while reusing the internal sco
   assert.equal(plan.routingMode, 'auto')
   assert.equal(plan.routingPreference, 'local')
   assert.equal(plan.strategy, 'privacy')
-  assert.deepEqual(plan.currentOrder, [
-    'custom/generic',
-    'vision-http/local-ollama/qwen2.5vl',
-    'http:ovh-free/qwen3-vl',
-  ])
-  assert.deepEqual(plan.autoPreviewOrder, [
-    'vision-http/local-ollama/qwen2.5vl',
-    'custom/generic',
-    'http:ovh-free/qwen3-vl',
-  ])
+  assert.deepEqual(plan.currentOrder, ['custom/generic', 'vision-http/local-ollama/qwen2.5vl', 'http:ovh-free/qwen3-vl'])
+  assert.deepEqual(plan.autoPreviewOrder, ['vision-http/local-ollama/qwen2.5vl', 'custom/generic', 'http:ovh-free/qwen3-vl'])
   assert.deepEqual(plan.suggestedOrder, plan.autoPreviewOrder)
   assert.ok(Array.isArray(plan.decisions))
   assert.ok(Array.isArray(plan.incomparableBackends))
@@ -251,18 +217,12 @@ test('shadow wrapper logs a plan but returns the original tool result byte-for-b
   }
   const { ctx, registered, logs } = fakeCtx(settings)
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { return undefined } },
-    logger: ctx.logger,
+    store: { async get() { return undefined } }, logger: ctx.logger,
   })
   const originalResult = '{"ok":true,"answer":"same"}'
-  wrapped.tools.register({
-    name: 'vision_describe',
-    async execute() { return originalResult },
-  })
-  const session = {}
+  wrapped.tools.register({ name: 'vision_describe', async execute() { return originalResult } })
   const result = await registered.get('vision_describe').execute(
-    { question: 'what is in this photo?' },
-    { agent: { session } },
+    { question: 'what is in this photo?' }, { agent: { session: {} } },
   )
   assert.equal(result, originalResult)
   assert.ok(logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow')))
@@ -273,8 +233,7 @@ test('disabled shadow performs zero planning work and leaves execution untouched
   const { ctx, registered, logs } = fakeCtx(settings)
   let storeReads = 0
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { storeReads += 1; return undefined } },
-    logger: ctx.logger,
+    store: { async get() { storeReads += 1; return undefined } }, logger: ctx.logger,
   })
   wrapped.tools.register({ name: 'vision_describe', async execute() { return 'ok' } })
   assert.equal(await registered.get('vision_describe').execute({ question: 'x' }, { agent: { session: {} } }), 'ok')
@@ -291,28 +250,18 @@ test('bootstrap evidence is remembered only for shadow intent fallback on the sa
   }
   const { ctx, registered, logs } = fakeCtx(settings)
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { return undefined } },
-    logger: ctx.logger,
+    store: { async get() { return undefined } }, logger: ctx.logger,
   })
   wrapped.tools.register({
     name: 'vision_bootstrap',
     async execute() {
-      return JSON.stringify({
-        ok: true,
-        evidence: { visual_kind: 'code', content_kind: 'unknown', mixed_of: [] },
-      })
+      return JSON.stringify({ ok: true, evidence: { visual_kind: 'code', content_kind: 'unknown', mixed_of: [] } })
     },
   })
-  wrapped.tools.register({
-    name: 'vision_describe',
-    async execute() { return 'done' },
-  })
+  wrapped.tools.register({ name: 'vision_describe', async execute() { return 'done' } })
   const session = {}
   await registered.get('vision_bootstrap').execute({}, { agent: { session } })
-  await registered.get('vision_describe').execute(
-    { question: 'check the important details' },
-    { agent: { session } },
-  )
+  await registered.get('vision_describe').execute({ question: 'check the important details' }, { agent: { session } })
   const shadowLogs = logs.filter((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow'))
   assert.equal(shadowLogs.length, 2)
   assert.equal(shadowLogs[0][4], 'structured')
