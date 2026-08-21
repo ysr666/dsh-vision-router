@@ -1,6 +1,6 @@
 # v2 shadow routing test guide
 
-The v2 capability router is deliberately **preview/shadow-only**. It computes an `autoPreviewOrder`, while the current v1 fallback chain remains the actual execution order.
+The v2 capability router is deliberately **preview/shadow-only**. It may compute an `autoPreviewOrder`, while the current v1 fallback chain remains the actual execution order.
 
 ## Product fields
 
@@ -10,11 +10,24 @@ routingPreference: balanced | quality | speed | local
 backgroundBenchmarking: local-free | all | off
 ```
 
-`routingMode: auto` is not execution-changing on this Draft branch. `capabilityRoutingShadow: true` enables internal turn-level observation/logging.
+None of these fields authorize execution-changing Auto in this Draft.
 
-## Measurement model
+## What shadow is allowed to observe
 
-Vision Router does not infer capability from names or families. Current direct axes are:
+Shadow planning may combine four separated inputs:
+
+```text
+Capability  -> direct Benchmark scores
+Performance -> separate runtime observations, when available
+Availability -> turn-scoped breaker/rate-limit/access facts
+Policy -> configured order + routingPreference
+```
+
+It must never reinterpret one input as another.
+
+## Capability evidence
+
+Current direct axes:
 
 ```text
 structured
@@ -24,286 +37,181 @@ grounding
 general
 ```
 
-Unsupported task classes do not receive proxy scores.
+Unsupported task types remain incomparable unless a direct axis is added later.
 
-Current persistence contract:
+Capability evidence is valid when its exact non-secret capability identity and Benchmark suite match. Measurement age is informational only.
 
-```text
-suite revision: 2
-profile cache version: 3
-```
+Changing an API key alone does not change capability identity.
 
-Cache v3 stores `measuredAtByAxis` and `fixtureCountByAxis`. Legacy cache-v2 records from the current suite migrate with the legacy record timestamp copied to each retained measured axis.
+## Performance evidence
 
-### Measurement time is provenance only
-
-Each axis keeps its own timestamp so the UI can truthfully say when that capability was measured.
-
-Required regression:
+Benchmark request duration is stored only as a Benchmark observation:
 
 ```text
-OCR measured 8 days ago
-General measured today
+benchmarkLatencyMs
+benchmarkMedianLatencyMsByAxis
 ```
 
-must yield:
+Shadow routing must not use those fields as current speed.
+
+`Balanced` and `Speed` require a separate same-axis runtime performance observation. Without it, the candidate remains incomparable for those preferences and configured order is preserved.
+
+## Expected preference behavior
+
+### Quality
+
+Two adjacent candidates with direct same-axis capability evidence can reorder only when the right candidate's capability advantage is at least `0.08`.
+
+### Balanced
+
+Requires both capability and runtime speed facts:
 
 ```text
-OCR      measured / comparable for OCR
-General  measured / comparable for General
+0.80 * capability + 0.20 * runtime-speed
 ```
 
-The old OCR date must remain 8 days ago when General is refreshed. It must **not** become invalid merely because it is older, and it must not be rewritten as newly measured.
+No runtime speed -> no weighted comparison.
 
-The same rule applies at 80 days or a year: age alone does not invalidate identity-valid, current-suite evidence.
+### Speed
 
-Evidence should disappear/rebind when the exact endpoint/model/API/credential identity or Benchmark suite changes, not when a calendar threshold passes.
-
-## Manual Benchmark
-
-Quick and Full remain manual/advanced controls:
-
-- Quick: ~3 requests, OCR + General;
-- Full: ~6 requests, Structured + OCR + Document + Grounding + General.
-
-They are no longer the expected onboarding path for Auto.
-
-Every selected fixture preflights before request 1:
+Requires both capability and runtime speed facts:
 
 ```text
-synthetic SVG
--> Sharp/libvips PNG
--> adapter attachment materialization if needed
--> request 1
+0.55 * capability + 0.45 * runtime-speed
 ```
 
-Preflight failure means zero model requests and no partial persistence. Latency is transport-only.
+No runtime speed -> no weighted comparison.
 
-Wrong-but-valid answers may score low; invocation/auth/rate-limit/network/protocol/timeout/infrastructure failures fail fast. Explicit user cancellation remains distinct from timeout/provider failure.
+### Local
 
-A user may manually retest whenever newer evidence is desired; the system must not invent a periodic retest requirement from age alone.
+Local is an explicit local-first policy. Capability comparison may happen within locality groups; local-first is not a capability claim.
 
-## Commit G background profiler
+## Information barriers
 
-When `routingMode: auto`, the profiler may gradually fill one **missing** axis at a time after an idle window.
+Test these explicitly:
 
-It must never behave like a hidden Full benchmark and must never periodically remeasure completed axes merely because their timestamps are old.
+1. A measured, B unmeasured, C strongly measured -> C must not cross B.
+2. A and B measured with delta below `0.08` -> keep configured order.
+3. A/B capability measured but no runtime performance under Balanced/Speed -> keep configured order.
+4. A/B have only Benchmark latency under Balanced/Speed -> keep configured order.
+5. `fallback-only` candidate with excellent Benchmark score -> cannot promote over user routes.
+6. unsupported task intent -> no proxy reorder.
 
-### Eligibility
+## Age-neutral evidence
 
-Default:
+Exercise capability records measured:
 
 ```text
-backgroundBenchmarking: local-free
+today
+8 days ago
+80 days ago
+1 year ago
 ```
+
+With unchanged identity/suite, all remain measured capability evidence.
+
+Expected diagnostics:
+
+- factual age remains visible;
+- no `fresh / stale / expired` validity tier;
+- background profiler does not schedule a retest only because evidence is old.
+
+## Credential rotation boundary
+
+For the same provider/model/endpoint/API configuration:
+
+1. Benchmark with Key A;
+2. rotate to Key B;
+3. refresh capability candidate/diagnostics.
 
 Expected:
 
-- local route: eligible;
-- explicitly known free route: eligible;
-- chargeable/unknown-cost cloud route: not eligible;
-- fallback-only route: not eligible.
+- same secret-safe `ep2_...` capability identity;
+- stored capability remains attached;
+- raw key never appears in profile/diagnostics;
+- access/auth behavior may change independently.
 
-With:
+## Background profiler shadow checks
 
-```text
-backgroundBenchmarking: all
-```
+Default `local-free`:
 
-configured benchmarkable cloud user routes may be measured. This is the explicit cost-authorization boundary.
+- local/known-free user routes may fill missing axes while idle;
+- paid cloud routes must not be called automatically.
 
-With `off`, no background Benchmark request is allowed.
+Explicit `all`:
 
-With `routingMode: ordered`, background profiling is also inactive.
+- configured chargeable routes may be profiled;
+- Settings must disclose the cost boundary.
 
-### Work unit
+`off` or `routingMode: ordered`:
 
-One work item is:
+- no background capability requests.
 
-```text
-one candidate + one unmeasured direct axis
-```
+Already measured axes must not be periodically refreshed based on age.
 
-After success, only that axis's score, latency, timestamp and fixture count are merged. Richer evidence on other axes must remain untouched.
+Real visual work and manual Benchmark must preempt background profiling.
 
-A complete five-axis profile should generate **zero** background Benchmark requests even if all five timestamps are months old.
+## Breaker / availability checks
 
-### Axis priority
+Turn-level shadow may observe the real v1 breaker through a side-effect-free peek seam.
 
-A recent foreground visual task may raise its direct benchmark axis to the front of the next background scan. Otherwise the background priority order is conservative and deterministic.
+Verify that observation does not:
 
-A recent Document task therefore makes a **missing** `document` axis a preferred next target, without inventing evidence for UI/detection/etc. tasks that lack a direct axis.
+- prune cooldown state;
+- touch LRU order;
+- clear credential state;
+- record new failures/successes;
+- change v1 fallback behavior.
 
-### Yield/preemption contract
+Settings preview stays health-neutral because it has no real session/turn scope.
 
-Priority is:
+## Diagnostic payload
 
-```text
-real visual task
-> manual Benchmark
-> background profiler
-```
-
-Required checks:
-
-1. start a background axis run;
-2. begin a real visual tool call;
-3. active background signal becomes aborted;
-4. no provider-failure backoff is recorded for that foreground yield;
-5. after foreground completion, a new idle window starts.
-
-Repeat with a manual Benchmark enqueue/run. Background work must yield until the manual queue is idle.
-
-A genuine background provider failure should create per-candidate/per-axis retry backoff rather than tight-looping.
-
-The background timer should be `unref()`-ed where available so the profiler cannot keep a short-lived Node process alive.
-
-## Order-preservation cases
-
-### No measurements
+Current contract:
 
 ```text
-configured: Gemini -> Qwen -> GLM -> Unknown
-preview:    Gemini -> Qwen -> GLM -> Unknown
+diagnosticVersion: 3
+measurementAgePolicy: informational-only
+credentialAffectsCapabilityIdentity: false
+benchmarkLatencyAffectsRouting: false
+performanceSource: runtime-observation-only
+autoPreviewOnly: true
+executionActive: false
+healthIncluded: false
 ```
 
-Names must have zero effect.
+For a candidate/axis, verify the copied JSON distinguishes:
 
-### One-sided measurement
+- `measuredAxisScore`;
+- `measuredAt` / `ageMs`;
+- `benchmarkLatencyMs`;
+- `runtimeLatencyMs`;
+- `runtimePerformanceObserved`;
+- `autoComparable`.
+
+No endpoint URL, API key, credential ref or raw model output should appear.
+
+## Critical execution test
+
+Create a case where Quality preview recommends:
 
 ```text
-A: unmeasured
-B: OCR 99
+configured: A -> B
+preview:    B -> A
 ```
 
-remains `A -> B`.
-
-### Unmeasured barrier
-
-```text
-A: OCR 60 measured
-B: OCR unmeasured
-C: OCR 99 measured
-```
-
-remains `A -> B -> C`. C cannot cross B using capability evidence.
-
-An old but valid measurement is **not** an information barrier.
-
-### Small vs material difference
-
-```text
-A OCR 91, B OCR 94 -> keep order
-A OCR 61, B OCR 94 -> may preview B -> A
-```
-
-The threshold remains 0.08.
-
-## Preference checks
-
-- **Quality**: direct measured capability only.
-- **Balanced**: 0.80 capability + 0.20 same-axis speed.
-- **Speed**: 0.55 capability + 0.45 same-axis speed.
-- **Local**: explicit local-first policy, then conservative capability comparison inside locality groups.
-
-Balanced/Speed must not borrow another axis's latency or an aggregate latency.
-
-## Candidate pool checks
-
-The pool may contain:
-
-- configured provider/model rows and fallbacks;
-- explicitly enabled local backends;
-- explicitly configured HTTP visual backends;
-- built-in free tier as `fallback-only` when unselected.
-
-Arbitrary DSH-discovered models must not enter Auto preview automatically. `fallback-only` routes cannot be Benchmark-promoted over user routes.
-
-## Breaker validation
-
-Turn-level shadow reads the same v1 breaker through side-effect-free observation.
+Then send a real image through the current product.
 
 Expected:
 
-- circuit-open/rate-limited route appears blocked;
-- it may move behind healthy routes in turn shadow;
-- capability scores are unchanged;
-- v1 remains responsible for actual skip/fallback.
-
-Observation must not mutate cooldown/LRU/credential/breaker state.
-
-Settings preview stays `healthIncluded:false` because there is no actual turn/session breaker scope.
-
-## Benchmark product UI checks
-
-The main model row remains compact with one Benchmark entry.
-
-The modal must show five fixed axes, each with:
-
 ```text
-score | median latency | measurement time
+actual execution starts from A
 ```
 
-For example:
+If actual execution starts from B, the Draft safety boundary has been crossed and the test fails regardless of preview quality.
 
-```text
-OCR      91 | 500ms | 8天前
-General  88 | 420ms | 刚刚
-Document — 未测
-```
+## Exit condition
 
-The age is factual provenance only. The UI must not label a result `stale`, `expired`, `已陈旧`, or `已过期` because N days passed.
+Shadow testing is successful only when the planner is explainable **and** real v1 behavior stays unchanged.
 
-## Shadow output
-
-Expected fields include:
-
-```text
-currentOrder
-autoPreviewOrder
-suggestedOrder
-decisions
-incomparableBackends
-measuredBackends
-unmeasuredBackends
-healthBackends
-blockedBackends
-```
-
-`measuredBackends` means a backend has routing-usable direct measured evidence. There is no time-age qualifier.
-
-## Safety contract
-
-Shadow/background profiling must not change the real tool result.
-
-Current execution remains:
-
-```text
-observe/profile in separate low-priority path
--> build preview/shadow
--> call original v1 visual tool implementation unchanged
-```
-
-Actual v1 execution still owns fallback walking, breaker, timeouts, cancellation, resource governance, local stabilization, compatibility bridges and error classification.
-
-## Gate before real Auto
-
-Before connecting `autoPreviewOrder` to execution, verify on real providers:
-
-1. old identity-valid measurements remain usable irrespective of age;
-2. refreshing one axis never rewrites another axis's measurement timestamp;
-3. unmeasured barriers always preserve capability order;
-4. endpoint/model/API/credential or suite changes stop old evidence from being reused;
-5. background default never spends chargeable cloud quota;
-6. a complete old profile is not periodically background-retested;
-7. `all` only runs after explicit user selection;
-8. foreground visual activity reliably preempts background work;
-9. manual Benchmark reliably preempts background work;
-10. provider failures back off without tight loops;
-11. Quick/Full preflight/failure rules remain intact;
-12. repeated large measured differences remain stable;
-13. Balanced/Speed use same-axis latency only;
-14. Local remains explicit policy;
-15. real v1 output/order remains unchanged.
-
-If those are not convincing, improve measurement/shadow behavior. Do not wire execution-changing Auto to compensate for weak evidence.
+Use `docs/v2-auto-preview-acceptance.md` for the complete real-machine matrix before discussing an execution-changing Auto commit.
