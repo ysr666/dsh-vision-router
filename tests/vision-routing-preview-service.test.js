@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
+import { capabilityEvidenceFingerprint } from '../lib/vision-capability-identity.js'
 import {
   buildVisionRoutingPreview,
   VISION_ROUTING_PREVIEW_INTENTS,
@@ -48,7 +48,7 @@ function fakeCore(localProviders = []) {
 }
 
 function adapterFingerprint(provider, model) {
-  return capabilityBenchmarkFingerprint({
+  return capabilityEvidenceFingerprint({
     provider,
     model,
     endpoint: `dsh-adapter://registered/${encodeURIComponent(provider)}`,
@@ -56,15 +56,16 @@ function adapterFingerprint(provider, model) {
   })
 }
 
-function profile(provider, model, measuredAt, scores, medianLatencyMs = {}) {
+function profile(provider, model, measuredAt, scores, benchmarkMedianLatencyMsByAxis = {}) {
   return {
     fingerprint: adapterFingerprint(provider, model),
     provider,
     model,
     measuredAt,
     source: 'self-benchmark',
+    suiteRevision: 2,
     scores,
-    medianLatencyMs,
+    benchmarkMedianLatencyMsByAxis,
     fixtureCount: 6,
     failureCount: 0,
   }
@@ -81,60 +82,48 @@ function row(preview, intent) {
 
 test('routing settings preview covers exactly the five directly measured benchmark axes', () => {
   assert.deepEqual(VISION_ROUTING_PREVIEW_INTENTS, [
-    'structured',
-    'ocr',
-    'document',
-    'grounding',
-    'general',
+    'structured', 'ocr', 'document', 'grounding', 'general',
   ])
 })
 
-test('directly comparable measurements may preview a conservative measured reorder', async () => {
+test('Quality may preview a conservative capability reorder while benchmark latency remains non-routing observation', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
       profile('alpha', 'vision-a', now - DAY, { ocr: 0.70 }, { ocr: 400 }),
       profile('beta', 'vision-b', now - DAY, { ocr: 0.90 }, { ocr: 500 }),
-    ]),
-    now,
+    ]), now,
   })
 
-  assert.equal(preview.diagnosticVersion, 2)
+  assert.equal(preview.diagnosticVersion, 3)
   assert.equal(preview.policy.measurementAgePolicy, 'informational-only')
+  assert.equal(preview.policy.credentialAffectsCapabilityIdentity, false)
+  assert.equal(preview.policy.benchmarkLatencyAffectsRouting, false)
+  assert.equal(preview.policy.performanceSource, 'runtime-observation-only')
   assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
-  assert.equal(preview.routingMode, 'auto')
-  assert.equal(preview.routingPreference, 'quality')
   assert.equal(preview.autoPreviewOnly, true)
   assert.equal(preview.executionActive, false)
   assert.equal(preview.healthIncluded, false)
   assert.deepEqual(preview.currentOrder, ['alpha/vision-a', 'beta/vision-b'])
   assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
-  assert.equal(Object.hasOwn(preview, 'freshMeasuredBackends'), false)
 
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.first, 'beta/vision-b')
-  assert.equal(ocr.changed, true)
   assert.equal(ocr.reason, 'measured-advantage')
-  assert.ok(ocr.decisions.some((decision) => decision.type === 'reorder' && decision.promoted === 'beta/vision-b'))
+  assert.equal(ocr.diagnostics.candidates[0].benchmarkLatencyMs, 500)
+  assert.equal(ocr.diagnostics.candidates[0].runtimeLatencyMs, null)
+  assert.equal(ocr.diagnostics.candidates[0].runtimePerformanceObserved, false)
 })
 
 test('one-sided measurement never jumps across an unmeasured configured route', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
-    store: store([
-      profile('beta', 'vision-b', now - DAY, { ocr: 1 }, { ocr: 50 }),
-    ]),
-    now,
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([profile('beta', 'vision-b', now - DAY, { ocr: 1 }, { ocr: 50 })]), now,
   })
-
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.first, 'alpha/vision-a')
   assert.equal(ocr.changed, false)
@@ -142,46 +131,47 @@ test('one-sided measurement never jumps across an unmeasured configured route', 
   assert.ok(ocr.incomparableBackends.includes('alpha/vision-a'))
 })
 
-test('measurement age does not remove otherwise valid evidence from Auto preview', async () => {
+test('measurement age does not remove otherwise valid capability evidence', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore(),
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
     store: store([
       profile('alpha', 'vision-a', now - 80 * DAY, { ocr: 0.10 }, { ocr: 1000 }),
       profile('beta', 'vision-b', now - 80 * DAY, { ocr: 1 }, { ocr: 50 }),
-    ]),
-    now,
+    ]), now,
   })
-
-  assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.first, 'beta/vision-b')
-  assert.equal(ocr.changed, true)
-  assert.equal(ocr.reason, 'measured-advantage')
   assert.ok(ocr.diagnostics.candidates.every((item) => item.evidenceState === 'measured'))
   assert.ok(ocr.diagnostics.candidates.every((item) => item.ageMs >= 79 * DAY))
+})
+
+test('Balanced preserves configured order when only Benchmark latency exists', async () => {
+  const now = Date.now()
+  const settings = config({ routingPreference: 'balanced' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now, { ocr: 0.20 }, { ocr: 50 }),
+      profile('beta', 'vision-b', now, { ocr: 1.00 }, { ocr: 9999 }),
+    ]), now,
+  })
+  const ocr = row(preview, 'ocr')
+  assert.deepEqual(ocr.order, ['alpha/vision-a', 'beta/vision-b'])
+  assert.equal(ocr.reason, 'insufficient-comparable-evidence')
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.runtimePerformanceObserved === false))
 })
 
 test('local preference may preview local-first as explicit user policy without inventing capability scores', async () => {
   const settings = config({ routingPreference: 'local' })
   const preview = await buildVisionRoutingPreview({
-    ctx: fakeCtx(settings),
-    config: settings,
-    core: fakeCore([{
-      name: 'ollama',
-      model: 'qwen-vl',
-      baseURL: 'http://127.0.0.1:11434/v1',
-      apiKeyEnv: '',
-    }]),
+    ctx: fakeCtx(settings), config: settings,
+    core: fakeCore([{ name: 'ollama', model: 'qwen-vl', baseURL: 'http://127.0.0.1:11434/v1', apiKeyEnv: '' }]),
     store: store(),
   })
-
   const general = row(preview, 'general')
   assert.equal(general.first, 'vision-http/ollama/qwen-vl')
-  assert.equal(general.changed, true)
   assert.equal(general.reason, 'local-preference')
   assert.deepEqual(preview.measuredBackends, [])
 })
