@@ -120,6 +120,30 @@ test('ordered mode and off policy never schedule background model requests', asy
   }
 })
 
+test('background profiler does not remeasure a complete profile solely because it is old', async () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const oldRecord = {
+    measuredAt: Date.now() - 365 * DAY,
+    measuredAtByAxis: {
+      structured: Date.now() - 365 * DAY,
+      ocr: Date.now() - 365 * DAY,
+      document: Date.now() - 365 * DAY,
+      grounding: Date.now() - 365 * DAY,
+      general: Date.now() - 365 * DAY,
+    },
+    scores: { structured: 0.8, ocr: 0.8, document: 0.8, grounding: 0.8, general: 0.8 },
+  }
+  const store = {
+    async get() { return oldRecord },
+    async put(record) { return record },
+  }
+  let calls = 0
+  const profiler = profilerFor(settings(), async () => { calls += 1 }, { store })
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 0)
+})
+
 test('recent foreground task moves its directly measurable axis to the front of progressive work', async () => {
   const seen = []
   const profiler = profilerFor(settings(), async ({ axis }) => { seen.push(axis) })
