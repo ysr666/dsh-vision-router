@@ -103,13 +103,17 @@ test('directly comparable measurements may preview a conservative measured reord
     now,
   })
 
+  assert.equal(preview.diagnosticVersion, 2)
+  assert.equal(preview.policy.measurementAgePolicy, 'informational-only')
+  assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
   assert.equal(preview.routingMode, 'auto')
   assert.equal(preview.routingPreference, 'quality')
   assert.equal(preview.autoPreviewOnly, true)
   assert.equal(preview.executionActive, false)
   assert.equal(preview.healthIncluded, false)
   assert.deepEqual(preview.currentOrder, ['alpha/vision-a', 'beta/vision-b'])
-  assert.deepEqual(preview.freshMeasuredBackends, ['alpha/vision-a', 'beta/vision-b'])
+  assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
+  assert.equal(Object.hasOwn(preview, 'freshMeasuredBackends'), false)
 
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.first, 'beta/vision-b')
@@ -152,11 +156,13 @@ test('measurement age does not remove otherwise valid evidence from Auto preview
     now,
   })
 
-  assert.deepEqual(preview.freshMeasuredBackends, ['alpha/vision-a', 'beta/vision-b'])
+  assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.first, 'beta/vision-b')
   assert.equal(ocr.changed, true)
   assert.equal(ocr.reason, 'measured-advantage')
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.evidenceState === 'measured'))
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.ageMs >= 79 * DAY))
 })
 
 test('local preference may preview local-first as explicit user policy without inventing capability scores', async () => {
@@ -177,5 +183,5 @@ test('local preference may preview local-first as explicit user policy without i
   assert.equal(general.first, 'vision-http/ollama/qwen-vl')
   assert.equal(general.changed, true)
   assert.equal(general.reason, 'local-preference')
-  assert.deepEqual(preview.freshMeasuredBackends, [])
+  assert.deepEqual(preview.measuredBackends, [])
 })
