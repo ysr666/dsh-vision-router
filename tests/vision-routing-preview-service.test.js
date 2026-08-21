@@ -89,7 +89,7 @@ test('routing settings preview covers exactly the five directly measured benchma
   ])
 })
 
-test('fresh directly comparable measurements may preview a conservative measured reorder', async () => {
+test('directly comparable measurements may preview a conservative measured reorder', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
@@ -138,7 +138,7 @@ test('one-sided measurement never jumps across an unmeasured configured route', 
   assert.ok(ocr.incomparableBackends.includes('alpha/vision-a'))
 })
 
-test('stale benchmark data remains outside Auto preview eligibility', async () => {
+test('measurement age does not remove otherwise valid evidence from Auto preview', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
@@ -146,17 +146,17 @@ test('stale benchmark data remains outside Auto preview eligibility', async () =
     config: settings,
     core: fakeCore(),
     store: store([
-      profile('alpha', 'vision-a', now - 8 * DAY, { ocr: 0.10 }, { ocr: 1000 }),
-      profile('beta', 'vision-b', now - 8 * DAY, { ocr: 1 }, { ocr: 50 }),
+      profile('alpha', 'vision-a', now - 80 * DAY, { ocr: 0.10 }, { ocr: 1000 }),
+      profile('beta', 'vision-b', now - 80 * DAY, { ocr: 1 }, { ocr: 50 }),
     ]),
     now,
   })
 
-  assert.deepEqual(preview.freshMeasuredBackends, [])
+  assert.deepEqual(preview.freshMeasuredBackends, ['alpha/vision-a', 'beta/vision-b'])
   const ocr = row(preview, 'ocr')
-  assert.equal(ocr.first, 'alpha/vision-a')
-  assert.equal(ocr.changed, false)
-  assert.equal(ocr.reason, 'insufficient-comparable-evidence')
+  assert.equal(ocr.first, 'beta/vision-b')
+  assert.equal(ocr.changed, true)
+  assert.equal(ocr.reason, 'measured-advantage')
 })
 
 test('local preference may preview local-first as explicit user policy without inventing capability scores', async () => {
