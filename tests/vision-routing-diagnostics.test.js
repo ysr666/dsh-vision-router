@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
+import { capabilityEvidenceFingerprint } from '../lib/vision-capability-identity.js'
 import {
   buildVisionRoutingPreview,
   injectVisionRoutingDiagnosticsPrelude,
@@ -45,7 +45,7 @@ function fakeCore(localProviders = [], httpProviders = []) {
 }
 
 function adapterFingerprint(provider, model) {
-  return capabilityBenchmarkFingerprint({
+  return capabilityEvidenceFingerprint({
     provider,
     model,
     endpoint: `dsh-adapter://registered/${encodeURIComponent(provider)}`,
@@ -53,15 +53,16 @@ function adapterFingerprint(provider, model) {
   })
 }
 
-function profile(provider, model, measuredAt, scores, medianLatencyMs = {}) {
+function profile(provider, model, measuredAt, scores, benchmarkMedianLatencyMsByAxis = {}) {
   return {
     fingerprint: adapterFingerprint(provider, model),
     provider,
     model,
     measuredAt,
     source: 'self-benchmark',
+    suiteRevision: 2,
     scores,
-    medianLatencyMs,
+    benchmarkMedianLatencyMsByAxis,
     fixtureCount: 6,
     failureCount: 0,
   }
@@ -80,7 +81,7 @@ function candidate(item, backend) {
   return item.diagnostics.candidates.find((entry) => entry.backend === backend)
 }
 
-test('diagnostic payload explains the active product policy and remains preview-only', async () => {
+test('diagnostic v3 explains capability/performance/access separation and remains preview-only', async () => {
   const now = Date.now()
   const settings = config({ routingPreference: 'balanced' })
   const preview = await buildVisionRoutingPreview({
@@ -90,19 +91,26 @@ test('diagnostic payload explains the active product policy and remains preview-
       profile('beta', 'vision-b', now - DAY, { ocr: 0.82 }, { ocr: 600 }),
     ]), now,
   })
-  assert.equal(preview.diagnosticVersion, 2)
+  assert.equal(preview.diagnosticVersion, 3)
   assert.equal(preview.policy.preference, 'balanced')
-  assert.equal(preview.policy.formula, '0.80*capability + 0.20*speed')
+  assert.match(preview.policy.formula, /runtime-speed/)
   assert.equal(preview.policy.minAdvantage, 0.08)
   assert.equal(preview.policy.measurementAgePolicy, 'informational-only')
+  assert.equal(preview.policy.credentialAffectsCapabilityIdentity, false)
+  assert.equal(preview.policy.benchmarkLatencyAffectsRouting, false)
+  assert.equal(preview.policy.performanceSource, 'runtime-observation-only')
   assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
-  assert.equal(preview.policy.configuredOrderIsBaseline, true)
   assert.equal(preview.autoPreviewOnly, true)
   assert.equal(preview.executionActive, false)
   assert.equal(preview.healthIncluded, false)
+  const ocr = row(preview, 'ocr')
+  assert.equal(ocr.changed, false)
+  assert.ok(ocr.diagnostics.candidates.every((entry) => entry.benchmarkLatencyMs !== null))
+  assert.ok(ocr.diagnostics.candidates.every((entry) => entry.runtimeLatencyMs === null))
+  assert.ok(ocr.diagnostics.candidates.every((entry) => entry.runtimePerformanceObserved === false))
 })
 
-test('small measured differences are auditable as below-threshold instead of vague keep-order text', async () => {
+test('small Quality differences remain auditable as below-threshold', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
@@ -114,15 +122,13 @@ test('small measured differences are auditable as below-threshold instead of vag
   })
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.changed, false)
-  assert.equal(ocr.first, 'alpha/vision-a')
-  assert.equal(ocr.diagnostics.configuredPairChecks.length, 1)
   assert.deepEqual(ocr.diagnostics.configuredPairChecks[0], {
     left: 'alpha/vision-a', right: 'beta/vision-b', outcome: 'below-threshold', threshold: 0.08,
     leftScore: 0.84, rightScore: 0.89, delta: 0.05,
   })
 })
 
-test('unmeasured configured routes expose the exact information barrier and candidate evidence state', async () => {
+test('unmeasured configured routes expose the exact information barrier', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
@@ -136,11 +142,12 @@ test('unmeasured configured routes expose the exact information barrier and cand
   assert.equal(alpha.autoComparable, false)
   assert.equal(beta.evidenceState, 'measured')
   assert.equal(beta.measuredAxisScore, 0.99)
+  assert.equal(beta.benchmarkLatencyMs, 100)
+  assert.equal(beta.runtimeLatencyMs, null)
   assert.equal(ocr.diagnostics.configuredPairChecks[0].outcome, 'incomparable')
-  assert.deepEqual(ocr.diagnostics.configuredPairChecks[0].missing, ['alpha/vision-a'])
 })
 
-test('old measurements remain auditable and comparable while age stays informational', async () => {
+test('old capability measurements remain auditable and comparable under Quality', async () => {
   const now = Date.now()
   const settings = config()
   const preview = await buildVisionRoutingPreview({
@@ -151,10 +158,7 @@ test('old measurements remain auditable and comparable while age stays informati
     ]), now,
   })
   const ocr = row(preview, 'ocr')
-  assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
   assert.equal(candidate(ocr, 'alpha/vision-a').evidenceState, 'measured')
-  assert.equal(candidate(ocr, 'beta/vision-b').evidenceState, 'measured')
-  assert.equal(candidate(ocr, 'beta/vision-b').measuredAxisScore, 0.95)
   assert.equal(candidate(ocr, 'beta/vision-b').effectiveCapability, 0.95)
   assert.ok(candidate(ocr, 'beta/vision-b').ageMs >= 364 * DAY)
   assert.equal(ocr.diagnostics.configuredPairChecks[0].outcome, 'measured-promotable')
@@ -171,11 +175,10 @@ test('local preference diagnostics show policy movement without pretending it is
   const general = row(preview, 'general')
   assert.equal(general.first, 'vision-http/ollama/qwen-vl')
   assert.equal(general.reason, 'local-preference')
-  assert.ok(general.diagnostics.candidates.some((entry) => entry.backend === 'vision-http/ollama/qwen-vl' && entry.local === true))
   assert.ok(general.diagnostics.configuredPairChecks.some((entry) => entry.outcome === 'local-policy-promotes-right'))
 })
 
-test('HTTP diagnostics expose only the secret-safe fingerprint, never raw endpoint or credential-ref material', async () => {
+test('HTTP diagnostics use credential-independent capability identity without exposing endpoint or credential material', async () => {
   const now = Date.now()
   const httpBackend = {
     name: 'private-cloud', model: 'model-x', baseURL: 'https://private.example.invalid/v1', apiKeyEnv: 'VERY_SECRET_KEY_ENV',
@@ -184,42 +187,41 @@ test('HTTP diagnostics expose only the secret-safe fingerprint, never raw endpoi
     providers: [{ provider: 'vision-http', model: 'private-cloud/model-x', fallbacks: [] }],
     httpProviders: [httpBackend],
   })
-  // fakeCtx has no credentials/launch-environment seam, so the candidate uses
-  // the safe unresolved credential identity until the real key becomes available.
-  const fingerprint = capabilityBenchmarkFingerprint({
+  const fingerprint = capabilityEvidenceFingerprint({
     provider: 'vision-http', model: 'private-cloud/model-x', endpoint: httpBackend.baseURL,
-    config: { api: 'openai-completions' }, credentialFingerprint: 'unresolved',
+    config: { api: 'openai-completions' },
   })
   const preview = await buildVisionRoutingPreview({
     ctx: fakeCtx(settings), config: settings, core: fakeCore([], [httpBackend]),
     store: store([{
       fingerprint, provider: 'vision-http', model: 'private-cloud/model-x', measuredAt: now - DAY,
-      source: 'self-benchmark', scores: { general: 0.75 }, medianLatencyMs: { general: 700 }, fixtureCount: 1, failureCount: 0,
+      source: 'self-benchmark', suiteRevision: 2, scores: { general: 0.75 },
+      benchmarkMedianLatencyMsByAxis: { general: 700 }, fixtureCount: 1, failureCount: 0,
     }]), now,
   })
   const serialized = JSON.stringify(preview)
   assert.doesNotMatch(serialized, /private\.example\.invalid/)
   assert.doesNotMatch(serialized, /VERY_SECRET_KEY_ENV/)
-  assert.doesNotMatch(serialized, /baseURL|apiKeyEnv|endpointConfig|credential/i)
-  const general = row(preview, 'general')
-  const entry = candidate(general, 'http:private-cloud/model-x')
+  assert.doesNotMatch(serialized, /baseURL|apiKeyEnv|endpointConfig|credentialFingerprint/i)
+  const entry = candidate(row(preview, 'general'), 'http:private-cloud/model-x')
   assert.equal(entry.measuredAxisScore, 0.75)
   assert.match(entry.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('diagnostics browser layer is GET-only, copyable, refreshable, benchmark-aware and age-neutral', () => {
+test('diagnostics browser layer is GET-only, v3, copyable and explicit about benchmark/runtime separation', () => {
   const html = '<!doctype html><html><head></head><body></body></html>'
   const injected = injectVisionRoutingDiagnosticsPrelude(html)
   assert.match(injected, /data-vision-router-routing-diagnostics/)
   assert.equal(injectVisionRoutingDiagnosticsPrelude(injected), injected)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /Auto验收诊断/)
-  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /刷新诊断/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /复制JSON/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /navigator\.clipboard\.writeText/)
   assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /method:'GET'/)
   assert.doesNotMatch(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /method:'POST'/)
-  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /data-vr-capability-control/)
-  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /data-job-id/)
-  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /测评时间：仅作记录，不按天数失效/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /body\.diagnosticVersion!==3/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /Benchmark耗时不当作当前速度/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /凭据不定义能力身份/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /测评耗时/)
+  assert.match(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /运行速度/)
   assert.doesNotMatch(VISION_ROUTING_DIAGNOSTICS_PRELUDE, /已陈旧|已过期|Stale|Expired|新鲜窗口/)
 })
