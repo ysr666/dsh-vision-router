@@ -259,9 +259,11 @@ export function apply(ctx, config = {}) {
   })
   // The smoke-test route sends only a built-in probe image to the exact selected
   // backend. It never walks the configured fallback chain, so a healthy OVH
-  // fallback can no longer make a broken custom model look healthy.
+  // fallback can no longer make a broken custom model look healthy. Its narrow
+  // compatibility bridge uses the same live-discovery evidence gate as runtime.
   installVisionBackendSmokeTest(executionCtx, runtimeConfig, core, {
     logger: logging.logger,
+    isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
   // index.js historically passes image bytes as `options.input` to the async
   // execFile API. That option is not fed into child stdin, so Tesseract waits
