@@ -162,7 +162,7 @@ test('any invocation failure fails fast instead of manufacturing zero-score evid
 test('capability profile store uses cache v3, atomic 0600 writes, suite revision, and strips secrets/extras', async () => {
   assert.equal(CAPABILITY_PROFILE_CACHE_VERSION, 3)
   assert.match(capabilityProfileCachePath('/tmp/dsh-home'), /cache[\\/]vision-router[\\/]capability-profiles\.json$/)
-  assert.equal(DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS, 30 * 24 * 60 * 60 * 1000)
+  assert.equal(DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS, Number.MAX_SAFE_INTEGER)
   const mem = memoryFs()
   const cacheFile = '/virtual/capability-profiles.json'
   const now = () => 50_000
@@ -324,7 +324,7 @@ test('single grounding repair refreshes only grounding timestamp and keeps other
   assert.deepEqual(await reloaded.get(fingerprint), repaired)
 })
 
-test('axis freshness is independent: refreshing general never makes stale OCR fresh', () => {
+test('axis timestamps remain independent metadata and do not create a default age cutoff', () => {
   const DAY = 24 * 60 * 60 * 1000
   const now = 20 * DAY
   const record = recordBase({
@@ -332,11 +332,32 @@ test('axis freshness is independent: refreshing general never makes stale OCR fr
     measuredAtByAxis: { ocr: now - 8 * DAY, general: now },
     scores: { ocr: 0.9, general: 0.8 },
   })
-  assert.equal(capabilityProfileAxisFreshness(record, 'ocr', now), 'stale')
+  assert.equal(capabilityProfileAxisFreshness(record, 'ocr', now), 'fresh')
   assert.equal(capabilityProfileAxisFreshness(record, 'general', now), 'fresh')
 })
 
-test('cache prunes expired axes independently instead of deleting a mixed-age profile', async () => {
+test('default cache keeps old identity-valid axes instead of pruning by wall-clock age', async () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const now = 400 * DAY
+  const cacheFile = '/virtual/capability-profiles.json'
+  const old = recordBase({
+    measuredAt: now - DAY,
+    measuredAtByAxis: { ocr: now - 365 * DAY, general: now - DAY },
+    scores: { ocr: 0.9, general: 0.8 },
+    medianLatencyMs: { ocr: 200, general: 300 },
+    fixtureCountByAxis: { ocr: 2, general: 1 },
+    fixtureCount: 3,
+  })
+  const mem = memoryFs({
+    [cacheFile]: JSON.stringify({ version: CAPABILITY_PROFILE_CACHE_VERSION, profiles: [old] }),
+  })
+  const [loaded] = await createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => now }).list()
+  assert.ok(loaded)
+  assert.deepEqual(loaded.scores, { ocr: 0.9, general: 0.8 })
+  assert.deepEqual(loaded.measuredAtByAxis, { ocr: now - 365 * DAY, general: now - DAY })
+})
+
+test('explicit finite retention policy can still prune old axes for a deliberate caller', async () => {
   const DAY = 24 * 60 * 60 * 1000
   const now = 40 * DAY
   const cacheFile = '/virtual/capability-profiles.json'
@@ -351,25 +372,25 @@ test('cache prunes expired axes independently instead of deleting a mixed-age pr
   const mem = memoryFs({
     [cacheFile]: JSON.stringify({ version: CAPABILITY_PROFILE_CACHE_VERSION, profiles: [mixed] }),
   })
-  const [loaded] = await createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => now }).list()
+  const [loaded] = await createCapabilityProfileStore({
+    cacheFile, fsOps: mem.ops, now: () => now, maxAgeMs: 30 * DAY,
+  }).list()
   assert.ok(loaded)
   assert.deepEqual(loaded.scores, { general: 0.8 })
-  assert.deepEqual(loaded.measuredAtByAxis, { general: now - DAY })
-  assert.deepEqual(loaded.fixtureCountByAxis, { general: 1 })
 })
 
-test('corrupt or wholly stale capability cache fails soft instead of poisoning routing', async () => {
+test('corrupt cache and explicitly age-pruned cache fail soft instead of poisoning routing', async () => {
   const cacheFile = '/virtual/capability-profiles.json'
   const corrupt = memoryFs({ [cacheFile]: '{not json' })
   const store = createCapabilityProfileStore({ cacheFile, fsOps: corrupt.ops, now: () => 100_000 })
   assert.deepEqual(await store.list(), [])
 
-  const stale = memoryFs({
+  const old = memoryFs({
     [cacheFile]: JSON.stringify({
       version: CAPABILITY_PROFILE_CACHE_VERSION,
       profiles: [recordBase({ measuredAt: 1 })],
     }),
   })
-  const staleStore = createCapabilityProfileStore({ cacheFile, fsOps: stale.ops, now: () => 200_000_000, maxAgeMs: 86_400_000 })
-  assert.deepEqual(await staleStore.list(), [])
+  const boundedStore = createCapabilityProfileStore({ cacheFile, fsOps: old.ops, now: () => 200_000_000, maxAgeMs: 86_400_000 })
+  assert.deepEqual(await boundedStore.list(), [])
 })
