@@ -50,23 +50,24 @@ test('benchmark product vocabulary is coverage-based and has no confidence or st
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /已陈旧|已过期|stale|expired/i)
 })
 
-test('measurement timestamps are shown as provenance without creating an age validity judgement', () => {
+test('measurement timestamps are provenance and benchmark latency is explicitly historical', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function axisMeasuredAt/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /measured\.measuredAtByAxis/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function ageText/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /测评时间仅作记录，不会因时间经过自动失效/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /测评耗时是当次Benchmark观测/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /不代表当前速度，也不用于Speed\/综合排序/)
 })
 
-test('benchmark modal renders five fixed axes with score latency and measurement time', () => {
+test('benchmark modal renders five fixed axes with score benchmark latency and measurement time', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /var SCORE_ORDER = \['structured', 'ocr', 'document', 'grounding', 'general'\]/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /var scores=measured\.scores\|\|\{\}, latencies=measured\.medianLatencyMs\|\|\{\}/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /latencies=measured\.benchmarkMedianLatencyMs\|\|\{\}/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评耗时','Benchmark latency'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /SCORE_ORDER\.forEach/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /— 未测/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /seconds\(latency\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /axisStateText\(measured,axis\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评时间','Measured'\)/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /text\('新鲜度','Freshness'\)/)
-  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /entries\.sort/)
 })
 
 test('cloud cost and text-only force verification live inside the benchmark modal', () => {
