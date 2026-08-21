@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   CAPABILITY_PROFILE_CACHE_VERSION,
   DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS,
+  capabilityProfileAxisFreshness,
   capabilityProfileCachePath,
   createCapabilityProfileStore,
   runExactCapabilityBenchmark,
@@ -109,12 +110,16 @@ test('exact benchmark probes one backend sequentially with fallback forbidden', 
   assert.equal(record.model, 'vision-model')
   assert.equal(record.suiteRevision, CAPABILITY_BENCHMARK_SUITE_REVISION)
   assert.equal(record.fixtureCount, 4)
+  assert.deepEqual(record.fixtureCountByAxis, { ocr: 2, grounding: 1, general: 1 })
   assert.equal(record.failureCount, 0)
   assert.equal(record.scores.ocr, 1)
   assert.equal(record.scores.grounding, 1)
   assert.equal(record.scores.general, 1)
   assert.equal(record.medianLatencyMs.ocr, 7)
   assert.equal(record.latencyMs, 7)
+  assert.equal(record.measuredAtByAxis.ocr, record.measuredAt)
+  assert.equal(record.measuredAtByAxis.grounding, record.measuredAt)
+  assert.equal(record.measuredAtByAxis.general, record.measuredAt)
   assert.equal(record.groundingDiagnostic.formatValid, true)
   assert.equal(record.groundingDiagnostic.iou, 1)
   assert.equal(record.groundingDiagnostic.coordinateSpace, 'pixels')
@@ -154,8 +159,8 @@ test('any invocation failure fails fast instead of manufacturing zero-score evid
   assert.equal(calls, 1)
 })
 
-test('capability profile store uses cache v2, atomic 0600 writes, suite revision, and strips secrets/extras', async () => {
-  assert.equal(CAPABILITY_PROFILE_CACHE_VERSION, 2)
+test('capability profile store uses cache v3, atomic 0600 writes, suite revision, and strips secrets/extras', async () => {
+  assert.equal(CAPABILITY_PROFILE_CACHE_VERSION, 3)
   assert.match(capabilityProfileCachePath('/tmp/dsh-home'), /cache[\\/]vision-router[\\/]capability-profiles\.json$/)
   assert.equal(DEFAULT_CAPABILITY_PROFILE_MAX_AGE_MS, 30 * 24 * 60 * 60 * 1000)
   const mem = memoryFs()
@@ -189,6 +194,8 @@ test('capability profile store uses cache v2, atomic 0600 writes, suite revision
 
   assert.equal(record.provider, 'provider-a')
   assert.equal(record.suiteRevision, CAPABILITY_BENCHMARK_SUITE_REVISION)
+  assert.deepEqual(record.measuredAtByAxis, { ocr: 50_000, grounding: 50_000, general: 50_000 })
+  assert.deepEqual(record.fixtureCountByAxis, { ocr: 4, grounding: 1, general: 1 })
   assert.equal(record.groundingDiagnostic.parseSource, 'glm-box-markers')
   assert.equal('rawOutput' in record.groundingDiagnostic, false)
   assert.ok(mem.writes.length >= 1)
@@ -198,7 +205,7 @@ test('capability profile store uses cache v2, atomic 0600 writes, suite revision
   assert.equal(persistedText.includes('secret.example'), false)
   assert.equal(persistedText.includes('SECRET MUST NOT PERSIST'), false)
   const persisted = JSON.parse(persistedText)
-  assert.equal(persisted.version, 2)
+  assert.equal(persisted.version, 3)
   assert.equal(persisted.profiles.length, 1)
   assert.equal(persisted.profiles[0].suiteRevision, CAPABILITY_BENCHMARK_SUITE_REVISION)
   assert.deepEqual(Object.keys(persisted.profiles[0].scores).sort(), ['general', 'grounding', 'ocr'])
@@ -207,8 +214,16 @@ test('capability profile store uses cache v2, atomic 0600 writes, suite revision
   assert.deepEqual(await reloaded.get(record.fingerprint), record)
 })
 
-test('legacy cache envelopes and wrong suite revisions are ignored', async () => {
+test('cache v2 migrates to per-axis timestamps while version 1 and wrong suites remain ignored', async () => {
   const cacheFile = '/virtual/capability-profiles.json'
+  const v2 = memoryFs({
+    [cacheFile]: JSON.stringify({ version: 2, profiles: [recordBase({ scores: { ocr: 0.8, general: 0.9 }, fixtureCount: 3 })] }),
+  })
+  const migrated = await createCapabilityProfileStore({ cacheFile, fsOps: v2.ops, now: () => 50_000 }).list()
+  assert.equal(migrated.length, 1)
+  assert.deepEqual(migrated[0].measuredAtByAxis, { ocr: 50_000, general: 50_000 })
+  assert.deepEqual(migrated[0].fixtureCountByAxis, { ocr: 2, general: 1 })
+
   const legacy = memoryFs({
     [cacheFile]: JSON.stringify({ version: 1, profiles: [recordBase()] }),
   })
@@ -223,15 +238,15 @@ test('legacy cache envelopes and wrong suite revisions are ignored', async () =>
   assert.deepEqual(await createCapabilityProfileStore({ cacheFile, fsOps: wrongSuite.ops, now: () => 50_000 }).list(), [])
 })
 
-test('quick retest cannot downgrade a richer full benchmark profile', async () => {
+test('partial retest refreshes only covered axes and preserves richer untouched evidence', async () => {
   const mem = memoryFs()
   const store = createCapabilityProfileStore({ cacheFile: '/virtual/capability-profiles.json', fsOps: mem.ops, now: () => 100_000 })
   const fingerprint = 'ep2_1234567890abcdef1234567890abcdef'
-  const full = await store.put(recordBase({
+  await store.put(recordBase({
     fingerprint,
     measuredAt: 90_000,
     scores: { structured: 1, ocr: 0.8, grounding: 0.7, document: 0.9, general: 0.8 },
-    medianLatencyMs: { general: 500 },
+    medianLatencyMs: { structured: 700, ocr: 600, grounding: 900, document: 800, general: 500 },
     fixtureCount: 6,
     groundingDiagnostic: {
       score: 0.7, iou: 0.7, formatValid: true, parseSource: 'flat-four-tuple',
@@ -239,21 +254,28 @@ test('quick retest cannot downgrade a richer full benchmark profile', async () =
       candidateSpaces: ['normalized-1000'],
     },
   }))
-  const writesAfterFull = mem.writes.length
   const returned = await store.put(recordBase({
     fingerprint,
     measuredAt: 100_000,
     scores: { ocr: 1, general: 1 },
-    medianLatencyMs: { general: 400 },
+    medianLatencyMs: { ocr: 350, general: 400 },
     fixtureCount: 3,
   }))
-  assert.deepEqual(returned, full)
-  assert.deepEqual(await store.get(fingerprint), full)
+
+  assert.deepEqual(returned.scores, { structured: 1, ocr: 1, grounding: 0.7, document: 0.9, general: 1 })
+  assert.equal(returned.measuredAtByAxis.structured, 90_000)
+  assert.equal(returned.measuredAtByAxis.document, 90_000)
+  assert.equal(returned.measuredAtByAxis.grounding, 90_000)
+  assert.equal(returned.measuredAtByAxis.ocr, 100_000)
+  assert.equal(returned.measuredAtByAxis.general, 100_000)
+  assert.equal(returned.medianLatencyMs.ocr, 350)
+  assert.equal(returned.medianLatencyMs.general, 400)
+  assert.equal(returned.medianLatencyMs.document, 800)
   assert.equal(returned.groundingDiagnostic.iou, 0.7)
-  assert.equal(mem.writes.length, writesAfterFull)
+  assert.equal(returned.fixtureCount, 6)
 })
 
-test('single grounding diagnostic repairs only grounding evidence inside a richer full profile', async () => {
+test('single grounding repair refreshes only grounding timestamp and keeps other axes untouched', async () => {
   const mem = memoryFs()
   const cacheFile = '/virtual/capability-profiles.json'
   const store = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => 120_000 })
@@ -292,15 +314,51 @@ test('single grounding diagnostic repairs only grounding evidence inside a riche
   assert.equal(repaired.medianLatencyMs.document, 2800)
   assert.equal(repaired.fixtureCount, 6)
   assert.equal(repaired.failureCount, 0)
-  assert.equal(repaired.measuredAt, measuredAt)
-  assert.equal(repaired.latencyMs, 2600)
+  assert.equal(repaired.measuredAt, 120_000)
+  assert.equal(repaired.measuredAtByAxis.grounding, 120_000)
+  assert.equal(repaired.measuredAtByAxis.document, measuredAt)
+  assert.equal(repaired.latencyMs, 2800)
   assert.equal(repaired.groundingDiagnostic.iou, 0.9473)
   await store.flush()
   const reloaded = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => 120_000 })
   assert.deepEqual(await reloaded.get(fingerprint), repaired)
 })
 
-test('corrupt or stale capability cache fails soft instead of poisoning routing', async () => {
+test('axis freshness is independent: refreshing general never makes stale OCR fresh', () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const now = 20 * DAY
+  const record = recordBase({
+    measuredAt: now,
+    measuredAtByAxis: { ocr: now - 8 * DAY, general: now },
+    scores: { ocr: 0.9, general: 0.8 },
+  })
+  assert.equal(capabilityProfileAxisFreshness(record, 'ocr', now), 'stale')
+  assert.equal(capabilityProfileAxisFreshness(record, 'general', now), 'fresh')
+})
+
+test('cache prunes expired axes independently instead of deleting a mixed-age profile', async () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const now = 40 * DAY
+  const cacheFile = '/virtual/capability-profiles.json'
+  const mixed = recordBase({
+    measuredAt: now - DAY,
+    measuredAtByAxis: { ocr: now - 31 * DAY, general: now - DAY },
+    scores: { ocr: 0.9, general: 0.8 },
+    medianLatencyMs: { ocr: 200, general: 300 },
+    fixtureCountByAxis: { ocr: 2, general: 1 },
+    fixtureCount: 3,
+  })
+  const mem = memoryFs({
+    [cacheFile]: JSON.stringify({ version: CAPABILITY_PROFILE_CACHE_VERSION, profiles: [mixed] }),
+  })
+  const [loaded] = await createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, now: () => now }).list()
+  assert.ok(loaded)
+  assert.deepEqual(loaded.scores, { general: 0.8 })
+  assert.deepEqual(loaded.measuredAtByAxis, { general: now - DAY })
+  assert.deepEqual(loaded.fixtureCountByAxis, { general: 1 })
+})
+
+test('corrupt or wholly stale capability cache fails soft instead of poisoning routing', async () => {
   const cacheFile = '/virtual/capability-profiles.json'
   const corrupt = memoryFs({ [cacheFile]: '{not json' })
   const store = createCapabilityProfileStore({ cacheFile, fsOps: corrupt.ops, now: () => 100_000 })
