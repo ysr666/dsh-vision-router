@@ -76,6 +76,14 @@ function store(records = []) {
   return { async get(key) { return map.get(key) } }
 }
 
+function runtimeStore(records = {}) {
+  return {
+    maxAgeMs: 60 * 60 * 1000,
+    minSamples: 2,
+    get(key) { return records[key] },
+  }
+}
+
 function row(preview, intent) {
   return preview.previews.find((item) => item.intent === intent)
 }
@@ -161,6 +169,67 @@ test('Balanced preserves configured order when only Benchmark latency exists', a
   assert.deepEqual(ocr.order, ['alpha/vision-a', 'beta/vision-b'])
   assert.equal(ocr.reason, 'insufficient-comparable-evidence')
   assert.ok(ocr.diagnostics.candidates.every((item) => item.runtimePerformanceObserved === false))
+})
+
+test('one runtime sample is visible as warming evidence but still cannot drive Balanced', async () => {
+  const now = Date.now()
+  const settings = config({ routingPreference: 'balanced' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now, { ocr: 0.8 }),
+      profile('beta', 'vision-b', now, { ocr: 0.8 }),
+    ]),
+    runtimePerformanceStore: runtimeStore({
+      'alpha/vision-a': {
+        runtimeLatencyMsByAxis: {}, observedLatencyMsByAxis: { ocr: 5000 },
+        sampleCountByAxis: { ocr: 1 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3600000, minSamples: 2,
+      },
+      'beta/vision-b': {
+        runtimeLatencyMsByAxis: {}, observedLatencyMsByAxis: { ocr: 100 },
+        sampleCountByAxis: { ocr: 1 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3600000, minSamples: 2,
+      },
+    }),
+    now,
+  })
+  const ocr = row(preview, 'ocr')
+  assert.deepEqual(ocr.order, ['alpha/vision-a', 'beta/vision-b'])
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.runtimePerformanceObserved === true))
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.runtimePerformanceEligible === false))
+  assert.ok(ocr.diagnostics.candidates.every((item) => item.runtimeSampleCount === 1))
+})
+
+test('two warmed same-axis runtime samples can make Balanced compare and reorder', async () => {
+  const now = Date.now()
+  const settings = config({ routingPreference: 'balanced' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(),
+    store: store([
+      profile('alpha', 'vision-a', now, { ocr: 0.8 }, { ocr: 10 }),
+      profile('beta', 'vision-b', now, { ocr: 0.8 }, { ocr: 9999 }),
+    ]),
+    runtimePerformanceStore: runtimeStore({
+      'alpha/vision-a': {
+        runtimeLatencyMsByAxis: { ocr: 5000 }, observedLatencyMsByAxis: { ocr: 5000 },
+        sampleCountByAxis: { ocr: 2 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3600000, minSamples: 2,
+      },
+      'beta/vision-b': {
+        runtimeLatencyMsByAxis: { ocr: 100 }, observedLatencyMsByAxis: { ocr: 100 },
+        sampleCountByAxis: { ocr: 2 }, observedAtByAxis: { ocr: now }, maxAgeMs: 3600000, minSamples: 2,
+      },
+    }),
+    now,
+  })
+  const ocr = row(preview, 'ocr')
+  assert.deepEqual(ocr.order, ['beta/vision-b', 'alpha/vision-a'])
+  assert.equal(ocr.reason, 'measured-advantage')
+  assert.equal(preview.policy.runtimePerformanceMaxAgeMs, 3600000)
+  assert.equal(preview.policy.runtimePerformanceMinSamples, 2)
+  const beta = ocr.diagnostics.candidates.find((item) => item.backend === 'beta/vision-b')
+  assert.equal(beta.runtimeLatencyMs, 100)
+  assert.equal(beta.runtimeSampleCount, 2)
+  assert.equal(beta.runtimePerformanceEligible, true)
+  assert.equal(beta.benchmarkLatencyMs, 9999)
 })
 
 test('local preference may preview local-first as explicit user policy without inventing capability scores', async () => {
