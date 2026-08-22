@@ -47,7 +47,7 @@ test('entry keeps prepareCall, tool runtime, session policy bridge, structured h
   const backendRuntimeAt = source.indexOf(
     'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {',
   )
-  const coreApplyAt = source.indexOf('const result = core.apply(backendRuntimeCtx, legacyCoreCompat.config)')
+  const coreApplyAt = source.indexOf('() => core.apply(backendRuntimeCtx, legacyCoreCompat.config)')
   const finishAt = source.indexOf('legacyCoreCompat.finishSchemaBootstrap()', coreApplyAt)
 
   assert.ok(mutationAt >= 0)
