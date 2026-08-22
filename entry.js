@@ -12,6 +12,7 @@ import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-compat.js'
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
+import { contextWithVisionBackendRuntimePolicy } from './lib/vision-backend-runtime-policy.js'
 import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
 import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-policy-bridge.js'
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
@@ -57,10 +58,13 @@ export const SETTINGS_CONTRACT_REVISION = 4
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
-// Structured 1+x also has a turn-level wall-clock budget. Individual
-// visionTaskTimeoutMs budgets remain unchanged; this one prevents a deep turn
-// from multiplying them into several minutes of serial waiting.
-core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(90000))
+// Keep the three timeout layers coherent: one provider call may use up to 120s,
+// one visual task (including fallbacks) shares 120s, and one visual turn shares
+// 120s. The runtime policy below reserves the final quarter of a multi-backend
+// task for fallback, so raising the task ceiling does not revive the historical
+// "120s per backend" stall that #117 removed.
+core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))
+core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(120000))
 
 // Both visible entry points — Settings > Vision Router and the legacy
 // Settings > Plugins compatibility card — edit the same Host-owned namespace.
@@ -150,7 +154,7 @@ export function apply(ctx, config = {}) {
   // inference. Install this boundary before the local-vision stabilizer so the
   // final local vision-http adapter is observed after stabilization. Primary
   // local-Ollama image turns finish a cold model load in pre-step, before the
-  // 45s vision-task budget begins; fallback Ollama warms in the background.
+  // visual task budget begins; fallback Ollama warms in the background.
   const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core)
   // #141 stabilization boundary: keep the recently merged local-vision
   // behavior isolated from main's existing provider/router semantics. It
@@ -166,10 +170,14 @@ export function apply(ctx, config = {}) {
     ...bootConfig,
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
+    visionTaskTimeoutMs:
+      Number.isFinite(Number(bootConfig.visionTaskTimeoutMs))
+        ? Number(bootConfig.visionTaskTimeoutMs)
+        : 120000,
     visionTurnBudgetMs:
       Number.isFinite(Number(bootConfig.visionTurnBudgetMs))
         ? Number(bootConfig.visionTurnBudgetMs)
-        : 90000,
+        : 120000,
   }
   // The batch-attachment API is the released, non-incidental discriminator
   // between the minimum Host contract and the newer Host-owned integration
@@ -274,14 +282,19 @@ export function apply(ctx, config = {}) {
   // maxTokensField + route headers at its final fetch boundary. Ordinary DSH
   // streams and unrelated Vision Router HTTP providers remain byte-identical.
   installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
-  // Direct compatibility bridging is allowed only after DSH/pi-ai's exact
-  // pre-wire image-capability admission rejection, or a local UNKNOWN_MODEL
-  // backed by exact private-registry evidence. Record the same provenance in
-  // the persistent diagnostics log so one image turn clearly shows attempt ->
-  // adapter failure -> direct bridge -> success/fallback. Provider/network/auth
-  // failures remain authoritative and cannot be retried through a second path.
+  // Existing execution policy stays authoritative for adapter-observed failures:
+  // only exact local pre-wire admission failures may unlock the post-failure
+  // bridge. The outer runtime policy added below handles the complementary case
+  // where DSH would silently project pixels to SHA text before the adapter ever
+  // gets a chance to reject them.
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
+    evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
+    logger: logging.logger,
+  })
+  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(executionCtx, {
+    config: runtimeConfig,
+    core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
@@ -289,7 +302,7 @@ export function apply(ctx, config = {}) {
   // backend. It never walks the configured fallback chain, so a healthy OVH
   // fallback can no longer make a broken custom model look healthy. Its narrow
   // compatibility bridge uses the same live-discovery evidence gate as runtime.
-  installVisionBackendSmokeTest(executionCtx, runtimeConfig, core, {
+  installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
@@ -298,7 +311,7 @@ export function apply(ctx, config = {}) {
   // for data until the OCR slice expires. Materialize only this exact
   // Tesseract-stdin call to a temporary image file; all other execFile calls
   // keep their native behavior.
-  installTesseractExecFileCompat(executionCtx)
+  installTesseractExecFileCompat(backendRuntimeCtx)
 
   // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
   // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
@@ -319,7 +332,7 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(executionCtx, legacyCoreCompat.config)
+    const result = core.apply(backendRuntimeCtx, legacyCoreCompat.config)
     legacyCoreCompat.finishSchemaBootstrap()
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
