@@ -6,6 +6,8 @@ import {
   classifySessionImageOwnership,
   contextWithNativeImageCoexistence,
   currentSessionImageOwnership,
+  currentSessionVisionPolicy,
+  resolveSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 
@@ -39,6 +41,8 @@ function boot({
   const handlers = new Map()
   const adapters = new Map()
   const registeredTools = []
+  let catalogThrows = resolveThrows
+  let modalities = inputModalities
   const persisted = {
     tool: true,
     rewriteImages: true,
@@ -69,11 +73,23 @@ function boot({
   }
   const llm = {
     registerAdapter(routes, adapter) {
-      const list = Array.isArray(routes) ? routes : [routes]
-      for (const route of list) adapters.set(route, adapter)
-      return () => {
-        for (const route of list) adapters.delete(route)
+      let activeRoutes = Array.isArray(routes) ? [...routes] : [routes]
+      for (const route of activeRoutes) adapters.set(route, adapter)
+      const dispose = () => {
+        for (const route of activeRoutes) {
+          if (adapters.get(route) === adapter) adapters.delete(route)
+        }
+        activeRoutes = []
       }
+      dispose.replace = (nextRoutes) => {
+        const next = Array.isArray(nextRoutes) ? [...nextRoutes] : [nextRoutes]
+        for (const route of activeRoutes) {
+          if (!next.includes(route) && adapters.get(route) === adapter) adapters.delete(route)
+        }
+        activeRoutes = next
+        for (const route of activeRoutes) adapters.set(route, adapter)
+      }
+      return dispose
     },
     registration(provider) {
       const adapter = adapters.get(provider)
@@ -81,8 +97,8 @@ function boot({
       return { adapter }
     },
     async resolveModelInfo(provider, model) {
-      if (resolveThrows) throw new Error('catalog unavailable')
-      return { provider, id: model, inputModalities }
+      if (catalogThrows) throw new Error('catalog unavailable')
+      return { provider, id: model, inputModalities: modalities }
     },
   }
   const tools = {
@@ -105,7 +121,18 @@ function boot({
       return callback({ settings })
     },
   }
-  return { ctx, handlers, persisted, registeredTools }
+  return {
+    ctx,
+    handlers,
+    persisted,
+    registeredTools,
+    setCatalogThrows(value) {
+      catalogThrows = value
+    },
+    setInputModalities(value) {
+      modalities = value
+    },
+  }
 }
 
 async function runPreStep(harness, provider, messages, callback) {
@@ -145,8 +172,6 @@ test('classifies exact Host model capabilities without guessing on metadata fail
 
 test('a globally registered wrapper no longer suppresses rewriting for an unrelated text-only session', async () => {
   const harness = boot({ inputModalities: ['text'] })
-  // This route was registered outside Vision Router's private context. Its
-  // existence must not make the current deepseek-official session plugin-owned.
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
@@ -172,6 +197,7 @@ test('explicit Vision Router registrations retain image blocks for their adapter
   const dispose = wrapped.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   wrapped.ctx.on('agent/pre-step', async (payload) => {
     assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
+    assert.equal(currentSessionVisionPolicy()?.preserveRawImages, true)
     return { kind: 'continue', messages: payload.messages }
   })
 
@@ -192,6 +218,93 @@ test('explicit Vision Router registrations retain image blocks for their adapter
     'text',
     'disposing the plugin registration also releases ownership of that route',
   )
+})
+
+test('registration handle replace moves ownership without losing the DSH handle contract', async () => {
+  const harness = boot({ inputModalities: ['text'] })
+  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  const adapter = { stream() {} }
+  const handle = wrapped.ctx.llm.registerAdapter(['owned-a'], adapter)
+  assert.equal(typeof handle, 'function')
+  assert.equal(typeof handle.replace, 'function')
+
+  assert.equal(
+    await resolveSessionVisionPolicy(harness.ctx, session('owned-a'), harness.persisted, {
+      state: undefined,
+    }).then((policy) => policy.ownership),
+    IMAGE_OWNERSHIP.TEXT_ONLY,
+    'direct helper calls do not inherit private-context ownership state',
+  )
+
+  let observed
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
+    observed = currentSessionImageOwnership()
+    return { kind: 'continue', messages: payload.messages }
+  })
+  const input = [imageMessage('sha256:replace')]
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-a') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(observed, IMAGE_OWNERSHIP.VISION_ROUTER)
+
+  handle.replace(['owned-b'])
+  const oldRoute = await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-a') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(observed, IMAGE_OWNERSHIP.TEXT_ONLY)
+  assert.equal(oldRoute.messages[0].content[0].content[0].type, 'text')
+
+  const newRoute = await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-b') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(observed, IMAGE_OWNERSHIP.VISION_ROUTER)
+  assert.equal(newRoute.messages[0].content[0].content[0].type, 'image')
+})
+
+test('foreign replacement of the same provider invalidates plugin ownership by adapter identity', async () => {
+  const harness = boot({ inputModalities: ['text'] })
+  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  wrapped.ctx.llm.registerAdapter(['shared-provider'], { stream() {} })
+  harness.ctx.llm.registerAdapter(['shared-provider'], { stream() {} })
+
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
+    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.TEXT_ONLY)
+    return { kind: 'continue', messages: payload.messages }
+  })
+  const input = [imageMessage('sha256:foreign-replace')]
+  const result = await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('shared-provider') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(result.messages[0].content[0].content[0].type, 'text')
+})
+
+test('failed adapter registration cannot leave stale plugin ownership', async () => {
+  const harness = boot({ inputModalities: ['text'] })
+  const originalRegister = harness.ctx.llm.registerAdapter
+  harness.ctx.llm.registerAdapter = () => {
+    throw new Error('duplicate provider')
+  }
+  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  assert.throws(
+    () => wrapped.ctx.llm.registerAdapter(['failed-provider'], { stream() {} }),
+    /duplicate provider/,
+  )
+  harness.ctx.llm.registerAdapter = originalRegister
+
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
+    assert.notEqual(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
+    return { kind: 'continue', messages: payload.messages }
+  })
+  const input = [imageMessage('sha256:failed-register')]
+  const result = await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('failed-provider') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(result.messages[0].content[0].content[0].type, 'text')
 })
 
 test('third-party providers ending in -vision are classified by model metadata, not their name', async () => {
@@ -221,7 +334,7 @@ test('third-party providers ending in -vision are classified by model metadata, 
   assert.equal(textResult.messages[0].content[0].content[0].type, 'text')
 })
 
-test('route classification falls back to live agent options when requestHeader is unavailable', async () => {
+test('route classification falls back to live agent options and then the same-session route cache', async () => {
   const harness = boot({ inputModalities: ['text', 'image'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   wrapped.ctx.on('agent/pre-step', async (payload) => {
@@ -229,22 +342,32 @@ test('route classification falls back to live agent options when requestHeader i
     return { kind: 'continue', messages: payload.messages }
   })
   const input = [imageMessage('sha256:agent-fallback')]
-  const sessionWithoutHeader = {
+  let headerAvailable = false
+  const restoringSession = {
     requestHeader() {
-      throw new Error('restoring')
+      if (!headerAvailable) throw new Error('restoring')
+      return { config: { provider: 'native-pi', model: 'native-vision' } }
     },
   }
-  const result = await harness.handlers.get('agent/pre-step')(
+  const handler = harness.handlers.get('agent/pre-step')
+  await handler(
     {
       agent: {
-        session: sessionWithoutHeader,
+        session: restoringSession,
         options: { provider: 'native-pi', model: 'native-vision' },
       },
       messages: input,
     },
     async () => ({ kind: 'continue', messages: input }),
   )
-  assert.equal(result.messages[0].content[0].content[0].type, 'image')
+
+  // The second restored step has neither a readable header nor agent route;
+  // only the route previously confirmed for this exact session object remains.
+  await handler(
+    { agent: { session: restoringSession }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  headerAvailable = true
 })
 
 test('native image turns preserve pixels and suppress only generic auto-mount policy', async () => {
@@ -274,13 +397,51 @@ test('native image turns preserve pixels and suppress only generic auto-mount po
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('unknown metadata preserves the pre-existing Host/adapter image contract', async () => {
-  const harness = boot({ resolveThrows: true })
-  const { result } = await runPreStep(harness, 'mystery-provider', [imageMessage('sha256:unknown')])
+test('catalog failure is conservative unless a capability was cached for the same live adapter', async () => {
+  const unknown = boot({ resolveThrows: true })
+  const unknownResult = await runPreStep(
+    unknown,
+    'mystery-provider',
+    [imageMessage('sha256:unknown')],
+  )
   assert.equal(
-    result.messages[0].content[0].content[0].type,
+    unknownResult.result.messages[0].content[0].content[0].type,
+    'text',
+    'without positive native-image evidence an unknown route must fail back to the safe text bridge',
+  )
+
+  const cached = boot({ inputModalities: ['text', 'image'] })
+  cached.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
+  const wrapped = contextWithNativeImageCoexistence(cached.ctx, cached.persisted)
+  wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
+  const input = [imageMessage('sha256:cached-native')]
+  const handler = cached.handlers.get('agent/pre-step')
+  const first = await handler(
+    { agent: { session: session('cached-native') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(first.messages[0].content[0].content[0].type, 'image')
+
+  cached.setCatalogThrows(true)
+  const second = await handler(
+    { agent: { session: session('cached-native') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(
+    second.messages[0].content[0].content[0].type,
     'image',
-    'a transient metadata miss must not destroy a possibly native inline image',
+    'the capability cache remains trusted only because the registered adapter identity is unchanged',
+  )
+
+  cached.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
+  const afterReplacement = await handler(
+    { agent: { session: session('cached-native') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(
+    afterReplacement.messages[0].content[0].content[0].type,
+    'text',
+    'a new adapter identity cannot inherit the previous adapter capability cache',
   )
 })
 
@@ -313,8 +474,6 @@ test('tool=false at startup still builds a stable tool schema, while execution f
   assert.equal(await harness.registeredTools[0].execute({}, {}), 'ok')
   assert.equal(calls, 1)
 
-  // The first real turn ends the boot projection. From here on core policy
-  // reads the actual setting without rebuilding/unregistering the schema.
   harness.persisted.tool = false
   wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
   const messages = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]
