@@ -195,9 +195,11 @@ test('explicit Vision Router registrations retain image blocks for their adapter
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   const dispose = wrapped.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
+  let expectedOwnership = IMAGE_OWNERSHIP.VISION_ROUTER
+  let expectedPreserveRawImages = true
   wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
-    assert.equal(currentSessionVisionPolicy()?.preserveRawImages, true)
+    assert.equal(currentSessionImageOwnership(), expectedOwnership)
+    assert.equal(currentSessionVisionPolicy()?.preserveRawImages, expectedPreserveRawImages)
     return { kind: 'continue', messages: payload.messages }
   })
 
@@ -209,6 +211,8 @@ test('explicit Vision Router registrations retain image blocks for their adapter
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 
   dispose()
+  expectedOwnership = IMAGE_OWNERSHIP.TEXT_ONLY
+  expectedPreserveRawImages = false
   const afterDispose = await harness.handlers.get('agent/pre-step')(
     { agent: { session: session('deepseek-vision') }, messages: input },
     async () => ({ kind: 'continue', messages: input }),
