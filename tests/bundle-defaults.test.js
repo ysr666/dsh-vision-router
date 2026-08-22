@@ -58,7 +58,7 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('release line stays on package identity 1.7.6', async () => {
+test('release line stays on package identity 1.7.7', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '1.7.6')
+  assert.equal(pkg.version, '1.7.7')
 })
