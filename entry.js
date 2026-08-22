@@ -12,7 +12,9 @@ import { installVisionRouterFileLogging } from './lib/file-logger.js'
 import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-compat.js'
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
+import { contextWithVisionBackendRuntimePolicy } from './lib/vision-backend-runtime-policy.js'
 import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
+import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-policy-bridge.js'
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
@@ -70,10 +72,13 @@ export const SETTINGS_CONTRACT_REVISION = 6
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
-// Structured 1+x also has a turn-level wall-clock budget. Individual
-// visionTaskTimeoutMs budgets remain unchanged; this one prevents a deep turn
-// from multiplying them into several minutes of serial waiting.
-core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(90000))
+// Keep the three timeout layers coherent: one provider call may use up to 120s,
+// one visual task (including fallbacks) shares 120s, and one visual turn shares
+// 120s. The runtime policy below reserves the final quarter of a multi-backend
+// task for fallback, so raising the task ceiling does not revive the historical
+// "120s per backend" stall that #117 removed.
+core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))
+core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(120000))
 
 // Both visible entry points — Settings > Vision Router and the legacy
 // Settings > Plugins compatibility card — edit the same Host-owned namespace.
@@ -154,7 +159,12 @@ export function apply(ctx, config = {}) {
   // route is registered. The wrapper patches only webServer.register and hands
   // every injection callback the original child context identity unchanged.
   const localMutationCtx = installLocalMutationRouteBoundary(ctx)
-  const logging = installVisionRouterFileLogging(localMutationCtx)
+  // Normalize DSH 0.1.1's prepareCall contract at the deepest private LLM
+  // boundary. Higher Vision Router layers can finish wrapping adapter.stream
+  // before this boundary captures the final Host-visible adapter, so prepareCall
+  // cannot bypass local/runtime/replay stream behavior.
+  const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)
+  const logging = installVisionRouterFileLogging(adapterContractCtx)
   const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
   // Runtime speed is deliberately process-local and short-lived. It is not
   // persisted beside capability evidence because network/provider performance
@@ -191,10 +201,14 @@ export function apply(ctx, config = {}) {
         : 'local-free',
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
+    visionTaskTimeoutMs:
+      Number.isFinite(Number(bootConfig.visionTaskTimeoutMs))
+        ? Number(bootConfig.visionTaskTimeoutMs)
+        : 120000,
     visionTurnBudgetMs:
       Number.isFinite(Number(bootConfig.visionTurnBudgetMs))
         ? Number(bootConfig.visionTurnBudgetMs)
-        : 90000,
+        : 120000,
   }
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
@@ -210,9 +224,16 @@ export function apply(ctx, config = {}) {
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
   })
-  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
-  const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)
+  // Feed the session-level image-ownership decision into the legacy core's
+  // wrapper/tool gates without reintroducing a global policy guess.
+  const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(
+    nativeImageCompat.ctx,
+    nativeImageCompat.config,
+    { rewriteHistoryImages: core.rewriteHistoryImages },
+  )
+  const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)
   const backgroundProfiling = installBackgroundCapabilityProfiling(
     structuredCtx,
     runtimeConfig,
@@ -232,7 +253,10 @@ export function apply(ctx, config = {}) {
       healthForCandidate: breakerShadowHealth.healthForCandidate,
     },
   )
-  const reconciledCtx = contextWithCoalescedAdapterUpdates(capabilityShadowCtx)
+  // prepareCall normalization/reconciliation is already installed at the
+  // deepest private Host registration boundary above. Do not wrap it again
+  // here or a prepared adapter may capture a pre-wrapper stream.
+  const reconciledCtx = capabilityShadowCtx
   const liveDiscovery = installLiveModelDiscovery(reconciledCtx, {
     config: runtimeConfig,
     logger: logging.logger,
@@ -240,6 +264,8 @@ export function apply(ctx, config = {}) {
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
   installClientPresentationBoundary(reconciledCtx)
   installLiveModelClientPrelude(reconciledCtx)
+  // Stable 1.7.x keeps the exact no-fallback smoke-test route, while its compact
+  // client yields to the v2 Benchmark client whenever v2 owns capability testing.
   installExactVisionTestClient(reconciledCtx)
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)
@@ -249,12 +275,22 @@ export function apply(ctx, config = {}) {
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
+  // v1.7.7's outer policy covers cases where DSH would otherwise project image
+  // bytes to SHA text before an adapter gets the chance to reject them. It sits
+  // below the v2 runtime-performance observer so real successful adapter calls
+  // can still be timed without changing execution decisions.
+  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(executionCtx, {
+    config: runtimeConfig,
+    core,
+    evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
+    logger: logging.logger,
+  })
   // Only real visual-tool adapter streams are timed. The tool wrapper above
   // supplies the direct capability axis through AsyncLocalStorage; benchmark,
   // smoke-test and background calls have no such scope and cannot contaminate
   // this runtime-performance store.
   const performanceCtx = contextWithVisionRuntimePerformance(
-    executionCtx,
+    backendRuntimeCtx,
     runtimePerformanceStore,
     { logger: logging.logger },
   )
@@ -291,8 +327,9 @@ export function apply(ctx, config = {}) {
   try {
     const result = withVisionCircuitBreakerObserver(
       breakerShadowHealth.capture,
-      () => core.apply(performanceCtx, nativeImageCompat.config),
+      () => core.apply(performanceCtx, legacyCoreCompat.config),
     )
+    legacyCoreCompat.finishSchemaBootstrap()
     installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
@@ -305,6 +342,7 @@ export function apply(ctx, config = {}) {
     }
     return result
   } catch (error) {
+    legacyCoreCompat.finishSchemaBootstrap()
     logging.logger.error(
       'vision-router: plugin apply failed: %s',
       error && error.stack ? error.stack : error && error.message ? error.message : String(error),
