@@ -9,6 +9,7 @@ import {
   currentSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
+import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
 function session(provider, model = 'model') {
@@ -174,6 +175,33 @@ test('text-only session uses the canonical core writer even when a global wrappe
       text: '[attached image: sha256:text-route] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["sha256:text-route"] and a specific question.',
     },
   ])
+})
+
+test('text-only fallback reuses the exact core session memory instead of degrading cached descriptions', async () => {
+  const harness = bridgeHarness({ inputModalities: ['text'] })
+  harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
+  const { bridge } = composeBridge(harness)
+  const selectedSession = session('deepseek-official')
+  const messages = [imageMessage('sha256:cached')]
+  const visionState = createSessionVisionStateStore()
+
+  bridge.ctx.on('agent/pre-step', async (payload) => {
+    const memory = visionState.memoryForSession(payload.agent.session)
+    memory.set('sha256:cached', '缓存里的电路图描述')
+    return { kind: 'continue', messages: payload.messages }
+  })
+
+  const handler = harness.handlers.get('agent/pre-step')
+  assert.ok(handler)
+  const result = await handler(
+    { agent: { session: selectedSession }, messages },
+    async () => ({ kind: 'continue', messages }),
+  )
+
+  const text = result.messages[0].content[0].content[0].text
+  assert.match(text, /此前由视觉模型读取/)
+  assert.match(text, /缓存里的电路图描述/)
+  assert.doesNotMatch(text, /call vision_describe/)
 })
 
 test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary', async () => {
