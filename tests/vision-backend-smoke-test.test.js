@@ -243,6 +243,6 @@ test('client prelude is idempotent and remains a separate quick smoke-test actio
   assert.match(EXACT_VISION_TEST_CLIENT, /text\('测试识图','Test vision'\)/)
   assert.match(EXACT_VISION_TEST_CLIENT, /control\.style\.order='1'/)
   assert.doesNotMatch(EXACT_VISION_TEST_CLIENT, /v2OwnsCapabilityTesting|removeExactTestControls/)
-  assert.match(EXACT_VISION_TEST_CLIENT, /fallback is disabled/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /no fallback/)
   assert.match(EXACT_VISION_TEST_CLIENT, /method:'POST'/)
 })
