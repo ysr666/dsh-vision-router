@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  IMAGE_OWNERSHIP,
   contextWithNativeImageCoexistence,
+  currentSessionVisionPolicy,
   sessionUsesNativeImageModel,
 } from '../lib/native-image-coexistence.js'
 
@@ -103,7 +105,7 @@ test('direct capability helper recognizes only explicit plugin routes, not arbit
   )
 })
 
-test('native image pre-step preserves raw pixels without promoting the route', async () => {
+test('native image pre-step exposes native policy without mutating config', async () => {
   const harness = boot()
   const bootConfig = {
     rewriteImages: true,
@@ -119,7 +121,11 @@ test('native image pre-step preserves raw pixels without promoting the route', a
 
   let observed
   ctx.on('agent/pre-step', async (_payload, next) => {
+    const policy = currentSessionVisionPolicy()
     observed = {
+      ownership: policy?.ownership,
+      preserveRawImages: policy?.preserveRawImages,
+      suppressGenericAutoMount: policy?.suppressGenericAutoMount,
       bootRewrite: config.rewriteImages,
       bootInstant: config.instantDescribe,
       liveRewrite: liveScope.get().rewriteImages,
@@ -137,14 +143,17 @@ test('native image pre-step preserves raw pixels without promoting the route', a
   )
 
   assert.deepEqual(observed, {
-    bootRewrite: false,
-    bootInstant: false,
-    liveRewrite: false,
-    liveInstant: false,
+    ownership: IMAGE_OWNERSHIP.NATIVE,
+    preserveRawImages: true,
+    suppressGenericAutoMount: true,
+    bootRewrite: true,
+    bootInstant: true,
+    liveRewrite: true,
+    liveInstant: true,
     providers: bootConfig.providers,
   })
-  // The override is turn-local only: no settings mutation and no provider
-  // priority/order change survives the pre-step.
+  // This layer is decision-only. The legacy-core bridge consumes the policy
+  // and projects native-turn rewrite/instant/auto-mount settings separately.
   assert.equal(config.rewriteImages, true)
   assert.equal(config.instantDescribe, true)
   assert.equal(harness.persisted.rewriteImages, true)
