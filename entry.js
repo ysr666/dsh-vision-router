@@ -13,6 +13,7 @@ import { contextWithDelegatedReplay } from './lib/replay-delegation.js'
 import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-compat.js'
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
 import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
+import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-policy-bridge.js'
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
@@ -213,14 +214,24 @@ export function apply(ctx, config = {}) {
   // DSH 0.1.1 publishes an exact native image-capable DeepSeek model. Do not
   // put it ahead of Vision Router's own configured chain: only when the user
   // has explicitly selected any Host-native image route, preserve raw pixels
-  // and skip the hidden instant-local caption pass for that turn. The override
-  // is AsyncLocalStorage-scoped and never mutates settings or provider order.
+  // and skip the hidden instant-local caption pass for that turn. Ownership is
+  // AsyncLocalStorage-scoped and never mutates settings or provider order.
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
+  // index.js still carries legacy global wrapper/tool gates. Feed the new
+  // session policy into that core through one narrow compatibility bridge:
+  // native/owned/unknown routes preserve raw pixels, text-only routes are
+  // normalized by the core's own rewriteHistoryImages implementation, and the
+  // boot-only tool projection ends immediately after core.apply wires schema.
+  const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(
+    nativeImageCompat.ctx,
+    nativeImageCompat.config,
+    { rewriteHistoryImages: core.rewriteHistoryImages },
+  )
   // Final structured-flow guard sits closest to core.apply so it sees the
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies one shared visual deadline.
-  const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)
+  const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)
   // Adapter reconciliation + prepareCall normalization are already installed at
   // the final Host registration boundary above. Wrapping again here would make
   // prepareCall capture a pre-wrapper stream.
@@ -308,7 +319,8 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(executionCtx, nativeImageCompat.config)
+    const result = core.apply(executionCtx, legacyCoreCompat.config)
+    legacyCoreCompat.finishSchemaBootstrap()
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
     // Publish the main DeepSeek + 自动识图 route as a derived alias of official
@@ -325,6 +337,7 @@ export function apply(ctx, config = {}) {
     }
     return result
   } catch (error) {
+    legacyCoreCompat.finishSchemaBootstrap()
     logging.logger.error(
       'vision-router: plugin apply failed: %s',
       error && error.stack ? error.stack : error && error.message ? error.message : String(error),
