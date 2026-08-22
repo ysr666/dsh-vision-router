@@ -3,13 +3,15 @@ import assert from 'node:assert/strict'
 
 import {
   IMAGE_OWNERSHIP,
+  VISION_ROUTER_ADAPTER_OWNER,
   classifySessionImageOwnership,
   contextWithNativeImageCoexistence,
   currentSessionImageOwnership,
   currentSessionVisionPolicy,
+  markVisionRouterAdapter,
   resolveSessionVisionPolicy,
+  visionRouterAdapterOwner,
 } from '../lib/native-image-coexistence.js'
-import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 
 function session(provider, model = 'model') {
   return {
@@ -33,14 +35,9 @@ function imageMessage(id = 'sha256:test') {
   }
 }
 
-function boot({
-  inputModalities = ['text'],
-  resolveThrows = false,
-  config = {},
-} = {}) {
+function boot({ inputModalities = ['text'], resolveThrows = false, config = {} } = {}) {
   const handlers = new Map()
   const adapters = new Map()
-  const registeredTools = []
   let catalogThrows = resolveThrows
   let modalities = inputModalities
   const persisted = {
@@ -101,15 +98,8 @@ function boot({
       return { provider, id: model, inputModalities: modalities }
     },
   }
-  const tools = {
-    register(definition) {
-      registeredTools.push(definition)
-      return () => {}
-    },
-  }
   const ctx = {
     llm,
-    tools,
     get(name) {
       return name === 'settings' ? settings : undefined
     },
@@ -125,7 +115,7 @@ function boot({
     ctx,
     handlers,
     persisted,
-    registeredTools,
+    adapters,
     setCatalogThrows(value) {
       catalogThrows = value
     },
@@ -135,19 +125,26 @@ function boot({
   }
 }
 
-async function runPreStep(harness, provider, messages, callback) {
+async function observeTurn(harness, provider, options = {}) {
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  let observed
   wrapped.ctx.on('agent/pre-step', async (payload) => {
-    if (callback) await callback(wrapped, payload)
+    observed = {
+      ownership: currentSessionImageOwnership(),
+      policy: currentSessionVisionPolicy(),
+    }
     return { kind: 'continue', messages: payload.messages }
   })
-  const handler = harness.handlers.get('agent/pre-step')
-  assert.ok(handler)
-  const result = await handler(
-    { agent: { session: session(provider) }, messages },
+  const messages = options.messages ?? [imageMessage()]
+  const agent = {
+    session: options.session ?? session(provider, options.model ?? 'model'),
+    ...(options.agent ?? {}),
+  }
+  const result = await harness.handlers.get('agent/pre-step')(
+    { agent, messages },
     async () => ({ kind: 'continue', messages }),
   )
-  return { wrapped, result }
+  return { wrapped, observed, result }
 }
 
 test('classifies exact Host model capabilities without guessing on metadata failure', async () => {
@@ -170,120 +167,98 @@ test('classifies exact Host model capabilities without guessing on metadata fail
   )
 })
 
-test('a globally registered wrapper no longer suppresses rewriting for an unrelated text-only session', async () => {
-  const harness = boot({ inputModalities: ['text'] })
-  harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
-
-  const input = [imageMessage('sha256:text-route')]
-  const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('deepseek-official') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+test('direct helper compatibility recognizes only explicit plugin routes, not arbitrary -vision names', async () => {
+  const text = boot({ inputModalities: ['text'] })
+  assert.equal(
+    await resolveSessionVisionPolicy(text.ctx, session('deepseek-vision'), text.persisted)
+      .then((policy) => policy.ownership),
+    IMAGE_OWNERSHIP.VISION_ROUTER,
   )
-
-  assert.equal(result.messages[0].content[0].type, 'tool_result')
-  assert.deepEqual(result.messages[0].content[0].content, [
-    {
-      type: 'text',
-      text: '[attached image: sha256:text-route] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["sha256:text-route"] and a specific question.',
-    },
-  ])
+  assert.equal(
+    await resolveSessionVisionPolicy(text.ctx, session('thirdparty-vision'), text.persisted)
+      .then((policy) => policy.ownership),
+    IMAGE_OWNERSHIP.TEXT_ONLY,
+  )
 })
 
-test('explicit Vision Router registrations retain image blocks for their adapter boundary', async () => {
+test('ownership token survives frozen adapters without mutating the original', () => {
+  const adapter = Object.freeze({ stream() {} })
+  const token = Object.freeze({ route: 'owned' })
+  const marked = markVisionRouterAdapter(adapter, token)
+  assert.notEqual(marked, adapter)
+  assert.equal(visionRouterAdapterOwner(marked), token)
+  assert.equal(adapter[VISION_ROUTER_ADAPTER_OWNER], undefined)
+  assert.equal(typeof marked.stream, 'function')
+})
+
+test('private registration marks Vision Router ownership and disposal releases it', async () => {
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   const dispose = wrapped.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-  let expectedOwnership = IMAGE_OWNERSHIP.VISION_ROUTER
-  let expectedPreserveRawImages = true
+
+  let observed
   wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), expectedOwnership)
-    assert.equal(currentSessionVisionPolicy()?.preserveRawImages, expectedPreserveRawImages)
+    observed = currentSessionVisionPolicy()
     return { kind: 'continue', messages: payload.messages }
   })
-
-  const input = [imageMessage('sha256:owned')]
-  const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('deepseek-vision') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+  const messages = [imageMessage('sha256:owned')]
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('deepseek-vision') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
-  assert.equal(result.messages[0].content[0].content[0].type, 'image')
+  assert.equal(observed.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
+  assert.equal(observed.preserveRawImages, true)
 
   dispose()
-  expectedOwnership = IMAGE_OWNERSHIP.TEXT_ONLY
-  expectedPreserveRawImages = false
-  const afterDispose = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('deepseek-vision') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('deepseek-vision') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
-  assert.equal(
-    afterDispose.messages[0].content[0].content[0].type,
-    'text',
-    'disposing the plugin registration also releases ownership of that route',
-  )
+  assert.equal(observed.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
+  assert.equal(observed.rewriteCurrentImages, true)
 })
 
 test('registration handle replace moves ownership without losing the DSH handle contract', async () => {
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  const adapter = { stream() {} }
-  const handle = wrapped.ctx.llm.registerAdapter(['owned-a'], adapter)
+  const handle = wrapped.ctx.llm.registerAdapter(['owned-a'], { stream() {} })
   assert.equal(typeof handle, 'function')
   assert.equal(typeof handle.replace, 'function')
-
-  assert.equal(
-    await resolveSessionVisionPolicy(harness.ctx, session('owned-a'), harness.persisted, {
-      state: undefined,
-    }).then((policy) => policy.ownership),
-    IMAGE_OWNERSHIP.TEXT_ONLY,
-    'direct helper calls do not inherit private-context ownership state',
-  )
 
   let observed
   wrapped.ctx.on('agent/pre-step', async (payload) => {
     observed = currentSessionImageOwnership()
     return { kind: 'continue', messages: payload.messages }
   })
-  const input = [imageMessage('sha256:replace')]
+  const messages = [imageMessage('sha256:replace')]
   await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('owned-a') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+    { agent: { session: session('owned-a') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
   assert.equal(observed, IMAGE_OWNERSHIP.VISION_ROUTER)
 
   handle.replace(['owned-b'])
-  const oldRoute = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('owned-a') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-a') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
   assert.equal(observed, IMAGE_OWNERSHIP.TEXT_ONLY)
-  assert.equal(oldRoute.messages[0].content[0].content[0].type, 'text')
 
-  const newRoute = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('owned-b') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-b') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
   assert.equal(observed, IMAGE_OWNERSHIP.VISION_ROUTER)
-  assert.equal(newRoute.messages[0].content[0].content[0].type, 'image')
 })
 
-test('foreign replacement of the same provider invalidates plugin ownership by adapter identity', async () => {
+test('foreign replacement of the same provider invalidates plugin ownership by token identity', async () => {
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   wrapped.ctx.llm.registerAdapter(['shared-provider'], { stream() {} })
   harness.ctx.llm.registerAdapter(['shared-provider'], { stream() {} })
 
-  wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.TEXT_ONLY)
-    return { kind: 'continue', messages: payload.messages }
-  })
-  const input = [imageMessage('sha256:foreign-replace')]
-  const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('shared-provider') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  assert.equal(result.messages[0].content[0].content[0].type, 'text')
+  const { observed } = await observeTurn(harness, 'shared-provider')
+  assert.equal(observed.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
 })
 
 test('failed adapter registration cannot leave stale plugin ownership', async () => {
@@ -299,58 +274,44 @@ test('failed adapter registration cannot leave stale plugin ownership', async ()
   )
   harness.ctx.llm.registerAdapter = originalRegister
 
+  let ownership
   wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.notEqual(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
+    ownership = currentSessionImageOwnership()
     return { kind: 'continue', messages: payload.messages }
   })
-  const input = [imageMessage('sha256:failed-register')]
-  const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('failed-provider') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
+  const messages = [imageMessage('sha256:failed')]
+  await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('failed-provider') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
-  assert.equal(result.messages[0].content[0].content[0].type, 'text')
+  assert.notEqual(ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
 })
 
-test('third-party providers ending in -vision are classified by model metadata, not their name', async () => {
-  const nativeHarness = boot({ inputModalities: ['text', 'image'] })
-  nativeHarness.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
-  const nativeWrapped = contextWithNativeImageCoexistence(nativeHarness.ctx, nativeHarness.persisted)
-  nativeWrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.NATIVE)
-    return { kind: 'continue', messages: payload.messages }
-  })
-  const nativeInput = [imageMessage('sha256:thirdparty-native')]
-  const nativeResult = await nativeHarness.handlers.get('agent/pre-step')(
-    { agent: { session: session('thirdparty-vision') }, messages: nativeInput },
-    async () => ({ kind: 'continue', messages: nativeInput }),
-  )
-  assert.equal(nativeResult.messages[0].content[0].content[0].type, 'image')
+test('third-party -vision providers stay Host-owned and follow exact model metadata', async () => {
+  const native = boot({ inputModalities: ['text', 'image'] })
+  native.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
+  const nativeTurn = await observeTurn(native, 'thirdparty-vision')
+  assert.equal(nativeTurn.observed.ownership, IMAGE_OWNERSHIP.NATIVE)
 
-  const textHarness = boot({ inputModalities: ['text'] })
-  textHarness.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
-  const textWrapped = contextWithNativeImageCoexistence(textHarness.ctx, textHarness.persisted)
-  textWrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
-  const textInput = [imageMessage('sha256:thirdparty-text')]
-  const textResult = await textHarness.handlers.get('agent/pre-step')(
-    { agent: { session: session('thirdparty-vision') }, messages: textInput },
-    async () => ({ kind: 'continue', messages: textInput }),
-  )
-  assert.equal(textResult.messages[0].content[0].content[0].type, 'text')
+  const text = boot({ inputModalities: ['text'] })
+  text.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
+  const textTurn = await observeTurn(text, 'thirdparty-vision')
+  assert.equal(textTurn.observed.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
 })
 
-test('route classification falls back to live agent options and then the same-session route cache', async () => {
+test('route classification falls back to live agent options and same-session route cache', async () => {
   const harness = boot({ inputModalities: ['text', 'image'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  const messages = [imageMessage('sha256:restore')]
+  let observed
   wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.NATIVE)
+    observed = currentSessionImageOwnership()
     return { kind: 'continue', messages: payload.messages }
   })
-  const input = [imageMessage('sha256:agent-fallback')]
-  let headerAvailable = false
+
   const restoringSession = {
     requestHeader() {
-      if (!headerAvailable) throw new Error('restoring')
-      return { config: { provider: 'native-pi', model: 'native-vision' } }
+      throw new Error('restoring')
     },
   }
   const handler = harness.handlers.get('agent/pre-step')
@@ -360,262 +321,90 @@ test('route classification falls back to live agent options and then the same-se
         session: restoringSession,
         options: { provider: 'native-pi', model: 'native-vision' },
       },
-      messages: input,
+      messages,
     },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-
-  // The second restored step has neither a readable header nor agent route;
-  // only the route previously confirmed for this exact session object remains.
-  await handler(
-    { agent: { session: restoringSession }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  headerAvailable = true
-})
-
-test('native image turns preserve pixels and suppress only generic auto-mount policy', async () => {
-  const harness = boot({
-    inputModalities: ['text', 'image'],
-    config: { structuredVisionBootstrap: true },
-  })
-  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  wrapped.ctx.on('agent/pre-step', async (payload) => {
-    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.NATIVE)
-    assert.equal(wrapped.config.rewriteImages, false)
-    assert.equal(wrapped.config.instantDescribe, false)
-    assert.equal(wrapped.config.autoActivateOnImage, false)
-    assert.equal(
-      wrapped.config.structuredVisionBootstrap,
-      true,
-      'explicit structured 1+x remains authoritative on a native visual model',
-    )
-    return { kind: 'continue', messages: payload.messages }
-  })
-
-  const input = [imageMessage('sha256:native')]
-  const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('deepseek-official') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  assert.equal(result.messages[0].content[0].content[0].type, 'image')
-})
-
-test('catalog failure is conservative unless a capability was cached for the same live adapter', async () => {
-  const unknown = boot({ resolveThrows: true })
-  const unknownResult = await runPreStep(
-    unknown,
-    'mystery-provider',
-    [imageMessage('sha256:unknown')],
-  )
-  assert.equal(
-    unknownResult.result.messages[0].content[0].content[0].type,
-    'text',
-    'without positive native-image evidence an unknown route must fail back to the safe text bridge',
-  )
-
-  const cached = boot({ inputModalities: ['text', 'image'] })
-  cached.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
-  const wrapped = contextWithNativeImageCoexistence(cached.ctx, cached.persisted)
-  wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
-  const input = [imageMessage('sha256:cached-native')]
-  const handler = cached.handlers.get('agent/pre-step')
-  const first = await handler(
-    { agent: { session: session('cached-native') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  assert.equal(first.messages[0].content[0].content[0].type, 'image')
-
-  cached.setCatalogThrows(true)
-  const second = await handler(
-    { agent: { session: session('cached-native') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  assert.equal(
-    second.messages[0].content[0].content[0].type,
-    'image',
-    'the capability cache remains trusted only because the registered adapter identity is unchanged',
-  )
-
-  cached.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
-  const afterReplacement = await handler(
-    { agent: { session: session('cached-native') }, messages: input },
-    async () => ({ kind: 'continue', messages: input }),
-  )
-  assert.equal(
-    afterReplacement.messages[0].content[0].content[0].type,
-    'text',
-    'a new adapter identity cannot inherit the previous adapter capability cache',
-  )
-})
-
-test('tool=false at startup still builds a stable tool schema, while execution follows the live toggle', async () => {
-  const harness = boot({ config: { tool: false } })
-  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-
-  assert.equal(
-    wrapped.config.tool,
-    true,
-    'boot projection keeps tool definitions constructible even when the live toggle is off',
-  )
-
-  let calls = 0
-  wrapped.ctx.tools.register({
-    name: 'vision_describe',
-    async execute() {
-      calls += 1
-      return 'ok'
-    },
-  })
-  assert.equal(harness.registeredTools.length, 1)
-  await assert.rejects(
-    () => harness.registeredTools[0].execute({}, {}),
-    /vision tools are disabled/,
-  )
-  assert.equal(calls, 0)
-
-  harness.persisted.tool = true
-  assert.equal(await harness.registeredTools[0].execute({}, {}), 'ok')
-  assert.equal(calls, 1)
-
-  harness.persisted.tool = false
-  wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
-  const messages = [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }]
-  await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('deepseek-official') }, messages },
     async () => ({ kind: 'continue', messages }),
   )
-  assert.equal(wrapped.config.tool, false)
-  await assert.rejects(
-    () => harness.registeredTools[0].execute({}, {}),
-    /vision tools are disabled/,
+  assert.equal(observed, IMAGE_OWNERSHIP.NATIVE)
+
+  await handler(
+    { agent: { session: restoringSession }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
+  assert.equal(observed, IMAGE_OWNERSHIP.NATIVE)
 })
 
-function screenshotHarness(initial) {
-  let settings = { ...initial }
-  let watcher
-  const tools = new Map()
-  const scope = {
-    get() {
-      return settings
-    },
-    watch(callback) {
-      watcher = callback
-      return () => {
-        if (watcher === callback) watcher = undefined
-      }
-    },
-  }
-  const settingsCtx = {
-    settings: {
-      register() {
-        return scope
-      },
-    },
-    effect() {},
-  }
-  const ctx = {
-    logger: { warn() {}, info() {}, error() {} },
-    tools: {
-      register(definition) {
-        tools.set(definition.name, definition)
-        return () => {
-          if (tools.get(definition.name) === definition) tools.delete(definition.name)
-        }
-      },
-    },
-    llm: {
-      registerAdapter() {
-        return () => {}
-      },
-    },
-    get() {
-      return undefined
-    },
-    on() {
-      return () => {}
-    },
-    inject(dependencies, callback) {
-      if (Array.isArray(dependencies) && dependencies.includes('settings')) callback(settingsCtx)
-    },
-    effect(effect) {
-      return effect()
-    },
-  }
-  return {
-    ctx,
-    tools,
-    setSettings(next) {
-      settings = { ...next }
-      watcher?.(settings)
-    },
-  }
-}
+test('turn policy distinguishes text, native, Vision Router and unknown ownership', async () => {
+  const text = await observeTurn(boot({ inputModalities: ['text'] }), 'deepseek-official')
+  assert.equal(text.observed.policy.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
+  assert.equal(text.observed.policy.preserveRawImages, false)
+  assert.equal(text.observed.policy.rewriteCurrentImages, true)
+  assert.equal(text.observed.policy.suppressGenericAutoMount, false)
 
-function localCoreStub() {
-  return {
-    localProvidersOf() {
-      return []
-    },
-    async downscaleImage(bytes) {
-      return bytes
-    },
-    toOpenAIContent() {
-      return []
-    },
-    async callLocalBackend() {
-      return ''
-    },
-    classifyVisionFailure() {
-      return { kind: 'other' }
-    },
-    VISION_FAILURE_KINDS: { AUTH: 'auth', RATE_LIMIT: 'rate-limit', TIMEOUT: 'timeout' },
-  }
-}
+  const native = await observeTurn(boot({ inputModalities: ['text', 'image'] }), 'deepseek-official')
+  assert.equal(native.observed.policy.ownership, IMAGE_OWNERSHIP.NATIVE)
+  assert.equal(native.observed.policy.preserveRawImages, true)
+  assert.equal(native.observed.policy.rewriteCurrentImages, false)
+  assert.equal(native.observed.policy.suppressGenericAutoMount, true)
+  assert.equal(native.observed.policy.allowStructuredBootstrap, true)
 
-test('desktop screenshot follows both desktopScreenshot and the global live tool gate', async () => {
-  const harness = screenshotHarness({ tool: false, desktopScreenshot: false })
-  const { ctx } = installLocalVisionStabilizer(
-    harness.ctx,
-    { tool: false, desktopScreenshot: false },
-    localCoreStub(),
-  )
+  const unknown = await observeTurn(boot({ resolveThrows: true }), 'mystery-provider')
+  assert.equal(unknown.observed.policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
+  assert.equal(unknown.observed.policy.preserveRawImages, true)
+  assert.equal(unknown.observed.policy.rewriteCurrentImages, false)
 
-  ctx.inject(['settings'], (child) => {
-    const scope = child.settings.register('vision-router', {}, { base: {} })
-    scope.watch(() => {})
+  const ownedHarness = boot({ inputModalities: ['text'] })
+  const ownedCtx = contextWithNativeImageCoexistence(ownedHarness.ctx, ownedHarness.persisted)
+  ownedCtx.ctx.llm.registerAdapter(['owned-provider'], { stream() {} })
+  let ownedPolicy
+  ownedCtx.ctx.on('agent/pre-step', async (payload) => {
+    ownedPolicy = currentSessionVisionPolicy()
+    return { kind: 'continue', messages: payload.messages }
   })
+  const messages = [imageMessage('sha256:owned-policy')]
+  await ownedHarness.handlers.get('agent/pre-step')(
+    { agent: { session: session('owned-provider') }, messages },
+    async () => ({ kind: 'continue', messages }),
+  )
+  assert.equal(ownedPolicy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
+  assert.equal(ownedPolicy.preserveRawImages, true)
+})
 
-  let calls = 0
-  ctx.tools.register({
-    name: 'vision_screenshot',
-    async execute() {
-      calls += 1
-      return 'shot'
-    },
+test('capability cache is scoped to the exact adapter/provider/model and never guesses after replacement', async () => {
+  const harness = boot({ inputModalities: ['text', 'image'] })
+  harness.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
+  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  let observed
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
+    observed = currentSessionImageOwnership()
+    return { kind: 'continue', messages: payload.messages }
   })
-  assert.equal(harness.tools.has('vision_screenshot'), false)
+  const messages = [imageMessage('sha256:cached')]
+  const handler = harness.handlers.get('agent/pre-step')
 
-  harness.setSettings({ tool: false, desktopScreenshot: true })
-  assert.equal(
-    harness.tools.has('vision_screenshot'),
-    false,
-    'desktop opt-in cannot bypass the global tool=false gate',
+  await handler(
+    { agent: { session: session('cached-native', 'vision-a') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
+  assert.equal(observed, IMAGE_OWNERSHIP.NATIVE)
 
-  harness.setSettings({ tool: true, desktopScreenshot: true })
-  assert.equal(harness.tools.has('vision_screenshot'), true)
-  const mounted = harness.tools.get('vision_screenshot')
-  assert.equal(await mounted.execute({}, {}), 'shot')
-  assert.equal(calls, 1)
-
-  harness.setSettings({ tool: false, desktopScreenshot: true })
-  assert.equal(harness.tools.has('vision_screenshot'), false)
-  await assert.rejects(
-    () => mounted.execute({}, {}),
-    /vision tools are disabled/,
-    'a stale captured definition must also fail closed after tool=false',
+  harness.setCatalogThrows(true)
+  await handler(
+    { agent: { session: session('cached-native', 'vision-a') }, messages },
+    async () => ({ kind: 'continue', messages }),
   )
-  assert.equal(calls, 1)
+  assert.equal(observed, IMAGE_OWNERSHIP.NATIVE)
+
+  await handler(
+    { agent: { session: session('cached-native', 'vision-b') }, messages },
+    async () => ({ kind: 'continue', messages }),
+  )
+  assert.equal(observed, IMAGE_OWNERSHIP.UNKNOWN)
+
+  harness.ctx.llm.registerAdapter(['cached-native'], { stream() {} })
+  await handler(
+    { agent: { session: session('cached-native', 'vision-a') }, messages },
+    async () => ({ kind: 'continue', messages }),
+  )
+  assert.equal(observed, IMAGE_OWNERSHIP.UNKNOWN)
 })

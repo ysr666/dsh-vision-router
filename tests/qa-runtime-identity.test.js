@@ -18,14 +18,47 @@ test('vision tool runtime boundary never proxies unrelated injected child contex
   assert.equal(seen, webChild, 'rc6 route/effect ownership depends on exact child identity')
 })
 
-test('entry installs tool runtime before native-image coexistence and structured hardening', async () => {
+test('entry keeps prepareCall, tool runtime, session policy bridge and structured hardening in final order', async () => {
   const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+  const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
+  const adapterContractAt = source.indexOf(
+    'const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)',
+  )
+  const loggingAt = source.indexOf('const logging = installVisionRouterFileLogging(adapterContractCtx)')
   const settingsAt = source.indexOf('const settingsCtx = batchAttachmentHost')
-  const runtimeAt = source.indexOf('const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx)')
-  const nativeAt = source.indexOf('const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)')
-  const structuredAt = source.indexOf('const structuredCtx = installStructuredFlowHardening(nativeImageCompat.ctx, nativeImageCompat.config)')
-  assert.ok(settingsAt >= 0)
+  const runtimeAt = source.indexOf(
+    'const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
+  )
+  const nativeAt = source.indexOf(
+    'const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
+  )
+  const bridgeAt = source.indexOf(
+    'const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(',
+  )
+  const structuredAt = source.indexOf(
+    'const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)',
+  )
+  const coreApplyAt = source.indexOf('const result = core.apply(executionCtx, legacyCoreCompat.config)')
+  const finishAt = source.indexOf('legacyCoreCompat.finishSchemaBootstrap()', coreApplyAt)
+
+  assert.ok(mutationAt >= 0)
+  assert.ok(
+    adapterContractAt > mutationAt,
+    'prepareCall normalization must sit at the deepest private Host-registration boundary',
+  )
+  assert.ok(loggingAt > adapterContractAt, 'all later adapter wrappers must register through the final contract boundary')
+  assert.ok(settingsAt > loggingAt)
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
-  assert.ok(nativeAt > runtimeAt, 'native-image coexistence must remain inside the runtime cancellation boundary')
-  assert.ok(structuredAt > nativeAt, 'structured deadlines must wrap the final native-image-aware runtime view')
+  assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
+  assert.ok(bridgeAt > nativeAt, 'legacy core projection must consume the session-scoped ownership policy')
+  assert.ok(structuredAt > bridgeAt, 'structured deadlines must wrap the final core-policy view')
+  assert.ok(coreApplyAt > structuredAt, 'core must receive the fully composed execution context')
+  assert.ok(finishAt > coreApplyAt, 'the temporary schema bootstrap projection ends immediately after core wiring')
+
+  const afterAdapterContract = source.slice(adapterContractAt + 1)
+  assert.equal(
+    afterAdapterContract.includes('contextWithCoalescedAdapterUpdates(structuredCtx)'),
+    false,
+    'a second prepareCall/coalescer wrapper would capture a pre-wrapper stream again',
+  )
 })
