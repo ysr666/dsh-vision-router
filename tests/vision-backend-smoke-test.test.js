@@ -241,6 +241,11 @@ test('client prelude is idempotent and yields to the v2 capability benchmark', (
   assert.equal(once, twice)
   assert.match(once, /data-vision-router-exact-vision-test/)
   assert.match(EXACT_VISION_TEST_CLIENT, /data-vision-router-capability-benchmark/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /function removeExactTestControls\(\)/)
+  assert.match(
+    EXACT_VISION_TEST_CLIENT,
+    /if \(v2OwnsCapabilityTesting\(\)\) \{\s*removeExactTestControls\(\);\s*return;\s*\}/,
+  )
   assert.match(EXACT_VISION_TEST_CLIENT, /fallback is disabled/)
   assert.match(EXACT_VISION_TEST_CLIENT, /method:'POST'/)
 })
