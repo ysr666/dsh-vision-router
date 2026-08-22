@@ -7,6 +7,7 @@ import {
   contextWithNativeImageCoexistence,
   currentSessionImageOwnership,
 } from '../lib/native-image-coexistence.js'
+import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 
 function session(provider, model = 'model') {
   return {
@@ -144,8 +145,8 @@ test('classifies exact Host model capabilities without guessing on metadata fail
 
 test('a globally registered wrapper no longer suppresses rewriting for an unrelated text-only session', async () => {
   const harness = boot({ inputModalities: ['text'] })
-  // This registration exists globally, but the current session remains on the
-  // original deepseek-official text-only route. Its capability wins.
+  // This route was registered outside Vision Router's private context. Its
+  // existence must not make the current deepseek-official session plugin-owned.
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
@@ -165,9 +166,10 @@ test('a globally registered wrapper no longer suppresses rewriting for an unrela
   ])
 })
 
-test('explicit Vision Router implementation routes retain image blocks for their adapter boundary', async () => {
+test('explicit Vision Router registrations retain image blocks for their adapter boundary', async () => {
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  const dispose = wrapped.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   wrapped.ctx.on('agent/pre-step', async (payload) => {
     assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
     return { kind: 'continue', messages: payload.messages }
@@ -176,6 +178,70 @@ test('explicit Vision Router implementation routes retain image blocks for their
   const input = [imageMessage('sha256:owned')]
   const result = await harness.handlers.get('agent/pre-step')(
     { agent: { session: session('deepseek-vision') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(result.messages[0].content[0].content[0].type, 'image')
+
+  dispose()
+  const afterDispose = await harness.handlers.get('agent/pre-step')(
+    { agent: { session: session('deepseek-vision') }, messages: input },
+    async () => ({ kind: 'continue', messages: input }),
+  )
+  assert.equal(
+    afterDispose.messages[0].content[0].content[0].type,
+    'text',
+    'disposing the plugin registration also releases ownership of that route',
+  )
+})
+
+test('third-party providers ending in -vision are classified by model metadata, not their name', async () => {
+  const nativeHarness = boot({ inputModalities: ['text', 'image'] })
+  nativeHarness.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
+  const nativeWrapped = contextWithNativeImageCoexistence(nativeHarness.ctx, nativeHarness.persisted)
+  nativeWrapped.ctx.on('agent/pre-step', async (payload) => {
+    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.NATIVE)
+    return { kind: 'continue', messages: payload.messages }
+  })
+  const nativeInput = [imageMessage('sha256:thirdparty-native')]
+  const nativeResult = await nativeHarness.handlers.get('agent/pre-step')(
+    { agent: { session: session('thirdparty-vision') }, messages: nativeInput },
+    async () => ({ kind: 'continue', messages: nativeInput }),
+  )
+  assert.equal(nativeResult.messages[0].content[0].content[0].type, 'image')
+
+  const textHarness = boot({ inputModalities: ['text'] })
+  textHarness.ctx.llm.registerAdapter(['thirdparty-vision'], { stream() {} })
+  const textWrapped = contextWithNativeImageCoexistence(textHarness.ctx, textHarness.persisted)
+  textWrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
+  const textInput = [imageMessage('sha256:thirdparty-text')]
+  const textResult = await textHarness.handlers.get('agent/pre-step')(
+    { agent: { session: session('thirdparty-vision') }, messages: textInput },
+    async () => ({ kind: 'continue', messages: textInput }),
+  )
+  assert.equal(textResult.messages[0].content[0].content[0].type, 'text')
+})
+
+test('route classification falls back to live agent options when requestHeader is unavailable', async () => {
+  const harness = boot({ inputModalities: ['text', 'image'] })
+  const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
+    assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.NATIVE)
+    return { kind: 'continue', messages: payload.messages }
+  })
+  const input = [imageMessage('sha256:agent-fallback')]
+  const sessionWithoutHeader = {
+    requestHeader() {
+      throw new Error('restoring')
+    },
+  }
+  const result = await harness.handlers.get('agent/pre-step')(
+    {
+      agent: {
+        session: sessionWithoutHeader,
+        options: { provider: 'native-pi', model: 'native-vision' },
+      },
+      messages: input,
+    },
     async () => ({ kind: 'continue', messages: input }),
   )
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
@@ -261,4 +327,132 @@ test('tool=false at startup still builds a stable tool schema, while execution f
     () => harness.registeredTools[0].execute({}, {}),
     /vision tools are disabled/,
   )
+})
+
+function screenshotHarness(initial) {
+  let settings = { ...initial }
+  let watcher
+  const tools = new Map()
+  const scope = {
+    get() {
+      return settings
+    },
+    watch(callback) {
+      watcher = callback
+      return () => {
+        if (watcher === callback) watcher = undefined
+      }
+    },
+  }
+  const settingsCtx = {
+    settings: {
+      register() {
+        return scope
+      },
+    },
+    effect() {},
+  }
+  const ctx = {
+    logger: { warn() {}, info() {}, error() {} },
+    tools: {
+      register(definition) {
+        tools.set(definition.name, definition)
+        return () => {
+          if (tools.get(definition.name) === definition) tools.delete(definition.name)
+        }
+      },
+    },
+    llm: {
+      registerAdapter() {
+        return () => {}
+      },
+    },
+    get() {
+      return undefined
+    },
+    on() {
+      return () => {}
+    },
+    inject(dependencies, callback) {
+      if (Array.isArray(dependencies) && dependencies.includes('settings')) callback(settingsCtx)
+    },
+    effect(effect) {
+      return effect()
+    },
+  }
+  return {
+    ctx,
+    tools,
+    setSettings(next) {
+      settings = { ...next }
+      watcher?.(settings)
+    },
+  }
+}
+
+function localCoreStub() {
+  return {
+    localProvidersOf() {
+      return []
+    },
+    async downscaleImage(bytes) {
+      return bytes
+    },
+    toOpenAIContent() {
+      return []
+    },
+    async callLocalBackend() {
+      return ''
+    },
+    classifyVisionFailure() {
+      return { kind: 'other' }
+    },
+    VISION_FAILURE_KINDS: { AUTH: 'auth', RATE_LIMIT: 'rate-limit', TIMEOUT: 'timeout' },
+  }
+}
+
+test('desktop screenshot follows both desktopScreenshot and the global live tool gate', async () => {
+  const harness = screenshotHarness({ tool: false, desktopScreenshot: false })
+  const { ctx } = installLocalVisionStabilizer(
+    harness.ctx,
+    { tool: false, desktopScreenshot: false },
+    localCoreStub(),
+  )
+
+  ctx.inject(['settings'], (child) => {
+    const scope = child.settings.register('vision-router', {}, { base: {} })
+    scope.watch(() => {})
+  })
+
+  let calls = 0
+  ctx.tools.register({
+    name: 'vision_screenshot',
+    async execute() {
+      calls += 1
+      return 'shot'
+    },
+  })
+  assert.equal(harness.tools.has('vision_screenshot'), false)
+
+  harness.setSettings({ tool: false, desktopScreenshot: true })
+  assert.equal(
+    harness.tools.has('vision_screenshot'),
+    false,
+    'desktop opt-in cannot bypass the global tool=false gate',
+  )
+
+  harness.setSettings({ tool: true, desktopScreenshot: true })
+  assert.equal(harness.tools.has('vision_screenshot'), true)
+  const mounted = harness.tools.get('vision_screenshot')
+  assert.equal(await mounted.execute({}, {}), 'shot')
+  assert.equal(calls, 1)
+
+  harness.setSettings({ tool: false, desktopScreenshot: true })
+  assert.equal(harness.tools.has('vision_screenshot'), false)
+  await assert.rejects(
+    () => mounted.execute({}, {}),
+    /vision tools are disabled/,
+    'a stale captured definition must also fail closed after tool=false',
+  )
+  assert.equal(calls, 1)
 })
