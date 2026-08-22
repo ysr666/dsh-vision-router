@@ -18,7 +18,7 @@ test('vision tool runtime boundary never proxies unrelated injected child contex
   assert.equal(seen, webChild, 'rc6 route/effect ownership depends on exact child identity')
 })
 
-test('entry keeps prepareCall, tool runtime, session policy bridge and structured hardening in final order', async () => {
+test('entry keeps prepareCall, tool runtime, session policy bridge, structured hardening and backend runtime policy in final order', async () => {
   const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
   const adapterContractAt = source.indexOf(
@@ -38,7 +38,13 @@ test('entry keeps prepareCall, tool runtime, session policy bridge and structure
   const structuredAt = source.indexOf(
     'const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)',
   )
-  const coreApplyAt = source.indexOf('const result = core.apply(executionCtx, legacyCoreCompat.config)')
+  const executionAt = source.indexOf(
+    'const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {',
+  )
+  const backendRuntimeAt = source.indexOf(
+    'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(executionCtx, {',
+  )
+  const coreApplyAt = source.indexOf('const result = core.apply(backendRuntimeCtx, legacyCoreCompat.config)')
   const finishAt = source.indexOf('legacyCoreCompat.finishSchemaBootstrap()', coreApplyAt)
 
   assert.ok(mutationAt >= 0)
@@ -52,7 +58,9 @@ test('entry keeps prepareCall, tool runtime, session policy bridge and structure
   assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
   assert.ok(bridgeAt > nativeAt, 'legacy core projection must consume the session-scoped ownership policy')
   assert.ok(structuredAt > bridgeAt, 'structured deadlines must wrap the final core-policy view')
-  assert.ok(coreApplyAt > structuredAt, 'core must receive the fully composed execution context')
+  assert.ok(executionAt > structuredAt, 'adapter-observed bridge policy must wrap the fully hardened execution view')
+  assert.ok(backendRuntimeAt > executionAt, 'preflight image-delivery policy must sit outside adapter-observed bridge policy')
+  assert.ok(coreApplyAt > backendRuntimeAt, 'core must receive the fully composed backend runtime context')
   assert.ok(finishAt > coreApplyAt, 'the temporary schema bootstrap projection ends immediately after core wiring')
 
   const afterAdapterContract = source.slice(adapterContractAt + 1)
