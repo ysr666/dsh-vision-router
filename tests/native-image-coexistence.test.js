@@ -15,6 +15,7 @@ function session(provider, model) {
 
 function boot({ inputModalities = ['text', 'image'], config = {} } = {}) {
   const handlers = new Map()
+  const adapters = new Map()
   const persisted = {
     rewriteImages: true,
     instantDescribe: true,
@@ -40,6 +41,15 @@ function boot({ inputModalities = ['text', 'image'], config = {} } = {}) {
   }
   const ctx = {
     llm: {
+      registerAdapter(routes, adapter) {
+        const list = Array.isArray(routes) ? routes : [routes]
+        for (const route of list) adapters.set(route, adapter)
+        return () => {
+          for (const route of list) {
+            if (adapters.get(route) === adapter) adapters.delete(route)
+          }
+        }
+      },
       async resolveModelInfo(provider, model) {
         return { provider, id: model, inputModalities }
       },
@@ -66,7 +76,7 @@ test('recognizes an explicitly selected Host-native image model', async () => {
   )
 })
 
-test('does not treat text-only or plugin-owned routes as native image routes', async () => {
+test('direct capability helper recognizes only explicit plugin routes, not arbitrary -vision names', async () => {
   const text = boot({ inputModalities: ['text'] })
   assert.equal(
     await sessionUsesNativeImageModel(text.ctx, session('deepseek-official', 'deepseek-v4-pro'), {}),
@@ -88,7 +98,8 @@ test('does not treat text-only or plugin-owned routes as native image routes', a
       session('openrouter-vision', 'some-model'),
       {},
     ),
-    false,
+    true,
+    'a third-party provider ending in -vision remains Host-owned unless Vision Router registered it',
   )
 })
 
@@ -141,7 +152,7 @@ test('native image pre-step preserves raw pixels without promoting the route', a
   assert.equal(config.providers, bootConfig.providers)
 })
 
-test('ordinary text and plugin-wrapper turns retain the existing rewrite path', async () => {
+test('ordinary text and explicitly registered plugin-wrapper turns retain the existing rewrite path', async () => {
   for (const [provider, model, modalities] of [
     ['deepseek-official', 'deepseek-v4-pro', ['text']],
     ['deepseek-vision', 'deepseek-v4-pro', ['text', 'image']],
@@ -152,6 +163,9 @@ test('ordinary text and plugin-wrapper turns retain the existing rewrite path', 
       instantDescribe: true,
       wrapperRoute: 'deepseek-vision',
     })
+    if (provider === 'deepseek-vision') {
+      ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
+    }
     let observed
     ctx.on('agent/pre-step', async (_payload, next) => {
       observed = [config.rewriteImages, config.instantDescribe]
