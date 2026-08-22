@@ -264,8 +264,9 @@ export function apply(ctx, config = {}) {
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
   installClientPresentationBoundary(reconciledCtx)
   installLiveModelClientPrelude(reconciledCtx)
-  // Stable 1.7.x keeps the exact no-fallback smoke-test route, while its compact
-  // client yields to the v2 Benchmark client whenever v2 owns capability testing.
+  // Stable 1.7.x keeps the exact no-fallback smoke test as a separate quick
+  // verification action. v2 Benchmark coexists beside it and owns capability
+  // scoring; neither browser client suppresses the other.
   installExactVisionTestClient(reconciledCtx)
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)
@@ -275,39 +276,40 @@ export function apply(ctx, config = {}) {
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
-  // v1.7.7's outer policy covers cases where DSH would otherwise project image
-  // bytes to SHA text before an adapter gets the chance to reject them. It sits
-  // below the v2 runtime-performance observer so real successful adapter calls
-  // can still be timed without changing execution decisions.
-  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(executionCtx, {
-    config: runtimeConfig,
-    core,
-    evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
-    logger: logging.logger,
-  })
   // Only real visual-tool adapter streams are timed. The tool wrapper above
   // supplies the direct capability axis through AsyncLocalStorage; benchmark,
   // smoke-test and background calls have no such scope and cannot contaminate
   // this runtime-performance store.
   const performanceCtx = contextWithVisionRuntimePerformance(
-    backendRuntimeCtx,
+    executionCtx,
     runtimePerformanceStore,
     { logger: logging.logger },
   )
-  installVisionBackendSmokeTest(performanceCtx, runtimeConfig, core, {
+  // v1.7.7's outer policy covers cases where DSH would otherwise project image
+  // bytes to SHA text before an adapter gets the chance to reject them. Keeping
+  // it outside the runtime-performance observer means native adapter execution
+  // is still timed, while a preflight direct bridge bypasses runtime sampling
+  // and therefore stays incomparable for Balanced/Speed as designed.
+  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {
+    config: runtimeConfig,
+    core,
+    evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
+    logger: logging.logger,
+  })
+  installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
-  installCapabilityBenchmarkService(performanceCtx, runtimeConfig, core, {
+  installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
   })
-  installVisionRoutingPreviewService(performanceCtx, runtimeConfig, core, {
+  installVisionRoutingPreviewService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
     runtimePerformanceStore,
   })
-  installTesseractExecFileCompat(performanceCtx)
+  installTesseractExecFileCompat(backendRuntimeCtx)
 
   try {
     const c = hardenedConfig && typeof hardenedConfig === 'object' ? hardenedConfig : {}
@@ -327,7 +329,7 @@ export function apply(ctx, config = {}) {
   try {
     const result = withVisionCircuitBreakerObserver(
       breakerShadowHealth.capture,
-      () => core.apply(performanceCtx, legacyCoreCompat.config),
+      () => core.apply(backendRuntimeCtx, legacyCoreCompat.config),
     )
     legacyCoreCompat.finishSchemaBootstrap()
     installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
