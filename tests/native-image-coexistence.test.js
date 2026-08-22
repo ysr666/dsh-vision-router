@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  IMAGE_OWNERSHIP,
   contextWithNativeImageCoexistence,
+  currentSessionVisionPolicy,
   sessionUsesNativeImageModel,
 } from '../lib/native-image-coexistence.js'
 
@@ -15,6 +17,7 @@ function session(provider, model) {
 
 function boot({ inputModalities = ['text', 'image'], config = {} } = {}) {
   const handlers = new Map()
+  const adapters = new Map()
   const persisted = {
     rewriteImages: true,
     instantDescribe: true,
@@ -40,6 +43,15 @@ function boot({ inputModalities = ['text', 'image'], config = {} } = {}) {
   }
   const ctx = {
     llm: {
+      registerAdapter(routes, adapter) {
+        const list = Array.isArray(routes) ? routes : [routes]
+        for (const route of list) adapters.set(route, adapter)
+        return () => {
+          for (const route of list) {
+            if (adapters.get(route) === adapter) adapters.delete(route)
+          }
+        }
+      },
       async resolveModelInfo(provider, model) {
         return { provider, id: model, inputModalities }
       },
@@ -66,7 +78,7 @@ test('recognizes an explicitly selected Host-native image model', async () => {
   )
 })
 
-test('does not treat text-only or plugin-owned routes as native image routes', async () => {
+test('direct capability helper recognizes only explicit plugin routes, not arbitrary -vision names', async () => {
   const text = boot({ inputModalities: ['text'] })
   assert.equal(
     await sessionUsesNativeImageModel(text.ctx, session('deepseek-official', 'deepseek-v4-pro'), {}),
@@ -88,11 +100,12 @@ test('does not treat text-only or plugin-owned routes as native image routes', a
       session('openrouter-vision', 'some-model'),
       {},
     ),
-    false,
+    true,
+    'a third-party provider ending in -vision remains Host-owned unless Vision Router registered it',
   )
 })
 
-test('native image pre-step preserves raw pixels without promoting the route', async () => {
+test('native image pre-step exposes native policy without mutating config', async () => {
   const harness = boot()
   const bootConfig = {
     rewriteImages: true,
@@ -108,7 +121,11 @@ test('native image pre-step preserves raw pixels without promoting the route', a
 
   let observed
   ctx.on('agent/pre-step', async (_payload, next) => {
+    const policy = currentSessionVisionPolicy()
     observed = {
+      ownership: policy?.ownership,
+      preserveRawImages: policy?.preserveRawImages,
+      suppressGenericAutoMount: policy?.suppressGenericAutoMount,
       bootRewrite: config.rewriteImages,
       bootInstant: config.instantDescribe,
       liveRewrite: liveScope.get().rewriteImages,
@@ -126,14 +143,17 @@ test('native image pre-step preserves raw pixels without promoting the route', a
   )
 
   assert.deepEqual(observed, {
-    bootRewrite: false,
-    bootInstant: false,
-    liveRewrite: false,
-    liveInstant: false,
+    ownership: IMAGE_OWNERSHIP.NATIVE,
+    preserveRawImages: true,
+    suppressGenericAutoMount: true,
+    bootRewrite: true,
+    bootInstant: true,
+    liveRewrite: true,
+    liveInstant: true,
     providers: bootConfig.providers,
   })
-  // The override is turn-local only: no settings mutation and no provider
-  // priority/order change survives the pre-step.
+  // This layer is decision-only. The legacy-core bridge consumes the policy
+  // and projects native-turn rewrite/instant/auto-mount settings separately.
   assert.equal(config.rewriteImages, true)
   assert.equal(config.instantDescribe, true)
   assert.equal(harness.persisted.rewriteImages, true)
@@ -141,7 +161,7 @@ test('native image pre-step preserves raw pixels without promoting the route', a
   assert.equal(config.providers, bootConfig.providers)
 })
 
-test('ordinary text and plugin-wrapper turns retain the existing rewrite path', async () => {
+test('ordinary text and explicitly registered plugin-wrapper turns retain the existing rewrite path', async () => {
   for (const [provider, model, modalities] of [
     ['deepseek-official', 'deepseek-v4-pro', ['text']],
     ['deepseek-vision', 'deepseek-v4-pro', ['text', 'image']],
@@ -152,6 +172,9 @@ test('ordinary text and plugin-wrapper turns retain the existing rewrite path', 
       instantDescribe: true,
       wrapperRoute: 'deepseek-vision',
     })
+    if (provider === 'deepseek-vision') {
+      ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
+    }
     let observed
     ctx.on('agent/pre-step', async (_payload, next) => {
       observed = [config.rewriteImages, config.instantDescribe]
