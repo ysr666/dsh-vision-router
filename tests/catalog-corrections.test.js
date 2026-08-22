@@ -7,6 +7,7 @@ import {
   toAnthropicMessages,
   callAnthropicCompatible,
 } from '../lib/catalog-corrections.js'
+import { stripTrailingSlashes } from '../lib/string-normalization.js'
 import { VISION_FAILURE_KINDS } from '../lib/vision-resilience.js'
 
 const brokenFacts = { api: 'openai-completions', baseUrl: 'https://opencode.ai/zen/go/v1' }
@@ -66,6 +67,14 @@ test('anthropicMediaType normalizes jpg to jpeg and passes others through', () =
   assert.equal(anthropicMediaType('image/jpg'), 'image/jpeg')
   assert.equal(anthropicMediaType('image/png'), 'image/png')
   assert.equal(anthropicMediaType(''), '')
+})
+
+test('stripTrailingSlashes handles adversarial slash runs without backtracking semantics', () => {
+  const trailing = `https://example.test${'/'.repeat(100_000)}`
+  assert.equal(stripTrailingSlashes(trailing), 'https://example.test')
+
+  const nonTrailing = `https://example.test/${'/'.repeat(100_000)}x`
+  assert.equal(stripTrailingSlashes(nonTrailing), nonTrailing)
 })
 
 test('toAnthropicMessages builds system, merges roles, and maps blocks', async () => {
