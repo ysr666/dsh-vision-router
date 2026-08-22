@@ -109,7 +109,7 @@ function boot({
 
 async function runPreStep(harness, provider, messages, callback) {
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  wrapped.ctx.on('agent/pre-step', async (payload, next) => {
+  wrapped.ctx.on('agent/pre-step', async (payload) => {
     if (callback) await callback(wrapped, payload)
     return { kind: 'continue', messages: payload.messages }
   })
@@ -122,7 +122,7 @@ async function runPreStep(harness, provider, messages, callback) {
   return { wrapped, result }
 }
 
-test('classifies exact Host model capabilities and fails unknown metadata safe', async () => {
+test('classifies exact Host model capabilities without guessing on metadata failure', async () => {
   const text = boot({ inputModalities: ['text'] })
   assert.equal(
     await classifySessionImageOwnership(text.ctx, session('deepseek-official'), text.persisted),
@@ -142,10 +142,12 @@ test('classifies exact Host model capabilities and fails unknown metadata safe',
   )
 })
 
-test('a globally registered Vision Router wrapper no longer suppresses rewriting for an unrelated text-only session', async () => {
+test('a globally registered wrapper no longer suppresses rewriting for an unrelated text-only session', async () => {
   const harness = boot({ inputModalities: ['text'] })
+  // This registration exists globally, but the current session remains on the
+  // original deepseek-official text-only route. Its capability wins.
+  harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  wrapped.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   wrapped.ctx.on('agent/pre-step', async (payload) => ({ kind: 'continue', messages: payload.messages }))
 
   const input = [imageMessage('sha256:text-route')]
@@ -163,10 +165,9 @@ test('a globally registered Vision Router wrapper no longer suppresses rewriting
   ])
 })
 
-test('Vision Router-owned routes retain their image blocks for the adapter boundary', async () => {
+test('explicit Vision Router implementation routes retain image blocks for their adapter boundary', async () => {
   const harness = boot({ inputModalities: ['text'] })
   const wrapped = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  wrapped.ctx.llm.registerAdapter(['custom-owned-route'], { stream() {} })
   wrapped.ctx.on('agent/pre-step', async (payload) => {
     assert.equal(currentSessionImageOwnership(), IMAGE_OWNERSHIP.VISION_ROUTER)
     return { kind: 'continue', messages: payload.messages }
@@ -174,7 +175,7 @@ test('Vision Router-owned routes retain their image blocks for the adapter bound
 
   const input = [imageMessage('sha256:owned')]
   const result = await harness.handlers.get('agent/pre-step')(
-    { agent: { session: session('custom-owned-route') }, messages: input },
+    { agent: { session: session('deepseek-vision') }, messages: input },
     async () => ({ kind: 'continue', messages: input }),
   )
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
@@ -207,11 +208,14 @@ test('native image turns preserve pixels and suppress only generic auto-mount po
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('unknown model metadata is bridged like text-only instead of leaking raw pixels', async () => {
+test('unknown metadata preserves the pre-existing Host/adapter image contract', async () => {
   const harness = boot({ resolveThrows: true })
   const { result } = await runPreStep(harness, 'mystery-provider', [imageMessage('sha256:unknown')])
-  assert.equal(result.messages[0].content[0].content[0].type, 'text')
-  assert.match(result.messages[0].content[0].content[0].text, /sha256:unknown/)
+  assert.equal(
+    result.messages[0].content[0].content[0].type,
+    'image',
+    'a transient metadata miss must not destroy a possibly native inline image',
+  )
 })
 
 test('tool=false at startup still builds a stable tool schema, while execution follows the live toggle', async () => {
