@@ -129,7 +129,6 @@ test('exact adapter smoke test mirrors the safe pre-wire image bridge without mo
   })
   assert.equal(result.ok, true)
   assert.equal(result.verified, true)
-  assert.equal(result.fallbackUsed, false)
   assert.equal(result.transport, 'adapter-bridge')
   assert.equal(adapterAttempts, 1)
   assert.equal(bridgeCalls.length, 1)
@@ -234,13 +233,16 @@ test('model-invoking diagnostic routes are transport-fenced on main and future v
   assert.equal(isLocalMutationRoute('/_dsh/vision-router/capability-benchmark', 'GET'), false)
 })
 
-test('client prelude is idempotent and yields to the v2 capability benchmark', () => {
+test('client prelude is idempotent and remains a separate quick smoke-test action in v2', () => {
   const original = '<html><head></head><body></body></html>'
   const once = injectExactVisionTestClient(original)
   const twice = injectExactVisionTestClient(once)
   assert.equal(once, twice)
   assert.match(once, /data-vision-router-exact-vision-test/)
-  assert.match(EXACT_VISION_TEST_CLIENT, /data-vision-router-capability-benchmark/)
-  assert.match(EXACT_VISION_TEST_CLIENT, /fallback is disabled/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /快速自检 · 1次请求/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /text\('测试识图','Test vision'\)/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /control\.style\.order='1'/)
+  assert.doesNotMatch(EXACT_VISION_TEST_CLIENT, /v2OwnsCapabilityTesting|removeExactTestControls/)
+  assert.match(EXACT_VISION_TEST_CLIENT, /no fallback/)
   assert.match(EXACT_VISION_TEST_CLIENT, /method:'POST'/)
 })

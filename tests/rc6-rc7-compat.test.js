@@ -22,9 +22,6 @@ function runtimeWithAttachments(attachments, llm = {}) {
 }
 
 test('contract detection follows the released attachment API, not unrelated LLM methods', () => {
-  // Official rc.6 already shipped registerConfigurableProviders(); using that
-  // as a version probe would incorrectly route every rc.6 host through the
-  // batch-attachment contract. saveImages() is the released observable seam.
   const single = runtimeWithAttachments(
     { saveImage() {}, readImage() {}, validateImage() {} },
     { registerConfigurableProviders() {} },
@@ -36,8 +33,6 @@ test('contract detection follows the released attachment API, not unrelated LLM 
   assert.equal(hasBatchAttachmentContract(single), false)
   assert.equal(hasBatchAttachmentContract(batch), true)
   assert.equal(hasBatchAttachmentContract({ llm: { registerConfigurableProviders() {} } }), false)
-  // Transitional rc.7-era alias must remain behaviorally identical for callers
-  // while runtime code migrates to the capability-named export.
   assert.equal(isRc7ContractRuntime, hasBatchAttachmentContract)
 })
 
@@ -118,7 +113,7 @@ test('host settings bridge uses the common public SettingsProvider seam and mask
   assert.equal(installRc7SettingsCompatibility, installHostSettingsCompatibility)
 })
 
-test('host settings bridge registers the final entry settings contract including remote permission', () => {
+test('host settings bridge registers the final entry settings contract including v2 routing fields', () => {
   let registeredConfig
   const scope = { get() { return EntryConfig({}) }, watch() { return () => {} } }
   const ctx = {
@@ -142,14 +137,19 @@ test('host settings bridge registers the final entry settings contract including
     namespace: 'vision-router',
   })
 
-  assert.equal(SETTINGS_CONTRACT_REVISION, 4)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 6)
   assert.equal(registeredConfig, EntryConfig)
   assert.equal(registeredConfig({}).allowRemoteSettings, false)
   assert.equal(registeredConfig({ allowRemoteSettings: true }).allowRemoteSettings, true)
-  assert.equal(registeredConfig({}).settingsContractRevision, 4)
+  assert.equal(registeredConfig({}).settingsContractRevision, SETTINGS_CONTRACT_REVISION)
   assert.equal(registeredConfig({}).visionDepth, 'standard')
   assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepth, 'custom')
   assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepthMaxCalls, 7)
+  assert.equal(registeredConfig({}).routingMode, 'ordered')
+  assert.equal(registeredConfig({}).routingPreference, 'balanced')
+  assert.equal(registeredConfig({}).backgroundBenchmarking, 'local-free')
+  assert.equal(registeredConfig({ backgroundBenchmarking: 'all' }).backgroundBenchmarking, 'all')
+  assert.equal(registeredConfig({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
 })
 
 test('attachment compatibility follows the batch-attachment seam', () => {
@@ -173,8 +173,6 @@ test('settings card registration is a structural superset of rc6 list and newer 
   assert.ok(block, 'settings.plugin.item registration must exist')
   assert.match(block[0], /key: 'vision-router'/)
   assert.match(block[0], /id: 'vision-router'/)
-  // rc.7+ requires key; rc.6 requires id. The slot runtime ignores the
-  // non-applicable extra metadata rather than rejecting it.
 })
 
 test('manifest keeps the minimum rc6 host peers while admitting the rc1 host line', async () => {
@@ -192,8 +190,5 @@ test('bundle patch defines Vision Router attachment storage admission including 
   assert.match(patch, /maxImageBytes:\s*20971520/)
   assert.match(patch, /maxImagePixels:\s*100000000/)
   assert.match(patch, /maxImageDimension:\s*10000/)
-  // Dimension is intentionally bounded rather than disabled: attachment-local
-  // is Host-global and also feeds native multimodal providers outside Vision
-  // Router's request-normalization boundary.
   assert.doesNotMatch(patch, /maxImageDimension:\s*(?:32768|65535|99999)/)
 })

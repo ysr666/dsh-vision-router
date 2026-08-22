@@ -13,6 +13,8 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
     [REMOTE_SETTINGS_PERMISSION]: enabled,
     providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }],
     routing: false,
+    routingMode: 'ordered',
+    routingPreference: 'balanced',
     visionDepth: 'standard',
     visionDepthMaxCalls: 0,
     proxy: 'http://127.0.0.1:1080',
@@ -26,7 +28,13 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
     wrapperRoute: 'secret-route',
     chainRoute: 'secret-chain',
   }
-  const user = { [REMOTE_SETTINGS_PERMISSION]: enabled, routing: false, proxy: resolved.proxy }
+  const user = {
+    [REMOTE_SETTINGS_PERMISSION]: enabled,
+    routing: false,
+    routingMode: 'ordered',
+    routingPreference: 'balanced',
+    proxy: resolved.proxy,
+  }
   const calls = []
   const settings = {
     writable,
@@ -36,7 +44,15 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
       if (!registered) return []
       return [{
         ns: 'vision-router', value: structuredClone(resolved),
-        base: { [REMOTE_SETTINGS_PERMISSION]: false, routing: false, visionDepth: 'standard', visionDepthMaxCalls: 0, proxy: '' },
+        base: {
+          [REMOTE_SETTINGS_PERMISSION]: false,
+          routing: false,
+          routingMode: 'ordered',
+          routingPreference: 'balanced',
+          visionDepth: 'standard',
+          visionDepthMaxCalls: 0,
+          proxy: '',
+        },
         user: structuredClone(user), revision, applies: 'live', secrets: [],
       }]
     },
@@ -68,6 +84,8 @@ test('remote describe projects only the explicit safe capability allow-list', as
   assert.equal(result.ok, true)
   assert.equal(result.value.writable, true)
   assert.equal(result.value.view.value.routing, false)
+  assert.equal(result.value.view.value.routingMode, 'ordered')
+  assert.equal(result.value.view.value.routingPreference, 'balanced')
   assert.equal(result.value.view.value.visionDepth, 'standard')
   assert.equal(result.value.view.value.visionDepthMaxCalls, 0)
   for (const field of ['proxy', 'proxyHosts', 'artifactsDir', 'desktopScreenshot', 'httpProviders', 'localOllama', 'localLmStudio', 'stealth', 'wrapperRoute', 'chainRoute', REMOTE_SETTINGS_PERMISSION]) {
@@ -75,7 +93,11 @@ test('remote describe projects only the explicit safe capability allow-list', as
     assert.equal(Object.hasOwn(result.value.view.user ?? {}, field), false, field)
   }
   assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('routing'), true)
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('routingMode'), true)
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('routingPreference'), true)
   assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionDepthMaxCalls'), true)
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('capabilityRoutingShadow'), false)
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('capabilityRoutingStrategy'), false)
 })
 
 test('remote mutation allows safe fields and returns authoritative readback', async () => {
@@ -86,6 +108,21 @@ test('remote mutation allows safe fields and returns authoritative readback', as
   assert.equal(result.ok, true)
   assert.equal(result.value.view.value.routing, true)
   assert.equal(calls.filter((entry) => entry[0] === 'mutate').length, 1)
+})
+
+test('remote settings use the same routing mode and preference product vocabulary', async () => {
+  const { settings } = makeSettings()
+  const handler = createVisionRouterRemoteSettingsHandler(settings)
+  const mode = await handler('mutate', {
+    ops: [{ op: 'set', path: ['routingMode'], value: 'auto' }], expectedRevision: 7,
+  })
+  assert.equal(mode.ok, true)
+  assert.equal(mode.value.view.value.routingMode, 'auto')
+  const preference = await handler('mutate', {
+    ops: [{ op: 'set', path: ['routingPreference'], value: 'local' }], expectedRevision: 7,
+  })
+  assert.equal(preference.ok, true)
+  assert.equal(preference.value.view.value.routingPreference, 'local')
 })
 
 test('remote mutation keeps custom depth and cap on the same safe settings surface', async () => {
