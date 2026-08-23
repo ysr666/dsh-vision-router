@@ -4,9 +4,9 @@
 
 <h1 align="center">dsh-vision-router</h1>
 
-<p align="center"><strong>Paste an image and it just works — eyes for text-only agents on DeepSeek Harness. Free out of the box, no key, no Python, one command.</strong></p>
+<p align="center"><strong>Turn vision on when you need it — eyes for text-only agents on DeepSeek Harness. Free out of the box, no key, no Python, one command.</strong></p>
 
-<p align="center">DeepSeek keeps thinking; the built-in free vision chain and fourteen deep tools do the seeing. Image turns behave like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
+<p align="center">DeepSeek keeps thinking; the built-in free vision chain and fourteen deep tools do the seeing. When an image matters, enable the composer’s “👁 Vision” control and use image turns like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
@@ -137,24 +137,28 @@ If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorte
 > [!NOTE]
 > If you install the plugin **into a Web process that was already running long-term**, let that DSH Web process reload once so the plugin bundle itself is discovered. After the plugin is loaded, adding/removing models or changing wrapper scope **hot-updates without further DSH restarts**.
 
-### 2. Switch to a “+ Auto Vision” model group in chat
+### 2. Pick your normal model, then enable “👁 Vision” when needed
 
-Once loaded, the plugin discovers the model groups enabled under **Settings → Models** and creates same-name auto-vision entries. For example:
-```text
-opencode-go                 ← original model group, unchanged
-opencode-go + Auto Vision   ← choose this when sending images
-```
+The stock model selector in the lower-right corner still chooses your **brain/conversation model** — DeepSeek, Qwen, or any other ordinary route. Vision Router’s generated “+ Auto Vision” wrappers remain real Host routes for image admission, but are hidden from the stock picker and `/model` when ownership can be established safely.
+
+When you need image input, explicitly click **“👁 Vision”** beside the composer:
+
+- `👁 Vision`: the ordinary model is active and Vision is off;
+- `👁 Vision ✓`: Vision Router has switched the session to that model’s internal vision wrapper;
+- the mode persists across sends and **does not auto-reset**;
+- turning it off switches back to the same ordinary model; choosing a different ordinary model turns Vision off;
+- changing only reasoning effort keeps Vision on.
 
 > [!IMPORTANT]
-> **Before sending an image, open the model selector in the lower-right corner of the chat composer and choose a group marked “+ Auto Vision”.**
+> **Pasting or uploading an image does not enable Vision automatically. Before sending an image, make sure the control shows `👁 Vision ✓`.**
 >
-> Vision Router deliberately **does not modify the original model group**. If the conversation still uses the original text-only opencode / DeepSeek route, DSH can reject the image with “the current model does not support images” *before Vision Router gets a chance to handle it*. That is a model-entry selection issue, not a broken vision backend.
-
-The auto-vision group follows the live DSH model catalog. Adding models or changing wrapper scope does not require a restart.
+> The real wrapper route is still present underneath to satisfy DSH image admission. Hiding is presentation-only and fails open: if the browser cannot confidently prove a route belongs to Vision Router, that route remains visible rather than risking hiding a third-party provider.
 
 ### 3. Paste or upload the image
 
-After choosing the “+ Auto Vision” model group, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
+With “👁 Vision” enabled, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
+
+If the session already contains images, DSH may reject switching from a vision wrapper back to a text-only route. Vision Router does not bypass that Host rule: it shows a transient error using the same interaction style as the stock model selector, keeps the real current model unchanged, and leaves `👁 Vision ✓` reflecting the actual state so the session stays usable.
 
 The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
@@ -280,7 +284,7 @@ Failures are classified (region / tos / quota / rate-limit / context / network) 
 
 ## Stealth mode
 
-Stealth mode is **off by default** (explicit opt-in since issue #34): with it off, the official `deepseek-official` route stays untouched and image turns go through the visible "DeepSeek + 自动识图" wrapper entry in the picker.
+Stealth mode is **off by default** (explicit opt-in since issue #34): with it off, the official `deepseek-official` route stays untouched. When you need images, the composer’s “👁 Vision” control switches to the internal DeepSeek wrapper, which is hidden from the stock picker and `/model` presentation by default.
 
 With stealth on, the plugin takes over the official `deepseek-official` route: the model picker looks exactly like stock (same DeepSeek group, same model names), but each entry is the auto-vision wrapper that declares image input and delegates text turns to a rebuilt native DeepSeek adapter (same `llm-deepseek` settings section and credentials). Old sessions keep working through the hidden `deepseek-vision` alias. The takeover requires the stock row to be absent — disable it in your profile patch layer (`~/.dsh/profiles/<profile>/cordis.patch.yml`):
 
@@ -290,26 +294,26 @@ With stealth on, the plugin takes over the official `deepseek-official` route: t
   disabled: true
 ```
 
-With the stock row present, the plugin falls back to the visible wrapper entry. Conversely, with stealth off but the stock row still disabled, the plugin performs a keep-alive takeover so the DeepSeek models don't vanish (the settings card explains this); to restore the fully official route, flip the `disabled` above back to `false` and restart.
+With the stock row present, the plugin keeps the official route and uses the internal wrapper through “👁 Vision”. Conversely, with stealth off but the stock row still disabled, the plugin performs a keep-alive takeover so the DeepSeek models don't vanish (the settings card explains this); to restore the fully official route, flip the `disabled` above back to `false` and restart.
 
-> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes such as opencode are auto-wrapped into “+ Auto Vision” groups by default.
+> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes such as opencode also receive internal vision wrappers by default, used through the composer toggle rather than a second user-facing model group.
 
-## Auto-vision model groups and manual wrappers
+## Auto-vision wrappers and manual scope
 
-`autoWrapProviders` is on by default. The plugin discovers the provider/model entries currently enabled under **Settings → Models** and registers a same-name “+ Auto Vision” model group for them. **The original group is never changed**: choose the auto-vision group for images, or keep using the original group for plain text. DSH `llm/adapters-updated` events are synced live, so adding/removing models does not require a restart.
+`autoWrapProviders` is on by default. The plugin discovers the provider/model entries currently enabled under **Settings → Models** and registers matching internal vision wrappers. **The original group is never changed.** Ordinary users do not need to find or manually select these routes: when ownership is confidently established, the wrappers are hidden from the stock picker and `/model`, and the composer’s “👁 Vision” control switches to them as needed. DSH `llm/adapters-updated` events are synced live, so adding/removing models does not require a restart.
 
 `wrappedProviders` is an **optional manual scope control**, not a required setup step. Use it only when:
 
-1. automatic wrapping is off and you want to pick which provider/models receive an auto-vision entry; or
-2. automatic wrapping remains on but one provider should expose only selected models in its “+ Auto Vision” group.
+1. automatic wrapping is off and you want to choose which provider/models can use “👁 Vision”; or
+2. automatic wrapping remains on but one provider should generate wrappers for only selected models.
 
-The settings card uses provider + model dropdowns; an empty model means every model on that route. Add multiple rows to select multiple models. Changes apply immediately with no restart.
+The settings card uses provider + model dropdowns; an empty model means every model on that route. Add multiple rows to select multiple models. Changes apply immediately with no restart. If browser-side ownership or exact mirroring cannot be established, presentation hiding fails open so a third-party route is never hidden merely for cosmetic cleanliness.
 
 ## Web settings
 
-The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**. Its top callout spells out the only step most users need: **return to chat → lower-right model selector → choose a “+ Auto Vision” model group → send the image**. The remaining controls are advanced customization:
+The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**. Its top callout spells out the only step most users need: **return to chat → choose your normal conversation model → click “👁 Vision” beside the composer → confirm ✓ → send the image**. The remaining controls are advanced customization:
 
-- **Auto-create “+ Auto Vision” model groups**: enabled by default; follows the live model catalog with no restart;
+- **Auto-create vision wrappers**: enabled by default; follows the live model catalog with no restart, and confidently owned internal wrappers are hidden from the stock picker;
 - **Manual auto-vision scope (optional)**: only for disabling auto-wrap or limiting selected models;
 - **Vision backend chain**: the real image-capable models used by `vision_describe` and friends; the built-in free Qwen is normally enough, and text-only models should not be placed here;
 - switches for legacy whole-turn routing, vision tools, image-block rewriting and stealth mode (official DeepSeek route only);
@@ -334,8 +338,8 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `fallbacks` | `[]` | backup image models for the shorthand vision provider |
 | `providers` | built-in free `vision-http` pair | multi-provider **vision backend** chain `{ provider, model, fallbacks[] }`, tried in order; do not put text-only models here |
 | `httpProviders` | built-in OVH entry | direct OpenAI-compatible endpoints `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `autoWrapProviders` | `true` | discover enabled provider/models and live-sync same-name “+ Auto Vision” groups; original groups stay unchanged |
-| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | optional manual wrapper scope `{ provider, models[] }`, used after disabling auto-wrap or to restrict one provider to selected models; changes apply live, no restart |
+| `autoWrapProviders` | `true` | discover enabled provider/models and live-sync their internal vision wrappers; confidently owned wrappers are hidden from the stock model picker while original groups stay unchanged |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | optional manual wrapper scope `{ provider, models[] }`, used after disabling auto-wrap or to restrict which models can enter an internal wrapper through “👁 Vision”; changes apply live, no restart |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |

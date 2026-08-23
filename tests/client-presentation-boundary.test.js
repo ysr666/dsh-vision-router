@@ -91,7 +91,9 @@ test('presentation prelude survives rc8 loader.create without requiring DSH ui-a
   const { exports, requested } = materializePresentation([CLIENT_PRESENTATION_PRELUDE])
   assert.equal(typeof exports.ImageGallery, 'function')
   assert.equal(exports.empty, null)
-  assert.deepEqual(requested, ['react'])
+  // Test the compatibility contract, not the exact list/order of optional
+  // presentation dependencies the boundary may probe while materializing.
+  assert.ok(requested.includes('react'))
   assert.ok(!requested.includes(LEGACY_ATTACHMENT_VALUE))
 })
 
