@@ -16,6 +16,7 @@ import { renderCapabilityBenchmarkFixturePng } from '../lib/vision-capability-be
 test('core benchmark suite v5 is generated locally and includes bilingual OCR coverage', () => {
   assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 5)
   assert.match(CAPABILITY_BENCHMARK_RENDERER_SCOPE, /^[^/]+\/[^/]+$/)
+  assert.match(CAPABILITY_BENCHMARK_RENDERER_SCOPE, /-proof-badge-v2$/)
   assert.deepEqual(CORE_BENCHMARK_INTENTS, ['structured', 'ocr', 'grounding', 'document', 'general'])
   const fixtures = listCapabilityBenchmarkFixtures()
   assert.equal(fixtures.length, 6)

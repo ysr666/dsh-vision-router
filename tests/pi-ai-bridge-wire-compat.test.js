@@ -22,7 +22,7 @@ function profile({
           provider,
           api: 'openai-completions',
           baseUrl,
-          compat: { maxTokensField },
+          ...(maxTokensField === null ? {} : { compat: { maxTokensField } }),
         }]
       },
     },
@@ -71,6 +71,46 @@ test('resolves rc1 model-level maxTokensField and route headers by exact endpoin
     maxTokensField: 'max_completion_tokens',
     headers: { 'x-tenant': 'alpha' },
   })
+})
+
+test('resolves pi-ai detected Z.ai max_completion_tokens when no explicit compat override exists', () => {
+  const profiles = new Map([
+    ['zhipu-glm', profile({
+      provider: 'zhipu-glm',
+      model: 'glm-4.6v',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      maxTokensField: null,
+      headers: {},
+    })],
+  ])
+  const facts = resolvePiAiBridgeWireFacts(
+    fakeCtx(profiles),
+    'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    'glm-4.6v',
+  )
+  assert.deepEqual(facts, {
+    provider: 'zhipu-glm',
+    model: 'glm-4.6v',
+    maxTokensField: 'max_completion_tokens',
+    headers: {},
+  })
+})
+
+test('keeps pi-ai detected max_tokens vendors unchanged when no explicit override exists', () => {
+  const profiles = new Map([
+    ['moonshotai-cn', profile({
+      provider: 'moonshotai-cn',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      maxTokensField: null,
+      headers: {},
+    })],
+  ])
+  const facts = resolvePiAiBridgeWireFacts(
+    fakeCtx(profiles),
+    'https://api.moonshot.cn/v1/chat/completions',
+    'vision-model',
+  )
+  assert.equal(facts.maxTokensField, 'max_tokens')
 })
 
 test('ambiguous aliases with different wire facts fail closed', () => {

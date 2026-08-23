@@ -119,6 +119,8 @@ test('suite v5 visual proof is benchmark metadata and an explicit sole output-fo
     const fixture = capabilityBenchmarkFixture(intent)
     const hardened = hardenCapabilityBenchmarkFixture(fixture, 'A1B2C3D4')
     assert.match(hardened.svg, /VR-CODE:A1B2C3D4/, `${intent} did not render the proof badge`)
+    assert.match(hardened.svg, /<rect x="442" y="8" width="314" height="42"/)
+    assert.match(hardened.svg, /<text x="456" y="36" font-family="ui-monospace,[^"]+" font-size="18"/)
     assert.doesNotMatch(hardened.prompt, /A1B2C3D4/, `${intent} leaked the random proof code into the prompt`)
     assert.match(hardened.prompt, /not part of the task content/i, `${intent} did not exclude proof metadata from the task body`)
     assert.match(hardened.prompt, /transcription order, all-visible-text, JSON-only, answer-only, or no-prose/i)
