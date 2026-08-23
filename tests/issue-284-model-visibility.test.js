@@ -255,7 +255,7 @@ test('issue #284 changing only reasoning effort while Vision is on keeps the hid
   assert.equal(selected[0].reasoningEffort, 'low')
 })
 
-test('issue #284 selecting a different model while Vision is on switches the hidden wrapper and keeps Vision on', async () => {
+test('issue #284 selecting a different model while Vision is on leaves the wrapper and turns Vision off', async () => {
   const input = state({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
     groups: [
@@ -270,11 +270,11 @@ test('issue #284 selecting a different model while Vision is on switches the hid
 
   await visibleDirectory.select({ provider: 'opencode-go', model: 'other-model' })
   assert.equal(selected.length, 1)
-  assert.equal(selected[0].provider, 'opencode-go-vision')
+  assert.equal(selected[0].provider, 'opencode-go')
   assert.equal(selected[0].model, 'other-model')
 })
 
-test('issue #284 selecting another provider while Vision is on follows that provider hidden twin', async () => {
+test('issue #284 selecting another provider while Vision is on submits that ordinary route and turns Vision off', async () => {
   const input = state({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
     groups: [
@@ -291,12 +291,12 @@ test('issue #284 selecting another provider while Vision is on follows that prov
 
   await visibleDirectory.select({ provider: 'openrouter', model: 'qwen3-vl', reasoningEffort: 'low' })
   assert.equal(selected.length, 1)
-  assert.equal(selected[0].provider, 'openrouter-vision')
+  assert.equal(selected[0].provider, 'openrouter')
   assert.equal(selected[0].model, 'qwen3-vl')
   assert.equal(selected[0].reasoningEffort, 'low')
 })
 
-test('issue #284 selecting an unwrapped model while Vision is on cannot silently turn Vision off', async () => {
+test('issue #284 selecting an unwrapped ordinary model while Vision is on is allowed and turns Vision off', async () => {
   const input = state({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
     groups: [
@@ -311,11 +311,10 @@ test('issue #284 selecting an unwrapped model while Vision is on cannot silently
     wrapperRoute: 'deepseek-vision',
   })
 
-  await assert.rejects(
-    visibleDirectory.select({ provider: 'plain-provider', model: 'plain-model' }),
-    /识图模式/,
-  )
-  assert.equal(selected.length, 0)
+  await visibleDirectory.select({ provider: 'plain-provider', model: 'plain-model' })
+  assert.equal(selected.length, 1)
+  assert.equal(selected[0].provider, 'plain-provider')
+  assert.equal(selected[0].model, 'plain-model')
 })
 
 test('issue #284 visibility prelude survives the rc8 queue-to-live loader replacement', () => {
