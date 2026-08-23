@@ -13,8 +13,8 @@ import {
 import { capabilityEvidenceFingerprint } from '../lib/vision-capability-identity.js'
 import { renderCapabilityBenchmarkFixturePng } from '../lib/vision-capability-benchmark-service.js'
 
-test('core benchmark suite v3 is generated locally and includes bilingual OCR coverage', () => {
-  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 3)
+test('core benchmark suite v4 is generated locally and includes bilingual OCR coverage', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 4)
   assert.match(CAPABILITY_BENCHMARK_RENDERER_SCOPE, /^[^/]+\/[^/]+$/)
   assert.deepEqual(CORE_BENCHMARK_INTENTS, ['structured', 'ocr', 'grounding', 'document', 'general'])
   const fixtures = listCapabilityBenchmarkFixtures()
