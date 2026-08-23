@@ -5,6 +5,7 @@ import {
   runV2SafeAcceptance,
 } from '../lib/v2-acceptance-service.js'
 import {
+  inspectProviderEvidence,
   inspectPublicSurfacePayload,
   parseAcceptanceArgs,
 } from '../lib/v2-acceptance-cli.js'
@@ -160,7 +161,7 @@ test('safe J0a acceptance refuses to mutate settings without explicit consent', 
   assert.deepEqual(runtime.settings.user(), {})
 })
 
-test('provider J0a acceptance requires a second explicit grant for chargeable cloud candidates', async () => {
+test('provider J0b acceptance requires a second explicit grant for chargeable cloud candidates', async () => {
   const candidate = {
     key: 'http:cloud/model',
     provider: 'vision-http',
@@ -203,20 +204,111 @@ test('provider J0a acceptance requires a second explicit grant for chargeable cl
   assert.equal(report.chargeableCloudAuthorized, true)
 })
 
-test('acceptance CLI requires explicit safe consent and provider flags compose monotonically', () => {
+test('acceptance CLI keeps J0a mutation authority independent from J0b provider authority', () => {
   assert.equal(parseAcceptanceArgs(['--accept-safe-mutations']).acceptedSafeMutations, true)
-  assert.throws(() => parseAcceptanceArgs(['--accept-safe-mutations', '--provider', 'x/y']), /allow-provider-requests/)
-  const options = parseAcceptanceArgs([
-    '--accept-safe-mutations',
+  assert.throws(() => parseAcceptanceArgs(['--provider', 'x/y']), /allow-provider-requests/)
+
+  const providerOnly = parseAcceptanceArgs([
     '--provider', 'http:cloud/model',
     '--allow-provider-requests',
     '--allow-chargeable-cloud',
     '--mode', 'full',
   ])
-  assert.equal(options.provider, 'http:cloud/model')
-  assert.equal(options.acceptedProviderRequests, true)
-  assert.equal(options.acceptedChargeableCloud, true)
-  assert.equal(options.mode, 'full')
+  assert.equal(providerOnly.acceptedSafeMutations, false)
+  assert.equal(providerOnly.provider, 'http:cloud/model')
+  assert.equal(providerOnly.acceptedProviderRequests, true)
+  assert.equal(providerOnly.acceptedChargeableCloud, true)
+  assert.equal(providerOnly.mode, 'full')
+
+  const list = parseAcceptanceArgs(['--list-candidates'])
+  assert.equal(list.listCandidates, true)
+  assert.equal(list.acceptedSafeMutations, false)
+  assert.throws(() => parseAcceptanceArgs(['--list-candidates', '--accept-safe-mutations']), /read-only/)
+})
+
+test('J0b evidence inspection proves exact identity, fresh requested axes, and preserves unrelated axes', () => {
+  const key = 'vision-http/local/model'
+  const fingerprint = 'ep2_0123456789abcdef0123456789abcdef'
+  const beforeSnapshot = {
+    suiteRevision: 3,
+    candidates: [{
+      key,
+      provider: 'vision-http',
+      model: 'local/model',
+      fingerprint,
+      measured: {
+        suiteRevision: 3,
+        scores: { document: 0.75 },
+        measuredAtByAxis: { document: 1000 },
+        benchmarkMedianLatencyMs: { document: 55 },
+        fixtureCountByAxis: { document: 1 },
+        measuredAxes: ['document'],
+      },
+    }],
+  }
+  const afterSnapshot = {
+    suiteRevision: 3,
+    candidates: [{
+      key,
+      provider: 'vision-http',
+      model: 'local/model',
+      fingerprint,
+      measured: {
+        suiteRevision: 3,
+        scores: { document: 0.75, ocr: 0.9, general: 0.8 },
+        measuredAtByAxis: { document: 1000, ocr: 10050, general: 10060 },
+        benchmarkMedianLatencyMs: { document: 55, ocr: 100, general: 120 },
+        fixtureCountByAxis: { document: 1, ocr: 2, general: 1 },
+        measuredAxes: ['ocr', 'document', 'general'],
+      },
+    }],
+  }
+  const providerReport = {
+    ok: true,
+    candidate: { key, provider: 'vision-http', model: 'local/model' },
+  }
+  const result = inspectProviderEvidence({
+    beforeSnapshot,
+    afterSnapshot,
+    providerReport,
+    key,
+    mode: 'quick',
+    startedAt: 10000,
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.cases.map((entry) => [entry.id, entry.status]), [
+    ['J0B-exact-identity', 'pass'],
+    ['J0B-capability-evidence', 'pass'],
+    ['J0B-axis-scope', 'pass'],
+  ])
+})
+
+test('J0b evidence inspection catches identity drift and failed runs must preserve old evidence', () => {
+  const key = 'vision-http/cloud/model'
+  const before = {
+    suiteRevision: 3,
+    candidates: [{
+      key,
+      provider: 'vision-http',
+      model: 'cloud/model',
+      fingerprint: 'ep2_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      measured: { suiteRevision: 3, scores: { ocr: 0.5 }, measuredAtByAxis: { ocr: 100 }, measuredAxes: ['ocr'] },
+    }],
+  }
+  const after = structuredClone(before)
+  after.candidates[0].fingerprint = 'ep2_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+  const failed = inspectProviderEvidence({
+    beforeSnapshot: before,
+    afterSnapshot: after,
+    providerReport: { ok: false, candidate: { key, provider: 'vision-http', model: 'cloud/model' } },
+    key,
+    mode: 'quick',
+    startedAt: 1000,
+  })
+  const byId = new Map(failed.cases.map((entry) => [entry.id, entry]))
+  assert.equal(byId.get('J0B-exact-identity')?.status, 'fail')
+  assert.equal(byId.get('J0B-failure-preserves-evidence')?.status, 'pass')
+  assert.equal(failed.ok, false)
 })
 
 test('public acceptance surface scanner allows fingerprints but rejects secrets and raw URLs', () => {
