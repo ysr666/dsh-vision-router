@@ -113,6 +113,23 @@ test('keeps pi-ai detected max_tokens vendors unchanged when no explicit overrid
   assert.equal(facts.maxTokensField, 'max_tokens')
 })
 
+test('does not infer vendor token semantics from a lookalike URL hostname', () => {
+  const profiles = new Map([
+    ['custom', profile({
+      provider: 'custom',
+      baseUrl: 'https://gateway.ai.cloudflare.com.attacker.invalid/v1',
+      maxTokensField: null,
+      headers: {},
+    })],
+  ])
+  const facts = resolvePiAiBridgeWireFacts(
+    fakeCtx(profiles),
+    'https://gateway.ai.cloudflare.com.attacker.invalid/v1/chat/completions',
+    'vision-model',
+  )
+  assert.equal(facts.maxTokensField, 'max_completion_tokens')
+})
+
 test('ambiguous aliases with different wire facts fail closed', () => {
   const profiles = new Map([
     ['a', profile({ provider: 'a', maxTokensField: 'max_tokens' })],
