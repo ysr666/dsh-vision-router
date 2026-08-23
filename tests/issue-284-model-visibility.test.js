@@ -98,6 +98,20 @@ test('issue #284 never hides a third-party -vision lookalike that does not satis
   assert.equal(output.current?.provider, 'vendor-vision')
 })
 
+test('issue #284 never hides a nested -vision-vision lookalike because core cannot own that twin', () => {
+  const input = state({
+    current: { provider: 'studio-vision-vision', model: 'm' },
+    groups: [
+      group('studio-vision', 'Studio Vision', ['m']),
+      group('studio-vision-vision', 'Studio Vision + 自动识图', ['m']),
+    ],
+  })
+  const output = projectVisionModeDirectoryState(input, { autoWrapProviders: true })
+
+  assert.deepEqual(ids(output.groups), ['studio-vision', 'studio-vision-vision'])
+  assert.equal(output.current?.provider, 'studio-vision-vision')
+})
+
 test('issue #284 does not hide a generated-looking twin when auto wrapping is off and the source/model is not explicitly wrapped', () => {
   const input = state({
     current: { provider: 'vendor-vision', model: 'm' },
