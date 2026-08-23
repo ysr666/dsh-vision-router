@@ -6,7 +6,7 @@ import { createExactCapabilityInvoker } from '../lib/vision-capability-benchmark
 const SERVICE_URL = new URL('../lib/vision-capability-benchmark-service.js', import.meta.url)
 
 function fixture() {
-  return { id: 'budget-fixture', intent: 'general', svg: '<svg/>', prompt: 'answer briefly' }
+  return { id: 'budget-fixture', intent: 'general', svg: '<svg/>', prompt: 'answer briefly', expected: {} }
 }
 
 function visualProofHarness() {
