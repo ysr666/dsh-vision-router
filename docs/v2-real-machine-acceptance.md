@@ -78,13 +78,13 @@ J0b is a separate measurement-authority gate. It does **not** require `--accept-
 Read-only discovery makes no mutations and no provider requests:
 
 ```bash
-dsh-vision-router-acceptance --list-candidates
+node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js --list-candidates
 ```
 
 For machine-readable output:
 
 ```bash
-dsh-vision-router-acceptance --list-candidates --json
+node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js --list-candidates --json
 ```
 
 The output contains only public candidate metadata such as exact key, provider/model, local/cloud-cost warning, benchmarkability, secret-safe fingerprint, and currently measured axes.
@@ -94,7 +94,7 @@ The output contains only public candidate metadata such as exact key, provider/m
 For a local or otherwise non-charge-warning candidate:
 
 ```bash
-dsh-vision-router-acceptance \
+node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
   --provider <exact-backend-key> \
   --allow-provider-requests \
   --json
@@ -103,7 +103,7 @@ dsh-vision-router-acceptance \
 For a candidate marked as potentially chargeable cloud, a second explicit grant is required:
 
 ```bash
-dsh-vision-router-acceptance \
+node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
   --provider <exact-backend-key> \
   --allow-provider-requests \
   --allow-chargeable-cloud \
@@ -137,12 +137,34 @@ full       -> structured + ocr + document + grounding + general
 grounding  -> grounding
 ```
 
+## Benchmark visual-proof contract — suite v5
+
+Every scored fixture contains a random image-visible `VR-CODE` badge. The random code is not present in the text prompt; a provider that never inspects the image therefore cannot manufacture valid capability evidence by replaying known fixture answers.
+
+Real-machine testing exposed that the original universal proof instruction could conflict with the task format itself:
+
+- OCR asks for all task text in top-to-bottom order, while the badge is physically near the top of the image;
+- Structured/Document ask for `ONLY JSON`, while the proof must live outside the JSON body;
+- Grounding asks for a coordinate-only answer line, while the proof requires a second line.
+
+Suite v4 fixed the Grounding wording, and a real `zhipu-glm/glm-4.6v` Grounding run then completed successfully. However, a suite-v4 Quick run on the same known-working visual backend still failed visual proof, revealing that the conflict was cross-fixture rather than Grounding-only.
+
+Suite v5 makes the boundary explicit for **all** scored fixture families:
+
+```text
+VR-CODE badge = benchmark verification metadata, not task content
+requested answer body = obey the fixture's normal OCR / JSON / grounding / general contract
+final line = the sole permitted output-format exception: VR-CODE:<code>
+```
+
+The badge remains mandatory and image-only. It must not be included inside OCR task text or JSON task content, and the verifier still rejects a missing or incorrect proof. Because this changes the measurement prompt contract, suite v5 intentionally invalidates suite-v4 fingerprints/evidence rather than silently reusing them.
+
 ## Combining J0a and J0b
 
 Both grants may be supplied in one invocation when desired:
 
 ```bash
-dsh-vision-router-acceptance \
+node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
   --accept-safe-mutations \
   --provider <exact-backend-key> \
   --allow-provider-requests \
@@ -161,11 +183,13 @@ They remain independent internally: the J0a grant authorizes only temporary sett
 
 The zero-provider E01 probe proves that real DSH consumes the scoped Auto order and restores it correctly, but it intentionally does **not** invoke an actual visual provider. J0b proves exact real-provider measurement behavior, not end-to-end Auto selection on a real user visual call.
 
-Remaining real-machine evidence should therefore focus on bounded, explicitly authorized cases that add information not already proven by E01/CI, such as:
+After the suite-v5 contract change, remaining real-machine evidence should focus on:
 
+- re-establishing v5 Quick evidence on a known-working visual backend;
+- re-running v5 Grounding after Quick so `J0B-axis-scope` can non-vacuously prove `ocr/general` preservation;
 - one real visual call where measured/policy evidence actually changes the selected first backend;
 - live revocation or settings change immediately before a real provider call, proving configured-order fallback;
 - real adapter + direct-HTTP fallback behavior under the same execution scope;
-- browser diagnostics showing the execution state and selected order without leaking endpoint/credential material.
+- browser diagnostics showing execution state/order without leaking endpoint/credential material.
 
 Persistent behavioral learning remains prohibited because no authority for it exists.
