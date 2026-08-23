@@ -40,6 +40,7 @@ import { installCapabilityBenchmarkService } from './lib/vision-capability-bench
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
 import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
 import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
+import { installV2AcceptanceService } from './lib/v2-acceptance-service.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
   normalizeBackgroundMeasurementAuthority,
@@ -117,7 +118,6 @@ core.Config.set(
   'capabilityRoutingStrategy',
   z.union(['quality', 'balanced', 'speed', 'privacy']).default('balanced'),
 )
-
 // Settings surfaces and Host persistence must agree on this field. Keep the
 // permission on the public entry contract as well as index.js so a packaged
 // build cannot expose the new client toggle while registering an older Host
@@ -312,7 +312,7 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
-  installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
+  const benchmarkManager = installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
   })
@@ -320,6 +320,13 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
     store: capabilityStore,
     runtimePerformanceStore,
+  })
+  installV2AcceptanceService(backendRuntimeCtx, {
+    runtimeCtx: performanceCtx,
+    runtimePerformanceStore,
+    backgroundProfiler: backgroundProfiling.profiler,
+    benchmarkManager,
+    logger: logging.logger,
   })
   installTesseractExecFileCompat(backendRuntimeCtx)
 
