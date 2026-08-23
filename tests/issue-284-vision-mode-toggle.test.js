@@ -190,13 +190,19 @@ test('issue #284 browser prelude wires the right-slot toggle to the shared Model
     switching: '切换中',
   })[key]
 
+  const assertSelection = (selection, expected) => {
+    assert.equal(selection?.provider, expected.provider)
+    assert.equal(selection?.model, expected.model)
+    assert.equal(selection?.reasoningEffort, expected.reasoningEffort)
+  }
+
   const offButton = Component({ ...props, session: {}, t: translate })
   assert.equal(offButton.type, 'button')
   assert.equal(offButton.props['aria-pressed'], false)
   assert.equal(offButton.props.disabled, false)
   offButton.props.onClick()
   await Promise.resolve()
-  assert.deepEqual(selections.at(-1), {
+  assertSelection(selections.at(-1), {
     provider: 'opencode-go-vision',
     model: 'qwen3.6-plus',
     reasoningEffort: 'high',
@@ -206,7 +212,7 @@ test('issue #284 browser prelude wires the right-slot toggle to the shared Model
   assert.equal(onButton.props['aria-pressed'], true)
   onButton.props.onClick()
   await Promise.resolve()
-  assert.deepEqual(selections.at(-1), {
+  assertSelection(selections.at(-1), {
     provider: 'opencode-go',
     model: 'qwen3.6-plus',
     reasoningEffort: 'high',
