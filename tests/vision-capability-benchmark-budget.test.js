@@ -9,7 +9,21 @@ function fixture() {
   return { id: 'budget-fixture', intent: 'general', svg: '<svg/>', prompt: 'answer briefly' }
 }
 
-function adapterCtx(onCall) {
+function visualProofHarness() {
+  let challenge = ''
+  return {
+    renderFixture: async (value) => {
+      challenge = value.visualProofChallenge
+      return Buffer.from('png')
+    },
+    prove(text = 'ok') {
+      assert.match(challenge, /^[A-Z0-9-]{6,32}$/)
+      return `${text}\nVR-CODE:${challenge}`
+    },
+  }
+}
+
+function adapterCtx(onCall, prove) {
   return {
     get(name) {
       if (name === 'attachments') {
@@ -25,7 +39,7 @@ function adapterCtx(onCall) {
       stream(options) {
         onCall(options)
         return (async function* () {
-          yield { text: 'ok' }
+          yield { text: prove('ok') }
           yield { type: 'finish', reason: { kind: 'stop' } }
         })()
       },
@@ -46,6 +60,7 @@ test('default Full deadline exceeds six per-fixture deadlines instead of timing 
 
 test('HTTP-direct Benchmark caps completion output at 512 tokens', async () => {
   const calls = []
+  const proof = visualProofHarness()
   const backend = {
     name: 'cloud',
     model: 'vision-model',
@@ -58,14 +73,14 @@ test('HTTP-direct Benchmark caps completion output at 512 tokens', async () => {
     httpProvidersOf: () => [backend],
     callOpenAICompatible: async (_provider, _messages, options) => {
       calls.push(options)
-      return 'ok'
+      return proof.prove('ok')
     },
   }
   const invoke = createExactCapabilityInvoker({}, core, {
     provider: 'vision-http',
     model: 'cloud/vision-model',
   }, { httpProviders: [backend] }, {
-    renderFixture: async () => Buffer.from('png'),
+    renderFixture: proof.renderFixture,
   })
 
   await invoke({
@@ -81,7 +96,8 @@ test('HTTP-direct Benchmark caps completion output at 512 tokens', async () => {
 
 test('DSH-adapter Benchmark caps completion output at 512 tokens', async () => {
   const calls = []
-  const ctx = adapterCtx((options) => calls.push(options))
+  const proof = visualProofHarness()
+  const ctx = adapterCtx((options) => calls.push(options), proof.prove)
   const core = {
     localProvidersOf: () => [],
     httpProvidersOf: () => [],
@@ -91,7 +107,7 @@ test('DSH-adapter Benchmark caps completion output at 512 tokens', async () => {
     model: 'vision-model',
     evidenceScope: 'adapter-route',
   }, {}, {
-    renderFixture: async () => Buffer.from('png'),
+    renderFixture: proof.renderFixture,
   })
 
   await invoke({
