@@ -273,3 +273,68 @@ test('issue #284 selecting a different ordinary model while Vision is on leaves 
   assert.equal(selected[0].provider, 'opencode-go')
   assert.equal(selected[0].model, 'other-model')
 })
+
+test('issue #284 visibility prelude survives the rc8 queue-to-live loader replacement', () => {
+  const input = state({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus' },
+    groups: [
+      group('opencode-go', 'OpenCode Go', ['qwen3.6-plus']),
+      group('opencode-go-vision', 'OpenCode Go + 自动识图', ['qwen3.6-plus']),
+    ],
+  })
+  let registered
+  const loader = {
+    load(spec) { registered = spec; return spec },
+    create() {
+      this.load = function liveLoad(spec) { registered = spec; return spec }
+      return this
+    },
+  }
+  const context = {
+    window: { __ModuleLoader__: loader },
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    Math,
+    JSON,
+  }
+  vm.runInNewContext(VISION_MODEL_VISIBILITY_PRELUDE, context)
+  loader.create()
+  loader.load({
+    id: MODEL_SELECTION_TARGET,
+    factory() {
+      return {
+        apply(ctx) {
+          ctx.inject(['modelDirectories'], (scope) => {
+            const visible = scope.modelDirectories.directoryFor('session-1').store.getSnapshot()
+            assert.deepEqual(ids(visible.groups), ['opencode-go'])
+            assert.equal(visible.current?.provider, 'opencode-go')
+          })
+        },
+      }
+    },
+  })
+
+  const directory = {
+    store: { subscribe() { return () => {} }, getSnapshot() { return input } },
+    async load() { return input },
+    async select() {},
+  }
+  const models = { directoryFor() { return directory } }
+  const settings = {
+    subscribe() { return () => {} },
+    getSnapshot() { return { value: { autoWrapProviders: true } } },
+  }
+  assert.equal(typeof registered?.factory, 'function')
+  const plugin = registered.factory(() => ({}))
+  plugin.apply({
+    settingsScope: { bind() { return settings } },
+    inject(_deps, callback) {
+      callback({ modelDirectories: models, get() { return models } })
+    },
+  })
+})
