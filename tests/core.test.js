@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
+import { parseVersionComparator } from '../lib/version-range.js'
 import {
   mediaTypeOf,
   sniffMediaType,
@@ -2606,9 +2607,30 @@ test('versionSatisfies evaluates the plugin peer range shape', () => {
   // Alternatives and bare versions.
   assert.equal(versionSatisfies('0.34.5', '>=0.35.3 <1 || 0.34.5'), true)
   assert.equal(versionSatisfies('0.34.5', '0.34.5'), true)
+  assert.equal(versionSatisfies('0.35.3', '<=0.35.3'), true)
+  assert.equal(versionSatisfies('0.35.3', '>0.35.2'), true)
+  assert.equal(versionSatisfies('0.35.3', '>0.35.3'), false)
+  assert.equal(versionSatisfies('0.35.3', '=0.35.3'), true)
   assert.equal(versionSatisfies('0.34.5', ''), false)
   assert.equal(versionSatisfies('0.34.5', undefined), false)
   assert.equal(versionSatisfies(undefined, range), false)
+})
+
+test('version comparator parsing is linear and malformed ranges fail safe', () => {
+  assert.deepEqual(parseVersionComparator('>=0.35.3'), { op: '>=', version: '0.35.3' })
+  assert.deepEqual(parseVersionComparator('<=1'), { op: '<=', version: '1' })
+  assert.deepEqual(parseVersionComparator('>0.35.3'), { op: '>', version: '0.35.3' })
+  assert.deepEqual(parseVersionComparator('<1'), { op: '<', version: '1' })
+  assert.deepEqual(parseVersionComparator('=0.35.3'), { op: '=', version: '0.35.3' })
+  assert.deepEqual(parseVersionComparator('0.35.3'), { op: '=', version: '0.35.3' })
+
+  const adversarial = `>=${'1'.repeat(100_000)}x`
+  assert.equal(parseVersionComparator(adversarial).version.length, 100_001)
+  assert.equal(versionSatisfies('1.0.0', adversarial), false)
+
+  for (const malformed of ['>=', '<=', '>', '<', '=', '==1', '=>1', '>>1']) {
+    assert.equal(versionSatisfies('1.0.0', malformed), false)
+  }
 })
 
 // ── vision-backend capability recognition (Zhipu feedback) ──────────────────

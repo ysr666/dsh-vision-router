@@ -70,6 +70,10 @@ test('anthropicMediaType normalizes jpg to jpeg and passes others through', () =
 })
 
 test('stripTrailingSlashes handles adversarial slash runs without backtracking semantics', () => {
+  assert.equal(stripTrailingSlashes(''), '')
+  assert.equal(stripTrailingSlashes('////'), '')
+  assert.equal(stripTrailingSlashes('https://example.test/v1／'), 'https://example.test/v1／')
+
   const trailing = `https://example.test${'/'.repeat(100_000)}`
   assert.equal(stripTrailingSlashes(trailing), 'https://example.test')
 
