@@ -105,8 +105,8 @@ function successfulResult(backend) {
   }
 }
 
-test('suite v3 structured fixture keeps evaluator answer tokens out of the model prompt', () => {
-  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 3)
+test('suite v4 structured fixture keeps evaluator answer tokens out of the model prompt', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 4)
   const fixture = capabilityBenchmarkFixture('structured')
   assert.deepEqual(fixture.expected.tokens, ['STATUS', 'READY', 'Queue', '3 jobs', 'Latency', '820 ms'])
   for (const token of fixture.expected.tokens) {
