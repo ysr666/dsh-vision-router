@@ -339,7 +339,9 @@ test('Auto execution rechecks live authority after planning and refuses a stale 
   releaseResolve()
   const result = await running
   assert.deepEqual(result, ['custom/generic'])
-  assert.ok(fixture.logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('authority-revoked')))
+  assert.ok(fixture.logs.some((entry) =>
+    entry[0] === 'info' && entry.slice(1).some((part) => String(part).includes('authority-revoked')),
+  ))
 })
 
 test('Auto planner failure is fail-closed to the original configured order', async () => {
