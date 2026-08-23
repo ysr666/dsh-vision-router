@@ -41,6 +41,40 @@ test('visual proof still rejects wrong, embedded, or missing challenge material'
   }
 })
 
+test('visual proof failure diagnostics expose booleans only and never the random challenge or response text', () => {
+  const expected = 'A1B2C3D4'
+  const cases = [
+    {
+      output: '',
+      diagnostic: { responseEmpty: true, prefixSeen: false, expectedCodeSeen: false, proofLikeLineSeen: false },
+    },
+    {
+      output: 'Router Bench 7Q2',
+      diagnostic: { responseEmpty: false, prefixSeen: false, expectedCodeSeen: false, proofLikeLineSeen: false },
+    },
+    {
+      output: 'A1B2C3D4\nRouter Bench 7Q2',
+      diagnostic: { responseEmpty: false, prefixSeen: false, expectedCodeSeen: true, proofLikeLineSeen: false },
+    },
+    {
+      output: 'VR-CODE：A1B2C3D4\nRouter Bench 7Q2',
+      diagnostic: { responseEmpty: false, prefixSeen: true, expectedCodeSeen: true, proofLikeLineSeen: true },
+    },
+  ]
+  for (const entry of cases) {
+    assert.throws(
+      () => verifyAndStripBenchmarkVisualProof(entry.output, expected),
+      (error) => {
+        assert.equal(error?.code, 'CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED')
+        assert.deepEqual(error?.proofDiagnostic, entry.diagnostic)
+        assert.match(error?.message ?? '', /vr-proof responseEmpty=[01] prefixSeen=[01] expectedCodeSeen=[01] proofLikeLineSeen=[01]/)
+        assert.doesNotMatch(error?.message ?? '', /A1B2C3D4|Router Bench/)
+        return true
+      },
+    )
+  }
+})
+
 test('J0b proof failure identifies the exact Quick fixture from terminal progress without raw model output', () => {
   const key = 'zhipu-glm/glm-4.6v'
   const candidate = {
