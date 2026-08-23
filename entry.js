@@ -22,6 +22,7 @@ import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.j
 import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
 import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
+import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
@@ -267,6 +268,12 @@ export function apply(ctx, config = {}) {
   // gallery to the legacy 1.7.x client factory, so the official package is
   // never value-required at runtime and remains free to evolve independently.
   installClientPresentationBoundary(reconciledCtx)
+  // The Host keeps wrapper routes registered because image admission and the
+  // Vision toggle need their real identity. Hide only confidently owned
+  // wrapper groups from DSH's stock model-selection presentation and project an
+  // active wrapper back to its ordinary source label; uncertain routes stay
+  // visible rather than being guessed away.
+  installVisionModelVisibilityBoundary(reconciledCtx)
   // Keep endpoint-discovered ids private to Vision Router's settings client:
   // the prelude wraps this package's browser context rather than changing the
   // global llm.models response (which would expose UNKNOWN_MODEL entries in the
