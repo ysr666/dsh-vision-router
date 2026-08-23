@@ -6,6 +6,9 @@ import {
 } from '../lib/vision-capability-benchmark-service.js'
 import { resolveVisionCredential } from '../lib/vision-capability-identity.js'
 import { collectCapabilityShadowCandidates } from '../lib/vision-capability-shadow.js'
+import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
+
+const MANUAL_MEASUREMENT_AUTHORITY = grantManualMeasurementFromUserAction('local-ui')
 
 function localBackend() {
   return {
@@ -95,7 +98,7 @@ test('full benchmark preflights every fixture before making the first provider r
     },
     callDirect: async () => { providerCalls += 1; return 'must not run' },
   })
-  await manager.enqueue('vision-http/local-test/vision-model', 'full')
+  await manager.enqueue('vision-http/local-test/vision-model', 'full', false, MANUAL_MEASUREMENT_AUTHORITY)
   await manager.waitForIdle()
   const job = (await manager.snapshot()).jobs.find((entry) => entry.key === 'vision-http/local-test/vision-model')
   assert.equal(renders, 4)
@@ -154,7 +157,7 @@ test('benchmark timeout is a failed timeout, never a user cancellation', async (
       throw error
     },
   })
-  await manager.enqueue('vision-http/local-test/vision-model', 'quick')
+  await manager.enqueue('vision-http/local-test/vision-model', 'quick', false, MANUAL_MEASUREMENT_AUTHORITY)
   await manager.waitForIdle()
   const job = (await manager.snapshot()).jobs.find((entry) => entry.key === 'vision-http/local-test/vision-model')
   assert.equal(job.state, 'failed')

@@ -23,8 +23,11 @@ import {
   capabilityBenchmarkFixture,
   capabilityBenchmarkFingerprint,
 } from '../lib/vision-capability-benchmark.js'
+import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
 import { injectVisionRoutingDiagnosticsPrelude } from '../lib/vision-routing-preview-service.js'
 import { injectVisionRoutingSettingsPrelude } from '../lib/vision-routing-settings-prelude.js'
+
+const MANUAL_MEASUREMENT_AUTHORITY = grantManualMeasurementFromUserAction('local-ui')
 
 const SCRIPT_INJECTORS = Object.freeze([
   ['presentation boundary', 'data-vision-router-presentation-boundary', injectClientPresentationBoundary],
@@ -221,9 +224,9 @@ test('repeated queued cancel churn keeps benchmark job history bounded', async (
     },
   })
 
-  await manager.enqueue('vision-http/local-a/vision-a', 'quick')
+  await manager.enqueue('vision-http/local-a/vision-a', 'quick', false, MANUAL_MEASUREMENT_AUTHORITY)
   for (let i = 0; i < 200; i += 1) {
-    const queued = await manager.enqueue('http:cloud-b/vision-b', 'quick')
+    const queued = await manager.enqueue('http:cloud-b/vision-b', 'quick', false, MANUAL_MEASUREMENT_AUTHORITY)
     assert.equal((await manager.cancel(queued.job.id)).cancelled, true)
   }
   const mid = await manager.snapshot()

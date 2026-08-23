@@ -125,7 +125,10 @@ test('DSH 0.1.1 prepareCall compatibility composes with runtime performance obse
   }
   const coalesced = contextWithCoalescedAdapterUpdates(base)
   const store = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
-  const observed = contextWithVisionRuntimePerformance(coalesced, store, { now })
+  const observed = contextWithVisionRuntimePerformance(coalesced, store, {
+    now,
+    observationAllowed: () => true,
+  })
 
   observed.llm.registerAdapter(['deepseek-vision'], {
     async resolveModel(provider, model) { return { provider, id: model, name: model } },
