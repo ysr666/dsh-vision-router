@@ -1,8 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { mapVisionPresentationSelection } from '../lib/vision-model-visibility-boundary.js'
+import vm from 'node:vm'
+import {
+  VISION_MODEL_VISIBILITY_PRELUDE,
+  mapVisionPresentationSelection,
+} from '../lib/vision-model-visibility-boundary.js'
 import { resolveVisionModePair } from '../lib/client-presentation-boundary.js'
+
+const MODEL_SELECTION_TARGET = '@deepseek-ai/dsh-client-ui-model-selection'
 
 function group(id, name, models) {
   return {
@@ -35,6 +41,64 @@ function activeState() {
     },
     groups,
   }
+}
+
+function visibleDirectoryHarness(input, settingsValue) {
+  let registered
+  let visibleDirectory
+  const loader = {
+    load(spec) {
+      registered = spec
+      return spec
+    },
+  }
+  vm.runInNewContext(VISION_MODEL_VISIBILITY_PRELUDE, {
+    window: { __ModuleLoader__: loader },
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    Math,
+    JSON,
+  })
+
+  loader.load({
+    id: MODEL_SELECTION_TARGET,
+    factory() {
+      return {
+        apply(ctx) {
+          ctx.inject(['modelDirectories'], (scope) => {
+            visibleDirectory = scope.modelDirectories.directoryFor('session-1')
+          })
+        },
+      }
+    },
+  })
+
+  const rawDirectory = {
+    store: {
+      subscribe() { return () => {} },
+      getSnapshot() { return input },
+    },
+    async load() { return input },
+    async select() {},
+  }
+  const models = { directoryFor() { return rawDirectory } }
+  const settings = {
+    subscribe() { return () => {} },
+    getSnapshot() { return { value: settingsValue } },
+  }
+  const plugin = registered.factory(() => ({}))
+  plugin.apply({
+    settingsScope: { bind() { return settings } },
+    inject(_deps, callback) {
+      callback({ modelDirectories: models, get() { return models } })
+    },
+  })
+  return visibleDirectory
 }
 
 test('issue #284 changing model while Vision is on does not inherit the previous reasoning effort', () => {
@@ -135,6 +199,35 @@ test('issue #284 the -vision suffix chain still resolves back from the verified 
     mode: 'on',
     target: { provider: 'studio-vision', model: 'm' },
   })
+})
+
+test('issue #284 blocked sticky-Vision model changes expose an error through the projected directory store', async () => {
+  const input = {
+    current: { provider: 'alpha-vision', model: 'alpha-1' },
+    groups: [
+      group('alpha', 'Alpha', ['alpha-1']),
+      group('alpha-vision', 'Alpha + 自动识图', ['alpha-1']),
+      group('plain', 'Plain', ['plain-1']),
+    ],
+    status: 'ready',
+    error: null,
+    failures: [],
+    routable: true,
+  }
+  const visibleDirectory = visibleDirectoryHarness(input, {
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'alpha', models: [] }],
+    wrapperRoute: 'deepseek-vision',
+  })
+
+  await assert.rejects(
+    visibleDirectory.select({ provider: 'plain', model: 'plain-1' }),
+    /识图模式/,
+  )
+  const visible = visibleDirectory.store.getSnapshot()
+  assert.equal(visible.status, 'error')
+  assert.match(visible.error, /识图模式已开启/)
+  assert.equal(visible.current.provider, 'alpha')
 })
 
 test('issue #284 guide copy no longer claims that choosing a normal model disables sticky Vision mode', () => {
