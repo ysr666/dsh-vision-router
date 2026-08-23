@@ -6,6 +6,7 @@ import {
   CLIENT_PRESENTATION_PRELUDE,
   resolveVisionModePair,
 } from '../lib/client-presentation-boundary.js'
+import { projectVisionModeDirectoryState } from '../lib/vision-model-visibility-boundary.js'
 
 const deepseekGroups = (routes = ['relay-auto-vision']) => [
   {
@@ -258,4 +259,148 @@ test('issue #284 browser toggle infers a unique custom wrapper when settings sco
   button.props.onClick()
   await Promise.resolve()
   assert.equal(selections.at(-1)?.provider, 'relay-auto-vision')
+})
+
+test('issue #284 explicit empty wrapperRoute disables DeepSeek inference even if a stale wrapper is still listed', () => {
+  const groups = deepseekGroups(['deepseek-vision'])
+  const config = { wrapperRoute: '' }
+
+  assert.deepEqual(resolveVisionModePair(groups, {
+    provider: 'deepseek-official',
+    model: 'deepseek-v4-pro',
+  }, config), { mode: 'unavailable' })
+  assert.deepEqual(resolveVisionModePair(groups, {
+    provider: 'deepseek-vision',
+    model: 'deepseek-v4-pro',
+  }, config), { mode: 'unavailable' })
+
+  const projected = projectVisionModeDirectoryState({
+    current: { provider: 'deepseek-vision', model: 'deepseek-v4-pro' },
+    groups,
+    status: 'ready',
+    error: null,
+  }, config)
+  assert.deepEqual(projected.groups.map((entry) => entry.id), ['deepseek-official', 'deepseek-vision'])
+  assert.equal(projected.current.provider, 'deepseek-vision')
+})
+
+test('issue #284 explicit wrappedProviders model filter narrows auto-wrap during stale directory transitions', () => {
+  const config = {
+    autoWrapProviders: true,
+    wrappedProviders: [{ provider: 'opencode-go', models: ['qwen3.6-plus'] }],
+  }
+
+  assert.equal(resolveVisionModePair(genericGroups, {
+    provider: 'opencode-go',
+    model: 'qwen3.6-plus',
+  }, config).mode, 'off')
+  assert.deepEqual(resolveVisionModePair(genericGroups, {
+    provider: 'opencode-go',
+    model: 'minimax-m2.7',
+  }, config), { mode: 'unavailable' })
+
+  const projected = projectVisionModeDirectoryState({
+    current: { provider: 'opencode-go', model: 'qwen3.6-plus' },
+    groups: genericGroups,
+    status: 'ready',
+    error: null,
+  }, config)
+  assert.deepEqual(projected.groups.map((entry) => entry.id), ['opencode-go', 'opencode-go-vision'])
+})
+
+test('issue #284 settings-unavailable useSyncExternalStore fallback snapshot is referentially stable', () => {
+  let registered
+  const loader = {
+    load(spec) {
+      registered = spec
+      return spec
+    },
+  }
+  const window = { __ModuleLoader__: loader }
+  vm.runInNewContext(CLIENT_PRESENTATION_PRELUDE, {
+    window,
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    Proxy,
+    Reflect,
+    console,
+  })
+
+  const snapshot = {
+    current: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
+    groups: deepseekGroups(['deepseek-vision']),
+    status: 'ready',
+    error: null,
+  }
+  const directory = {
+    store: {
+      subscribe() { return () => {} },
+      getSnapshot() { return snapshot },
+    },
+    async select() {},
+  }
+
+  const React = {
+    Fragment: Symbol('Fragment'),
+    createElement(type, props, ...children) { return { type, props: props ?? {}, children } },
+    useState(initial) { return [initial, () => {}] },
+    useEffect() {},
+    useSyncExternalStore(_subscribe, getSnapshot) {
+      const first = getSnapshot()
+      const second = getSnapshot()
+      if (first !== second) throw new Error('useSyncExternalStore snapshot getter returned a fresh object')
+      return first
+    },
+  }
+
+  loader.load({
+    id: 'dsh-vision-router',
+    factory(require) {
+      require('@deepseek-ai/dsh-client-ui-attachment')
+      return { apply() {} }
+    },
+  })
+  const plugin = registered.factory((id) => {
+    if (id === 'react') return React
+    throw new Error(`unexpected host value request: ${id}`)
+  })
+
+  let injection
+  plugin.apply({
+    locale: { register() { return () => {} } },
+    effect(run) { return run() },
+    inject(dependencies, callback) { injection = { dependencies, callback } },
+  })
+
+  let registration
+  let Component
+  injection.callback({
+    modelDirectories: { directoryFor() { return directory } },
+    effect(run) { return run() },
+    slots: {
+      inject(_name, entries) {
+        Array.from(entries())
+        return () => {}
+      },
+      register(options, component) {
+        registration = options
+        Component = component
+        return () => {}
+      },
+    },
+  })
+
+  const props = registration.inject('session-1')
+  assert.doesNotThrow(() => Component({
+    ...props,
+    session: {},
+    t(key) {
+      return ({ label: '识图', enable: '开启', disable: '关闭', unavailable: '不可用', loading: '加载中', switching: '切换中' })[key] ?? key
+    },
+  }))
 })
