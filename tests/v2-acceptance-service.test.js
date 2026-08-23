@@ -54,7 +54,18 @@ function createLlm() {
   const adapters = new Map()
   return {
     registerAdapter(providers, adapter) {
-      for (const provider of providers) adapters.set(provider, adapter)
+      // Mirror the released DSH adapter registration contract closely enough
+      // that J0a cannot go green with a duck-typed adapter the real Host rejects.
+      assert.equal(typeof adapter?.providerInfo, 'function')
+      assert.equal(typeof adapter?.providerRetryPolicy, 'function')
+      assert.equal(typeof adapter?.listModels, 'function')
+      assert.equal(typeof adapter?.resolveModel, 'function')
+      assert.equal(typeof adapter?.stream, 'function')
+      for (const provider of providers) {
+        const info = adapter.providerInfo(provider)
+        assert.equal(info?.id, provider)
+        adapters.set(provider, adapter)
+      }
       return () => {
         for (const provider of providers) if (adapters.get(provider) === adapter) adapters.delete(provider)
       }
