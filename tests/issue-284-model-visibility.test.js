@@ -255,7 +255,7 @@ test('issue #284 changing only reasoning effort while Vision is on keeps the hid
   assert.equal(selected[0].reasoningEffort, 'low')
 })
 
-test('issue #284 selecting a different ordinary model while Vision is on leaves the wrapper and turns Vision off', async () => {
+test('issue #284 selecting a different model while Vision is on switches the hidden wrapper and keeps Vision on', async () => {
   const input = state({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
     groups: [
@@ -270,8 +270,52 @@ test('issue #284 selecting a different ordinary model while Vision is on leaves 
 
   await visibleDirectory.select({ provider: 'opencode-go', model: 'other-model' })
   assert.equal(selected.length, 1)
-  assert.equal(selected[0].provider, 'opencode-go')
+  assert.equal(selected[0].provider, 'opencode-go-vision')
   assert.equal(selected[0].model, 'other-model')
+})
+
+test('issue #284 selecting another provider while Vision is on follows that provider hidden twin', async () => {
+  const input = state({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    groups: [
+      group('opencode-go', 'OpenCode Go', ['qwen3.6-plus']),
+      group('opencode-go-vision', 'OpenCode Go + 自动识图', ['qwen3.6-plus']),
+      group('openrouter', 'openrouter', ['qwen3-vl']),
+      group('openrouter-vision', 'openrouter + 自动识图', ['qwen3-vl']),
+    ],
+  })
+  const { visibleDirectory, selected } = visibilityPluginHarness(input, {
+    autoWrapProviders: true,
+    wrapperRoute: 'deepseek-vision',
+  })
+
+  await visibleDirectory.select({ provider: 'openrouter', model: 'qwen3-vl', reasoningEffort: 'low' })
+  assert.equal(selected.length, 1)
+  assert.equal(selected[0].provider, 'openrouter-vision')
+  assert.equal(selected[0].model, 'qwen3-vl')
+  assert.equal(selected[0].reasoningEffort, 'low')
+})
+
+test('issue #284 selecting an unwrapped model while Vision is on cannot silently turn Vision off', async () => {
+  const input = state({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    groups: [
+      group('opencode-go', 'OpenCode Go', ['qwen3.6-plus']),
+      group('opencode-go-vision', 'OpenCode Go + 自动识图', ['qwen3.6-plus']),
+      group('plain-provider', 'Plain Provider', ['plain-model']),
+    ],
+  })
+  const { visibleDirectory, selected } = visibilityPluginHarness(input, {
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'opencode-go', models: [] }],
+    wrapperRoute: 'deepseek-vision',
+  })
+
+  await assert.rejects(
+    visibleDirectory.select({ provider: 'plain-provider', model: 'plain-model' }),
+    /识图模式/,
+  )
+  assert.equal(selected.length, 0)
 })
 
 test('issue #284 visibility prelude survives the rc8 queue-to-live loader replacement', () => {
