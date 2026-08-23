@@ -18,6 +18,67 @@ test('vision tool runtime boundary never proxies unrelated injected child contex
   assert.equal(seen, webChild, 'rc6 route/effect ownership depends on exact child identity')
 })
 
+test('vision_present registration accepts host originalDimensions without loosening strict output schema', () => {
+  let registered
+  const ctx = {
+    tools: {
+      register(def) {
+        registered = def
+        return () => {}
+      },
+    },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(ctx)
+  const original = {
+    name: 'vision_present',
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          attachment: {
+            type: 'object',
+            properties: {
+              attachmentId: { type: 'string' },
+              mediaType: { type: 'string' },
+              bytes: { type: 'number' },
+              width: { type: 'number' },
+              height: { type: 'number' },
+              name: { type: 'string' },
+            },
+            required: ['attachmentId', 'mediaType', 'bytes', 'width', 'height'],
+            additionalProperties: false,
+          },
+        },
+        required: ['attachment'],
+        additionalProperties: false,
+      },
+    },
+    async execute() { return {} },
+  }
+
+  wrapped.tools.register(original)
+
+  assert.ok(registered)
+  const attachment = registered.output.schema.properties.attachment
+  assert.equal(attachment.additionalProperties, false)
+  assert.deepEqual(attachment.required, ['attachmentId', 'mediaType', 'bytes', 'width', 'height'])
+  assert.equal(original.output.schema.properties.attachment.properties.originalDimensions, undefined)
+  assert.deepEqual(attachment.properties.originalDimensions, {
+    type: 'object',
+    properties: {
+      width: { type: 'integer' },
+      height: { type: 'integer' },
+    },
+    required: ['width', 'height'],
+    additionalProperties: false,
+  })
+  assert.equal(
+    attachment.required.includes('originalDimensions'),
+    false,
+    'originalDimensions is optional and appears only when the host downsizes the image',
+  )
+})
+
 test('entry keeps prepareCall, tool runtime, session policy bridge, structured hardening and backend runtime policy in final order', async () => {
   const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
