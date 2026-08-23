@@ -105,13 +105,29 @@ function successfulResult(backend) {
   }
 }
 
-test('suite v4 structured fixture keeps evaluator answer tokens out of the model prompt', () => {
-  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 4)
+test('suite v5 structured fixture keeps evaluator answer tokens out of the model prompt', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 5)
   const fixture = capabilityBenchmarkFixture('structured')
   assert.deepEqual(fixture.expected.tokens, ['STATUS', 'READY', 'Queue', '3 jobs', 'Latency', '820 ms'])
   for (const token of fixture.expected.tokens) {
     assert.equal(fixture.prompt.includes(token), false, `structured prompt leaked evaluator token: ${token}`)
   }
+})
+
+test('suite v5 visual proof is benchmark metadata and an explicit sole output-format exception for every direct fixture family', () => {
+  for (const intent of ['structured', 'ocr', 'grounding', 'document', 'general']) {
+    const fixture = capabilityBenchmarkFixture(intent)
+    const hardened = hardenCapabilityBenchmarkFixture(fixture, 'A1B2C3D4')
+    assert.match(hardened.svg, /VR-CODE:A1B2C3D4/, `${intent} did not render the proof badge`)
+    assert.doesNotMatch(hardened.prompt, /A1B2C3D4/, `${intent} leaked the random proof code into the prompt`)
+    assert.match(hardened.prompt, /not part of the task content/i, `${intent} did not exclude proof metadata from the task body`)
+    assert.match(hardened.prompt, /transcription order, all-visible-text, JSON-only, answer-only, or no-prose/i)
+    assert.match(hardened.prompt, /sole exception to those output-format constraints/i)
+    assert.match(hardened.prompt, /one final line exactly in the form VR-CODE:<code>/)
+  }
+  assert.match(capabilityBenchmarkFixture('ocr').prompt, /top-to-bottom order/i)
+  assert.match(capabilityBenchmarkFixture('structured').prompt, /ONLY JSON/)
+  assert.match(capabilityBenchmarkFixture('document').prompt, /ONLY JSON/)
 })
 
 test('script marker detector only accepts an exact attribute on a real script opening tag', () => {
@@ -157,6 +173,10 @@ test('scored benchmark fixture hides a per-run visual proof challenge from the p
   assert.equal(
     verifyAndStripBenchmarkVisualProof('3 shapes: circle, square, triangle\nVR-CODE:A1B2C3D4', 'A1B2C3D4'),
     '3 shapes: circle, square, triangle',
+  )
+  assert.equal(
+    verifyAndStripBenchmarkVisualProof('{"title":"Order Summary"}\nVR-CODE:A1B2C3D4', 'A1B2C3D4'),
+    '{"title":"Order Summary"}',
   )
   assert.throws(
     () => verifyAndStripBenchmarkVisualProof('3 shapes: circle, square, triangle', 'A1B2C3D4'),
