@@ -1,6 +1,6 @@
 # Vision Router v2 real-machine self-acceptance (J0a + J0b)
 
-The real-machine acceptance harness runs against the **currently running local DSH process**. It does not enable execution-changing Auto and does not change the product UI.
+The real-machine acceptance harness runs against the **currently running local DSH process**. It does not grant authority by itself: execution-changing Auto is active only when the user's live `routingMode` is explicitly `auto`.
 
 The acceptance runner follows the same authority rule as v2 itself:
 
@@ -8,7 +8,7 @@ The acceptance runner follows the same authority rule as v2 itself:
 
 J0a and J0b deliberately use **independent grants**. Permission to mutate temporary routing settings does not imply permission to call a real provider, and permission to call one exact provider does not imply permission to change routing settings.
 
-## J0a — safe authority acceptance
+## J0a — safe authority + execution-seam acceptance
 
 Run:
 
@@ -32,8 +32,42 @@ It covers:
 | A09 | Raw Benchmark manager calls without an opaque manual grant are rejected. |
 | L00 | No current setting grants persistent behavioral learning. |
 | R00 | Original user-layer authority settings are restored exactly. |
+| E01-auto-execution-scope | The real DSH core `vision-router` SettingsScope accepts a process-local Auto order, exposes it only inside the scoped call, restores the original view afterward, and makes zero provider requests. |
 
-The CLI also checks live routing-preview and Benchmark public surfaces for execution inactivity and secret minimization.
+The CLI also checks that the live routing diagnostics remain read-only and secret-minimized while reporting the current execution state truthfully:
+
+```text
+routingMode: auto    -> autoPreviewOnly=false, executionActive=true
+routingMode: ordered -> autoPreviewOnly=true,  executionActive=false
+```
+
+The execution scope is deliberately narrow:
+
+```text
+executionScope: router-owned-visual-tools
+executionFailClosed: true
+```
+
+Planner failure, authority revocation, or settings changes before execution fall back to the configured v1 order.
+
+### Recorded real-machine E01 evidence
+
+On **2026-08-24**, the zero-provider execution-scope probe passed against a running local DSH process with:
+
+```json
+{
+  "ok": true,
+  "scopeHooked": true,
+  "transientOverrideWorks": true,
+  "restored": true,
+  "providerRequestsMade": 0,
+  "executionCapable": true,
+  "executionScope": "router-owned-visual-tools",
+  "executionFailClosed": true
+}
+```
+
+This proves the Auto execution seam is connected to the SettingsScope actually consumed by the real DSH-hosted v1 core, rather than existing only in isolated unit-test scaffolding.
 
 ## J0b — real-provider acceptance
 
@@ -125,6 +159,13 @@ They remain independent internally: the J0a grant authorizes only temporary sett
 
 ## What J0a/J0b still do not prove
 
-These are pre-executor gates. They do not make Auto execution-active and do not authorize persistent behavioral learning.
+The zero-provider E01 probe proves that real DSH consumes the scoped Auto order and restores it correctly, but it intentionally does **not** invoke an actual visual provider. J0b proves exact real-provider measurement behavior, not end-to-end Auto selection on a real user visual call.
 
-After J0a and J0b have convincing real-machine PASS evidence, the next code phase may define the stable `RoutingDecision` contract and a separate live execution-authority gate before any opt-in Auto executor is considered.
+Remaining real-machine evidence should therefore focus on bounded, explicitly authorized cases that add information not already proven by E01/CI, such as:
+
+- one real visual call where measured/policy evidence actually changes the selected first backend;
+- live revocation or settings change immediately before a real provider call, proving configured-order fallback;
+- real adapter + direct-HTTP fallback behavior under the same execution scope;
+- browser diagnostics showing the execution state and selected order without leaking endpoint/credential material.
+
+Persistent behavioral learning remains prohibited because no authority for it exists.
