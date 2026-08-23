@@ -403,8 +403,7 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   assert.equal(before.props['aria-pressed'], true)
   assert.equal(before.children[2]?.children[0], '✓')
   before.props.onClick()
-  await Promise.resolve()
-  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
 
   assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
   assert.equal(harness.getSnapshot().status, 'error')
@@ -422,7 +421,7 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   assert.equal(toast.props.anchor, null)
 
   button.props.onClick()
-  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(harness.selections.length, 2)
 })
 
