@@ -137,7 +137,7 @@ test('host settings bridge registers the final entry settings contract including
     namespace: 'vision-router',
   })
 
-  assert.equal(SETTINGS_CONTRACT_REVISION, 6)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
   assert.equal(registeredConfig, EntryConfig)
   assert.equal(registeredConfig({}).allowRemoteSettings, false)
   assert.equal(registeredConfig({ allowRemoteSettings: true }).allowRemoteSettings, true)
@@ -147,7 +147,8 @@ test('host settings bridge registers the final entry settings contract including
   assert.equal(registeredConfig({ visionDepth: 'custom', visionDepthMaxCalls: 7 }).visionDepthMaxCalls, 7)
   assert.equal(registeredConfig({}).routingMode, 'ordered')
   assert.equal(registeredConfig({}).routingPreference, 'balanced')
-  assert.equal(registeredConfig({}).backgroundBenchmarking, 'local-free')
+  assert.equal(registeredConfig({}).backgroundBenchmarking, 'off')
+  assert.equal(registeredConfig({ backgroundBenchmarking: 'local-free' }).backgroundBenchmarking, 'local-free')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'all' }).backgroundBenchmarking, 'all')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
 })

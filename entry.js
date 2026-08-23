@@ -41,6 +41,10 @@ import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchm
 import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
 import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
+import {
+  normalizeBackgroundMeasurementAuthority,
+  resolveVisionRoutingAuthority,
+} from './lib/vision-routing-authority.js'
 import { withVisionCircuitBreakerObserver } from './lib/vision-breaker-observer.js'
 import { createVisionBreakerShadowHealth } from './lib/vision-breaker-shadow-health.js'
 import { installBackgroundCapabilityProfiling } from './lib/vision-background-benchmark.js'
@@ -65,7 +69,7 @@ import {
 // schema default so a newer browser client can distinguish a genuinely updated
 // Host from a stale in-process plugin module instead of reporting a generic
 // readback mismatch after the old Host rejects a newly visible field.
-export const SETTINGS_CONTRACT_REVISION = 6
+export const SETTINGS_CONTRACT_REVISION = 7
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -97,12 +101,12 @@ core.Config.set(
   'routingPreference',
   z.union(['balanced', 'quality', 'speed', 'local']).default('balanced'),
 )
-// Background profiling never gates normal use. By default it only spends idle
-// time on local/free routes; `all` is the explicit user authorization boundary
-// for potentially chargeable cloud endpoints, and `off` disables it entirely.
+// Background measurement is a separate user authority. Even local/free work
+// consumes resources, so absence never grants it: users explicitly choose
+// local-free or all when they want standing background measurement.
 core.Config.set(
   'backgroundBenchmarking',
-  z.union(['local-free', 'all', 'off']).default('local-free'),
+  z.union(['local-free', 'all', 'off']).default('off'),
 )
 
 // Internal development controls. Shadow remains observational and is not the
@@ -195,10 +199,7 @@ export function apply(ctx, config = {}) {
     ...bootConfig,
     routingMode: routingProduct.mode,
     routingPreference: routingProduct.preference,
-    backgroundBenchmarking:
-      ['local-free', 'all', 'off'].includes(bootConfig.backgroundBenchmarking)
-        ? bootConfig.backgroundBenchmarking
-        : 'local-free',
+    backgroundBenchmarking: normalizeBackgroundMeasurementAuthority(bootConfig.backgroundBenchmarking),
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
     visionTaskTimeoutMs:
@@ -276,14 +277,25 @@ export function apply(ctx, config = {}) {
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
-  // Only real visual-tool adapter streams are timed. The tool wrapper above
-  // supplies the direct capability axis through AsyncLocalStorage; benchmark,
-  // smoke-test and background calls have no such scope and cannot contaminate
-  // this runtime-performance store.
+  // Only real visual-tool adapter streams are timed, and only while live Auto
+  // authority permits future-routing observation. Benchmark/smoke/background
+  // calls have no visual-tool scope and cannot contaminate this store.
   const performanceCtx = contextWithVisionRuntimePerformance(
     executionCtx,
     runtimePerformanceStore,
-    { logger: logging.logger },
+    {
+      logger: logging.logger,
+      observationAllowed() {
+        try {
+          const settings = executionCtx?.get?.('settings')
+          const current = settings?.get?.('vision-router')
+          if (!current || typeof current !== 'object' || Array.isArray(current)) return false
+          return resolveVisionRoutingAuthority(current).ephemeralRuntimeObservation
+        } catch {
+          return false
+        }
+      },
+    },
   )
   // v1.7.7's outer policy covers cases where DSH would otherwise project image
   // bytes to SHA text before an adapter gets the chance to reject them. Keeping

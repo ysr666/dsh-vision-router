@@ -8,6 +8,10 @@ import {
   routingPreferenceToCapabilityStrategy,
   resolveVisionRoutingProduct,
 } from '../lib/vision-routing-product.js'
+import {
+  normalizeBackgroundMeasurementAuthority,
+  resolveVisionRoutingAuthority,
+} from '../lib/vision-routing-authority.js'
 import { normalizeRuntimeVisionConfig } from '../lib/runtime-config-normalizer.js'
 
 test('product vocabulary is auto/ordered plus plain-language preferences', () => {
@@ -39,6 +43,53 @@ test('current draft defaults to ordered without pretending auto execution is act
     strategy: 'privacy',
     automatic: true,
   })
+})
+
+test('routing authority fails closed and does not infer measurement from Auto', () => {
+  assert.equal(normalizeBackgroundMeasurementAuthority(undefined), 'off')
+  assert.equal(normalizeBackgroundMeasurementAuthority('unexpected'), 'off')
+  assert.deepEqual(resolveVisionRoutingAuthority({}), {
+    execution: 'ordered',
+    autoSelectionAuthorized: false,
+    backgroundMeasurement: 'off',
+    backgroundMeasurementAuthorized: false,
+    backgroundMeasurementActive: false,
+    ephemeralRuntimeObservation: false,
+    persistentLearning: false,
+  })
+  assert.deepEqual(resolveVisionRoutingAuthority({ routingMode: 'auto' }), {
+    execution: 'auto',
+    autoSelectionAuthorized: true,
+    backgroundMeasurement: 'off',
+    backgroundMeasurementAuthorized: false,
+    backgroundMeasurementActive: false,
+    ephemeralRuntimeObservation: true,
+    persistentLearning: false,
+  })
+  const measurementOnly = resolveVisionRoutingAuthority({
+    routingMode: 'ordered',
+    backgroundBenchmarking: 'all',
+  })
+  assert.equal(measurementOnly.autoSelectionAuthorized, false)
+  assert.equal(measurementOnly.backgroundMeasurementAuthorized, true)
+  assert.equal(measurementOnly.backgroundMeasurementActive, false)
+})
+
+test('explicit background authority activates only alongside Auto preparation', () => {
+  const local = resolveVisionRoutingAuthority({
+    routingMode: 'auto',
+    backgroundBenchmarking: 'local-free',
+  })
+  assert.equal(local.backgroundMeasurement, 'local-free')
+  assert.equal(local.backgroundMeasurementAuthorized, true)
+  assert.equal(local.backgroundMeasurementActive, true)
+
+  const all = resolveVisionRoutingAuthority({
+    routingMode: 'auto',
+    backgroundBenchmarking: 'all',
+  })
+  assert.equal(all.backgroundMeasurement, 'all')
+  assert.equal(all.backgroundMeasurementActive, true)
 })
 
 test('runtime normalization bounds product fields and preserves configured provider order', () => {

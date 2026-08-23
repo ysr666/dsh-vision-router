@@ -3,10 +3,21 @@ import assert from 'node:assert/strict'
 import {
   CAPABILITY_BENCHMARK_MODE_REQUESTS,
   classifyCapabilityBenchmarkFailure,
-  createCapabilityBenchmarkManager,
+  createCapabilityBenchmarkManager as createCapabilityBenchmarkManagerRaw,
   createExactCapabilityInvoker,
 } from '../lib/vision-capability-benchmark-service.js'
 import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
+import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
+
+function createCapabilityBenchmarkManager(...args) {
+  const manager = createCapabilityBenchmarkManagerRaw(...args)
+  const authority = grantManualMeasurementFromUserAction('local-ui')
+  const enqueue = manager.enqueue.bind(manager)
+  const run = manager.run.bind(manager)
+  manager.enqueue = (key, mode, force) => enqueue(key, mode, force, authority)
+  manager.run = (key, intents, signal) => run(key, intents, signal, authority)
+  return manager
+}
 
 function fakeCtx(settingsValue = {}, image = true) {
   return {
@@ -126,6 +137,23 @@ function successfulResult(backend, fixtureCount = CAPABILITY_BENCHMARK_MODE_REQU
 
 test('quick/full/grounding request counts stay bounded', () => {
   assert.deepEqual(CAPABILITY_BENCHMARK_MODE_REQUESTS, { quick: 3, full: 6, grounding: 1 })
+})
+
+test('manual benchmark manager rejects programmatic measurement without explicit authority', async () => {
+  let calls = 0
+  const manager = createCapabilityBenchmarkManagerRaw(fakeCtx({ providers: [] }), { providers: [] }, fakeCore(), {
+    store: memoryStore(),
+    runBenchmark: async ({ backend }) => { calls += 1; return successfulResult(backend) },
+  })
+  await assert.rejects(
+    manager.enqueue('vision-http/local-ollama/qwen2.5vl', 'quick'),
+    (error) => error?.code === 'CAPABILITY_BENCHMARK_AUTHORITY_REQUIRED',
+  )
+  await assert.rejects(
+    manager.run('vision-http/local-ollama/qwen2.5vl', ['ocr']),
+    (error) => error?.code === 'CAPABILITY_BENCHMARK_AUTHORITY_REQUIRED',
+  )
+  assert.equal(calls, 0)
 })
 
 test('exact invoker sends one selected vision-http provider directly and never enters fallback', async () => {

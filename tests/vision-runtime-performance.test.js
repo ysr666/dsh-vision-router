@@ -2,10 +2,17 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { installCapabilityShadowRuntime } from '../lib/vision-capability-shadow.js'
 import {
-  contextWithVisionRuntimePerformance,
+  contextWithVisionRuntimePerformance as contextWithVisionRuntimePerformanceRaw,
   createVisionRuntimePerformanceStore,
   withVisionRuntimePerformanceScope,
 } from '../lib/vision-runtime-performance.js'
+
+function contextWithVisionRuntimePerformance(ctx, store, options = {}) {
+  return contextWithVisionRuntimePerformanceRaw(ctx, store, {
+    observationAllowed: () => true,
+    ...options,
+  })
+}
 
 function finishStream({ delay, now, kind = 'stop' } = {}) {
   return async function* () {
@@ -28,6 +35,17 @@ async function drain(stream) {
   for await (const chunk of stream) chunks.push(chunk)
   return chunks
 }
+
+test('runtime observer fails closed when no observation authority callback is supplied', async () => {
+  const now = clock()
+  const store = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
+  const ctx = contextWithVisionRuntimePerformanceRaw({
+    llm: { stream: finishStream({ delay: 250, now }) },
+  }, store, { now })
+  await withVisionRuntimePerformanceScope('vision_ocr', {}, () =>
+    drain(ctx.llm.stream({ provider: 'p', model: 'm' })))
+  assert.equal(store.size(), 0)
+})
 
 test('one successful runtime sample is visible as warming evidence but not yet routing-eligible', async () => {
   const now = clock()
@@ -147,10 +165,11 @@ test('changing deployment identity immediately discards same-name runtime speed 
   assert.equal(warming.runtimeLatencyMsByAxis.ocr, undefined)
 })
 
-test('real visual tool execution establishes runtime scope even when shadow logging is disabled', async () => {
+test('runtime observation follows live Auto authority rather than shadow logging', async () => {
   const now = clock()
   const runtimeStore = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
   const registered = new Map()
+  let routingMode = 'ordered'
   const base = {
     logger: { debug() {}, info() {}, warn() {} },
     get(name) {
@@ -159,7 +178,7 @@ test('real visual tool execution establishes runtime scope even when shadow logg
           get() {
             return {
               capabilityRoutingShadow: false,
-              routingMode: 'ordered',
+              routingMode,
               providers: [{ provider: 'p', model: 'm', fallbacks: [] }],
             }
           },
@@ -191,7 +210,10 @@ test('real visual tool execution establishes runtime scope even when shadow logg
     store: capabilityStore,
     runtimePerformanceStore: runtimeStore,
   })
-  const observed = contextWithVisionRuntimePerformance(shadow, runtimeStore, { now })
+  const observed = contextWithVisionRuntimePerformanceRaw(shadow, runtimeStore, {
+    now,
+    observationAllowed: () => routingMode === 'auto',
+  })
 
   observed.tools.register({
     name: 'vision_ocr',
@@ -200,6 +222,16 @@ test('real visual tool execution establishes runtime scope even when shadow logg
       return 'ok'
     },
   })
+
+  assert.equal(await registered.get('vision_ocr').execute({}, { agent: { session: {} } }), 'ok')
+  assert.equal(runtimeStore.get('p/m'), undefined)
+
+  routingMode = 'auto'
   assert.equal(await registered.get('vision_ocr').execute({}, { agent: { session: {} } }), 'ok')
   assert.equal(runtimeStore.get('p/m').runtimeLatencyMsByAxis.ocr, 350)
+  assert.equal(runtimeStore.get('p/m').sampleCountByAxis.ocr, 1)
+
+  routingMode = 'ordered'
+  assert.equal(await registered.get('vision_ocr').execute({}, { agent: { session: {} } }), 'ok')
+  assert.equal(runtimeStore.get('p/m').sampleCountByAxis.ocr, 1)
 })

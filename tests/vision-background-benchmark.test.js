@@ -120,6 +120,18 @@ test('ordered mode and off policy never schedule background model requests', asy
   }
 })
 
+test('Auto alone does not infer missing or invalid background measurement authority', async () => {
+  const missing = settings()
+  delete missing.backgroundBenchmarking
+  for (const config of [missing, settings({ backgroundBenchmarking: 'unexpected' })]) {
+    let calls = 0
+    const profiler = profilerFor(config, async () => { calls += 1 })
+    await profiler.tick()
+    profiler.stop()
+    assert.equal(calls, 0)
+  }
+})
+
 test('background profiler does not remeasure a complete profile solely because it is old', async () => {
   const DAY = 24 * 60 * 60 * 1000
   const oldRecord = {
