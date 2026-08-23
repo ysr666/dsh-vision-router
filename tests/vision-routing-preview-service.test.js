@@ -111,8 +111,11 @@ test('Quality may preview a conservative capability reorder while benchmark late
   assert.equal(preview.policy.benchmarkLatencyAffectsRouting, false)
   assert.equal(preview.policy.performanceSource, 'runtime-observation-only')
   assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
-  assert.equal(preview.autoPreviewOnly, true)
-  assert.equal(preview.executionActive, false)
+  assert.equal(preview.diagnosticReadOnly, true)
+  assert.equal(preview.autoPreviewOnly, false)
+  assert.equal(preview.executionActive, true)
+  assert.equal(preview.executionScope, 'router-owned-visual-tools')
+  assert.equal(preview.executionFailClosed, true)
   assert.equal(preview.healthIncluded, false)
   assert.deepEqual(preview.currentOrder, ['alpha/vision-a', 'beta/vision-b'])
   assert.deepEqual(preview.measuredBackends, ['alpha/vision-a', 'beta/vision-b'])
@@ -123,6 +126,18 @@ test('Quality may preview a conservative capability reorder while benchmark late
   assert.equal(ocr.diagnostics.candidates[0].benchmarkLatencyMs, 500)
   assert.equal(ocr.diagnostics.candidates[0].runtimeLatencyMs, null)
   assert.equal(ocr.diagnostics.candidates[0].runtimePerformanceObserved, false)
+})
+
+test('Ordered diagnostics remain preview-only while the executor stays inactive', async () => {
+  const settings = config({ routingMode: 'ordered' })
+  const preview = await buildVisionRoutingPreview({
+    ctx: fakeCtx(settings), config: settings, core: fakeCore(), store: store(),
+  })
+  assert.equal(preview.diagnosticReadOnly, true)
+  assert.equal(preview.autoPreviewOnly, true)
+  assert.equal(preview.executionActive, false)
+  assert.equal(preview.executionScope, 'router-owned-visual-tools')
+  assert.equal(preview.executionFailClosed, true)
 })
 
 test('one-sided measurement never jumps across an unmeasured configured route', async () => {
