@@ -4,9 +4,9 @@
 
 <h1 align="center">dsh-vision-router</h1>
 
-<p align="center"><strong>图片粘贴即用：给 DeepSeek Harness 的纯文本 Agent 装上“眼睛”——开箱免费、免 Key、无 Python、一条命令安装。</strong></p>
+<p align="center"><strong>一键开启识图：给 DeepSeek Harness 的纯文本 Agent 装上“眼睛”——开箱免费、免 Key、无 Python、一条命令安装。</strong></p>
 
-<p align="center">DeepSeek 只负责思考，内置免费视觉链 + 14 个深看工具负责“看”；图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
+<p align="center">DeepSeek 只负责思考，内置免费视觉链 + 14 个深看工具负责“看”；需要看图时开启输入框旁的「👁 识图」，图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
 
 <p align="center">
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
@@ -135,25 +135,28 @@ pnpm dsh plugin --profile web add dsh-vision-router
 > [!NOTE]
 > 如果你是把插件**首次安装进一个已经长期运行的 Web 进程**，需要让 DSH Web 进程重新加载一次插件本体。插件加载完成后，新增/删除模型、修改自动识图包装范围都会**热更新，无需再重启 DSH**。
 
-### 2. 在聊天页切换到「+ 自动识图」模型组
+### 2. 选择日常模型，按需开启「👁 识图」
 
-插件加载后会自动发现 **设置 → 模型** 里已启用的模型组，并为它们额外创建同名的自动识图入口。例如：
+聊天页右下角的原生模型选择器只负责选择你的**脑子/会话模型**，例如 DeepSeek、Qwen 或其他普通模型。Vision Router 生成的内部「+ 自动识图」wrapper 默认不会出现在原生模型列表和 `/model` 中。
 
-```text
-opencode-go                 ← 原模型组，保持不变
-opencode-go + 自动识图       ← 发图片时选这个
-```
+需要看图时，在输入框旁主动点击 **「👁 识图」**：
+
+- `👁 识图`：当前普通模型，识图关闭；
+- `👁 识图 ✓`：已切到该模型对应的 Vision Router 内部识图 route；
+- 开启后会持续生效，发送消息后**不会自动复位**；
+- 主动关闭会切回同一个普通模型；手动选择另一个普通模型会关闭识图；
+- 只修改当前模型的 reasoning effort 不会关闭识图。
 
 > [!IMPORTANT]
-> **发图前，请点击聊天页输入区右下角的模型选择器，选择带「+ 自动识图」的模型组。**
+> **上传 / 粘贴图片不会替你自动开启识图。发图前请先确认按钮处于 `👁 识图 ✓`。**
 >
-> Vision Router 故意**不修改原模型组**。因此如果当前仍选着原来的纯文本 `opencode-go` / DeepSeek 路由，DSH 会在插件处理图片之前先提示“当前模型不支持图片”。这不是视觉后端配置失败，只是还没有切到自动识图入口。
+> Vision Router 仍保留真实 wrapper route 来通过 DSH 的图片准入，只是把它们作为内部实现隐藏起来。若浏览器端无法安全确认某个 route 属于 Vision Router，隐藏逻辑会 fail-open：宁可显示该 route，也不会误藏第三方模型。
 
-这个模型组的模型列表会跟随 DSH 的模型目录实时同步；新增模型或修改包装范围后无需重启。
+### 3. 粘贴或上传图片
 
-### 3. 直接粘贴或上传图片
+开启「👁 识图」后，直接往对话里贴图即可。默认情况下完整视觉工具表从会话开始就保持稳定，Agent 可直接调用 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
 
-选好「+ 自动识图」模型组后，直接往对话里贴图即可。默认情况下完整视觉工具表从会话开始就保持稳定，Agent 可直接调用 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
+如果当前 session 已经包含图片，DSH 可能拒绝从识图 route 切回不接受图片的纯文本 route。此时 Vision Router 不绕过 Host 约束：会显示与原生模型选择器一致的临时错误提示，真实模型保持不变，`👁 识图 ✓` 也继续反映真实状态，可继续使用或稍后重试。
 
 默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明现在只作提示：未声明图片能力、甚至被标成仅文本的模型也会列出并给出警告。运行时永远先通过该供应商已注册的 DSH adapter 实际调用，因此 WebSocket、RPC 和私有协议都保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才可能进入 HTTP 直连兼容兜底。实际调用失败后自动尝试下一后端；一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
 
@@ -279,7 +282,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 ## 隐身模式
 
-隐身模式默认**关闭**（issue #34 起显式 opt-in）：关闭时官方 `deepseek-official` 路由原样保留，发图走选择器里可见的「DeepSeek + 自动识图」包装入口。
+隐身模式默认**关闭**（issue #34 起显式 opt-in）：关闭时官方 `deepseek-official` 路由原样保留；需要看图时通过输入框旁的「👁 识图」切换到内部 DeepSeek wrapper。该 wrapper 默认从原生模型选择器和 `/model` 展示层隐藏。
 
 开启隐身模式后，插件接管官方 `deepseek-official` 路由：模型选择器看起来和原版完全一样（同一个 DeepSeek 组、同样的模型名），但每个条目背后都是声明了图片输入的自动识图包装；文字轮交给插件重建的原生 DeepSeek 适配器（读取同一个 `llm-deepseek` 设置段与凭据）。老会话通过隐藏的 `deepseek-vision` 别名继续工作。接管的前提是官方行不在场——在你的 profile 补丁层（`~/.dsh/profiles/<profile>/cordis.patch.yml`）禁用即可：
 
@@ -289,26 +292,26 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
   disabled: true
 ```
 
-官方行在场时，插件自动回退为可见包装入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置卡片会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
+官方行在场时，插件保留官方路由并使用内部 wrapper +「👁 识图」入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置卡片会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
 
-> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认会被自动包装成「+ 自动识图」模型组。
+> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
 
-## 自动识图模型组与手动包装
+## 自动识图包装与手动范围
 
-默认开启 `autoWrapProviders`：插件会自动发现 **设置 → 模型** 中当前已启用的 provider / model，并额外注册同名的「+ 自动识图」模型组。**原模型组完全不变**；发图片时选自动识图组，纯文字仍可继续用原组。DSH 的 `llm/adapters-updated` 变化会触发同步，所以新增/删除模型后无需重启。
+默认开启 `autoWrapProviders`：插件会自动发现 **设置 → 模型** 中当前已启用的 provider / model，并为它们注册内部识图 wrapper。**原模型组完全不变**；普通用户不需要在模型选择器里寻找或手工选择这些 wrapper，它们会在能确认归属时默认隐藏，由聊天输入框旁的「👁 识图」负责切换。DSH 的 `llm/adapters-updated` 变化会触发同步，所以新增/删除模型后无需重启。
 
 `wrappedProviders` 是**可选的手动范围控制**，不是普通用户必须配置的步骤。只有两种情况需要它：
 
-1. 关闭了自动包装，想手动指定哪些 provider / model 获得自动识图入口；
-2. 自动包装保持开启，但只想让某个 provider 的部分模型出现在「+ 自动识图」组。
+1. 关闭了自动包装，想手动指定哪些 provider / model 可以使用「👁 识图」；
+2. 自动包装保持开启，但只想让某个 provider 的部分模型生成内部识图 wrapper。
 
-设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要限定多个模型就添加多行。修改即时生效，无需重启。
+设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要限定多个模型就添加多行。修改即时生效，无需重启。若客户端无法确认 wrapper 归属或镜像关系不完整，展示层会 fail-open，不会为了“干净”而误隐藏第三方 route。
 
 ## Web 设置
 
-Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，顶部会直接提示最重要的使用步骤：**回到聊天页 → 右下角模型选择器 → 选择「+ 自动识图」模型组 → 发图**。其余设置主要用于高级定制：
+Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，顶部会直接提示最重要的使用步骤：**回到聊天页 → 选择平时使用的普通模型 → 点击输入框旁「👁 识图」→ 确认显示 ✓ → 发图**。其余设置主要用于高级定制：
 
-- **自动创建「+ 自动识图」模型组**：默认开启，自动发现已有模型；模型目录变化热更新，无需重启；
+- **自动创建识图包装**：默认开启，自动发现已有模型；内部 wrapper 在能安全确认归属时从原生模型列表隐藏，模型目录变化热更新，无需重启；
 - **手动限定自动识图范围（可选）**：仅在需要关闭自动包装或限制部分模型时使用；
 - **视觉后端链**：给 `vision_describe` 等视觉工具调用的真正图片模型，默认内置免费 Qwen 即可；不要填纯文本模型；
 - 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式（仅官方 DeepSeek 路由）；
@@ -333,8 +336,8 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `fallbacks` | `[]` | 简写视觉供应商的备用图片模型 |
 | `providers` | 内置免费 `vision-http` 条目 | 多供应商视觉后端链 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式。不要填写纯文本模型 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
-| `autoWrapProviders` | `true` | 自动发现当前已启用 provider / model，并热更新同名「+ 自动识图」模型组；原模型组不变 |
-| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选的手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只包装部分模型。改动即时生效，无需重启 |
+| `autoWrapProviders` | `true` | 自动发现当前已启用 provider / model，并热更新对应内部识图 wrapper；能确认归属时从原生模型选择器隐藏，原模型组不变 |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选的手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只有部分模型可通过「👁 识图」进入 wrapper。改动即时生效，无需重启 |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
