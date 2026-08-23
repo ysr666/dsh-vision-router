@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { mapVisionPresentationSelection } from '../lib/vision-model-visibility-boundary.js'
+import { resolveVisionModePair } from '../lib/client-presentation-boundary.js'
 
 function group(id, name, models) {
   return {
@@ -97,4 +99,48 @@ test('issue #284 selecting an already verified wrapper is idempotent', () => {
   const mapped = mapVisionPresentationSelection(activeState(), incoming, config)
 
   assert.deepEqual(mapped, incoming)
+})
+
+test('issue #284 an ordinary provider whose id ends in -vision can still enable its own twin', () => {
+  const suffixGroups = [
+    group('studio-vision', 'Studio Vision', ['m']),
+    group('studio-vision-vision', 'Studio Vision + 自动识图', ['m']),
+  ]
+
+  assert.deepEqual(resolveVisionModePair(
+    suffixGroups,
+    { provider: 'studio-vision', model: 'm', reasoningEffort: 'low' },
+    { autoWrapProviders: true },
+  ), {
+    mode: 'off',
+    target: {
+      provider: 'studio-vision-vision',
+      model: 'm',
+      reasoningEffort: 'low',
+    },
+  })
+})
+
+test('issue #284 the -vision suffix chain still resolves back from the verified twin', () => {
+  const suffixGroups = [
+    group('studio-vision', 'Studio Vision', ['m']),
+    group('studio-vision-vision', 'Studio Vision + 自动识图', ['m']),
+  ]
+
+  assert.deepEqual(resolveVisionModePair(
+    suffixGroups,
+    { provider: 'studio-vision-vision', model: 'm' },
+    { autoWrapProviders: true },
+  ), {
+    mode: 'on',
+    target: { provider: 'studio-vision', model: 'm' },
+  })
+})
+
+test('issue #284 guide copy no longer claims that choosing a normal model disables sticky Vision mode', () => {
+  const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('手动切回普通模型'), false)
+  assert.equal(source.includes('manually switch back to a normal model'), false)
+  assert.match(source, /切换聊天模型时也会继续保持识图模式/)
+  assert.match(source, /Changing chat models keeps Vision mode on/)
 })
