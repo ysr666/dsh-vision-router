@@ -45,6 +45,13 @@ const genericGroups = [
   },
 ]
 
+function firstChildOfType(node, type) {
+  if (!node) return undefined
+  if (node.type === type) return node
+  if (!Array.isArray(node.children)) return undefined
+  return node.children.find((child) => child && child.type === type)
+}
+
 test('issue #284 infers one unique DeepSeek wrapper when browser settings are unavailable', () => {
   assert.deepEqual(resolveVisionModePair(deepseekGroups(), {
     provider: 'deepseek-official',
@@ -236,13 +243,17 @@ test('issue #284 browser toggle infers a unique custom wrapper when settings sco
 
   const props = registration.inject('session-1')
   hookCursor = 0
-  const button = Component({
+  const rendered = Component({
     ...props,
     session: {},
     t(key) {
       return ({ label: '识图', enable: '开启', disable: '关闭', unavailable: '不可用', loading: '加载中', switching: '切换中' })[key] ?? key
     },
   })
+  // The component may wrap the control with auxiliary UI such as a transient
+  // toast. Assert the button contract instead of assuming the root node shape.
+  const button = firstChildOfType(rendered, 'button')
+  assert.ok(button)
   assert.equal(button.props.disabled, false)
   button.props.onClick()
   await Promise.resolve()
