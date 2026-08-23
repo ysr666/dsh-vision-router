@@ -63,7 +63,7 @@ function profile(provider, model, measuredAt, scores, benchmarkMedianLatencyMsBy
     model,
     measuredAt,
     source: 'self-benchmark',
-    suiteRevision: 2,
+    suiteRevision: 3,
     scores,
     benchmarkMedianLatencyMsByAxis,
     fixtureCount: 6,

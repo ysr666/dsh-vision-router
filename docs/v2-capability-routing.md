@@ -95,7 +95,7 @@ A positive timestamp remains required for provenance integrity; malformed record
 Current revisions:
 
 ```text
-CAPABILITY_BENCHMARK_SUITE_REVISION = 2
+CAPABILITY_BENCHMARK_SUITE_REVISION = 3
 CAPABILITY_PROFILE_CACHE_VERSION = 4
 ```
 

@@ -30,7 +30,7 @@ Every Settings preview must still report:
 ## Current measurement contract
 
 ```text
-CAPABILITY_BENCHMARK_SUITE_REVISION = 2
+CAPABILITY_BENCHMARK_SUITE_REVISION = 3
 CAPABILITY_PROFILE_CACHE_VERSION = 4
 diagnosticVersion = 3
 ```

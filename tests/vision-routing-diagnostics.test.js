@@ -60,7 +60,7 @@ function profile(provider, model, measuredAt, scores, benchmarkMedianLatencyMsBy
     model,
     measuredAt,
     source: 'self-benchmark',
-    suiteRevision: 2,
+    suiteRevision: 3,
     scores,
     benchmarkMedianLatencyMsByAxis,
     fixtureCount: 6,
@@ -268,7 +268,7 @@ test('HTTP diagnostics use credential-independent capability identity without ex
     ctx: fakeCtx(settings), config: settings, core: fakeCore([], [httpBackend]),
     store: store([{
       fingerprint, provider: 'vision-http', model: 'private-cloud/model-x', measuredAt: now - DAY,
-      source: 'self-benchmark', suiteRevision: 2, scores: { general: 0.75 },
+      source: 'self-benchmark', suiteRevision: 3, scores: { general: 0.75 },
       benchmarkMedianLatencyMsByAxis: { general: 700 }, fixtureCount: 1, failureCount: 0,
     }]), now,
   })

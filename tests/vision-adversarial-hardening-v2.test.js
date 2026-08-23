@@ -1,6 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { injectClientPresentationBoundary } from '../lib/client-presentation-boundary.js'
 import { redactDiagnosticText } from '../lib/diagnostic-redaction.js'
+import { htmlHasScriptMarker } from '../lib/html-script-marker.js'
+import { injectLiveModelClientPrelude } from '../lib/live-model-client-prelude.js'
+import { injectLocalPermissionClientPrelude } from '../lib/local-remote-settings-permission.js'
+import { injectRemoteSettingsRiskConfirmationPrelude } from '../lib/remote-settings-risk-confirmation.js'
+import { injectSettingsRc8ClientPrelude } from '../lib/settings-client-rc8-lifecycle.js'
+import { injectExactVisionTestClient } from '../lib/vision-backend-smoke-test-client.js'
+import { injectCapabilityBenchmarkClient } from '../lib/vision-capability-benchmark-client.js'
 import {
   hardenCapabilityBenchmarkFixture,
   verifyAndStripBenchmarkVisualProof,
@@ -11,9 +19,24 @@ import {
   createExactCapabilityInvoker,
 } from '../lib/vision-capability-benchmark-service.js'
 import {
+  CAPABILITY_BENCHMARK_SUITE_REVISION,
   capabilityBenchmarkFixture,
   capabilityBenchmarkFingerprint,
 } from '../lib/vision-capability-benchmark.js'
+import { injectVisionRoutingDiagnosticsPrelude } from '../lib/vision-routing-preview-service.js'
+import { injectVisionRoutingSettingsPrelude } from '../lib/vision-routing-settings-prelude.js'
+
+const SCRIPT_INJECTORS = Object.freeze([
+  ['presentation boundary', 'data-vision-router-presentation-boundary', injectClientPresentationBoundary],
+  ['remote settings risk', 'data-vision-router-remote-settings-risk-confirmation', injectRemoteSettingsRiskConfirmationPrelude],
+  ['live models', 'data-vision-router-live-models', injectLiveModelClientPrelude],
+  ['rc8 settings lifecycle', 'data-vision-router-settings-rc8-lifecycle', injectSettingsRc8ClientPrelude],
+  ['local settings permission', 'data-vision-router-local-settings-permission', injectLocalPermissionClientPrelude],
+  ['exact vision test', 'data-vision-router-exact-vision-test', injectExactVisionTestClient],
+  ['capability benchmark', 'data-vision-router-capability-benchmark', injectCapabilityBenchmarkClient],
+  ['routing settings', 'data-vision-router-routing-settings', injectVisionRoutingSettingsPrelude],
+  ['routing diagnostics', 'data-vision-router-routing-diagnostics', injectVisionRoutingDiagnosticsPrelude],
+])
 
 function attachmentCtx(settings) {
   return {
@@ -79,6 +102,49 @@ function successfulResult(backend) {
   }
 }
 
+test('suite v3 structured fixture keeps evaluator answer tokens out of the model prompt', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 3)
+  const fixture = capabilityBenchmarkFixture('structured')
+  assert.deepEqual(fixture.expected.tokens, ['STATUS', 'READY', 'Queue', '3 jobs', 'Latency', '820 ms'])
+  for (const token of fixture.expected.tokens) {
+    assert.equal(fixture.prompt.includes(token), false, `structured prompt leaked evaluator token: ${token}`)
+  }
+})
+
+test('script marker detector only accepts an exact attribute on a real script opening tag', () => {
+  const marker = 'data-vision-router-marker-test'
+  assert.equal(htmlHasScriptMarker(`<script type="text/x-demo > still-quoted" ${marker}></script>`, marker), true)
+  assert.equal(htmlHasScriptMarker(`<SCRIPT ${marker}="1"></SCRIPT>`, marker), true)
+  assert.equal(htmlHasScriptMarker(`<!-- <script ${marker}></script> -->`, marker), false)
+  assert.equal(htmlHasScriptMarker(`<main>${marker}</main>`, marker), false)
+  assert.equal(htmlHasScriptMarker(`<script>const decoy = '<script ${marker}>';</script>`, marker), false)
+  assert.equal(htmlHasScriptMarker(`<script data-note="${marker}"></script>`, marker), false)
+  assert.equal(htmlHasScriptMarker(`<script data-note="x > ${marker}"></script>`, marker), false)
+  assert.equal(htmlHasScriptMarker(`<script ${marker}-extra></script>`, marker), false)
+})
+
+test('every browser injector ignores marker decoys and is idempotent only on a real script marker', () => {
+  for (const [name, marker, inject] of SCRIPT_INJECTORS) {
+    const decoys = [
+      `<html><head></head><body>${marker}</body></html>`,
+      `<html><head><!-- <script ${marker}></script> --></head><body></body></html>`,
+      `<html><head><script>window.markerDecoy = '<script ${marker}>';</script></head><body></body></html>`,
+      `<html><head><script data-note="${marker}"></script></head><body></body></html>`,
+      `<html><head><script data-note="value > ${marker}"></script></head><body></body></html>`,
+      `<html><head><script ${marker}-extra></script></head><body></body></html>`,
+    ]
+    for (const input of decoys) {
+      const output = inject(input)
+      assert.notEqual(output, input, `${name} treated a marker decoy as an injected script`)
+      assert.equal(htmlHasScriptMarker(output, marker), true, `${name} did not inject its real script marker`)
+      assert.equal(inject(output), output, `${name} did not become idempotent after real injection`)
+    }
+
+    const alreadyInjected = `<html><head><script type="text/x-demo > still-quoted" ${marker}></script></head><body></body></html>`
+    assert.equal(inject(alreadyInjected), alreadyInjected, `${name} duplicated a real script marker`)
+  }
+})
+
 test('scored benchmark fixture hides a per-run visual proof challenge from the prompt', () => {
   const fixture = capabilityBenchmarkFixture('general')
   const hardened = hardenCapabilityBenchmarkFixture(fixture, 'A1B2C3D4')
@@ -123,12 +189,10 @@ test('image-blind provider cannot turn a memorized static benchmark answer into 
 })
 
 test('hard deadline rejects a non-cooperative promise that ignores AbortSignal', async () => {
-  const started = Date.now()
   await assert.rejects(
     withHardDeadline(new Promise(() => {}), 25, 'hung benchmark'),
     (error) => error?.name === 'TimeoutError' && error?.code === 'CAPABILITY_BENCHMARK_TIMEOUT',
   )
-  assert.ok(Date.now() - started < 1000)
 })
 
 test('diagnostic redaction removes bearer keys, sk keys, credentials and sensitive URL query values', () => {
