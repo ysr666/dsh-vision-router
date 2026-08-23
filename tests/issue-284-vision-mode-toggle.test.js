@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import vm from 'node:vm'
 import {
   CLIENT_PRESENTATION_PRELUDE,
   resolveVisionModePair,
@@ -74,7 +75,7 @@ test('issue #284 refuses a twin when that exact model is not mirrored', () => {
   }), { mode: 'unavailable' })
 })
 
-test('issue #284 preserves a falsy or empty reasoning effort exactly by omission', () => {
+test('issue #284 omits reasoning effort when the current selection has none', () => {
   assert.deepEqual(resolveVisionModePair(groups, {
     provider: 'opencode-go',
     model: 'qwen3.6-plus',
@@ -87,7 +88,132 @@ test('issue #284 preserves a falsy or empty reasoning effort exactly by omission
   })
 })
 
-test('issue #284 is an explicit persistent model toggle with no send/image auto-reset hook', () => {
+test('issue #284 browser prelude wires the right-slot toggle to the shared ModelDirectory', async () => {
+  let registered
+  const loader = {
+    load(spec) {
+      registered = spec
+      return spec
+    },
+  }
+  const window = { __ModuleLoader__: loader }
+  vm.runInNewContext(CLIENT_PRESENTATION_PRELUDE, {
+    window,
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    console,
+  })
+
+  const selections = []
+  let snapshot = {
+    current: { provider: 'opencode-go', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    groups,
+    status: 'ready',
+    error: null,
+  }
+  const store = {
+    subscribe() { return () => {} },
+    getSnapshot() { return snapshot },
+  }
+  const directory = {
+    store,
+    async select(selection) {
+      selections.push(selection)
+      snapshot = { ...snapshot, current: selection, status: 'ready' }
+    },
+  }
+
+  const React = {
+    Fragment: Symbol('Fragment'),
+    createElement(type, props, ...children) { return { type, props: props ?? {}, children } },
+    useState(initial) { return [initial, () => {}] },
+    useEffect() {},
+    useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
+  }
+
+  loader.load({
+    id: 'dsh-vision-router',
+    factory(require) {
+      require('@deepseek-ai/dsh-client-ui-attachment')
+      return { apply() {} }
+    },
+  })
+  const plugin = registered.factory((id) => {
+    if (id === 'react') return React
+    throw new Error(`unexpected host value request: ${id}`)
+  })
+
+  let dependencyInjection
+  const ctx = {
+    locale: { register() { return () => {} } },
+    effect(run) { return run() },
+    inject(dependencies, callback) { dependencyInjection = { dependencies, callback } },
+  }
+  plugin.apply(ctx)
+  assert.deepEqual(Array.from(dependencyInjection.dependencies), ['slots', 'modelDirectories'])
+
+  let slotName
+  let registration
+  let Component
+  const scope = {
+    modelDirectories: { directoryFor() { return directory } },
+    sessions: { subagentAddress() { return undefined } },
+    effect(run) { return run() },
+    slots: {
+      inject(name, entries) {
+        slotName = name
+        Array.from(entries())
+        return () => {}
+      },
+      register(options, component) {
+        registration = options
+        Component = component
+        return () => {}
+      },
+    },
+  }
+  dependencyInjection.callback(scope)
+  assert.equal(slotName, 'conversation.input.right')
+  assert.equal(registration.id, 'vision-router-mode-toggle')
+
+  const props = registration.inject('session-1')
+  const translate = (key) => ({
+    label: '识图',
+    enable: '开启识图模式',
+    disable: '关闭识图模式',
+    unavailable: '不可用',
+    switching: '切换中',
+  })[key]
+
+  const offButton = Component({ ...props, session: {}, t: translate })
+  assert.equal(offButton.type, 'button')
+  assert.equal(offButton.props['aria-pressed'], false)
+  assert.equal(offButton.props.disabled, false)
+  offButton.props.onClick()
+  await Promise.resolve()
+  assert.deepEqual(selections.at(-1), {
+    provider: 'opencode-go-vision',
+    model: 'qwen3.6-plus',
+    reasoningEffort: 'high',
+  })
+
+  const onButton = Component({ ...props, session: {}, t: translate })
+  assert.equal(onButton.props['aria-pressed'], true)
+  onButton.props.onClick()
+  await Promise.resolve()
+  assert.deepEqual(selections.at(-1), {
+    provider: 'opencode-go',
+    model: 'qwen3.6-plus',
+    reasoningEffort: 'high',
+  })
+})
+
+test('issue #284 is explicit and persistent with no send/image auto-reset hook', () => {
   const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("ctx.inject(['slots', 'modelDirectories']"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("scope.slots.inject('conversation.input.right'"), true)
