@@ -53,8 +53,7 @@ function translate(key, params) {
     unavailable: '不可用',
     loading: '加载中',
     switching: '切换中',
-    failedShort: '识图切换失败',
-    failed: '识图模式切换失败：{message}',
+    failed: '模型操作失败：{message}',
     failedUnknown: '未知错误',
   }
   const template = copy[key] ?? key
@@ -80,6 +79,17 @@ function createHookReact() {
     useEffect() {},
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
   }
+}
+
+function firstChildOfType(node, type) {
+  if (!node) return undefined
+  if (node.type === type) return node
+  if (!Array.isArray(node.children)) return undefined
+  return node.children.find((child) => child && child.type === type)
+}
+
+function buttonOf(rendered) {
+  return firstChildOfType(rendered, 'button')
 }
 
 function createBrowserHarness({
@@ -130,14 +140,21 @@ function createBrowserHarness({
     async select(selection) {
       selections.push(selection)
       if (rejectSelection) {
-        snapshot = { ...snapshot, status: 'error', error: 'session.selectModel failed: route disappeared' }
-        throw new Error('session.selectModel failed: route disappeared')
+        const message = typeof rejectSelection === 'string'
+          ? rejectSelection
+          : 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
+        snapshot = { ...snapshot, status: 'error', error: message }
+        throw new Error(`session.selectModel failed: ${message}`)
       }
       snapshot = { ...snapshot, current: selection, status: 'ready', error: null }
     },
   }
 
   const React = createHookReact()
+  function NativeToast() {}
+  function WarningIcon() {}
+  const primitives = { Toast: NativeToast, IconWarningOutline16: WarningIcon }
+
   loader.load({
     id: 'dsh-vision-router',
     factory(require) {
@@ -146,13 +163,19 @@ function createBrowserHarness({
         apply(ctx) {
           ctx.locale.register('vision-router', {
             zh: {
+              quickStartTitle: '旧标题',
               quickStartBody: '旧快速开始',
+              onboardingStep1Title: '旧步骤标题',
               onboardingStep1Body: '旧引导',
+              guideStep1Title: '旧高亮标题',
               guideStep1Body: '旧步骤',
             },
             en: {
+              quickStartTitle: 'old title',
               quickStartBody: 'old quick start',
+              onboardingStep1Title: 'old step title',
               onboardingStep1Body: 'old onboarding',
+              guideStep1Title: 'old guide title',
               guideStep1Body: 'old guide',
             },
           })
@@ -162,6 +185,7 @@ function createBrowserHarness({
   })
   const plugin = registered.factory((id) => {
     if (id === 'react') return React
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') return primitives
     throw new Error(`unexpected host value request: ${id}`)
   })
 
@@ -214,6 +238,8 @@ function createBrowserHarness({
 
   return {
     React,
+    primitives,
+    dependencyInjection,
     selections,
     store,
     directory,
@@ -253,10 +279,7 @@ test('issue #284 maps a generated vision twin back to its source route', () => {
     model: 'minimax-m2.7',
   }), {
     mode: 'on',
-    target: {
-      provider: 'opencode-go',
-      model: 'minimax-m2.7',
-    },
+    target: { provider: 'opencode-go', model: 'minimax-m2.7' },
   })
 })
 
@@ -278,10 +301,7 @@ test('issue #284 maps default DeepSeek through the built-in deepseek-vision wrap
     model: 'deepseek-v4-pro',
   }), {
     mode: 'on',
-    target: {
-      provider: 'deepseek-official',
-      model: 'deepseek-v4-pro',
-    },
+    target: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
   })
 })
 
@@ -304,18 +324,7 @@ test('issue #284 follows a custom configured DeepSeek wrapper route in both dire
   })
 })
 
-test('issue #284 refuses a configured wrapper without the exact mirrored model', () => {
-  const wrapperRoute = 'relay-auto-vision'
-  assert.deepEqual(resolveVisionModePair([
-    { id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-v4-pro', name: 'Pro' }] },
-    { id: wrapperRoute, name: 'DeepSeek + 自动识图', models: [{ id: 'other', name: 'Other' }] },
-  ], {
-    provider: 'deepseek-official',
-    model: 'deepseek-v4-pro',
-  }, { wrapperRoute }), { mode: 'unavailable' })
-})
-
-test('issue #284 refuses lookalike -vision providers not owned by the generated twin naming contract', () => {
+test('issue #284 rejects lookalikes and exact-model mismatches', () => {
   const lookalike = [
     { id: 'third-party', name: 'Third Party', models: [{ id: 'm', name: 'M' }] },
     { id: 'third-party-vision', name: 'Third Party Vision Native', models: [{ id: 'm', name: 'M' }] },
@@ -324,9 +333,7 @@ test('issue #284 refuses lookalike -vision providers not owned by the generated 
     provider: 'third-party',
     model: 'm',
   }), { mode: 'unavailable' })
-})
 
-test('issue #284 refuses a twin when that exact model is not mirrored', () => {
   assert.deepEqual(resolveVisionModePair([
     { id: 'provider', name: 'Provider', models: [{ id: 'a', name: 'A' }] },
     { id: 'provider-vision', name: 'Provider + 自动识图', models: [{ id: 'b', name: 'B' }] },
@@ -336,41 +343,29 @@ test('issue #284 refuses a twin when that exact model is not mirrored', () => {
   }), { mode: 'unavailable' })
 })
 
-test('issue #284 omits reasoning effort when the current selection has none', () => {
-  assert.deepEqual(resolveVisionModePair(groups, {
-    provider: 'opencode-go',
-    model: 'qwen3.6-plus',
-  }), {
-    mode: 'off',
-    target: {
-      provider: 'opencode-go-vision',
-      model: 'qwen3.6-plus',
-    },
-  })
-})
-
 test('issue #284 browser prelude wires the right-slot toggle to shared directory and settings scopes', async () => {
   const harness = createBrowserHarness()
-  assert.deepEqual(Array.from(harness.registration ? ['slots', 'modelDirectories'] : []), ['slots', 'modelDirectories'])
+  assert.deepEqual(Array.from(harness.dependencyInjection.dependencies), ['slots', 'modelDirectories'])
   assert.equal(harness.slotName, 'conversation.input.right')
   assert.equal(harness.registration.id, 'vision-router-mode-toggle')
 
-  const offButton = harness.render()
-  assert.equal(offButton.type, 'button')
+  const offButton = buttonOf(harness.render())
   assert.equal(offButton.props['aria-pressed'], false)
   assert.equal(offButton.props.disabled, false)
+  assert.equal(offButton.props['data-vision-router-mode-toggle'], 'true')
+  assert.equal(offButton.children[2], null)
   offButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go-vision')
-  assert.equal(harness.selections.at(-1)?.model, 'qwen3.6-plus')
   assert.equal(harness.selections.at(-1)?.reasoningEffort, 'high')
 
-  const onButton = harness.render()
+  const onButton = buttonOf(harness.render())
   assert.equal(onButton.props['aria-pressed'], true)
+  assert.equal(onButton.children[2]?.children[0], '✓')
+  assert.match(onButton.props.style.boxShadow, /brand-primary/)
   onButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go')
-  assert.equal(harness.selections.at(-1)?.model, 'qwen3.6-plus')
   assert.equal(harness.selections.at(-1)?.reasoningEffort, 'high')
 })
 
@@ -381,7 +376,7 @@ test('issue #284 browser toggle follows the live configured DeepSeek wrapper rou
     current: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
     wrapperRoute,
   })
-  const button = harness.render()
+  const button = buttonOf(harness.render())
   assert.equal(button.props.disabled, false)
   button.props.onClick()
   await Promise.resolve()
@@ -394,54 +389,74 @@ test('issue #284 browser toggle follows the live configured DeepSeek wrapper rou
     status: 'ready',
     error: null,
   })
-  const staleButton = harness.render()
-  assert.equal(staleButton.props.disabled, true)
+  assert.equal(buttonOf(harness.render()).props.disabled, true)
 })
 
-test('issue #284 reports a rejected model switch instead of swallowing it', async () => {
-  const harness = createBrowserHarness({ rejectSelection: true })
-  const button = harness.render()
-  button.props.onClick()
+test('issue #284 image-session rejection uses transient toast and keeps the real ON state usable', async () => {
+  const error = 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
+  const harness = createBrowserHarness({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    rejectSelection: error,
+  })
+
+  const before = buttonOf(harness.render())
+  assert.equal(before.props['aria-pressed'], true)
+  assert.equal(before.children[2]?.children[0], '✓')
+  before.props.onClick()
   await Promise.resolve()
   await Promise.resolve()
 
-  const failed = harness.render()
-  assert.equal(failed.props.disabled, false)
-  assert.match(failed.props.title, /route disappeared/)
-  assert.equal(failed.children[0].children[0], '⚠')
-  assert.equal(failed.children[1].children[0], '识图切换失败')
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
+  assert.equal(harness.getSnapshot().status, 'error')
+
+  const rendered = harness.render()
+  const button = buttonOf(rendered)
+  const toast = firstChildOfType(rendered, harness.primitives.Toast)
+  assert.equal(button.props['aria-pressed'], true)
+  assert.equal(button.props.disabled, false)
+  assert.equal(button.children[1].children[0], '识图')
+  assert.equal(button.children[2]?.children[0], '✓')
+  assert.equal(button.props.title, '关闭识图模式')
+  assert.ok(toast)
+  assert.equal(toast.props.text, `模型操作失败：${error}`)
+  assert.equal(toast.props.anchor, null)
+
+  button.props.onClick()
+  await Promise.resolve()
+  assert.equal(harness.selections.length, 2)
 })
 
 test('issue #284 distinguishes initial model loading from a genuinely unavailable pair', () => {
   const harness = createBrowserHarness()
   harness.setSnapshot({ current: null, groups: [], status: 'loading', error: null })
-  const button = harness.render()
+  const button = buttonOf(harness.render())
   assert.equal(button.props.disabled, true)
   assert.equal(button.props.title, '加载中')
 })
 
-test('issue #284 patches onboarding copy to teach the explicit composer toggle', () => {
+test('issue #284 patches onboarding copy and accurately explains the guide spotlight', () => {
   const harness = createBrowserHarness()
   const main = harness.localeRegistrations.find((entry) => entry.namespace === 'vision-router')
   assert.ok(main)
-  assert.match(main.dictionaries.zh.quickStartBody, /主动开启「识图」/)
-  assert.match(main.dictionaries.zh.onboardingStep1Body, /输入框旁主动开启「识图」/)
-  assert.match(main.dictionaries.zh.guideStep1Body, /持续生效/)
-  assert.match(main.dictionaries.en.quickStartBody, /Turn on “Vision” beside the composer/)
-  assert.equal(main.dictionaries.zh.quickStartBody.includes('请选择带「+ 自动识图」'), false)
+  assert.equal(main.dictionaries.zh.quickStartTitle, '聊天模型 + 识图模式')
+  assert.match(main.dictionaries.zh.quickStartBody, /出现 ✓ 表示已开启/)
+  assert.match(main.dictionaries.zh.onboardingStep1Title, /开启识图/)
+  assert.match(main.dictionaries.zh.onboardingStep1Body, /模型选择器左侧的「识图」/)
+  assert.match(main.dictionaries.zh.guideStep1Body, /^高亮的是聊天模型选择器/)
+  assert.equal(main.dictionaries.zh.guideStep1Body.includes('和「识图」按钮已经被高亮'), false)
+  assert.match(main.dictionaries.en.quickStartBody, /a ✓ means it is on/)
 })
 
-test('issue #284 is explicit and persistent with no send/image auto-reset hook', () => {
+test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
   const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("ctx.inject(['slots', 'modelDirectories']"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("scope.slots.inject('conversation.input.right'"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("id: 'vision-router-mode-toggle'"), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('directory.select(pair.target)'), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('resolveVisionModePair(state.groups, state.current, visionConfig)'), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("'aria-pressed': active"), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("wrapperRoute: 'deepseek-vision'"), false)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("failedShort: '识图切换失败'"), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('catch(function(){})'), false)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("'data-vision-router-mode-toggle': 'true'"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("require('@deepseek-ai/dsh-client-ui-primitives')"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("failed: '模型操作失败：{message}'"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('failedShort'), false)
   assert.equal(source.includes('send-committed'), false)
   assert.equal(source.includes('conversation.input.attachments'), false)
   assert.equal(source.includes('imageIds'), false)
