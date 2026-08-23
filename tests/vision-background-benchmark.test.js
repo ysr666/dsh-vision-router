@@ -174,6 +174,103 @@ test('real foreground vision aborts an in-flight background request and does not
   profiler.stop()
 })
 
+test('provider-originated AbortError is a genuine failure and receives retry backoff', async () => {
+  const providerAbort = Object.assign(new Error('provider aborted stream'), { name: 'AbortError' })
+  const profiler = profilerFor(settings(), async () => { throw providerAbort })
+  await profiler.tick()
+  assert.equal(profiler.snapshot().backoffSize, 1)
+  profiler.stop()
+})
+
+test('revoking all background authorization aborts a running paid benchmark without provider backoff', async () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  let intervalCallback
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }), {
+    setIntervalFn(callback) {
+      intervalCallback = callback
+      return inertTimer()
+    },
+    clearIntervalFn() {},
+    policyPollMs: 25,
+    core: fakeCore(),
+  })
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'off'
+  intervalCallback()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.stop()
+})
+
+test('local-free never guesses that a custom remote ovh-named endpoint is free', async () => {
+  const fakeOvh = {
+    name: 'ovh-definitely-paid-proxy',
+    baseURL: 'https://paid.example.invalid/v1',
+    model: 'vision-paid',
+    apiKeyEnv: '',
+    maxTokens: 512,
+  }
+  const config = settings({
+    backgroundBenchmarking: 'local-free',
+    providers: [{ provider: 'vision-http', model: `${fakeOvh.name}/${fakeOvh.model}`, fallbacks: [] }],
+    httpProviders: [fakeOvh],
+  })
+  const c = {
+    ...fakeCore(),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [fakeOvh],
+    DEFAULT_HTTP_PROVIDERS: [],
+  }
+  let calls = 0
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config), config, core: c, store: memoryStore(),
+    idleMs: 0, gapMs: 0, scanMs: 0, setTimer: inertTimer, clearTimer() {},
+    runAxisBenchmark: async () => { calls += 1 },
+  })
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 0)
+})
+
+test('local-free may use only an exact trusted built-in free HTTP identity', async () => {
+  const builtin = {
+    name: 'ovh-trusted',
+    baseURL: 'https://free.example.invalid/v1',
+    model: 'vision-free',
+    apiKeyEnv: '',
+    maxTokens: 512,
+  }
+  const config = settings({
+    backgroundBenchmarking: 'local-free',
+    providers: [{ provider: 'vision-http', model: `${builtin.name}/${builtin.model}`, fallbacks: [] }],
+    httpProviders: [builtin],
+  })
+  const c = {
+    ...fakeCore(),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [builtin],
+    DEFAULT_HTTP_PROVIDERS: [builtin],
+  }
+  const seen = []
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config), config, core: c, store: memoryStore(),
+    idleMs: 0, gapMs: 0, scanMs: 0, setTimer: inertTimer, clearTimer() {},
+    runAxisBenchmark: async ({ candidate }) => { seen.push(candidate.key) },
+  })
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, ['http:ovh-trusted/vision-free'])
+})
+
 test('manual benchmark lease pauses and preempts background profiling until all manual work releases', async () => {
   let calls = 0
   const profiler = profilerFor(settings(), async () => { calls += 1 })
