@@ -338,3 +338,38 @@ test('issue #284 visibility prelude survives the rc8 queue-to-live loader replac
     },
   })
 })
+
+test('issue #284 real DSH model-selection dependency contract exposes settingsScope to the visibility decorator', () => {
+  let registered
+  const loader = {
+    load(spec) { registered = spec; return spec },
+  }
+  vm.runInNewContext(VISION_MODEL_VISIBILITY_PRELUDE, {
+    window: { __ModuleLoader__: loader },
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    Math,
+    JSON,
+  })
+
+  loader.load({
+    id: MODEL_SELECTION_TARGET,
+    factory() {
+      return {
+        inject: ['commandUi', 'connection', 'locale', 'sessions', 'slots', 'remote'],
+        apply() {},
+      }
+    },
+  })
+
+  assert.equal(typeof registered?.factory, 'function')
+  const plugin = registered.factory(() => ({}))
+  assert.ok(Array.isArray(plugin.inject))
+  assert.ok(plugin.inject.includes('settingsScope'))
+  assert.equal(plugin.inject.filter((name) => name === 'settingsScope').length, 1)
+})
