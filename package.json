@@ -44,7 +44,8 @@
     "openrouter",
     "image",
     "ocr",
-    "screenshot"
+    "screenshot",
+    "plugin"
   ],
   "dependencies": {
     "@deepseek-ai/schemastery": ">=3.18.0",
