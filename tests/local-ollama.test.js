@@ -378,6 +378,45 @@ test('callLocalBackend speaks Anthropic Messages when format=anthropic (dispatch
   }
 })
 
+test('callLocalBackend normalizes Anthropic baseURL suffixes in linear time', async () => {
+  const original = globalThis.fetch
+  const captured = []
+  globalThis.fetch = async (url) => {
+    captured.push(String(url))
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const baseURLs = [
+      'http://localhost:11434/v1',
+      'http://localhost:11434/v1/',
+      'http://localhost:11434/v1////',
+      'http://localhost:11434////',
+      '',
+      `http://localhost:11434/v1${'/'.repeat(100_000)}`,
+    ]
+    for (const baseURL of baseURLs) {
+      await callLocalBackend(
+        { name: 'local', baseURL, model: 'm', format: 'anthropic' },
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+        {},
+      )
+    }
+    assert.deepEqual(captured, [
+      'http://localhost:11434/v1/messages',
+      'http://localhost:11434/v1/messages',
+      'http://localhost:11434/v1/messages',
+      'http://localhost:11434/v1/messages',
+      '/v1/messages',
+      'http://localhost:11434/v1/messages',
+    ])
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
 test('callLocalBackend openai format stays on the pure OpenAI transport', async () => {
   const original = globalThis.fetch
   let captured

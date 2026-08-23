@@ -80,6 +80,8 @@ import {
   readResponseTextBounded,
 } from './lib/http-body-limit.js'
 import { writeArtifactFile } from './lib/artifact-boundary.js'
+import { stripTrailingSlashes } from './lib/string-normalization.js'
+import { parseVersionComparator } from './lib/version-range.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -151,10 +153,10 @@ export function versionSatisfies(version, range) {
     const clauses = alternative.split(/\s+/)
     if (clauses.length === 0) return false
     return clauses.every((clause) => {
-      const match = clause.match(/^(>=|<=|>|<|=)?\s*(.+)$/)
-      if (!match) return false
-      const op = match[1] ?? '='
-      const other = parseVersionParts(match[2])
+      const comparator = parseVersionComparator(clause)
+      if (comparator === undefined) return false
+      const { op } = comparator
+      const other = parseVersionParts(comparator.version)
       if (other === undefined) return false
       const cmp = compareVersionParts(parts, other)
       switch (op) {
@@ -2113,7 +2115,10 @@ export async function callLocalBackend(provider, messages, options = {}) {
     if (wire.length > 0 && wire[0].role !== 'user') {
       wire.unshift({ role: 'user', content: [{ type: 'text', text: '(conversation history)' }] })
     }
-    const baseURL = String(provider.baseURL).replace(/\/+$/, '').replace(/\/v1$/, '')
+    const normalizedBaseURL = stripTrailingSlashes(String(provider.baseURL))
+    const baseURL = normalizedBaseURL.endsWith('/v1')
+      ? normalizedBaseURL.slice(0, -3)
+      : normalizedBaseURL
     return callAnthropicCompatible(
       { ...provider, baseURL },
       wire,
