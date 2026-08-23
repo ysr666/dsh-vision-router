@@ -11,6 +11,36 @@ test('visual-proof failure is not misclassified as unsupported image capability'
   )
 })
 
+test('visual proof accepts the exact standalone challenge line at any output position and strips only that line', () => {
+  const expected = 'A1B2C3D4'
+  assert.equal(
+    verifyAndStripBenchmarkVisualProof('VR-CODE:A1B2C3D4\nRouter Bench 7Q2\nInvoice A-1948', expected),
+    'Router Bench 7Q2\nInvoice A-1948',
+  )
+  assert.equal(
+    verifyAndStripBenchmarkVisualProof('Router Bench 7Q2\nVR-CODE:A1B2C3D4\nInvoice A-1948', expected),
+    'Router Bench 7Q2\nInvoice A-1948',
+  )
+  assert.equal(
+    verifyAndStripBenchmarkVisualProof('Router Bench 7Q2\nInvoice A-1948\nVR-CODE:A1B2C3D4', expected),
+    'Router Bench 7Q2\nInvoice A-1948',
+  )
+})
+
+test('visual proof still rejects wrong, embedded, or missing challenge material', () => {
+  for (const output of [
+    'Router Bench 7Q2\nVR-CODE:WRONG99',
+    'Router Bench 7Q2 VR-CODE:A1B2C3D4',
+    '{"proof":"VR-CODE:A1B2C3D4"}',
+    'Router Bench 7Q2',
+  ]) {
+    assert.throws(
+      () => verifyAndStripBenchmarkVisualProof(output, 'A1B2C3D4'),
+      (error) => error?.code === 'CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED',
+    )
+  }
+})
+
 test('J0b proof failure identifies the exact Quick fixture from terminal progress without raw model output', () => {
   const key = 'zhipu-glm/glm-4.6v'
   const candidate = {
