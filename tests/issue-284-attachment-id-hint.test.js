@@ -123,7 +123,7 @@ test('issue #284 Vision Router-owned image route tells the model the exact durab
   const hint = result.messages[1]
   assert.equal(hint.id, 'vision-router-attachment-refs-7-1')
   assert.equal(hint.source.plugin, 'dsh-vision-router')
-  assert.match(hint.content[0].text, new RegExp(realId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  assert.equal(hint.content[0].text.includes(realId), true)
   assert.match(hint.content[0].text, /use only these exact ids/i)
   assert.match(hint.content[0].text, /Never guess or invent/i)
 })
@@ -181,7 +181,7 @@ test('issue #284 attachment hint collects nested image refs without fabricating 
   )
 
   const text = result.messages.at(-1).content[0].text
-  assert.match(text, /sha256:first-real-id/)
-  assert.match(text, /sha256:second-real-id/)
-  assert.doesNotMatch(text, /7f8e9d0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d/)
+  assert.equal(text.includes(first), true)
+  assert.equal(text.includes(second), true)
+  assert.equal(text.includes('7f8e9d0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d'), false)
 })
