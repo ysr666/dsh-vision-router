@@ -106,12 +106,13 @@ test('full benchmark preflights every fixture before making the first provider r
 
 test('adapter benchmark latency excludes fixture rendering and durable attachment preparation', async () => {
   let clock = 0
+  let challenge = ''
   const settings = { providers: [{ provider: 'adapter-x', model: 'vision-x', fallbacks: [] }] }
   const runtime = ctx(settings, {
     onSaveImage() { clock += 700 },
     stream: () => (async function* () {
       clock += 100
-      yield { text: 'ok' }
+      yield { text: `ok\nVR-CODE:${challenge}` }
       yield { type: 'finish', reason: { kind: 'stop' } }
     })(),
   })
@@ -122,10 +123,15 @@ test('adapter benchmark latency excludes fixture rendering and durable attachmen
     endpointConfig: { api: 'dsh-adapter' }, evidenceScope: 'adapter-route',
   }, settings, {
     now: () => clock,
-    renderFixture: async () => { clock += 500; return Buffer.from('png') },
+    renderFixture: async (fixture) => {
+      challenge = fixture.visualProofChallenge
+      clock += 500
+      return Buffer.from('png')
+    },
   })
   const fixture = { id: 'f', intent: 'general', svg: '<svg/>', prompt: 'x' }
   await invoke.preflight([fixture])
+  assert.match(challenge, /^[A-Z0-9-]{6,32}$/)
   assert.equal(clock, 1200)
   const result = await invoke({
     backend: { fingerprint: 'ep2_00000000000000000000000000000000' },
@@ -133,6 +139,7 @@ test('adapter benchmark latency excludes fixture rendering and durable attachmen
   })
   assert.equal(result.transport, 'adapter')
   assert.equal(result.latencyMs, 100)
+  assert.equal(result.output, 'ok')
   assert.equal(clock, 1300)
 })
 
