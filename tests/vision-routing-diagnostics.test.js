@@ -89,7 +89,7 @@ function candidate(item, backend) {
   return item.diagnostics.candidates.find((entry) => entry.backend === backend)
 }
 
-test('diagnostic v3 explains capability/performance/access separation and remains preview-only', async () => {
+test('diagnostic v3 explains capability/performance/access separation and reports active Auto execution', async () => {
   const now = Date.now()
   const settings = config({ routingPreference: 'balanced' })
   const preview = await buildVisionRoutingPreview({
@@ -108,8 +108,11 @@ test('diagnostic v3 explains capability/performance/access separation and remain
   assert.equal(preview.policy.benchmarkLatencyAffectsRouting, false)
   assert.equal(preview.policy.performanceSource, 'runtime-observation-only')
   assert.deepEqual(preview.policy.evidenceInvalidation, ['endpoint-identity', 'benchmark-suite'])
-  assert.equal(preview.autoPreviewOnly, true)
-  assert.equal(preview.executionActive, false)
+  assert.equal(preview.diagnosticReadOnly, true)
+  assert.equal(preview.autoPreviewOnly, false)
+  assert.equal(preview.executionActive, true)
+  assert.equal(preview.executionScope, 'router-owned-visual-tools')
+  assert.equal(preview.executionFailClosed, true)
   assert.equal(preview.healthIncluded, false)
   const ocr = row(preview, 'ocr')
   assert.equal(ocr.changed, false)
