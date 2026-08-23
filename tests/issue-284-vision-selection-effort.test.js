@@ -115,7 +115,7 @@ test('issue #284 selecting an already verified wrapper is idempotent', () => {
   assert.deepEqual(mapped, incoming)
 })
 
-test('issue #284 an ordinary provider whose id ends in -vision can still enable its own twin', () => {
+test('issue #284 an ordinary provider ending in -vision never manufactures a nested twin', () => {
   const suffixGroups = [
     group('studio-vision', 'Studio Vision', ['m']),
     group('studio-vision-vision', 'Studio Vision + 自动识图', ['m']),
@@ -125,17 +125,10 @@ test('issue #284 an ordinary provider whose id ends in -vision can still enable 
     suffixGroups,
     { provider: 'studio-vision', model: 'm', reasoningEffort: 'low' },
     { autoWrapProviders: true },
-  ), {
-    mode: 'off',
-    target: {
-      provider: 'studio-vision-vision',
-      model: 'm',
-      reasoningEffort: 'low',
-    },
-  })
+  ), { mode: 'unavailable' })
 })
 
-test('issue #284 the -vision suffix chain still resolves back from the verified twin', () => {
+test('issue #284 a nested -vision-vision lookalike is never treated as a Vision Router-owned twin', () => {
   const suffixGroups = [
     group('studio-vision', 'Studio Vision', ['m']),
     group('studio-vision-vision', 'Studio Vision + 自动识图', ['m']),
@@ -145,10 +138,7 @@ test('issue #284 the -vision suffix chain still resolves back from the verified 
     suffixGroups,
     { provider: 'studio-vision-vision', model: 'm' },
     { autoWrapProviders: true },
-  ), {
-    mode: 'on',
-    target: { provider: 'studio-vision', model: 'm' },
-  })
+  ), { mode: 'unavailable' })
 })
 
 test('issue #284 guide copy says a manual ordinary-model change turns Vision off', () => {
