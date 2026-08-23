@@ -129,7 +129,7 @@ test('adapter benchmark latency excludes fixture rendering and durable attachmen
       return Buffer.from('png')
     },
   })
-  const fixture = { id: 'f', intent: 'general', svg: '<svg/>', prompt: 'x' }
+  const fixture = { id: 'f', intent: 'general', svg: '<svg/>', prompt: 'x', expected: {} }
   await invoke.preflight([fixture])
   assert.match(challenge, /^[A-Z0-9-]{6,32}$/)
   assert.equal(clock, 1200)
