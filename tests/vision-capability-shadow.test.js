@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  autoExecutionConfigFor,
   buildCapabilityShadowPlan,
   collectCapabilityShadowCandidates,
   generatedCapabilityRoute,
@@ -29,17 +30,28 @@ function fakeCore() {
   }
 }
 
-function fakeCtx(settingsValue = {}) {
+function fakeCtx(initialSettings = {}) {
+  let settingsValue = initialSettings
   const registered = new Map()
   const logs = []
+  const settingsScope = {
+    get() { return settingsValue },
+  }
+  const settingsService = {
+    get() { return settingsValue },
+    register() { return settingsScope },
+  }
   const ctx = {
     logger: {
       info: (...args) => logs.push(['info', ...args]),
       warn: (...args) => logs.push(['warn', ...args]),
     },
     get(name) {
-      if (name === 'settings') return { get: () => settingsValue }
+      if (name === 'settings') return settingsService
       return undefined
+    },
+    inject(_dependencies, callback) {
+      return callback({ settings: settingsService })
     },
     llm: {
       listProviders: () => [],
@@ -53,7 +65,13 @@ function fakeCtx(settingsValue = {}) {
       },
     },
   }
-  return { ctx, registered, logs }
+  return {
+    ctx,
+    registered,
+    logs,
+    settingsScope,
+    setSettings(value) { settingsValue = value },
+  }
 }
 
 test('only the two router-owned generated routes are filtered', () => {
@@ -228,8 +246,8 @@ test('shadow wrapper logs a plan but returns the original tool result byte-for-b
   assert.ok(logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow')))
 })
 
-test('disabled shadow performs zero planning work and leaves execution untouched', async () => {
-  const settings = { capabilityRoutingShadow: false }
+test('disabled shadow performs zero planning work and leaves ordered execution untouched', async () => {
+  const settings = { capabilityRoutingShadow: false, routingMode: 'ordered' }
   const { ctx, registered, logs } = fakeCtx(settings)
   let storeReads = 0
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
@@ -239,6 +257,128 @@ test('disabled shadow performs zero planning work and leaves execution untouched
   assert.equal(await registered.get('vision_describe').execute({ question: 'x' }, { agent: { session: {} } }), 'ok')
   assert.equal(storeReads, 0)
   assert.equal(logs.length, 0)
+})
+
+test('Auto execution exposes the planned order only inside the current visual-tool call', async () => {
+  const settings = {
+    capabilityRoutingShadow: false,
+    routingMode: 'auto',
+    routingPreference: 'local',
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  const fixture = fakeCtx(settings)
+  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+    store: { async get() { return undefined } }, logger: fixture.ctx.logger,
+  })
+  let capturedScope
+  wrapped.inject(['settings'], (child) => {
+    capturedScope = child.settings.register('vision-router', {}, { base: settings })
+  })
+  assert.ok(capturedScope)
+  assert.deepEqual(capturedScope.get().providers, settings.providers)
+
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+    },
+  })
+  const result = await fixture.registered.get('vision_describe').execute(
+    { question: 'what is here?' }, { agent: { session: {} } },
+  )
+  assert.deepEqual(result, [
+    'vision-http/local-ollama/qwen2.5vl',
+    'custom/generic',
+  ])
+  assert.deepEqual(capturedScope.get().providers, settings.providers, 'scoped execution order must disappear after the call')
+  assert.ok(fixture.logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 auto execute')))
+})
+
+test('Auto execution rechecks live authority after planning and refuses a stale plan after revocation', async () => {
+  const initial = {
+    capabilityRoutingShadow: false,
+    routingMode: 'auto',
+    routingPreference: 'local',
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  const fixture = fakeCtx(initial)
+  let enteredResolve
+  let releaseResolve
+  const entered = new Promise((resolve) => { enteredResolve = resolve })
+  const release = new Promise((resolve) => { releaseResolve = resolve })
+  let first = true
+  const wrapped = installCapabilityShadowRuntime(fixture.ctx, initial, fakeCore(), {
+    store: {
+      async get() {
+        if (first) {
+          first = false
+          enteredResolve()
+          await release
+        }
+        return undefined
+      },
+    },
+    logger: fixture.ctx.logger,
+  })
+  let capturedScope
+  wrapped.inject(['settings'], (child) => {
+    capturedScope = child.settings.register('vision-router', {}, { base: initial })
+  })
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+    },
+  })
+
+  const running = fixture.registered.get('vision_describe').execute(
+    { question: 'what is here?' }, { agent: { session: {} } },
+  )
+  await entered
+  fixture.setSettings({ ...initial, routingMode: 'ordered' })
+  releaseResolve()
+  const result = await running
+  assert.deepEqual(result, ['custom/generic'])
+  assert.ok(fixture.logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('authority-revoked')))
+})
+
+test('Auto planner failure is fail-closed to the original configured order', async () => {
+  const settings = {
+    capabilityRoutingShadow: false,
+    routingMode: 'auto',
+    routingPreference: 'local',
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  const fixture = fakeCtx(settings)
+  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+    store: { async get() { throw new Error('profile store unavailable') } },
+    logger: fixture.ctx.logger,
+  })
+  let capturedScope
+  wrapped.inject(['settings'], (child) => {
+    capturedScope = child.settings.register('vision-router', {}, { base: settings })
+  })
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+    },
+  })
+  const result = await fixture.registered.get('vision_describe').execute(
+    { question: 'what is here?' }, { agent: { session: {} } },
+  )
+  assert.deepEqual(result, ['custom/generic'])
+  assert.ok(fixture.logs.some((entry) => entry[0] === 'warn' && String(entry[1]).includes('auto/shadow planning failed')))
+})
+
+test('Auto scope never synthesizes an unconfigured direct HTTP route', () => {
+  const config = {
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  assert.equal(
+    autoExecutionConfigFor(config, ['http:paid/model', 'custom/generic']),
+    undefined,
+  )
 })
 
 test('bootstrap evidence is remembered only for shadow intent fallback on the same session', async () => {
