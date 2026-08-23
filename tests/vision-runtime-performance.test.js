@@ -128,6 +128,25 @@ test('runtime samples are isolated by backend and direct axis', async () => {
   assert.equal(store.get('p/slow').runtimeLatencyMsByAxis.document, 900)
 })
 
+test('changing deployment identity immediately discards same-name runtime speed evidence', () => {
+  const identityContext = { identity: 'endpoint-A' }
+  const store = createVisionRuntimePerformanceStore({
+    minSamples: 2,
+    context: identityContext,
+    identityResolver: (_backendKey, ctx) => ctx.identity,
+  })
+  store.record('p/m', 'ocr', 100)
+  store.record('p/m', 'ocr', 200)
+  assert.equal(store.get('p/m').runtimeLatencyMsByAxis.ocr, 150)
+
+  identityContext.identity = 'endpoint-B'
+  assert.equal(store.get('p/m'), undefined)
+  store.record('p/m', 'ocr', 900)
+  const warming = store.get('p/m')
+  assert.equal(warming.sampleCountByAxis.ocr, 1)
+  assert.equal(warming.runtimeLatencyMsByAxis.ocr, undefined)
+})
+
 test('real visual tool execution establishes runtime scope even when shadow logging is disabled', async () => {
   const now = clock()
   const runtimeStore = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
