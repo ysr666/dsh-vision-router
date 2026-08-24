@@ -7,7 +7,6 @@ import { injectLiveModelClientPrelude } from '../lib/live-model-client-prelude.j
 import { injectLocalPermissionClientPrelude } from '../lib/local-remote-settings-permission.js'
 import { injectRemoteSettingsRiskConfirmationPrelude } from '../lib/remote-settings-risk-confirmation.js'
 import { injectSettingsRc8ClientPrelude } from '../lib/settings-client-rc8-lifecycle.js'
-import { injectExactVisionTestClient } from '../lib/vision-backend-smoke-test-client.js'
 import { injectCapabilityBenchmarkClient } from '../lib/vision-capability-benchmark-client.js'
 import {
   hardenCapabilityBenchmarkFixture,
@@ -35,7 +34,6 @@ const SCRIPT_INJECTORS = Object.freeze([
   ['live models', 'data-vision-router-live-models', injectLiveModelClientPrelude],
   ['rc8 settings lifecycle', 'data-vision-router-settings-rc8-lifecycle', injectSettingsRc8ClientPrelude],
   ['local settings permission', 'data-vision-router-local-settings-permission', injectLocalPermissionClientPrelude],
-  ['exact vision test', 'data-vision-router-exact-vision-test', injectExactVisionTestClient],
   ['capability benchmark', 'data-vision-router-capability-benchmark', injectCapabilityBenchmarkClient],
   ['routing settings', 'data-vision-router-routing-settings', injectVisionRoutingSettingsPrelude],
   ['routing diagnostics', 'data-vision-router-routing-diagnostics', injectVisionRoutingDiagnosticsPrelude],

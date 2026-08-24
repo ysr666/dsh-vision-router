@@ -79,5 +79,14 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   assert.match(entry, /installCapabilityBenchmarkClient/)
   assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli.js')
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.bin, 'dsh-vision-router-acceptance'), false)
-  assert.equal(pkg.scripts['test:acceptance:v2'], 'node ./lib/v2-acceptance-cli.js')
+  assert.equal(Object.prototype.hasOwnProperty.call(pkg.scripts, 'test:acceptance:v2'), false)
+  for (const path of [
+    '../lib/v2-acceptance-cli.js',
+    '../lib/v2-acceptance-service.js',
+    '../lib/v2-execution-acceptance-observer.js',
+    '../lib/vision-backend-smoke-test-client.js',
+    '../lib/vision-backend-smoke-test.js',
+  ]) {
+    await assert.rejects(readFile(new URL(path, import.meta.url)), (error) => error?.code === 'ENOENT')
+  }
 })
