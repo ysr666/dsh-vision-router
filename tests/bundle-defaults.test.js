@@ -68,3 +68,16 @@ test('release line stays on package identity 1.7.7', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(pkg.version, '1.7.7')
 })
+
+test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
+  const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+
+  assert.doesNotMatch(entry, /installExactVisionTestClient/)
+  assert.doesNotMatch(entry, /installV2AcceptanceService/)
+  assert.doesNotMatch(entry, /createV2ExecutionAcceptanceObserver/)
+  assert.match(entry, /installCapabilityBenchmarkClient/)
+  assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli.js')
+  assert.equal(Object.prototype.hasOwnProperty.call(pkg.bin, 'dsh-vision-router-acceptance'), false)
+  assert.equal(pkg.scripts['test:acceptance:v2'], 'node ./lib/v2-acceptance-cli.js')
+})

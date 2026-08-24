@@ -20,7 +20,6 @@ import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
 import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
-import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
 import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
@@ -42,8 +41,6 @@ import { installCapabilityBenchmarkService } from './lib/vision-capability-bench
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
 import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
 import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
-import { installV2AcceptanceService } from './lib/v2-acceptance-service.js'
-import { createV2ExecutionAcceptanceObserver } from './lib/v2-execution-acceptance-observer.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
   normalizeBackgroundMeasurementAuthority,
@@ -99,9 +96,8 @@ core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).defaul
 
 // Product semantics: users choose whether Vision Router may select a backend
 // automatically or must obey the configured order, plus a plain-language
-// routing preference. This draft keeps `ordered` as the safe default because
-// execution-changing auto routing is not wired yet. A future stable 2.0 can
-// change the new-install default only after the executor passes its gates.
+// routing preference. Ordered remains the safe default; Auto changes execution
+// only under explicit live routingMode:auto authority.
 core.Config.set('routingMode', z.union(['ordered', 'auto']).default('ordered'))
 core.Config.set(
   'routingPreference',
@@ -115,9 +111,9 @@ core.Config.set(
   z.union(['local-free', 'all', 'off']).default('off'),
 )
 
-// Internal development controls. Shadow remains observational and is not the
-// user-facing product switch. capabilityRoutingStrategy is retained only for
-// prototype/backward compatibility; routingPreference is the product contract.
+// Legacy prototype fields remain accepted for settings-document compatibility,
+// but they are not rendered and do not grant execution or measurement authority.
+// routingMode/routingPreference are the only current product routing controls.
 core.Config.set('capabilityRoutingShadow', z.boolean().default(false))
 core.Config.set(
   'capabilityRoutingStrategy',
@@ -175,7 +171,6 @@ export function apply(ctx, config = {}) {
   const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)
   const logging = installVisionRouterFileLogging(adapterContractCtx)
   const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
-  const executionAcceptanceObserver = createV2ExecutionAcceptanceObserver()
   // Runtime speed is deliberately process-local and short-lived. It is not
   // persisted beside capability evidence because network/provider performance
   // is a dynamic runtime fact, not a model capability fact.
@@ -263,7 +258,6 @@ export function apply(ctx, config = {}) {
       store: capabilityStore,
       runtimePerformanceStore,
       healthForCandidate: breakerShadowHealth.healthForCandidate,
-      acceptanceObserver: executionAcceptanceObserver,
     },
   )
   // prepareCall normalization/reconciliation is already installed at the
@@ -292,18 +286,16 @@ export function apply(ctx, config = {}) {
   // primary Vision Router settings section. This is presentation-only: the Host
   // keeps one settings namespace and one wrapper-registration implementation.
   installWrapperScopeClientPrelude(reconciledCtx)
-  // #266: 1.7.x gets one exact, no-fallback image smoke test per visible row.
-  // Keep it out of the controlled React form so the v2 capability-benchmark
-  // client can take ownership later without forking the stable settings UI.
-  installExactVisionTestClient(reconciledCtx)
+  // Capability Benchmark is the single visible per-model testing entry point.
+  // The legacy exact smoke backend remains installed for compatibility/doctor
+  // callers, but its separate settings-row client is intentionally not mounted.
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)
-  installPiAiBridgeWireCompat(reconciledCtx, logging.logger, executionAcceptanceObserver)
+  installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
-    acceptanceObserver: executionAcceptanceObserver,
   })
   // Only real visual-tool adapter streams are timed, and only while live Auto
   // authority permits future-routing observation. Benchmark/smoke/background
@@ -335,13 +327,12 @@ export function apply(ctx, config = {}) {
     core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
-    acceptanceObserver: executionAcceptanceObserver,
   })
   installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
-  const benchmarkManager = installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
+  installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
   })
@@ -349,15 +340,6 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
     store: capabilityStore,
     runtimePerformanceStore,
-  })
-  installV2AcceptanceService(backendRuntimeCtx, {
-    runtimeCtx: performanceCtx,
-    executionCtx: backendRuntimeCtx,
-    executionAcceptanceObserver,
-    runtimePerformanceStore,
-    backgroundProfiler: backgroundProfiling.profiler,
-    benchmarkManager,
-    logger: logging.logger,
   })
   installTesseractExecFileCompat(backendRuntimeCtx)
 
