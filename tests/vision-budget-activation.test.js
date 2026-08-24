@@ -53,7 +53,38 @@ test('long text-only turns never consume the structured vision budget', async ()
   }
 })
 
-test('the structured vision budget starts on the first actual visual tool call', async () => {
+test('default structured vision turn budget is unlimited for long-running agent turns', async () => {
+  const originalNow = Date.now
+  let now = 1_500_000
+  Date.now = () => now
+  try {
+    const harness = boot()
+    const session = {}
+    harness.wrapped.tools.register({
+      name: 'vision_describe',
+      async execute() { return 'visible evidence' },
+    })
+
+    await preStep(harness, session, 1)
+    const first = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
+    assert.equal(first, 'visible evidence')
+
+    now += 3 * 60 * 60 * 1000
+    const afterThreeHours = await preStep(harness, session, 1)
+    assert.equal(
+      afterThreeHours.messages.some((message) => String(message.id).includes('structured-guard-stop')),
+      false,
+      'the default policy must not impose an aggregate wall-clock cap on a long agent turn',
+    )
+
+    const second = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
+    assert.equal(second, 'visible evidence')
+  } finally {
+    Date.now = originalNow
+  }
+})
+
+test('an explicit structured vision budget starts on the first actual visual tool call', async () => {
   const originalNow = Date.now
   let now = 2_000_000
   Date.now = () => now

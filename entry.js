@@ -18,10 +18,12 @@ import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-po
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
-import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
+import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
+import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
 import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
 import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
+import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
@@ -78,13 +80,15 @@ export const SETTINGS_CONTRACT_REVISION = 7
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
-// Keep the three timeout layers coherent: one provider call may use up to 120s,
-// one visual task (including fallbacks) shares 120s, and one visual turn shares
-// 120s. The runtime policy below reserves the final quarter of a multi-backend
-// task for fallback, so raising the task ceiling does not revive the historical
-// "120s per backend" stall that #117 removed.
+// Keep the timeout layers coherent: one provider call may use up to 120s and
+// one visual task (including fallbacks) shares 120s. The whole-turn visual
+// budget is an optional user safety cap rather than an Agent lifetime policy:
+// 0 means unlimited, which is the default for long-running autonomous turns.
+// The runtime policy below still reserves the final quarter of a multi-backend
+// task for fallback, so disabling the aggregate cap does not revive the
+// historical "120s per backend" stall that #117 removed.
 core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))
-core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(120000))
+core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(0).max(600000).default(0))
 
 // Both visible entry points — Settings > Vision Router and the legacy
 // Settings > Plugins compatibility card — edit the same Host-owned namespace.
@@ -211,7 +215,7 @@ export function apply(ctx, config = {}) {
     visionTurnBudgetMs:
       Number.isFinite(Number(bootConfig.visionTurnBudgetMs))
         ? Number(bootConfig.visionTurnBudgetMs)
-        : 120000,
+        : 0,
   }
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
@@ -236,6 +240,11 @@ export function apply(ctx, config = {}) {
     nativeImageCompat.config,
     { rewriteHistoryImages: core.rewriteHistoryImages },
   )
+  // Final structured-flow guard sits closest to core.apply so it sees the
+  // actual tool registrations and pre-step listener. It makes bootstrap
+  // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
+  // rejects empty/non-evidence results, and applies the optional turn deadline
+  // only when the user explicitly configures one.
   const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)
   const backgroundProfiling = installBackgroundCapabilityProfiling(
     structuredCtx,
@@ -267,10 +276,25 @@ export function apply(ctx, config = {}) {
   })
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
   installClientPresentationBoundary(reconciledCtx)
-  installLiveModelClientPrelude(reconciledCtx)
-  // Stable 1.7.x keeps the exact no-fallback smoke test as a separate quick
-  // verification action. v2 Benchmark coexists beside it and owns capability
-  // scoring; neither browser client suppresses the other.
+  // The Host keeps wrapper routes registered because image admission and the
+  // Vision toggle need their real identity. Hide only confidently owned
+  // wrapper groups from DSH's stock model-selection presentation and project an
+  // active wrapper back to its ordinary source label; uncertain routes stay
+  // visible rather than being guessed away.
+  installVisionModelVisibilityBoundary(reconciledCtx)
+  // Keep endpoint-discovered ids private to Vision Router's settings client,
+  // but make Settings -> Models authoritative when DSH already enumerates a
+  // provider. Live /models data now fills only a still-active provider whose
+  // DSH catalog is empty, so disabled models and removed providers cannot leak
+  // back into the Vision Router picker through stale endpoint discovery.
+  installStrictLiveModelClientPrelude(reconciledCtx)
+  // Surface the existing autoWrapProviders/wrappedProviders contract in the
+  // primary Vision Router settings section. This is presentation-only: the Host
+  // keeps one settings namespace and one wrapper-registration implementation.
+  installWrapperScopeClientPrelude(reconciledCtx)
+  // #266: 1.7.x gets one exact, no-fallback image smoke test per visible row.
+  // Keep it out of the controlled React form so the v2 capability-benchmark
+  // client can take ownership later without forking the stable settings UI.
   installExactVisionTestClient(reconciledCtx)
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)

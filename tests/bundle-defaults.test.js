@@ -42,6 +42,11 @@ test('entry contract exposes routing product semantics without enabling auto exe
   assert.equal(Config({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
 })
 
+test('public plugin config leaves the whole-turn vision budget unlimited by default', () => {
+  assert.equal(Config({}).visionTurnBudgetMs, 0)
+  assert.equal(Config({ visionTurnBudgetMs: 180000 }).visionTurnBudgetMs, 180000)
+})
+
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
   assert.equal(SETTINGS_CONTRACT_REVISION, 7)
   assert.equal(Config({}).allowRemoteSettings, false)

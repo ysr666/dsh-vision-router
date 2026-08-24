@@ -220,7 +220,7 @@ test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('native session preserves pixels, suppresses generic auto-mount, and keeps explicit 1+x', async () => {
+test('native session preserves pixels, suppresses automatic orchestration, and keeps tools optional', async () => {
   const harness = bridgeHarness({
     inputModalities: ['text', 'image'],
     config: { structuredVisionBootstrap: true },
@@ -234,7 +234,8 @@ test('native session preserves pixels, suppresses generic auto-mount, and keeps 
     assert.equal(bridge.config.rewriteImages, false)
     assert.equal(bridge.config.instantDescribe, false)
     assert.equal(bridge.config.autoActivateOnImage, false)
-    assert.equal(bridge.config.structuredVisionBootstrap, true)
+    assert.equal(bridge.config.structuredVisionBootstrap, false)
+    assert.equal(bridge.config.tool, true)
   })
 
   assert.equal(result.messages[0].content[0].content[0].type, 'image')

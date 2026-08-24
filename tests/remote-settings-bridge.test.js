@@ -17,6 +17,7 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
     routingPreference: 'balanced',
     visionDepth: 'standard',
     visionDepthMaxCalls: 0,
+    visionTurnBudgetMs: 120000,
     proxy: 'http://127.0.0.1:1080',
     proxyHosts: ['secret.internal'],
     artifactsDir: '../../escape',
@@ -51,6 +52,7 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
           routingPreference: 'balanced',
           visionDepth: 'standard',
           visionDepthMaxCalls: 0,
+          visionTurnBudgetMs: 120000,
           proxy: '',
         },
         user: structuredClone(user), revision, applies: 'live', secrets: [],
@@ -88,6 +90,7 @@ test('remote describe projects only the explicit safe capability allow-list', as
   assert.equal(result.value.view.value.routingPreference, 'balanced')
   assert.equal(result.value.view.value.visionDepth, 'standard')
   assert.equal(result.value.view.value.visionDepthMaxCalls, 0)
+  assert.equal(result.value.view.value.visionTurnBudgetMs, 120000)
   for (const field of ['proxy', 'proxyHosts', 'artifactsDir', 'desktopScreenshot', 'httpProviders', 'localOllama', 'localLmStudio', 'stealth', 'wrapperRoute', 'chainRoute', REMOTE_SETTINGS_PERMISSION]) {
     assert.equal(Object.hasOwn(result.value.view.value, field), false, field)
     assert.equal(Object.hasOwn(result.value.view.user ?? {}, field), false, field)
@@ -98,6 +101,7 @@ test('remote describe projects only the explicit safe capability allow-list', as
   assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionDepthMaxCalls'), true)
   assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('capabilityRoutingShadow'), false)
   assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('capabilityRoutingStrategy'), false)
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionTurnBudgetMs'), true)
 })
 
 test('remote mutation allows safe fields and returns authoritative readback', async () => {
@@ -125,7 +129,7 @@ test('remote settings use the same routing mode and preference product vocabular
   assert.equal(preference.value.view.value.routingPreference, 'local')
 })
 
-test('remote mutation keeps custom depth and cap on the same safe settings surface', async () => {
+test('remote mutation keeps custom depth, cap and turn budget on the same safe settings surface', async () => {
   const { settings } = makeSettings()
   const handler = createVisionRouterRemoteSettingsHandler(settings)
   const depth = await handler('mutate', {
@@ -138,6 +142,11 @@ test('remote mutation keeps custom depth and cap on the same safe settings surfa
   })
   assert.equal(cap.ok, true)
   assert.equal(cap.value.view.value.visionDepthMaxCalls, 6)
+  const budget = await handler('mutate', {
+    ops: [{ op: 'set', path: ['visionTurnBudgetMs'], value: 180000 }], expectedRevision: 7,
+  })
+  assert.equal(budget.ok, true)
+  assert.equal(budget.value.view.value.visionTurnBudgetMs, 180000)
 })
 
 test('host/network/privacy/credential-bearing fields are always local-only remotely', async () => {
@@ -224,5 +233,5 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
   }
   installVisionRouterRemoteSettingsBridge(ctx)
   assert.deepEqual(registrations, [[REMOTE_SETTINGS_CHANNEL, { authority: 'trusted-host' }]])
-  assert.equal(indexTaps.length, 1)
+  assert.equal(indexTaps.length, 2, 'local permission and turn-budget UI use separate presentation-only index transforms')
 })
