@@ -20,7 +20,6 @@ import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
 import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
-import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
@@ -286,9 +285,8 @@ export function apply(ctx, config = {}) {
   // primary Vision Router settings section. This is presentation-only: the Host
   // keeps one settings namespace and one wrapper-registration implementation.
   installWrapperScopeClientPrelude(reconciledCtx)
-  // Capability Benchmark is the single visible per-model testing entry point.
-  // The legacy exact smoke backend remains installed for compatibility/doctor
-  // callers, but its separate settings-row client is intentionally not mounted.
+  // Capability Benchmark is the single visible and callable per-model
+  // capability-test surface in the release runtime.
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)
   installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
@@ -298,8 +296,8 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
   })
   // Only real visual-tool adapter streams are timed, and only while live Auto
-  // authority permits future-routing observation. Benchmark/smoke/background
-  // calls have no visual-tool scope and cannot contaminate this store.
+  // authority permits future-routing observation. Benchmark/background calls
+  // have no visual-tool scope and cannot contaminate this store.
   const performanceCtx = contextWithVisionRuntimePerformance(
     executionCtx,
     runtimePerformanceStore,
@@ -327,10 +325,6 @@ export function apply(ctx, config = {}) {
     core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
-  })
-  installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
-    logger: logging.logger,
-    isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
   })
   installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
