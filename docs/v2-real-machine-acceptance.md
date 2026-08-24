@@ -83,6 +83,8 @@ dsh-vision-router-acceptance \
 
 This phase requires the already-measured `opencode-go/minimax-m3` and `zhipu-glm/glm-4.6v` routes in the configured provider list. It temporarily places MiniMax immediately before GLM, selects Quality + Auto, invokes the real registered `vision_ground` tool at most twice, and restores the exact original user-layer routing/background fields in `finally`.
 
+The provider-invoking route accepts only loopback/localhost transport and rejects cross-site browser requests. Command-line clients without browser Origin/Sec-Fetch headers remain supported.
+
 | Case | Contract |
 | --- | --- |
 | E02-real-auto-reorder | Existing comparable Grounding evidence changes the planned first backend, and the real visual tool attempts that backend first. |

@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  isV2AcceptanceRequestAuthorized,
   runV2ProviderAcceptance,
   runV2RealExecutionAcceptance,
   runV2SafeAcceptance,
@@ -125,6 +126,26 @@ function createRuntime(user = {}) {
   }
   return { settings, runtimeCtx: observed, store, profiler, benchmarkManager }
 }
+
+test('real-provider acceptance route rejects cross-site localhost requests', () => {
+  const local = (headers = {}) => ({
+    headers: { host: '127.0.0.1:3080', ...headers },
+    socket: { remoteAddress: '127.0.0.1' },
+  })
+  assert.equal(isV2AcceptanceRequestAuthorized(local()), true, 'non-browser CLI remains allowed')
+  assert.equal(isV2AcceptanceRequestAuthorized(local({
+    origin: 'http://127.0.0.1:3080',
+    'sec-fetch-site': 'same-origin',
+  })), true)
+  assert.equal(isV2AcceptanceRequestAuthorized(local({
+    origin: 'https://attacker.invalid',
+    'sec-fetch-site': 'cross-site',
+  })), false)
+  assert.equal(isV2AcceptanceRequestAuthorized({
+    headers: { host: '127.0.0.1:3080' },
+    socket: { remoteAddress: '192.0.2.10' },
+  }), false)
+})
 
 test('safe J0a acceptance runs inside the live wrappers and restores exact user-layer authority state', async () => {
   const runtime = createRuntime({ routingMode: 'auto' })
