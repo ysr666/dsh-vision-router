@@ -21,6 +21,7 @@ import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
 import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
+import { installGuideVisionToggleHighlight } from './lib/guide-vision-toggle-highlight.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
@@ -260,6 +261,11 @@ export function apply(ctx, config = {}) {
   })
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
   installClientPresentationBoundary(reconciledCtx)
+  // The same first walkthrough step now teaches the explicit "识图" control
+  // introduced by #284. Widen the existing spotlight to cover that button and
+  // the adjacent model selector as one target instead of leaving the control
+  // under the dimming veil.
+  installGuideVisionToggleHighlight(reconciledCtx)
   // The Host keeps wrapper routes registered because image admission and the
   // Vision toggle need their real identity. Hide only confidently owned
   // wrapper groups from DSH's stock model-selection presentation and project an

@@ -2,6 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Config, SETTINGS_CONTRACT_REVISION } from '../entry.js'
+import {
+  GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE,
+  injectGuideVisionToggleHighlight,
+  unionGuideRects,
+} from '../lib/guide-vision-toggle-highlight.js'
 
 const bundlePatch = new URL('../cordis.patch.yml', import.meta.url)
 
@@ -49,6 +54,25 @@ test('entry contract exposes routing product semantics without enabling auto exe
 test('public plugin config leaves the whole-turn vision budget unlimited by default', () => {
   assert.equal(Config({}).visionTurnBudgetMs, 0)
   assert.equal(Config({ visionTurnBudgetMs: 180000 }).visionTurnBudgetMs, 180000)
+})
+
+test('walkthrough step 1 combines the Vision toggle and model selector into one spotlight', () => {
+  assert.deepEqual(
+    unionGuideRects(
+      { x: 100, y: 440, left: 100, top: 440, right: 220, bottom: 500, width: 120, height: 60 },
+      { x: 236, y: 430, left: 236, top: 430, right: 760, bottom: 510, width: 524, height: 80 },
+    ),
+    { x: 100, y: 430, left: 100, top: 430, right: 760, bottom: 510, width: 660, height: 80 },
+  )
+  assert.match(GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE, /data-vr-step="step1"/)
+  assert.match(GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE, /data-vision-router-mode-toggle/)
+  assert.match(GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE, /vr-guide-spot-hole/)
+  assert.match(GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE, /vr-guide-spot-ring/)
+
+  const html = '<html><head></head><body></body></html>'
+  const once = injectGuideVisionToggleHighlight(html)
+  assert.equal(injectGuideVisionToggleHighlight(once), once)
+  assert.equal((once.match(/data-vision-router-guide-toggle-highlight/g) ?? []).length, 1)
 })
 
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
