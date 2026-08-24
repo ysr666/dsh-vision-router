@@ -29,6 +29,11 @@ test('progressive tools remain an explicit opt-in', () => {
   assert.equal(Config({ progressiveTools: true }).progressiveTools, true)
 })
 
+test('public plugin config leaves the whole-turn vision budget unlimited by default', () => {
+  assert.equal(Config({}).visionTurnBudgetMs, 0)
+  assert.equal(Config({ visionTurnBudgetMs: 180000 }).visionTurnBudgetMs, 180000)
+})
+
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
   assert.equal(SETTINGS_CONTRACT_REVISION, 4)
   assert.equal(Config({}).allowRemoteSettings, false)

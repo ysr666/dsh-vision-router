@@ -6,13 +6,15 @@ import {
   installVisionTurnBudgetClientPrelude,
 } from '../lib/vision-turn-budget-client-prelude.js'
 
-test('turn-budget prelude exposes the existing Host field with the schema bounds', () => {
+test('turn-budget prelude exposes unlimited as the default while preserving the explicit cap range', () => {
   assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /visionTurnBudgetMs/)
+  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /DEFAULT_MS = 0/)
   assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /MIN_MS = 10000/)
   assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /MAX_MS = 600000/)
+  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /parsed === 0/)
   assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /scope\.set\(FIELD, parsed\)/)
-  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /普通模型思考、原生多模态直接看图不会启动此计时/)
-  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /native multimodal image processing do not start this timer/)
+  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /默认不限制；填 0 表示不限制/)
+  assert.match(VISION_TURN_BUDGET_CLIENT_PRELUDE, /Unlimited by default; enter 0 for unlimited/)
 })
 
 test('turn-budget prelude injection is idempotent and stays inside head when available', () => {

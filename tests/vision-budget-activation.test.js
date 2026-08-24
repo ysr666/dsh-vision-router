@@ -53,7 +53,7 @@ test('long text-only turns never consume the structured vision budget', async ()
   }
 })
 
-test('default structured vision turn budget is 180 seconds, not the historical 90 seconds', async () => {
+test('default structured vision turn budget is unlimited for long-running agent turns', async () => {
   const originalNow = Date.now
   let now = 1_500_000
   Date.now = () => now
@@ -66,28 +66,25 @@ test('default structured vision turn budget is 180 seconds, not the historical 9
     })
 
     await preStep(harness, session, 1)
-    const result = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
-    assert.equal(result, 'visible evidence')
+    const first = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
+    assert.equal(first, 'visible evidence')
 
-    now += 90_001
-    const afterHistoricalLimit = await preStep(harness, session, 1)
+    now += 3 * 60 * 60 * 1000
+    const afterThreeHours = await preStep(harness, session, 1)
     assert.equal(
-      afterHistoricalLimit.messages.some((message) => String(message.id).includes('structured-guard-stop')),
+      afterThreeHours.messages.some((message) => String(message.id).includes('structured-guard-stop')),
       false,
-      'the old 90s fallback must no longer terminate an image turn',
+      'the default policy must not impose an aggregate wall-clock cap on a long agent turn',
     )
 
-    now += 90_000
-    const afterNewLimit = await preStep(harness, session, 1)
-    const stop = afterNewLimit.messages.find((message) => String(message.id).includes('structured-guard-stop'))
-    assert.ok(stop)
-    assert.match(stop.content[0].text, /视觉总时间预算已耗尽/)
+    const second = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
+    assert.equal(second, 'visible evidence')
   } finally {
     Date.now = originalNow
   }
 })
 
-test('the structured vision budget starts on the first actual visual tool call', async () => {
+test('an explicit structured vision budget starts on the first actual visual tool call', async () => {
   const originalNow = Date.now
   let now = 2_000_000
   Date.now = () => now
