@@ -3,11 +3,8 @@ import assert from 'node:assert/strict'
 import { CAPABILITY_BENCHMARK_CLIENT } from '../lib/vision-capability-benchmark-client.js'
 
 test('background UI excludes Host-declared text-only models from unattended eligibility', () => {
-  assert.match(
-    CAPABILITY_BENCHMARK_CLIENT,
-    /candidate\.imageCapability==='text-only'\)return false/,
-  )
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /backgroundExcluded/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidate\.imageCapability==='text-only'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /backgroundExcluded\(body,candidate\.key\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /Host标记仅文本/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台不自动测/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /可手动测试识图\/强制验证/)
