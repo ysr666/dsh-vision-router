@@ -195,5 +195,22 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
   }
   installVisionRouterRemoteSettingsBridge(ctx)
   assert.deepEqual(registrations, [[REMOTE_SETTINGS_CHANNEL, { authority: 'trusted-host' }]])
-  assert.equal(indexTaps.length, 2, 'local permission and turn-budget UI use separate presentation-only index transforms')
+
+  const sample = '<html><head></head><body></body></html>'
+  const rendered = indexTaps.map((transform) => transform(sample))
+  assert.equal(
+    rendered.some((html) => html.includes('data-vision-router-remote-settings-risk-confirmation')),
+    true,
+    'remote risk confirmation prelude is installed',
+  )
+  assert.equal(
+    rendered.some((html) => html.includes('data-vision-router-settings-ia')),
+    true,
+    'the consolidated settings IA prelude is installed',
+  )
+  assert.equal(
+    rendered.some((html) => html.includes('data-vision-router-turn-budget')),
+    false,
+    'whole-turn budget no longer owns a duplicate presentation prelude',
+  )
 })
