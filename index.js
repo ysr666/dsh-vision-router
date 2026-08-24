@@ -2816,6 +2816,10 @@ export function createStealthAdapter(ctx, { native, imageMemory, pairs, chainRou
       const base = await native.resolveModel(provider, model, signal)
       return { ...base, provider, inputModalities: ['text', 'image'] }
     },
+    async prepareCall(provider, model, signal) {
+      const resolved = await this.resolveModel(provider, model, signal)
+      return { model: resolved, stream: (options) => this.stream(options) }
+    },
     ...createWrapperStreamBody(ctx, { imageMemory, delegateProvider, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels }),
   }
 }
@@ -3294,6 +3298,10 @@ export function apply(ctx, config = {}) {
         async resolveModel(provider, model, signal) {
           return nativeAdapter.resolveModel(provider, model, signal)
         },
+        async prepareCall(provider, model, signal) {
+          const resolved = await this.resolveModel(provider, model, signal)
+          return { model: resolved, stream: (options) => this.stream(options) }
+        },
         async *stream(options) {
           yield* nativeAdapter.stream(options)
         },
@@ -3455,6 +3463,10 @@ export function apply(ctx, config = {}) {
           inputModalities: ['text', 'image'],
           context: { contextWindow: 32768 },
         }
+      },
+      async prepareCall(provider, model, signal) {
+        const resolved = await this.resolveModel(provider, model, signal)
+        return { model: resolved, stream: (options) => this.stream(options) }
       },
       async *stream(options) {
         const entry = httpEntries().find((candidate) => candidate.id === options.model)
@@ -3689,6 +3701,10 @@ export function apply(ctx, config = {}) {
           inputModalities: ['text', 'image'],
         }
       },
+      async prepareCall(provider, model, signal) {
+        const resolved = await this.resolveModel(provider, model, signal)
+        return { model: resolved, stream: (options) => this.stream(options) }
+      },
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: textProviderRoute(),
@@ -3816,6 +3832,10 @@ export function apply(ctx, config = {}) {
         }
         const base = await original.resolveModel(provider, model)
         return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
+      },
+      async prepareCall(provider, model, signal) {
+        const resolved = await this.resolveModel(provider, model, signal)
+        return { model: resolved, stream: (options) => this.stream(options) }
       },
       ...createWrapperStreamBody(ctx, {
         imageMemory,
@@ -4327,6 +4347,10 @@ export function apply(ctx, config = {}) {
           inputModalities: ['text', 'image'],
           context: { contextWindow: 128000 },
         }
+      },
+      async prepareCall(provider, model, signal) {
+        const resolved = await this.resolveModel(provider, model, signal)
+        return { model: resolved, stream: (options) => this.stream(options) }
       },
       async *stream(options) {
         const failures = []
