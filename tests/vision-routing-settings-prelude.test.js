@@ -27,6 +27,23 @@ test('product UI exposes ordered/auto and balanced/quality/speed/local choices',
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /本地/)
 })
 
+test('background profiling is a separate opt-in authority and UI defaults missing state to off', () => {
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /BACKGROUND_VALUES = \['off', 'local-free', 'all'\]/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /background: allowed\(value\.backgroundBenchmarking, BACKGROUND_VALUES, 'off'\)/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /后台补充能力数据/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /自动补测已关闭；未测模型仍按你的设置顺序执行/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto开启时仅在空闲时补测本地或免费后端/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto开启时会在空闲时补测所有已配置模型/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /默认只在空闲时测本地或免费后端/)
+})
+
+test('Auto copy makes measurement non-blocking and evidence-driven', () => {
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto只使用已有实测数据；未测能力保持你的设置顺序/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /你可以手动测评，也可以选择在空闲时自动补充能力数据/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /实测 ' \+ measured \+ ' \/ ' \+ total/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /自动选择会在后台渐进建立能力数据/)
+})
+
 test('routing choices reuse the stabilized SettingsScope and readback-safe save helper', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /ctx\.settingsScope\.bind\(\{ namespace: 'vision-router' \}\)/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /helpers\.shouldUseRemoteSettings/)
