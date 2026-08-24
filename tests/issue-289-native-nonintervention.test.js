@@ -9,6 +9,7 @@ import {
 } from '../lib/native-image-coexistence.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
+import { REMOTE_SETTINGS_READABLE_FIELDS } from '../lib/remote-settings-bridge.js'
 
 function session(provider, model = 'model') {
   return {
@@ -182,4 +183,8 @@ test('a native model may still explicitly call a Vision Router tool', async () =
     { agent: { session: nativeSession } },
   )
   assert.equal(result, 'native-requested OCR evidence')
+})
+
+test('the turn budget is available through the trusted remote settings channel', () => {
+  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionTurnBudgetMs'), true)
 })
