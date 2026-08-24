@@ -60,13 +60,14 @@ export const SETTINGS_CONTRACT_REVISION = 4
 // for the settings namespace, so composition config and settings validation
 // agree on the same default.
 core.Config.set('progressiveTools', z.boolean().default(false))
-// Keep the three timeout layers coherent: one provider call may use up to 120s,
-// one visual task (including fallbacks) shares 120s, and one visual turn shares
-// 120s. The runtime policy below reserves the final quarter of a multi-backend
-// task for fallback, so raising the task ceiling does not revive the historical
-// "120s per backend" stall that #117 removed.
+// Keep the timeout layers coherent: one provider call may use up to 120s, one
+// visual task (including fallbacks) shares 120s, while one image turn gets 180s
+// total so a slow first look does not consume the entire 1+x evidence budget.
+// The runtime policy below still reserves the final quarter of a multi-backend
+// task for fallback, so this does not revive the historical "120s per backend"
+// stall that #117 removed.
 core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))
-core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(120000))
+core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(10000).max(600000).default(180000))
 
 // Both visible entry points — Settings > Vision Router and the legacy
 // Settings > Plugins compatibility card — edit the same Host-owned namespace.
@@ -179,7 +180,7 @@ export function apply(ctx, config = {}) {
     visionTurnBudgetMs:
       Number.isFinite(Number(bootConfig.visionTurnBudgetMs))
         ? Number(bootConfig.visionTurnBudgetMs)
-        : 120000,
+        : 180000,
   }
   // The batch-attachment API is the released, non-incidental discriminator
   // between the minimum Host contract and the newer Host-owned integration
