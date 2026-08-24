@@ -25,6 +25,11 @@ import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.j
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installGuideVisionToggleHighlight } from './lib/guide-vision-toggle-highlight.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
+import {
+  contextWithVisionRouteOwnership,
+  createVisionRouteOwnership,
+  installVisionRouteOwnershipBoundary,
+} from './lib/vision-route-ownership.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
@@ -250,6 +255,11 @@ export function apply(ctx, config = {}) {
   // the final Host registration boundary above. Wrapping again here would make
   // prepareCall capture a pre-wrapper stream.
   const reconciledCtx = structuredCtx
+  const visionRouteOwnership = createVisionRouteOwnership()
+  // The browser never infers wrapper identity from route names. Publish the
+  // process-local registration facts through one read-only same-origin view;
+  // the toggle, stock picker projection and Models alias consume the same fact.
+  installVisionRouteOwnershipBoundary(reconciledCtx, visionRouteOwnership)
   // Discover the provider's actual /models list independently of DSH's static
   // catalog. The Host owns credentials/networking/cache; the browser receives
   // model ids only. A live hit is also the evidence required before an
@@ -279,10 +289,9 @@ export function apply(ctx, config = {}) {
   // under the dimming veil.
   installGuideVisionToggleHighlight(reconciledCtx)
   // The Host keeps wrapper routes registered because image admission and the
-  // Vision toggle need their real identity. Hide only confidently owned
-  // wrapper groups from DSH's stock model-selection presentation and project an
-  // active wrapper back to its ordinary source label; uncertain routes stay
-  // visible rather than being guessed away.
+  // Vision toggle need their real identity. Hide only Host-confirmed wrapper
+  // groups from DSH's stock model-selection presentation and project an active
+  // wrapper back to its ordinary source label.
   installVisionModelVisibilityBoundary(reconciledCtx)
   // Keep endpoint-discovered ids private to Vision Router's settings client,
   // but make Settings -> Models authoritative when DSH already enumerates a
@@ -353,13 +362,23 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(backendRuntimeCtx, legacyCoreCompat.config)
+    // Keep the monolithic core unchanged: this last boundary makes its old
+    // duplicate-route adoption branch unreachable and records only successful
+    // registrations from this plugin instance as wrapper ownership facts.
+    const ownedCore = contextWithVisionRouteOwnership(
+      backendRuntimeCtx,
+      legacyCoreCompat.config,
+      visionRouteOwnership,
+    )
+    const result = core.apply(ownedCore.ctx, ownedCore.config)
     legacyCoreCompat.finishSchemaBootstrap()
     // On newer Hosts the Settings -> Models surface is backed by the
     // configurable-provider directory, not by the live adapter registry alone.
-    // Publish the main DeepSeek + 自动识图 route as a derived alias of official
-    // DeepSeek. On older Hosts the helper feature-detects and stays inert.
-    installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
+    // Publish the main DeepSeek + 自动识图 route only when this plugin instance
+    // actually owns the live wrapper registration.
+    installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger, {
+      ownership: visionRouteOwnership,
+    })
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {
         logging.logger.error(
