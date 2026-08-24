@@ -156,14 +156,14 @@ test('background profiler does not remeasure a complete profile solely because i
   assert.equal(calls, 0)
 })
 
-test('recent foreground task moves its directly measurable axis to the front of progressive work', async () => {
+test('recent foreground task does not reorder the deterministic background axis plan', async () => {
   const seen = []
   const profiler = profilerFor(settings(), async ({ axis }) => { seen.push(axis) })
   profiler.foregroundStart({ toolName: 'vision_long_screenshot_ocr', args: {} })
   profiler.foregroundEnd()
   await profiler.tick()
   profiler.stop()
-  assert.deepEqual(seen, ['document'])
+  assert.deepEqual(seen, ['ocr'])
 })
 
 test('real foreground vision aborts an in-flight background request and does not backoff it as a provider failure', async () => {
@@ -183,6 +183,24 @@ test('real foreground vision aborts an in-flight background request and does not
   assert.equal(profiler.snapshot().activeForeground, 1)
   assert.equal(profiler.snapshot().backoffSize, 0)
   profiler.foregroundEnd()
+  profiler.stop()
+})
+
+test('settings or model topology changes abort stale in-flight background work and rescan without provider backoff', async () => {
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(settings(), ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+  }))
+  const ticking = profiler.tick()
+  await ready
+  profiler.topologyChanged()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
   profiler.stop()
 })
 
