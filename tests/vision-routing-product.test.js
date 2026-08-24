@@ -23,14 +23,12 @@ test('product vocabulary is auto/ordered plus plain-language preferences', () =>
   assert.equal(normalizeVisionRoutingPreference('privacy'), 'balanced')
 })
 
-test('legacy privacy strategy maps to user-facing local preference only as compatibility input', () => {
-  assert.equal(normalizeVisionRoutingPreference(undefined, 'privacy'), 'local')
-  assert.equal(normalizeVisionRoutingPreference(undefined, 'quality'), 'quality')
+test('internal privacy strategy is emitted only from the public local preference', () => {
   assert.equal(routingPreferenceToCapabilityStrategy('local'), 'privacy')
   assert.equal(routingPreferenceToCapabilityStrategy('quality'), 'quality')
 })
 
-test('current draft defaults to ordered without pretending auto execution is active', () => {
+test('release defaults to ordered and enables Auto only when explicitly selected', () => {
   assert.deepEqual(resolveVisionRoutingProduct({}), {
     mode: 'ordered',
     preference: 'balanced',
@@ -43,6 +41,21 @@ test('current draft defaults to ordered without pretending auto execution is act
     strategy: 'privacy',
     automatic: true,
   })
+})
+
+test('prototype routing fields are ignored by the release product contract', () => {
+  assert.deepEqual(resolveVisionRoutingProduct({
+    capabilityRoutingShadow: true,
+    capabilityRoutingStrategy: 'privacy',
+  }), {
+    mode: 'ordered',
+    preference: 'balanced',
+    strategy: 'balanced',
+    automatic: false,
+  })
+  const normalized = normalizeRuntimeVisionConfig({ capabilityRoutingStrategy: 'quality' })
+  assert.equal(normalized.routingMode, 'ordered')
+  assert.equal(normalized.routingPreference, 'balanced')
 })
 
 test('routing authority fails closed and does not infer measurement from Auto', () => {

@@ -40,6 +40,10 @@ test('entry contract exposes routing product semantics without enabling auto exe
   assert.equal(Config({ backgroundBenchmarking: 'local-free' }).backgroundBenchmarking, 'local-free')
   assert.equal(Config({ backgroundBenchmarking: 'all' }).backgroundBenchmarking, 'all')
   assert.equal(Config({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
+  const schema = Config.toJSON()
+  const fields = schema.refs[String(schema.uid)].dict
+  assert.equal(Object.hasOwn(fields, 'capabilityRoutingShadow'), false)
+  assert.equal(Object.hasOwn(fields, 'capabilityRoutingStrategy'), false)
 })
 
 test('public plugin config leaves the whole-turn vision budget unlimited by default', () => {

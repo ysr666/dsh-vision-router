@@ -94,8 +94,8 @@ test('shadow health observation failures stay neutral instead of blocking execut
   assert.equal(plan.explanation[0].health, 1)
 })
 
-test('disabled runtime shadow never reads health and returns the original result', async () => {
-  const settings = { capabilityRoutingShadow: false }
+test('ordered runtime never reads planner health and returns the original result', async () => {
+  const settings = { routingMode: 'ordered' }
   const { ctx, registered } = contextFor(settings)
   let healthReads = 0
   const wrapped = installCapabilityShadowRuntime(ctx, settings, coreWithoutExtraCandidates(), {

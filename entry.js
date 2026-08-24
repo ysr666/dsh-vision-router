@@ -110,14 +110,6 @@ core.Config.set(
   z.union(['local-free', 'all', 'off']).default('off'),
 )
 
-// Legacy prototype fields remain accepted for settings-document compatibility,
-// but they are not rendered and do not grant execution or measurement authority.
-// routingMode/routingPreference are the only current product routing controls.
-core.Config.set('capabilityRoutingShadow', z.boolean().default(false))
-core.Config.set(
-  'capabilityRoutingStrategy',
-  z.union(['quality', 'balanced', 'speed', 'privacy']).default('balanced'),
-)
 // Settings surfaces and Host persistence must agree on this field. Keep the
 // permission on the public entry contract as well as index.js so a packaged
 // build cannot expose the new client toggle while registering an older Host

@@ -212,7 +212,7 @@ test('planner reports product mode/preference while reusing the internal scorer 
   assert.ok(Array.isArray(plan.incomparableBackends))
 })
 
-test('legacy prototype strategy remains readable for stored-config compatibility when product preference is absent', async () => {
+test('prototype strategy is ignored when the product preference is absent', async () => {
   const plan = await buildCapabilityShadowPlan({
     ctx: fakeCtx().ctx,
     core: fakeCore(),
@@ -225,11 +225,11 @@ test('legacy prototype strategy remains readable for stored-config compatibility
     args: { question: 'what is in this photo?' },
   })
   assert.equal(plan.routingMode, 'ordered')
-  assert.equal(plan.routingPreference, 'local')
-  assert.equal(plan.strategy, 'privacy')
+  assert.equal(plan.routingPreference, 'balanced')
+  assert.equal(plan.strategy, 'balanced')
 })
 
-test('legacy shadow flag is inert and cannot trigger planning or execution changes in ordered mode', async () => {
+test('prototype fields cannot trigger planning or execution changes in ordered mode', async () => {
   const settings = {
     capabilityRoutingShadow: true,
     routingMode: 'ordered',
@@ -254,7 +254,6 @@ test('legacy shadow flag is inert and cannot trigger planning or execution chang
 
 test('Auto execution exposes the planned order only inside the current visual-tool call', async () => {
   const settings = {
-    capabilityRoutingShadow: false,
     routingMode: 'auto',
     routingPreference: 'local',
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
@@ -289,7 +288,6 @@ test('Auto execution exposes the planned order only inside the current visual-to
 
 test('Auto execution rechecks live authority after planning and refuses a stale plan after revocation', async () => {
   const initial = {
-    capabilityRoutingShadow: false,
     routingMode: 'auto',
     routingPreference: 'local',
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
@@ -339,7 +337,6 @@ test('Auto execution rechecks live authority after planning and refuses a stale 
 
 test('Auto planner failure is fail-closed to the original configured order', async () => {
   const settings = {
-    capabilityRoutingShadow: false,
     routingMode: 'auto',
     routingPreference: 'local',
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],

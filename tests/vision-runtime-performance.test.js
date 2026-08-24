@@ -165,7 +165,7 @@ test('changing deployment identity immediately discards same-name runtime speed 
   assert.equal(warming.runtimeLatencyMsByAxis.ocr, undefined)
 })
 
-test('runtime observation follows live Auto authority rather than shadow logging', async () => {
+test('runtime observation follows live Auto authority', async () => {
   const now = clock()
   const runtimeStore = createVisionRuntimePerformanceStore({ now, minSamples: 1 })
   const registered = new Map()
@@ -177,7 +177,6 @@ test('runtime observation follows live Auto authority rather than shadow logging
         return {
           get() {
             return {
-              capabilityRoutingShadow: false,
               routingMode,
               providers: [{ provider: 'p', model: 'm', fallbacks: [] }],
             }
