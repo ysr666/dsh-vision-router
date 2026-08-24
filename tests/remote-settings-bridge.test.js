@@ -204,13 +204,13 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
     'remote risk confirmation prelude is installed',
   )
   assert.equal(
-    rendered.some((html) => html.includes('data-vision-router-turn-budget')),
-    true,
-    'turn-budget presentation prelude is installed',
-  )
-  assert.equal(
     rendered.some((html) => html.includes('data-vision-router-settings-ia')),
     true,
-    'settings IA presentation prelude is installed',
+    'the consolidated settings IA prelude is installed',
+  )
+  assert.equal(
+    rendered.some((html) => html.includes('data-vision-router-turn-budget')),
+    false,
+    'whole-turn budget no longer owns a duplicate presentation prelude',
   )
 })
