@@ -29,7 +29,7 @@ test('product UI exposes ordered/auto and balanced/quality/speed/local choices',
 
 test('background profiling is a separate opt-in authority and UI defaults missing state to off', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /BACKGROUND_VALUES = \['off', 'local-free', 'all'\]/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /background: allowed\(value\.backgroundBenchmarking, BACKGROUND_VALUES, 'off'\)/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /background: allowed\(source\.backgroundBenchmarking, BACKGROUND_VALUES, 'off'\)/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /后台补充能力数据/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /自动补测已关闭；未测模型仍按你的设置顺序执行/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto开启时仅在空闲时补测本地或免费后端/)
