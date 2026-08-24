@@ -10,8 +10,8 @@ import {
   verifyAndStripBenchmarkVisualProof,
 } from '../lib/vision-capability-benchmark-hardening.js'
 
-test('grounding suite v4 keeps coordinate output compatible with the final visual-proof line', () => {
-  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 4)
+test('grounding suite v5 keeps coordinate output compatible with the final visual-proof line', () => {
+  assert.equal(CAPABILITY_BENCHMARK_SUITE_REVISION, 5)
 
   const fixture = capabilityBenchmarkFixture('grounding')
   assert.match(fixture.prompt, /first line/i)
@@ -21,7 +21,7 @@ test('grounding suite v4 keeps coordinate output compatible with the final visua
 
   const hardened = hardenCapabilityBenchmarkFixture(fixture, 'ABC123')
   assert.match(hardened.prompt, /first line/i)
-  assert.match(hardened.prompt, /add one final line exactly/i)
+  assert.match(hardened.prompt, /one final line exactly/i)
   assert.match(hardened.prompt, /VR-CODE:<code>/)
 
   const stripped = verifyAndStripBenchmarkVisualProof(
