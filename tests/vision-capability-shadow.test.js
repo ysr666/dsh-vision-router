@@ -34,6 +34,7 @@ function fakeCtx(initialSettings = {}) {
   let settingsValue = initialSettings
   const registered = new Map()
   const logs = []
+  const injections = []
   const settingsScope = {
     get() { return settingsValue },
   }
@@ -50,7 +51,8 @@ function fakeCtx(initialSettings = {}) {
       if (name === 'settings') return settingsService
       return undefined
     },
-    inject(_dependencies, callback) {
+    inject(dependencies, callback) {
+      injections.push(dependencies)
       return callback({ settings: settingsService })
     },
     llm: {
@@ -69,6 +71,7 @@ function fakeCtx(initialSettings = {}) {
     ctx,
     registered,
     logs,
+    injections,
     settingsScope,
     setSettings(value) { settingsValue = value },
   }
@@ -131,7 +134,7 @@ test('configured pi-ai provider keeps its credential ref only for benchmark exec
   assert.match(candidate.endpointFingerprint, /^ep2_[0-9a-f]{32}$/)
 })
 
-test('shadow keeps old capability evidence and labels Benchmark latency as non-routing observation', async () => {
+test('capability evidence keeps old measurements and labels Benchmark latency as non-routing observation', async () => {
   const oldRows = await collectCapabilityShadowCandidates(fakeCtx().ctx, {}, fakeCore(), {
     async get() {
       return {
@@ -185,7 +188,7 @@ test('unselected built-in HTTP tier is fixed fallback-only', async () => {
   assert.equal(fallback.routeRole, 'fallback-only')
 })
 
-test('shadow plan reports product mode/preference while reusing the internal scorer strategy', async () => {
+test('planner reports product mode/preference while reusing the internal scorer strategy', async () => {
   const plan = await buildCapabilityShadowPlan({
     ctx: fakeCtx().ctx,
     core: fakeCore(),
@@ -209,7 +212,7 @@ test('shadow plan reports product mode/preference while reusing the internal sco
   assert.ok(Array.isArray(plan.incomparableBackends))
 })
 
-test('legacy prototype strategy remains readable when the product preference is absent', async () => {
+test('legacy prototype strategy remains readable for stored-config compatibility when product preference is absent', async () => {
   const plan = await buildCapabilityShadowPlan({
     ctx: fakeCtx().ctx,
     core: fakeCore(),
@@ -226,16 +229,17 @@ test('legacy prototype strategy remains readable when the product preference is 
   assert.equal(plan.strategy, 'privacy')
 })
 
-test('shadow wrapper logs a plan but returns the original tool result byte-for-byte', async () => {
+test('legacy shadow flag is inert and cannot trigger planning or execution changes in ordered mode', async () => {
   const settings = {
     capabilityRoutingShadow: true,
     routingMode: 'ordered',
     routingPreference: 'balanced',
     providers: [{ provider: 'custom', model: 'm', fallbacks: [] }],
   }
-  const { ctx, registered, logs } = fakeCtx(settings)
+  const { ctx, registered, logs, injections } = fakeCtx(settings)
+  let storeReads = 0
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { return undefined } }, logger: ctx.logger,
+    store: { async get() { storeReads += 1; return undefined } }, logger: ctx.logger,
   })
   const originalResult = '{"ok":true,"answer":"same"}'
   wrapped.tools.register({ name: 'vision_describe', async execute() { return originalResult } })
@@ -243,20 +247,9 @@ test('shadow wrapper logs a plan but returns the original tool result byte-for-b
     { question: 'what is in this photo?' }, { agent: { session: {} } },
   )
   assert.equal(result, originalResult)
-  assert.ok(logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow')))
-})
-
-test('disabled shadow performs zero planning work and leaves ordered execution untouched', async () => {
-  const settings = { capabilityRoutingShadow: false, routingMode: 'ordered' }
-  const { ctx, registered, logs } = fakeCtx(settings)
-  let storeReads = 0
-  const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { storeReads += 1; return undefined } }, logger: ctx.logger,
-  })
-  wrapped.tools.register({ name: 'vision_describe', async execute() { return 'ok' } })
-  assert.equal(await registered.get('vision_describe').execute({ question: 'x' }, { agent: { session: {} } }), 'ok')
   assert.equal(storeReads, 0)
   assert.equal(logs.length, 0)
+  assert.equal(injections.some((deps) => Array.isArray(deps) && deps.includes('webServer')), false)
 })
 
 test('Auto execution exposes the planned order only inside the current visual-tool call', async () => {
@@ -370,7 +363,7 @@ test('Auto planner failure is fail-closed to the original configured order', asy
     { question: 'what is here?' }, { agent: { session: {} } },
   )
   assert.deepEqual(result, ['custom/generic'])
-  assert.ok(fixture.logs.some((entry) => entry[0] === 'warn' && String(entry[1]).includes('auto/shadow planning failed')))
+  assert.ok(fixture.logs.some((entry) => entry[0] === 'warn' && String(entry[1]).includes('auto planning failed')))
 })
 
 test('Auto scope never synthesizes an unconfigured direct HTTP route', () => {
@@ -381,31 +374,4 @@ test('Auto scope never synthesizes an unconfigured direct HTTP route', () => {
     autoExecutionConfigFor(config, ['http:paid/model', 'custom/generic']),
     undefined,
   )
-})
-
-test('bootstrap evidence is remembered only for shadow intent fallback on the same session', async () => {
-  const settings = {
-    capabilityRoutingShadow: true,
-    routingMode: 'ordered',
-    routingPreference: 'balanced',
-    providers: [{ provider: 'custom', model: 'm', fallbacks: [] }],
-  }
-  const { ctx, registered, logs } = fakeCtx(settings)
-  const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { return undefined } }, logger: ctx.logger,
-  })
-  wrapped.tools.register({
-    name: 'vision_bootstrap',
-    async execute() {
-      return JSON.stringify({ ok: true, evidence: { visual_kind: 'code', content_kind: 'unknown', mixed_of: [] } })
-    },
-  })
-  wrapped.tools.register({ name: 'vision_describe', async execute() { return 'done' } })
-  const session = {}
-  await registered.get('vision_bootstrap').execute({}, { agent: { session } })
-  await registered.get('vision_describe').execute({ question: 'check the important details' }, { agent: { session } })
-  const shadowLogs = logs.filter((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 shadow'))
-  assert.equal(shadowLogs.length, 2)
-  assert.equal(shadowLogs[0][4], 'structured')
-  assert.equal(shadowLogs[1][4], 'code_screenshot')
 })
