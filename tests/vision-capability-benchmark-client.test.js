@@ -17,8 +17,9 @@ test('benchmark client keeps one compact benchmark action with Quick and Full pr
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评','Benchmark'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /快速测评/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整测评/)
-  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /测试识图|Test vision/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /定位测评|Grounding benchmark|mode === 'grounding'/)
+  // Test Vision remains a separate exact-check client/control. The benchmark
+  // client may mention that explicit path in copy, but must not own its DOM.
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vision-router-exact-vision-test/)
 })
 
