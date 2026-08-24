@@ -40,7 +40,6 @@ test('background profiling is a separate opt-in authority and UI defaults missin
 test('Auto copy makes measurement non-blocking and evidence-driven', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto只使用已有实测数据；未测能力保持你的设置顺序/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /你可以手动测评，也可以选择在空闲时自动补充能力数据/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /实测 ' \+ measured \+ ' \/ ' \+ total/)
   assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /自动选择会在后台渐进建立能力数据/)
 })
 
@@ -61,18 +60,11 @@ test('remote routing controls refresh on connection resets and settings document
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.remoteDisposers/)
 })
 
-test('Auto settings surface is GET-only and accurately describes active scoped execution', () => {
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /PREVIEW_ENDPOINT = '\/_dsh\/vision-router\/routing-preview'/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /method: 'GET'/)
-  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /method:\s*'POST'/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto选择预览/)
+test('Auto settings surface shows product controls without a diagnostics or preview endpoint', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto · 执行已启用/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto · execution active/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto执行仅影响Router自有视觉工具/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /falls back to configured order on errors or authority revocation/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /测评时间只作记录，不会因过了几天自动失效/)
-  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /只使用7天内的直接Benchmark结果/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.preview\.measuredBackends/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /routing-preview|PREVIEW_ENDPOINT|refreshPreview|buildPreview/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /suite|fingerprint|barrier|runtime sample|transport|acceptance/i)
 })
 
 test('routing product panel stays scoped to the existing Vision Router chain UI without observer self-refresh', () => {

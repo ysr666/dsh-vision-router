@@ -38,7 +38,6 @@ import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.j
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
-import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
 import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
@@ -321,11 +320,6 @@ export function apply(ctx, config = {}) {
   installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
-  })
-  installVisionRoutingPreviewService(backendRuntimeCtx, runtimeConfig, core, {
-    logger: logging.logger,
-    store: capabilityStore,
-    runtimePerformanceStore,
   })
   installTesseractExecFileCompat(backendRuntimeCtx)
 

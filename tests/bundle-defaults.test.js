@@ -80,6 +80,7 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   assert.doesNotMatch(entry, /installExactVisionTestClient/)
   assert.doesNotMatch(entry, /installV2AcceptanceService/)
   assert.doesNotMatch(entry, /createV2ExecutionAcceptanceObserver/)
+  assert.doesNotMatch(entry, /installVisionRoutingPreviewService/)
   assert.match(entry, /installCapabilityBenchmarkClient/)
   assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli.js')
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.bin, 'dsh-vision-router-acceptance'), false)
@@ -90,6 +91,7 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
     '../lib/v2-execution-acceptance-observer.js',
     '../lib/vision-backend-smoke-test-client.js',
     '../lib/vision-backend-smoke-test.js',
+    '../lib/vision-routing-preview-service.js',
   ]) {
     await assert.rejects(readFile(new URL(path, import.meta.url)), (error) => error?.code === 'ENOENT')
   }

@@ -23,7 +23,6 @@ import {
   capabilityBenchmarkFingerprint,
 } from '../lib/vision-capability-benchmark.js'
 import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
-import { injectVisionRoutingDiagnosticsPrelude } from '../lib/vision-routing-preview-service.js'
 import { injectVisionRoutingSettingsPrelude } from '../lib/vision-routing-settings-prelude.js'
 
 const MANUAL_MEASUREMENT_AUTHORITY = grantManualMeasurementFromUserAction('local-ui')
@@ -36,7 +35,6 @@ const SCRIPT_INJECTORS = Object.freeze([
   ['local settings permission', 'data-vision-router-local-settings-permission', injectLocalPermissionClientPrelude],
   ['capability benchmark', 'data-vision-router-capability-benchmark', injectCapabilityBenchmarkClient],
   ['routing settings', 'data-vision-router-routing-settings', injectVisionRoutingSettingsPrelude],
-  ['routing diagnostics', 'data-vision-router-routing-diagnostics', injectVisionRoutingDiagnosticsPrelude],
 ])
 
 function attachmentCtx(settings) {
