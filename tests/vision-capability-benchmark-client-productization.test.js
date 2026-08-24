@@ -7,7 +7,17 @@ test('background UI excludes Host-declared text-only models from unattended elig
     CAPABILITY_BENCHMARK_CLIENT,
     /candidate\.imageCapability==='text-only'\)return false/,
   )
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台不会自动测，可手动测试识图\/强制验证/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /backgroundExcluded/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /Host标记仅文本/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台不自动测/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /可手动测试识图\/强制验证/)
+})
+
+test('background UI shows live progress and elapsed time for unattended measurement', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.completed/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.total/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.elapsedMs/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台自动/)
 })
 
 test('background UI distinguishes transient retry from non-retryable failure', () => {

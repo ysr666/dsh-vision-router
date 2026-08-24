@@ -103,7 +103,7 @@ test('Zhipu-like image adapter remains eligible for unattended background profil
   assert.deepEqual(seen, [['zhipu-glm/glm-4.6v', 'ocr']])
 })
 
-test('Host-declared text-only adapter is not probed by unattended background profiling', async () => {
+test('Host-declared text-only adapter is not probed and is exposed as an unattended exclusion', async () => {
   const config = configFor([['deepseek-official', 'deepseek-v4-flash']])
   const ctx = fakeCtx(config, {
     modalities: { 'deepseek-official/deepseek-v4-flash': ['text'] },
@@ -111,8 +111,40 @@ test('Host-declared text-only adapter is not probed by unattended background pro
   let calls = 0
   const profiler = profilerFor(config, ctx, memoryStore(), async () => { calls += 1 })
   await profiler.tick()
+  const snapshot = profiler.snapshot()
   profiler.stop()
   assert.equal(calls, 0)
+  assert.deepEqual(snapshot.excluded, [{
+    key: 'deepseek-official/deepseek-v4-flash',
+    reason: 'host-text-only',
+  }])
+})
+
+test('running background snapshot exposes fixture progress and elapsed time', async () => {
+  const config = configFor([['zhipu-glm', 'glm-4.6v']])
+  const ctx = fakeCtx(config)
+  let clock = 1_000
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const profiler = profilerFor(config, ctx, memoryStore(), async ({ onProgress }) => {
+    onProgress?.({ phase: 'start', completed: 0, total: 2, fixture: 'ocr-a', intent: 'ocr' })
+    onProgress?.({ phase: 'finish', completed: 1, total: 2, fixture: 'ocr-a', intent: 'ocr' })
+    clock = 4_500
+    await gate
+  }, { now: () => clock })
+  const running = profiler.tick()
+  await new Promise((resolve) => setImmediate(resolve))
+  const snapshot = profiler.snapshot()
+  assert.equal(snapshot.running?.key, 'zhipu-glm/glm-4.6v')
+  assert.equal(snapshot.running?.axis, 'ocr')
+  assert.equal(snapshot.running?.completed, 1)
+  assert.equal(snapshot.running?.total, 2)
+  assert.equal(snapshot.running?.startedAt, 1_000)
+  assert.equal(snapshot.running?.elapsedMs, 3_500)
+  assert.equal(snapshot.running?.currentFixture, 'ocr-a')
+  release()
+  await running
+  profiler.stop()
 })
 
 test('one failed model does not block the next model on the same axis', async () => {
