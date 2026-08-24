@@ -63,6 +63,35 @@ function reactStub(stateValues = [], stateWrites = []) {
   }
 }
 
+// Mirror the helper exported by the real client bundle. The IA prelude receives
+// these helpers through exports, so acceptance tests should exercise the same
+// path instead of accidentally testing only its old-bundle compatibility fallback.
+function parseLocalProviderDraft(value, defaults) {
+  const input = value && typeof value === 'object' ? value : {}
+  const temperature =
+    typeof input.temperature === 'number' && Number.isFinite(input.temperature)
+      ? Math.min(2, Math.max(0, input.temperature))
+      : undefined
+  const topP =
+    typeof input.top_p === 'number' && Number.isFinite(input.top_p)
+      ? Math.min(1, Math.max(0, input.top_p))
+      : undefined
+  return {
+    enabled: input.enabled === true,
+    baseURL:
+      typeof input.baseURL === 'string' && input.baseURL.trim() !== ''
+        ? input.baseURL.trim()
+        : defaults.baseURL,
+    model:
+      typeof input.model === 'string' && input.model.trim() !== ''
+        ? input.model.trim()
+        : defaults.model,
+    format: input.format === 'anthropic' ? 'anthropic' : 'openai',
+    ...(temperature === undefined ? {} : { temperature }),
+    ...(topP === undefined ? {} : { top_p: topP }),
+  }
+}
+
 function walk(node, visit) {
   if (node === null || node === undefined || node === false) return
   if (typeof node === 'string' || typeof node === 'number') return visit(node)
@@ -174,6 +203,7 @@ function harness({
     id: 'dsh-vision-router',
     factory() {
       return {
+        parseLocalProviderDraft,
         apply(ctx) {
           ctx.slots.register({ name: 'settings.section', id: 'vision-router' }, function Legacy() {})
         },
