@@ -111,11 +111,14 @@ test('benchmark modal renders five fixed axes with score benchmark latency and m
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /text\('新鲜度','Freshness'\)/)
 })
 
-test('cloud cost and text-only force verification live inside the benchmark modal', () => {
+test('cloud cost and advisory text-only verification live inside the benchmark modal', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /云端测评会发送生成的测试图片/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /强制验证图片能力/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /DSH当前将此模型标记为仅文本/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /Host当前将此模型标记为仅文本/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /该标签只作提示/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /本次测评仍会实际发送图片验证/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /force=candidate\.imageCapability==='text-only'/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /force:force===true/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /强制验证图片能力/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /window\.confirm/)
 })
 
