@@ -107,6 +107,31 @@ test('all policy is explicit authorization for paid configured cloud backends', 
   assert.deepEqual(seen, [['http:paid-cloud/vision-paid', 'ocr']])
 })
 
+test('explicit off to all opt-in bypasses only the startup idle window and wakes immediately', async () => {
+  const config = settings({ backgroundBenchmarking: 'off' })
+  const seen = []
+  let scheduledDelay
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config),
+    config,
+    core: fakeCore(),
+    store: memoryStore(),
+    now: () => 100_000,
+    idleMs: 30_000,
+    gapMs: 15_000,
+    scanMs: 5_000,
+    setTimer(callback, delay) { scheduledDelay = delay; return inertTimer() },
+    clearTimer() {},
+    runAxisBenchmark: async ({ candidate, axis }) => { seen.push([candidate.key, axis]) },
+  })
+  config.backgroundBenchmarking = 'all'
+  profiler.settingsChanged()
+  assert.equal(scheduledDelay, 0)
+  await profiler.tick()
+  assert.deepEqual(seen, [['http:paid-cloud/vision-paid', 'ocr']])
+  profiler.stop()
+})
+
 test('ordered mode and off policy never schedule background model requests', async () => {
   for (const config of [
     settings({ routingMode: 'ordered' }),
@@ -186,7 +211,7 @@ test('real foreground vision aborts an in-flight background request and does not
   profiler.stop()
 })
 
-test('settings or model topology changes abort stale in-flight background work and rescan without provider backoff', async () => {
+test('model topology changes abort stale in-flight background work and rescan without provider backoff', async () => {
   let started
   const ready = new Promise((resolve) => { started = resolve })
   let observedSignal
@@ -204,11 +229,57 @@ test('settings or model topology changes abort stale in-flight background work a
   profiler.stop()
 })
 
+test('all to local-free aborts an in-flight paid cloud benchmark immediately without provider backoff', async () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }))
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'local-free'
+  profiler.settingsChanged()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.stop()
+})
+
+test('all to local-free keeps an in-flight local benchmark running', async () => {
+  const config = settings({
+    backgroundBenchmarking: 'all',
+    providers: [{ provider: 'vision-http', model: 'local-test/vision-local', fallbacks: [] }],
+  })
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let finish
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve) => {
+    observedSignal = signal
+    finish = resolve
+    started()
+  }))
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'local-free'
+  profiler.settingsChanged()
+  assert.equal(observedSignal.aborted, false)
+  finish()
+  await ticking
+  assert.equal(observedSignal.aborted, false)
+  profiler.stop()
+})
+
 test('provider-originated AbortError is a genuine failure and receives retry backoff', async () => {
   const providerAbort = Object.assign(new Error('provider aborted stream'), { name: 'AbortError' })
   const profiler = profilerFor(settings(), async () => { throw providerAbort })
   await profiler.tick()
   assert.equal(profiler.snapshot().backoffSize, 1)
+  assert.equal(profiler.snapshot().deferred.length, 1)
   profiler.stop()
 })
 
