@@ -18,6 +18,7 @@ test('benchmark is the single compact per-model testing entry point', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /快速测评/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整测评/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /测试识图|Test vision/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /定位测评|Grounding benchmark|mode === 'grounding'/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vision-router-exact-vision-test/)
 })
 
