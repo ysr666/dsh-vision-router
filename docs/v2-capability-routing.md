@@ -110,7 +110,10 @@ Benchmark uses generated fixtures rather than user images. It targets the exact
 selected backend with fallbacks disabled. All fixtures and attachment
 materialization are preflighted before the first model request. A failed or
 cancelled run does not publish partial evidence, and a failed retest preserves
-the prior valid profile.
+the prior valid profile. Each fixture has its own hard deadline aligned with the
+normal 120-second provider-call ceiling, while the whole manual Benchmark keeps a
+larger run deadline so a legitimate slow Quick/Full sequence is not discarded
+after its requests have already completed.
 
 Cloud Benchmark requests may cost money. Manual tests require an explicit user
 action; background paid tests require `backgroundBenchmarking: all`.
@@ -153,15 +156,20 @@ intentional: standing background authority is the user's permission to verify
 capability within the selected local/free/paid cost boundary, not permission to
 trust possibly stale Host modality metadata as ground truth.
 
-Failure state is scoped to the exact deployment fingerprint plus model and axis,
-so one model or axis cannot block another. Transient failures such as network,
-timeout, and rate-limit conditions receive retry backoff. Clear non-retryable
-conditions such as authentication failure, unsupported image input, unavailable
-model, unsupported protocol, or Benchmark infrastructure failure stop automatic
-retry for that exact work item until relevant settings/topology/identity changes
-or the user explicitly tests again. Public background status exposes only a
-sanitized failure class/code; raw provider responses and credentials are not
-published to the browser.
+Transient failure state is scoped to the exact deployment fingerprint plus model
+and axis. Network, timeout, and rate-limit conditions receive retry backoff.
+Clear deployment-level non-retryable failures such as authentication failure,
+unavailable model, and unsupported protocol are persisted for the same exact
+fingerprint and stop unattended measurement across axes, including after process
+restart. Visual-proof and Benchmark-infrastructure failures remain axis-scoped;
+they do not manufacture a text-only verdict or disable other axes. An explicit
+image-input rejection is persisted separately as a measured text-only verdict.
+Ordinary settings refreshes, adapter notifications, and process restart do not
+silently clear these same-fingerprint stops. A changed deployment fingerprint
+creates a new evidence scope, and an explicit successful Test Vision clears the
+same-fingerprint stop. Public background status exposes only a sanitized failure
+class/code; raw provider responses and credentials are not published to the
+browser.
 
 Changing authorization while work is running is enforced immediately. `all →
 off` aborts background work; `all → local-free` aborts a no-longer-authorized
