@@ -44,13 +44,15 @@ test('remote routing controls refresh on connection resets and settings document
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.remoteDisposers/)
 })
 
-test('Auto preview is GET-only, read-only and does not expire measurements by age', () => {
+test('Auto settings surface is GET-only and accurately describes active scoped execution', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /PREVIEW_ENDPOINT = '\/_dsh\/vision-router\/routing-preview'/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /method: 'GET'/)
   assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /method:\s*'POST'/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto选择预览/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /不会改变实际识图执行顺序/)
-  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /does not change actual vision execution/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto · 执行已启用/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto · execution active/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /Auto执行仅影响Router自有视觉工具/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /falls back to configured order on errors or authority revocation/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /测评时间只作记录，不会因过了几天自动失效/)
   assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /只使用7天内的直接Benchmark结果/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /state\.preview\.measuredBackends/)

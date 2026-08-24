@@ -1,4 +1,4 @@
-# Vision Router v2 real-machine self-acceptance (J0a + J0b)
+# Vision Router v2 real-machine self-acceptance
 
 The real-machine acceptance harness runs against the **currently running local DSH process**. It does not grant authority by itself: execution-changing Auto is active only when the user's live `routingMode` is explicitly `auto`.
 
@@ -6,7 +6,7 @@ The acceptance runner follows the same authority rule as v2 itself:
 
 > Auto is delegated control, not assumed control.
 
-J0a and J0b deliberately use **independent grants**. Permission to mutate temporary routing settings does not imply permission to call a real provider, and permission to call one exact provider does not imply permission to change routing settings.
+Safe authority checks, real Auto execution, and exact-provider Benchmark deliberately use **independent grants**. Permission to mutate temporary routing settings does not imply permission to call a real provider, and permission to call one exact provider does not imply permission to change routing settings.
 
 ## J0a — safe authority + execution-seam acceptance
 
@@ -69,6 +69,57 @@ On **2026-08-24**, the zero-provider execution-scope probe passed against a runn
 
 This proves the Auto execution seam is connected to the SettingsScope actually consumed by the real DSH-hosted v1 core, rather than existing only in isolated unit-test scaffolding.
 
+## Real Auto execution — bounded two-request acceptance
+
+Run only with explicit permission to make provider requests that may incur cloud charges:
+
+```bash
+dsh-vision-router-acceptance \
+  --accept-real-execution \
+  --allow-provider-requests \
+  --allow-chargeable-cloud \
+  --json
+```
+
+This phase requires the already-measured `opencode-go/minimax-m3` and `zhipu-glm/glm-4.6v` routes in the configured provider list. It temporarily places MiniMax immediately before GLM, selects Quality + Auto, invokes the real registered `vision_ground` tool at most twice, and restores the exact original user-layer routing/background fields in `finally`.
+
+| Case | Contract |
+| --- | --- |
+| E02-real-auto-reorder | Existing comparable Grounding evidence changes the planned first backend, and the real visual tool attempts that backend first. |
+| E04-scoped-fallback-transport | The selected identity stays unchanged through its authorized direct-HTTP compatibility transport. |
+| E03-last-moment-revocation | Revoking Auto after planning but before the live authority recheck discards the plan and attempts the current configured first backend. |
+| E05-provider-identity-stable | The selected backend's secret-safe capability fingerprint is unchanged by execution. |
+| R00-real-execution-settings-restore | The original user-layer routing and background settings are restored exactly. |
+
+### Recorded real-machine execution evidence
+
+On **2026-08-24**, the bounded real execution phase passed with two successful provider requests:
+
+```text
+Configured Grounding first: opencode-go/minimax-m3 (score 0.0000)
+Auto planned/actual first:   zhipu-glm/glm-4.6v (score 0.9617)
+Decision:                    measured-advantage, delta 0.9617
+Transport:                   host-advisory-preflight-direct-bridge
+GLM token field:             max_completion_tokens
+
+Plan before revocation:      zhipu-glm/glm-4.6v
+Actual first after revoke:   opencode-go/minimax-m3
+Revocation result:           authority-revoked, configured-order execution
+Settings restore:            exact byte-for-byte match
+```
+
+The GLM call used the Host's text-projection advisory path, so this evidence proves the scoped preflight direct bridge; it does not claim an adapter rejection that did not occur.
+
+### Recorded browser acceptance
+
+The same run also verified the visible settings diagnostics in the running local UI:
+
+- Auto was shown as execution-active, scoped to Router-owned visual tools, with configured MiniMax → GLM and Auto GLM → MiniMax Grounding orders;
+- the expanded decision showed `0.000 vs 0.962`, delta `0.962`, threshold `0.080`, and the measured-advantage reason;
+- the diagnostics endpoint remained GET-only (`POST` returned `405`) and its JSON contained no credential or raw endpoint material;
+- toggling Composer Vision mode on and off made no provider request, preserved the ordinary `ByteDance Seed: Seed 1.6` selection, produced no alert, and did not alter routing settings;
+- the original settings document matched its pre-run backup byte-for-byte after UI restoration.
+
 ## J0b — real-provider acceptance
 
 J0b is a separate measurement-authority gate. It does **not** require `--accept-safe-mutations`.
@@ -78,13 +129,13 @@ J0b is a separate measurement-authority gate. It does **not** require `--accept-
 Read-only discovery makes no mutations and no provider requests:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js --list-candidates
+dsh-vision-router-acceptance --list-candidates
 ```
 
 For machine-readable output:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js --list-candidates --json
+dsh-vision-router-acceptance --list-candidates --json
 ```
 
 The output contains only public candidate metadata such as exact key, provider/model, local/cloud-cost warning, benchmarkability, secret-safe fingerprint, and currently measured axes.
@@ -94,7 +145,7 @@ The output contains only public candidate metadata such as exact key, provider/m
 For a local or otherwise non-charge-warning candidate:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
+dsh-vision-router-acceptance \
   --provider <exact-backend-key> \
   --allow-provider-requests \
   --json
@@ -103,7 +154,7 @@ node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js
 For a candidate marked as potentially chargeable cloud, a second explicit grant is required:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
+dsh-vision-router-acceptance \
   --provider <exact-backend-key> \
   --allow-provider-requests \
   --allow-chargeable-cloud \
@@ -164,7 +215,7 @@ The badge remains mandatory and image-only. It must not be included inside OCR t
 Both grants may be supplied in one invocation when desired:
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/dsh-vision-router/lib/v2-acceptance-cli.js \
+dsh-vision-router-acceptance \
   --accept-safe-mutations \
   --provider <exact-backend-key> \
   --allow-provider-requests \
@@ -179,17 +230,6 @@ They remain independent internally: the J0a grant authorizes only temporary sett
 - `1`: at least one requested acceptance case failed or the live DSH runtime rejected the run;
 - `2`: invalid arguments or required user consent was not supplied.
 
-## What J0a/J0b still do not prove
+## Remaining boundary
 
-The zero-provider E01 probe proves that real DSH consumes the scoped Auto order and restores it correctly, but it intentionally does **not** invoke an actual visual provider. J0b proves exact real-provider measurement behavior, not end-to-end Auto selection on a real user visual call.
-
-After the suite-v5 contract change, remaining real-machine evidence should focus on:
-
-- re-establishing v5 Quick evidence on a known-working visual backend;
-- re-running v5 Grounding after Quick so `J0B-axis-scope` can non-vacuously prove `ocr/general` preservation;
-- one real visual call where measured/policy evidence actually changes the selected first backend;
-- live revocation or settings change immediately before a real provider call, proving configured-order fallback;
-- real adapter + direct-HTTP fallback behavior under the same execution scope;
-- browser diagnostics showing execution state/order without leaking endpoint/credential material.
-
-Persistent behavioral learning remains prohibited because no authority for it exists.
+The recorded evidence covers exact Benchmark identity/evidence, real execution-changing Auto selection, last-moment authority revocation, the scoped direct-HTTP compatibility path, visible browser diagnostics, and exact settings restoration. It does not broaden Auto beyond Router-owned visual tools, grant background cloud measurement without its separate setting, or authorize persistent behavioral learning.

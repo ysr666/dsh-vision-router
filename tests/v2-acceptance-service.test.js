@@ -2,8 +2,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   runV2ProviderAcceptance,
+  runV2RealExecutionAcceptance,
   runV2SafeAcceptance,
 } from '../lib/v2-acceptance-service.js'
+import { createV2ExecutionAcceptanceObserver } from '../lib/v2-execution-acceptance-observer.js'
 import {
   inspectProviderEvidence,
   inspectPublicSurfacePayload,
@@ -224,6 +226,110 @@ test('acceptance CLI keeps J0a mutation authority independent from J0b provider 
   assert.equal(list.listCandidates, true)
   assert.equal(list.acceptedSafeMutations, false)
   assert.throws(() => parseAcceptanceArgs(['--list-candidates', '--accept-safe-mutations']), /read-only/)
+
+  const real = parseAcceptanceArgs([
+    '--accept-real-execution',
+    '--allow-provider-requests',
+    '--allow-chargeable-cloud',
+  ])
+  assert.equal(real.acceptedRealExecution, true)
+  assert.throws(() => parseAcceptanceArgs(['--accept-real-execution']), /requires --allow-provider-requests/)
+})
+
+test('real execution acceptance proves reorder, last-moment revocation, scoped bridge transport, and exact restore', async () => {
+  const providers = [
+    { provider: 'deepseek-official', model: 'deepseek-v4-flash', fallbacks: [] },
+    { provider: 'zhipu-glm', model: 'glm-4.6v', fallbacks: [] },
+    { provider: 'opencode-go', model: 'minimax-m3', fallbacks: [] },
+  ]
+  const settings = createSettings({
+    routingMode: 'auto',
+    routingPreference: 'balanced',
+    backgroundBenchmarking: 'local-free',
+    providers,
+  })
+  const before = settings.user()
+  const observer = createV2ExecutionAcceptanceObserver()
+  const high = 'zhipu-glm/glm-4.6v'
+  const low = 'opencode-go/minimax-m3'
+  const tools = {
+    async execute() {
+      await observer.beforeLiveCheck({
+        kind: 'auto-plan',
+        intent: 'grounding',
+        axis: 'grounding',
+        routingMode: 'auto',
+        routingPreference: 'quality',
+        configuredOrder: [low, high, 'deepseek-official/deepseek-v4-flash'],
+        plannedOrder: [high, low, 'deepseek-official/deepseek-v4-flash'],
+        changed: true,
+        decision: {
+          type: 'reorder',
+          reason: 'measured-advantage',
+          before: low,
+          promoted: high,
+          intent: 'grounding',
+          axis: 'grounding',
+          leftScore: 0,
+          rightScore: 0.9617,
+          delta: 0.9617,
+        },
+      })
+      const live = settings.get('vision-router')
+      const backend = live.routingMode === 'auto' ? high : low
+      if (live.routingMode === 'auto') {
+        observer.record({ kind: 'auto-scope', selectedOrder: [high, low], changed: true })
+      } else {
+        observer.record({ kind: 'auto-skipped', reason: 'authority-revoked' })
+      }
+      observer.record({ kind: 'preflight-bridge-attempt', backend, provider: backend.split('/')[0], model: backend.split('/').slice(1).join('/'), transport: 'direct-http' })
+      if (backend === high) observer.record({ kind: 'bridge-wire-compat', backend, maxTokensField: 'max_completion_tokens' })
+      observer.record({ kind: 'preflight-bridge-success', backend, outcome: 'success', transport: 'direct-http' })
+      return { isError: false, value: '{"x1":1,"y1":1,"x2":2,"y2":2}' }
+    },
+  }
+  const candidates = [
+    { key: high, fingerprint: 'ep2_high' },
+    { key: low, fingerprint: 'ep2_low' },
+  ]
+  const report = await runV2RealExecutionAcceptance({
+    runtimeCtx: { get(name) { return name === 'settings' ? settings : undefined }, tools },
+    executionObserver: observer,
+    backgroundProfiler: { snapshot: () => ({ running: false, activeForeground: 0, activeManualBenchmarks: 0 }) },
+    benchmarkManager: { async snapshot() { return { candidates } } },
+    acceptedProviderRequests: true,
+    acceptedChargeableCloud: true,
+  })
+  assert.equal(report.ok, true)
+  assert.equal(report.providerRequestsMaximum, 2)
+  assert.deepEqual(settings.user(), before)
+  assert.deepEqual(report.cases.map((entry) => entry.status), ['pass', 'pass', 'pass', 'pass', 'pass'])
+  assert.equal(report.cases.find((entry) => entry.id === 'E02-real-auto-reorder')?.details?.actualFirstAttempt, high)
+  assert.equal(report.cases.find((entry) => entry.id === 'E03-last-moment-revocation')?.details?.actualFirstAttempt, low)
+  assert.equal(JSON.stringify(report).includes('max_completion_tokens'), true)
+  assert.equal(JSON.stringify(report).includes('baseURL'), false)
+})
+
+test('execution acceptance observer pauses only its capture and drops unapproved diagnostic fields', async () => {
+  const observer = createV2ExecutionAcceptanceObserver()
+  observer.record({ kind: 'outside', backend: 'ignored/model' })
+  const capture = observer.createCapture({ pauseBeforeLiveCheck: true })
+  let passed = false
+  const running = capture.run(async () => {
+    await observer.beforeLiveCheck({
+      kind: 'auto-plan',
+      configuredOrder: ['a/model'],
+      apiKey: 'secret',
+      baseURL: 'https://private.example',
+    })
+    passed = true
+  })
+  await capture.entered
+  assert.equal(passed, false)
+  capture.release()
+  await running
+  assert.equal(passed, true)
+  assert.deepEqual(capture.events(), [{ kind: 'auto-plan', configuredOrder: ['a/model'] }])
 })
 
 test('J0b evidence inspection proves exact identity, fresh requested axes, and preserves unrelated axes', () => {

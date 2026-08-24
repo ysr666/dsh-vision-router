@@ -41,6 +41,7 @@ import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchm
 import { installVisionRoutingPreviewService } from './lib/vision-routing-preview-service.js'
 import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
 import { installV2AcceptanceService } from './lib/v2-acceptance-service.js'
+import { createV2ExecutionAcceptanceObserver } from './lib/v2-execution-acceptance-observer.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
   normalizeBackgroundMeasurementAuthority,
@@ -170,6 +171,7 @@ export function apply(ctx, config = {}) {
   const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)
   const logging = installVisionRouterFileLogging(adapterContractCtx)
   const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
+  const executionAcceptanceObserver = createV2ExecutionAcceptanceObserver()
   // Runtime speed is deliberately process-local and short-lived. It is not
   // persisted beside capability evidence because network/provider performance
   // is a dynamic runtime fact, not a model capability fact.
@@ -252,6 +254,7 @@ export function apply(ctx, config = {}) {
       store: capabilityStore,
       runtimePerformanceStore,
       healthForCandidate: breakerShadowHealth.healthForCandidate,
+      acceptanceObserver: executionAcceptanceObserver,
     },
   )
   // prepareCall normalization/reconciliation is already installed at the
@@ -271,11 +274,12 @@ export function apply(ctx, config = {}) {
   installExactVisionTestClient(reconciledCtx)
   installVisionRoutingSettingsPrelude(reconciledCtx)
   installCapabilityBenchmarkClient(reconciledCtx)
-  installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
+  installPiAiBridgeWireCompat(reconciledCtx, logging.logger, executionAcceptanceObserver)
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+    acceptanceObserver: executionAcceptanceObserver,
   })
   // Only real visual-tool adapter streams are timed, and only while live Auto
   // authority permits future-routing observation. Benchmark/smoke/background
@@ -307,6 +311,7 @@ export function apply(ctx, config = {}) {
     core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+    acceptanceObserver: executionAcceptanceObserver,
   })
   installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
@@ -323,6 +328,8 @@ export function apply(ctx, config = {}) {
   })
   installV2AcceptanceService(backendRuntimeCtx, {
     runtimeCtx: performanceCtx,
+    executionCtx: backendRuntimeCtx,
+    executionAcceptanceObserver,
     runtimePerformanceStore,
     backgroundProfiler: backgroundProfiling.profiler,
     benchmarkManager,
