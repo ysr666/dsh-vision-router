@@ -3,6 +3,27 @@
 每个版本的中英双语发布说明（GitHub Release 工作流从这里取对应版本的段落，发布前必须先写好本节）｜
 Bilingual (Chinese + English) release notes for every version — the GitHub Release workflow pulls the matching section from this file, so it must be filled in before tagging.
 
+## Unreleased
+
+### 聊天识图模式 / Composer Vision mode
+
+- **输入框旁新增显式「👁 识图」开关（#284 / #286）**：普通模型仍由 DSH 原生模型选择器负责；需要发图时用户主动开启识图，底层切到同一 provider/model 的 Vision Router wrapper。开关默认关闭、发送后不复位，关闭时切回同一普通模型；只修改 reasoning effort 保持识图开启，手动选择另一个普通模型则退出 wrapper。DeepSeek 默认 `deepseek-official <-> deepseek-vision`，并支持自定义 `wrapperRoute`。
+- **Explicit composer “👁 Vision” mode (#284 / #286)**: the stock DSH picker still owns the ordinary conversation model; users explicitly enable Vision when image input is needed, switching underneath to Vision Router’s matching wrapper for the same provider/model. The mode starts off, persists across sends, and turns off by returning to the same ordinary route. Reasoning-effort-only changes stay on the wrapper, while choosing a different ordinary model leaves it. DeepSeek maps `deepseek-official <-> deepseek-vision` by default and custom `wrapperRoute` values are supported.
+
+- **内部「+ 自动识图」wrapper 默认从模型列表隐藏**：真实 Host route、adapter 与 `ModelDirectory` 完全保留，只给 DSH 官方 model-selection 插件提供 presentation facade；输入框选择器与 `/model` 不再展示可确认属于 Vision Router 的 wrapper，识图开启时仍显示对应普通模型名称。隐藏判定要求配置意图、route/name 与 exact-model 镜像全部匹配；设置不可见、归属有歧义、镜像不完整或第三方 lookalike 时 fail-open，宁可显示也不误藏。
+- **Internal “+ Auto Vision” wrappers are hidden from the stock model UI by default**: the real Host routes, adapters and `ModelDirectory` remain authoritative; only DSH’s model-selection presentation receives a facade, so the composer picker and `/model` omit confidently owned wrappers while still showing the ordinary model name when Vision is active. Hiding requires matching config intent, route/name and exact-model mirroring; missing settings, ambiguous ownership, incomplete mirrors and third-party lookalikes fail open and remain visible.
+
+- **切换失败不再把按钮卡死**：模型切换沿用原生选择器的瞬时 Toast 反馈；例如 session 已经包含图片、Host 拒绝切回纯文本模型时，不绕过 DSH 安全约束，真实 current 保持 wrapper，按钮继续显示 `👁 识图 ✓` 并可再次操作。新手引导与 Quick Start 同步改为“选普通模型 → 开启识图 → 发图”。
+- **Rejected switches no longer poison the toggle state**: selection failures use the stock picker’s transient Toast interaction. If a session already contains images and the Host refuses a switch back to a text-only model, Vision Router does not bypass the DSH guard; the real current route stays on the wrapper, `👁 Vision ✓` remains usable, and onboarding/Quick Start now teach “choose the ordinary model → enable Vision → send the image.”
+
+- **原生多模态 wrapper 获得真实 attachment ID 提示**：当 Vision Router 自有识图 route 同时保留原图像素并允许模型继续调用 `vision_describe` / `vision_ground` 等精查工具时，模型输入会携带当前轮真实 attachment ID，避免模型猜造 `sha256:…` 后被会话隔离正确拒绝；跨 session 附件校验与 `unknown attachment id` 安全边界不放宽。
+- **Vision Router-owned multimodal wrappers receive the real attachment IDs for the current turn**: models that already see raw pixels can still call precision tools such as `vision_describe` / `vision_ground` without inventing a `sha256:…` identifier. Session-scoped attachment authorization and the `unknown attachment id` boundary remain strict; no cross-session fallback is introduced.
+
+### 验证 / Validation
+
+- 新增纯投影、VM/loader、selection 失败、effort-only、第三方 lookalike、配置缺失/歧义、rc.8 queue→live ModuleLoader 替换与 attachment-id 等对抗回归；Node 22 / Node 24、DSH rc.6 / rc.7 / rc.8、Windows / macOS / Ubuntu host-sharp、native multimodal cold resume 与大图资源压力继续作为合入门禁。
+- Adds adversarial coverage for pure projection, VM/loader wiring, rejected selections, effort-only changes, third-party lookalikes, missing/ambiguous configuration, rc.8 queue→live ModuleLoader replacement, and attachment IDs. Node 22/24, DSH rc.6/rc.7/rc.8, Windows/macOS/Ubuntu host-sharp, native multimodal cold resume, and large-image resource stress remain merge gates.
+
 ## v1.7.1
 
 > **v1.7.0 → v1.7.1 hotfix**：远程 Web 部署不再必须先访问 loopback 页面才能开启远程设置；首次开启改为明确风险确认，确认后仅写入 `allowRemoteSettings=true`，取消则保持只读。既有远程字段 allow-list 与敏感配置本机专属边界不变。
@@ -35,7 +56,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **Private live model discovery and registry (#223 / #225 / #227 / #230)**: Vision Router no longer relies solely on the static DSH/pi-ai catalog. Configured compatible providers are queried through bounded `/models` discovery, cached by route fingerprint, and merged only into Vision Router's private picker without mutating the global DSH model catalog. The registry keeps DSH catalog, live evidence, trusted endpoint hints, and saved compatibility rows separate; restart cache is display-only until the current route is revalidated. Exact official BigModel endpoint hints cover callable visual models omitted from its listing, including `glm-4.6v-flash`.
 
 - **provider 目录兜底，彻底修复“只显示 DeepSeek”（#242）**：选择器同时读取 DSH `llm.providers` 与 `llm.models`。只要 provider 处于 active，即使模型枚举失败也不会整组消失；没有可枚举模型时提供“手动输入模型 ID”，但不会污染 DSH 全局目录，也不会绕过既有运行时授权/桥接证据边界。
-- **Provider-directory fallback fixes the “only DeepSeek” case (#242)**: the picker now combines DSH `llm.providers` with `llm.models`. Active providers stay visible even when their model enumeration fails; if no IDs can be listed, users can enter an exact model ID manually. The private entry never mutates DSH's global catalog and does not grant direct-bridge authority by itself.
+- **Provider-directory fallback fixes the “only DeepSeek” case (#242)**: the picker now combines DSH `llm.providers` with DSH `llm.models`. Active providers stay visible even when their model enumeration fails; if no IDs can be listed, users can enter an exact model ID manually. The private entry never mutates DSH's global catalog and does not grant direct-bridge authority by itself.
 
 - **模型发现凭据与后端诊断（#238 / #243 / #245）**：实时发现的凭据解析与 DSH 自身所有权语义对齐，启动早期拿不到 Key 时不再匿名打 `/models` 制造 401；诊断日志记录实际尝试的 provider/model、adapter/bridge 路径、证据来源、成功后端与精确失败类别/详情，避免把后续 OVH fallback 误记到前一个 provider。
 - **Discovery credentials and backend diagnostics (#238 / #243 / #245)**: live discovery now mirrors DSH credential ownership and defers instead of anonymously probing `/models` during startup races. Persistent diagnostics identify the exact provider/model, adapter vs bridge path, evidence source, winning backend, and bounded classified failure detail without misattributing later OVH fallbacks.
@@ -197,7 +218,6 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 - **设置页模型能力警告去告警化（#169）**：「⚠️ 无法读取此模型的图片能力声明…」「⚠️ DSH 未声明此模型支持图片输入…」「⚠️ DSH 将此模型标记为仅文本…」三条警告改为「不影响使用 / 仍可直接使用 / 会在调用时自动验证，失败自动切换」的口吻并去掉 ⚠️ 图标——它们只是提示，模型仍可选用且会实际尝试。
 - **Settings capability warnings no longer read as breakage (#169)**: the three model-list warnings ("⚠️ 无法读取此模型的图片能力声明…", "⚠️ DSH 未声明此模型支持图片输入…", "⚠️ DSH 将此模型标记为仅文本…") now lead with usability ("不影响使用 / 仍可直接使用 / verified automatically on the call") and drop the alarm icon — they are advisories, and the model remains selectable and is tried for real.
-
 - **图片注入提醒友好化（#169）**：图片上传与结构化预识别（1+x 流程）的注入提醒不再以「当前文本模型无法直接查看图片」开头，改为「已收到图片…我可以借助视觉工具来看图」并用平实语言解释流程；全部功能约束（先 `vision_bootstrap`、不预选模式、x >= 1 深挖证据调用、`ok:false` 故障兜底、图中文字不可信）原样保留。
 - **Friendlier image reminders (#169)**: the reminders injected on image upload and by the structured-bootstrap (1+x) flow no longer open with "当前文本模型无法直接查看图片"; they now lead with "已收到图片…我可以借助视觉工具来看图" and explain the workflow in plain language. Every functional constraint is preserved (first call must be `vision_bootstrap`, no mode preselection, x >= 1 evidence call before answering, `ok:false` failure fallback, text inside images stays untrusted).
 
@@ -410,7 +430,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 ### 改进 / Changed
 
 - **未声明视觉模型的自动识别与直连桥接（#99）**：视觉后端能力改用保守的名称推断（glm-4.6v 系列、qwen-vl/qvq、gpt-4o/4.1/5、gemini、claude-3+、internvl、doubao-vision、step-v、grok-4、pixtral、llama-vision、florence 等），并新增 `extraVisionModels` 设置手动声明视觉后端；下拉框、工具对与视觉后端链共用同一判定。当渠道适配器因目录未声明图片输入而拒绝收图（如 pi-ai `UNSUPPORTED_CONTENT`）时，推断/声明的后端自动回退为经该渠道自身 baseURL + 凭据的 OpenAI 兼容直连调用，智谱类渠道开箱即用。
-- **Automatic recognition + direct-channel bridging for undeclared vision models (#99)**: vision-backend capability now uses conservative name-based inference (glm-4.6v family, qwen-vl/qvq, gpt-4o/4.1/5, gemini, claude-3+, internvl, doubao-vision, step-v, grok-4, pixtral, llama-vision, florence, …) plus a new `extraVisionModels` setting to declare vision backends manually; the dropdown, tool pairs and the chain list share one decision. When a channel adapter rejects images because the catalog does not declare image input (pi-ai `UNSUPPORTED_CONTENT`), inferred/declared backends fall back to a direct OpenAI-compatible call over the channel's own baseURL + credential, so Zhipu-like channels work out of the box.
+- **Automatic recognition + direct-channel bridging for undeclared vision models (#99)**: vision-backend capability now uses conservative name-based inference (glm-4.6v family, qwen-vl/qvq, gpt-4o/4.1/5, gemini, claude-3+、internvl, doubao-vision, step-v, grok-4, pixtral, llama-vision, florence, …) plus a new `extraVisionModels` setting to declare vision backends manually; the dropdown, tool pairs and the chain list share one decision. When a channel adapter rejects images because the catalog does not declare image input (pi-ai `UNSUPPORTED_CONTENT`), inferred/declared backends fall back to a direct OpenAI-compatible call over the channel's own baseURL + credential, so Zhipu-like channels work out of the box.
 - **doctor 检测并修复过期的版本钉住豁免（#101）**：pnpm v11 默认 `minimumReleaseAge=1440` 分钟，发布不到 24 小时的新版本会被 `dsh plugin update` 静默忽略；形如 `dsh-vision-router@1.2.0` 的版本钉住豁免只对单个版本生效、随新版发布失效——这正是「出了新版但更新无反应」的根源。doctor 现在会标记各 profile `pnpm-workspace.yaml` 中 `dsh-vision-router` 与 `@deepseek-ai/*` 宿主包的此类条目，修复时重写为裸名 / 组织通配模式。
 - **The doctor detects and repairs stale version-pinned release-age exemptions (#101)**: pnpm v11 defaults `minimumReleaseAge` to 1440 minutes, so releases younger than 24h are silently ignored by `dsh plugin update`; a version-pinned exemption such as `dsh-vision-router@1.2.0` covers only that version and goes stale on the next release — the root cause of "a new release is out but update does nothing". The doctor now flags such entries for `dsh-vision-router` and the `@deepseek-ai/*` host packages in each profile's `pnpm-workspace.yaml` and rewrites them to bare names / the org pattern on repair.
 - **引导流程聚光灯高亮（#107）**：三步引导此前只有第 3 步有卡片内高亮；现在每一步都是聚光灯引导——暗色遮罩 + 呼吸光环圈出真实控件（第 1 步模型选择器、第 2 步设置齿轮与「插件」入口、第 3 步视觉后端链），提示卡带箭头锚定且绝不遮挡目标；第 2 步的「下一步」可自动打开设置面板并进入插件页，全程可从提示卡一键推进。目标用稳定锚点（`data-slot` / `aria-*`）定位，不依赖哈希 CSS 类名；动效遵循 `prefers-reduced-motion`。
