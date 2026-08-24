@@ -74,14 +74,25 @@ test('background polling is fast only while work is running and DOM writes are i
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function setData\(control,key,value\)/)
 })
 
-test('benchmark product vocabulary is coverage-based and has no confidence or stale tier', () => {
+test('benchmark product vocabulary is coverage-based and shows static request and time estimates', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageOf/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageKindText/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · 覆盖 OCR 和通用 · 快速建立Auto依据/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约6次请求 · 覆盖结构化、OCR、文档、定位、通用/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · 预计1–3分钟 · OCR \+ 通用/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约6次请求 · 预计3–8分钟 · 结构化 \+ OCR \+ 文档 \+ 定位 \+ 通用/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /低置信度|中置信度|low confidence|medium confidence/i)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /confidence/i)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /已陈旧|已过期|stale|expired/i)
+})
+
+test('Auto first-enable intro and benchmark modal explain that Settings may be closed', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /AUTO_INTRO_KEY = 'vision-router:auto-intro-v2'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /localStorage\.getItem\(AUTO_INTRO_KEY\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /已开启 Auto/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /开启Auto本身不会启动测评，也不会产生额外Benchmark请求/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台测评由「后台补充能力数据」单独控制/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /可以直接关闭设置页面，任务会在DSH中继续/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /测评开始后可关闭设置页面，任务会在DSH中继续/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /\.vr-routing-choice\[data-value="auto"\]/)
 })
 
 test('quick coverage is presented as a basic capability profile and full coverage as complete', () => {
