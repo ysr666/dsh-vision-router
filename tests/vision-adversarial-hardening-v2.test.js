@@ -110,7 +110,7 @@ test('suite v5 structured fixture keeps evaluator answer tokens out of the model
   }
 })
 
-test('suite v5 visual proof is benchmark metadata and an explicit sole output-format exception for every direct fixture family', () => {
+test('suite v5 visual proof preserves each fixture family output contract', () => {
   for (const intent of ['structured', 'ocr', 'grounding', 'document', 'general']) {
     const fixture = capabilityBenchmarkFixture(intent)
     const hardened = hardenCapabilityBenchmarkFixture(fixture, 'A1B2C3D4')
@@ -119,9 +119,17 @@ test('suite v5 visual proof is benchmark metadata and an explicit sole output-fo
     assert.match(hardened.svg, /<text x="456" y="36" font-family="ui-monospace,[^"]+" font-size="18"/)
     assert.doesNotMatch(hardened.prompt, /A1B2C3D4/, `${intent} leaked the random proof code into the prompt`)
     assert.match(hardened.prompt, /not part of the task content/i, `${intent} did not exclude proof metadata from the task body`)
-    assert.match(hardened.prompt, /transcription order, all-visible-text, JSON-only, answer-only, or no-prose/i)
-    assert.match(hardened.prompt, /sole exception to those output-format constraints/i)
-    assert.match(hardened.prompt, /one final line exactly in the form VR-CODE:<code>/)
+    if (/\bONLY JSON\b/i.test(fixture.prompt)) {
+      assert.equal(hardened.visualProofMode, 'json-field', `${intent} did not keep JSON-only proof inside JSON`)
+      assert.match(hardened.prompt, /valid JSON only/i)
+      assert.match(hardened.prompt, /top-level string key named "_vr_code"/i)
+      assert.doesNotMatch(hardened.prompt, /one final line exactly in the form VR-CODE:<code>/)
+    } else {
+      assert.equal(hardened.visualProofMode, 'line', `${intent} did not use line proof`)
+      assert.match(hardened.prompt, /transcription order, all-visible-text, answer-only, or no-prose/i)
+      assert.match(hardened.prompt, /sole exception to those output-format constraints/i)
+      assert.match(hardened.prompt, /one final line exactly in the form VR-CODE:<code>/)
+    }
   }
   assert.match(capabilityBenchmarkFixture('ocr').prompt, /top-to-bottom order/i)
   assert.match(capabilityBenchmarkFixture('structured').prompt, /ONLY JSON/)

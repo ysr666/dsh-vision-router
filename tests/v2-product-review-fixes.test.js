@@ -153,7 +153,7 @@ test('background profiler can be woken immediately by settings or model topology
 test('exact image check remains a one-request product action independent from Auto Benchmark evidence', () => {
   assert.match(VISION_EXACT_CHECK_CLIENT, /测试识图/)
   assert.match(VISION_EXACT_CHECK_CLIENT, /1次请求/)
-  assert.match(VISION_EXACT_CHECK_CLIENT, /不写入Auto能力数据/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /不写入Auto能力分数/)
   assert.match(VISION_EXACT_CHECK_CLIENT, /capability-runtime/)
   assert.doesNotMatch(VISION_EXACT_CHECK_CLIENT, /mode:'quick'|mode:'full'/)
 })
