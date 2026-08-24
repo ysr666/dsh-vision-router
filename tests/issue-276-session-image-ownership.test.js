@@ -340,18 +340,20 @@ test('turn policy distinguishes text, native, Vision Router and unknown ownershi
   assert.equal(text.observed.policy.preserveRawImages, false)
   assert.equal(text.observed.policy.rewriteCurrentImages, true)
   assert.equal(text.observed.policy.suppressGenericAutoMount, false)
+  assert.equal(text.observed.policy.allowStructuredBootstrap, true)
 
   const native = await observeTurn(boot({ inputModalities: ['text', 'image'] }), 'deepseek-official')
   assert.equal(native.observed.policy.ownership, IMAGE_OWNERSHIP.NATIVE)
   assert.equal(native.observed.policy.preserveRawImages, true)
   assert.equal(native.observed.policy.rewriteCurrentImages, false)
   assert.equal(native.observed.policy.suppressGenericAutoMount, true)
-  assert.equal(native.observed.policy.allowStructuredBootstrap, true)
+  assert.equal(native.observed.policy.allowStructuredBootstrap, false)
 
   const unknown = await observeTurn(boot({ resolveThrows: true }), 'mystery-provider')
   assert.equal(unknown.observed.policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
   assert.equal(unknown.observed.policy.preserveRawImages, true)
   assert.equal(unknown.observed.policy.rewriteCurrentImages, false)
+  assert.equal(unknown.observed.policy.allowStructuredBootstrap, true)
 
   const ownedHarness = boot({ inputModalities: ['text'] })
   const ownedCtx = contextWithNativeImageCoexistence(ownedHarness.ctx, ownedHarness.persisted)
@@ -368,6 +370,7 @@ test('turn policy distinguishes text, native, Vision Router and unknown ownershi
   )
   assert.equal(ownedPolicy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
   assert.equal(ownedPolicy.preserveRawImages, true)
+  assert.equal(ownedPolicy.allowStructuredBootstrap, true)
 })
 
 test('capability cache is scoped to the exact adapter/provider/model and never guesses after replacement', async () => {
