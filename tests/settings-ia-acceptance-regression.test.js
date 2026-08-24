@@ -97,6 +97,14 @@ function containing(tree, needle) {
   return findAll(tree, (node) => typeof node.type === 'string' && textOf(node).includes(needle))[0]
 }
 
+async function clickAndSettle(view, label) {
+  button(view.tree(), label).props.onClick()
+  // React intentionally ignores event-handler return values. The settings UI
+  // starts an async save/reset with `void`, so wait one macrotask for its
+  // promise/readback chain to drain before asserting the settled UI effects.
+  await new Promise((resolve) => setImmediate(resolve))
+}
+
 function harness({
   page = 'general',
   drafts = {},
@@ -250,8 +258,7 @@ test('acceptance: a resolved-but-unlanded write is retried and never treated as 
       // Host failure mode that previously produced false “saved” UI.
     },
   })
-  const save = button(view.tree(), '保存')
-  await save.props.onClick()
+  await clickAndSettle(view, '保存')
   assert.equal(view.calls.filter((call) => call[0] === 'set' && call[1] === 'cache').length, 2)
   assert.equal(view.calls.some((call) => call[0] === 'load'), true)
   assert.equal(view.stateWrites.some((write) => write.slot === 5 && write.next?.status === 'saved'), false)
@@ -268,7 +275,7 @@ test('acceptance: only landed fields clear while a failed draft remains reported
       setSnapshot({ ...snapshot, value: { ...snapshot.value, [key]: value }, user: { ...snapshot.user, [key]: value } })
     },
   })
-  await button(view.tree(), '保存').props.onClick()
+  await clickAndSettle(view, '保存')
   const draftWrite = view.stateWrites.find((write) => write.slot === 1 && typeof write.next === 'function')
   assert.ok(draftWrite, 'landed fields must update the draft object')
   const nextDrafts = draftWrite.next({ cache: false, downscale: false })
@@ -279,14 +286,13 @@ test('acceptance: only landed fields clear while a failed draft remains reported
 
 test('acceptance: saving desktop capture on triggers the native permission probe only after readback lands', async () => {
   const view = harness({ page: 'local', drafts: { desktopScreenshot: true } })
-  await button(view.tree(), '保存').props.onClick()
+  await clickAndSettle(view, '保存')
   assert.equal(view.fetchCalls.some(([url, init]) => url === '/_dsh/vision-router/request-screenshot-permission' && init?.method === 'POST'), true)
 })
 
 test('acceptance: overridden fields retain the user-layer reset path', async () => {
   const view = harness({ page: 'advanced', user: { cache: true } })
-  const reset = button(view.tree(), '恢复默认')
-  await reset.props.onClick()
+  await clickAndSettle(view, '恢复默认')
   assert.deepEqual(view.calls.find((call) => call[0] === 'unset'), ['unset', 'cache'])
 })
 
