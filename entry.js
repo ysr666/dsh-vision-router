@@ -20,8 +20,6 @@ import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
 import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
 import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
-import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
-import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
 import { installGuideVisionToggleHighlight } from './lib/guide-vision-toggle-highlight.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
@@ -37,6 +35,23 @@ import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundar
 import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
 import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
+import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
+import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
+import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
+import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
+import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
+import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
+import {
+  normalizeBackgroundMeasurementAuthority,
+  resolveVisionRoutingAuthority,
+} from './lib/vision-routing-authority.js'
+import { withVisionCircuitBreakerObserver } from './lib/vision-breaker-observer.js'
+import { createVisionBreakerShadowHealth } from './lib/vision-breaker-shadow-health.js'
+import { installBackgroundCapabilityProfiling } from './lib/vision-background-benchmark.js'
+import {
+  contextWithVisionRuntimePerformance,
+  createVisionRuntimePerformanceStore,
+} from './lib/vision-runtime-performance.js'
 import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
@@ -54,7 +69,7 @@ import {
 // schema default so a newer browser client can distinguish a genuinely updated
 // Host from a stale in-process plugin module instead of reporting a generic
 // readback mismatch after the old Host rejects a newly visible field.
-export const SETTINGS_CONTRACT_REVISION = 4
+export const SETTINGS_CONTRACT_REVISION = 7
 
 // Schemastery object schemas expose set() as the supported way to replace a
 // field schema. This mutates the Config object that index.js itself later uses
@@ -77,6 +92,23 @@ core.Config.set('visionTurnBudgetMs', z.number().step(1000).min(0).max(600000).d
 // entry serializes exactly the same shape on every supported Host generation.
 core.Config.set('visionDepth', z.union(['fast', 'standard', 'deep', 'custom']).default('standard'))
 core.Config.set('visionDepthMaxCalls', z.number().step(1).min(0).max(100).default(0))
+
+// Product semantics: users choose whether Vision Router may select a backend
+// automatically or must obey the configured order, plus a plain-language
+// routing preference. Ordered remains the safe default; Auto changes execution
+// only under explicit live routingMode:auto authority.
+core.Config.set('routingMode', z.union(['ordered', 'auto']).default('ordered'))
+core.Config.set(
+  'routingPreference',
+  z.union(['balanced', 'quality', 'speed', 'local']).default('balanced'),
+)
+// Background measurement is a separate user authority. Even local/free work
+// consumes resources, so absence never grants it: users explicitly choose
+// local-free or all when they want standing background measurement.
+core.Config.set(
+  'backgroundBenchmarking',
+  z.union(['local-free', 'all', 'off']).default('off'),
+)
 
 // Settings surfaces and Host persistence must agree on this field. Keep the
 // permission on the public entry contract as well as index.js so a packaged
@@ -129,6 +161,11 @@ export function apply(ctx, config = {}) {
   // cannot bypass local/runtime/replay stream behavior.
   const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)
   const logging = installVisionRouterFileLogging(adapterContractCtx)
+  const capabilityStore = createCapabilityProfileStore({ logger: logging.logger })
+  // Runtime speed is deliberately process-local and short-lived. It is not
+  // persisted beside capability evidence because network/provider performance
+  // is a dynamic runtime fact, not a model capability fact.
+  const runtimePerformanceStore = createVisionRuntimePerformanceStore()
   const delegatedReplayCtx = contextWithDelegatedReplay(logging.ctx, {
     wrapperRoute:
       typeof config.wrapperRoute === 'string' && config.wrapperRoute !== ''
@@ -136,43 +173,25 @@ export function apply(ctx, config = {}) {
         : 'deepseek-vision',
     visionConfig: config,
   })
-  // Newer pi-ai replay envelopes store the real producer under
-  // replayState.response.{provider,model}; the older delegated-replay shim
-  // recognizes the pre-v2 top-level shape. Layer a narrow private compatibility
-  // view so resumed wrapper history keeps provider-native replay metadata rather
-  // than degrading to foreign history at the delegate boundary.
   const runtimeCtx = contextWithReplayEnvelopeV2Compat(delegatedReplayCtx)
-  // Filesystem authority is separate from browser rendering safety. Put this
-  // boundary INSIDE adversarial hardening so the secure HTML renderer that the
-  // outer layer installs is itself wrapped by canonical workspace containment.
   const screenshotSourceCtx = installScreenshotSourceBoundary(runtimeCtx, core)
-  // Security/runtime boundary shared by the core and the local-vision shim:
-  // keep artifacts inside the session workspace, make HTML screenshots truly
-  // offline + sandboxed, protect the screenshot-permission side effect, and
-  // make the process-wide fetch cleanup coexist with later plugin patches.
   const { ctx: hardenedCtx, config: hardenedConfig } = installAdversarialHardening(
     screenshotSourceCtx,
     config,
     core,
   )
-  // Ollama's native API can preload a model independently of an actual vision
-  // inference. Install this boundary before the local-vision stabilizer so the
-  // final local vision-http adapter is observed after stabilization. Primary
-  // local-Ollama image turns finish a cold model load in pre-step, before the
-  // visual task budget begins; fallback Ollama warms in the background.
   const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core)
-  // #141 stabilization boundary: keep the recently merged local-vision
-  // behavior isolated from main's existing provider/router semantics. It
-  // normalizes only the local settings/runtime seams before core.apply sees
-  // the context (desktop screenshot exposure, instant-local budget/one-pass,
-  // local vision-http transport and connection-probe fallback).
   const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(
     ollamaColdStartCtx,
     hardenedConfig,
     core,
   )
+  const routingProduct = resolveVisionRoutingProduct(bootConfig)
   const runtimeConfig = {
     ...bootConfig,
+    routingMode: routingProduct.mode,
+    routingPreference: routingProduct.preference,
+    backgroundBenchmarking: normalizeBackgroundMeasurementAuthority(bootConfig.backgroundBenchmarking),
     progressiveTools: hardenedConfig.progressiveTools === true,
     guidanceOverrides: normalizeGuidanceOverrides(bootConfig.guidanceOverrides ?? hardenedConfig.guidanceOverrides),
     visionTaskTimeoutMs:
@@ -184,57 +203,24 @@ export function apply(ctx, config = {}) {
         ? Number(bootConfig.visionTurnBudgetMs)
         : 0,
   }
-  // The batch-attachment API is the released, non-incidental discriminator
-  // between the minimum Host contract and the newer Host-owned integration
-  // generation. Keep the branch named after that observable capability rather
-  // than a release number so rc.8+ naturally follows the same public contract.
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
-  // DSH may reconstruct attachment-local after a profile/home patch reload.
-  // Keep the historical rc.8 overlay migration attached to that service
-  // lifecycle instead of healing only the instance present during apply().
-  if (batchAttachmentHost) {
-    installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
-  }
-  // The remote settings bridge uses DSH Connection's trusted-host carrier
-  // fence and its own safe-field capability allow-list. Main's local Web
-  // mutation boundary continues to protect the independent /_dsh write routes.
+  if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
-  // rc.8 swaps ModuleLoader.load() while entering live mode. The older local
-  // permission/risk shims still own rc.6/rc.7; this narrow lifecycle shim
-  // re-installs both contexts after rc.8's queue -> live transition.
   installSettingsRc8ClientLifecycle(stabilizedCtx)
-  const ownershipCtx = batchAttachmentHost
-    ? protectHostProviderOwnership(stabilizedCtx)
-    : stabilizedCtx
+  const ownershipCtx = batchAttachmentHost ? protectHostProviderOwnership(stabilizedCtx) : stabilizedCtx
   const settingsCtx = batchAttachmentHost
     ? installHostSettingsCompatibility(ownershipCtx, { ...runtimeConfig, stealth: false }, {
         namespace: 'vision-router',
         Config: core.Config,
       })
     : ownershipCtx
-  // The minimum Host keeps the narrow process-local fallback required by the
-  // old attachment-local durability walk. Batch-capable hosts keep AttachmentId
-  // store-owned, so never fabricate one there: host persistence errors remain
-  // authoritative and diagnosable instead of creating a false durable ref.
   const attachmentCompatCtx = attachmentContextForContract(settingsCtx, logging.logger, {
     installAndroidAttachmentCompat,
   })
-  // Put per-tool cwd/cancellation/cache policy AFTER Host settings compatibility
-  // so rc.7/rc.8's synthetic settings injection is visible to the boundary.
-  // The secure screenshot renderer owns its exact FsTarget and active browser
-  // cancellation directly, so it does not depend on this placement.
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
-  // DSH 0.1.1 publishes an exact native image-capable DeepSeek model. Do not
-  // put it ahead of Vision Router's own configured chain: only when the user
-  // has explicitly selected any Host-native image route, preserve raw pixels
-  // and skip the hidden instant-local caption pass for that turn. Ownership is
-  // AsyncLocalStorage-scoped and never mutates settings or provider order.
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
-  // index.js still carries legacy global wrapper/tool gates. Feed the new
-  // session policy into that core through one narrow compatibility bridge:
-  // native/owned/unknown routes preserve raw pixels, text-only routes are
-  // normalized by the core's own rewriteHistoryImages implementation, and the
-  // boot-only tool projection ends immediately after core.apply wires schema.
+  // Feed the session-level image-ownership decision into the legacy core's
+  // wrapper/tool gates without reintroducing a global policy guess.
   const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(
     nativeImageCompat.ctx,
     nativeImageCompat.config,
@@ -246,32 +232,34 @@ export function apply(ctx, config = {}) {
   // rejects empty/non-evidence results, and applies the optional turn deadline
   // only when the user explicitly configures one.
   const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)
-  // Adapter reconciliation + prepareCall normalization are already installed at
-  // the final Host registration boundary above. Wrapping again here would make
-  // prepareCall capture a pre-wrapper stream.
-  const reconciledCtx = structuredCtx
-  // Discover the provider's actual /models list independently of DSH's static
-  // catalog. The Host owns credentials/networking/cache; the browser receives
-  // model ids only. A live hit is also the evidence required before an
-  // UNKNOWN_MODEL catalog miss may enter the compatibility bridge.
+  const backgroundProfiling = installBackgroundCapabilityProfiling(
+    structuredCtx,
+    runtimeConfig,
+    core,
+    capabilityStore,
+    { logger: logging.logger },
+  )
+  const breakerShadowHealth = createVisionBreakerShadowHealth(backgroundProfiling.ctx)
+  const capabilityShadowCtx = installCapabilityShadowRuntime(
+    backgroundProfiling.ctx,
+    runtimeConfig,
+    core,
+    {
+      logger: logging.logger,
+      store: capabilityStore,
+      runtimePerformanceStore,
+      healthForCandidate: breakerShadowHealth.healthForCandidate,
+    },
+  )
+  // prepareCall normalization/reconciliation is already installed at the
+  // deepest private Host registration boundary above. Do not wrap it again
+  // here or a prepared adapter may capture a pre-wrapper stream.
+  const reconciledCtx = capabilityShadowCtx
   const liveDiscovery = installLiveModelDiscovery(reconciledCtx, {
     config: runtimeConfig,
     logger: logging.logger,
   })
-  // Consolidate the private picker registry without weakening execution
-  // admission. Fresh/stale endpoint models get explicit source labels, while a
-  // model already saved under an active provider stays visible as [saved] even
-  // when that provider does not enumerate every accepted id. Saved-only rows do
-  // NOT alter liveDiscovery.hasModel(), so they cannot authorize a direct
-  // UNKNOWN_MODEL bridge by themselves. The registry also exposes the evidence
-  // source strictly for diagnostics (`known` vs `live`) without changing the
-  // admission decision.
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
-  // rc.8 turns ui-attachment into a dynamic presentation plugin and no longer
-  // exports its React implementation as package values. Install a narrowly
-  // scoped browser boundary that supplies Vision Router's own lightweight
-  // gallery to the legacy 1.7.x client factory, so the official package is
-  // never value-required at runtime and remains free to evolve independently.
   installClientPresentationBoundary(reconciledCtx)
   // The same first walkthrough step now teaches the explicit "识图" control
   // introduced by #284. Widen the existing spotlight to cover that button and
@@ -294,49 +282,53 @@ export function apply(ctx, config = {}) {
   // primary Vision Router settings section. This is presentation-only: the Host
   // keeps one settings namespace and one wrapper-registration implementation.
   installWrapperScopeClientPrelude(reconciledCtx)
-  // #266: 1.7.x gets one exact, no-fallback image smoke test per visible row.
-  // Keep it out of the controlled React form so the v2 capability-benchmark
-  // client can take ownership later without forking the stable settings UI.
-  installExactVisionTestClient(reconciledCtx)
-  // DSH 0.1.1 adds per-route/model pi-ai wire compatibility. The legacy
-  // direct image bridge is non-streaming and predates that surface, so preserve
-  // maxTokensField + route headers at its final fetch boundary. Ordinary DSH
-  // streams and unrelated Vision Router HTTP providers remain byte-identical.
+  // Capability Benchmark is the single visible and callable per-model
+  // capability-test surface in the release runtime.
+  installVisionRoutingSettingsPrelude(reconciledCtx)
+  installCapabilityBenchmarkClient(reconciledCtx)
   installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
-  // Existing execution policy stays authoritative for adapter-observed failures:
-  // only exact local pre-wire admission failures may unlock the post-failure
-  // bridge. The outer runtime policy added below handles the complementary case
-  // where DSH would silently project pixels to SHA text before the adapter ever
-  // gets a chance to reject them.
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
-  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(executionCtx, {
+  // Only real visual-tool adapter streams are timed, and only while live Auto
+  // authority permits future-routing observation. Benchmark/background calls
+  // have no visual-tool scope and cannot contaminate this store.
+  const performanceCtx = contextWithVisionRuntimePerformance(
+    executionCtx,
+    runtimePerformanceStore,
+    {
+      logger: logging.logger,
+      observationAllowed() {
+        try {
+          const settings = executionCtx?.get?.('settings')
+          const current = settings?.get?.('vision-router')
+          if (!current || typeof current !== 'object' || Array.isArray(current)) return false
+          return resolveVisionRoutingAuthority(current).ephemeralRuntimeObservation
+        } catch {
+          return false
+        }
+      },
+    },
+  )
+  // v1.7.7's outer policy covers cases where DSH would otherwise project image
+  // bytes to SHA text before an adapter gets the chance to reject them. Keeping
+  // it outside the runtime-performance observer means native adapter execution
+  // is still timed, while a preflight direct bridge bypasses runtime sampling
+  // and therefore stays incomparable for Balanced/Speed as designed.
+  const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {
     config: runtimeConfig,
     core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
   })
-  // The smoke-test route sends only a built-in probe image to the exact selected
-  // backend. It never walks the configured fallback chain, so a healthy OVH
-  // fallback can no longer make a broken custom model look healthy. Its narrow
-  // compatibility bridge uses the same live-discovery evidence gate as runtime.
-  installVisionBackendSmokeTest(backendRuntimeCtx, runtimeConfig, core, {
+  installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
-    isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),
+    store: capabilityStore,
   })
-  // index.js historically passes image bytes as `options.input` to the async
-  // execFile API. That option is not fed into child stdin, so Tesseract waits
-  // for data until the OCR slice expires. Materialize only this exact
-  // Tesseract-stdin call to a temporary image file; all other execFile calls
-  // keep their native behavior.
   installTesseractExecFileCompat(backendRuntimeCtx)
 
-  // 启动诊断摘要只描述 composition/apply 的基础配置。设置服务可能稍后
-  // 覆盖这些值；每个图片轮还会记录 current() 的实时决策，避免把这个
-  // 启动快照误当成最终设置状态。
   try {
     const c = hardenedConfig && typeof hardenedConfig === 'object' ? hardenedConfig : {}
     const local = c.localOllama && typeof c.localOllama === 'object' ? c.localOllama : {}
@@ -353,12 +345,11 @@ export function apply(ctx, config = {}) {
     /* diagnostics must never break apply */
   }
   try {
-    const result = core.apply(backendRuntimeCtx, legacyCoreCompat.config)
+    const result = withVisionCircuitBreakerObserver(
+      breakerShadowHealth.capture,
+      () => core.apply(backendRuntimeCtx, legacyCoreCompat.config),
+    )
     legacyCoreCompat.finishSchemaBootstrap()
-    // On newer Hosts the Settings -> Models surface is backed by the
-    // configurable-provider directory, not by the live adapter registry alone.
-    // Publish the main DeepSeek + 自动识图 route as a derived alias of official
-    // DeepSeek. On older Hosts the helper feature-detects and stays inert.
     installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
     if (result && typeof result.then === 'function') {
       return result.catch((error) => {

@@ -1,0 +1,400 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  createBackgroundCapabilityProfiler,
+  installBackgroundCapabilityProfiling,
+} from '../lib/vision-background-benchmark.js'
+
+function backendFixtures() {
+  return {
+    local: {
+      name: 'local-test',
+      baseURL: 'http://127.0.0.1:11434/v1',
+      model: 'vision-local',
+      apiKeyEnv: '',
+      maxTokens: 512,
+    },
+    paid: {
+      name: 'paid-cloud',
+      baseURL: 'https://paid.example.invalid/v1',
+      model: 'vision-paid',
+      apiKeyEnv: 'PAID_KEY',
+      maxTokens: 512,
+    },
+  }
+}
+
+function settings(overrides = {}) {
+  const { paid } = backendFixtures()
+  return {
+    routingMode: 'auto',
+    routingPreference: 'balanced',
+    backgroundBenchmarking: 'local-free',
+    providers: [{ provider: 'vision-http', model: 'paid-cloud/vision-paid', fallbacks: [] }],
+    httpProviders: [paid],
+    ...overrides,
+  }
+}
+
+function fakeCtx(config) {
+  return {
+    logger: { info() {}, warn() {} },
+    get(name) {
+      if (name === 'settings') return { get: () => config }
+      if (name === 'credentials') return { resolve: async () => ({ value: 'paid-secret' }) }
+      return undefined
+    },
+    llm: {
+      registration() { return { adapter: { constructor: { name: 'FakeAdapter' } } } },
+      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
+    },
+    tools: { register() { return () => {} } },
+    effect() { return () => {} },
+  }
+}
+
+function fakeCore() {
+  const { local, paid } = backendFixtures()
+  return {
+    DEFAULT_HTTP_PROVIDERS: [],
+    adapterAvailable: () => true,
+    decideVisionBackendCapability: () => ({ image: true, attemptable: true }),
+    localProvidersOf: () => [local],
+    httpProvidersOf: () => [paid],
+  }
+}
+
+function memoryStore(records = new Map()) {
+  return {
+    async get(key) { return records.get(key) },
+    async put(record) { records.set(record.fingerprint, record); return record },
+  }
+}
+
+function inertTimer() {
+  return { unref() {} }
+}
+
+function profilerFor(config, runAxisBenchmark, extra = {}) {
+  return createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config),
+    config,
+    core: fakeCore(),
+    store: memoryStore(),
+    idleMs: 0,
+    gapMs: 0,
+    scanMs: 0,
+    setTimer: inertTimer,
+    clearTimer() {},
+    runAxisBenchmark,
+    ...extra,
+  })
+}
+
+test('local-free background policy skips paid cloud and profiles a local backend first', async () => {
+  const seen = []
+  const profiler = profilerFor(settings(), async ({ candidate, axis }) => { seen.push([candidate.key, axis]) })
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, [['vision-http/local-test/vision-local', 'ocr']])
+})
+
+test('all policy is explicit authorization for paid configured cloud backends', async () => {
+  const seen = []
+  const profiler = profilerFor(settings({ backgroundBenchmarking: 'all' }), async ({ candidate, axis }) => { seen.push([candidate.key, axis]) })
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, [['http:paid-cloud/vision-paid', 'ocr']])
+})
+
+test('explicit off to all opt-in bypasses only the startup idle window and wakes immediately', async () => {
+  const config = settings({ backgroundBenchmarking: 'off' })
+  const seen = []
+  let scheduledDelay
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config),
+    config,
+    core: fakeCore(),
+    store: memoryStore(),
+    now: () => 100_000,
+    idleMs: 30_000,
+    gapMs: 15_000,
+    scanMs: 5_000,
+    setTimer(callback, delay) { scheduledDelay = delay; return inertTimer() },
+    clearTimer() {},
+    runAxisBenchmark: async ({ candidate, axis }) => { seen.push([candidate.key, axis]) },
+  })
+  config.backgroundBenchmarking = 'all'
+  profiler.settingsChanged()
+  assert.equal(scheduledDelay, 0)
+  await profiler.tick()
+  assert.deepEqual(seen, [['http:paid-cloud/vision-paid', 'ocr']])
+  profiler.stop()
+})
+
+test('ordered mode and off policy never schedule background model requests', async () => {
+  for (const config of [
+    settings({ routingMode: 'ordered' }),
+    settings({ backgroundBenchmarking: 'off' }),
+  ]) {
+    let calls = 0
+    const profiler = profilerFor(config, async () => { calls += 1 })
+    await profiler.tick()
+    profiler.stop()
+    assert.equal(calls, 0)
+  }
+})
+
+test('Auto alone does not infer missing or invalid background measurement authority', async () => {
+  const missing = settings()
+  delete missing.backgroundBenchmarking
+  for (const config of [missing, settings({ backgroundBenchmarking: 'unexpected' })]) {
+    let calls = 0
+    const profiler = profilerFor(config, async () => { calls += 1 })
+    await profiler.tick()
+    profiler.stop()
+    assert.equal(calls, 0)
+  }
+})
+
+test('background profiler does not remeasure a complete profile solely because it is old', async () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const oldRecord = {
+    measuredAt: Date.now() - 365 * DAY,
+    measuredAtByAxis: {
+      structured: Date.now() - 365 * DAY,
+      ocr: Date.now() - 365 * DAY,
+      document: Date.now() - 365 * DAY,
+      grounding: Date.now() - 365 * DAY,
+      general: Date.now() - 365 * DAY,
+    },
+    scores: { structured: 0.8, ocr: 0.8, document: 0.8, grounding: 0.8, general: 0.8 },
+  }
+  const store = {
+    async get() { return oldRecord },
+    async put(record) { return record },
+  }
+  let calls = 0
+  const profiler = profilerFor(settings(), async () => { calls += 1 }, { store })
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 0)
+})
+
+test('recent foreground task does not reorder the deterministic background axis plan', async () => {
+  const seen = []
+  const profiler = profilerFor(settings(), async ({ axis }) => { seen.push(axis) })
+  profiler.foregroundStart({ toolName: 'vision_long_screenshot_ocr', args: {} })
+  profiler.foregroundEnd()
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, ['ocr'])
+})
+
+test('real foreground vision aborts an in-flight background request and does not backoff it as a provider failure', async () => {
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(settings(), ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+  }))
+  const ticking = profiler.tick()
+  await ready
+  profiler.foregroundStart({ toolName: 'vision_ocr', args: {} })
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().activeForeground, 1)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.foregroundEnd()
+  profiler.stop()
+})
+
+test('model topology changes abort stale in-flight background work and rescan without provider backoff', async () => {
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(settings(), ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+  }))
+  const ticking = profiler.tick()
+  await ready
+  profiler.topologyChanged()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.stop()
+})
+
+test('all to local-free aborts an in-flight paid cloud benchmark immediately without provider backoff', async () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }))
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'local-free'
+  profiler.settingsChanged()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.stop()
+})
+
+test('all to local-free keeps an in-flight local benchmark running', async () => {
+  const config = settings({
+    backgroundBenchmarking: 'all',
+    providers: [{ provider: 'vision-http', model: 'local-test/vision-local', fallbacks: [] }],
+  })
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let finish
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve) => {
+    observedSignal = signal
+    finish = resolve
+    started()
+  }))
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'local-free'
+  profiler.settingsChanged()
+  assert.equal(observedSignal.aborted, false)
+  finish()
+  await ticking
+  assert.equal(observedSignal.aborted, false)
+  profiler.stop()
+})
+
+test('provider-originated AbortError is a genuine failure and receives retry backoff', async () => {
+  const providerAbort = Object.assign(new Error('provider aborted stream'), { name: 'AbortError' })
+  const profiler = profilerFor(settings(), async () => { throw providerAbort })
+  await profiler.tick()
+  assert.equal(profiler.snapshot().backoffSize, 1)
+  assert.equal(profiler.snapshot().deferred.length, 1)
+  profiler.stop()
+})
+
+test('revoking all background authorization aborts a running paid benchmark without provider backoff', async () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  let intervalCallback
+  let started
+  const ready = new Promise((resolve) => { started = resolve })
+  let observedSignal
+  const profiler = profilerFor(config, ({ signal }) => new Promise((resolve, reject) => {
+    observedSignal = signal
+    started()
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+  }), {
+    setIntervalFn(callback) {
+      intervalCallback = callback
+      return inertTimer()
+    },
+    clearIntervalFn() {},
+    policyPollMs: 25,
+    core: fakeCore(),
+  })
+  const ticking = profiler.tick()
+  await ready
+  config.backgroundBenchmarking = 'off'
+  intervalCallback()
+  await ticking
+  assert.equal(observedSignal.aborted, true)
+  assert.equal(profiler.snapshot().backoffSize, 0)
+  profiler.stop()
+})
+
+test('local-free never guesses that a custom remote ovh-named endpoint is free', async () => {
+  const fakeOvh = {
+    name: 'ovh-definitely-paid-proxy',
+    baseURL: 'https://paid.example.invalid/v1',
+    model: 'vision-paid',
+    apiKeyEnv: '',
+    maxTokens: 512,
+  }
+  const config = settings({
+    backgroundBenchmarking: 'local-free',
+    providers: [{ provider: 'vision-http', model: `${fakeOvh.name}/${fakeOvh.model}`, fallbacks: [] }],
+    httpProviders: [fakeOvh],
+  })
+  const c = {
+    ...fakeCore(),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [fakeOvh],
+    DEFAULT_HTTP_PROVIDERS: [],
+  }
+  let calls = 0
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config), config, core: c, store: memoryStore(),
+    idleMs: 0, gapMs: 0, scanMs: 0, setTimer: inertTimer, clearTimer() {},
+    runAxisBenchmark: async () => { calls += 1 },
+  })
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 0)
+})
+
+test('local-free may use only an exact trusted built-in free HTTP identity', async () => {
+  const builtin = {
+    name: 'ovh-trusted',
+    baseURL: 'https://free.example.invalid/v1',
+    model: 'vision-free',
+    apiKeyEnv: '',
+    maxTokens: 512,
+  }
+  const config = settings({
+    backgroundBenchmarking: 'local-free',
+    providers: [{ provider: 'vision-http', model: `${builtin.name}/${builtin.model}`, fallbacks: [] }],
+    httpProviders: [builtin],
+  })
+  const c = {
+    ...fakeCore(),
+    localProvidersOf: () => [],
+    httpProvidersOf: () => [builtin],
+    DEFAULT_HTTP_PROVIDERS: [builtin],
+  }
+  const seen = []
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx: fakeCtx(config), config, core: c, store: memoryStore(),
+    idleMs: 0, gapMs: 0, scanMs: 0, setTimer: inertTimer, clearTimer() {},
+    runAxisBenchmark: async ({ candidate }) => { seen.push(candidate.key) },
+  })
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, ['http:ovh-trusted/vision-free'])
+})
+
+test('manual benchmark lease pauses and preempts background profiling until all manual work releases', async () => {
+  let calls = 0
+  const profiler = profilerFor(settings(), async () => { calls += 1 })
+  profiler.manualStart()
+  await profiler.tick()
+  assert.equal(calls, 0)
+  assert.equal(profiler.snapshot().activeManualBenchmarks, 1)
+  profiler.manualEnd()
+  await profiler.tick()
+  assert.equal(calls, 1)
+  profiler.stop()
+})
+
+test('installed profiler is shared through the capability store without becoming enumerable persisted data', () => {
+  const config = settings()
+  const store = memoryStore()
+  const installed = installBackgroundCapabilityProfiling(fakeCtx(config), config, fakeCore(), store, {
+    idleMs: 60_000,
+    setTimer: inertTimer,
+    clearTimer() {},
+    runAxisBenchmark: async () => {},
+  })
+  assert.equal(store.backgroundProfiler, installed.profiler)
+  assert.equal(Object.keys(store).includes('backgroundProfiler'), false)
+  installed.profiler.stop()
+})
