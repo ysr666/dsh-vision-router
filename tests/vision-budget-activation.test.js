@@ -53,6 +53,40 @@ test('long text-only turns never consume the structured vision budget', async ()
   }
 })
 
+test('default structured vision turn budget is 180 seconds, not the historical 90 seconds', async () => {
+  const originalNow = Date.now
+  let now = 1_500_000
+  Date.now = () => now
+  try {
+    const harness = boot()
+    const session = {}
+    harness.wrapped.tools.register({
+      name: 'vision_describe',
+      async execute() { return 'visible evidence' },
+    })
+
+    await preStep(harness, session, 1)
+    const result = await harness.defs.get('vision_describe').execute({}, { agent: { session } })
+    assert.equal(result, 'visible evidence')
+
+    now += 90_001
+    const afterHistoricalLimit = await preStep(harness, session, 1)
+    assert.equal(
+      afterHistoricalLimit.messages.some((message) => String(message.id).includes('structured-guard-stop')),
+      false,
+      'the old 90s fallback must no longer terminate an image turn',
+    )
+
+    now += 90_000
+    const afterNewLimit = await preStep(harness, session, 1)
+    const stop = afterNewLimit.messages.find((message) => String(message.id).includes('structured-guard-stop'))
+    assert.ok(stop)
+    assert.match(stop.content[0].text, /视觉总时间预算已耗尽/)
+  } finally {
+    Date.now = originalNow
+  }
+})
+
 test('the structured vision budget starts on the first actual visual tool call', async () => {
   const originalNow = Date.now
   let now = 2_000_000
