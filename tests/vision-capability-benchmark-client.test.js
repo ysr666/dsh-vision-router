@@ -4,10 +4,6 @@ import {
   CAPABILITY_BENCHMARK_CLIENT,
   injectCapabilityBenchmarkClient,
 } from '../lib/vision-capability-benchmark-client.js'
-import {
-  EXACT_VISION_TEST_CLIENT,
-  injectExactVisionTestClient,
-} from '../lib/vision-backend-smoke-test-client.js'
 
 test('capability benchmark client injects once into the document head', () => {
   const html = '<!doctype html><html><head><title>DSH</title></head><body></body></html>'
@@ -16,21 +12,13 @@ test('capability benchmark client injects once into the document head', () => {
   assert.equal(injectCapabilityBenchmarkClient(once), once)
 })
 
-test('smoke test and benchmark remain two distinct settings actions in either injection order', () => {
-  const html = '<!doctype html><html><head><title>DSH</title></head><body></body></html>'
-  const smokeThenBenchmark = injectCapabilityBenchmarkClient(injectExactVisionTestClient(html))
-  const benchmarkThenSmoke = injectExactVisionTestClient(injectCapabilityBenchmarkClient(html))
-
-  for (const composed of [smokeThenBenchmark, benchmarkThenSmoke]) {
-    assert.match(composed, /data-vision-router-exact-vision-test/)
-    assert.match(composed, /data-vision-router-capability-benchmark/)
-  }
-
-  assert.match(EXACT_VISION_TEST_CLIENT, /快速自检 · 1次请求/)
-  assert.match(EXACT_VISION_TEST_CLIENT, /text\('测试识图','Test vision'\)/)
-  assert.match(EXACT_VISION_TEST_CLIENT, /control\.style\.order='1'/)
-  assert.doesNotMatch(EXACT_VISION_TEST_CLIENT, /v2OwnsCapabilityTesting|removeExactTestControls/)
+test('benchmark is the single compact per-model testing entry point', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /data-vr-capability-primary/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评','Benchmark'\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /快速测评/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整测评/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /测试识图|Test vision/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vision-router-exact-vision-test/)
 })
 
 test('client is scoped to the actual Vision Router model chain and never mutates settings', () => {
@@ -43,9 +31,9 @@ test('client is scoped to the actual Vision Router model chain and never mutates
 test('main settings row stays compact with one benchmark entry point', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /data-vr-capability-primary/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评','Benchmark'\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /部分测评/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整测评/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /尚未测评 · 自动选择不会推断此模型能力/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /部分能力/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整能力/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /尚未测评 · Auto暂时保持设置顺序/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vr-capability-action/)
 })
 
@@ -64,11 +52,18 @@ test('running and queued jobs temporarily replace benchmark button with stop/can
 test('benchmark product vocabulary is coverage-based and has no confidence or stale tier', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageOf/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageKindText/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · 覆盖 OCR 和通用/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /约3次请求 · 覆盖 OCR 和通用 · 快速建立Auto依据/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /约6次请求 · 覆盖结构化、OCR、文档、定位、通用/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /低置信度|中置信度|low confidence|medium confidence/i)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /confidence/i)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /已陈旧|已过期|stale|expired/i)
+})
+
+test('quick coverage is presented as a basic capability profile and full coverage as complete', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /axes\.indexOf\('ocr'\) >= 0 && axes\.indexOf\('general'\) >= 0/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /基本能力/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /完整能力/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /部分能力/)
 })
 
 test('measurement timestamps are provenance and benchmark latency is explicitly historical', () => {
@@ -99,22 +94,17 @@ test('cloud cost and text-only force verification live inside the benchmark moda
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /window\.confirm/)
 })
 
-test('grounding diagnostics render in-app with developer details and no native alert', () => {
+test('grounding diagnostics remain display-only with developer details and no repair action', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function appendDiagnosticDetails/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /定位能力/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /开发者信息/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /parse=/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidateSpaces=/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /诊断定位|Diagnose grounding/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /action==='diagnose'/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /window\.alert/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /apiKeyEnv/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /endpointCredentialRef/)
-})
-
-test('legacy full profile exposes one-request grounding repair only inside modal', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /hasGrounding/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /诊断定位/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /enqueue\(row,control,'grounding',false\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /只发送1次定位测试/)
 })
 
 test('incomplete selection removes benchmark controls and observer ignores unrelated streaming mutations', () => {
