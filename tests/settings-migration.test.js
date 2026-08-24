@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  flattenProviderFallbackRows,
   legacySettingsMigrationOps,
   migrateLegacyVisionSettings,
 } from '../lib/settings-migration.js'
@@ -22,7 +23,7 @@ function descriptor({ user = {}, value = {}, revision = 9 } = {}) {
   }
 }
 
-test('legacy shorthand migrates atomically to providers and retires stale keys', () => {
+test('legacy shorthand migrates atomically to one visible row per runtime backend', () => {
   const ops = legacySettingsMigrationOps(descriptor({
     user: {
       provider: 'openrouter',
@@ -37,7 +38,10 @@ test('legacy shorthand migrates atomically to providers and retires stale keys',
   assert.deepEqual(ops[0], {
     op: 'set',
     path: ['providers'],
-    value: [{ provider: 'openrouter', model: 'qwen-vl', fallbacks: ['qwen-vl-backup'] }],
+    value: [
+      { provider: 'openrouter', model: 'qwen-vl', fallbacks: [] },
+      { provider: 'openrouter', model: 'qwen-vl-backup', fallbacks: [] },
+    ],
   })
   assert.deepEqual(
     ops.slice(1).map((op) => op.path[0]),
@@ -46,7 +50,32 @@ test('legacy shorthand migrates atomically to providers and retires stale keys',
   assert.equal(ops.slice(1).every((op) => op.op === 'unset'), true)
 })
 
-test('an explicit providers chain is never overwritten while shorthand is cleaned', () => {
+test('explicit nested provider fallbacks are flattened without changing execution order', () => {
+  const providers = [
+    { provider: 'openrouter', model: 'primary', fallbacks: ['backup-1', 'backup-2'] },
+    { provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] },
+  ]
+  assert.deepEqual(flattenProviderFallbackRows(providers), [
+    { provider: 'openrouter', model: 'primary', fallbacks: [] },
+    { provider: 'openrouter', model: 'backup-1', fallbacks: [] },
+    { provider: 'openrouter', model: 'backup-2', fallbacks: [] },
+    { provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] },
+  ])
+
+  const ops = legacySettingsMigrationOps(descriptor({ user: { providers } }))
+  assert.deepEqual(ops, [{
+    op: 'set',
+    path: ['providers'],
+    value: [
+      { provider: 'openrouter', model: 'primary', fallbacks: [] },
+      { provider: 'openrouter', model: 'backup-1', fallbacks: [] },
+      { provider: 'openrouter', model: 'backup-2', fallbacks: [] },
+      { provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] },
+    ],
+  }])
+})
+
+test('an explicit already-flat providers chain is never overwritten while shorthand is cleaned', () => {
   const providers = [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }]
   const ops = legacySettingsMigrationOps(descriptor({
     user: {
@@ -80,7 +109,7 @@ test('retired fields are cleaned even when no legacy shorthand exists', () => {
   )
 })
 
-test('migration uses one revision-checked mutate and preserves a pre-existing providers chain', async () => {
+test('migration uses one revision-checked mutate and preserves an already-flat providers chain', async () => {
   const providers = [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }]
   const calls = []
   const settings = {
@@ -104,6 +133,37 @@ test('migration uses one revision-checked mutate and preserves a pre-existing pr
   assert.equal(calls[0].revision, 12)
   assert.equal(calls[0].ops.some((op) => op.op === 'set' && op.path[0] === 'providers'), false)
   assert.deepEqual(calls[0].ops.map((op) => op.path[0]), ['provider', 'instantDescribe'])
+})
+
+test('a settings revision conflict is re-described once so legacy custom models are not shadowed by defaults', async () => {
+  let describeCount = 0
+  const calls = []
+  const settings = {
+    writable: true,
+    describe() {
+      describeCount++
+      return [descriptor({
+        user: { provider: 'openrouter', model: 'qwen-vl' },
+        revision: describeCount === 1 ? 20 : 21,
+      })]
+    },
+    async mutate(ns, ops, revision) {
+      calls.push({ ns, ops, revision })
+      if (calls.length === 1) {
+        const error = new Error('revision changed')
+        error.code = 'SETTINGS_CONFLICT'
+        throw error
+      }
+    },
+  }
+
+  const result = await migrateLegacyVisionSettings(settings)
+  assert.equal(result.migrated, true)
+  assert.equal(describeCount, 2)
+  assert.deepEqual(calls.map((call) => call.revision), [20, 21])
+  assert.deepEqual(calls[1].ops[0].value, [
+    { provider: 'openrouter', model: 'qwen-vl', fallbacks: [] },
+  ])
 })
 
 test('read-only settings never attempt migration', async () => {
