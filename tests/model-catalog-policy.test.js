@@ -105,7 +105,7 @@ function ids(body, provider) {
   return found ? found.models.map((model) => model.id) : []
 }
 
-test('Settings -> Models wins over endpoint /models when DSH already enumerates the provider', async () => {
+test('fresh endpoint /models extends an active provider even when DSH already enumerates it', async () => {
   const body = await runCatalog({
     baseGroups: [group('zai', ['glm-a', 'glm-b', 'glm-c'])],
     providerRows: [active('zai')],
@@ -118,16 +118,34 @@ test('Settings -> Models wins over endpoint /models when DSH already enumerates 
         { id: 'glm-a' },
         { id: 'glm-b' },
         { id: 'glm-c' },
-        { id: 'glm-disabled-1' },
-        { id: 'glm-disabled-2' },
+        { id: 'glm-live-1' },
+        { id: 'glm-live-2' },
       ],
     }],
   })
 
-  assert.deepEqual(ids(body, 'zai'), ['glm-a', 'glm-b', 'glm-c'])
+  assert.deepEqual(ids(body, 'zai'), ['glm-a', 'glm-b', 'glm-c', 'glm-live-1', 'glm-live-2'])
+  const zai = valueOf(body).groups.find((entry) => entry.id === 'zai')
+  assert.equal(zai.models.find((model) => model.id === 'glm-live-1')?.visionRouterLiveDiscovered, true)
 })
 
-test('endpoint /models fills an active provider only when DSH has no enumerated models', async () => {
+test('stale endpoint cache cannot expand an already enumerated DSH model catalog', async () => {
+  const body = await runCatalog({
+    baseGroups: [group('zai', ['glm-a'])],
+    providerRows: [active('zai')],
+    liveProviders: [{
+      provider: 'zai',
+      discoveredAt: Date.now() - 60_000,
+      stale: true,
+      live: false,
+      models: [{ id: 'glm-a' }, { id: 'glm-old-cache-only' }],
+    }],
+  })
+
+  assert.deepEqual(ids(body, 'zai'), ['glm-a'])
+})
+
+test('endpoint /models fills an active provider when DSH has no enumerated models', async () => {
   const body = await runCatalog({
     baseGroups: [group('zai', [])],
     providerRows: [active('zai')],

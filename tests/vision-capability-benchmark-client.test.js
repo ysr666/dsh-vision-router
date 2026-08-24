@@ -50,6 +50,16 @@ test('running and queued jobs temporarily replace benchmark button with stop/can
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.elapsedMs/)
 })
 
+test('background profiler running state is shown on the same model row as manual benchmark progress', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /RUNTIME_ENDPOINT = '\/_dsh\/vision-router\/capability-runtime'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundRun\(body,key\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.running/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /正在测评/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台自动/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.active === true/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /setPrimary\(control, text\('测评中','Benchmarking'\)/)
+})
+
 test('benchmark product vocabulary is coverage-based and has no confidence or stale tier', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageOf/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function coverageKindText/)
