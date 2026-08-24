@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { mapVisionPresentationSelection } from '../lib/vision-model-visibility-boundary.js'
-import { resolveVisionModePair } from '../lib/client-presentation-boundary.js'
+import {
+  CLIENT_PRESENTATION_PRELUDE,
+  resolveVisionModePair,
+} from '../lib/client-presentation-boundary.js'
 
 function group(id, name, models) {
   return {
@@ -142,9 +144,8 @@ test('issue #284 a nested -vision-vision lookalike is never treated as a Vision 
 })
 
 test('issue #284 guide copy says a manual ordinary-model change turns Vision off', () => {
-  const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
-  assert.equal(source.includes('手动切回普通模型'), true)
-  assert.equal(source.includes('manually switch back to a normal model'), true)
-  assert.equal(source.includes('切换聊天模型时也会继续保持识图模式'), false)
-  assert.equal(source.includes('Changing chat models keeps Vision mode on'), false)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('手动切回普通模型'), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('manually switch back to a normal model'), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('切换聊天模型时也会继续保持识图模式'), false)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('Changing chat models keeps Vision mode on'), false)
 })
