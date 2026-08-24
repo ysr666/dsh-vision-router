@@ -103,21 +103,20 @@ test('Zhipu-like image adapter remains eligible for unattended background profil
   assert.deepEqual(seen, [['zhipu-glm/glm-4.6v', 'ocr']])
 })
 
-test('Host-declared text-only adapter is not probed and is exposed as an unattended exclusion', async () => {
+test('Host-declared text-only adapter is actually probed under explicit background authority', async () => {
   const config = configFor([['deepseek-official', 'deepseek-v4-flash']])
   const ctx = fakeCtx(config, {
     modalities: { 'deepseek-official/deepseek-v4-flash': ['text'] },
   })
-  let calls = 0
-  const profiler = profilerFor(config, ctx, memoryStore(), async () => { calls += 1 })
+  const seen = []
+  const profiler = profilerFor(config, ctx, memoryStore(), async ({ candidate, axis }) => {
+    seen.push([candidate.key, axis])
+  })
   await profiler.tick()
   const snapshot = profiler.snapshot()
   profiler.stop()
-  assert.equal(calls, 0)
-  assert.deepEqual(snapshot.excluded, [{
-    key: 'deepseek-official/deepseek-v4-flash',
-    reason: 'host-text-only',
-  }])
+  assert.deepEqual(seen, [['deepseek-official/deepseek-v4-flash', 'ocr']])
+  assert.deepEqual(snapshot.excluded, [])
 })
 
 test('running background snapshot exposes fixture progress and elapsed time', async () => {

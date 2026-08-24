@@ -73,12 +73,17 @@ plan, revoked Auto authority, or planner failure falls back to the current
 configured order. The temporary Auto order is isolated to one visual-tool call
 with `AsyncLocalStorage` and is restored automatically afterward.
 
-Host text-only metadata remains advisory for a user-selected generative model.
-It does not become a generic permanent blacklist for normal execution or an
-explicit user test. Unattended Background Benchmark is deliberately more
-conservative: when the Host positively declares a model text-only, standing
-background authority does not spend requests trying to contradict that
-advisory. The user may still use **Test Vision** or **Force Verify** explicitly.
+Host text-only metadata is advisory for a user-selected generative model. It is
+not treated as proof that the model cannot inspect images. **Test Vision** always
+tries the exact current dropdown selection when its live adapter can be invoked.
+If the user has explicitly enabled `backgroundBenchmarking`, eligible configured
+models are also actually measured within that cost scope even when Host metadata
+currently labels them text-only. The measured result, rather than the Host label,
+is the capability evidence used by Auto.
+
+Structural non-generative exclusions remain hard boundaries: explicit measurement
+authority never turns an endpoint that cannot be invoked as a generative model
+into an execution route.
 
 ## Capability Benchmark
 
@@ -88,12 +93,18 @@ Auto-routing control.
 
 - **Test Vision**: one request to the exact current model, with fallback disabled.
   It verifies whether that model can actually inspect an image and does not
-  create an Auto capability score.
+  create an Auto capability score. This explicit check is independent from the
+  persisted Auto Benchmark candidate/evidence pool, so a newly selected live
+  adapter model can be checked before it has benchmark evidence.
 - **Quick**: OCR + General, about three requests.
 - **Full**: Structured + OCR + Document + Grounding + General, about six
   requests.
-- **Force Verify**: available when Host metadata says text-only and the user
-  explicitly wants to challenge that advisory with a manual capability test.
+
+A Host text-only label is shown as an advisory, not as a separate product mode.
+Quick/Full Benchmark may still send generated test images to verify the model
+when the user explicitly starts the Benchmark. The implementation may carry an
+internal force flag for compatibility with older service guards, but users do
+not need to reason about a separate “Force Verify” workflow.
 
 Benchmark uses generated fixtures rather than user images. It targets the exact
 selected backend with fallbacks disabled. All fixtures and attachment
@@ -103,6 +114,12 @@ the prior valid profile.
 
 Cloud Benchmark requests may cost money. Manual tests require an explicit user
 action; background paid tests require `backgroundBenchmarking: all`.
+
+The explicit one-image Test Vision path has a bounded end-to-end deadline and is
+selection-scoped. Changing the row selection aborts the old browser request, and
+a late result from the previous model cannot overwrite the newly selected row.
+User-facing failures are localized; low-level provider details are retained only
+as diagnostic detail rather than primary UI copy.
 
 ## Background measurement
 
@@ -129,6 +146,12 @@ Real visual work immediately preempts background work and restarts the normal
 idle window. Manual Benchmark pauses background work, but when manual work ends
 background resumes after only its normal short gap rather than manufacturing a
 new full foreground-idle delay.
+
+Within an explicitly enabled background mode, Host text-only metadata does not
+silently remove an otherwise eligible configured model from measurement. This is
+intentional: standing background authority is the user's permission to verify
+capability within the selected local/free/paid cost boundary, not permission to
+trust possibly stale Host modality metadata as ground truth.
 
 Failure state is scoped to the exact deployment fingerprint plus model and axis,
 so one model or axis cannot block another. Transient failures such as network,

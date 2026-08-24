@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createBackgroundCapabilityProfiler } from '../lib/vision-background-benchmark.js'
+import {
+  createBackgroundCapabilityProfiler,
+  runExactVisionCheck,
+} from '../lib/vision-background-benchmark.js'
 import { VISION_EXACT_CHECK_CLIENT } from '../lib/vision-exact-check-client.js'
 import { VISION_ROUTING_SETTINGS_PRELUDE } from '../lib/vision-routing-settings-prelude.js'
 
@@ -41,6 +44,7 @@ function fakeCtx(config) {
     get(name) {
       if (name === 'settings') return { get: () => config }
       if (name === 'credentials') return { resolve: async () => ({ value: 'paid-secret' }) }
+      if (name === 'attachments') return { async saveImage() { return { id: 'exact-check-image', mediaType: 'image/png' } } }
       return undefined
     },
     llm: {
@@ -152,6 +156,43 @@ test('exact image check remains a one-request product action independent from Au
   assert.match(VISION_EXACT_CHECK_CLIENT, /不写入Auto能力数据/)
   assert.match(VISION_EXACT_CHECK_CLIENT, /capability-runtime/)
   assert.doesNotMatch(VISION_EXACT_CHECK_CLIENT, /mode:'quick'|mode:'full'/)
+})
+
+test('exact image check can probe the current live adapter model before it enters the Auto candidate pool', async () => {
+  const config = { routingMode: 'ordered', providers: [] }
+  const ctx = fakeCtx(config)
+  let seen
+  await assert.rejects(
+    runExactVisionCheck({
+      ctx,
+      config,
+      core: { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
+      store: { async get() {} },
+      provider: 'opencode-go',
+      model: 'hy3',
+      invokerOptions: {
+        renderFixture: async () => Buffer.from('png'),
+        streamExact(call) {
+          seen = call
+          throw new Error('reached exact adapter invocation')
+        },
+      },
+    }),
+    /reached exact adapter invocation/,
+  )
+  assert.equal(seen.provider, 'opencode-go')
+  assert.equal(seen.model, 'hy3')
+})
+
+test('exact image check is bounded, selection-safe, and does not expose raw backend errors as primary copy', () => {
+  assert.match(VISION_EXACT_CHECK_CLIENT, /activeRuns/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /abortActive/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /currentRun/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /setTimeout\(function\(\)\{controller\.abort\(\);\},50000\)/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /正在测试当前模型/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /测试超时，已自动结束/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /VISION_CHECK_BACKEND_STALE/)
+  assert.doesNotMatch(VISION_EXACT_CHECK_CLIENT, /setStatus\(control,'✗ '\+selection\.provider\+'\/'\+selection\.model\+' · '\+detail,detail\)/)
 })
 
 test('ordered mode hides capability Benchmark while retaining the independent exact image check', () => {
