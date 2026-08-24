@@ -49,6 +49,7 @@ function reactStub(stateValues = [], stateWrites = []) {
   let index = 0
   return {
     Fragment: Symbol('Fragment'),
+    beginRender() { index = 0 },
     createElement(type, props, ...children) { return { type, props: props ?? {}, children } },
     useMemo(factory) { return factory() },
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
@@ -217,8 +218,30 @@ function harness({
       snapshot = { ...snapshot, user: nextUser }
     },
   }
-  return { Component, scope, tree: () => Component({ scope }), calls, fetchCalls, stateWrites, getSnapshot: () => snapshot }
+  return {
+    Component,
+    scope,
+    tree: () => {
+      React.beginRender()
+      return Component({ scope })
+    },
+    calls,
+    fetchCalls,
+    stateWrites,
+    getSnapshot: () => snapshot,
+  }
 }
+
+test('acceptance harness: repeated renders restart the React hook cursor', () => {
+  const view = harness({
+    page: 'local',
+    drafts: { localLmStudio: { enabled: true, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' } },
+  })
+  const first = textOf(view.tree())
+  const second = textOf(view.tree())
+  assert.equal(second, first)
+  assert.match(second, /启用 LM Studio 时必须填写真实模型标识/)
+})
 
 test('acceptance: remote disabled/unavailable settings render an actionable state instead of blank', () => {
   const remote = harness({
@@ -360,8 +383,8 @@ test('acceptance: every necessary editable setting from the old surface has one 
     'rewriteImages', 'routing', 'reverseRouting', 'textProvider',
     'progressiveTools', 'stealth', 'wrapperRoute', 'chainRoute', 'extraVisionModels',
   ]
-  for (const key of expected) assert.match(SETTINGS_IA_CLIENT_PRELUDE, new RegExp(`['\"]${key}['\"]`), key)
+  for (const key of expected) assert.match(SETTINGS_IA_CLIENT_PRELUDE, new RegExp(`['\\\"]${key}['\\\"]`), key)
   for (const retired of ['instantDescribe', 'localDescribeStyle', 'visionGuideStep']) {
-    assert.doesNotMatch(SETTINGS_IA_CLIENT_PRELUDE, new RegExp(`['\"]${retired}['\"]`), retired)
+    assert.doesNotMatch(SETTINGS_IA_CLIENT_PRELUDE, new RegExp(`['\\\"]${retired}['\\\"]`), retired)
   }
 })
