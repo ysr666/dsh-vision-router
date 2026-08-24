@@ -18,7 +18,8 @@ import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-po
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
-import { installLiveModelClientPrelude } from './lib/live-model-client-prelude.js'
+import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
+import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
 import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
 import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
 import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
@@ -274,12 +275,16 @@ export function apply(ctx, config = {}) {
   // active wrapper back to its ordinary source label; uncertain routes stay
   // visible rather than being guessed away.
   installVisionModelVisibilityBoundary(reconciledCtx)
-  // Keep endpoint-discovered ids private to Vision Router's settings client:
-  // the prelude wraps this package's browser context rather than changing the
-  // global llm.models response (which would expose UNKNOWN_MODEL entries in the
-  // ordinary chat model picker). The existing classic client bundle stays the
-  // DSH module-system artifact, including HMR/source-map behavior.
-  installLiveModelClientPrelude(reconciledCtx)
+  // Keep endpoint-discovered ids private to Vision Router's settings client,
+  // but make Settings -> Models authoritative when DSH already enumerates a
+  // provider. Live /models data now fills only a still-active provider whose
+  // DSH catalog is empty, so disabled models and removed providers cannot leak
+  // back into the Vision Router picker through stale endpoint discovery.
+  installStrictLiveModelClientPrelude(reconciledCtx)
+  // Surface the existing autoWrapProviders/wrappedProviders contract in the
+  // primary Vision Router settings section. This is presentation-only: the Host
+  // keeps one settings namespace and one wrapper-registration implementation.
+  installWrapperScopeClientPrelude(reconciledCtx)
   // #266: 1.7.x gets one exact, no-fallback image smoke test per visible row.
   // Keep it out of the controlled React form so the v2 capability-benchmark
   // client can take ownership later without forking the stable settings UI.
