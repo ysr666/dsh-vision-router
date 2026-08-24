@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { verifyAndStripBenchmarkVisualProof } from '../lib/vision-capability-benchmark-hardening.js'
+import {
+  hardenCapabilityBenchmarkFixture,
+  verifyAndStripBenchmarkVisualProof,
+} from '../lib/vision-capability-benchmark-hardening.js'
 
 test('visual-proof failure is not misclassified as unsupported image capability', () => {
   assert.throws(
@@ -8,6 +11,37 @@ test('visual-proof failure is not misclassified as unsupported image capability'
     (error) => error?.code === 'CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED'
       && error?.benchmarkClass === 'visual-proof',
   )
+})
+
+test('JSON-only fixtures carry visual proof inside JSON instead of contradicting the output contract', () => {
+  const fixture = hardenCapabilityBenchmarkFixture({
+    id: 'json-only',
+    intent: 'document',
+    svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    prompt: 'Return ONLY JSON with title and rows.',
+    expected: { title: 'x' },
+  }, 'A1B2C3D4')
+  assert.equal(fixture.visualProofMode, 'json-field')
+  assert.match(fixture.prompt, /"_vr_code"/)
+  assert.doesNotMatch(fixture.prompt, /one final line exactly/i)
+  const stripped = verifyAndStripBenchmarkVisualProof(
+    '{"title":"Order Summary","rows":[],"_vr_code":"A1B2C3D4"}',
+    'A1B2C3D4',
+  )
+  assert.deepEqual(JSON.parse(stripped), { title: 'Order Summary', rows: [] })
+})
+
+test('JSON visual proof still rejects a wrong or missing image-derived code', () => {
+  for (const output of [
+    '{"title":"Order Summary","_vr_code":"WRONG99"}',
+    '{"title":"Order Summary"}',
+  ]) {
+    assert.throws(
+      () => verifyAndStripBenchmarkVisualProof(output, 'A1B2C3D4'),
+      (error) => error?.code === 'CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED'
+        && error?.benchmarkClass === 'visual-proof',
+    )
+  }
 })
 
 test('visual proof accepts the exact standalone challenge line at any output position and strips only that line', () => {
