@@ -22,7 +22,8 @@ import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-cli
 import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
 import { installExactVisionTestClient } from './lib/vision-backend-smoke-test-client.js'
 import { installVisionBackendSmokeTest } from './lib/vision-backend-smoke-test.js'
-import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
+import { installHardenedClientPresentationBoundary } from './lib/client-presentation-lifecycle.js'
+import { installVisionClientRootBoundary } from './lib/vision-client-root-boundary.js'
 import { installGuideVisionToggleHighlight } from './lib/guide-vision-toggle-highlight.js'
 import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import {
@@ -260,6 +261,10 @@ export function apply(ctx, config = {}) {
   // process-local registration facts through one read-only same-origin view;
   // the toggle, stock picker projection and Models alias consume the same fact.
   installVisionRouteOwnershipBoundary(reconciledCtx, visionRouteOwnership)
+  // Install the ownership/recovery projection before the legacy presentation
+  // decorators. It wraps only their ModelDirectory view: the Vision button
+  // fails closed on unknown ownership, while the stock picker fails open.
+  installVisionClientRootBoundary(reconciledCtx)
   // Discover the provider's actual /models list independently of DSH's static
   // catalog. The Host owns credentials/networking/cache; the browser receives
   // model ids only. A live hit is also the evidence required before an
@@ -278,20 +283,18 @@ export function apply(ctx, config = {}) {
   // admission decision.
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
   // rc.8 turns ui-attachment into a dynamic presentation plugin and no longer
-  // exports its React implementation as package values. Install a narrowly
-  // scoped browser boundary that supplies Vision Router's own lightweight
-  // gallery to the legacy 1.7.x client factory, so the official package is
-  // never value-required at runtime and remains free to evolve independently.
-  installClientPresentationBoundary(reconciledCtx)
+  // exports its React implementation as package values. Keep the legacy client
+  // body single-sourced, but harden its loader lifecycle so both a new create()
+  // result and a later full ModuleLoader replacement retain the same boundary.
+  installHardenedClientPresentationBoundary(reconciledCtx)
   // The same first walkthrough step now teaches the explicit "识图" control
   // introduced by #284. Widen the existing spotlight to cover that button and
   // the adjacent model selector as one target instead of leaving the control
   // under the dimming veil.
   installGuideVisionToggleHighlight(reconciledCtx)
-  // The Host keeps wrapper routes registered because image admission and the
-  // Vision toggle need their real identity. Hide only Host-confirmed wrapper
-  // groups from DSH's stock model-selection presentation and project an active
-  // wrapper back to its ordinary source label.
+  // Retain the old visibility decorator as a compatibility no-op fallback. The
+  // root boundary strips its settingsScope hard dependency and supplies the
+  // Host-owned model projection first, so it no longer decides provenance.
   installVisionModelVisibilityBoundary(reconciledCtx)
   // Keep endpoint-discovered ids private to Vision Router's settings client,
   // but make Settings -> Models authoritative when DSH already enumerates a
