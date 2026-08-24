@@ -75,6 +75,20 @@ function memoryStore(recordForFingerprint) {
   }
 }
 
+function memoryVerdictStore() {
+  const records = new Map()
+  return {
+    records,
+    async get(fingerprint) { return records.get(fingerprint) },
+    async markUnsupported(value) {
+      const record = { ...value, state: 'unsupported', reason: 'provider-rejected-image' }
+      records.set(value.fingerprint, record)
+      return record
+    },
+    async clear(fingerprint) { return records.delete(fingerprint) },
+  }
+}
+
 function profilerFor(config, ctx, store, runAxisBenchmark, extra = {}) {
   return createBackgroundCapabilityProfiler({
     ctx,
@@ -240,6 +254,13 @@ test('background failure classification distinguishes permanent and transient ca
 
   const visualProof = Object.assign(new Error('benchmark visual proof missing'), { benchmarkClass: 'visual-proof' })
   assert.deepEqual(classifyBackgroundBenchmarkFailure(visualProof), {
+    errorClass: 'visual-proof',
+    errorCode: undefined,
+    retryable: false,
+  })
+
+  const unsupported = Object.assign(new Error('model does not support image input'), { benchmarkClass: 'unsupported-image' })
+  assert.deepEqual(classifyBackgroundBenchmarkFailure(unsupported), {
     errorClass: 'unsupported-image',
     errorCode: undefined,
     retryable: false,
@@ -248,6 +269,74 @@ test('background failure classification distinguishes permanent and transient ca
   const timeout = Object.assign(new Error('fixture timed out'), { code: 'CAPABILITY_BENCHMARK_TIMEOUT' })
   assert.equal(classifyBackgroundBenchmarkFailure(timeout).errorClass, 'timeout')
   assert.equal(classifyBackgroundBenchmarkFailure(timeout).retryable, true)
+})
+
+test('explicit image rejection becomes a fingerprint-scoped whole-model background stop', async () => {
+  const config = configFor([['deepseek-official', 'deepseek-v4-flash']])
+  const ctx = fakeCtx(config)
+  const verdicts = memoryVerdictStore()
+  const seen = []
+  const profiler = profilerFor(config, ctx, memoryStore(), async ({ candidate, axis }) => {
+    seen.push([candidate.key, axis])
+    throw Object.assign(new Error('model does not support image input'), {
+      benchmarkClass: 'unsupported-image',
+      code: 'MODEL_DOES_NOT_SUPPORT_IMAGES',
+    })
+  }, { imageVerdictStore: verdicts })
+
+  await profiler.tick()
+  assert.deepEqual(seen, [['deepseek-official/deepseek-v4-flash', 'ocr']])
+  assert.deepEqual(profiler.snapshot().excluded, [
+    { key: 'deepseek-official/deepseek-v4-flash', reason: 'measured-text-only' },
+  ])
+  assert.equal(verdicts.records.size, 1)
+
+  await profiler.tick()
+  profiler.stop()
+  assert.deepEqual(seen, [['deepseek-official/deepseek-v4-flash', 'ocr']])
+})
+
+test('non-retryable unavailable survives ordinary settings and topology refreshes', async () => {
+  const config = configFor([['openrouter', 'openai/gpt-5.6-sol']])
+  const ctx = fakeCtx(config)
+  let calls = 0
+  const profiler = profilerFor(config, ctx, memoryStore(), async () => {
+    calls += 1
+    throw Object.assign(new Error('model not found'), { status: 404, code: 'MODEL_NOT_FOUND' })
+  })
+
+  await profiler.tick()
+  assert.equal(calls, 1)
+  assert.equal(profiler.snapshot().deferred[0]?.errorClass, 'unavailable')
+  assert.equal(profiler.snapshot().deferred[0]?.retryable, false)
+
+  profiler.settingsChanged()
+  await profiler.tick()
+  assert.equal(calls, 1)
+
+  profiler.topologyChanged()
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 1)
+})
+
+test('explicit successful image retest clears same-fingerprint nonretryable background stop', async () => {
+  const config = configFor([['openrouter', 'openai/gpt-5.6-sol']])
+  const ctx = fakeCtx(config)
+  let calls = 0
+  let fail = true
+  const profiler = profilerFor(config, ctx, memoryStore(), async () => {
+    calls += 1
+    if (fail) throw Object.assign(new Error('model not found'), { status: 404, code: 'MODEL_NOT_FOUND' })
+  })
+
+  await profiler.tick()
+  assert.equal(calls, 1)
+  fail = false
+  assert.equal(await profiler.recordImageSupported('openrouter', 'openai/gpt-5.6-sol'), true)
+  await profiler.tick()
+  profiler.stop()
+  assert.equal(calls, 2)
 })
 
 test('non-retryable failure is fingerprint-scoped and a changed endpoint identity is measured again', async () => {
