@@ -12,7 +12,7 @@ test('capability benchmark client injects once into the document head', () => {
   assert.equal(injectCapabilityBenchmarkClient(once), once)
 })
 
-test('benchmark is the single compact per-model testing entry point', () => {
+test('benchmark client keeps one compact benchmark action with Quick and Full product modes', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /data-vr-capability-primary/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('测评','Benchmark'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /快速测评/)
@@ -38,9 +38,9 @@ test('main settings row stays compact with one benchmark entry point', () => {
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vr-capability-action/)
 })
 
-test('running and queued jobs temporarily replace benchmark button with stop/cancel', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.state === 'queued'/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.state === 'running'/)
+test('running and queued manual jobs temporarily replace benchmark button with stop/cancel', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /job&&job\.state==='queued'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /job&&job\.state==='running'/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('停止','Stop'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /text\('取消','Cancel'\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /method:'DELETE'/)
@@ -50,14 +50,27 @@ test('running and queued jobs temporarily replace benchmark button with stop/can
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.elapsedMs/)
 })
 
-test('background profiler running state is shown on the same model row as manual benchmark progress', () => {
+test('background profiler state is rendered on the same model row instead of leaving stale unmeasured copy', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /RUNTIME_ENDPOINT = '\/_dsh\/vision-router\/capability-runtime'/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundRun\(body,key\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.running/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundDeferred\(body,key\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundEligible\(body,candidate\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /正在测评/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台自动/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.active === true/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /setPrimary\(control, text\('测评中','Benchmarking'\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /等待后台测评/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /等待后台补测/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台测评暂缓/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /当前后台模式不会自动测此模型/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /setPrimary\(control,text\('测评中','Benchmarking'\)/)
+})
+
+test('background polling is fast only while work is running and DOM writes are idempotent', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function pollDelay\(body\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /return 1000/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /return 3000/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(n\.textContent!==next\)n\.textContent=next/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(b\.textContent!==nextLabel\)b\.textContent=nextLabel/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function setData\(control,key,value\)/)
 })
 
 test('benchmark product vocabulary is coverage-based and has no confidence or stale tier', () => {
@@ -118,9 +131,9 @@ test('grounding diagnostics remain display-only with developer details and no re
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /endpointCredentialRef/)
 })
 
-test('incomplete selection removes benchmark controls and observer ignores unrelated streaming mutations', () => {
+test('incomplete selection removes benchmark controls and observer ignores unrelated row-internal mutations', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function completeSelection/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /removeControl\(row\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
 })
