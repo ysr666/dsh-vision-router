@@ -163,10 +163,6 @@ function settingsHarness({
       fetchCalls.push(args)
       return { ok: true, status: 200, async json() { return {} } }
     },
-    // Deliberately inject host intrinsics. Objects created by the evaluated
-    // prelude still belong to the VM realm, so constructor-identity checks
-    // reproduce the cross-realm failure mode that the compatibility fallback
-    // must not depend on.
     Object,
     Promise,
     Array,
@@ -250,9 +246,9 @@ test('adversarial: historical nested fallbacks are visible rows and cannot ride 
   })
   const tree = view.tree()
   const modelInputs = findAll(tree, (node) => node.type === 'input' && node.props.placeholder === 'model')
-  assert.deepEqual(
-    modelInputs.map((node) => node.props.value),
-    ['qwen-vl', 'qwen-vl-backup', 'qwen-vl-last'],
+  assert.equal(
+    JSON.stringify(modelInputs.map((node) => node.props.value)),
+    JSON.stringify(['qwen-vl', 'qwen-vl-backup', 'qwen-vl-last']),
   )
 
   const providerInputs = findAll(tree, (node) => node.type === 'input' && node.props.placeholder === 'provider')
@@ -262,13 +258,13 @@ test('adversarial: historical nested fallbacks are visible rows and cannot ride 
   const write = view.stateWrites.find((entry) => entry.slot === 2 && Array.isArray(entry.next))
   assert.ok(write, 'editing the chain must write the chain draft slot')
   assert.equal(write.next[0].provider, 'zhipu')
-  assert.deepEqual(write.next[0].fallbacks, [])
-  assert.deepEqual(
-    write.next.slice(1).map((row) => [row.provider, row.model, row.fallbacks]),
-    [
+  assert.equal(write.next[0].fallbacks.length, 0)
+  assert.equal(
+    JSON.stringify(write.next.slice(1).map((row) => [row.provider, row.model, row.fallbacks])),
+    JSON.stringify([
       ['openrouter', 'qwen-vl-backup', []],
       ['openrouter', 'qwen-vl-last', []],
-    ],
+    ]),
   )
 })
 
