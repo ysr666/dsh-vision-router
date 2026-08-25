@@ -1,0 +1,51 @@
+name: Trigger v2.0.0 release
+
+on:
+  push:
+    branches:
+      - release/trigger-v2.0.0
+    paths:
+      - .github/workflows/trigger-v2-release.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch verified v2.0.0 release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-check immutable release target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: 7ec4c403a1b41236944258bdf2544f27a47baff6
+          RELEASE_TAG: v2.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [ "$MAIN_SHA" = "$TARGET_SHA" ] || {
+            echo "::error::main moved to $MAIN_SHA; refusing to dispatch release for $TARGET_SHA"
+            exit 1
+          }
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::$RELEASE_TAG already exists; refusing duplicate trigger"
+            exit 1
+          fi
+
+      - name: Dispatch Release workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: 7ec4c403a1b41236944258bdf2544f27a47baff6
+          RELEASE_TAG: v2.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag="$RELEASE_TAG" \
+            -f target_sha="$TARGET_SHA"
+          echo "Dispatched Release for $RELEASE_TAG at $TARGET_SHA"
