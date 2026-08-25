@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.1"><img src="https://img.shields.io/badge/release-v1.7.1-5B4CF0?style=flat-square" alt="Release v1.7.1" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.0.0"><img src="https://img.shields.io/badge/release-v2.0.0-5B4CF0?style=flat-square" alt="Release v2.0.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v1.7.1)**
+> 📌 **Announcement (v2.0.0)**
 >
-> **v1.7.1:** Remote settings can now be enabled after an explicit risk confirmation.
+> **v2.0.0:** Capability-aware Auto routing + benchmarks, explicit 👁 Vision, and Settings 2.0. [What’s new →](docs/releases/v2.0.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -160,7 +160,7 @@ With “👁 Vision” enabled, paste or upload an image normally. By default th
 
 If the session already contains images, DSH may reject switching from a vision wrapper back to a text-only route. Vision Router does not bypass that Host rule: it shows a transient error using the same interaction style as the stock model selector, keeps the real current model unchanged, and leaves `👁 Vision ✓` reflecting the actual state so the session stays usable.
 
-The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Plugins → Plugin config → 视觉路由（自动识图）**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
+The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Vision Router**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory only: undeclared or text-only-labelled models remain selectable and show a warning. At runtime Vision Router always tries the provider's registered DSH adapter first — including WebSocket, RPC and private transports — and falls through on a real failure. The direct compatibility bridge is used only when an http(s) OpenAI Chat Completions endpoint is positively identified. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
 
 ### See it in action
 
@@ -194,6 +194,8 @@ Any of these channels can join the vision chain as an `httpProviders` entry (key
 
 ## Highlights
 
+- **Capability-aware Auto routing.** Keep configured order for deterministic control, or explicitly enable Auto to prioritize already-configured models using measured capability evidence. Auto never infers capability from model names, and enabling Auto alone does not start benchmarks.
+- **Verifiable model profiling.** Exact Test Vision sends one request to one exact model; Quick and Full benchmark OCR / general / structured / document / grounding capabilities. Background profiling is separately authorized and yields to real foreground vision work.
 - **Original pixels, real answers.** The vision chain reads the image at original resolution (auto-downscaled only to protect latency/quota); the agent's question travels with the image, so answers are about *your* question, not a generic description.
 - **Automatic failover with classified errors.** Region blocks, ToS filtering, 402 quota, 429 rate limits, context overflow, network failures — the chain walks providers one by one and only reports after all of them failed, with actionable advice. A 429 immediately advances to the next backend and opens a Retry-After-aware cooldown instead of sleeping inside the request.
 - **Image memory.** Vision answers are cached by attachment content hash; later text turns substitute the recorded description (marked as untrusted evidence), so DeepSeek genuinely remembers earlier images without re-spending vision calls.
@@ -311,29 +313,28 @@ The settings card uses provider + model dropdowns; an empty model means every mo
 
 ## Web settings
 
-The Web profile registers a **视觉路由（自动识图）** card under **Settings → Plugins → Plugin config**. Its top callout spells out the only step most users need: **return to chat → choose your normal conversation model → click “👁 Vision” beside the composer → confirm ✓ → send the image**. The remaining controls are advanced customization:
+The Web profile registers a first-class **Settings → Vision Router** surface. Its General page keeps model choice and v2 routing authority together; Vision Strategy, Local & Device, Advanced and Diagnostics separate tool behavior, local backends, sensitive/performance controls and troubleshooting.
 
-- **Auto-create vision wrappers**: enabled by default; follows the live model catalog with no restart, and confidently owned internal wrappers are hidden from the stock picker;
-- **Manual auto-vision scope (optional)**: only for disabling auto-wrap or limiting selected models;
-- **Vision backend chain**: the real image-capable models used by `vision_describe` and friends; the built-in free Qwen is normally enough, and text-only models should not be placed here;
-- switches for legacy whole-turn routing, vision tools, image-block rewriting and stealth mode (official DeepSeek route only);
-- timeout, wrapper/chain route names, proxy and other advanced parameters;
-- every field shows an overridden badge with one-click reset plus discard/save;
-- a **Test connection** button prioritizes an enabled local backend, verifies that its configured model appears in `/v1/models`, and otherwise probes the first usable vision provider;
-- artifact-producing tools render dedicated call cards with result facts and open-file buttons.
+- **Vision model chain**: the real image-capable models used by `vision_describe` and friends; the built-in free chain remains the final fallback;
+- **Model selection**: keep the configured order, or explicitly enable capability-aware Auto with Balanced / Quality / Speed / Local preference;
+- **Background capability data**: `off`, `local-free`, or `all`; this is separately authorized and never turns on merely because Auto was enabled;
+- **Test Vision / Benchmark**: exact one-request image verification plus Quick (~3 requests, OCR + General) and Full (~6 requests, Structured + OCR + Document + Grounding + General) profiling; benchmark work continues if Settings is closed;
+- **Local & Device**: Ollama / LM Studio and privacy-gated desktop screenshot controls;
+- **Advanced / Diagnostics**: timeout, wrapper scope, proxy/network, compatibility, version, runtime status and troubleshooting.
 
 <p align="center">
-  <img src="assets/vision-settings.png" width="72%" alt="The vision-router card in Settings > Plugins > Plugin config." />
+  <img src="assets/vision-settings.png" width="72%" alt="The Vision Router settings surface." />
 </p>
-
-> PR [#8](https://github.com/ysr666/dsh-vision-router/pull/8) upgrades the panel with catalog-driven model dropdowns, add/remove fallback rows, and proxy settings.
 
 ## Configuration
 
-Everything is optional; defaults work out of the box. Edit via the Web card or a profile patch:
+Everything is optional; defaults work out of the box. Prefer **Settings → Vision Router**; profile overrides remain available for advanced deployments:
 
 | Field | Default | Meaning |
 |---|---|---|
+| `routingMode` | `ordered` | `ordered` keeps the configured model-chain order; `auto` delegates prioritization to measured capability evidence. Auto is never enabled by migration |
+| `routingPreference` | `balanced` | Auto preference: `balanced`, `quality`, `speed`, or `local`; changes ordering only among already-authorized candidates |
+| `backgroundBenchmarking` | `off` | background capability profiling authority: `off`, `local-free`, or `all`; enabling Auto does not change it, and authorized background work runs only while Auto is active |
 | `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | shorthand **vision backend** route (adapter-backed provider + model that genuinely accepts images) |
 | `fallbacks` | `[]` | backup image models for the shorthand vision provider |
 | `providers` | built-in free `vision-http` pair | multi-provider **vision backend** chain `{ provider, model, fallbacks[] }`, tried in order; do not put text-only models here |
@@ -349,26 +350,21 @@ Everything is optional; defaults work out of the box. Edit via the Web card or a
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
 | `desktopScreenshot` | `false` | privacy opt-in for the model-callable `vision_screenshot` desktop-capture tool; checked live before every capture |
 | `freeFallback` | `true` | append the anonymous OVH models after explicit local/custom HTTP backends; turning this off never disables an explicitly configured local backend |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **Local vision backend (merged from dsh-vision)**: when enabled, `local-ollama` leads the HTTP vision chain; skipped automatically when Ollama is down; `format` selects `openai` (`/chat/completions`) or `anthropic` (`/messages`); optional `temperature` / `top_p` are sent only when explicitly set. v1.7 prewarms loopback models and renews a 30-minute residency so cold loading is not charged to the normal inference deadline |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | **Local LM Studio backend (merged from dsh-vision)**: follows Ollama and precedes custom/cloud HTTP backends; enabling it requires the real model identifier shown in LM Studio Developer or returned by `/v1/models`; supports the same optional sampling fields, while `format: 'anthropic'` requires LM Studio 0.4.1+ |
-| `instantDescribe` | `false` | **Instant local translation (merged from dsh-vision)**: when on and at least one local backend is usable, uncached image blocks are recognized before the first model step; Ollama is tried before LM Studio with a shared timeout budget, multi-image batches run concurrently (up to 3), and failures fall back to the static tool-hint marker |
-| `localDescribeStyle` | `plain` | **Local recognition output style (merged from dsh-vision)**: `plain` = flat description; `structured` = structured recognition (【初步判断】/【细节】/【空间结构】/【原图尺寸】), better for screenshot analysis |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | local vision backend; when enabled, `local-ollama` leads the HTTP vision chain, is skipped automatically when down, and supports OpenAI or Anthropic wire format |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | local LM Studio backend after Ollama; enter the exact model identifier from LM Studio Developer or `/v1/models` |
+| `visionTurnBudgetMs` | `0` | whole-turn vision wall-clock budget; `0` means unlimited. Concrete provider calls/tools still keep their own hard deadlines |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | pre-call downscale and its pixel budget (latency guard) |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | vision answer cache |
 | `timeoutMs` | `120000` | per vision call deadline |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | artifact directory (relative to the session workspace) |
 | `proxy` / `proxyHosts` | `''` / openrouter hosts | optional proxy for vision provider hosts only |
-| `catalogCorrections` | `true` | built-in catalog-routing corrections: when the installed pi-ai catalog routes a known model to the wrong wire protocol (e.g. `opencode-go/qwen3.6-plus` to OpenAI chat completions while OpenCode Go only serves it on `/v1/messages`), the plugin answers that backend directly over the corrected protocol. Each correction disarms itself once the catalog is fixed upstream |
+| `catalogCorrections` | `true` | built-in catalog-routing corrections for known upstream wire-protocol mismatches; each correction disarms itself once the catalog is fixed upstream |
 
 ### Local Ollama vision backend (merged from dsh-vision)
 
 > **Incremental author**: [shaoqiuyuavailable](https://github.com/shaoqiuyuavailable) (router local-vision increment)
 >
-> **Design credit**: the local vision backends (Ollama / LM Studio dual backends, instant recognition,
-> structured output, screenshot identification, same-image memory dedup, failure-fallback placeholder,
-> concurrency anti-snowball, timeout protection) inherit their design from
-> [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision) —
-> merged into the HTTP vision chain here, with per-level fallback and dual-protocol support added on top.
+> **Design credit**: the local vision backends (Ollama / LM Studio dual backends, structured recognition, screenshot identification, same-image memory dedup, failure fallback, concurrency protection and timeout handling) inherit their design from [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision) — merged into the HTTP vision chain here, with per-level fallback and dual-protocol support added on top.
 
 An optional keyless local-first vision path for private, free, offline recognition. It plugs into the existing HTTP vision chain as `local-ollama`; if it fails, any configured cloud backends can still be tried unless you deliberately configure a local-only chain.
 
@@ -379,31 +375,27 @@ An optional keyless local-first vision path for private, free, offline recogniti
 ollama pull qwen2.5vl
 ```
 
-**2. Enable it** — in the settings card's "Local vision" group, or via a profile patch:
+**2. Enable it** — under **Settings → Vision Router → Local & Device**, or via a profile patch:
 
 ```yaml
 - id: vision-router
   config:
     localOllama:
       enabled: true
-      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI-compatible endpoint
+      baseURL: 'http://127.0.0.1:11434/v1'
       model: 'qwen2.5vl'
-      temperature: 0.5                        # optional; low temperature is steadier for recognition
-      top_p: 0.8                              # optional; unset = server default
-    instantDescribe: true                     # recognize images on the first model step
-    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+      temperature: 0.5
+      top_p: 0.8
 ```
 
 **3. What happens**
 
 - When enabled, `local-ollama` heads the HTTP vision chain. For a strict local-only setup, remove cloud vision rows/custom HTTP endpoints and turn off `freeFallback`.
-- **v1.7 cold-start handling:** the selected loopback Ollama model is prewarmed through Ollama's native API and kept resident for 30 minutes. If it is cold when Ollama is the primary image backend, loading completes before the normal vision-task budget starts; a short `/api/ps` probe keeps a dead service on the fast fallback path. Remote Ollama URLs are never auto-warmed.
-- **LM Studio works the same way** — enable `localLmStudio` in the same "Local vision" group with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`) and enter the exact model identifier shown in Developer or `/v1/models`. It sits after `local-ollama` and before custom/cloud HTTP backends.
+- The selected loopback Ollama model is prewarmed through Ollama's native API and kept resident for 30 minutes. If it is cold when Ollama is the primary image backend, loading completes before the normal vision-task budget starts; a short `/api/ps` probe keeps a dead service on the fast fallback path. Remote Ollama URLs are never auto-warmed.
+- **LM Studio works the same way** — enable `localLmStudio` with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`) and enter the exact model identifier shown in Developer or `/v1/models`. It sits after `local-ollama` and before custom/cloud HTTP backends.
 - Each local backend can speak **OpenAI or Anthropic format** via `format` (default `openai`). Anthropic mode routes to `/v1/messages` with `anthropic-version` and base64 image sources; `x-api-key` is sent only when a key is configured. LM Studio needs version 0.4.1 or newer for this endpoint.
 - If a local backend is down or the call times out, its entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
-- `instantDescribe` tries enabled local backends in order (Ollama, then LM Studio) before the first model step. Multiple uncached images run concurrently (up to 3); one failed image does not block the others, and attachment-memory hits are reused without another local request.
 - `vision_screenshot` is disabled by default. After the separate Desktop screenshot opt-in, `identify=true` uses the same Ollama → LM Studio fallback.
-- Verify runtime decisions with `image turn — instantDescribe=… localBackends=…` and results with `instant local describe recognized N/M uncached image(s), C cached, F failed attempts` in the log.
 
 ## Requirements
 

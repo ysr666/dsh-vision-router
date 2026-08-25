@@ -92,9 +92,20 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('release line stays on package identity 1.7.7', async () => {
+test('release line stays on package identity 2.0.0', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(pkg.version, '1.7.7')
+  assert.equal(pkg.version, '2.0.0')
+})
+
+test('v2.0.0 ships curated release notes and the tag workflow consumes them first', async () => {
+  const notes = await readFile(new URL('../docs/releases/v2.0.0.md', import.meta.url), 'utf8')
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+
+  assert.match(notes, /^# v2\.0\.0$/m)
+  assert.match(notes, /能力感知 Auto 路由 \/ Capability-aware Auto routing/)
+  assert.match(notes, /真实验收与发布门禁 \/ Real-machine acceptance & release gates/)
+  assert.match(workflow, /CURATED_NOTES="docs\/releases\/\$RELEASE_TAG\.md"/)
+  assert.match(workflow, /cat "\$CURATED_NOTES" > release-notes\.md/)
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
