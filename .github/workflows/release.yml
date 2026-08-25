@@ -4,9 +4,19 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (for example v2.0.0)
+        required: true
+        type: string
+      target_sha:
+        description: Exact current main commit SHA to release
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -15,11 +25,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: read
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
     steps:
-      - name: Checkout exact tag
+      - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -33,27 +47,34 @@ jobs:
           registry-url: 'https://registry.npmjs.org/'
           cache: pnpm
 
-      - name: Verify tag, source commit, and package metadata
+      - name: Verify requested release identity and package metadata
         shell: bash
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           EXPECTED_TAG="v$VERSION"
 
-          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ] || {
-            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+          [ "$RELEASE_TAG" = "$EXPECTED_TAG" ] || {
+            echo "::error::requested tag $RELEASE_TAG does not match package.json version $VERSION"
             exit 1
           }
-          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || {
-            echo "::error::checkout HEAD does not match the tag event SHA"
+          [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ] || {
+            echo "::error::checkout HEAD does not match requested release SHA"
             exit 1
           }
 
           git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
-            echo "::error::release tag is not reachable from origin/main"
-            exit 1
-          }
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            [ "$(git rev-parse origin/main)" = "$RELEASE_SHA" ] || {
+              echo "::error::manual release target must be the exact current origin/main HEAD"
+              exit 1
+            }
+          else
+            git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
+              echo "::error::release tag is not reachable from origin/main"
+              exit 1
+            }
+          fi
 
           # Release identity and artifact verification are hard gates. README /
           # release-note freshness is useful documentation hygiene, but must not
@@ -90,6 +111,40 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Ensure immutable release tag exists at verified SHA
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+
+          if [ -n "$REMOTE_TAG_SHA" ]; then
+            [ "$REMOTE_TAG_SHA" = "$RELEASE_SHA" ] || {
+              echo "::error::$RELEASE_TAG already exists at $REMOTE_TAG_SHA, expected $RELEASE_SHA"
+              exit 1
+            }
+            echo "$RELEASE_TAG already exists at the verified release SHA"
+            exit 0
+          fi
+
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || {
+            echo "::error::tag event did not resolve to an existing remote tag"
+            exit 1
+          }
+
+          gh api \
+            --method POST \
+            "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$RELEASE_SHA"
+
+          CREATED_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+          [ "$CREATED_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::created tag does not resolve to verified release SHA"
+            exit 1
+          }
+
   publish:
     name: Publish verified package
     needs: verify
@@ -100,10 +155,13 @@ jobs:
       id-token: write
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
     steps:
-      - name: Checkout exact tag
+      - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ env.RELEASE_SHA }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -141,10 +199,16 @@ jobs:
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
           EXPECTED_TAG="v$VERSION"
-          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ]
-          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          [ "$RELEASE_TAG" = "$EXPECTED_TAG" ]
+          [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ]
+
+          REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+          [ "$REMOTE_TAG_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::$RELEASE_TAG no longer resolves to verified release SHA"
+            exit 1
+          }
+
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
 
       - name: Pack once and record exact tarball hashes
         shell: bash
@@ -234,18 +298,18 @@ jobs:
             echo "## Commits"
             echo
           } >> release-notes.md
-          PREV_TAG="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+          PREV_TAG="$(git describe --tags --abbrev=0 "$RELEASE_SHA^" 2>/dev/null || true)"
           if [ -n "$PREV_TAG" ]; then
-            git log --pretty=format:'- %s' "$PREV_TAG..$GITHUB_SHA" >> release-notes.md
+            git log --pretty=format:'- %s' "$PREV_TAG..$RELEASE_SHA" >> release-notes.md
           else
-            git log --pretty=format:'- %s' "$GITHUB_SHA" >> release-notes.md
+            git log --pretty=format:'- %s' "$RELEASE_SHA" >> release-notes.md
           fi
           {
             echo
             echo
             echo "## Supply-chain verification"
             echo
-            echo "- Git commit: \`$GITHUB_SHA\`"
+            echo "- Git commit: \`$RELEASE_SHA\`"
             echo "- npm tarball SHA-1: \`$PACKAGE_SHA1\`"
             echo "- tarball SHA-256: \`$PACKAGE_SHA256\`"
             echo "- packed files: \`$PACKAGE_FILE_COUNT\`"
