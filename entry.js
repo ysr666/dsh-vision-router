@@ -34,6 +34,7 @@ import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
+import { installSettingsLimitClientPrelude } from './lib/settings-limit-client-prelude.js'
 import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
 import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
@@ -146,6 +147,10 @@ export function apply(ctx, config = {}) {
   }
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
+  // Install this transform before the Settings IA transform so its module
+  // wrapper remains outside the canonical settings component and can harden
+  // both that surface and the fallback client if the IA wrapper is unavailable.
+  installSettingsLimitClientPrelude(stabilizedCtx)
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
   installSettingsRc8ClientLifecycle(stabilizedCtx)
   const ownershipCtx = batchAttachmentHost ? protectHostProviderOwnership(stabilizedCtx) : stabilizedCtx
