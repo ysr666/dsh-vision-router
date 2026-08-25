@@ -797,6 +797,55 @@ export function planToolResultImageShadows(events, surfaceNodes, shouldStrip) {
   return plans
 }
 
+/** Ids of guard-stop messages this plugin ever injected for a session. */
+const PERSISTED_GUARD_STOP_SURFACE_ID = /^vision-router-structured-guard-stop-(?:\d+|undefined)$/
+
+/**
+ * Plan shadow replacements that keep persisted guard-stop messages off the
+ * model surface.
+ *
+ * Guard-stop orders (turn-budget / depth-quota exhausted) were injected as
+ * `user/message` events and persisted into session history. `agent/pre-step`
+ * only sees the inbox claim — never the historical surface — so no pre-step
+ * rewrite can catch them before `Session.deriveMessages()` feeds history to
+ * the adapter. A persisted guard-stop is then replayed on EVERY later turn as
+ * a standing "never call vision tools again" order, even though the per-turn
+ * budget/depth quota resets every turn: the first image in a session is
+ * recognized, but every later image answers "本轮视觉总时间预算已耗尽…"
+ * without calling any vision tool.
+ *
+ * Same harness surface-shadow mechanism as `planToolResultImageShadows`:
+ * replace the surface node with an inert note via `surfaceOp:{op:'replace'}`
+ * + `sourceEventSeqs`, so the human transcript keeps rendering the original
+ * while every later `deriveMessages()` projection sees the replacement.
+ * Durable, replayable, survives session resume. Match by id only, never by
+ * text: ids are plugin-owned, while the instruction text can legitimately
+ * appear inside user quotes or error transcripts.
+ *
+ * @param events - the session event log array (`session.events`).
+ * @param surfaceNodes - the ordered seqs of the current surface (`session.surface.nodes`).
+ * @returns [{ seq, event, data }] where data is the inert frozen replacement
+ * message payload for the append at `seq`.
+ */
+export function planGuardStopShadows(events, surfaceNodes) {
+  const plans = []
+  for (const seq of surfaceNodes ?? []) {
+    const event = events && events[seq]
+    if (!event || event.type !== 'user/message') continue
+    const data = event.data
+    if (!data || typeof data.id !== 'string' || !PERSISTED_GUARD_STOP_SURFACE_ID.test(data.id)) continue
+    plans.push({
+      seq,
+      event,
+      data: deepFreezeLocal({
+        ...data,
+        content: [{ type: 'text', text: '[vision-router: 系统提示已过期]' }],
+      }),
+    })
+  }
+  return plans
+}
+
 /** Marker text for an image the text-only model cannot see (see vision_describe). */
 function imageMarker(id) {
   return `[attached image: ${id}] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["${id}"] and a specific question.`
@@ -4874,6 +4923,82 @@ export function apply(ctx, config = {}) {
     scan.count += newSeqs.length
   }
 
+  /**
+   * Shadow-sanitize persisted guard-stop messages off the model surface.
+   *
+   * Guard-stop orders (turn-budget / depth-quota exhausted) were injected as
+   * `user/message` events and persisted into session history. `agent/pre-step`
+   * only sees the inbox claim — never the historical surface — so a pre-step
+   * rewrite cannot catch them before `Session.deriveMessages()` feeds history
+   * to the adapter. A persisted guard-stop is then replayed on EVERY later
+   * turn as a standing "never call vision tools again" order, even though the
+   * per-turn budget/depth quota resets every turn: the first image in a
+   * session is recognized, but every later image answers "本轮视觉总时间预算
+   * 已耗尽…" without calling any vision tool.
+   *
+   * This uses the same harness surface-shadow mechanism as the tool-result
+   * image sanitizer above: replace the surface node with an inert note via
+   * `surfaceOp: {op:'replace'}` + `sourceEventSeqs`, so the human transcript
+   * keeps the original while every later `deriveMessages()` projection sees
+   * the replacement. Durable, replayable, survives session resume.
+   */
+  const guardStopSurfaceScans = new WeakMap()
+  const sanitizeSessionGuardStops = async (session) => {
+    if (!session) return
+    let events
+    let nodes
+    try {
+      events = session.events
+      nodes = session.surface && session.surface.nodes
+    } catch {
+      return // not a host Session: nothing to sanitize
+    }
+    if (!Array.isArray(events) || !Array.isArray(nodes) || nodes.length === 0) return
+    let scan = guardStopSurfaceScans.get(session)
+    if (!scan) {
+      scan = { count: 0, done: new Set() }
+      guardStopSurfaceScans.set(session, scan)
+    }
+    // Compaction replaces the surface wholesale; a shrunk node list means the
+    // positional cursor is stale, so restart from the head (same as the
+    // tool-result sanitizer above).
+    if (nodes.length < scan.count) {
+      scan.count = 0
+      scan.done = new Set()
+    }
+    if (nodes.length === scan.count) return
+    const newSeqs = nodes.slice(scan.count)
+    const plans = planGuardStopShadows(events, newSeqs)
+    for (const plan of plans) {
+      if (scan.done.has(plan.seq)) continue
+      scan.done.add(plan.seq)
+      try {
+        session.append(
+          'user/message',
+          plan.data,
+          {
+            surfaceOp: { op: 'replace', start: plan.seq, end: plan.seq },
+            sourceEventSeqs: [plan.seq],
+          },
+        )
+        ctx.logger?.info(
+          'vision-router: shadowed a persisted guard-stop message off the model surface (event seq %s)',
+          plan.seq,
+        )
+      } catch (error) {
+        // A failed shadow leaves the original event on the surface: the
+        // session stays usable (today's behavior) instead of crashing the
+        // pre-step.
+        ctx.logger?.warn(
+          'vision-router: could not shadow guard-stop at event seq %s (%s)',
+          plan.seq,
+          error && error.message ? error.message : String(error),
+        )
+      }
+    }
+    scan.count += newSeqs.length
+  }
+
   // session -> { turn, startIndex, hasImage, routed, failures, lastError }
   const turnState = new WeakMap()
 
@@ -4929,6 +5054,17 @@ export function apply(ctx, config = {}) {
     } catch (error) {
       ctx.logger?.warn(
         'vision-router: session-surface sanitization failed (%s)',
+        error && error.message ? error.message : String(error),
+      )
+    }
+    // Guard-stop leftovers are persisted user messages, so they can only be
+    // removed from the model surface through the same shadow mechanism as
+    // tool-result images (issue #74-style surface rewrite).
+    try {
+      await sanitizeSessionGuardStops(session)
+    } catch (error) {
+      ctx.logger?.warn(
+        'vision-router: guard-stop surface sanitization failed (%s)',
         error && error.message ? error.message : String(error),
       )
     }
