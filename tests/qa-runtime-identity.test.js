@@ -79,7 +79,7 @@ test('vision_present registration accepts host originalDimensions without loosen
   )
 })
 
-test('entry keeps prepareCall, tool runtime, session policy bridge, structured hardening, runtime observation and backend runtime policy in final order', async () => {
+test('entry keeps prepareCall, tool runtime, session policy bridge, diagnostics, structured hardening, runtime observation and backend runtime policy in final order', async () => {
   const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
   const adapterContractAt = source.indexOf(
@@ -96,8 +96,11 @@ test('entry keeps prepareCall, tool runtime, session policy bridge, structured h
   const bridgeAt = source.indexOf(
     'const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(',
   )
+  const diagnosticsAt = source.indexOf(
+    'const limitDiagnosticCtx = installVisionLimitDiagnostics(',
+  )
   const structuredAt = source.indexOf(
-    'const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)',
+    'const structuredCtx = installStructuredFlowHardening(limitDiagnosticCtx, legacyCoreCompat.config)',
   )
   const executionAt = source.indexOf(
     'const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {',
@@ -121,7 +124,14 @@ test('entry keeps prepareCall, tool runtime, session policy bridge, structured h
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
   assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
   assert.ok(bridgeAt > nativeAt, 'legacy core projection must consume the session-scoped ownership policy')
-  assert.ok(structuredAt > bridgeAt, 'structured deadlines must wrap the final core-policy view')
+  assert.ok(
+    diagnosticsAt > bridgeAt,
+    'limit diagnostics must observe only the final legacy-core policy view and may not become an execution policy itself',
+  )
+  assert.ok(
+    structuredAt > diagnosticsAt,
+    'structured deadlines must remain the semantic hardening layer outside the read-only limit diagnostics observer',
+  )
   assert.ok(executionAt > structuredAt, 'adapter-observed bridge policy must wrap the fully hardened execution view')
   assert.ok(performanceAt > executionAt, 'runtime performance observation must wrap the actual adapter execution seam')
   assert.ok(

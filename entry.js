@@ -34,6 +34,7 @@ import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
+import { installSettingsLimitClientPrelude } from './lib/settings-limit-client-prelude.js'
 import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
 import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
@@ -56,6 +57,7 @@ import {
   installStructuredFlowHardening,
   normalizeGuidanceOverrides,
 } from './lib/structured-flow-hardening.js'
+import { installVisionLimitDiagnostics } from './lib/vision-limit-diagnostics.js'
 import {
   attachmentContextForContract,
   hasBatchAttachmentContract,
@@ -205,6 +207,9 @@ export function apply(ctx, config = {}) {
   }
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
+  // Install this before the consolidated Settings IA transform registered by
+  // the remote-settings bridge so the numeric fence remains the outer wrapper.
+  installSettingsLimitClientPrelude(stabilizedCtx)
   installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
   installSettingsRc8ClientLifecycle(stabilizedCtx)
   const ownershipCtx = batchAttachmentHost ? protectHostProviderOwnership(stabilizedCtx) : stabilizedCtx
@@ -230,8 +235,15 @@ export function apply(ctx, config = {}) {
   // actual tool registrations and pre-step listener. It makes bootstrap
   // one-shot, enforces fast/standard/deep/custom quotas, tracks mixed branches,
   // rejects empty/non-evidence results, and applies the optional turn deadline
-  // only when the user explicitly configures one.
-  const structuredCtx = installStructuredFlowHardening(legacyCoreCompat.ctx, legacyCoreCompat.config)
+  // only when the user explicitly configures one. The diagnostic observer sits
+  // immediately inside it so it can inspect the final budget result/guard while
+  // leaving #220/#295 wall-clock semantics untouched.
+  const limitDiagnosticCtx = installVisionLimitDiagnostics(
+    legacyCoreCompat.ctx,
+    legacyCoreCompat.config,
+    logging.logger,
+  )
+  const structuredCtx = installStructuredFlowHardening(limitDiagnosticCtx, legacyCoreCompat.config)
   const backgroundProfiling = installBackgroundCapabilityProfiling(
     structuredCtx,
     runtimeConfig,
