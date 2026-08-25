@@ -10,6 +10,7 @@ import {
   SETTINGS_LIMIT_CLIENT_PRELUDE,
   injectSettingsLimitClientPrelude,
 } from '../lib/settings-limit-client-prelude.js'
+import { injectSettingsIaClientPrelude } from '../lib/settings-ia-client-prelude.js'
 import {
   formatVisionTurnGuard,
   installVisionLimitDiagnostics,
@@ -200,23 +201,29 @@ test('issue 307: runtime diagnostics preserve budget semantics while exposing li
     name: 'vision_describe',
     async execute() { return JSON.stringify({ ok: false, code: 'VISION_TURN_BUDGET_EXCEEDED' }) },
   })
-  const session = {}
-  await registeredTool.execute({}, { agent: { session, turn: 7 } })
-  await registeredTool.execute({}, { agent: { session, turn: 7 } })
-  assert.equal(warnings.length, 1, 'exhaustion is logged once per turn')
-  assert.equal(warnings[0].includes(180000), true)
-
   wrapped.on('agent/pre-step', async () => ({
     messages: [{
       id: 'vision-router-structured-guard-stop-7',
       content: [{ type: 'text', text: '本轮视觉总时间预算已耗尽。不要再调用视觉工具。' }],
     }],
   }))
-  const decision = await preStep({ turn: 7 }, undefined)
+
+  const session = {}
+  const decision = await preStep({ agent: { session }, turn: 7 }, undefined)
+  await registeredTool.execute({}, { agent: { session } })
+  await registeredTool.execute({}, { agent: { session } })
+  assert.equal(warnings.length, 1, 'exhaustion is logged once per pre-step turn even when tool exec has no turn field')
+  assert.equal(warnings[0].includes(180000), true)
+  assert.equal(warnings[0].includes('7'), true)
+
   const guard = decision.messages[0].content[0].text
-  assert.match(guard, /180 秒上限/)
+  assert.match(guard, /时间上限（180 秒）/)
   assert.match(guard, /默认配置为“不限制”/)
-  assert.match(formatVisionTurnGuard(180000), /180 秒上限/)
+  assert.match(formatVisionTurnGuard(180000), /时间上限（180 秒）/)
+
+  await preStep({ agent: { session }, turn: 8 }, undefined)
+  await registeredTool.execute({}, { agent: { session } })
+  assert.equal(warnings.length, 2, 'the next pre-step turn owns a fresh exhaustion diagnostic')
 })
 
 test('issue 307: doctor parses the effective limit line and warns only for explicit positive turn caps', () => {
@@ -239,9 +246,14 @@ test('issue 307: doctor parses the effective limit line and warns only for expli
   assert.equal(formatDoctorVisionLimits(unlimited).some((line) => line.startsWith('WARN:')), false)
 })
 
-test('issue 307: settings limit prelude injection is idempotent', () => {
+test('issue 307: settings limit prelude injection is idempotent and precedes the consolidated IA', () => {
   const html = '<html><head></head><body></body></html>'
   const once = injectSettingsLimitClientPrelude(html)
   assert.match(once, /data-vision-router-settings-limit-hardening/)
   assert.equal(injectSettingsLimitClientPrelude(once), once)
+
+  const both = injectSettingsIaClientPrelude(once)
+  const limitIndex = both.indexOf('data-vision-router-settings-limit-hardening')
+  const iaIndex = both.indexOf('data-vision-router-settings-ia')
+  assert.ok(limitIndex >= 0 && iaIndex > limitIndex, 'numeric settings fence must execute before the IA wrapper')
 })
