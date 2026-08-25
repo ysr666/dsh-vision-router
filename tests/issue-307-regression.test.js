@@ -22,6 +22,10 @@ import {
 } from '../lib/doctor-vision-limits.js'
 
 function reactStub() {
+  const childArray = (children) => {
+    if (children === undefined || children === null) return []
+    return (Array.isArray(children) ? children : [children]).flat(Infinity)
+  }
   const React = {
     Fragment: Symbol('Fragment'),
     createElement(type, props, ...children) {
@@ -32,9 +36,9 @@ function reactStub() {
       return { ...node, props: { ...node.props, ...(props ?? {}) } }
     },
     Children: {
-      map(children, fn) { return (Array.isArray(children) ? children : [children]).map(fn) },
-      forEach(children, fn) { (Array.isArray(children) ? children : [children]).forEach(fn) },
-      toArray(children) { return Array.isArray(children) ? [...children] : children === undefined ? [] : [children] },
+      map(children, fn) { return childArray(children).map(fn) },
+      forEach(children, fn) { childArray(children).forEach(fn) },
+      toArray(children) { return childArray(children) },
     },
   }
   return React
