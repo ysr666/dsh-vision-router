@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  V2_SETTINGS_IA_CLIENT,
   V2_SETTINGS_IA_STYLE,
   injectV2SettingsIaIntegration,
 } from '../lib/v2-settings-ia-integration.js'
@@ -26,12 +27,51 @@ test('v2 routing controls are visually integrated into General instead of becomi
   assert.doesNotMatch(V2_SETTINGS_IA_STYLE, /display\s*:\s*none[^;]*data-vr-routing-settings-panel/i)
 })
 
-test('v2 settings IA integration is scoped and idempotent', () => {
+test('new IA restores a strong disabled affordance for Ordered-only Auto controls', () => {
+  assert.match(
+    V2_SETTINGS_IA_STYLE,
+    /\[data-vr-routing-settings-panel\][^}]*\.vr-routing-choice:disabled\{[^}]*opacity:\.45;[^}]*cursor:not-allowed/s,
+  )
+  assert.match(V2_SETTINGS_IA_STYLE, /data-vr-ia-disabled/)
+})
+
+test('v2 settings IA integration is scoped, script-backed, and idempotent', () => {
   const html = '<html><head></head><body></body></html>'
   const once = injectV2SettingsIaIntegration(html)
   assert.match(once, /data-vision-router-v2-settings-ia/)
+  assert.match(once, /Save or discard the current changes/)
   assert.equal(injectV2SettingsIaIntegration(once), once)
   assert.match(V2_SETTINGS_IA_STYLE, /\.vr-settings-ia-root/)
+})
+
+test('mixed save semantics cannot partially apply routing while the React IA has unsaved changes', () => {
+  assert.match(V2_SETTINGS_IA_CLIENT, /root\.querySelector\('\.vr-ia-savebar'\)/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /event\.preventDefault\(\)/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /event\.stopPropagation\(\)/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /event\.stopImmediatePropagation/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /请先保存或放弃当前修改，再调整模型选择方式/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /避免出现部分设置已生效、部分仍未保存/)
+})
+
+test('General copy describes Auto as measured reprioritization of a baseline order', () => {
+  assert.match(V2_SETTINGS_IA_CLIENT, /负责看图的模型，以及多个模型之间如何选择/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /配置基线顺序；Auto会根据已有实测能力临时调整优先级/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /没有可靠测评依据时仍保持此顺序/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /配置顺序：/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /执行顺序：/)
+})
+
+test('background profiling copy matches the separate-authority but Auto-only execution contract', () => {
+  assert.match(V2_SETTINGS_IA_CLIENT, /后台测评是独立授权，不会因开启Auto自动开启/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /后台测评已单独授权，但只在Auto模式下运行/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /当前固定顺序不会产生后台测评请求/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /云端API可能产生费用/)
+})
+
+test('segmented routing controls expose selection state to assistive technology', () => {
+  assert.match(V2_SETTINGS_IA_CLIENT, /setAttribute\('role','group'\)/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /setAttribute\('aria-label'/)
+  assert.match(V2_SETTINGS_IA_CLIENT, /setAttribute\('aria-pressed'/)
 })
 
 test('Auto introduction, Benchmark modal, and remote-risk confirmation remain product contracts', () => {
