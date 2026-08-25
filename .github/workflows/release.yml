@@ -56,17 +56,17 @@ jobs:
           }
 
           # Release identity and artifact verification are hard gates. README /
-          # CHANGELOG freshness is useful documentation hygiene, but must not
-          # make an otherwise verified hotfix impossible to publish. Keep those
-          # checks visible as warnings and let the release-note step fall back
-          # to the immutable commit list when a changelog section is absent.
+          # release-note freshness is useful documentation hygiene, but must not
+          # make an otherwise verified hotfix impossible to publish. A curated
+          # docs/releases/<tag>.md file takes precedence over CHANGELOG.md.
           for f in README.md README.zh.md; do
             if ! grep -q "$EXPECTED_TAG" "$f"; then
               echo "::warning::$f does not yet mention $EXPECTED_TAG"
             fi
           done
-          if ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
-            echo "::warning::CHANGELOG.md has no section for $EXPECTED_TAG; release notes will use the commit list"
+          CURATED_NOTES="docs/releases/$EXPECTED_TAG.md"
+          if [ ! -s "$CURATED_NOTES" ] && ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
+            echo "::warning::no curated release notes or CHANGELOG.md section for $EXPECTED_TAG; release notes will use the commit list"
           fi
 
           node <<'NODE'
@@ -212,18 +212,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          {
-            echo "# $RELEASE_TAG"
-            echo
-          } > release-notes.md
-          CHANGELOG_SECTION="$(mktemp)"
-          awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md > "$CHANGELOG_SECTION"
-          if [ -s "$CHANGELOG_SECTION" ]; then
-            cat "$CHANGELOG_SECTION" >> release-notes.md
+          CURATED_NOTES="docs/releases/$RELEASE_TAG.md"
+          if [ -s "$CURATED_NOTES" ]; then
+            cat "$CURATED_NOTES" > release-notes.md
           else
-            echo "> Hotfix release; see the immutable commit list below for the exact changes." >> release-notes.md
+            {
+              echo "# $RELEASE_TAG"
+              echo
+            } > release-notes.md
+            CHANGELOG_SECTION="$(mktemp)"
+            awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md > "$CHANGELOG_SECTION"
+            if [ -s "$CHANGELOG_SECTION" ]; then
+              cat "$CHANGELOG_SECTION" >> release-notes.md
+            else
+              echo "> Release notes were not curated for this tag; see the immutable commit list below for the exact changes." >> release-notes.md
+            fi
+            rm -f "$CHANGELOG_SECTION"
           fi
-          rm -f "$CHANGELOG_SECTION"
           {
             echo
             echo "## Commits"
