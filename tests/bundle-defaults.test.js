@@ -108,6 +108,21 @@ test('v2.0.0 ships curated release notes and the tag workflow consumes them firs
   assert.match(workflow, /cat "\$CURATED_NOTES" > release-notes\.md/)
 })
 
+test('manual Release workflow creates only the exact current-main package tag before publishing', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+
+  assert.match(workflow, /workflow_dispatch:/)
+  assert.match(workflow, /target_sha:/)
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \|\| github\.ref_name \}\}/)
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
+  assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
+  assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
+  assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
+  assert.match(workflow, /already exists at \$REMOTE_TAG_SHA, expected \$RELEASE_SHA/)
+  assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
+  assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
+})
+
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
