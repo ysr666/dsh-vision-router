@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v1.7.1"><img src="https://img.shields.io/badge/release-v1.7.1-5B4CF0?style=flat-square" alt="Release v1.7.1" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-657%20tests-2EA44F?style=flat-square" alt="Verified: 657 tests" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.0.0"><img src="https://img.shields.io/badge/release-v2.0.0-5B4CF0?style=flat-square" alt="Release v2.0.0" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
   <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
@@ -29,9 +29,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v1.7.1）**
+> 📌 **公告（v2.0.0）**
 >
-> **v1.7.1：远程设置现可在风险确认后开启。**
+> **v2.0.0：Auto 能力路由+测评、输入框识图、设置 2.0。** [查看完整更新 →](docs/releases/v2.0.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -158,7 +158,7 @@ pnpm dsh plugin --profile web add dsh-vision-router
 
 如果当前 session 已经包含图片，DSH 可能拒绝从识图 route 切回不接受图片的纯文本 route。此时 Vision Router 不绕过 Host 约束：会显示与原生模型选择器一致的临时错误提示，真实模型保持不变，`👁 识图 ✓` 也继续反映真实状态，可继续使用或稍后重试。
 
-默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → 插件 → 插件配置 → 视觉路由（自动识图）**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明现在只作提示：未声明图片能力、甚至被标成仅文本的模型也会列出并给出警告。运行时永远先通过该供应商已注册的 DSH adapter 实际调用，因此 WebSocket、RPC 和私有协议都保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才可能进入 HTTP 直连兼容兜底。实际调用失败后自动尝试下一后端；一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
+默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → Vision Router**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明现在只作提示：未声明图片能力、甚至被标成仅文本的模型也会列出并给出警告。运行时永远先通过该供应商已注册的 DSH adapter 实际调用，因此 WebSocket、RPC 和私有协议都保留原生传输；只有明确识别为 http(s) OpenAI Chat Completions 的渠道才可能进入 HTTP 直连兼容兜底。实际调用失败后自动尝试下一后端；一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
 
 ### 实际效果
 
@@ -181,7 +181,7 @@ pnpm dsh plugin --profile web add dsh-vision-router
 | Intern AI（上海AI实验室） | `internvl-latest` · `internvl3.5-latest` | 30 RPM，**9000 万 token/月** | ✅ | chat.intern-ai.org.cn |
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
 | Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
-| NVIDIA NIM | `meta-llama/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
+| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
 | OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
 | OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
 
@@ -192,6 +192,8 @@ pnpm dsh plugin --profile web add dsh-vision-router
 
 ## 亮点
 
+- **能力感知 Auto 路由。** 想要确定性就继续按配置顺序；想自动选择时再显式开启 Auto，只在已配置模型和已有实测证据上调整优先级。不会通过模型名猜能力，单纯开启 Auto 也不会自动发起测评。
+- **可验证的模型测评。** 「测试识图」只向当前精确模型发一次请求；Quick / Full 分别测 OCR、通用理解，以及结构化、文档、定位等能力。后台能力数据是独立授权，并会给真实前台识图让路。
 - **原图像素，真实答案。** 视觉链按原始分辨率读图（仅为保护延迟/额度自动缩放）；你的问题随图一起发送，答案围绕*你的问题*，而不是一段泛泛的描述。
 - **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。遇到 429 会立即尝试下一后端，并按 Retry-After 开启冷却，不会在单次请求内睡眠等待。
 - **图片记忆。** 视觉答案按附件内容哈希缓存；后续文字轮用记录的描述替换历史图片（标注为不可信证据），DeepSeek 真正“记得”之前发过的图，且不重复消耗视觉调用。
@@ -223,7 +225,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
   <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
 </p>
 
-图中展示 11 个图像处理工具；另有负责持久展示图片的 `vision_present` 与可选 1+x 结构化首遍识别的 `vision_bootstrap`，默认深看工具集共 13 个。若启动时显式开启隐私敏感的 `vision_screenshot`，则额外增加为第 14 个工具。
+图中展示 11 个图像处理工具；另有 `vision_materialize`、负责持久展示图片的 `vision_present` 与可选 1+x 结构化首遍识别的 `vision_bootstrap`，默认深看工具集共 14 个。若启动时显式开启隐私敏感的 `vision_screenshot`，则额外增加为第 15 个工具。
 
 | 工具 | 作用 | 产物 |
 |---|---|---|
@@ -267,7 +269,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 视觉工具按顺序逐个尝试，全部失败才报错：
 
-1. **用户视觉模型**：设置卡里一行一个，从上到下；已启用供应商即使模型枚举部分失败也会保留在下拉中，可调用的生成式模型继续可选，图片能力声明只作提示，最终以运行时实际调用为准；
+1. **用户视觉模型**：设置页里一行一个，从上到下；已启用供应商即使模型枚举部分失败也会保留在下拉中，可调用的生成式模型继续可选，图片能力声明只作提示，最终以运行时实际调用为准；
 2. **本地 Ollama（可选，默认关）**：`localOllama.enabled` 开启后，通过本机 Ollama 做免 Key、离线识别（例如 qwen2.5vl）；
 3. **本地 LM Studio（可选，默认关）**：`localLmStudio.enabled` 排在 Ollama 之后，模型名必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实标识；
 4. **高级自定义 HTTP 视觉端点**：旧配置/高级配置中的 `httpProviders` 排在本地后端之后；
@@ -292,7 +294,7 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
   disabled: true
 ```
 
-官方行在场时，插件保留官方路由并使用内部 wrapper +「👁 识图」入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置卡片会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
+官方行在场时，插件保留官方路由并使用内部 wrapper +「👁 识图」入口。反过来，隐身模式关闭但官方行仍被禁用时，插件会做 keep-alive 兜底接管，保住 DeepSeek 模型（设置页会给出提示）；想完全恢复官方原生行，把上面的 `disabled` 改回 `false` 再重启即可。
 
 > 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
 
@@ -305,39 +307,38 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 1. 关闭了自动包装，想手动指定哪些 provider / model 可以使用「👁 识图」；
 2. 自动包装保持开启，但只想让某个 provider 的部分模型生成内部识图 wrapper。
 
-设置卡片里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要限定多个模型就添加多行。修改即时生效，无需重启。若客户端无法确认 wrapper 归属或镜像关系不完整，展示层会 fail-open，不会为了“干净”而误隐藏第三方 route。
+设置页里用两个下拉（provider + 模型）配置；模型留空 = 包装该路由的全部模型，同一 provider 要限定多个模型就添加多行。修改即时生效，无需重启。若客户端无法确认 wrapper 归属或镜像关系不完整，展示层会 fail-open，不会为了“干净”而误隐藏第三方 route。
 
 ## Web 设置
 
-Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由（自动识图）」卡片，顶部会直接提示最重要的使用步骤：**回到聊天页 → 选择平时使用的普通模型 → 点击输入框旁「👁 识图」→ 确认显示 ✓ → 发图**。其余设置主要用于高级定制：
+Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页把识图模型与 v2 路由授权放在一起；「识图策略 / 本地与设备 / 高级 / 诊断」分别承载工具行为、本地后端、敏感/性能设置和排障。
 
-- **自动创建识图包装**：默认开启，自动发现已有模型；内部 wrapper 在能安全确认归属时从原生模型列表隐藏，模型目录变化热更新，无需重启；
-- **手动限定自动识图范围（可选）**：仅在需要关闭自动包装或限制部分模型时使用；
-- **视觉后端链**：给 `vision_describe` 等视觉工具调用的真正图片模型，默认内置免费 Qwen 即可；不要填纯文本模型；
-- 开关：整轮自动路由（旧模式）、识图工具、图片块改写、隐身模式（仅官方 DeepSeek 路由）；
-- 视觉请求超时、包装/链路由名、代理等高级参数；
-- 每个字段都有「已覆盖」徽标与一键恢复组合默认，以及放弃/保存；
-- 「测试连接」按钮优先探测已启用的本地后端，并校验所填模型是否出现在 `/v1/models`；否则探测第一个可用视觉提供方；
-- 产出制品的工具在对话里渲染专用调用卡（关键字段 + 打开文件按钮）。
+- **识图模型链**：`vision_describe` 等视觉工具真正调用的图片模型，内置免费链固定作为最终兜底；
+- **模型选择方式**：继续按配置顺序，或显式开启能力感知 Auto，并选择「综合 / 质量 / 速度 / 本地」偏好；
+- **后台补充能力数据**：`关闭 / 仅本地与免费 / 所有模型`，独立授权，不会因开启 Auto 自动开启；
+- **测试识图 / 测评**：一次精确图片验证，以及 Quick（约3次，OCR+通用）/ Full（约6次，结构化+OCR+文档+定位+通用）能力测评；关闭设置页后任务仍继续；
+- **本地与设备**：Ollama / LM Studio 与隐私敏感的桌面截屏开关；
+- **高级 / 诊断**：超时、wrapper范围、代理/网络、兼容、版本、运行状态与排障。
 
 <p align="center">
-  <img src="assets/vision-settings.png" width="72%" alt="设置 → 插件 → 插件配置 里的视觉路由卡片。" />
+  <img src="assets/vision-settings.png" width="72%" alt="Vision Router 一级设置页面。" />
 </p>
-
-> PR [#8](https://github.com/ysr666/dsh-vision-router/pull/8) 会把面板升级为目录驱动的模型下拉框、可增删的备用模型行与代理设置。
 
 ## 配置项
 
-全部可选，默认即可用。通过 Web 卡片或 profile 补丁修改：
+全部可选，默认即可用。优先使用 **设置 → Vision Router**；高级部署仍可通过 profile 补丁覆盖：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
+| `routingMode` | `ordered` | `ordered` 按配置模型链执行；`auto` 把优先级委托给实测能力证据。升级不会自动开启 Auto |
+| `routingPreference` | `balanced` | Auto 偏好：`balanced` / `quality` / `speed` / `local`；只在已授权候选之间改变顺序 |
+| `backgroundBenchmarking` | `off` | 后台能力测评授权：`off` / `local-free` / `all`；开启 Auto 不会改变它，已授权后台任务只在 Auto 激活时运行 |
 | `provider` / `model` | `vision-http` / `ovh/Qwen2.5-VL-72B-Instruct` | 简写视觉后端链路（有适配器且真正支持图片输入的供应商 + 模型） |
 | `fallbacks` | `[]` | 简写视觉供应商的备用图片模型 |
-| `providers` | 内置免费 `vision-http` 条目 | 多供应商视觉后端链 `{ provider, model, fallbacks[] }`，按序尝试；优先于简写形式。不要填写纯文本模型 |
+| `providers` | 内置免费 `vision-http` 条目 | 多供应商视觉后端链 `{ provider, model, fallbacks[] }`，按序尝试；不要填写纯文本模型 |
 | `httpProviders` | 内置 OVH 条目 | OpenAI 兼容直连端点 `{ name, baseURL, model, apiKeyEnv, maxTokens }` |
 | `autoWrapProviders` | `true` | 自动发现当前已启用 provider / model，并热更新对应内部识图 wrapper；能确认归属时从原生模型选择器隐藏，原模型组不变 |
-| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选的手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只有部分模型可通过「👁 识图」进入 wrapper。改动即时生效，无需重启 |
+| `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只有部分模型可通过「👁 识图」进入 wrapper |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
 | `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
@@ -347,24 +348,23 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
 | `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；关闭它不会停用用户明确配置的本地后端 |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | **本地视觉后端（并入自 dsh-vision）**：开启后 local-ollama 排在 HTTP 视觉链最前；Ollama 未运行会自动跳过；`format` 可选 `openai`（`/chat/completions`）或 `anthropic`（`/messages`）；可选的 `temperature` / `top_p` 只在显式填写时发送。v1.7 会预热本机 loopback 模型并续期 30 分钟驻留，冷加载时间不再计入正常识图截止时间 |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | **本地 LM Studio 后端（并入自 dsh-vision）**：排在 Ollama 之后、自定义/云 HTTP 后端之前；开启时必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实模型标识；可选采样参数同 Ollama，`format: 'anthropic'` 需 LM Studio 0.4.1+ |
-| `instantDescribe` | `false` | **即时本地翻译（并入自 dsh-vision）**：开启且至少一个本地后端可用时，在第一模型步之前识别无缓存图片块；Ollama → LM Studio 共用总超时预算，多图并发上限 3，失败则回退静态工具标记 |
-| `localDescribeStyle` | `plain` | **本地识别输出风格（并入自 dsh-vision）**：`plain` = 平铺描述；`structured` = 结构化识别（【初步判断】/【细节】/【空间结构】/【原图尺寸】），截图分析质量更高 |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | 本地视觉后端；开启后排在 HTTP 视觉链前部，服务未运行会自动跳过，支持 OpenAI / Anthropic 协议 |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | Ollama 之后的本地 LM Studio 后端；填写 Developer 页或 `/v1/models` 返回的真实模型 ID |
+| `visionTurnBudgetMs` | `0` | 整轮视觉总墙钟预算；`0` = 不设整轮上限。具体 provider调用/工具仍有自己的硬超时 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存 |
 | `timeoutMs` | `120000` | 单次视觉调用超时 |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | 产物目录（相对会话工作区） |
 | `proxy` / `proxyHosts` | `''` / openrouter 域名 | 仅视觉供应商域名可选的本地代理 |
-| `catalogCorrections` | `true` | 内置目录纠错：当已安装的 pi-ai 目录把已知模型路由到错误协议时（例如 `opencode-go/qwen3.6-plus` 被指向 OpenAI chat completions，而 OpenCode Go 只在 `/v1/messages` 上提供该模型），插件直接按正确协议应答该后端；上游目录修复后每条纠错自动失效 |
+| `catalogCorrections` | `true` | 内置目录纠错：当已安装目录把已知模型路由到错误协议时按正确协议应答；上游修复后对应纠错自动失效 |
 
 ### 本地 Ollama 视觉后端（并入自 dsh-vision）
 
 > **增量开发作者**：[shaoqiuyuavailable](https://github.com/shaoqiuyuavailable)（router 本地视觉增量）
 >
-> **思路来源**：本地视觉后端（Ollama / LM Studio 双后端、即时识别、结构化输出、截屏识别、同图去重记忆、失败降级占位、并发防雪崩、超时防护）的思路继承自 [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision)——本项目将其并入 HTTP 视觉链，并在此基础上扩展了逐级降级链与双协议支持。
+> **思路来源**：Ollama / LM Studio 双本地后端、结构化识别、截屏识别、同图记忆、失败降级、并发保护与超时防护等设计继承自 [dsh-vision](https://github.com/shaoqiuyuavailable/text-llm-vision/tree/dsh-vision)；本项目将其并入 HTTP 视觉链，并扩展逐级 fallback 与双协议支持。
 
-可选的本地优先视觉路径：不需要 Key，支持隐私、零费用、离线识别。它作为 HTTP 视觉链里的 `local-ollama` 接入；若本地识别失败，除非用户明确配置纯本地链，否则仍可能继续尝试已配置的云后端。
+可选的本地优先视觉路径：不需要 Key，适合隐私、零费用、离线识别。它作为 HTTP 视觉链里的 `local-ollama` 接入；若本地识别失败，除非用户明确配置纯本地链，否则仍可能继续尝试已配置的云后端。
 
 **1. 安装 Ollama 并拉取视觉模型**
 
@@ -373,31 +373,27 @@ Web 配置页在 **设置 → 插件 → 插件配置** 下注册「视觉路由
 ollama pull qwen2.5vl
 ```
 
-**2. 开启** —— 设置卡片「本地视觉」组，或 profile patch：
+**2. 开启** —— **设置 → Vision Router → 本地与设备**，或 profile patch：
 
 ```yaml
 - id: vision-router
   config:
     localOllama:
       enabled: true
-      baseURL: 'http://127.0.0.1:11434/v1'   # OpenAI 兼容端点
+      baseURL: 'http://127.0.0.1:11434/v1'
       model: 'qwen2.5vl'
-      temperature: 0.5                        # 可选；识别用低温更稳
-      top_p: 0.8                              # 可选；留空 = 服务端默认
-    instantDescribe: true                     # 图片轮第一轮即本地识别
-    localDescribeStyle: 'structured'          # 'plain' | 'structured'
+      temperature: 0.5
+      top_p: 0.8
 ```
 
 **3. 行为说明**
 
-- 开启后 `local-ollama` 排在 HTTP 视觉链最前。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
-- **v1.7 冷启动处理：**选中的本机 loopback Ollama 模型会通过原生 API 预热并保持 30 分钟驻留。如果模型在 Ollama 作为首个图片后端时已经冷却，加载会在正常视觉任务预算开始之前完成；短 `/api/ps` 探测保证服务未运行/挂死时仍快速进入 fallback。远程 Ollama URL 不会自动预热。
-- **LM Studio 同理**——同一「本地视觉」组里开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
+- 开启后 `local-ollama` 排在 HTTP 视觉链前部。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
+- 选中的本机 loopback Ollama 模型会通过原生 API 预热并保持 30 分钟驻留。如果模型在 Ollama 作为首个图片后端时已经冷却，加载会在正常视觉任务预算开始之前完成；短 `/api/ps` 探测保证服务未运行/挂死时仍快速进入 fallback。远程 Ollama URL 不会自动预热。
+- **LM Studio 同理**——开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
 - 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）。Anthropic 模式走 `/v1/messages`，带 `anthropic-version` 并把图片转为 base64 source；只有配置了 Key 才发送 `x-api-key`。LM Studio 需 0.4.1 或更高版本才提供该端点。
-- 任一本地后端未运行或调用超时时自动跳过，继续降级到云链——任何调用都不受影响。
-- `instantDescribe` 会在第一模型步之前按 Ollama → LM Studio 的顺序尝试已启用本地后端。多张无缓存图片并发识别（上限 3），单张失败不影响其余；命中附件记忆的图片不会再次请求本地服务。
+- 任一本地后端未运行或调用超时时自动跳过，继续降级到云链。
 - `vision_screenshot` 默认关闭。单独开启「桌面截屏」隐私开关后，`identify=true` 使用同样的 Ollama → LM Studio 降级顺序。
-- 日志中的 `image turn — instantDescribe=… localBackends=…` 显示实时决策；`instant local describe recognized N/M uncached image(s), C cached, F failed attempts` 显示本轮结果。
 
 ## 环境要求
 
@@ -475,7 +471,7 @@ npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router@<版本号>
 pnpm dsh plugin --profile web add dsh-vision-router@<版本号>
 ```
 
-设置存放在 profile 的设置提供方里，升级不丢失。设置卡里的一键更新会自动显式安装 registry 已确认的版本，并在命令结束后核对实际安装版本——绝不只凭包管理器退出码就报成功。
+设置存放在 profile 的设置提供方里，升级不丢失。设置页的一键更新会自动显式安装 registry 已确认的版本，并在命令结束后核对实际安装版本——绝不只凭包管理器退出码就报成功。
 
 > **新版本一直不生效（`downloaded 0` / `added 0`）：** pnpm v11 会拦下发布不足 24 小时的版本；按上面方式显式安装目标版本（pnpm 会自动写入豁免），或运行 `npx dsh-vision-router repair` 修复过期的带版本号豁免条目后，更新立即生效。
 
