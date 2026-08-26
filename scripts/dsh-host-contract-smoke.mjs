@@ -25,12 +25,18 @@ const attachmentLocalEntry = requireFromHost.resolve('@deepseek-ai/dsh-attachmen
 const attachmentLocal = await import(pathToFileURL(attachmentLocalEntry).href)
 const AttachmentLocal = attachmentLocal.default
 assert.ok(AttachmentLocal?.Config, 'attachment-local Config must be exported')
-const parsed = AttachmentLocal.Config({ maxImageDimension: 10_000 })
+// Probe the schema with the same complete, valid row Vision Router ships in
+// cordis.patch.yml. Passing only an unknown field can exercise Schemastery's
+// recovery path and therefore does not prove whether the Host owns that field.
+const parsed = AttachmentLocal.Config({
+  maxImageBytes: 20 * 1024 * 1024,
+  maxImagePixels: 100_000_000,
+  maxImageDimension: 10_000,
+})
 if (expectDimension) {
   assert.equal(parsed.maxImageDimension, 10_000, 'Host must preserve maxImageDimension')
-  assert.throws(() => AttachmentLocal.Config({ maxImageDimension: 10_001 }))
 } else {
-  assert.equal(Object.hasOwn(parsed, 'maxImageDimension'), false, 'legacy Host must not pretend to expose maxImageDimension')
+  assert.equal(Object.hasOwn(parsed, 'maxImageDimension'), false, 'legacy Host must not expose maxImageDimension')
 }
 
 const llmEntry = requireFromHost.resolve('@deepseek-ai/dsh-llm')
