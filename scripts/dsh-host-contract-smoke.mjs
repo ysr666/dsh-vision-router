@@ -15,19 +15,26 @@ const plugin = await import(pathToFileURL(pluginEntry).href)
 assert.equal(typeof plugin.apply, 'function', 'packaged public entry must export apply()')
 assert.ok(plugin.Config, 'packaged public entry must export Config')
 
+const attachmentEntry = requireFromHost.resolve('@deepseek-ai/dsh-attachment')
+const attachment = await import(pathToFileURL(attachmentEntry).href)
+const attachmentStore = Object.create(attachment.default.prototype)
 const { hasBatchAttachmentContract } = plugin
 assert.equal(typeof hasBatchAttachmentContract, 'function')
-assert.equal(hasBatchAttachmentContract({ attachments: {} }), false)
-assert.equal(hasBatchAttachmentContract({ attachments: { saveImages() {} } }), true)
-assert.equal(expectBatch, hasBatchAttachmentContract({ attachments: expectBatch ? { saveImages() {} } : {} }))
+assert.equal(
+  hasBatchAttachmentContract({ get(name) { return name === 'attachments' ? attachmentStore : undefined } }),
+  expectBatch,
+  'batch attachment capability must match the released Host prototype',
+)
 
 const attachmentLocalEntry = requireFromHost.resolve('@deepseek-ai/dsh-attachment-local')
 const attachmentLocal = await import(pathToFileURL(attachmentLocalEntry).href)
 const AttachmentLocal = attachmentLocal.default
 assert.ok(AttachmentLocal?.Config, 'attachment-local Config must be exported')
-// Probe the schema with the same complete, valid row Vision Router ships in
-// cordis.patch.yml. Passing only an unknown field can exercise Schemastery's
-// recovery path and therefore does not prove whether the Host owns that field.
+// The bundle deliberately carries maxImageDimension through the same row used
+// by every supported Host. Older Schemastery versions may preserve an unknown
+// field as parser input, so field presence is not a valid negative capability
+// probe. The positive admission contract is asserted only where the Host owns
+// the dimension policy (rc.8+), matching the long-standing CI smoke.
 const parsed = AttachmentLocal.Config({
   maxImageBytes: 20 * 1024 * 1024,
   maxImagePixels: 100_000_000,
@@ -35,8 +42,6 @@ const parsed = AttachmentLocal.Config({
 })
 if (expectDimension) {
   assert.equal(parsed.maxImageDimension, 10_000, 'Host must preserve maxImageDimension')
-} else {
-  assert.equal(Object.hasOwn(parsed, 'maxImageDimension'), false, 'legacy Host must not expose maxImageDimension')
 }
 
 const llmEntry = requireFromHost.resolve('@deepseek-ai/dsh-llm')
@@ -98,6 +103,40 @@ if (expectCurrent) {
   const disposeWatch = scope.watch(() => {})
   assert.equal(typeof disposeWatch, 'function')
   disposeWatch()
+
+  const toolsEntry = requireFromHost.resolve('@deepseek-ai/dsh-tools')
+  const systemPromptEntry = requireFromHost.resolve('@deepseek-ai/dsh-system-prompt')
+  const tools = await import(pathToFileURL(toolsEntry).href)
+  const systemPrompt = await import(pathToFileURL(systemPromptEntry).href)
+  const toolsCtx = new Context()
+  await toolsCtx.plugin(systemPrompt.default)
+  await toolsCtx.plugin(tools.default)
+  const probeTool = tools.defineTool({
+    name: 'vision_router_p0_echo',
+    description: 'P0 Host contract probe',
+    parameters: { text: { type: 'string' } },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) { return args.text ?? '' },
+  })
+  const disposeTool = toolsCtx.tools.register(probeTool)
+  assert.equal(typeof disposeTool, 'function', 'tool registration must return a disposer')
+  assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), true)
+  const toolResult = await toolsCtx.tools.execute({
+    callId: 'vision-router-p0-call',
+    name: probeTool.name,
+    arguments: { text: 'ok' },
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(toolResult, {
+    content: [{ type: 'text', text: 'ok' }],
+    isError: false,
+    value: 'ok',
+  })
+  disposeTool()
+  assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), false, 'tool disposer must clean up registration')
 }
 
 console.log(`DSH Host contract smoke passed: batch=${expectBatch} dimension=${expectDimension} current=${expectCurrent}`)
