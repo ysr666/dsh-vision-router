@@ -1,0 +1,85 @@
+name: Latest DSH Canary
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-dsh:
+    name: latest-dsh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - name: Resolve latest released DSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          DSH_VERSION="$(npm view @deepseek-ai/dsh-llm version)"
+          test -n "$DSH_VERSION"
+          echo "DSH_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
+          echo "Testing latest DSH contract: $DSH_VERSION"
+      - run: pnpm install --frozen-lockfile
+      - name: Pack plugin
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+      - name: Install isolated latest Host fixture
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-latest-${process.env.DSH_VERSION}`)
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          const v = process.env.DSH_VERSION
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies: {
+              'dsh-vision-router': `file:${tarball}`,
+              '@deepseek-ai/dsh-attachment': v,
+              '@deepseek-ai/dsh-attachment-local': v,
+              '@deepseek-ai/dsh-llm': v,
+              '@deepseek-ai/dsh-llm-deepseek': v,
+              '@deepseek-ai/dsh-anonymous-user-id': v,
+              '@deepseek-ai/dsh-settings': v,
+              sharp: '0.35.3'
+            }
+          }, null, 2))
+          const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+          fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
+      - name: Verify latest Host contract
+        env:
+          HOST_DIR: ${{ env.HOST_DIR }}
+          EXPECT_BATCH: 'true'
+          EXPECT_DIMENSION: 'true'
+          EXPECT_CURRENT: 'true'
+        run: node scripts/dsh-host-contract-smoke.mjs
+      - name: Compatibility investigation hint
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '## Latest DSH compatibility investigation required'
+            echo
+            echo "The scheduled canary failed against @deepseek-ai/dsh-llm ${DSH_VERSION}."
+            echo 'This job is intentionally non-gating for normal pull requests. Confirm the changed Host capability before changing the supported contract or adding compatibility code.'
+          } >> "$GITHUB_STEP_SUMMARY"
