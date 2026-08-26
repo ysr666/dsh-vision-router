@@ -354,10 +354,15 @@ test('real screenshot permission route rejects cross-origin POSTs without proxyi
   assert.equal(status, 403)
 })
 
-test('proxy fetch cleanup becomes inert under later plugin patches and cannot resurface', () => {
+test('proxy fetch cleanup becomes inert under later plugin patches, runs its disposer, and cannot resurface', () => {
   const hostFetch = () => 'host'
   const savedFetch = globalThis.fetch
-  const patchA = () => 'a'
+  let rawCalls = 0
+  let disposerCalls = 0
+  const patchA = () => {
+    rawCalls += 1
+    return 'a'
+  }
   let cleanup
   const ctx = {
     tools: { register() {} },
@@ -371,20 +376,31 @@ test('proxy fetch cleanup becomes inert under later plugin patches and cannot re
     const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
     hardened.effect(() => {
       globalThis.fetch = patchA
-      return () => { globalThis.fetch = hostFetch }
+      return () => {
+        disposerCalls += 1
+        globalThis.fetch = hostFetch
+      }
     }, 'vision-router: proxy fetch')
     const guardedFetch = globalThis.fetch
     assert.notEqual(guardedFetch, patchA)
     assert.equal(guardedFetch(), 'a')
+    assert.equal(rawCalls, 1)
 
     const laterPatch = (...args) => guardedFetch(...args)
     globalThis.fetch = laterPatch
     cleanup()
-    assert.equal(globalThis.fetch, laterPatch)
+    assert.equal(disposerCalls, 1, 'the owned effect disposer must run even below a later fetch wrapper')
+    assert.equal(globalThis.fetch, laterPatch, 'later plugin ownership must survive Vision Router cleanup')
+    assert.equal(laterPatch(), 'host', 'a retained guard must bypass the unloaded Vision Router fetch')
+    assert.equal(rawCalls, 1, 'the raw Vision Router fetch must never be reached after unload')
+
     // Simulate the later plugin unloading and restoring the fetch value it
     // captured. Vision Router's guard must remain inert instead of resurfacing.
     globalThis.fetch = guardedFetch
     assert.equal(globalThis.fetch(), 'host')
+    assert.equal(rawCalls, 1)
+    cleanup()
+    assert.equal(disposerCalls, 1, 'cleanup is idempotent')
   } finally {
     globalThis.fetch = savedFetch
   }
