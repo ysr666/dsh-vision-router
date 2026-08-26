@@ -94,4 +94,6 @@ jobs:
         run: node scripts/dsh-host-contract-smoke.mjs
       - name: Verify current Vision Router contract surfaces
         if: matrix.current == 'true'
-        run: pnpm test:contract
+        run: |
+          pnpm test:contract
+          node --test tests/native-image-coexistence.test.js
