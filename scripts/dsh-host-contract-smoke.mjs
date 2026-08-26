@@ -80,8 +80,17 @@ if (expectCurrent) {
 
   const settingsEntry = requireFromHost.resolve('@deepseek-ai/dsh-settings')
   const settings = await import(pathToFileURL(settingsEntry).href)
+  assert.equal(typeof settings.default, 'function', 'DSH SettingsProvider must be exported')
+  // The base SettingsProvider is a service definition: a production Host mounts
+  // a storage-backed subclass. Mount the smallest real subclass here instead of
+  // invoking the abstract provider with no load()/persist() implementation.
+  class MemorySettings extends settings.default {
+    get writable() { return true }
+    load() { return Promise.resolve({}) }
+    persist() { return Promise.resolve() }
+  }
   const settingsCtx = new Context()
-  await settingsCtx.plugin(settings.default)
+  await settingsCtx.plugin(MemorySettings)
   const scope = settingsCtx.settings.register('vision-router-p0-probe', plugin.Config, { base: {} })
   assert.equal(typeof scope.get, 'function', 'settings registration must expose live get()')
   assert.equal(typeof scope.watch, 'function', 'settings registration must expose watch()')
