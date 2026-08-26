@@ -68,7 +68,6 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
       - name: Verify latest Host contract
         env:
-          HOST_DIR: ${{ env.HOST_DIR }}
           EXPECT_BATCH: 'true'
           EXPECT_DIMENSION: 'true'
           EXPECT_CURRENT: 'true'
