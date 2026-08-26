@@ -252,11 +252,35 @@ test('background failure classification distinguishes permanent and transient ca
     retryable: false,
   })
 
+  const doesNotExist = Object.assign(new Error('selected model does not exist'), { code: 'MODEL_DOES_NOT_EXIST' })
+  assert.deepEqual(classifyBackgroundBenchmarkFailure(doesNotExist), {
+    errorClass: 'unavailable',
+    errorCode: 'MODEL_DOES_NOT_EXIST',
+    retryable: false,
+  })
+
+  const serviceUnavailable = Object.assign(new Error('upstream maintenance'), {
+    status: 503,
+    code: 'SERVICE_UNAVAILABLE',
+  })
+  assert.deepEqual(classifyBackgroundBenchmarkFailure(serviceUnavailable), {
+    errorClass: 'provider',
+    errorCode: 'SERVICE_UNAVAILABLE',
+    retryable: true,
+  })
+
+  const genericUnavailable = Object.assign(new Error('service unavailable'), { code: 'UNAVAILABLE' })
+  assert.deepEqual(classifyBackgroundBenchmarkFailure(genericUnavailable), {
+    errorClass: 'provider',
+    errorCode: 'UNAVAILABLE',
+    retryable: true,
+  })
+
   const visualProof = Object.assign(new Error('benchmark visual proof missing'), { benchmarkClass: 'visual-proof' })
   assert.deepEqual(classifyBackgroundBenchmarkFailure(visualProof), {
     errorClass: 'visual-proof',
     errorCode: undefined,
-    retryable: false,
+    retryable: true,
   })
 
   const unsupported = Object.assign(new Error('model does not support image input'), { benchmarkClass: 'unsupported-image' })
