@@ -51,6 +51,7 @@ jobs:
         shell: node {0}
         env:
           DSH_VERSION: ${{ matrix.dsh }}
+          EXPECT_CURRENT: ${{ matrix.current }}
         run: |
           const fs = require('node:fs')
           const path = require('node:path')
@@ -62,20 +63,25 @@ jobs:
           fs.rmSync(hostDir, { recursive: true, force: true })
           fs.mkdirSync(hostDir, { recursive: true })
           const v = process.env.DSH_VERSION
+          const dependencies = {
+            'dsh-vision-router': `file:${tarball}`,
+            '@deepseek-ai/dsh-attachment': v,
+            '@deepseek-ai/dsh-attachment-local': v,
+            '@deepseek-ai/dsh-llm': v,
+            '@deepseek-ai/dsh-llm-deepseek': v,
+            '@deepseek-ai/dsh-anonymous-user-id': v,
+            '@deepseek-ai/dsh-settings': v,
+            sharp: '0.35.3'
+          }
+          if (process.env.EXPECT_CURRENT === 'true') {
+            dependencies['@deepseek-ai/dsh-tools'] = v
+            dependencies['@deepseek-ai/dsh-system-prompt'] = v
+          }
           fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
             private: true,
             type: 'module',
             packageManager: 'pnpm@11.20.0',
-            dependencies: {
-              'dsh-vision-router': `file:${tarball}`,
-              '@deepseek-ai/dsh-attachment': v,
-              '@deepseek-ai/dsh-attachment-local': v,
-              '@deepseek-ai/dsh-llm': v,
-              '@deepseek-ai/dsh-llm-deepseek': v,
-              '@deepseek-ai/dsh-anonymous-user-id': v,
-              '@deepseek-ai/dsh-settings': v,
-              sharp: '0.35.3'
-            }
+            dependencies,
           }, null, 2))
           const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
           if (installed.status !== 0) process.exit(installed.status ?? 1)
