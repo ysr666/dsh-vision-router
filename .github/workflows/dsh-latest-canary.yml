@@ -60,6 +60,8 @@ jobs:
               '@deepseek-ai/dsh-llm-deepseek': v,
               '@deepseek-ai/dsh-anonymous-user-id': v,
               '@deepseek-ai/dsh-settings': v,
+              '@deepseek-ai/dsh-tools': v,
+              '@deepseek-ai/dsh-system-prompt': v,
               sharp: '0.35.3'
             }
           }, null, 2))
