@@ -15,10 +15,11 @@ test('Host capability snapshot reads seams without invoking registrations', () =
   }
   const llm = {
     registerAdapter() { registrations += 1 },
-    registerConfigurableProviders() { registrations += 1 },
     prepareCall() {},
   }
-  const settings = { register() {}, get() {} }
+  // Match the real DSH SettingsProvider shape: register() is on the service;
+  // get()/watch() are on the SettingsScope returned by a registration.
+  const settings = { register() { registrations += 1 } }
   const tools = { register() { registrations += 1 }, execute() {} }
   const jobs = { enqueue() {} }
   const ctx = {
@@ -33,11 +34,23 @@ test('Host capability snapshot reads seams without invoking registrations', () =
   assert.equal(result.adapterRegistration, true)
   assert.equal(result.registrationReplace, 'unknown')
   assert.equal(result.jobs, true)
+  assert.equal(result.surfaceReplacement, 'unknown')
   assert.equal(result.settingsLiveNamespace, true)
+  assert.equal(result.settingsWebExposure, 'unknown')
   assert.equal(result.prepareCall, true)
   assert.equal(result.toolRegistration, true)
   assert.equal(result.toolExecution, true)
   assert.equal(registrations, 0, 'Doctor probe must not mutate Host topology')
+})
+
+test('registration replace stays unknown when only registerAdapter is observable', () => {
+  const result = inspectDshHostCapabilities({
+    get(name) {
+      return name === 'llm' ? { registerAdapter() {} } : undefined
+    },
+  })
+  assert.equal(result.adapterRegistration, true)
+  assert.equal(result.registrationReplace, 'unknown')
 })
 
 test('unknown capability values remain explicit instead of becoming version guesses', () => {
@@ -57,6 +70,7 @@ test('Host capability endpoint is GET-only and diagnostics failures stay contain
     get(name) {
       if (name === 'attachments') return { saveImages() {}, imageLimits: { maxImageDimension: 10_000 } }
       if (name === 'llm') return { registerAdapter() {}, prepareCall() {} }
+      if (name === 'settings') return { register() {} }
       return undefined
     },
     webServer: {
@@ -96,6 +110,7 @@ test('Host capability endpoint is GET-only and diagnostics failures stay contain
   assert.equal(body.ok, true)
   assert.equal(body.capabilities.batchAttachments, true)
   assert.equal(body.capabilities.prepareCall, true)
+  assert.equal(body.capabilities.settingsLiveNamespace, true)
 
   const postRes = response()
   await route.handler({ method: 'POST' }, postRes)
