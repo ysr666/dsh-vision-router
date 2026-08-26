@@ -17,23 +17,23 @@ Node 22 and Node 24 remain the general required runtime matrix. The Host contrac
 
 ## Capability matrix
 
-`yes` means the fixture has a direct test or feature probe. `no` means the fixture has a direct negative probe. `probe` means the capability is intentionally not inferred from the version label and is verified at runtime/contract-test time.
+`yes` means the fixture has a direct positive test or feature probe. `no` means a direct negative probe exists. `compat` means the fixture proves Vision Router can safely carry the newer input/config through that Host, but does **not** claim the Host owns that capability. `probe` means the capability is intentionally not inferred from the version label and is verified at runtime/contract-test time.
 
 | Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.2 | Evidence / detection |
 | --- | --- | --- | --- | --- |
-| Batch attachment save | no | yes | yes | `hasBatchAttachmentContract()` checks `attachments.saveImages`; `tests/rc6-rc7-compat.test.js`; contract CI. |
-| Max image dimension policy | no | yes | yes | `AttachmentLocal.Config` materialization plus `imageLimits.maxImageDimension`; `tests/attachment-admission-policy.test.js`; contract CI. |
-| Adapter registration | yes | yes | yes | read-only `ctx.llm.registerAdapter` capability probe plus adapter contract tests. |
-| Atomic registration replace | probe | probe | yes in current contract test | current DSH registration handle is exercised by the current-contract fixture; Doctor reports `unknown` if a live Host cannot prove this without mutating topology. |
-| Settings live namespace | yes | yes | yes | `settings.register()` + live `scope.get()/watch()` compatibility tests; `tests/rc6-real-settings-persistence.test.js`. |
-| Tool registration / execution | probe | probe | yes in current contract test | current-contract tool seam smoke plus Vision Router tool-runtime boundary tests. |
-| `prepareCall` | no | no | yes | `tests/adapter-prepare-call-compat.test.js`; current-contract fixture checks the installed LLM contract. |
+| Batch attachment save | no | yes | yes | `hasBatchAttachmentContract()` checks the released `attachments.saveImages` prototype; `tests/rc6-rc7-compat.test.js`; contract CI. |
+| Max image dimension policy | compat | yes | yes | All fixtures parse the complete attachment-local row; rc.8/current positively retain the field and the established admission tests exercise the 10000/10001 boundary. Older Schemastery passthrough is not treated as ownership evidence. |
+| Adapter registration | yes | yes | yes | released `ctx.llm.registerAdapter` surface plus adapter contract tests. |
+| Atomic registration replace | probe | probe | yes | current-contract exercises the real registration handle's `replace()` and disposer; Doctor reports `unknown` if a live Host cannot prove replacement without mutating topology. |
+| Settings live namespace | yes | yes | yes | `settings.register()` + live `scope.get()/watch()` compatibility tests; current-contract mounts the real SettingsProvider contract through a minimal storage subclass. |
+| Tool registration / execution | probe | probe | yes | current-contract mounts the released `@deepseek-ai/dsh-tools` runtime, registers a typed tool, executes it, and disposes it; Vision Router tool-runtime boundary tests remain additive. |
+| `prepareCall` | no | no | yes | `tests/adapter-prepare-call-compat.test.js`; current-contract exercises the installed LLM runtime's `prepareCall()`. |
 | Native image coexistence | yes | yes | yes | `tests/native-image-coexistence.test.js`, `tests/issue-289-native-nonintervention.test.js`, cold-resume workflow. |
 | Jobs service | probe | probe | probe | read-only Doctor capability probe only; P2 must run a separate feasibility spike before any scheduler migration. |
 | Client surface replacement | probe | probe | probe | no version inference; keep `unknown` until a safe readable Host seam is available. |
 | Settings web exposure | probe | probe | probe | presentation capability; never inferred from the settings persistence service. |
-| Effect/dispose cleanup | yes | yes | yes | compatibility lifecycle tests and current-contract fixture; all plugin registrations remain Cordis-effect owned. |
-| Public entry boot | yes | yes | yes | packed plugin entry import in each Host contract fixture. |
+| Effect/dispose cleanup | yes | yes | yes | compatibility lifecycle tests plus current-contract adapter/tool/watch disposer checks; plugin registrations remain Cordis-effect owned. |
+| Public entry boot | yes | yes | yes | packed plugin public entry import in each Host contract fixture. |
 | Packaged tarball install | yes | yes | yes | each Host contract fixture packs the plugin then installs the tarball into an isolated Host package. |
 
 ## Compatibility inventory and exit criteria
