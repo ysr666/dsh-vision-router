@@ -1,0 +1,99 @@
+name: DSH Contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: minimum-contract
+            dsh: 0.1.0-rc.6
+            batch: 'false'
+            dimension: 'false'
+            current: 'false'
+          - name: legacy-contract
+            dsh: 0.1.0-rc.8
+            batch: 'true'
+            dimension: 'true'
+            current: 'false'
+          - name: current-contract
+            dsh: 0.1.1-rc.2
+            batch: 'true'
+            dimension: 'true'
+            current: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack plugin
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+      - name: Install isolated Host fixture
+        shell: node {0}
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+          EXPECT_CURRENT: ${{ matrix.current }}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-p0-${process.env.DSH_VERSION}`)
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          const v = process.env.DSH_VERSION
+          const dependencies = {
+            'dsh-vision-router': `file:${tarball}`,
+            '@deepseek-ai/dsh-attachment': v,
+            '@deepseek-ai/dsh-attachment-local': v,
+            '@deepseek-ai/dsh-llm': v,
+            '@deepseek-ai/dsh-llm-deepseek': v,
+            '@deepseek-ai/dsh-anonymous-user-id': v,
+            '@deepseek-ai/dsh-settings': v,
+            sharp: '0.35.3'
+          }
+          if (process.env.EXPECT_CURRENT === 'true') {
+            dependencies['@deepseek-ai/dsh-tools'] = v
+            dependencies['@deepseek-ai/dsh-system-prompt'] = v
+          }
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies,
+          }, null, 2))
+          const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+          fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
+      - name: Verify Host contract
+        env:
+          EXPECT_BATCH: ${{ matrix.batch }}
+          EXPECT_DIMENSION: ${{ matrix.dimension }}
+          EXPECT_CURRENT: ${{ matrix.current }}
+        run: node scripts/dsh-host-contract-smoke.mjs
+      - name: Verify current Vision Router contract surfaces
+        if: matrix.current == 'true'
+        run: |
+          pnpm test:contract
+          node --test tests/native-image-coexistence.test.js

@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import path from 'node:path'
+
+const hostDir = process.env.HOST_DIR
+if (!hostDir) throw new Error('HOST_DIR is required')
+const requireFromHost = createRequire(path.join(hostDir, 'package.json'))
+const expectBatch = process.env.EXPECT_BATCH === 'true'
+const expectDimension = process.env.EXPECT_DIMENSION === 'true'
+const expectCurrent = process.env.EXPECT_CURRENT === 'true'
+
+const pluginEntry = requireFromHost.resolve('dsh-vision-router')
+const plugin = await import(pathToFileURL(pluginEntry).href)
+const { inspectDshHostCapabilities } = await import(
+  pathToFileURL(path.join(path.dirname(pluginEntry), 'dsh-host-capabilities.js')).href
+)
+assert.equal(typeof plugin.apply, 'function', 'packaged public entry must export apply()')
+assert.ok(plugin.Config, 'packaged public entry must export Config')
+
+const attachmentEntry = requireFromHost.resolve('@deepseek-ai/dsh-attachment')
+const attachment = await import(pathToFileURL(attachmentEntry).href)
+const attachmentStore = Object.create(attachment.default.prototype)
+const { hasBatchAttachmentContract } = plugin
+assert.equal(typeof hasBatchAttachmentContract, 'function')
+assert.equal(
+  hasBatchAttachmentContract({ get(name) { return name === 'attachments' ? attachmentStore : undefined } }),
+  expectBatch,
+  'batch attachment capability must match the released Host prototype',
+)
+
+const attachmentLocalEntry = requireFromHost.resolve('@deepseek-ai/dsh-attachment-local')
+const attachmentLocal = await import(pathToFileURL(attachmentLocalEntry).href)
+const AttachmentLocal = attachmentLocal.default
+assert.ok(AttachmentLocal?.Config, 'attachment-local Config must be exported')
+// The bundle deliberately carries maxImageDimension through the same row used
+// by every supported Host. Older Schemastery versions may preserve an unknown
+// field as parser input, so field presence is not a valid negative capability
+// probe. The positive admission contract is asserted only where the Host owns
+// the dimension policy (rc.8+), matching the long-standing CI smoke.
+const parsed = AttachmentLocal.Config({
+  maxImageBytes: 20 * 1024 * 1024,
+  maxImagePixels: 100_000_000,
+  maxImageDimension: 10_000,
+})
+if (expectDimension) {
+  assert.equal(parsed.maxImageDimension, 10_000, 'Host must preserve maxImageDimension')
+}
+
+const llmEntry = requireFromHost.resolve('@deepseek-ai/dsh-llm')
+const llm = await import(pathToFileURL(llmEntry).href)
+assert.equal(typeof llm.default, 'function', 'DSH LLM runtime must be exported')
+assert.equal(typeof llm.default.prototype.registerAdapter, 'function', 'adapter registration seam must exist')
+
+if (expectCurrent) {
+  const llmRequire = createRequire(llmEntry)
+  const cordisEntry = llmRequire.resolve('@deepseek-ai/cordis')
+  const { Context } = await import(pathToFileURL(cordisEntry).href)
+  const ctx = new Context()
+  await ctx.plugin(llm.default)
+  const llmCapabilities = inspectDshHostCapabilities(ctx)
+  assert.equal(llmCapabilities.adapterRegistration, true, 'Doctor must recognize current DSH adapter registration')
+  assert.equal(llmCapabilities.registrationReplace, 'unknown', 'read-only Doctor must not manufacture a route to prove replace()')
+  assert.equal(llmCapabilities.prepareCall, true, 'Doctor must recognize current DSH prepareCall()')
+
+  const adapter = {
+    providerInfo(provider) { return { id: provider, name: provider } },
+    providerRetryPolicy() { return undefined },
+    listModels() { return Promise.resolve([]) },
+    resolveModel(provider, model) { return Promise.resolve({ provider, id: model, name: model }) },
+    prepareCall(provider, model) {
+      return Promise.resolve({
+        model: { provider, id: model, name: model },
+        stream: (options) => this.stream(options),
+      })
+    },
+    async * stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+
+  const registration = ctx.llm.registerAdapter(['vision-router-p0-a'], adapter)
+  assert.equal(typeof registration, 'function', 'adapter registration must return a disposer')
+  assert.equal(typeof registration.replace, 'function', 'current Host registration must support atomic replace()')
+  registration.replace(['vision-router-p0-b'])
+  assert.equal(ctx.llm.listProviders().some((item) => item.id === 'vision-router-p0-b'), true)
+  assert.equal(typeof ctx.llm.prepareCall, 'function', 'current Host must expose prepareCall()')
+  const prepared = await ctx.llm.prepareCall({ provider: 'vision-router-p0-b', model: 'probe-model' })
+  assert.equal(typeof prepared.stream, 'function')
+  registration()
+  assert.equal(ctx.llm.listProviders().some((item) => item.id === 'vision-router-p0-b'), false, 'registration disposer must clean up the route')
+
+  const settingsEntry = requireFromHost.resolve('@deepseek-ai/dsh-settings')
+  const settings = await import(pathToFileURL(settingsEntry).href)
+  assert.equal(typeof settings.default, 'function', 'DSH SettingsProvider must be exported')
+  // The base SettingsProvider is a service definition: a production Host mounts
+  // a storage-backed subclass. Mount the smallest real subclass here instead of
+  // invoking the abstract provider with no load()/persist() implementation.
+  class MemorySettings extends settings.default {
+    get writable() { return true }
+    load() { return Promise.resolve({}) }
+    persist() { return Promise.resolve() }
+  }
+  const settingsCtx = new Context()
+  await settingsCtx.plugin(MemorySettings)
+  const settingsCapabilities = inspectDshHostCapabilities(settingsCtx)
+  assert.equal(
+    settingsCapabilities.settingsLiveNamespace,
+    true,
+    'Doctor must recognize the real current DSH SettingsProvider register() live-namespace seam',
+  )
+  const scope = settingsCtx.settings.register('vision-router-p0-probe', plugin.Config, { base: {} })
+  assert.equal(typeof scope.get, 'function', 'settings registration must expose live get()')
+  assert.equal(typeof scope.watch, 'function', 'settings registration must expose watch()')
+  assert.equal(typeof scope.get(), 'object')
+  const disposeWatch = scope.watch(() => {})
+  assert.equal(typeof disposeWatch, 'function')
+  disposeWatch()
+
+  const toolsEntry = requireFromHost.resolve('@deepseek-ai/dsh-tools')
+  const systemPromptEntry = requireFromHost.resolve('@deepseek-ai/dsh-system-prompt')
+  const tools = await import(pathToFileURL(toolsEntry).href)
+  const systemPrompt = await import(pathToFileURL(systemPromptEntry).href)
+  const toolsCtx = new Context()
+  await toolsCtx.plugin(systemPrompt.default)
+  await toolsCtx.plugin(tools.default)
+  const toolCapabilities = inspectDshHostCapabilities(toolsCtx)
+  assert.equal(toolCapabilities.toolRegistration, true, 'Doctor must recognize current DSH tool registration')
+  assert.equal(toolCapabilities.toolExecution, true, 'Doctor must recognize current DSH tool execution')
+  const probeTool = tools.defineTool({
+    name: 'vision_router_p0_echo',
+    description: 'P0 Host contract probe',
+    parameters: { text: { type: 'string' } },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) { return args.text ?? '' },
+  })
+  const disposeTool = toolsCtx.tools.register(probeTool)
+  assert.equal(typeof disposeTool, 'function', 'tool registration must return a disposer')
+  assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), true)
+  const toolResult = await toolsCtx.tools.execute({
+    callId: 'vision-router-p0-call',
+    name: probeTool.name,
+    arguments: { text: 'ok' },
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(toolResult, {
+    content: [{ type: 'text', text: 'ok' }],
+    isError: false,
+    value: 'ok',
+  })
+  disposeTool()
+  assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), false, 'tool disposer must clean up registration')
+}
+
+console.log(`DSH Host contract smoke passed: batch=${expectBatch} dimension=${expectDimension} current=${expectCurrent}`)

@@ -133,7 +133,7 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   assert.doesNotMatch(entry, /createV2ExecutionAcceptanceObserver/)
   assert.doesNotMatch(entry, /installVisionRoutingPreviewService/)
   assert.match(entry, /installCapabilityBenchmarkClient/)
-  assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli.js')
+  assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli-p0.js')
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.bin, 'dsh-vision-router-acceptance'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.scripts, 'test:acceptance:v2'), false)
   for (const path of [
