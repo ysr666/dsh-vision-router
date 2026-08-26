@@ -12,6 +12,9 @@ const expectCurrent = process.env.EXPECT_CURRENT === 'true'
 
 const pluginEntry = requireFromHost.resolve('dsh-vision-router')
 const plugin = await import(pathToFileURL(pluginEntry).href)
+const { inspectDshHostCapabilities } = await import(
+  pathToFileURL(path.join(path.dirname(pluginEntry), 'dsh-host-capabilities.js')).href
+)
 assert.equal(typeof plugin.apply, 'function', 'packaged public entry must export apply()')
 assert.ok(plugin.Config, 'packaged public entry must export Config')
 
@@ -55,6 +58,10 @@ if (expectCurrent) {
   const { Context } = await import(pathToFileURL(cordisEntry).href)
   const ctx = new Context()
   await ctx.plugin(llm.default)
+  const llmCapabilities = inspectDshHostCapabilities(ctx)
+  assert.equal(llmCapabilities.adapterRegistration, true, 'Doctor must recognize current DSH adapter registration')
+  assert.equal(llmCapabilities.registrationReplace, 'unknown', 'read-only Doctor must not manufacture a route to prove replace()')
+  assert.equal(llmCapabilities.prepareCall, true, 'Doctor must recognize current DSH prepareCall()')
 
   const adapter = {
     providerInfo(provider) { return { id: provider, name: provider } },
@@ -96,6 +103,12 @@ if (expectCurrent) {
   }
   const settingsCtx = new Context()
   await settingsCtx.plugin(MemorySettings)
+  const settingsCapabilities = inspectDshHostCapabilities(settingsCtx)
+  assert.equal(
+    settingsCapabilities.settingsLiveNamespace,
+    true,
+    'Doctor must recognize the real current DSH SettingsProvider register() live-namespace seam',
+  )
   const scope = settingsCtx.settings.register('vision-router-p0-probe', plugin.Config, { base: {} })
   assert.equal(typeof scope.get, 'function', 'settings registration must expose live get()')
   assert.equal(typeof scope.watch, 'function', 'settings registration must expose watch()')
@@ -111,6 +124,9 @@ if (expectCurrent) {
   const toolsCtx = new Context()
   await toolsCtx.plugin(systemPrompt.default)
   await toolsCtx.plugin(tools.default)
+  const toolCapabilities = inspectDshHostCapabilities(toolsCtx)
+  assert.equal(toolCapabilities.toolRegistration, true, 'Doctor must recognize current DSH tool registration')
+  assert.equal(toolCapabilities.toolExecution, true, 'Doctor must recognize current DSH tool execution')
   const probeTool = tools.defineTool({
     name: 'vision_router_p0_echo',
     description: 'P0 Host contract probe',
