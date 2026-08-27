@@ -11,7 +11,8 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
-import { writeArtifactFile } from '../lib/artifact-boundary.js'
+import { writeArtifactFile as compatibilityWriteArtifactFile } from '../lib/artifact-boundary.js'
+import { writeArtifactFile as primitiveWriteArtifactFile } from '../lib/artifact-io.js'
 import { cleanupArtifactRuns } from '../lib/artifact-retention.js'
 import { createVisionArtifactStore } from '../lib/vision-artifact-store.js'
 import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
@@ -38,7 +39,7 @@ test('VisionArtifactStore publish preserves the hardened writer path, bytes and 
 
     const data = Buffer.from('p2-artifact-parity')
     const relativePath = 'nested/output.txt'
-    const legacy = await writeArtifactFile(
+    const legacy = await primitiveWriteArtifactFile(
       legacyWorkspace,
       '.dsh-vision-router/artifacts',
       relativePath,
@@ -56,6 +57,36 @@ test('VisionArtifactStore publish preserves the hardened writer path, bytes and 
     )
     assert.deepEqual(await readFile(next), data)
     assert.deepEqual(await readFile(legacy), data)
+  })
+})
+
+test('legacy artifact boundary remains behavior-compatible after becoming a store shim', async () => {
+  await withTempDir('dvr-artifact-shim-', async (root) => {
+    const primitiveWorkspace = path.join(root, 'primitive')
+    const shimWorkspace = path.join(root, 'shim')
+    await mkdir(primitiveWorkspace)
+    await mkdir(shimWorkspace)
+
+    const data = Buffer.from('compatibility-shim')
+    const relativePath = 'nested/compat.txt'
+    const primitive = await primitiveWriteArtifactFile(
+      primitiveWorkspace,
+      'artifacts',
+      relativePath,
+      data,
+    )
+    const shim = await compatibilityWriteArtifactFile(
+      shimWorkspace,
+      'artifacts',
+      relativePath,
+      data,
+    )
+
+    assert.equal(
+      relativeToWorkspace(primitiveWorkspace, primitive),
+      relativeToWorkspace(shimWorkspace, shim),
+    )
+    assert.deepEqual(await readFile(shim), data)
   })
 })
 
