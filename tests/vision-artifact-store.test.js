@@ -127,7 +127,6 @@ test('facade run ownership protects an active run until release', async () => {
     const runId = '.vision-run-p2-active'
     const target = path.join(root, runId)
     await mkdir(target)
-    await readFile(new URL('data:text/plain,')).catch(() => undefined)
     const old = new Date(Date.now() - 60_000)
     await utimes(target, old, old)
 
