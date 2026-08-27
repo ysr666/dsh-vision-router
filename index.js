@@ -54,6 +54,8 @@ import {
   VISION_FAILURE_KINDS,
   VISION_RESULT_CODES,
 } from './lib/vision-resilience.js'
+import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
+import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   normalizeStructuredBootstrapResult,
@@ -3464,12 +3466,13 @@ export function apply(ctx, config = {}) {
       (pair) => pair && pair.provider === HTTP_ROUTE && availableHttp.has(pair.model),
     )
     const seen = new Set()
-    return [...native, ...local, ...http].filter((pair) => {
+    const base = [...native, ...local, ...http].filter((pair) => {
       const key = `${pair.provider}/${pair.model}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
     })
+    return applyVisionExecutionOrder(base, currentVisionExecutionOrder())
   }
 
   const routingPairWeight = (pair, entriesById) => {
@@ -4330,7 +4333,7 @@ export function apply(ctx, config = {}) {
         if (capability && capability.attemptable !== false && capability.image) add(provider, model)
       }
     }
-    return out
+    return applyVisionExecutionOrder(out, currentVisionExecutionOrder())
   }
 
   // ── vision chain route: fallback under our own control ─────────────────────
