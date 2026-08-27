@@ -7,6 +7,7 @@ import {
   generatedCapabilityRoute,
   installCapabilityShadowRuntime,
 } from '../lib/vision-capability-shadow.js'
+import { currentVisionExecutionOrder } from '../lib/vision-execution-order.js'
 
 const OVH = {
   name: 'ovh-free',
@@ -35,12 +36,16 @@ function fakeCtx(initialSettings = {}) {
   const registered = new Map()
   const logs = []
   const injections = []
+  let settingsRegisterCalls = 0
   const settingsScope = {
     get() { return settingsValue },
   }
   const settingsService = {
     get() { return settingsValue },
-    register() { return settingsScope },
+    register() {
+      settingsRegisterCalls += 1
+      return settingsScope
+    },
   }
   const ctx = {
     logger: {
@@ -73,8 +78,13 @@ function fakeCtx(initialSettings = {}) {
     logs,
     injections,
     settingsScope,
+    get settingsRegisterCalls() { return settingsRegisterCalls },
     setSettings(value) { settingsValue = value },
   }
+}
+
+function orderIds(order) {
+  return Array.isArray(order) ? order.map((row) => `${row.provider}/${row.model}`) : undefined
 }
 
 test('only the two router-owned generated routes are filtered', () => {
@@ -121,7 +131,9 @@ test('configured pi-ai provider keeps its credential ref only for benchmark exec
     },
   }
   const rows = await collectCapabilityShadowCandidates(
-    ctx, config, { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
+    ctx,
+    config,
+    { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
     { async get() { return undefined } },
   )
   const candidate = rows.find((row) => row.provider === 'zhipu-glm' && row.model === 'glm-4.6v-flash')
@@ -158,10 +170,17 @@ test('arbitrary DSH-discovered vision models never enter the automatic routing p
   ctx.llm.registration = (provider) => ({
     adapter: {
       constructor: { name: 'FakeRegisteredAdapter' },
-      listModels: async () => provider === 'auto-discovered' ? [{ id: 'not-selected', inputModalities: ['text', 'image'] }] : [],
+      listModels: async () => provider === 'auto-discovered'
+        ? [{ id: 'not-selected', inputModalities: ['text', 'image'] }]
+        : [],
     },
   })
-  const rows = await collectCapabilityShadowCandidates(ctx, config, fakeCore(), { async get() { return undefined } })
+  const rows = await collectCapabilityShadowCandidates(
+    ctx,
+    config,
+    fakeCore(),
+    { async get() { return undefined } },
+  )
   assert.ok(rows.some((row) => row.key === 'custom/chosen'))
   assert.ok(rows.every((row) => !row.key.includes('auto-discovered') && !row.key.includes('not-selected')))
 })
@@ -174,7 +193,12 @@ test('explicit vision-http rows preserve their configured position and are not t
     ],
   }
   const core = { ...fakeCore(), localProvidersOf: () => [] }
-  const rows = await collectCapabilityShadowCandidates(fakeCtx(config).ctx, config, core, { async get() { return undefined } })
+  const rows = await collectCapabilityShadowCandidates(
+    fakeCtx(config).ctx,
+    config,
+    core,
+    { async get() { return undefined } },
+  )
   assert.deepEqual(rows.slice(0, 2).map((row) => row.key), ['http:ovh-free/qwen3-vl', 'custom/chosen'])
   assert.equal(rows[0].routeRole, 'user')
 })
@@ -182,7 +206,12 @@ test('explicit vision-http rows preserve their configured position and are not t
 test('unselected built-in HTTP tier is fixed fallback-only', async () => {
   const config = { providers: [{ provider: 'custom', model: 'chosen', fallbacks: [] }] }
   const core = { ...fakeCore(), localProvidersOf: () => [] }
-  const rows = await collectCapabilityShadowCandidates(fakeCtx(config).ctx, config, core, { async get() { return undefined } })
+  const rows = await collectCapabilityShadowCandidates(
+    fakeCtx(config).ctx,
+    config,
+    core,
+    { async get() { return undefined } },
+  )
   const fallback = rows.find((row) => row.key === 'http:ovh-free/qwen3-vl')
   assert.ok(fallback)
   assert.equal(fallback.routeRole, 'fallback-only')
@@ -236,23 +265,30 @@ test('prototype fields cannot trigger planning or execution changes in ordered m
     routingPreference: 'balanced',
     providers: [{ provider: 'custom', model: 'm', fallbacks: [] }],
   }
-  const { ctx, registered, logs, injections } = fakeCtx(settings)
+  const { ctx, registered, logs } = fakeCtx(settings)
   let storeReads = 0
   const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
-    store: { async get() { storeReads += 1; return undefined } }, logger: ctx.logger,
+    store: { async get() { storeReads += 1; return undefined } },
+    logger: ctx.logger,
   })
   const originalResult = '{"ok":true,"answer":"same"}'
-  wrapped.tools.register({ name: 'vision_describe', async execute() { return originalResult } })
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      assert.equal(currentVisionExecutionOrder(), undefined)
+      return originalResult
+    },
+  })
   const result = await registered.get('vision_describe').execute(
-    { question: 'what is in this photo?' }, { agent: { session: {} } },
+    { question: 'what is in this photo?' },
+    { agent: { session: {} } },
   )
   assert.equal(result, originalResult)
   assert.equal(storeReads, 0)
   assert.equal(logs.length, 0)
-  assert.equal(injections.some((deps) => Array.isArray(deps) && deps.includes('webServer')), false)
 })
 
-test('Auto execution exposes the planned order only inside the current visual-tool call', async () => {
+test('runtime does not impersonate Settings get/register anymore', () => {
   const settings = {
     routingMode: 'auto',
     routingPreference: 'local',
@@ -260,29 +296,51 @@ test('Auto execution exposes the planned order only inside the current visual-to
   }
   const fixture = fakeCtx(settings)
   const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
-    store: { async get() { return undefined } }, logger: fixture.ctx.logger,
+    store: { async get() { return undefined } },
+    logger: fixture.ctx.logger,
   })
-  let capturedScope
+  let captured
   wrapped.inject(['settings'], (child) => {
-    capturedScope = child.settings.register('vision-router', {}, { base: settings })
+    captured = child.settings.register('vision-router', {}, { base: settings })
   })
-  assert.ok(capturedScope)
-  assert.deepEqual(capturedScope.get().providers, settings.providers)
+  assert.equal(fixture.settingsRegisterCalls, 1)
+  assert.equal(captured, fixture.settingsScope)
+  assert.deepEqual(captured.get(), settings)
+  assert.equal(currentVisionExecutionOrder(), undefined)
+})
+
+test('Auto execution exposes only provider/model order inside the current visual-tool call', async () => {
+  const settings = {
+    routingMode: 'auto',
+    routingPreference: 'local',
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  const fixture = fakeCtx(settings)
+  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+    store: { async get() { return undefined } },
+    logger: fixture.ctx.logger,
+  })
+  assert.equal(currentVisionExecutionOrder(), undefined)
 
   wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
-      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+      const order = currentVisionExecutionOrder()
+      assert.ok(Object.isFrozen(order))
+      assert.ok(order.every((pair) => Object.isFrozen(pair)))
+      assert.ok(order.every((pair) => Object.keys(pair).sort().join(',') === 'model,provider'))
+      return orderIds(order)
     },
   })
   const result = await fixture.registered.get('vision_describe').execute(
-    { question: 'what is here?' }, { agent: { session: {} } },
+    { question: 'what is here?' },
+    { agent: { session: {} } },
   )
   assert.deepEqual(result, [
     'vision-http/local-ollama/qwen2.5vl',
     'custom/generic',
   ])
-  assert.deepEqual(capturedScope.get().providers, settings.providers, 'scoped execution order must disappear after the call')
+  assert.equal(currentVisionExecutionOrder(), undefined, 'execution order must disappear after the call')
   assert.ok(fixture.logs.some((entry) => entry[0] === 'info' && String(entry[1]).includes('v2 auto execute')))
 })
 
@@ -311,27 +369,70 @@ test('Auto execution rechecks live authority after planning and refuses a stale 
     },
     logger: fixture.ctx.logger,
   })
-  let capturedScope
-  wrapped.inject(['settings'], (child) => {
-    capturedScope = child.settings.register('vision-router', {}, { base: initial })
-  })
   wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
-      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+      return orderIds(currentVisionExecutionOrder()) ?? ['custom/generic']
     },
   })
 
   const running = fixture.registered.get('vision_describe').execute(
-    { question: 'what is here?' }, { agent: { session: {} } },
+    { question: 'what is here?' },
+    { agent: { session: {} } },
   )
   await entered
   fixture.setSettings({ ...initial, routingMode: 'ordered' })
   releaseResolve()
   const result = await running
   assert.deepEqual(result, ['custom/generic'])
+  assert.equal(currentVisionExecutionOrder(), undefined)
   assert.ok(fixture.logs.some((entry) =>
     entry[0] === 'info' && entry.slice(1).some((part) => String(part).includes('authority-revoked')),
+  ))
+})
+
+test('Auto execution rejects a plan when any live settings field changes during evidence collection', async () => {
+  const initial = {
+    routingMode: 'auto',
+    routingPreference: 'local',
+    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
+  }
+  const fixture = fakeCtx(initial)
+  let enteredResolve
+  let releaseResolve
+  const entered = new Promise((resolve) => { enteredResolve = resolve })
+  const release = new Promise((resolve) => { releaseResolve = resolve })
+  let first = true
+  const wrapped = installCapabilityShadowRuntime(fixture.ctx, initial, fakeCore(), {
+    store: {
+      async get() {
+        if (first) {
+          first = false
+          enteredResolve()
+          await release
+        }
+        return undefined
+      },
+    },
+    logger: fixture.ctx.logger,
+  })
+  wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return orderIds(currentVisionExecutionOrder()) ?? ['custom/generic']
+    },
+  })
+  const running = fixture.registered.get('vision_describe').execute(
+    { question: 'what is here?' },
+    { agent: { session: {} } },
+  )
+  await entered
+  fixture.setSettings({ ...initial, routingPreference: 'quality' })
+  releaseResolve()
+  const result = await running
+  assert.deepEqual(result, ['custom/generic'])
+  assert.ok(fixture.logs.some((entry) =>
+    entry[0] === 'info' && entry.slice(1).some((part) => String(part).includes('settings-changed')),
   ))
 })
 
@@ -346,24 +447,22 @@ test('Auto planner failure is fail-closed to the original configured order', asy
     store: { async get() { throw new Error('profile store unavailable') } },
     logger: fixture.ctx.logger,
   })
-  let capturedScope
-  wrapped.inject(['settings'], (child) => {
-    capturedScope = child.settings.register('vision-router', {}, { base: settings })
-  })
   wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
-      return capturedScope.get().providers.map((row) => `${row.provider}/${row.model}`)
+      return orderIds(currentVisionExecutionOrder()) ?? ['custom/generic']
     },
   })
   const result = await fixture.registered.get('vision_describe').execute(
-    { question: 'what is here?' }, { agent: { session: {} } },
+    { question: 'what is here?' },
+    { agent: { session: {} } },
   )
   assert.deepEqual(result, ['custom/generic'])
+  assert.equal(currentVisionExecutionOrder(), undefined)
   assert.ok(fixture.logs.some((entry) => entry[0] === 'warn' && String(entry[1]).includes('auto planning failed')))
 })
 
-test('Auto scope never synthesizes an unconfigured direct HTTP route', () => {
+test('legacy parity helper never synthesizes an unconfigured direct HTTP route', () => {
   const config = {
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
   }

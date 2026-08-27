@@ -36,7 +36,7 @@ import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boun
 import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
 import { installSettingsLimitClientPrelude } from './lib/settings-limit-client-prelude.js'
 import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
-import { installCapabilityShadowRuntime } from './lib/vision-capability-shadow.js'
+import { installVisionRoutingRuntime } from './lib/vision-routing-runtime.js'
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
 import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
@@ -252,7 +252,7 @@ export function apply(ctx, config = {}) {
     { logger: logging.logger },
   )
   const breakerShadowHealth = createVisionBreakerShadowHealth(backgroundProfiling.ctx)
-  const capabilityShadowCtx = installCapabilityShadowRuntime(
+  const routingRuntimeCtx = installVisionRoutingRuntime(
     backgroundProfiling.ctx,
     runtimeConfig,
     core,
@@ -266,7 +266,7 @@ export function apply(ctx, config = {}) {
   // prepareCall normalization/reconciliation is already installed at the
   // deepest private Host registration boundary above. Do not wrap it again
   // here or a prepared adapter may capture a pre-wrapper stream.
-  const reconciledCtx = capabilityShadowCtx
+  const reconciledCtx = routingRuntimeCtx
   const liveDiscovery = installLiveModelDiscovery(reconciledCtx, {
     config: runtimeConfig,
     logger: logging.logger,

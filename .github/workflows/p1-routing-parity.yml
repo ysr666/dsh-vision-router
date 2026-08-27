@@ -28,5 +28,15 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Evidence collector parity and execution-order isolation
-        run: node --test tests/vision-routing-evidence-parity.test.js tests/vision-execution-order.test.js tests/vision-execution-order-plan-parity.test.js tests/vision-execution-order-apply.test.js
+      - name: P1 routing, authority, runtime and execution-order parity
+        run: >-
+          node --test
+          tests/vision-routing-evidence-parity.test.js
+          tests/vision-execution-order.test.js
+          tests/vision-execution-order-plan-parity.test.js
+          tests/vision-execution-order-apply.test.js
+          tests/vision-execution-order-core-wiring.test.js
+          tests/vision-capability-shadow.test.js
+          tests/vision-capability-router.test.js
+          tests/vision-routing-product.test.js
+          tests/vision-runtime-performance.test.js
