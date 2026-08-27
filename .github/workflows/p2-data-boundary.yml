@@ -1,0 +1,54 @@
+name: P2 Data Boundary
+
+on:
+  pull_request:
+    paths:
+      - 'lib/artifact-*.js'
+      - 'lib/vision-artifact-store.js'
+      - 'lib/vision-tool-runtime-boundary.js'
+      - 'lib/adversarial-hardening.js'
+      - 'tests/vision-artifact-store.test.js'
+      - 'tests/artifact-path-security.test.js'
+      - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/qa-cancellation-publication.test.js'
+      - '.github/workflows/p2-data-boundary.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/artifact-*.js'
+      - 'lib/vision-artifact-store.js'
+      - 'lib/vision-tool-runtime-boundary.js'
+      - 'lib/adversarial-hardening.js'
+      - 'tests/vision-artifact-store.test.js'
+      - 'tests/artifact-path-security.test.js'
+      - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/qa-cancellation-publication.test.js'
+      - '.github/workflows/p2-data-boundary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  artifact-boundary:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Artifact facade parity and lifecycle safety
+        run: >-
+          node --test
+          tests/vision-artifact-store.test.js
+          tests/artifact-path-security.test.js
+          tests/resource-retention-lifecycle.test.js
+          tests/qa-cancellation-publication.test.js
