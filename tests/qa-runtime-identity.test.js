@@ -79,8 +79,14 @@ test('vision_present registration accepts host originalDimensions without loosen
   )
 })
 
-test('entry keeps prepareCall, tool runtime, session policy bridge, diagnostics, structured hardening, runtime observation and backend runtime policy in final order', async () => {
-  const source = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+test('P3 final composition keeps runtime order outside the thin public entry', async () => {
+  const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+  const source = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
+
+  assert.match(entry, /import \{ applyVisionRuntimeComposition \} from '.\/lib\/runtime-composition\.js'/)
+  assert.match(entry, /return applyVisionRuntimeComposition\(ctx, config, core\)/)
+  assert.doesNotMatch(entry, /installVisionRouterFileLogging|installVisionRoutingRuntime|installVisionWebIntegration/)
+
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
   const adapterContractAt = source.indexOf(
     'const adapterContractCtx = contextWithCoalescedAdapterUpdates(localMutationCtx)',
