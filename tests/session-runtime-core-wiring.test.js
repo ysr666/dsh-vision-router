@@ -25,6 +25,16 @@ test('runtime composition creates one explicit SessionVisionRuntime and gives th
   )
 })
 
+test('session state and index expose no hidden current owner or lookup monkey-patch seam', async () => {
+  const state = await source('lib/session-vision-state.js')
+  const index = await source('lib/session-vision-index.js')
+
+  assert.doesNotMatch(state, /currentSessionVisionStateStore|\blet currentStore\b/)
+  assert.doesNotMatch(index, /currentSessionVisionStateStore|legacyLookupDelegation|adoptStore/)
+  assert.doesNotMatch(index, /store\.lookupAttachment\s*=/)
+  assert.match(index, /stateStore \?\? createSessionVisionStateStore\(\)/)
+})
+
 test('core accepts the optional internal runtime without breaking two-argument direct callers', async () => {
   const core = await source('index.js')
 
