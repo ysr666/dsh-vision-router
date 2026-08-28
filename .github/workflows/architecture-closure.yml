@@ -24,6 +24,7 @@ on:
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
+      - 'tests/presentation-switch.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -58,6 +59,7 @@ on:
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
+      - 'tests/presentation-switch.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -96,6 +98,7 @@ jobs:
           tests/core-vision-surface-parity.test.js
           tests/settings-impersonation-closure.test.js
           tests/presentation-convergence-parity.test.js
+          tests/presentation-switch.test.js
           tests/session-runtime-core-wiring.test.js
           tests/session-vision-runtime-parity.test.js
           tests/vision-execution-order-core-wiring.test.js
