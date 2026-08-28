@@ -26,10 +26,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DSH_VERSION="$(npm view @deepseek-ai/dsh-llm version)"
+          DSH_VERSION="$(npm view @deepseek-ai/dsh version)"
           test -n "$DSH_VERSION"
           echo "DSH_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
-          echo "Testing latest DSH contract: $DSH_VERSION"
+          echo "Testing latest published DSH release family: $DSH_VERSION"
+      - name: Verify DSH release family is published
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=(
+            '@deepseek-ai/dsh-attachment'
+            '@deepseek-ai/dsh-attachment-local'
+            '@deepseek-ai/dsh-llm'
+            '@deepseek-ai/dsh-llm-deepseek'
+            '@deepseek-ai/dsh-anonymous-user-id'
+            '@deepseek-ai/dsh-settings'
+            '@deepseek-ai/dsh-tools'
+            '@deepseek-ai/dsh-system-prompt'
+          )
+          missing=()
+          for package in "${packages[@]}"; do
+            published="$(npm view "${package}@${DSH_VERSION}" version 2>/dev/null || true)"
+            if [[ "$published" != "$DSH_VERSION" ]]; then
+              missing+=("$package")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "DSH root package @deepseek-ai/dsh@$DSH_VERSION is published, but the Host contract package family is incomplete:" >&2
+            printf '  - %s@%s\n' "${missing[@]}" "$DSH_VERSION" >&2
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - name: Pack plugin
         run: |
@@ -81,6 +107,6 @@ jobs:
           {
             echo '## Latest DSH compatibility investigation required'
             echo
-            echo "The scheduled canary failed against @deepseek-ai/dsh-llm ${DSH_VERSION}."
-            echo 'This job is intentionally non-gating for normal pull requests. Confirm the changed Host capability before changing the supported contract or adding compatibility code.'
+            echo "The scheduled canary failed against the @deepseek-ai/dsh ${DSH_VERSION} release family."
+            echo 'This job is intentionally non-gating for normal pull requests. Confirm whether the release family is fully published and then confirm the changed Host capability before changing the supported contract or adding compatibility code.'
           } >> "$GITHUB_STEP_SUMMARY"
