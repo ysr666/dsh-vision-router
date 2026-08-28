@@ -18,6 +18,7 @@ on:
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/core-vision-surface-parity.test.js'
+      - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
@@ -45,6 +46,7 @@ on:
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/core-vision-surface-parity.test.js'
+      - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
@@ -80,6 +82,7 @@ jobs:
           node --test
           tests/architecture-contract-baseline.test.js
           tests/core-vision-surface-parity.test.js
+          tests/session-runtime-core-wiring.test.js
           tests/session-vision-runtime-parity.test.js
           tests/vision-execution-order-core-wiring.test.js
           tests/session-vision-state-integration.test.js

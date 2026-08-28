@@ -73,6 +73,7 @@ import {
   scaleBox,
   scaledDimensions,
 } from './lib/image-resource-governor.js'
+import { createSessionVisionIndex } from './lib/session-vision-index.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
 import {
   ERROR_RESPONSE_MAX_BYTES,
@@ -3082,6 +3083,17 @@ export function apply(ctx, config = {}, runtime = {}) {
     descriptionMaxChars: 256 * 1024,
     attachmentMaxEntries: 256,
   })
+  const sessionVisionIndex = sessionVisionRuntime?.index ?? createSessionVisionIndex({
+    stateStore: visionState,
+    core: {
+      collectEventAttachmentRefs,
+      rewriteImageBlocks,
+      planToolResultImageShadows,
+      planGuardStopShadows,
+    },
+    config: () => current(),
+    logger: ctx.logger,
+  })
   const imageMemory = visionState.descriptionFacade
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
@@ -4730,284 +4742,16 @@ export function apply(ctx, config = {}, runtime = {}) {
     }, 'vision-router: proxy fetch')
   }
 
-  const recordUploadedAttachments = (session, attachments) => {
-    visionState.recordAttachments(session, attachments)
-  }
-
-  /**
-   * Index image attachments recorded anywhere in the session event log, not
-   * just in the inbox-claim message stream `agent/pre-step` hands us
-   * (issue #72). Host-produced images (the built-in `read_image` tool's
-   * re-uploads, persisted as `tool/result` events) never enter that stream,
-   * so the harness-announced attachment id stayed unresolvable even though
-   * the UI showed the image and the bytes are durably stored. `session.events`
-   * is the complete append-only log (seeded from storage on resume), so
-   * scanning it — incrementally, per session id — finds every ref with full
-   * metadata for a later `attachments.readImage(ref)`.
-   */
-  const scanSessionEventLog = (session) => {
-    if (!session) return
-    let events
-    try {
-      events = session.events
-    } catch {
-      return // not a host Session (or the getter is unavailable): nothing to scan
-    }
-    if (!Array.isArray(events) || events.length === 0) return
-    const last = visionState.getScannedEventSeq(session)
-    if (last >= events.length) return
-    const refs = collectEventAttachmentRefs(events.slice(last))
-    visionState.setScannedEventSeq(session, events.length)
-    if (refs.length > 0) recordUploadedAttachments(session, refs)
-  }
-
-  const lookupAttachment = (session, id) => {
-    let hit = visionState.lookupAttachment(session, id)
-    if (hit !== undefined) return hit
-    // Cache eviction is a performance event, never a correctness event. First
-    // consume any newly appended log entries; if the requested ref was older
-    // than the bounded working set, perform a target-only recovery from the
-    // durable session log instead of rebuilding an unbounded index.
-    if (session !== undefined) {
-      scanSessionEventLog(session)
-      hit = visionState.lookupAttachment(session, id)
-      if (hit !== undefined) return hit
-      let events
-      try {
-        events = session.events
-      } catch {
-        events = undefined
-      }
-      if (Array.isArray(events) && events.length > 0) {
-        const wanted = String(id)
-        const recovered = collectEventAttachmentRefs(events).find(
-          (ref) => ref && String(ref.attachmentId) === wanted,
-        )
-        if (recovered !== undefined) {
-          visionState.recordAttachments(session, [recovered])
-          return recovered
-        }
-      }
-    }
-    return undefined
-  }
-
-  // ── issue #74: shadow-sanitize tool-result image blocks on the surface ────
-  //
-  // A tool result that renders an image block (vision_present, or the host
-  // read_image on image-capable routes) is persisted as a durable
-  // `tool/result` event and then flows into EVERY later request through
-  // `Session.deriveMessages()`. A text-only adapter (DeepSeek native, pi-ai
-  // text routes) rejects nested images with UNSUPPORTED_CONTENT and the
-  // session is locked forever. The pre-step inbox sanitizer cannot see these
-  // historical events, so the surface itself is rewritten instead: each
-  // offending event is shadowed by a sanitized replacement event
-  // (`surfaceOp: {op:'replace'}`, the same mechanism the host compaction
-  // pruner uses). The Web UI transcript renders append-origin events, so the
-  // user still sees the image; only the model-visible surface is sanitized.
-  // The decision is route-aware: an image-capable route legitimately consumes
-  // read_image's result image, mirroring the host's own gate
-  // (`assertImageCapableRoute` in dsh-tool-fs).
-
-  // session -> { count: nodes examined, done: Set<seqs already decided> }
-  const sessionSurfaceScans = new WeakMap()
-
-  const sessionRouteHandlesImages = async (session) => {
-    let provider
-    let model
-    try {
-      const header = typeof session.requestHeader === 'function' ? session.requestHeader() : undefined
-      provider = header && header.config ? header.config.provider : undefined
-      model = header && header.config ? header.config.model : undefined
-    } catch {
-      return false
-    }
-    if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') {
-      return false
-    }
-    // Plugin-owned routes handle image blocks at their stream boundary: the
-    // wrapper and the provider twins rewrite them into markers/descriptions,
-    // the stealth adapter does the same, and the vision-chain route serves
-    // image-capable models.
-    if (provider === wrapperRoute() || provider === chainRoute() || provider.endsWith('-vision')) {
-      return true
-    }
-    if (stealthActive && provider === 'deepseek-official') return true
-    // Routing mode reverse-routes text-only turns back to the text provider;
-    // when neither the wrapper nor the stealth adapter is there to rewrite
-    // images, the reverse target is the bare text adapter, which rejects
-    // tool-result images. Sanitize so text turns stay usable.
-    if (routingEnabled() && reverseRoutingEnabled() && !wrapperRegistered && !stealthActive) {
-      return false
-    }
-    // Same probe the host uses to gate read_image: only routes whose models
-    // declare image input may keep tool-result images.
-    try {
-      const info = await ctx.llm.resolveModelInfo(provider, model)
-      return Array.isArray(info && info.inputModalities) && info.inputModalities.includes('image')
-    } catch {
-      return false // unknown route: fail safe and sanitize
-    }
-  }
-
-  const sanitizeSessionToolResults = async (session) => {
-    if (!session) return
-    let events
-    let nodes
-    try {
-      events = session.events
-      nodes = session.surface && session.surface.nodes
-    } catch {
-      return // not a host Session: nothing to sanitize
-    }
-    if (!Array.isArray(events) || !Array.isArray(nodes) || nodes.length === 0) return
-    let scan = sessionSurfaceScans.get(session)
-    if (!scan) {
-      scan = { count: 0, done: new Set() }
-      sessionSurfaceScans.set(session, scan)
-    }
-    // Compaction replaces the surface wholesale; a shrunk node list means the
-    // positional cursor is stale, so restart from the head. Kept decisions are
-    // memoized in `done`, so a restart is a cheap no-op for examined events.
-    if (nodes.length < scan.count) {
-      scan.count = 0
-      scan.done = new Set()
-    }
-    if (nodes.length === scan.count) return
-    let routeHandlesImages
-    const newSeqs = nodes.slice(scan.count)
-    for (const seq of newSeqs) {
-      const event = events[seq]
-      if (!event || event.type !== 'tool/result' || scan.done.has(seq)) continue
-      const message = event.data && event.data.message
-      if (!message || !Array.isArray(message.content) || !blocksHaveImage(message.content)) {
-        scan.done.add(seq)
-        continue
-      }
-      if (routeHandlesImages === undefined) {
-        routeHandlesImages = await sessionRouteHandlesImages(session)
-      }
-      if (routeHandlesImages) {
-        // Image-capable route: keep the image (read_image's result is the
-        // model's view of the file). The wrapper/twin/stealth routes rewrite
-        // it at stream time anyway.
-        scan.done.add(seq)
-        continue
-      }
-      const sanitized = sanitizeToolResultMessage(message)
-      if (sanitized === message) {
-        scan.done.add(seq)
-        continue
-      }
-      try {
-        session.append(
-          'tool/result',
-          { ...event.data, message: sanitized },
-          {
-            surfaceOp: { op: 'replace', start: seq, end: seq },
-            sourceEventSeqs: [seq],
-          },
-        )
-        scan.done.add(seq)
-        ctx.logger?.info(
-          'vision-router: sanitized a tool-result image block out of the model surface (event seq %s)',
-          seq,
-        )
-      } catch (error) {
-        // A failed shadow leaves the original event on the surface: the
-        // session stays usable (today's behavior) instead of crashing the
-        // pre-step.
-        ctx.logger?.warn(
-          'vision-router: could not sanitize tool-result image at event seq %s (%s)',
-          seq,
-          error && error.message ? error.message : String(error),
-        )
-      }
-    }
-    scan.count += newSeqs.length
-  }
-
-  /**
-   * Shadow-sanitize persisted guard-stop messages off the model surface.
-   *
-   * Guard-stop orders (turn-budget / depth-quota exhausted) were injected as
-   * `user/message` events and persisted into session history. `agent/pre-step`
-   * only sees the inbox claim — never the historical surface — so a pre-step
-   * rewrite cannot catch them before `Session.deriveMessages()` feeds history
-   * to the adapter. A persisted guard-stop is then replayed on EVERY later
-   * turn as a standing "never call vision tools again" order, even though the
-   * per-turn budget/depth quota resets every turn: the first image in a
-   * session is recognized, but every later image answers "本轮视觉总时间预算
-   * 已耗尽…" without calling any vision tool.
-   *
-   * This uses the same harness surface-shadow mechanism as the tool-result
-   * image sanitizer above: replace the surface node with an inert note via
-   * `surfaceOp: {op:'replace'}` + `sourceEventSeqs`, so the human transcript
-   * keeps the original while every later `deriveMessages()` projection sees
-   * the replacement. Durable, replayable, survives session resume.
-   */
-  const guardStopSurfaceScans = new WeakMap()
-  const sanitizeSessionGuardStops = async (session) => {
-    if (!session) return
-    let events
-    let nodes
-    try {
-      events = session.events
-      nodes = session.surface && session.surface.nodes
-    } catch {
-      return // not a host Session: nothing to sanitize
-    }
-    if (!Array.isArray(events) || !Array.isArray(nodes) || nodes.length === 0) return
-    let scan = guardStopSurfaceScans.get(session)
-    if (!scan) {
-      scan = { count: 0, done: new Set() }
-      guardStopSurfaceScans.set(session, scan)
-    }
-    // Compaction replaces the surface wholesale; a shrunk node list means the
-    // positional cursor is stale, so restart from the head (same as the
-    // tool-result sanitizer above).
-    if (nodes.length < scan.count) {
-      scan.count = 0
-      scan.done = new Set()
-    }
-    if (nodes.length === scan.count) return
-    const newSeqs = nodes.slice(scan.count)
-    const plans = planGuardStopShadows(events, newSeqs)
-    for (const plan of plans) {
-      if (scan.done.has(plan.seq)) continue
-      scan.done.add(plan.seq)
-      try {
-        session.append(
-          'user/message',
-          plan.data,
-          {
-            surfaceOp: { op: 'replace', start: plan.seq, end: plan.seq },
-            sourceEventSeqs: [plan.seq],
-          },
-        )
-        ctx.logger?.info(
-          'vision-router: shadowed a persisted guard-stop message off the model surface (event seq %s)',
-          plan.seq,
-        )
-      } catch (error) {
-        // A failed shadow leaves the original event on the surface: the
-        // session stays usable (today's behavior) instead of crashing the
-        // pre-step.
-        ctx.logger?.warn(
-          'vision-router: could not shadow guard-stop at event seq %s (%s)',
-          plan.seq,
-          error && error.message ? error.message : String(error),
-        )
-      }
-    }
-    scan.count += newSeqs.length
-  }
+  const lookupAttachment = (session, id) => sessionVisionIndex.lookupAttachment(session, id)
 
   // session -> { turn, startIndex, hasImage, routed, failures, lastError }
   const turnState = new WeakMap()
 
   ctx.on('agent/pre-step', async (payload, next) => {
-    const decision = await next()
+    let decision = await next()
+    if (sessionVisionRuntime?.index === undefined) {
+      decision = await sessionVisionIndex.prepareDecision(payload, decision)
+    }
     if (decision && decision.kind === 'reject') return decision
     const session = payload.agent && payload.agent.session
     if (!session) return decision
@@ -5038,40 +4782,13 @@ export function apply(ctx, config = {}, runtime = {}) {
         )
       }
     }
-    // Record every raw image reference before nested tool-result images are
-    // sanitized. This preserves attachment lookup for a later vision_describe.
-    const rawImageRefs = rewriteImageBlocks(rawMessages)
-    recordUploadedAttachments(session, rawImageRefs.attachments)
-    // Also index image attachments that live only in the session event log
-    // (read_image re-uploads never cross the inbox-claim message stream).
-    // Incremental: scans only new events (issue #72).
-    scanSessionEventLog(session)
     // Hard invariant: tool-produced image blocks never reach a model request.
-    // Two layers: (1) sanitize tool-result images in the inbox claim, and
-    // (2) shadow-sanitize historical tool/result events on the session
-    // surface (issue #74) — the only lever that can rewrite durable history.
+    // SessionVisionIndex owns durable-log indexing and historical surface
+    // repair; Core retains only the current inbox sanitizer.
     const sanitizedToolResults = sanitizeToolResultImages(rawMessages)
     const messages = sanitizedToolResults.messages
     const hasImage = messages.some((message) => blocksHaveImage(message && message.content))
-    try {
-      await sanitizeSessionToolResults(session)
-    } catch (error) {
-      ctx.logger?.warn(
-        'vision-router: session-surface sanitization failed (%s)',
-        error && error.message ? error.message : String(error),
-      )
-    }
-    // Guard-stop leftovers are persisted user messages, so they can only be
-    // removed from the model surface through the same shadow mechanism as
-    // tool-result images (issue #74-style surface rewrite).
-    try {
-      await sanitizeSessionGuardStops(session)
-    } catch (error) {
-      ctx.logger?.warn(
-        'vision-router: guard-stop surface sanitization failed (%s)',
-        error && error.message ? error.message : String(error),
-      )
-    }
+
     // Register the turn state BEFORE the image-turn branches below: those
     // branches return early (auto-mount reminder, history rewrite), and the
     // agent/request hook must still see the state, otherwise an image turn is
