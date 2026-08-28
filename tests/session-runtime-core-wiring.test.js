@@ -31,7 +31,7 @@ test('session state and index expose no hidden current owner or lookup monkey-pa
 
   assert.doesNotMatch(state, /currentSessionVisionStateStore|\blet currentStore\b/)
   assert.doesNotMatch(index, /currentSessionVisionStateStore|legacyLookupDelegation|adoptStore/)
-  assert.doesNotMatch(index, /store\.lookupAttachment\s*=/)
+  assert.doesNotMatch(index, /store\.lookupAttachment\s*=(?!=)/)
   assert.match(index, /stateStore \?\? createSessionVisionStateStore\(\)/)
 })
 
