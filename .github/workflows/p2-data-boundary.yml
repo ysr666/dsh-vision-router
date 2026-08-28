@@ -14,6 +14,10 @@ on:
       - 'lib/native-image-coexistence.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
+      - 'lib/vision-provider-transport.js'
+      - 'lib/http-compat.js'
+      - 'lib/catalog-corrections.js'
+      - 'lib/public-entry.js'
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
@@ -25,6 +29,8 @@ on:
       - 'tests/issue-276-entry-policy-bridge.test.js'
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
+      - 'tests/vision-provider-transport.test.js'
+      - 'tests/http-compat.test.js'
       - '.github/workflows/p2-data-boundary.yml'
   push:
     branches: [main]
@@ -40,6 +46,10 @@ on:
       - 'lib/native-image-coexistence.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
+      - 'lib/vision-provider-transport.js'
+      - 'lib/http-compat.js'
+      - 'lib/catalog-corrections.js'
+      - 'lib/public-entry.js'
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
@@ -51,6 +61,8 @@ on:
       - 'tests/issue-276-entry-policy-bridge.test.js'
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
+      - 'tests/vision-provider-transport.test.js'
+      - 'tests/http-compat.test.js'
       - '.github/workflows/p2-data-boundary.yml'
 
 permissions:
@@ -107,3 +119,25 @@ jobs:
           tests/issue-276-entry-policy-bridge.test.js
           tests/issue-276-session-image-ownership.test.js
           tests/issue-289-native-nonintervention.test.js
+
+  provider-transport:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Router-owned provider HTTP is independent of the global fetch patch
+        run: >-
+          node --test
+          tests/vision-provider-transport.test.js
+          tests/http-compat.test.js
