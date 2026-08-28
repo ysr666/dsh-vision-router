@@ -14,6 +14,7 @@ import { contextWithReplayEnvelopeV2Compat } from './lib/replay-envelope-v2-comp
 import { contextWithVisionExecutionPolicy } from './lib/vision-execution-policy.js'
 import { contextWithVisionBackendRuntimePolicy } from './lib/vision-backend-runtime-policy.js'
 import { contextWithNativeImageCoexistence } from './lib/native-image-coexistence.js'
+import { installSessionVisionIndexBoundary } from './lib/session-vision-index.js'
 import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-policy-bridge.js'
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
@@ -224,10 +225,21 @@ export function apply(ctx, config = {}) {
   })
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
+  // P2-C centralizes the durable attachment index and two model-surface repair
+  // cursors inside the same native-ownership ALS. Its decorated next() runs
+  // after downstream middleware settles but before the mature core resumes, so
+  // the old core scan blocks become compatibility no-ops without changing Host
+  // persistence or resume semantics.
+  const sessionIndexCtx = installSessionVisionIndexBoundary(
+    nativeImageCompat.ctx,
+    nativeImageCompat.config,
+    core,
+    { logger: logging.logger },
+  )
   // Feed the session-level image-ownership decision into the legacy core's
   // wrapper/tool gates without reintroducing a global policy guess.
   const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(
-    nativeImageCompat.ctx,
+    sessionIndexCtx,
     nativeImageCompat.config,
     { rewriteHistoryImages: core.rewriteHistoryImages },
   )

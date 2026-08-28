@@ -3,12 +3,14 @@ name: P2 Data Boundary
 on:
   pull_request:
     paths:
+      - 'entry.js'
       - 'lib/artifact-*.js'
       - 'lib/vision-artifact-store.js'
       - 'lib/vision-tool-runtime-boundary.js'
       - 'lib/adversarial-hardening.js'
       - 'lib/session-surface-policy.js'
       - 'lib/session-vision-state.js'
+      - 'lib/session-vision-index.js'
       - 'lib/native-image-coexistence.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
@@ -23,6 +25,7 @@ on:
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
       - 'tests/session-vision-state-integration.test.js'
+      - 'tests/session-vision-index.test.js'
       - 'tests/issue-276-entry-policy-bridge.test.js'
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
@@ -32,12 +35,14 @@ on:
   push:
     branches: [main]
     paths:
+      - 'entry.js'
       - 'lib/artifact-*.js'
       - 'lib/vision-artifact-store.js'
       - 'lib/vision-tool-runtime-boundary.js'
       - 'lib/adversarial-hardening.js'
       - 'lib/session-surface-policy.js'
       - 'lib/session-vision-state.js'
+      - 'lib/session-vision-index.js'
       - 'lib/native-image-coexistence.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
@@ -52,6 +57,7 @@ on:
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
       - 'tests/session-vision-state-integration.test.js'
+      - 'tests/session-vision-index.test.js'
       - 'tests/issue-276-entry-policy-bridge.test.js'
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
@@ -103,12 +109,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Session surface, ownership and legacy bridge parity
+      - name: Session surface, index, resume and ownership parity
         run: >-
           node --test
           tests/session-surface-policy.test.js
           tests/session-vision-state.test.js
           tests/session-vision-state-integration.test.js
+          tests/session-vision-index.test.js
           tests/issue-276-entry-policy-bridge.test.js
           tests/issue-276-session-image-ownership.test.js
           tests/issue-289-native-nonintervention.test.js
