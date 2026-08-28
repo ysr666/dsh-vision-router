@@ -32,8 +32,13 @@ test('core delegates Session indexing, durable recovery and surface repair to on
   )
   assert.match(
     core,
-    /if \(sessionVisionRuntime === undefined\) \{\s*await visionIndex\.prepareDecision\(payload, decision\)\s*\}/s,
-    'direct two-argument core callers must reuse the same index instead of a second legacy algorithm',
+    /if \(sessionVisionRuntime === undefined\) \{[\s\S]*?visionIndex\.recordAttachments\(session, rawImageRefs\.attachments\)[\s\S]*?visionIndex\.scanEventLog\(session\)[\s\S]*?\}/,
+    'direct two-argument core callers must record and scan through SessionVisionIndex before inbox sanitization',
+  )
+  assert.match(
+    core,
+    /if \(sessionVisionRuntime === undefined\) \{[\s\S]*?await visionIndex\.repairToolResultSurface\(session\)[\s\S]*?await visionIndex\.repairGuardStopSurface\(session\)[\s\S]*?\}/,
+    'direct two-argument core callers must repair the historical surface through SessionVisionIndex',
   )
 
   assert.doesNotMatch(core, /const scanSessionEventLog =/)
