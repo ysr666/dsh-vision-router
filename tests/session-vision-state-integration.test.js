@@ -5,7 +5,12 @@ import test from 'node:test'
 const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
 
 test('runtime no longer owns cross-turn vision state in process-global raw Maps', () => {
-  assert.match(source, /const visionState = createSessionVisionStateStore\(/)
+  assert.match(source, /const sessionVisionRuntime = runtime\?\.sessionVision/)
+  assert.match(
+    source,
+    /const visionState = sessionVisionRuntime\?\.stateStore \?\? createSessionVisionStateStore\(/,
+    'explicit composition ownership must take precedence while preserving two-argument direct-call fallback',
+  )
   assert.doesNotMatch(source, /const imageMemory = new Map\(\)/)
   assert.doesNotMatch(source, /const sessionAttachmentsById = new Map\(\)/)
   assert.doesNotMatch(source, /const scannedSessionEventSeqs = new Map\(\)/)
