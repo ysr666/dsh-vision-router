@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import { resolveSessionSurfacePolicy } from '../lib/session-surface-policy.js'
 import {
   CORE_VISION_SURFACE_KEYS,
+  createCoreVisionSurfaceRuntime,
   resolveCoreVisionSurface,
 } from '../lib/core-vision-surface.js'
 
@@ -80,6 +82,11 @@ test('explicit core surface is exactly equivalent to every legacy projection com
         assert.equal(explicit.ownership, legacy.policy.ownership)
         assert.equal(explicit.preserveRawImages, legacy.policy.preserveRawImages)
         assert.equal(explicit.rewriteCurrentImages, legacy.policy.rewriteCurrentImages)
+        assert.equal(explicit.toolAvailable, legacy.values.tool !== false)
+        assert.equal(explicit.rewriteEnabled, legacy.values.rewriteImages !== false)
+        assert.equal(explicit.instantDescribe, legacy.values.instantDescribe === true)
+        assert.equal(explicit.autoActivateOnImage, legacy.values.autoActivateOnImage !== false)
+        assert.equal(explicit.structuredBootstrap, legacy.values.structuredVisionBootstrap === true)
         cases += 1
       }
     }
@@ -126,4 +133,52 @@ test('explicit surface cannot expose unrelated plugin configuration as a fake Se
   assert.equal(Object.hasOwn(explicit.values, 'allowRemoteSettings'), false)
   assert.equal(Object.isFrozen(explicit), true)
   assert.equal(Object.isFrozen(explicit.values), true)
+})
+
+test('CoreVisionSurface runtime keeps schema bootstrap explicit and reads live config', () => {
+  const live = {
+    tool: false,
+    rewriteImages: true,
+    instantDescribe: false,
+    autoActivateOnImage: true,
+    structuredVisionBootstrap: false,
+  }
+  const runtime = createCoreVisionSurfaceRuntime({ config: () => live })
+
+  assert.equal(runtime.current().toolAvailable, true)
+  assert.equal(runtime.current().rewriteEnabled, true)
+
+  runtime.finishSchemaBootstrap()
+  assert.equal(runtime.current().toolAvailable, false)
+
+  live.tool = true
+  live.instantDescribe = true
+  live.autoActivateOnImage = false
+  live.structuredVisionBootstrap = true
+  const current = runtime.current()
+  assert.equal(current.toolAvailable, true)
+  assert.equal(current.instantDescribe, true)
+  assert.equal(current.autoActivateOnImage, false)
+  assert.equal(current.structuredBootstrap, true)
+})
+
+test('production composition passes one explicit CoreVisionSurface runtime into Core', async () => {
+  const composition = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
+  const core = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+
+  assert.match(composition, /import \{ createCoreVisionSurfaceRuntime \} from '.\/core-vision-surface\.js'/)
+  assert.match(composition, /const coreVisionSurfaceRuntime = createCoreVisionSurfaceRuntime\(/)
+  assert.match(composition, /coreVisionSurface: coreVisionSurfaceRuntime/)
+  assert.match(composition, /coreVisionSurfaceRuntime\.finishSchemaBootstrap\(\)/)
+
+  assert.match(core, /const coreVisionSurfaceRuntime = runtime\?\.coreVisionSurface/)
+  assert.match(core, /coreVisionFlag\('toolAvailable'/)
+  assert.match(core, /coreVisionFlag\('rewriteEnabled'/)
+  assert.match(core, /coreVisionFlag\('instantDescribe'/)
+  assert.match(core, /coreVisionFlag\('autoActivateOnImage'/)
+  assert.match(core, /coreVisionFlag\('structuredBootstrap'/)
+
+  assert.doesNotMatch(core, /const toolEnabled = \(\) => current\(\)\.tool !== false/)
+  assert.doesNotMatch(core, /const rewriteEnabled = \(\) => current\(\)\.rewriteImages !== false/)
+  assert.doesNotMatch(core, /const structuredBootstrapEnabled = \(\) => current\(\)\.structuredVisionBootstrap === true/)
 })
