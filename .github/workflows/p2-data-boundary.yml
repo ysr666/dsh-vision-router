@@ -25,6 +25,7 @@ on:
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/p2-exit-gate.test.js'
       - 'tests/qa-cancellation-publication.test.js'
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
@@ -64,6 +65,7 @@ on:
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/p2-exit-gate.test.js'
       - 'tests/qa-cancellation-publication.test.js'
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
@@ -99,12 +101,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Artifact facade parity and lifecycle safety
+      - name: Artifact facade parity, lifecycle safety and P2 exit stress
         run: >-
           node --test
           tests/vision-artifact-store.test.js
           tests/artifact-path-security.test.js
           tests/resource-retention-lifecycle.test.js
+          tests/p2-exit-gate.test.js
           tests/qa-cancellation-publication.test.js
 
   session-surface:
