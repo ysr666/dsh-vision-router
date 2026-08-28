@@ -1,10 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import {
-  createSessionVisionStateStore,
-  currentSessionVisionStateStore,
-} from '../lib/session-vision-state.js'
+import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import {
   createSessionVisionIndex,
   installSessionVisionIndexBoundary,
@@ -86,9 +83,11 @@ function sessionWith(events = [], nodes = events.map((_, index) => index)) {
   }
 }
 
-test('state store constructed by mature core is discoverable by the P2 session index boundary', () => {
-  const store = createSessionVisionStateStore()
-  assert.equal(currentSessionVisionStateStore(), store)
+test('session index requires an explicit state-store owner', () => {
+  assert.throws(
+    () => createSessionVisionIndex({ core: coreStub() }),
+    /requires an explicit state store/,
+  )
 })
 
 test('incremental durable-log scan advances cursor and records only new attachment refs', () => {
@@ -108,8 +107,9 @@ test('incremental durable-log scan advances cursor and records only new attachme
   assert.equal(store.lookupAttachment(session, 'b')?.attachmentId, 'b')
 })
 
-test('bounded attachment eviction triggers target-only durable recovery through the same store lookup API', () => {
+test('bounded attachment eviction triggers target-only durable recovery only through the index', () => {
   const store = createSessionVisionStateStore({ attachmentMaxEntries: 1 })
+  const originalLookup = store.lookupAttachment
   const session = sessionWith([
     { type: 'user/message', data: { refs: [ref('old')] } },
     { type: 'user/message', data: { refs: [ref('new')] } },
@@ -118,10 +118,10 @@ test('bounded attachment eviction triggers target-only durable recovery through 
 
   index.scanEventLog(session)
   assert.equal(store.stateStats(session).attachments, 1)
-  // createSessionVisionIndex adopts the mature store's compatibility lookup;
-  // core callers therefore hit the centralized targeted recovery first.
-  assert.equal(store.lookupAttachment(session, 'old')?.attachmentId, 'old')
+  assert.equal(store.lookupAttachment(session, 'old'), undefined)
+  assert.equal(index.lookupAttachment(session, 'old')?.attachmentId, 'old')
   assert.equal(store.stateStats(session).attachments, 1)
+  assert.equal(store.lookupAttachment, originalLookup, 'index must never replace the store lookup API')
 })
 
 test('tool-result surface repair is incremental and persists only Host replacement events', async () => {
@@ -184,7 +184,12 @@ test('pre-step boundary prepares downstream decision before mature core resumes'
       return undefined
     },
   }
-  const wrapped = installSessionVisionIndexBoundary(ctx, {}, coreStub())
+  const wrapped = installSessionVisionIndexBoundary(
+    ctx,
+    {},
+    coreStub(),
+    { stateStore: store },
+  )
 
   let observedCursor = 0
   wrapped.on('agent/pre-step', async (payload, next) => {
