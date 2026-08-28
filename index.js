@@ -3070,6 +3070,17 @@ export function apply(ctx, config = {}, runtime = {}) {
   // Live configuration: composition entry at boot, then the resolved settings
   // section once the settings service mounts (installSettingsSection below).
   let current = () => config
+  const coreVisionSurfaceRuntime = runtime?.coreVisionSurface
+  const coreVisionFlag = (name, fallback) => {
+    if (
+      coreVisionSurfaceRuntime &&
+      typeof coreVisionSurfaceRuntime.current === 'function'
+    ) {
+      const surface = coreVisionSurfaceRuntime.current()
+      if (surface && typeof surface[name] === 'boolean') return surface[name]
+    }
+    return fallback()
+  }
   const pairs = () => providersOf(current())
   // #208: cross-turn visual knowledge belongs to a bounded session owner,
   // not to the plugin process. The compatibility facade is used only at
@@ -3138,8 +3149,20 @@ export function apply(ctx, config = {}, runtime = {}) {
         text && typeof text.model === 'string' && text.model !== '' ? text.model : 'deepseek-v4-pro',
     }
   }
-  const toolEnabled = () => current().tool !== false
-  const structuredBootstrapEnabled = () => current().structuredVisionBootstrap === true
+  const toolEnabled = () =>
+    coreVisionFlag('toolAvailable', () => current().tool !== false)
+  const structuredBootstrapEnabled = () =>
+    coreVisionFlag(
+      'structuredBootstrap',
+      () => current().structuredVisionBootstrap === true,
+    )
+  const instantDescribeEnabled = () =>
+    coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
+  const autoActivateOnImageEnabled = () =>
+    coreVisionFlag(
+      'autoActivateOnImage',
+      () => current().autoActivateOnImage !== false,
+    )
   const visionDepth = () => (current().visionDepth === 'fast' || current().visionDepth === 'deep' ? current().visionDepth : 'standard')
   // 档位提示（注入 bootstrapReminder / followupReminder）：
   // - bootstrapReminder（bootstrap 执行前，visual_kind 未知）：只给档位句
@@ -3155,7 +3178,8 @@ export function apply(ctx, config = {}, runtime = {}) {
   // Per-session turn gate: pass 1 is the actual universal structured visual call.
   // The gate opens only after vision_bootstrap has completed that visual request.
   const structuredBootstrapTurnState = new WeakMap()
-  const rewriteEnabled = () => current().rewriteImages !== false
+  const rewriteEnabled = () =>
+    coreVisionFlag('rewriteEnabled', () => current().rewriteImages !== false)
   const downscaleEnabled = () => current().downscale !== false
   const downscaleMaxPixels = () => {
     const value = current().downscaleMaxPixels
@@ -3180,7 +3204,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // The main 1+x structured bootstrap owns the first visual pass.
   // Never stack instantDescribe in front of it (that would silently become 2+x).
   const instantLocalProvider = () =>
-    current().instantDescribe === true && !structuredBootstrapEnabled()
+    instantDescribeEnabled() && !structuredBootstrapEnabled()
       ? localProvidersOf(current())
       : undefined
   const instantLocalStyle = () =>
@@ -4775,7 +4799,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       if (hasImage) {
         ctx.logger.info(
           'vision-router: image turn — instantDescribe=%s localBackends=%s',
-          current().instantDescribe === true ? 'on' : 'off',
+          instantDescribeEnabled() ? 'on' : 'off',
           localProvidersOf(current())
             .map((p) => p.name)
             .join(',') || 'none',
@@ -4887,7 +4911,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       // 都先尝试本地识别并把结果写入 imageMemory：后续 rewriteHistoryImages
       // / wrapper 改写时缓存命中，模型第一轮即"看懂"。失败（无本地后端 /
       // 连接失败 / 超时）静默回退原有标记，绝不阻塞图片轮。
-      if (rewriteEnabled() && !routingEnabled() && current().instantDescribe === true) {
+      if (rewriteEnabled() && !routingEnabled() && instantDescribeEnabled()) {
         const localProviders = instantLocalProvider()
         if (localProviders !== undefined && localProviders.length > 0) {
           try {
@@ -4914,7 +4938,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       }
       // Auto-mount the deep vision tools on image turns: the model can use
       // them from its very first step without the user asking for them.
-      if (toolEnabled() && current().autoActivateOnImage !== false) {
+      if (toolEnabled() && autoActivateOnImageEnabled()) {
         const outcome = activateDeepTools()
         if (!autoMountNotified && outcome.includes('已挂载')) {
           autoMountNotified = true

@@ -30,6 +30,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'installHostSettingsCompatibility(',
     'installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
     'contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
+    'createCoreVisionSurfaceRuntime({',
     'createSessionVisionRuntime({',
     'installSessionVisionIndexBoundary(',
     'installLegacyCoreVisionPolicyBridge(',
@@ -57,8 +58,8 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
 
   assert.match(
     source,
-    /\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{ sessionVision: sessionVisionRuntime \},?\s*\)/s,
-    'core must receive both the fully composed backend context and the explicit SessionVisionRuntime owner',
+    /\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    'core must receive the fully composed backend context plus explicit SessionVisionRuntime and CoreVisionSurface owners',
   )
   assert.ok(
     source.split('\n').length < 400,
