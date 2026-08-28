@@ -53,7 +53,9 @@ jobs:
           done
           if (( ${#missing[@]} > 0 )); then
             echo "DSH root package @deepseek-ai/dsh@$DSH_VERSION is published, but the Host contract package family is incomplete:" >&2
-            printf '  - %s@%s\n' "${missing[@]}" "$DSH_VERSION" >&2
+            for package in "${missing[@]}"; do
+              printf '  - %s@%s\n' "$package" "$DSH_VERSION" >&2
+            done
             exit 1
           fi
       - run: pnpm install --frozen-lockfile
