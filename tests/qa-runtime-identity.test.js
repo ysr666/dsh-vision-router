@@ -99,6 +99,12 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const nativeAt = source.indexOf(
     'const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
   )
+  const sessionRuntimeAt = source.indexOf(
+    'const sessionVisionRuntime = createSessionVisionRuntime({',
+  )
+  const sessionIndexAt = source.indexOf(
+    'const sessionIndexCtx = installSessionVisionIndexBoundary(',
+  )
   const bridgeAt = source.indexOf(
     'const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(',
   )
@@ -117,7 +123,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const backendRuntimeAt = source.indexOf(
     'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {',
   )
-  const coreApplyAt = source.indexOf('() => core.apply(backendRuntimeCtx, legacyCoreCompat.config)')
+  const coreApplyAt = source.indexOf('() => core.apply(')
   const finishAt = source.indexOf('legacyCoreCompat.finishSchemaBootstrap()', coreApplyAt)
 
   assert.ok(mutationAt >= 0)
@@ -129,7 +135,9 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(settingsAt > loggingAt)
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
   assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
-  assert.ok(bridgeAt > nativeAt, 'legacy core projection must consume the session-scoped ownership policy')
+  assert.ok(sessionRuntimeAt > nativeAt, 'explicit SessionVisionRuntime must consume the final session ownership context')
+  assert.ok(sessionIndexAt > sessionRuntimeAt, 'the session index boundary must receive the explicit runtime owner')
+  assert.ok(bridgeAt > sessionIndexAt, 'legacy core projection must consume the indexed session-scoped ownership policy')
   assert.ok(
     diagnosticsAt > bridgeAt,
     'limit diagnostics must observe only the final legacy-core policy view and may not become an execution policy itself',
@@ -145,6 +153,11 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     'preflight image-delivery policy must remain outermost so direct bridges bypass runtime speed sampling',
   )
   assert.ok(coreApplyAt > backendRuntimeAt, 'core must receive the fully composed backend runtime context')
+  assert.match(
+    source.slice(coreApplyAt),
+    /^\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{ sessionVision: sessionVisionRuntime \},?\s*\)/s,
+    'core must receive the same explicit SessionVisionRuntime owner as the session index boundary',
+  )
   assert.ok(finishAt > coreApplyAt, 'the temporary schema bootstrap projection ends immediately after core wiring')
 
   const afterAdapterContract = source.slice(adapterContractAt + 1)
