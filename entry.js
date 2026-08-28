@@ -19,11 +19,6 @@ import { installLegacyCoreVisionPolicyBridge } from './lib/legacy-core-vision-po
 import { installPiAiBridgeWireCompat } from './lib/pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './lib/live-model-discovery.js'
 import { installVisionModelRegistry } from './lib/vision-model-registry.js'
-import { installStrictLiveModelClientPrelude } from './lib/strict-live-model-client-prelude.js'
-import { installWrapperScopeClientPrelude } from './lib/wrapper-scope-client-prelude.js'
-import { installClientPresentationBoundary } from './lib/client-presentation-boundary.js'
-import { installGuideVisionToggleHighlight } from './lib/guide-vision-toggle-highlight.js'
-import { installVisionModelVisibilityBoundary } from './lib/vision-model-visibility-boundary.js'
 import { installAdversarialHardening } from './lib/adversarial-hardening.js'
 import { installOllamaColdStartGuard } from './lib/ollama-cold-start.js'
 import { installLocalVisionStabilizer } from './lib/local-vision-stabilizer.js'
@@ -34,14 +29,9 @@ import { installTesseractExecFileCompat } from './lib/tesseract-exec-compat.js'
 import { installLocalMutationRouteBoundary } from './lib/web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './lib/screenshot-source-boundary.js'
 import { installVisionToolRuntimeBoundary } from './lib/vision-tool-runtime-boundary.js'
-import { installVisionRouterRemoteSettingsBridge } from './lib/remote-settings-bridge.js'
-import { installSettingsLimitClientPrelude } from './lib/settings-limit-client-prelude.js'
-import { installSettingsRc8ClientLifecycle } from './lib/settings-client-rc8-lifecycle.js'
 import { installVisionRoutingRuntime } from './lib/vision-routing-runtime.js'
 import { createCapabilityProfileStore } from './lib/vision-capability-probe.js'
 import { installCapabilityBenchmarkService } from './lib/vision-capability-benchmark-service.js'
-import { installCapabilityBenchmarkClient } from './lib/vision-capability-benchmark-client.js'
-import { installVisionRoutingSettingsPrelude } from './lib/vision-routing-settings-prelude.js'
 import { resolveVisionRoutingProduct } from './lib/vision-routing-product.js'
 import {
   normalizeBackgroundMeasurementAuthority,
@@ -66,6 +56,10 @@ import {
   installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
 } from './lib/dsh-contract-compat.js'
+import {
+  installVisionSettingsWebBoundary,
+  installVisionWebIntegration,
+} from './lib/web/index.js'
 
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. This revision is also exposed as a resolved
@@ -208,11 +202,9 @@ export function apply(ctx, config = {}) {
   }
   const batchAttachmentHost = hasBatchAttachmentContract(stabilizedCtx)
   if (batchAttachmentHost) installVisionAttachmentAdmissionPolicy(stabilizedCtx, logging.logger)
-  // Install this before the consolidated Settings IA transform registered by
-  // the remote-settings bridge so the numeric fence remains the outer wrapper.
-  installSettingsLimitClientPrelude(stabilizedCtx)
-  installVisionRouterRemoteSettingsBridge(stabilizedCtx, logging.logger)
-  installSettingsRc8ClientLifecycle(stabilizedCtx)
+  // Preserve the historical pre-Host-settings wrapper order behind one P3-C
+  // Web responsibility boundary.
+  installVisionSettingsWebBoundary(stabilizedCtx, logging.logger)
   const ownershipCtx = batchAttachmentHost ? protectHostProviderOwnership(stabilizedCtx) : stabilizedCtx
   const settingsCtx = batchAttachmentHost
     ? installHostSettingsCompatibility(ownershipCtx, { ...runtimeConfig, stealth: false }, {
@@ -284,32 +276,17 @@ export function apply(ctx, config = {}) {
     logger: logging.logger,
   })
   installVisionModelRegistry(reconciledCtx, liveDiscovery, { config: runtimeConfig })
-  installClientPresentationBoundary(reconciledCtx)
-  // The same first walkthrough step now teaches the explicit "识图" control
-  // introduced by #284. Widen the existing spotlight to cover that button and
-  // the adjacent model selector as one target instead of leaving the control
-  // under the dimming veil.
-  installGuideVisionToggleHighlight(reconciledCtx)
-  // The Host keeps wrapper routes registered because image admission and the
-  // Vision toggle need their real identity. Hide only confidently owned
-  // wrapper groups from DSH's stock model-selection presentation and project an
-  // active wrapper back to its ordinary source label; uncertain routes stay
-  // visible rather than being guessed away.
-  installVisionModelVisibilityBoundary(reconciledCtx)
-  // Keep endpoint-discovered ids private to Vision Router's settings client,
-  // but make Settings -> Models authoritative when DSH already enumerates a
-  // provider. Live /models data now fills only a still-active provider whose
-  // DSH catalog is empty, so disabled models and removed providers cannot leak
-  // back into the Vision Router picker through stale endpoint discovery.
-  installStrictLiveModelClientPrelude(reconciledCtx)
-  // Surface the existing autoWrapProviders/wrappedProviders contract in the
-  // primary Vision Router settings section. This is presentation-only: the Host
-  // keeps one settings namespace and one wrapper-registration implementation.
-  installWrapperScopeClientPrelude(reconciledCtx)
-  // Capability Benchmark is the single visible and callable per-model
-  // capability-test surface in the release runtime.
-  installVisionRoutingSettingsPrelude(reconciledCtx)
-  installCapabilityBenchmarkClient(reconciledCtx)
+  // P3-C owns browser responsibility through lib/web/*. The mature injected
+  // clients remain unchanged and are installed in their historical order.
+  // Host product decisions are additionally exposed through a sanitized,
+  // read-only structured state endpoint for diagnostics/new client code.
+  installVisionWebIntegration(reconciledCtx, {
+    config: runtimeConfig,
+    core,
+    store: capabilityStore,
+    runtimePerformanceStore,
+    healthForCandidate: breakerShadowHealth.healthForCandidate,
+  })
   installPiAiBridgeWireCompat(reconciledCtx, logging.logger)
   const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {
     isBridgeEvidence: (provider, model) => liveDiscovery.hasModel(provider, model),

@@ -126,13 +126,18 @@ test('manual Release workflow creates only the exact current-main package tag be
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+  const benchmarkPanel = await readFile(new URL('../lib/web/benchmark-panel.js', import.meta.url), 'utf8')
+  const webComposition = await readFile(new URL('../lib/web/index.js', import.meta.url), 'utf8')
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
-  assert.doesNotMatch(entry, /installExactVisionTestClient/)
-  assert.doesNotMatch(entry, /installV2AcceptanceService/)
-  assert.doesNotMatch(entry, /createV2ExecutionAcceptanceObserver/)
-  assert.doesNotMatch(entry, /installVisionRoutingPreviewService/)
-  assert.match(entry, /installCapabilityBenchmarkClient/)
+  const releaseSurface = `${entry}\n${benchmarkPanel}\n${webComposition}`
+  assert.doesNotMatch(releaseSurface, /installExactVisionTestClient/)
+  assert.doesNotMatch(releaseSurface, /installV2AcceptanceService/)
+  assert.doesNotMatch(releaseSurface, /createV2ExecutionAcceptanceObserver/)
+  assert.doesNotMatch(releaseSurface, /installVisionRoutingPreviewService/)
+  assert.match(entry, /installVisionWebIntegration/)
+  assert.match(benchmarkPanel, /installCapabilityBenchmarkClient/)
+  assert.match(webComposition, /benchmarkPanel/)
   assert.equal(pkg.bin['dsh-vision-router'], './lib/doctor-cli-p0.js')
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.bin, 'dsh-vision-router-acceptance'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(pkg.scripts, 'test:acceptance:v2'), false)
