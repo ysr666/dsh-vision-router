@@ -20,6 +20,7 @@ on:
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/session-single-owner-core-wiring.test.js'
+      - 'tests/session-vision-index-direct-compat.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
       - 'tests/session-surface-policy.test.js'
@@ -48,6 +49,7 @@ on:
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/session-single-owner-core-wiring.test.js'
+      - 'tests/session-vision-index-direct-compat.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
       - 'tests/session-surface-policy.test.js'
@@ -84,6 +86,7 @@ jobs:
           tests/core-vision-surface-parity.test.js
           tests/session-vision-runtime-parity.test.js
           tests/session-single-owner-core-wiring.test.js
+          tests/session-vision-index-direct-compat.test.js
           tests/vision-execution-order-core-wiring.test.js
           tests/session-vision-state-integration.test.js
           tests/session-surface-policy.test.js
