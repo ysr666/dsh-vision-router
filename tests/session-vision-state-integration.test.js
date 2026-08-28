@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+const sessionIndexSource = await readFile(
+  new URL('../lib/session-vision-index.js', import.meta.url),
+  'utf8',
+)
 
 test('runtime no longer owns cross-turn vision state in process-global raw Maps', () => {
   assert.match(source, /const sessionVisionRuntime = runtime\?\.sessionVision/)
@@ -26,9 +30,9 @@ test('session-visible paths use the bound memory view instead of the global comp
 })
 
 test('attachment cache miss performs target-only durable log recovery', () => {
-  assert.match(source, /collectEventAttachmentRefs\(events\)\.find\(/)
-  assert.match(source, /String\(ref\.attachmentId\) === wanted/)
-  assert.match(source, /visionState\.recordAttachments\(session, \[recovered\]\)/)
+  assert.match(sessionIndexSource, /core\.collectEventAttachmentRefs\(events\)\.find\(/)
+  assert.match(sessionIndexSource, /String\(ref\.attachmentId \?\? ref\.id\) === wanted/)
+  assert.match(sessionIndexSource, /store\.recordAttachments\(session, \[recovered\]\)/)
 })
 
 test('high-resolution upload admission remains separate from execution budgets', async () => {
