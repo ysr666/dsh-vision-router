@@ -209,7 +209,7 @@ Any of these channels can join the vision chain as an `httpProviders` entry (key
 - **Original pixels, real answers.** The vision chain reads the image at original resolution (auto-downscaled only to protect latency/quota); the agent's question travels with the image, so answers are about *your* question, not a generic description.
 - **Automatic failover with classified errors.** Region blocks, ToS filtering, 402 quota, 429 rate limits, context overflow, network failures — the chain walks providers one by one and only reports after all of them failed, with actionable advice. A 429 immediately advances to the next backend and opens a Retry-After-aware cooldown instead of sleeping inside the request.
 - **Image memory.** Vision answers are cached by attachment content hash; later text turns substitute the recorded description (marked as untrusted evidence), so DeepSeek genuinely remembers earlier images without re-spending vision calls.
-- **A verifiable pixel loop.** Reference → `vision_html_screenshot` → `vision_pixel_diff` (ratio + red heatmap + worst-region ranking) → fix → repeat until the mismatch converges. UI restoration becomes measurable instead of eyeballed.
+- **A verifiable pixel loop.** Reference → `vision_html_screenshot` → `vision_pixel_diff` (ratio + worst 8×8-grid regions) → fix → repeat until the mismatch converges. UI restoration becomes measurable instead of eyeballed.
 - **Stable tool schema.** All fourteen deep tools are registered from session start by default, avoiding a mid-conversation tool-list expansion that can invalidate long-context KV/prefix caches. `progressiveTools: true` remains an advanced boot-time opt-in; only then does `vision_activate` mount the tools on demand. See [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md).
 - **Selective proxy.** Only the configured vision provider hosts go through your local proxy; DeepSeek stays direct.
 
@@ -410,6 +410,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
+- **DSH Host support window:** DVR 2.0.x supports DSH `0.1.0-rc.6` (minimum), `0.1.0-rc.8` (previous train), and current `0.1.1-rc.2`. DVR 2.1.0 is the announced boundary that may raise the minimum to `0.1.0-rc.8`; a 2.0.x patch will not silently raise the Host floor. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
