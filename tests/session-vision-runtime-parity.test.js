@@ -49,6 +49,21 @@ test('explicit SessionVisionRuntime owns exactly one store and one index', () =>
   )
 })
 
+test('explicit runtime never monkey-patches the state-store lookup API', () => {
+  const store = createSessionVisionStateStore()
+  const originalLookup = store.lookupAttachment
+  const runtime = createSessionVisionRuntime({ core: coreStub(), stateStore: store })
+  const session = {
+    id: 'no-monkey-patch',
+    events: [{ type: 'user/message', data: { refs: [ref('durable')] } }],
+    surface: { nodes: [0] },
+  }
+
+  runtime.index.scanEventLog(session)
+  runtime.index.lookupAttachment(session, 'durable')
+  assert.equal(store.lookupAttachment, originalLookup)
+})
+
 test('explicit runtime index remains bound to its own store when legacy current-store pointer drifts', () => {
   const storeA = createSessionVisionStateStore()
   const runtime = createSessionVisionRuntime({ core: coreStub(), stateStore: storeA })
