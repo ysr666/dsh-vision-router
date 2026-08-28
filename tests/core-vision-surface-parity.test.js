@@ -172,11 +172,11 @@ test('production composition passes one explicit CoreVisionSurface runtime into 
   assert.match(composition, /coreVisionSurfaceRuntime\.finishSchemaBootstrap\(\)/)
 
   assert.match(core, /const coreVisionSurfaceRuntime = runtime\?\.coreVisionSurface/)
-  assert.match(core, /coreVisionFlag\('toolAvailable'/)
-  assert.match(core, /coreVisionFlag\('rewriteEnabled'/)
-  assert.match(core, /coreVisionFlag\('instantDescribe'/)
-  assert.match(core, /coreVisionFlag\('autoActivateOnImage'/)
-  assert.match(core, /coreVisionFlag\('structuredBootstrap'/)
+  assert.match(core, /coreVisionFlag\(\s*'toolAvailable'/)
+  assert.match(core, /coreVisionFlag\(\s*'rewriteEnabled'/)
+  assert.match(core, /coreVisionFlag\(\s*'instantDescribe'/)
+  assert.match(core, /coreVisionFlag\(\s*'autoActivateOnImage'/)
+  assert.match(core, /coreVisionFlag\(\s*'structuredBootstrap'/)
 
   assert.doesNotMatch(core, /const toolEnabled = \(\) => current\(\)\.tool !== false/)
   assert.doesNotMatch(core, /const rewriteEnabled = \(\) => current\(\)\.rewriteImages !== false/)
