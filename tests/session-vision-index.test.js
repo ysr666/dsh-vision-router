@@ -1,10 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import {
-  createSessionVisionStateStore,
-  currentSessionVisionStateStore,
-} from '../lib/session-vision-state.js'
+import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import {
   createSessionVisionIndex,
   installSessionVisionIndexBoundary,
@@ -86,9 +83,13 @@ function sessionWith(events = [], nodes = events.map((_, index) => index)) {
   }
 }
 
-test('state store constructed by mature core is discoverable by the P2 session index boundary', () => {
-  const store = createSessionVisionStateStore()
-  assert.equal(currentSessionVisionStateStore(), store)
+test('state-store factories are independent and expose no implicit current owner', () => {
+  const first = createSessionVisionStateStore()
+  const second = createSessionVisionStateStore()
+  const session = { id: 'factory-isolation' }
+  first.recordAttachments(session, [ref('first-only')])
+  assert.equal(first.lookupAttachment(session, 'first-only')?.attachmentId, 'first-only')
+  assert.equal(second.lookupAttachment(session, 'first-only'), undefined)
 })
 
 test('incremental durable-log scan advances cursor and records only new attachment refs', () => {
@@ -108,8 +109,9 @@ test('incremental durable-log scan advances cursor and records only new attachme
   assert.equal(store.lookupAttachment(session, 'b')?.attachmentId, 'b')
 })
 
-test('bounded attachment eviction triggers target-only durable recovery through the same store lookup API', () => {
+test('bounded attachment eviction recovers only through SessionVisionIndex without patching the store API', () => {
   const store = createSessionVisionStateStore({ attachmentMaxEntries: 1 })
+  const originalLookup = store.lookupAttachment
   const session = sessionWith([
     { type: 'user/message', data: { refs: [ref('old')] } },
     { type: 'user/message', data: { refs: [ref('new')] } },
@@ -118,9 +120,9 @@ test('bounded attachment eviction triggers target-only durable recovery through 
 
   index.scanEventLog(session)
   assert.equal(store.stateStats(session).attachments, 1)
-  // createSessionVisionIndex adopts the mature store's compatibility lookup;
-  // core callers therefore hit the centralized targeted recovery first.
-  assert.equal(store.lookupAttachment(session, 'old')?.attachmentId, 'old')
+  assert.equal(store.lookupAttachment(session, 'old'), undefined)
+  assert.equal(index.lookupAttachment(session, 'old')?.attachmentId, 'old')
+  assert.equal(store.lookupAttachment, originalLookup)
   assert.equal(store.stateStats(session).attachments, 1)
 })
 
@@ -174,6 +176,7 @@ test('surface cursor resets safely when compaction/replay shrinks the node list'
 
 test('pre-step boundary prepares downstream decision before mature core resumes', async () => {
   const store = createSessionVisionStateStore()
+  const index = createSessionVisionIndex({ stateStore: store, core: coreStub() })
   const handlers = new Map()
   const ctx = {
     on(event, handler) {
@@ -184,7 +187,7 @@ test('pre-step boundary prepares downstream decision before mature core resumes'
       return undefined
     },
   }
-  const wrapped = installSessionVisionIndexBoundary(ctx, {}, coreStub())
+  const wrapped = installSessionVisionIndexBoundary(ctx, {}, coreStub(), { index })
 
   let observedCursor = 0
   wrapped.on('agent/pre-step', async (payload, next) => {
