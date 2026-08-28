@@ -15,12 +15,17 @@ on:
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
       - 'lib/vision-provider-transport.js'
+      - 'lib/legacy-global-proxy-boundary.js'
       - 'lib/http-compat.js'
       - 'lib/catalog-corrections.js'
       - 'lib/public-entry.js'
+      - 'lib/vision-background-benchmark.js'
+      - 'docs/architecture/compat-inventory.md'
+      - 'docs/architecture/p2-jobs-feasibility.md'
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/p2-exit-gate.test.js'
       - 'tests/qa-cancellation-publication.test.js'
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
@@ -30,7 +35,10 @@ on:
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
       - 'tests/vision-provider-transport.test.js'
+      - 'tests/legacy-global-proxy-boundary.test.js'
       - 'tests/http-compat.test.js'
+      - 'tests/vision-background-benchmark.test.js'
+      - 'tests/vision-background-lifecycle.test.js'
       - '.github/workflows/p2-data-boundary.yml'
   push:
     branches: [main]
@@ -47,12 +55,17 @@ on:
       - 'lib/legacy-core-vision-policy-bridge.js'
       - 'lib/structured-flow-hardening.js'
       - 'lib/vision-provider-transport.js'
+      - 'lib/legacy-global-proxy-boundary.js'
       - 'lib/http-compat.js'
       - 'lib/catalog-corrections.js'
       - 'lib/public-entry.js'
+      - 'lib/vision-background-benchmark.js'
+      - 'docs/architecture/compat-inventory.md'
+      - 'docs/architecture/p2-jobs-feasibility.md'
       - 'tests/vision-artifact-store.test.js'
       - 'tests/artifact-path-security.test.js'
       - 'tests/resource-retention-lifecycle.test.js'
+      - 'tests/p2-exit-gate.test.js'
       - 'tests/qa-cancellation-publication.test.js'
       - 'tests/session-surface-policy.test.js'
       - 'tests/session-vision-state.test.js'
@@ -62,7 +75,10 @@ on:
       - 'tests/issue-276-session-image-ownership.test.js'
       - 'tests/issue-289-native-nonintervention.test.js'
       - 'tests/vision-provider-transport.test.js'
+      - 'tests/legacy-global-proxy-boundary.test.js'
       - 'tests/http-compat.test.js'
+      - 'tests/vision-background-benchmark.test.js'
+      - 'tests/vision-background-lifecycle.test.js'
       - '.github/workflows/p2-data-boundary.yml'
 
 permissions:
@@ -85,12 +101,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Artifact facade parity and lifecycle safety
+      - name: Artifact facade parity, lifecycle safety and P2 exit stress
         run: >-
           node --test
           tests/vision-artifact-store.test.js
           tests/artifact-path-security.test.js
           tests/resource-retention-lifecycle.test.js
+          tests/p2-exit-gate.test.js
           tests/qa-cancellation-publication.test.js
 
   session-surface:
@@ -136,8 +153,31 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Router-owned provider HTTP is independent of the global fetch patch
+      - name: Router-owned provider HTTP and legacy proxy narrowing
         run: >-
           node --test
           tests/vision-provider-transport.test.js
+          tests/legacy-global-proxy-boundary.test.js
           tests/http-compat.test.js
+
+  jobs-feasibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Current scheduler authority, preemption and lifecycle evidence
+        run: >-
+          node --test
+          tests/vision-background-benchmark.test.js
+          tests/vision-background-lifecycle.test.js

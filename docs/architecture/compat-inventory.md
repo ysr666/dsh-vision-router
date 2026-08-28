@@ -65,6 +65,15 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** upstream endpoint behavior becomes generic-compatible for a rule and regression evidence confirms the preset is no longer needed.
 - **Tests:** `http-compat`, provider HTTP regression tests.
 
+## `lib/legacy-global-proxy-boundary.js`
+
+- **Reason:** retain the process-global proxy patch only for Host-owned/raw-fetch visual providers that still lack a provider-scoped proxy seam. Router-owned `vision-http` and direct protocol-correction traffic already uses `VisionProviderTransport` with an explicit dispatcher.
+- **Host gap:** the supported Host window does not yet guarantee one provider-scoped/shared HTTP proxy seam that third-party Host-owned adapters can consume without a process-global fetch wrapper.
+- **First needed for:** legacy/custom Host-owned visual provider compatibility when users configure Vision Router proxy routing.
+- **Feature detection:** live visual-chain ownership. Router-owned routes bypass the legacy patch; any unknown/Host-owned provider conservatively keeps it available. This is capability/ownership detection, not a Host-version persona.
+- **Removal condition:** **the minimum supported DSH provides a provider-scoped/shared HTTP proxy seam** that covers the remaining Host-owned/raw-fetch provider compatibility requirement.
+- **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, `adversarial-hardening`, P2 Data Boundary Node 22/24.
+
 ## `lib/tesseract-exec-compat.js`
 
 - **Reason:** isolate runtime/Node process-exec differences around the local OCR binary.
