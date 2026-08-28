@@ -1,0 +1,114 @@
+name: DSH 0.1.2-alpha.1 Audit
+
+on:
+  push:
+    branches: [audit/dsh-0.1.2-alpha.1]
+
+permissions:
+  contents: read
+
+jobs:
+  alpha-contract:
+    name: alpha contract / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack plugin
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const { spawnSync } = require('node:child_process')
+          fs.mkdirSync('tmp-pack', { recursive: true })
+          const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+          const packed = spawnSync(cmd, ['pack', '--pack-destination', 'tmp-pack'], {
+            stdio: 'inherit',
+            shell: process.platform === 'win32',
+          })
+          if (packed.status !== 0) process.exit(packed.status ?? 1)
+      - name: Install DSH 0.1.2-alpha.1 Host fixture
+        shell: node {0}
+        env:
+          DSH_VERSION: 0.1.2-alpha.1
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const { createRequire } = require('node:module')
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-alpha-${process.platform}`)
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          const v = process.env.DSH_VERSION
+          const dependencies = {
+            'dsh-vision-router': `file:${tarball}`,
+            '@deepseek-ai/dsh-attachment': v,
+            '@deepseek-ai/dsh-attachment-local': v,
+            '@deepseek-ai/dsh-llm': v,
+            '@deepseek-ai/dsh-llm-deepseek': v,
+            '@deepseek-ai/dsh-anonymous-user-id': v,
+            '@deepseek-ai/dsh-settings': v,
+            '@deepseek-ai/dsh-tools': v,
+            '@deepseek-ai/dsh-system-prompt': v,
+            '@deepseek-ai/dsh-client-ui-settings': v,
+            '@deepseek-ai/dsh-client-ui-primitives': v,
+            '@deepseek-ai/dsh-client-runtime': v,
+            '@deepseek-ai/dsh-client-connection': v,
+            '@deepseek-ai/dsh-api-remotes': v,
+            '@deepseek-ai/dsh-client-ui-attachment': v,
+            sharp: '0.35.3'
+          }
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies,
+          }, null, 2))
+          const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+          const installed = spawnSync(cmd, ['install'], {
+            cwd: hostDir,
+            stdio: 'inherit',
+            shell: process.platform === 'win32',
+          })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+          const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
+          for (const name of Object.keys(dependencies).filter((name) => name.startsWith('@deepseek-ai/dsh-'))) {
+            hostRequire.resolve(name)
+          }
+          fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
+      - name: Verify alpha Host contract
+        env:
+          EXPECT_BATCH: 'true'
+          EXPECT_DIMENSION: 'true'
+          EXPECT_CURRENT: 'true'
+        run: node scripts/dsh-host-contract-smoke.mjs
+      - name: Run targeted compatibility regressions
+        run: >-
+          node --test
+          tests/adapter-prepare-call-compat.test.js
+          tests/attachment-admission-policy.test.js
+          tests/dsh-host-capabilities.test.js
+          tests/doctor-host-capabilities.test.js
+          tests/native-image-coexistence.test.js
+          tests/issue-289-native-nonintervention.test.js
+          tests/client-presentation-boundary.test.js
+          tests/settings-ia-client-prelude.test.js
+          tests/remote-settings-bridge.test.js
+          tests/remote-settings-v2-contract.test.js
+          tests/issue-284-vision-mode-toggle.test.js
+          tests/pi-ai-bridge-wire-compat.test.js
