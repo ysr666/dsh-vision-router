@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import {
   DSH_SUPPORT_WINDOW,
@@ -49,4 +50,20 @@ test('support window text exposes current and announced floors without changing 
   assert.ok(lines.some((line) => line.includes('DVR 2.1.0 -> DSH 0.1.0-rc.8')))
   assert.ok(lines.some((line) => line.includes('HOST_BELOW_NEXT_FLOOR_CAPABILITIES')))
   assert.equal(Object.isFrozen(lines), true)
+})
+
+test('public READMEs state the current and announced Host floors', async () => {
+  const [english, chinese] = await Promise.all([
+    readFile(new URL('../README.md', import.meta.url), 'utf8'),
+    readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
+  ])
+
+  for (const source of [english, chinese]) {
+    assert.match(source, /2\.0\.x/)
+    assert.match(source, /0\.1\.0-rc\.6/)
+    assert.match(source, /0\.1\.0-rc\.8/)
+    assert.match(source, /0\.1\.1-rc\.2/)
+    assert.match(source, /2\.1\.0/)
+    assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
+  }
 })

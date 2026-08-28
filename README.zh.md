@@ -408,6 +408,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
+- **DSH Host 支持窗口：** DVR 2.0.x 支持 DSH `0.1.0-rc.6`（最低）、`0.1.0-rc.8`（上一支持线）以及当前 `0.1.1-rc.2`。DVR 2.1.0 是已公告、允许把最低 Host 提升到 `0.1.0-rc.8` 的边界；2.0.x 补丁版本不会静默提高最低 Host。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
