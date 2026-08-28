@@ -99,6 +99,9 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const nativeAt = source.indexOf(
     'const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
   )
+  const coreSurfaceRuntimeAt = source.indexOf(
+    'const coreVisionSurfaceRuntime = createCoreVisionSurfaceRuntime({',
+  )
   const sessionRuntimeAt = source.indexOf(
     'const sessionVisionRuntime = createSessionVisionRuntime({',
   )
@@ -135,7 +138,14 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(settingsAt > loggingAt)
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
   assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
-  assert.ok(sessionRuntimeAt > nativeAt, 'explicit SessionVisionRuntime must consume the final session ownership context')
+  assert.ok(
+    coreSurfaceRuntimeAt > nativeAt,
+    'explicit CoreVisionSurfaceRuntime must consume the final session ownership context',
+  )
+  assert.ok(
+    sessionRuntimeAt > coreSurfaceRuntimeAt,
+    'explicit SessionVisionRuntime must remain alongside the CoreVisionSurface owner',
+  )
   assert.ok(sessionIndexAt > sessionRuntimeAt, 'the session index boundary must receive the explicit runtime owner')
   assert.ok(bridgeAt > sessionIndexAt, 'legacy core projection must consume the indexed session-scoped ownership policy')
   assert.ok(
@@ -155,8 +165,8 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(coreApplyAt > backendRuntimeAt, 'core must receive the fully composed backend runtime context')
   assert.match(
     source.slice(coreApplyAt),
-    /^\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{ sessionVision: sessionVisionRuntime \},?\s*\)/s,
-    'core must receive the same explicit SessionVisionRuntime owner as the session index boundary',
+    /^\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    'core must receive the same explicit SessionVisionRuntime and CoreVisionSurfaceRuntime owners as composition',
   )
   assert.ok(finishAt > coreApplyAt, 'the temporary schema bootstrap projection ends immediately after core wiring')
 
