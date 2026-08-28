@@ -30,6 +30,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'installHostSettingsCompatibility(',
     'installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
     'contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
+    'createSessionVisionRuntime({',
     'installSessionVisionIndexBoundary(',
     'installLegacyCoreVisionPolicyBridge(',
     'installVisionLimitDiagnostics(',
@@ -44,7 +45,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'contextWithVisionBackendRuntimePolicy(',
     'installCapabilityBenchmarkService(',
     'installTesseractExecFileCompat(backendRuntimeCtx)',
-    'core.apply(backendRuntimeCtx, legacyCoreCompat.config)',
+    '() => core.apply(',
   ]
 
   let previous = -1
@@ -54,6 +55,11 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     previous = at
   }
 
+  assert.match(
+    source,
+    /\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{ sessionVision: sessionVisionRuntime \},?\s*\)/s,
+    'core must receive both the fully composed backend context and the explicit SessionVisionRuntime owner',
+  )
   assert.ok(
     source.split('\n').length < 400,
     'runtime composition must remain orchestration-sized rather than becoming a new monolith',

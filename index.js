@@ -3060,7 +3060,7 @@ export function isOpenAIHttpBridgeTransport(transport) {
   }
 }
 
-export function apply(ctx, config = {}) {
+export function apply(ctx, config = {}, runtime = {}) {
   // Route sharp version diagnostics (issue #75) through the harness logger
   // instead of console.warn, so the warning lands in the server log.
   registerSharpWarningHook((message) => {
@@ -3074,7 +3074,8 @@ export function apply(ctx, config = {}) {
   // not to the plugin process. The compatibility facade is used only at
   // adapter boundaries that do not expose a Session; ambiguous attachment ids
   // deliberately miss instead of crossing conversations.
-  const visionState = createSessionVisionStateStore({
+  const sessionVisionRuntime = runtime?.sessionVision
+  const visionState = sessionVisionRuntime?.stateStore ?? createSessionVisionStateStore({
     maxSessions: 64,
     idleTtlMs: 60 * 60 * 1000,
     descriptionMaxEntries: 64,
