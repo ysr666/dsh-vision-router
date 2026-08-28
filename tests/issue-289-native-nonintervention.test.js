@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+import { currentCoreVisionSurface } from '../lib/core-vision-surface.js'
 import {
   IMAGE_OWNERSHIP,
   contextWithNativeImageCoexistence,
@@ -113,17 +114,20 @@ test('Host-native image models make structured bootstrap optional, not tools una
   assert.equal(text.allowStructuredBootstrap, true)
 })
 
-test('legacy core sees 1+x disabled only during a native turn while tool access stays enabled', async () => {
+test('explicit CoreVisionSurface suppresses native 1+x without mutating Settings/config', async () => {
   const harness = boot()
   const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
   let observed
 
   legacy.ctx.on('agent/pre-step', async (payload, next) => {
+    const surface = currentCoreVisionSurface(legacy.config)
     observed = {
       ownership: currentSessionVisionPolicy()?.ownership,
-      structuredVisionBootstrap: legacy.config.structuredVisionBootstrap,
-      tool: legacy.config.tool,
+      surfaceStructuredBootstrap: surface.structuredBootstrap,
+      surfaceToolAvailable: surface.toolAvailable,
+      persistedStructuredBootstrap: legacy.config.structuredVisionBootstrap,
+      persistedTool: legacy.config.tool,
     }
     return next()
   })
@@ -136,8 +140,10 @@ test('legacy core sees 1+x disabled only during a native turn while tool access 
   )
   assert.deepEqual(observed, {
     ownership: IMAGE_OWNERSHIP.NATIVE,
-    structuredVisionBootstrap: false,
-    tool: true,
+    surfaceStructuredBootstrap: false,
+    surfaceToolAvailable: true,
+    persistedStructuredBootstrap: true,
+    persistedTool: true,
   })
 
   await handler(
@@ -146,8 +152,10 @@ test('legacy core sees 1+x disabled only during a native turn while tool access 
   )
   assert.deepEqual(observed, {
     ownership: IMAGE_OWNERSHIP.TEXT_ONLY,
-    structuredVisionBootstrap: true,
-    tool: true,
+    surfaceStructuredBootstrap: true,
+    surfaceToolAvailable: true,
+    persistedStructuredBootstrap: true,
+    persistedTool: true,
   })
 })
 

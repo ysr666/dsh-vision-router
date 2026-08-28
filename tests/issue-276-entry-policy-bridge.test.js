@@ -149,9 +149,6 @@ async function runCoreLikePreStep(harness, bridge, provider, messages, observe) 
 
 test('text-only session uses the canonical core writer even when a global wrapper exists', async () => {
   const harness = bridgeHarness({ inputModalities: ['text'] })
-  // This registration is intentionally outside Vision Router's private context:
-  // it reproduces the old global wrapperRegistered condition without granting
-  // ownership of the currently selected Host route.
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const { bridge } = composeBridge(harness)
   const messages = [imageMessage('sha256:text-route')]
@@ -165,6 +162,7 @@ test('text-only session uses the canonical core writer even when a global wrappe
       const policy = currentSessionVisionPolicy()
       assert.equal(policy.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
       assert.equal(policy.rewriteCurrentImages, true)
+      assert.equal(bridge.config, harness.persisted)
       assert.equal(bridge.config.rewriteImages, true)
     },
   )
@@ -214,7 +212,8 @@ test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary
     const policy = currentSessionVisionPolicy()
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
     assert.equal(policy.preserveRawImages, true)
-    assert.equal(bridge.config.rewriteImages, false)
+    assert.equal(bridge.config, harness.persisted)
+    assert.equal(bridge.config.rewriteImages, true)
   })
 
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
@@ -231,10 +230,14 @@ test('native session preserves pixels, suppresses automatic orchestration, and k
   const result = await runCoreLikePreStep(harness, bridge, 'deepseek-official', messages, () => {
     const policy = currentSessionVisionPolicy()
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.NATIVE)
-    assert.equal(bridge.config.rewriteImages, false)
-    assert.equal(bridge.config.instantDescribe, false)
-    assert.equal(bridge.config.autoActivateOnImage, false)
-    assert.equal(bridge.config.structuredVisionBootstrap, false)
+    assert.equal(policy.preserveRawImages, true)
+    assert.equal(policy.suppressGenericAutoMount, true)
+    assert.equal(policy.allowStructuredBootstrap, false)
+    assert.equal(bridge.config, harness.persisted)
+    assert.equal(bridge.config.rewriteImages, true)
+    assert.equal(bridge.config.instantDescribe, true)
+    assert.equal(bridge.config.autoActivateOnImage, true)
+    assert.equal(bridge.config.structuredVisionBootstrap, true)
     assert.equal(bridge.config.tool, true)
   })
 
@@ -250,22 +253,26 @@ test('UNKNOWN capability preserves the existing Host image contract instead of f
     const policy = currentSessionVisionPolicy()
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
     assert.equal(policy.preserveRawImages, true)
-    assert.equal(bridge.config.rewriteImages, false)
+    assert.equal(bridge.config, harness.persisted)
+    assert.equal(bridge.config.rewriteImages, true)
   })
 
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('tool=false is projected only while legacy core builds schema; execution follows the live setting', async () => {
+test('tool=false stays real through the pre-step bridge while execution follows live settings', async () => {
   const harness = bridgeHarness({ config: { tool: false } })
   const { bridge } = composeBridge(harness, { toolRuntime: true })
 
-  let projectedScope
+  let liveScope
   bridge.ctx.inject(['settings'], (child) => {
-    projectedScope = child.settings.register('vision-router')
+    liveScope = child.settings.register('vision-router')
   })
-  assert.equal(bridge.config.tool, true)
-  assert.equal(projectedScope.get().tool, true)
+  assert.equal(bridge.config, harness.persisted)
+  assert.equal(bridge.config.tool, false)
+  assert.equal(liveScope.get(), harness.persisted)
+  assert.equal(liveScope.get().tool, false)
+  assert.equal(Object.hasOwn(bridge, 'finishSchemaBootstrap'), false)
 
   let calls = 0
   bridge.ctx.tools.register({
@@ -278,9 +285,6 @@ test('tool=false is projected only while legacy core builds schema; execution fo
   const registered = harness.tools.get('vision_describe')
   assert.ok(registered)
 
-  bridge.finishSchemaBootstrap()
-  assert.equal(bridge.config.tool, false)
-  assert.equal(projectedScope.get().tool, false)
   await assert.rejects(() => registered.execute({}, {}), /vision tools are disabled/)
   assert.equal(calls, 0)
 

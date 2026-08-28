@@ -22,27 +22,39 @@ function imageMessage() {
   }
 }
 
-test('legacy boot projection tolerates frozen config without mutating its source', () => {
+test('pre-step compatibility keeps frozen config exact instead of projecting internal policy', () => {
   const frozen = Object.freeze({
     tool: false,
     rewriteImages: true,
     instantDescribe: true,
     autoActivateOnImage: true,
   })
+  const settings = { marker: 'real-settings' }
+  const child = { settings }
+  const ctx = {
+    get(name) {
+      return name === 'settings' ? settings : undefined
+    },
+    inject(_dependencies, callback) {
+      return callback(child)
+    },
+    on() {
+      return () => {}
+    },
+  }
   const bridge = installLegacyCoreVisionPolicyBridge(
-    {},
+    ctx,
     frozen,
     { rewriteHistoryImages },
   )
 
-  assert.equal(bridge.config.tool, true)
-  assert.equal(frozen.tool, false)
-  assert.equal(Object.keys(bridge.config).includes('tool'), true)
-  assert.equal({ ...bridge.config }.tool, true)
-
-  bridge.finishSchemaBootstrap()
+  assert.equal(bridge.config, frozen)
   assert.equal(bridge.config.tool, false)
-  assert.equal(frozen.tool, false)
+  assert.equal(bridge.ctx.get('settings'), settings)
+  let injected
+  bridge.ctx.inject(['settings'], (value) => { injected = value })
+  assert.equal(injected, child)
+  assert.equal(Object.hasOwn(bridge, 'finishSchemaBootstrap'), false)
 })
 
 test('text-only image policy preserves reject decisions by exact identity', async () => {
