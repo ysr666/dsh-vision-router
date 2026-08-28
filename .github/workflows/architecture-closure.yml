@@ -6,6 +6,7 @@ on:
       - 'entry.js'
       - 'index.js'
       - 'lib/runtime-composition.js'
+      - 'lib/core-vision-surface.js'
       - 'lib/session-vision-*.js'
       - 'lib/session-surface-policy.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
@@ -16,6 +17,8 @@ on:
       - 'lib/vision-capability-shadow.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
+      - 'tests/core-vision-surface-parity.test.js'
+      - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
       - 'tests/session-surface-policy.test.js'
@@ -30,6 +33,7 @@ on:
       - 'entry.js'
       - 'index.js'
       - 'lib/runtime-composition.js'
+      - 'lib/core-vision-surface.js'
       - 'lib/session-vision-*.js'
       - 'lib/session-surface-policy.js'
       - 'lib/legacy-core-vision-policy-bridge.js'
@@ -40,6 +44,8 @@ on:
       - 'lib/vision-capability-shadow.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
+      - 'tests/core-vision-surface-parity.test.js'
+      - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
       - 'tests/session-vision-state-integration.test.js'
       - 'tests/session-surface-policy.test.js'
@@ -73,6 +79,8 @@ jobs:
         run: >-
           node --test
           tests/architecture-contract-baseline.test.js
+          tests/core-vision-surface-parity.test.js
+          tests/session-vision-runtime-parity.test.js
           tests/vision-execution-order-core-wiring.test.js
           tests/session-vision-state-integration.test.js
           tests/session-surface-policy.test.js
