@@ -127,7 +127,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {',
   )
   const coreApplyAt = source.indexOf('() => core.apply(')
-  const finishAt = source.indexOf('legacyCoreCompat.finishSchemaBootstrap()', coreApplyAt)
+  const finishAt = source.indexOf('coreVisionSurfaceRuntime.finishSchemaBootstrap()', coreApplyAt)
 
   assert.ok(mutationAt >= 0)
   assert.ok(
@@ -147,10 +147,13 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     'explicit SessionVisionRuntime must remain alongside the CoreVisionSurface owner',
   )
   assert.ok(sessionIndexAt > sessionRuntimeAt, 'the session index boundary must receive the explicit runtime owner')
-  assert.ok(bridgeAt > sessionIndexAt, 'legacy core projection must consume the indexed session-scoped ownership policy')
+  assert.ok(
+    bridgeAt > sessionIndexAt,
+    'the retained pre-step compatibility boundary must consume the indexed session-scoped ownership policy',
+  )
   assert.ok(
     diagnosticsAt > bridgeAt,
-    'limit diagnostics must observe only the final legacy-core policy view and may not become an execution policy itself',
+    'limit diagnostics must observe the final pre-step compatibility view and may not become an execution policy itself',
   )
   assert.ok(
     structuredAt > diagnosticsAt,
@@ -168,7 +171,12 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     /^\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
     'core must receive the same explicit SessionVisionRuntime and CoreVisionSurfaceRuntime owners as composition',
   )
-  assert.ok(finishAt > coreApplyAt, 'the temporary schema bootstrap projection ends immediately after core wiring')
+  assert.ok(finishAt > coreApplyAt, 'CoreVisionSurface alone owns the temporary schema-bootstrap lifecycle')
+  assert.equal(
+    source.includes('legacyCoreCompat.finishSchemaBootstrap()'),
+    false,
+    'the pre-step compatibility boundary must not regain schema-bootstrap authority',
+  )
 
   const afterAdapterContract = source.slice(adapterContractAt + 1)
   assert.equal(
