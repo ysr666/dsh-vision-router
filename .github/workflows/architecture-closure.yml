@@ -15,10 +15,15 @@ on:
       - 'lib/catalog-corrections.js'
       - 'lib/web/**'
       - 'lib/vision-capability-shadow.js'
+      - 'lib/vision-capability-benchmark-service.js'
+      - 'lib/vision-capability-benchmark-client.js'
+      - 'lib/vision-capability-benchmark-presentation.js'
+      - 'lib/vision-product-presentation.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
+      - 'tests/presentation-convergence-parity.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -44,10 +49,15 @@ on:
       - 'lib/catalog-corrections.js'
       - 'lib/web/**'
       - 'lib/vision-capability-shadow.js'
+      - 'lib/vision-capability-benchmark-service.js'
+      - 'lib/vision-capability-benchmark-client.js'
+      - 'lib/vision-capability-benchmark-presentation.js'
+      - 'lib/vision-product-presentation.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
+      - 'tests/presentation-convergence-parity.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -85,6 +95,7 @@ jobs:
           tests/architecture-contract-baseline.test.js
           tests/core-vision-surface-parity.test.js
           tests/settings-impersonation-closure.test.js
+          tests/presentation-convergence-parity.test.js
           tests/session-runtime-core-wiring.test.js
           tests/session-vision-runtime-parity.test.js
           tests/vision-execution-order-core-wiring.test.js
