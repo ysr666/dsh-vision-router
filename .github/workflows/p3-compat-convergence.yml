@@ -1,0 +1,56 @@
+name: P3 Compatibility Convergence
+
+on:
+  pull_request:
+    paths:
+      - 'entry.js'
+      - 'lib/dsh-support-window.js'
+      - 'lib/doctor-cli-p0.js'
+      - 'lib/web/**'
+      - 'lib/runtime-composition.js'
+      - 'docs/architecture/dsh-support-window.md'
+      - 'docs/architecture/p3-*.md'
+      - 'docs/releases/**'
+      - 'tests/dsh-support-window.test.js'
+      - 'tests/p3-*.test.js'
+      - '.github/workflows/p3-compat-convergence.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'entry.js'
+      - 'lib/dsh-support-window.js'
+      - 'lib/doctor-cli-p0.js'
+      - 'lib/web/**'
+      - 'lib/runtime-composition.js'
+      - 'docs/architecture/dsh-support-window.md'
+      - 'docs/architecture/p3-*.md'
+      - 'docs/releases/**'
+      - 'tests/dsh-support-window.test.js'
+      - 'tests/p3-*.test.js'
+      - '.github/workflows/p3-compat-convergence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Support-window and Doctor policy
+        run: >-
+          node --test
+          tests/dsh-support-window.test.js
+          tests/doctor-host-capabilities.test.js
