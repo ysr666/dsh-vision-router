@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   alpha-contract:
-    name: alpha release / ${{ matrix.os }}
+    name: alpha source / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -19,13 +19,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Checkout DSH 0.1.2-alpha.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.1.2-alpha.1
+          path: upstream
+          persist-credentials: false
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 11.20.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Pack plugin
         shell: node {0}
@@ -39,10 +45,20 @@ jobs:
             shell: process.platform === 'win32',
           })
           if (packed.status !== 0) process.exit(packed.status ?? 1)
-      - name: Install published DSH alpha CLI and Vision Router
+      - name: Install and build DSH release-tag source
         shell: node {0}
-        env:
-          DSH_VERSION: 0.1.2-alpha.1
+        run: |
+          const { spawnSync } = require('node:child_process')
+          const path = require('node:path')
+          const upstream = path.resolve('upstream')
+          const cmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
+          const common = { cwd: upstream, stdio: 'inherit', shell: process.platform === 'win32' }
+          let result = spawnSync(cmd, ['pnpm', 'install', '--frozen-lockfile'], common)
+          if (result.status !== 0) process.exit(result.status ?? 1)
+          result = spawnSync(cmd, ['pnpm', 'run', 'build'], common)
+          if (result.status !== 0) process.exit(result.status ?? 1)
+      - name: Install Vision Router into alpha web profile and compose config
+        shell: node {0}
         run: |
           const fs = require('node:fs')
           const path = require('node:path')
@@ -50,41 +66,27 @@ jobs:
           const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
           if (!tgz) throw new Error('packed plugin tarball not found')
           const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
-          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-alpha-host-${process.platform}`)
-          const dshHome = path.join(process.env.RUNNER_TEMP, `dvr-alpha-home-${process.platform}`)
-          fs.rmSync(hostDir, { recursive: true, force: true })
+          const upstream = path.resolve('upstream')
+          const dshHome = path.join(process.env.RUNNER_TEMP, `dvr-alpha-source-home-${process.platform}`)
           fs.rmSync(dshHome, { recursive: true, force: true })
-          fs.mkdirSync(hostDir, { recursive: true })
           fs.mkdirSync(dshHome, { recursive: true })
-          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
-            private: true,
-            type: 'module',
-            packageManager: 'pnpm@11.20.0',
-            dependencies: {
-              '@deepseek-ai/dsh': process.env.DSH_VERSION,
-              sharp: '0.35.3'
-            }
-          }, null, 2))
-          const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+          const cmd = process.platform === 'win32' ? 'corepack.cmd' : 'corepack'
           const common = {
-            cwd: hostDir,
+            cwd: upstream,
             stdio: 'inherit',
             shell: process.platform === 'win32',
-            env: { ...process.env, DSH_HOME: dshHome }
+            env: { ...process.env, DSH_HOME: dshHome },
           }
-          let result = spawnSync(cmd, ['install'], common)
+          let result = spawnSync(cmd, ['pnpm', 'dsh', 'plugin', '--profile', 'web', 'add', `file:${tarball}`], common)
           if (result.status !== 0) process.exit(result.status ?? 1)
-          result = spawnSync(cmd, ['exec', 'dsh', '--version'], common)
-          if (result.status !== 0) process.exit(result.status ?? 1)
-          result = spawnSync(cmd, ['exec', 'dsh', 'plugin', '--profile', 'web', 'add', `file:${tarball}`], common)
-          if (result.status !== 0) process.exit(result.status ?? 1)
-          const profilePackage = JSON.parse(fs.readFileSync(path.join(dshHome, 'profiles', 'web', 'package.json'), 'utf8'))
+          const profilePath = path.join(dshHome, 'profiles', 'web', 'package.json')
+          const profilePackage = JSON.parse(fs.readFileSync(profilePath, 'utf8'))
           const installedSpec = profilePackage.dependencies?.['dsh-vision-router']
           if (!installedSpec) throw new Error('web profile did not record dsh-vision-router after plugin add')
-          console.log({ dsh: process.env.DSH_VERSION, profilePlugin: installedSpec, dshHome })
-          result = spawnSync(cmd, ['exec', 'dsh', '--profile', 'web', '--dump-config'], common)
+          console.log({ upstream: 'dsh-v0.1.2-alpha.1', profilePlugin: installedSpec, dshHome })
+          result = spawnSync(cmd, ['pnpm', 'dsh', '--profile', 'web', '--dump-config'], common)
           if (result.status !== 0) process.exit(result.status ?? 1)
-      - name: Run targeted compatibility regressions
+      - name: Run targeted Vision Router compatibility regressions
         run: >-
           node --test
           tests/adapter-prepare-call-compat.test.js
