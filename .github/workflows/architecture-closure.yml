@@ -14,7 +14,8 @@ on:
       - 'lib/http-compat.js'
       - 'lib/catalog-corrections.js'
       - 'lib/web/**'
-      - 'lib/vision-capability-shadow.js'
+      - 'lib/vision-routing-runtime.js'
+      - 'lib/vision-routing-evidence.js'
       - 'lib/vision-capability-benchmark-service.js'
       - 'lib/vision-capability-benchmark-client.js'
       - 'lib/vision-capability-benchmark-presentation.js'
@@ -25,6 +26,8 @@ on:
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
       - 'tests/presentation-switch.test.js'
+      - 'tests/capability-shadow-retirement.test.js'
+      - 'tests/vision-routing-runtime-parity.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -49,7 +52,8 @@ on:
       - 'lib/http-compat.js'
       - 'lib/catalog-corrections.js'
       - 'lib/web/**'
-      - 'lib/vision-capability-shadow.js'
+      - 'lib/vision-routing-runtime.js'
+      - 'lib/vision-routing-evidence.js'
       - 'lib/vision-capability-benchmark-service.js'
       - 'lib/vision-capability-benchmark-client.js'
       - 'lib/vision-capability-benchmark-presentation.js'
@@ -60,6 +64,8 @@ on:
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
       - 'tests/presentation-switch.test.js'
+      - 'tests/capability-shadow-retirement.test.js'
+      - 'tests/vision-routing-runtime-parity.test.js'
       - 'tests/session-runtime-core-wiring.test.js'
       - 'tests/session-vision-runtime-parity.test.js'
       - 'tests/vision-execution-order-core-wiring.test.js'
@@ -99,6 +105,7 @@ jobs:
           tests/settings-impersonation-closure.test.js
           tests/presentation-convergence-parity.test.js
           tests/presentation-switch.test.js
+          tests/capability-shadow-retirement.test.js
           tests/session-runtime-core-wiring.test.js
           tests/session-vision-runtime-parity.test.js
           tests/vision-execution-order-core-wiring.test.js

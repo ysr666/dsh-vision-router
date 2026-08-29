@@ -5,7 +5,7 @@ import {
   createExactCapabilityInvoker,
 } from '../lib/vision-capability-benchmark-service.js'
 import { resolveVisionCredential } from '../lib/vision-capability-identity.js'
-import { collectCapabilityShadowCandidates } from '../lib/vision-capability-shadow.js'
+import { collectVisionRoutingCandidates } from '../lib/vision-routing-evidence.js'
 import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
 
 const MANUAL_MEASUREMENT_AUTHORITY = grantManualMeasurementFromUserAction('local-ui')
@@ -193,8 +193,8 @@ test('rotating an API key changes access identity but not capability evidence id
   const runtimeB = ctx(settings, { credentials: { TEST_KEY: 'key-B-secret' } })
   const c = core({ local: [], http: [backend] })
   const store = { async get() { return undefined } }
-  const [a] = await collectCapabilityShadowCandidates(runtimeA, settings, c, store)
-  const [b] = await collectCapabilityShadowCandidates(runtimeB, settings, c, store)
+  const [a] = await collectVisionRoutingCandidates(runtimeA, settings, c, store)
+  const [b] = await collectVisionRoutingCandidates(runtimeB, settings, c, store)
   assert.ok(a)
   assert.ok(b)
   assert.equal(a.endpointFingerprint, b.endpointFingerprint)

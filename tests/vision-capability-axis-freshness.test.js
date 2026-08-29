@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { collectCapabilityShadowCandidates, buildCapabilityShadowPlan } from '../lib/vision-capability-shadow.js'
+import { collectVisionRoutingCandidates } from '../lib/vision-routing-evidence.js'
+import { buildVisionRoutingPlan } from '../lib/vision-routing-runtime.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -55,14 +56,14 @@ test('measurement age is metadata: eight-day-old OCR remains usable by Quality',
       return records.get(fingerprint)
     },
   }
-  const rows = await collectCapabilityShadowCandidates(ctx(config()), config(), core(), store)
+  const rows = await collectVisionRoutingCandidates(ctx(config()), config(), core(), store)
   assert.equal(rows.length, 2)
   assert.ok(rows.every((row) => Number.isFinite(row.measured?.ocr)))
   assert.ok(rows.every((row) => Number.isFinite(row.measured?.general)))
   assert.ok(rows.every((row) => row.benchmarkMedianLatencyMsByAxis?.ocr === 100))
   assert.ok(rows.every((row) => row.runtimeLatencyMsByAxis === undefined))
 
-  const ocr = await buildCapabilityShadowPlan({
+  const ocr = await buildVisionRoutingPlan({
     ctx: ctx(config()), config: config(), core: core(), store,
     toolName: 'vision_ocr', args: {},
   })
@@ -84,7 +85,7 @@ test('per-axis timestamps remain independent provenance without creating a TTL',
       }
     },
   }
-  const rows = await collectCapabilityShadowCandidates(ctx(config()), config(), core(), store)
+  const rows = await collectVisionRoutingCandidates(ctx(config()), config(), core(), store)
   assert.ok(rows.every((row) => row.measured?.ocr === 0.9))
   assert.ok(rows.every((row) => row.measured?.general === 0.8))
   assert.ok(rows.every((row) => row.measuredAtByAxis?.ocr === now - 8 * DAY))

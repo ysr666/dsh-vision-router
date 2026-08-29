@@ -1,12 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  autoExecutionConfigFor,
-  buildCapabilityShadowPlan,
-  collectCapabilityShadowCandidates,
+  buildVisionRoutingPlan,
+  installVisionRoutingRuntime,
+} from '../lib/vision-routing-runtime.js'
+import {
+  collectVisionRoutingCandidates,
   generatedCapabilityRoute,
-  installCapabilityShadowRuntime,
-} from '../lib/vision-capability-shadow.js'
+} from '../lib/vision-routing-evidence.js'
 import { currentVisionExecutionOrder } from '../lib/vision-execution-order.js'
 
 const OVH = {
@@ -97,7 +98,7 @@ test('only the two router-owned generated routes are filtered', () => {
 
 test('registered DSH adapter without a pi-ai baseURL gets a stable adapter-route benchmark identity', async () => {
   const config = { providers: [{ provider: 'deepseek-official', model: 'deepseek-v4-flash', fallbacks: [] }] }
-  const rows = await collectCapabilityShadowCandidates(
+  const rows = await collectVisionRoutingCandidates(
     fakeCtx(config).ctx, config, fakeCore(), { async get() { return undefined } },
   )
   const candidate = rows.find((row) => row.provider === 'deepseek-official' && row.model === 'deepseek-v4-flash')
@@ -130,7 +131,7 @@ test('configured pi-ai provider keeps its credential ref only for benchmark exec
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
     },
   }
-  const rows = await collectCapabilityShadowCandidates(
+  const rows = await collectVisionRoutingCandidates(
     ctx,
     config,
     { ...fakeCore(), localProvidersOf: () => [], httpProvidersOf: () => [] },
@@ -147,7 +148,7 @@ test('configured pi-ai provider keeps its credential ref only for benchmark exec
 })
 
 test('capability evidence keeps old measurements and labels Benchmark latency as non-routing observation', async () => {
-  const oldRows = await collectCapabilityShadowCandidates(fakeCtx().ctx, {}, fakeCore(), {
+  const oldRows = await collectVisionRoutingCandidates(fakeCtx().ctx, {}, fakeCore(), {
     async get() {
       return {
         measuredAt: Date.now() - 365 * 24 * 60 * 60 * 1000,
@@ -175,7 +176,7 @@ test('arbitrary DSH-discovered vision models never enter the automatic routing p
         : [],
     },
   })
-  const rows = await collectCapabilityShadowCandidates(
+  const rows = await collectVisionRoutingCandidates(
     ctx,
     config,
     fakeCore(),
@@ -193,7 +194,7 @@ test('explicit vision-http rows preserve their configured position and are not t
     ],
   }
   const core = { ...fakeCore(), localProvidersOf: () => [] }
-  const rows = await collectCapabilityShadowCandidates(
+  const rows = await collectVisionRoutingCandidates(
     fakeCtx(config).ctx,
     config,
     core,
@@ -206,7 +207,7 @@ test('explicit vision-http rows preserve their configured position and are not t
 test('unselected built-in HTTP tier is fixed fallback-only', async () => {
   const config = { providers: [{ provider: 'custom', model: 'chosen', fallbacks: [] }] }
   const core = { ...fakeCore(), localProvidersOf: () => [] }
-  const rows = await collectCapabilityShadowCandidates(
+  const rows = await collectVisionRoutingCandidates(
     fakeCtx(config).ctx,
     config,
     core,
@@ -218,7 +219,7 @@ test('unselected built-in HTTP tier is fixed fallback-only', async () => {
 })
 
 test('planner reports product mode/preference while reusing the internal scorer strategy', async () => {
-  const plan = await buildCapabilityShadowPlan({
+  const plan = await buildVisionRoutingPlan({
     ctx: fakeCtx().ctx,
     core: fakeCore(),
     store: { async get() { return undefined } },
@@ -242,7 +243,7 @@ test('planner reports product mode/preference while reusing the internal scorer 
 })
 
 test('prototype strategy is ignored when the product preference is absent', async () => {
-  const plan = await buildCapabilityShadowPlan({
+  const plan = await buildVisionRoutingPlan({
     ctx: fakeCtx().ctx,
     core: fakeCore(),
     store: { async get() { return undefined } },
@@ -267,7 +268,7 @@ test('prototype fields cannot trigger planning or execution changes in ordered m
   }
   const { ctx, registered, logs } = fakeCtx(settings)
   let storeReads = 0
-  const wrapped = installCapabilityShadowRuntime(ctx, settings, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(ctx, settings, fakeCore(), {
     store: { async get() { storeReads += 1; return undefined } },
     logger: ctx.logger,
   })
@@ -295,7 +296,7 @@ test('runtime does not impersonate Settings get/register anymore', () => {
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
   }
   const fixture = fakeCtx(settings)
-  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(fixture.ctx, settings, fakeCore(), {
     store: { async get() { return undefined } },
     logger: fixture.ctx.logger,
   })
@@ -316,7 +317,7 @@ test('Auto execution exposes only provider/model order inside the current visual
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
   }
   const fixture = fakeCtx(settings)
-  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(fixture.ctx, settings, fakeCore(), {
     store: { async get() { return undefined } },
     logger: fixture.ctx.logger,
   })
@@ -356,7 +357,7 @@ test('Auto execution rechecks live authority after planning and refuses a stale 
   const entered = new Promise((resolve) => { enteredResolve = resolve })
   const release = new Promise((resolve) => { releaseResolve = resolve })
   let first = true
-  const wrapped = installCapabilityShadowRuntime(fixture.ctx, initial, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(fixture.ctx, initial, fakeCore(), {
     store: {
       async get() {
         if (first) {
@@ -403,7 +404,7 @@ test('Auto execution rejects a plan when any live settings field changes during 
   const entered = new Promise((resolve) => { enteredResolve = resolve })
   const release = new Promise((resolve) => { releaseResolve = resolve })
   let first = true
-  const wrapped = installCapabilityShadowRuntime(fixture.ctx, initial, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(fixture.ctx, initial, fakeCore(), {
     store: {
       async get() {
         if (first) {
@@ -443,7 +444,7 @@ test('Auto planner failure is fail-closed to the original configured order', asy
     providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
   }
   const fixture = fakeCtx(settings)
-  const wrapped = installCapabilityShadowRuntime(fixture.ctx, settings, fakeCore(), {
+  const wrapped = installVisionRoutingRuntime(fixture.ctx, settings, fakeCore(), {
     store: { async get() { throw new Error('profile store unavailable') } },
     logger: fixture.ctx.logger,
   })
@@ -460,14 +461,4 @@ test('Auto planner failure is fail-closed to the original configured order', asy
   assert.deepEqual(result, ['custom/generic'])
   assert.equal(currentVisionExecutionOrder(), undefined)
   assert.ok(fixture.logs.some((entry) => entry[0] === 'warn' && String(entry[1]).includes('auto planning failed')))
-})
-
-test('legacy parity helper never synthesizes an unconfigured direct HTTP route', () => {
-  const config = {
-    providers: [{ provider: 'custom', model: 'generic', fallbacks: [] }],
-  }
-  assert.equal(
-    autoExecutionConfigFor(config, ['http:paid/model', 'custom/generic']),
-    undefined,
-  )
 })

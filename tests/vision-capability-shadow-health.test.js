@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildCapabilityShadowPlan,
-  installCapabilityShadowRuntime,
-} from '../lib/vision-capability-shadow.js'
+  buildVisionRoutingPlan,
+  installVisionRoutingRuntime,
+} from '../lib/vision-routing-runtime.js'
 
 function coreWithoutExtraCandidates() {
   return {
@@ -41,7 +41,7 @@ function contextFor(settingsValue = {}) {
   return { ctx, registered }
 }
 
-test('shadow health can demote a circuit-open backend without changing current order', async () => {
+test('routing health can demote a circuit-open backend without changing current order', async () => {
   const config = {
     routingMode: 'ordered',
     routingPreference: 'balanced',
@@ -51,7 +51,7 @@ test('shadow health can demote a circuit-open backend without changing current o
     ],
   }
   const { ctx } = contextFor(config)
-  const plan = await buildCapabilityShadowPlan({
+  const plan = await buildVisionRoutingPlan({
     ctx,
     config,
     core: coreWithoutExtraCandidates(),
@@ -72,12 +72,12 @@ test('shadow health can demote a circuit-open backend without changing current o
   assert.equal(plan.explanation.find((row) => row.backend === 'custom-a/qwen-vl-a').health, 0)
 })
 
-test('shadow health observation failures stay neutral instead of blocking execution', async () => {
+test('routing health observation failures stay neutral instead of blocking execution', async () => {
   const config = {
     providers: [{ provider: 'custom-a', model: 'generic-a', fallbacks: [] }],
   }
   const { ctx } = contextFor(config)
-  const plan = await buildCapabilityShadowPlan({
+  const plan = await buildVisionRoutingPlan({
     ctx,
     config,
     core: coreWithoutExtraCandidates(),
@@ -98,7 +98,7 @@ test('ordered runtime never reads planner health and returns the original result
   const settings = { routingMode: 'ordered' }
   const { ctx, registered } = contextFor(settings)
   let healthReads = 0
-  const wrapped = installCapabilityShadowRuntime(ctx, settings, coreWithoutExtraCandidates(), {
+  const wrapped = installVisionRoutingRuntime(ctx, settings, coreWithoutExtraCandidates(), {
     store: { async get() { return undefined } },
     healthForCandidate() {
       healthReads += 1

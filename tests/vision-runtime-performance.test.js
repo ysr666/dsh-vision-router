@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { installCapabilityShadowRuntime } from '../lib/vision-capability-shadow.js'
+import { installVisionRoutingRuntime } from '../lib/vision-routing-runtime.js'
 import {
   contextWithVisionRuntimePerformance as contextWithVisionRuntimePerformanceRaw,
   createVisionRuntimePerformanceStore,
@@ -205,11 +205,11 @@ test('runtime observation follows live Auto authority', async () => {
     localProvidersOf: () => [],
     httpProvidersOf: () => [],
   }
-  const shadow = installCapabilityShadowRuntime(base, {}, core, {
+  const routed = installVisionRoutingRuntime(base, {}, core, {
     store: capabilityStore,
     runtimePerformanceStore: runtimeStore,
   })
-  const observed = contextWithVisionRuntimePerformanceRaw(shadow, runtimeStore, {
+  const observed = contextWithVisionRuntimePerformanceRaw(routed, runtimeStore, {
     now,
     observationAllowed: () => routingMode === 'auto',
   })
