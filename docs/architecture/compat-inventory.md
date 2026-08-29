@@ -65,6 +65,15 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** upstream endpoint behavior becomes generic-compatible for a rule and regression evidence confirms the preset is no longer needed.
 - **Tests:** `http-compat`, provider HTTP regression tests.
 
+## `lib/vision-provider-transport.js` process/profile registry
+
+- **Reason:** carry the Router-owned provider transport into compatibility callers whose mature function signatures still accept only a raw `fetch` or use an internal direct HTTP call, while keeping Router traffic off the process-global fetch patch.
+- **Host gap:** this is an internal composition gap rather than a DSH version persona: `fetchWithOpenAICompatibility(...)` and the Anthropic catalog-correction path do not yet receive a `VisionProviderTransport` parameter explicitly.
+- **First needed for:** provider-scoped transport ownership and proxy narrowing without rewriting the mature compatibility call signatures in the same migration.
+- **Feature detection:** explicit transport-aware callers bypass the registry; only compatibility paths that call `currentVisionProviderTransport()` consume the currently installed process/profile transport. The registry never patches `globalThis.fetch`.
+- **Removal condition:** every Router-owned compatibility caller receives `VisionProviderTransport` explicitly, production has zero reads of `currentVisionProviderTransport()`, and the install/release registry can be removed without changing proxy, credential, bounded-body or cancellation behavior.
+- **Tests:** `vision-provider-transport`, `http-compat`, `catalog-corrections`, P2 Data Boundary provider-transport Node 22/24, Host pack/install smoke.
+
 ## `lib/legacy-global-proxy-boundary.js`
 
 - **Reason:** retain the process-global proxy patch only for Host-owned/raw-fetch visual providers that still lack a provider-scoped proxy seam. Router-owned `vision-http` and direct protocol-correction traffic already uses `VisionProviderTransport` with an explicit dispatcher.
@@ -73,6 +82,15 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Feature detection:** live visual-chain ownership. Router-owned routes bypass the legacy patch; any unknown/Host-owned provider conservatively keeps it available. This is capability/ownership detection, not a Host-version persona.
 - **Removal condition:** **the minimum supported DSH provides a provider-scoped/shared HTTP proxy seam** that covers the remaining Host-owned/raw-fetch provider compatibility requirement.
 - **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, `adversarial-hardening`, P2 Data Boundary Node 22/24.
+
+## `lib/legacy-core-vision-policy-bridge.js`
+
+- **Reason:** preserve the two remaining pre-step compatibility behaviors after Core policy ownership moved to explicit session/Core surfaces: reuse the exact `SessionMemoryView` for text-only image-history rewrite, and expose exact current-turn durable attachment IDs as read-only model context for Vision Router-owned wrappers.
+- **Host gap:** the supported Host pre-step path does not natively provide both an exact session-scoped visual-memory rewrite seam for text-only fallback and a model-readable durable attachment-reference seam for Router-owned image turns.
+- **First needed for:** the Core/session ownership migration that removed Settings/config impersonation while retaining these two real pre-step behaviors.
+- **Feature detection:** live `SessionSurfacePolicy` (`rewriteCurrentImages` and ownership), exact known session visual memory, and actual current-turn image attachment IDs. No Host version-string branch and no Settings/config projection.
+- **Removal condition:** the minimum supported Host exposes native pre-step/session-memory and durable attachment-reference capabilities that make both behaviors redundant, and contract/parity tests prove the bridge can be removed without reintroducing Settings impersonation or degrading text-only/native image turns.
+- **Tests:** `settings-impersonation-closure`, `session-surface-policy`, session/runtime parity and native cold-resume coverage.
 
 ## `lib/tesseract-exec-compat.js`
 
@@ -91,4 +109,4 @@ A compatibility seam may be deleted only when all of the following are true:
 2. the relevant capability is proved by a gating Host contract fixture or direct feature test;
 3. deleting the seam leaves Node 22/24, minimum/legacy/current Host contracts and relevant platform tests green;
 4. no Authority, Session, Storage or native-multimodal invariant changes as a side effect;
-5. the deletion is a focused change, not bundled into an unrelated P1/P2 refactor.
+5. the deletion is a focused change, not bundled into an unrelated routing/data-boundary refactor.

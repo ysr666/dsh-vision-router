@@ -5,6 +5,7 @@ on:
     paths:
       - 'entry.js'
       - 'index.js'
+      - 'lib/public-entry.js'
       - 'lib/runtime-composition.js'
       - 'lib/core-vision-surface.js'
       - 'lib/session-vision-*.js'
@@ -22,6 +23,7 @@ on:
       - 'lib/vision-product-presentation.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
+      - 'tests/compat-inventory-completeness.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
@@ -43,6 +45,7 @@ on:
     paths:
       - 'entry.js'
       - 'index.js'
+      - 'lib/public-entry.js'
       - 'lib/runtime-composition.js'
       - 'lib/core-vision-surface.js'
       - 'lib/session-vision-*.js'
@@ -60,6 +63,7 @@ on:
       - 'lib/vision-product-presentation.js'
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
+      - 'tests/compat-inventory-completeness.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
@@ -101,6 +105,7 @@ jobs:
         run: >-
           node --test
           tests/architecture-contract-baseline.test.js
+          tests/compat-inventory-completeness.test.js
           tests/core-vision-surface-parity.test.js
           tests/settings-impersonation-closure.test.js
           tests/presentation-convergence-parity.test.js
