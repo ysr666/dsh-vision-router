@@ -24,6 +24,7 @@ on:
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/compat-inventory-completeness.test.js'
+      - 'tests/final-architecture-closure.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
@@ -64,6 +65,7 @@ on:
       - 'docs/architecture/**'
       - 'tests/architecture-contract-baseline.test.js'
       - 'tests/compat-inventory-completeness.test.js'
+      - 'tests/final-architecture-closure.test.js'
       - 'tests/core-vision-surface-parity.test.js'
       - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
@@ -106,6 +108,7 @@ jobs:
           node --test
           tests/architecture-contract-baseline.test.js
           tests/compat-inventory-completeness.test.js
+          tests/final-architecture-closure.test.js
           tests/core-vision-surface-parity.test.js
           tests/settings-impersonation-closure.test.js
           tests/presentation-convergence-parity.test.js
