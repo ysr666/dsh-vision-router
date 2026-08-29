@@ -219,7 +219,10 @@ test('Windows PowerShell compiles the helper and can enter and restore a per-mon
     '[DshVisionDesktopCapture]::ValidateDpiContext()',
   )
   await promisify(execFile)('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
-    timeout: 15000,
+    // Hosted Windows images occasionally cold-start Add-Type far slower than
+    // the ~5s warm run. Keep this probe below product screenshot deadlines but
+    // high enough that CI load is not mistaken for a DPI implementation bug.
+    timeout: 60000,
     windowsHide: true,
   })
 })
