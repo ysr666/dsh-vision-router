@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { createSecureHtmlScreenshotExecute } from '../lib/adversarial-hardening.js'
@@ -83,7 +84,7 @@ test('secure screenshot renders the same session-cwd target that passed containm
     agent: { session: { header: { cwd: '/workspace' } } },
   }))
 
-  assert.equal(result.path, '/workspace/.artifacts/shot.png')
+  assert.equal(result.path, path.resolve('/workspace/.artifacts/shot.png'))
   const sourceResolutions = harness.resolveCalls.filter(([value]) => value === 'page.html')
   assert.equal(sourceResolutions.length, 1, 'renderer must not resolve the source string a second time')
   assert.equal(sourceResolutions[0][1].cwd, '/workspace')
