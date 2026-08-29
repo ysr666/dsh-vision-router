@@ -13,6 +13,13 @@ const legacyLimits = (overrides = {}) => Object.freeze({
   ...overrides,
 })
 
+const alphaNormalizationDefaults = (overrides = {}) => Object.freeze({
+  maxPixels: 2048 * 2048,
+  maxDimension: 8192,
+  maxBytes: 4 * 1024 * 1024,
+  ...overrides,
+})
+
 function contextFor(store) {
   return {
     get(name) {
@@ -37,32 +44,102 @@ test('repairs the historical Vision Router 20MiB/100MP overlay on rc8 limits', (
   assert.equal(logs.length, 1)
 })
 
+test('repairs a stale pre-alpha DVR profile after alpha materializes its new defaults', () => {
+  const store = {
+    // A historical profile row contains only the 20MiB/100MP DVR pair. On
+    // alpha the omitted dimensions/policy materialize as these Host defaults.
+    imageLimits: legacyLimits({ maxImageDimension: 8192 }),
+    normalizationPolicy: alphaNormalizationDefaults(),
+  }
+  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
+
+  assert.equal(result.changed, true)
+  assert.equal(result.reason, 'legacy-alpha-policy-repaired')
+  assert.equal(store.imageLimits.maxImageDimension, 10_000)
+  assert.deepEqual(store.normalizationPolicy, {
+    maxPixels: 100_000_000,
+    maxDimension: 10_000,
+    maxBytes: 20 * 1024 * 1024,
+  })
+  assert.equal(Object.isFrozen(store.normalizationPolicy), true)
+})
+
+test('repairs only alpha normalization when admission already has the DVR dimension', () => {
+  const limits = legacyLimits({ maxImageDimension: 10_000 })
+  const store = {
+    imageLimits: limits,
+    normalizationPolicy: alphaNormalizationDefaults(),
+  }
+  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
+
+  assert.equal(result.changed, true)
+  assert.equal(result.reason, 'legacy-alpha-policy-repaired')
+  assert.equal(store.imageLimits, limits)
+  assert.deepEqual(store.normalizationPolicy, {
+    maxPixels: 100_000_000,
+    maxDimension: 10_000,
+    maxBytes: 20 * 1024 * 1024,
+  })
+})
+
 test('does not overwrite an explicit deployment dimension', () => {
-  for (const dimension of [4096, 10_000, 16_384]) {
+  for (const dimension of [4096, 16_384]) {
     const original = legacyLimits({ maxImageDimension: dimension })
-    const store = { imageLimits: original }
+    const store = {
+      imageLimits: original,
+      normalizationPolicy: alphaNormalizationDefaults(),
+    }
     const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
     assert.equal(result.changed, false)
     assert.equal(result.reason, 'not-legacy-overlay')
     assert.equal(store.imageLimits, original)
+    assert.deepEqual(store.normalizationPolicy, alphaNormalizationDefaults())
+  }
+
+  // 10000px is the released DVR admission contract, so it is not rewritten;
+  // absent alpha normalization metadata remains inert on pre-alpha Hosts.
+  const original = legacyLimits({ maxImageDimension: 10_000 })
+  const store = { imageLimits: original }
+  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
+  assert.equal(result.changed, false)
+  assert.equal(result.reason, 'not-legacy-overlay')
+  assert.equal(store.imageLimits, original)
+})
+
+test('does not overwrite any explicit alpha normalization tuple', () => {
+  for (const normalizationPolicy of [
+    alphaNormalizationDefaults({ maxPixels: 12_000_000 }),
+    alphaNormalizationDefaults({ maxDimension: 4096 }),
+    alphaNormalizationDefaults({ maxBytes: 8 * 1024 * 1024 }),
+    Object.freeze({ maxPixels: 100_000_000, maxDimension: 10_000, maxBytes: 20 * 1024 * 1024 }),
+  ]) {
+    const limits = legacyLimits({ maxImageDimension: 10_000 })
+    const store = { imageLimits: limits, normalizationPolicy }
+    const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
+    assert.equal(result.changed, false)
+    assert.equal(result.reason, 'not-legacy-overlay')
+    assert.equal(store.imageLimits, limits)
+    assert.equal(store.normalizationPolicy, normalizationPolicy)
   }
 })
 
-test('does not claim unrelated attachment policies that happen to use 2000px', () => {
+test('does not claim unrelated attachment policies that happen to use Host defaults', () => {
   for (const overrides of [
     { maxImageBytes: 3.5 * 1024 * 1024 },
     { maxImagePixels: 40_000_000 },
   ]) {
-    const original = legacyLimits(overrides)
-    const store = { imageLimits: original }
+    const original = legacyLimits({ maxImageDimension: 8192, ...overrides })
+    const normalizationPolicy = alphaNormalizationDefaults()
+    const store = { imageLimits: original, normalizationPolicy }
     const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
     assert.equal(result.changed, false)
     assert.equal(result.reason, 'not-legacy-overlay')
     assert.equal(store.imageLimits, original)
+    assert.equal(store.normalizationPolicy, normalizationPolicy)
   }
 })
 
-test('fails open when the Host exposes a read-only limits property', () => {
+test('fails open when the Host exposes a read-only admission limits property', () => {
   const store = {}
   Object.defineProperty(store, 'imageLimits', {
     configurable: false,
@@ -79,6 +156,48 @@ test('fails open when the Host exposes a read-only limits property', () => {
   assert.equal(result.reason, 'limits-readonly')
   assert.equal(store.imageLimits.maxImageDimension, 2000)
   assert.equal(warnings.length, 1)
+})
+
+test('reports a read-only alpha normalization policy instead of claiming support', () => {
+  const store = {
+    imageLimits: legacyLimits({ maxImageDimension: 10_000 }),
+  }
+  const original = alphaNormalizationDefaults()
+  Object.defineProperty(store, 'normalizationPolicy', {
+    configurable: false,
+    enumerable: true,
+    writable: false,
+    value: original,
+  })
+  const warnings = []
+  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store), {
+    warn(...args) { warnings.push(args) },
+  })
+
+  assert.equal(result.changed, false)
+  assert.equal(result.reason, 'normalization-policy-readonly')
+  assert.equal(store.normalizationPolicy, original)
+  assert.equal(warnings.length, 1)
+})
+
+test('custom migration targets remain opt-in and bounded by the historical fingerprint', () => {
+  const store = {
+    imageLimits: legacyLimits({ maxImageDimension: 8192 }),
+    normalizationPolicy: alphaNormalizationDefaults(),
+  }
+  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store), undefined, {
+    maxImageDimension: 9000,
+    normalizedImageMaxPixels: 80_000_000,
+    normalizedImageMaxDimension: 9000,
+    normalizedImageMaxBytes: 16 * 1024 * 1024,
+  })
+  assert.equal(result.changed, true)
+  assert.equal(store.imageLimits.maxImageDimension, 9000)
+  assert.deepEqual(store.normalizationPolicy, {
+    maxPixels: 80_000_000,
+    maxDimension: 9000,
+    maxBytes: 16 * 1024 * 1024,
+  })
 })
 
 test('is inert when no attachment limits service exists', () => {
