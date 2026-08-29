@@ -1,14 +1,35 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 
 const RETIRED_SHADOW_SURFACE = /vision-capability-shadow|buildCapabilityShadowPlan|installCapabilityShadowRuntime|collectCapabilityShadowCandidates|autoExecutionConfigFor/
+const RETIRED_SHADOW_IMPORT = /(?:from\s+['"][^'"]*vision-capability-shadow\.js['"]|import\s*\(\s*['"][^'"]*vision-capability-shadow\.js['"]\s*\))/
 
 async function missing(path) {
   await assert.rejects(
     readFile(new URL(path, import.meta.url), 'utf8'),
     (error) => error?.code === 'ENOENT',
   )
+}
+
+async function sourceFiles(root) {
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    throw error
+  }
+  const out = []
+  for (const entry of entries) {
+    const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), root)
+    if (entry.isDirectory()) {
+      out.push(...await sourceFiles(child))
+    } else if (/\.(?:c?js|mjs)$/.test(entry.name)) {
+      out.push(child)
+    }
+  }
+  return out
 }
 
 test('C3-A retires the capability-shadow shim and its historical test path', async () => {
@@ -48,5 +69,19 @@ test('routing tests no longer depend on the retired shadow surface', async () =>
   ]) {
     const source = await readFile(new URL(path, import.meta.url), 'utf8')
     assert.doesNotMatch(source, RETIRED_SHADOW_SURFACE, path)
+  }
+})
+
+test('no production, test, or script module imports the retired shadow shim', async () => {
+  const roots = [
+    new URL('../lib/', import.meta.url),
+    new URL('./', import.meta.url),
+    new URL('../scripts/', import.meta.url),
+  ]
+  for (const root of roots) {
+    for (const file of await sourceFiles(root)) {
+      const source = await readFile(file, 'utf8')
+      assert.doesNotMatch(source, RETIRED_SHADOW_IMPORT, file.pathname)
+    }
   }
 })
