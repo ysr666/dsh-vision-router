@@ -70,6 +70,10 @@ function targetPluginSpec(apply) {
   }
 }
 
+function jsonValue(value) {
+  return JSON.parse(JSON.stringify(value))
+}
+
 test('alpha Host catalog is projected into the legacy client connection facade', async () => {
   const catalog = { groups: [{ id: 'deepseek-official', models: [] }], failures: [] }
   const events = []
@@ -124,7 +128,7 @@ test('alpha Host catalog is projected into the legacy client connection facade',
 
   assert.equal(observed.compatConnection.isLoopback, false)
   assert.equal(observed.compatConnection.rpc, rpc)
-  assert.deepEqual(observed.result, { result: { ok: true, value: catalog } })
+  assert.deepEqual(jsonValue(observed.result), { result: { ok: true, value: catalog } })
   assert.deepEqual(events, ['credentials/reference-updated'])
   assert.equal(localeRegistrations.length, 1)
   const [, dictionaries] = localeRegistrations[0]
@@ -180,11 +184,31 @@ test('Host compatibility prelude survives queue-to-live loader replacement', () 
   assert.equal(plugin.apply.__visionRouterHostCompat, true)
 })
 
-test('Host compatibility and presentation boundaries compose in either order', () => {
+test('Host compatibility and presentation boundaries compose in either order', async () => {
   for (const preludes of [
     [CLIENT_HOST_COMPAT_PRELUDE, CLIENT_PRESENTATION_PRELUDE],
     [CLIENT_PRESENTATION_PRELUDE, CLIENT_HOST_COMPAT_PRELUDE],
   ]) {
+    const catalog = { groups: [{ id: 'deepseek-official', models: [] }], failures: [] }
+    const events = []
+    const remote = {
+      session: {
+        modelCatalog: async () => ({ ok: true, value: catalog }),
+      },
+      $on(event) {
+        events.push(event)
+        return () => {}
+      },
+    }
+    const connection = { isLoopback: false, rpc: { call() {} } }
+    const ctx = {
+      remote,
+      locale: { register() { return () => {} } },
+      get(name) { return name === 'connection' ? connection : undefined },
+    }
+
+    let observedCatalog
+    let observedConnection
     const harness = loaderHarness(preludes)
     const registered = harness.register({
       id: 'dsh-vision-router',
@@ -192,7 +216,11 @@ test('Host compatibility and presentation boundaries compose in either order', (
         const attachment = require('@deepseek-ai/dsh-client-ui-attachment')
         return {
           ImageGallery: attachment.ImageGallery,
-          apply() {},
+          async apply(compatCtx) {
+            observedConnection = compatCtx.get('connection')
+            observedCatalog = await observedConnection.api.llm.models({})
+            compatCtx.remote.$on('credentials/updated', () => {})
+          },
         }
       },
     })
@@ -204,10 +232,16 @@ test('Host compatibility and presentation boundaries compose in either order', (
       if (id === '@deepseek-ai/dsh-client-ui-primitives') return {}
       throw new Error(`unexpected value request: ${id}`)
     })
+
     assert.equal(typeof plugin.ImageGallery, 'function')
     assert.equal(typeof plugin.apply, 'function')
-    assert.equal(plugin.apply.__visionRouterHostCompat, true)
     assert.ok(!requested.includes('@deepseek-ai/dsh-client-ui-attachment'))
+
+    await plugin.apply(ctx)
+    assert.equal(observedConnection.isLoopback, false)
+    assert.equal(observedConnection.rpc, connection.rpc)
+    assert.deepEqual(jsonValue(observedCatalog), { result: { ok: true, value: catalog } })
+    assert.deepEqual(events, ['credentials/reference-updated'])
   }
 })
 
