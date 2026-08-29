@@ -18,13 +18,20 @@
       config:
         progressiveTools: false
 
-# Vision Router 的附件产品契约：Host attachment store 负责保存用户提交的
-# durable 原件，具体视觉后端负责本次推理所需的 resize/tile/request budget。
-# 因此存储准入保持 20MiB / 1 亿像素，同时在 DSH rc.8 新增的单边限制上
-# 显式选择 10000px：覆盖 4K/手机原图和常见长截图，但不把 Host 的全局
-# 极端长边安全闸无限放开。该值作用于整个 attachment-local（包括原生视觉
-# provider），所以这里刻意不用 32768/无限；更大的部署需求仍可由后续
-# profile/--patch 层按实际 provider 能力覆盖。
+# Vision Router 的附件产品契约：Host attachment store 是 durable 图片的唯一
+# owner，视觉工具只读取 Host 已持久化、校验后的 canonical pixels。DSH rc.8
+# 以前 Host 会把已准入的源编码直接持久化；0.1.2-alpha.1 开始又增加独立的
+# provider-independent normalization stage。若沿用 alpha.1 的 4.2MP / 4MiB
+# 默认值，DVR 的 crop / grounding / OCR / pixel-diff 会在用户毫不知情时换到
+# 一个更小的像素坐标系。因此这里把 normalization policy 同步到 DVR 既有的
+# 20MiB / 1 亿像素 / 10000px 准入边界：普通 8-bit sRGB 图片继续 pass-through，
+# 不扩大 DVR 在 rc.8 时已经允许的 durable 存储上限，同时仍让 Host 独占
+# normalization、完整性校验和对象身份。
+#
+# 注意：alpha.1 对 EXIF/色彩空间/GIF/超限编码等输入仍可能规范化或重编码。
+# DVR 不另存第二份 raw attachment，也不声称能从 canonical object 恢复源字节；
+# 像素工具的合同因此以 Host canonical pixels 为准。ImageAttachmentRef 的
+# originalDimensions 仅用于说明 Host 曾缩放，不能被当作可读取的原图。
 #
 # DSH 的 patch 是“整段 config 替换”而非深度合并。旧版 Vision Router 曾在
 # profile 自己的 cordis.patch.yml 写入同一行的 20MiB/100MP 两个字段；这层
@@ -34,11 +41,14 @@
 # 这样升级旧 profile 不要求用户手工清理配置，同时后续 profile/--patch 的
 # 明确部署策略仍保持最终所有权。
 #
-# rc.6/rc.7 没有 maxImageDimension；发布合同 CI 会用真实旧包验证额外配置键
-# 不会破坏最低支持 Host。若旧 Host 开始严格拒绝未知键，此处必须改为按能力
+# rc.6/rc.7/rc.8 没有 normalizedImage*；发布合同 CI 会用真实旧包验证额外
+# 配置键仍被安全忽略。若旧 Host 开始严格拒绝未知键，此处必须改为按能力
 # 生成配置，而不是靠版本字符串分支。
 - id: attachment-local
   config:
     maxImageBytes: 20971520
     maxImagePixels: 100000000
     maxImageDimension: 10000
+    normalizedImageMaxBytes: 20971520
+    normalizedImageMaxPixels: 100000000
+    normalizedImageMaxDimension: 10000
