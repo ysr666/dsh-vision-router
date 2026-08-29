@@ -18,11 +18,11 @@ test('installed bundle keeps the full vision tool schema stable by default', asy
   )
 })
 
-test('bundle declares the rc8 large-image admission policy for clean profiles', async () => {
+test('bundle declares one large-image policy for admission and alpha canonical storage', async () => {
   const text = await readFile(bundlePatch, 'utf8')
   assert.match(
     text,
-    /- id: attachment-local[\s\S]*?maxImageBytes: 20971520[\s\S]*?maxImagePixels: 100000000[\s\S]*?maxImageDimension: 10000/,
+    /- id: attachment-local[\s\S]*?maxImageBytes: 20971520[\s\S]*?maxImagePixels: 100000000[\s\S]*?maxImageDimension: 10000[\s\S]*?normalizedImageMaxBytes: 20971520[\s\S]*?normalizedImageMaxPixels: 100000000[\s\S]*?normalizedImageMaxDimension: 10000/,
   )
 })
 
