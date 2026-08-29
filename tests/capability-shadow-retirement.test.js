@@ -78,10 +78,12 @@ test('no production, test, or script module imports the retired shadow shim', as
     new URL('./', import.meta.url),
     new URL('../scripts/', import.meta.url),
   ]
+  const offenders = []
   for (const root of roots) {
     for (const file of await sourceFiles(root)) {
       const source = await readFile(file, 'utf8')
-      assert.doesNotMatch(source, RETIRED_SHADOW_IMPORT, file.pathname)
+      if (RETIRED_SHADOW_IMPORT.test(source)) offenders.push(file.pathname)
     }
   }
+  assert.deepEqual(offenders, [])
 })
