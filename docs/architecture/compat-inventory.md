@@ -94,12 +94,12 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/tesseract-exec-compat.js`
 
-- **Reason:** isolate runtime/Node process-exec differences around the local OCR binary.
-- **Host gap:** external executable behavior is not a DSH semantic seam, but remains a supported runtime compatibility boundary.
-- **First needed for:** Node 24/local Tesseract process execution reliability.
-- **Feature detection:** executable/process behavior rather than Node version persona where possible.
-- **Removal condition:** one supported execution path passes Node 22/24 and platform matrices without the compatibility wrapper.
-- **Tests:** `tesseract-node24-boot`, cross-platform Host tests.
+- **Reason:** own the single process-wide `promisify(execFile)` compatibility boundary for the two narrow child-process cases Vision Router still needs: materializing Tesseract stdin image bytes, and replacing only Core's exact legacy Windows `VirtualScreen`/`CopyFromScreen` desktop-capture command with a per-monitor-DPI-safe equivalent. One owner prevents cleanup-order bugs from independently stacked `execFile` wrappers.
+- **Host gap:** these are runtime/platform gaps rather than DSH semantic ownership: Node's async `execFile` path does not consume the historical OCR `options.input`, while non-DPI-aware Windows PowerShell virtualizes desktop metrics and can disagree with physical screen-copy coordinates on scaled/mixed-DPI displays.
+- **First needed for:** Node 24/local Tesseract process execution reliability; Windows scaled/mixed-DPI `vision_screenshot` correctness (#340).
+- **Feature detection:** exact executable/call fingerprints only. Tesseract handling requires `tesseract[.exe]` + stdin input; Windows screenshot handling requires `win32`, `powershell[.exe]`, `-Command`, and the exact legacy `SystemInformation.VirtualScreen` + `Graphics.CopyFromScreen` script shape. No Host/Node version persona and unrelated child processes delegate unchanged.
+- **Removal condition:** local OCR no longer needs an `execFile` stdin shim **and** Core/Host exposes a native DPI-correct desktop-capture seam (or the legacy PowerShell command is removed), with Node 22/24 and Windows platform matrices proving the shared wrapper is unreachable before deletion.
+- **Tests:** `tesseract-node24-boot`, `qa-screenshot-runtime` (PMv2/PMv1 ordering, context restoration, exact-match passthrough, Windows PowerShell compile smoke), cross-platform Host tests.
 
 ## Removal protocol
 
