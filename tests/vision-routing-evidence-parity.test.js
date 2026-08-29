@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  collectCapabilityShadowCandidates,
-  generatedCapabilityRoute as legacyGeneratedCapabilityRoute,
-} from '../lib/vision-capability-shadow.js'
-import {
   collectVisionRoutingCandidates,
   collectVisionRoutingEvidence,
   generatedCapabilityRoute,
@@ -92,15 +88,8 @@ const config = {
   httpProviders: [PAID],
 }
 
-test('P1 evidence collector preserves legacy candidate order, keys, roles and evidence exactly', async () => {
-  const legacy = await collectCapabilityShadowCandidates(
-    ctxFixture(),
-    config,
-    coreFixture(),
-    storeFixture(),
-    runtimeFixture(),
-  )
-  const next = await collectVisionRoutingCandidates(
+test('P1 evidence collector preserves the frozen candidate order, roles and endpoint identity contract', async () => {
+  const rows = await collectVisionRoutingCandidates(
     ctxFixture(),
     config,
     coreFixture(),
@@ -108,10 +97,22 @@ test('P1 evidence collector preserves legacy candidate order, keys, roles and ev
     runtimeFixture(),
   )
 
-  assert.deepEqual(next, legacy)
-  assert.deepEqual(next.map((candidate) => candidate.key), legacy.map((candidate) => candidate.key))
-  assert.deepEqual(next.map((candidate) => candidate.routeRole), legacy.map((candidate) => candidate.routeRole))
-  assert.deepEqual(next.map((candidate) => candidate.endpointFingerprint), legacy.map((candidate) => candidate.endpointFingerprint))
+  assert.deepEqual(rows.map((candidate) => candidate.key), [
+    'custom/chosen',
+    'custom/fallback',
+    'vision-http/local-ollama/qwen2.5vl',
+    'http:ovh-free/qwen3-vl',
+    'http:paid-cloud/vision-pro',
+  ])
+  assert.deepEqual(rows.map((candidate) => candidate.routeRole), [
+    'user',
+    'user',
+    'user',
+    'fallback-only',
+    'user',
+  ])
+  assert.ok(rows.every((candidate) => candidate.benchmarkable === true))
+  assert.ok(rows.every((candidate) => /^ep2_[0-9a-f]{32}$/.test(candidate.endpointFingerprint)))
 })
 
 test('P1 evidence boundary returns facts only and contains health failures as uncertainty', async () => {
@@ -139,14 +140,14 @@ test('P1 evidence boundary returns facts only and contains health failures as un
   assert.deepEqual(Object.keys(evidence).sort(), ['candidates', 'health', 'measured'])
 })
 
-test('generated Router routes keep exact legacy filtering semantics', () => {
-  for (const [provider, cfg] of [
-    ['deepseek-vision', {}],
-    ['vision-chain', {}],
-    ['custom-vision', {}],
-    ['my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }],
-    ['my-chain', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }],
+test('generated Router routes keep the frozen filtering contract', () => {
+  for (const [provider, cfg, expected] of [
+    ['deepseek-vision', {}, true],
+    ['vision-chain', {}, true],
+    ['custom-vision', {}, false],
+    ['my-wrapper', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }, true],
+    ['my-chain', { wrapperRoute: 'my-wrapper', chainRoute: 'my-chain' }, true],
   ]) {
-    assert.equal(generatedCapabilityRoute(provider, cfg), legacyGeneratedCapabilityRoute(provider, cfg))
+    assert.equal(generatedCapabilityRoute(provider, cfg), expected)
   }
 })
