@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
+const RETIRED_SHADOW_SURFACE = /vision-capability-shadow|buildCapabilityShadowPlan|installCapabilityShadowRuntime|collectCapabilityShadowCandidates|autoExecutionConfigFor/
+
 async function missing(path) {
   await assert.rejects(
     readFile(new URL(path, import.meta.url), 'utf8'),
@@ -24,7 +26,7 @@ test('benchmark presentation consumes final routing evidence directly', async ()
     /import \{ collectVisionRoutingCandidates \} from '\.\/vision-routing-evidence\.js'/,
   )
   assert.match(presentation, /await collectVisionRoutingCandidates\(/)
-  assert.doesNotMatch(presentation, /vision-capability-shadow|collectCapabilityShadowCandidates/)
+  assert.doesNotMatch(presentation, RETIRED_SHADOW_SURFACE)
 })
 
 test('final routing parity suite imports the real runtime and evidence modules', async () => {
@@ -34,8 +36,17 @@ test('final routing parity suite imports the real runtime and evidence modules',
   )
   assert.match(parity, /from '\.\.\/lib\/vision-routing-runtime\.js'/)
   assert.match(parity, /from '\.\.\/lib\/vision-routing-evidence\.js'/)
-  assert.doesNotMatch(
-    parity,
-    /vision-capability-shadow|buildCapabilityShadowPlan|installCapabilityShadowRuntime|collectCapabilityShadowCandidates|autoExecutionConfigFor/,
-  )
+  assert.doesNotMatch(parity, RETIRED_SHADOW_SURFACE)
+})
+
+test('routing tests no longer depend on the retired shadow surface', async () => {
+  for (const path of [
+    './vision-routing-runtime-parity.test.js',
+    './vision-execution-order-plan-parity.test.js',
+    './vision-routing-evidence-parity.test.js',
+    './vision-runtime-performance.test.js',
+  ]) {
+    const source = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.doesNotMatch(source, RETIRED_SHADOW_SURFACE, path)
+  }
 })
