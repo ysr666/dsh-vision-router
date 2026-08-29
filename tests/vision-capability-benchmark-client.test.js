@@ -51,11 +51,19 @@ test('running and queued manual jobs temporarily replace benchmark button with s
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /job\.elapsedMs/)
 })
 
-test('background profiler state is rendered on the same model row instead of leaving stale unmeasured copy', () => {
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /RUNTIME_ENDPOINT = '\/_dsh\/vision-router\/capability-runtime'/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundRun\(body,key\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundDeferred\(body,key\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundEligible\(body,candidate\)/)
+test('background profiler state is rendered from Host candidate presentation on the same model row', () => {
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function presentationBackground\(candidate\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /candidate&&candidate\.presentation/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /presentation&&presentation\.background/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /capability-runtime/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /function backgroundRun\(body,key\)/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /function backgroundDeferred\(body,key\)/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /function backgroundEligible\(body,candidate\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.state==='running'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.state==='waiting'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.state==='measured-waiting'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.state==='deferred'/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /background\.state==='policy-excluded'/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /正在测评/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /后台自动/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /等待后台测评/)
@@ -67,8 +75,9 @@ test('background profiler state is rendered on the same model row instead of lea
 
 test('background polling is fast only while work is running and DOM writes are idempotent', () => {
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function pollDelay\(body\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /return 1000/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /return 3000/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function backgroundRunning\(body\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(manualActive\(body\)\|\|backgroundRunning\(body\)\)return 1000/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(backgroundPending\(body\)\)return 3000/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(n\.textContent!==next\)n\.textContent=next/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(b\.textContent!==nextLabel\)b\.textContent=nextLabel/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function setData\(control,key,value\)/)
