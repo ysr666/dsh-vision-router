@@ -36,7 +36,7 @@ jobs:
           tests/vision-execution-order-plan-parity.test.js
           tests/vision-execution-order-apply.test.js
           tests/vision-execution-order-core-wiring.test.js
-          tests/vision-capability-shadow.test.js
+          tests/vision-routing-runtime-parity.test.js
           tests/vision-capability-router.test.js
           tests/vision-routing-product.test.js
           tests/vision-runtime-performance.test.js
