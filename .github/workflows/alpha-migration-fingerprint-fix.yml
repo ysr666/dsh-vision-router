@@ -1,0 +1,50 @@
+name: one-shot strict alpha migration fingerprint
+
+on:
+  push:
+    branches: [fix/dsh-0.1.2-alpha1-compat]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-fingerprint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: fix/dsh-0.1.2-alpha1-compat
+      - name: Narrow runtime migration to provable historical Host defaults
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('lib/dsh-contract-compat.js')
+          text = path.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  "  return limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||\n    limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION ||\n    limits.maxImageDimension === VISION_ROUTER_IMAGE_DIMENSION\n",
+                  "  return limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||\n    limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION\n",
+              ),
+              (
+                  " * - dimension is a known DVR/Host-default value (2000, 8192, or 10000); and\n",
+                  " * - dimension is rc.8's 2000px default or alpha's 8192px default; and\n",
+              ),
+              (
+                  "  const repairNormalization = exactAlphaNormalizationDefaults(store.normalizationPolicy)\n  const repairDimension =\n    limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||\n    (\n      limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION &&\n      repairNormalization\n    )\n",
+                  "  const repairNormalization =\n    limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION &&\n    exactAlphaNormalizationDefaults(store.normalizationPolicy)\n  const repairDimension =\n    limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||\n    repairNormalization\n",
+              ),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'expected migration block not found: {old!r}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
+          Path('.github/workflows/alpha-migration-fingerprint-fix.yml').unlink()
+      - name: Commit exact migration patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/dsh-contract-compat.js .github/workflows/alpha-migration-fingerprint-fix.yml
+          git commit -m "fix(compat): respect explicit alpha normalization policy"
+          git push origin HEAD:fix/dsh-0.1.2-alpha1-compat
