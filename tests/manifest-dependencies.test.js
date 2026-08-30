@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 
 const manifestPath = new URL('../package.json', import.meta.url)
 
@@ -71,18 +71,29 @@ test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () =
 })
 
 test('all GitHub Actions dependencies are pinned to immutable commit SHAs', async () => {
-  const workflows = ['ci.yml', 'dsh-alpha-source-contract.yml', 'release.yml', 'resource-stress.yml', 'star-history.yml']
+  const workflowsDir = new URL('../.github/workflows/', import.meta.url)
+  const workflows = (await readdir(workflowsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /\.ya?ml$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+
+  assert.ok(workflows.length > 0, 'repository must contain at least one GitHub Actions workflow')
+
+  let actionRefCount = 0
   for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    const source = await readFile(new URL(name, workflowsDir), 'utf8')
     // YAML steps may spell this either as `- uses: ...` or as `- name: ...`
     // followed by an indented `uses: ...`. Match the capability line itself,
-    // not one particular presentation shape.
+    // not one particular presentation shape. Local actions do not carry an
+    // external ref and are intentionally ignored by this dependency check.
     const refs = [...source.matchAll(/^\s*(?:-\s*)?uses:\s+[^@\s]+@([^\s#]+)/gm)].map((match) => match[1])
-    assert.ok(refs.length > 0, `${name} must contain at least one external action`)
+    actionRefCount += refs.length
     for (const ref of refs) {
       assert.match(ref, /^[a-f0-9]{40}$/i, `${name} contains mutable action ref ${ref}`)
     }
   }
+
+  assert.ok(actionRefCount > 0, 'workflow scan must find at least one external action reference')
 })
 
 test('large-image stress policy cannot regress to a one-off development branch gate', async () => {
