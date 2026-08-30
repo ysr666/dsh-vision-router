@@ -2803,17 +2803,6 @@ export function createStealthAdapter(ctx, { native, imageMemory, pairs, chainRou
     providerRetryPolicy(provider) {
       return native.providerRetryPolicy(provider)
     },
-    imageRequestPricing(_provider, model) {
-      // Duck-typed adapter (see makeTwinAdapter): delegate to the native
-      // DeepSeek adapter's image pricing when it declares one.
-      try {
-        return native && typeof native.imageRequestPricing === 'function'
-          ? native.imageRequestPricing('deepseek-official', model)
-          : undefined
-      } catch {
-        return undefined
-      }
-    },
     async listModels(provider) {
       if (provider !== 'deepseek-official') return []
       const listed = await native.listModels(provider)
@@ -3299,17 +3288,6 @@ export function apply(ctx, config = {}) {
         providerRetryPolicy(provider) {
           return nativeAdapter.providerRetryPolicy(provider)
         },
-        imageRequestPricing(_provider, model) {
-          // Duck-typed adapter (see makeTwinAdapter): delegate to the native
-          // DeepSeek adapter's image pricing when it declares one.
-          try {
-            return nativeAdapter && typeof nativeAdapter.imageRequestPricing === 'function'
-              ? nativeAdapter.imageRequestPricing(nativeRoute, model)
-              : undefined
-          } catch {
-            return undefined
-          }
-        },
         async listModels() {
           return [] // hidden from the picker
         },
@@ -3458,11 +3436,6 @@ export function apply(ctx, config = {}) {
         return { id: provider, name: 'Vision HTTP' }
       },
       providerRetryPolicy() {
-        return undefined
-      },
-      imageRequestPricing() {
-        // Duck-typed adapter (see makeTwinAdapter): HTTP backends declare no
-        // image pricing, so let the token meter use its neutral estimate.
         return undefined
       },
       async listModels() {
@@ -3637,18 +3610,6 @@ export function apply(ctx, config = {}) {
       providerRetryPolicy() {
         try {
           return ctx.llm.registration(textProviderRoute()).retryPolicy
-        } catch {
-          return undefined
-        }
-      },
-      imageRequestPricing(_provider, model) {
-        // Duck-typed adapter (see makeTwinAdapter): delegate to the text
-        // provider's image pricing when it declares one.
-        try {
-          const delegate = delegateAdapter()
-          return delegate && typeof delegate.imageRequestPricing === 'function'
-            ? delegate.imageRequestPricing(textProviderRoute(), model)
-            : undefined
         } catch {
           return undefined
         }
@@ -3831,20 +3792,6 @@ export function apply(ctx, config = {}) {
         try {
           return original && typeof original.providerRetryPolicy === 'function'
             ? original.providerRetryPolicy(provider)
-            : undefined
-        } catch {
-          return undefined
-        }
-      },
-      imageRequestPricing(_provider, model) {
-        // Duck-typed adapter: delegate to the source adapter's image pricing
-        // when it declares one, otherwise declare none (token meter falls back
-        // to its own neutral estimate). DSH 0.1.2 calls this via
-        // LlmRuntime.imageRequestPricing on every token-meter measurement.
-        const original = originalAdapter()
-        try {
-          return original && typeof original.imageRequestPricing === 'function'
-            ? original.imageRequestPricing(provider, model)
             : undefined
         } catch {
           return undefined
@@ -4355,12 +4302,6 @@ export function apply(ctx, config = {}) {
         return { id: provider, name: 'Vision Chain' }
       },
       providerRetryPolicy() {
-        return undefined
-      },
-      imageRequestPricing() {
-        // Duck-typed adapter (see makeTwinAdapter): the chain aggregates
-        // multiple backends with different pricing, so declare none and let
-        // the token meter use its neutral estimate.
         return undefined
       },
       async listModels() {
