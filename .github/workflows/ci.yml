@@ -1,0 +1,278 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/auto-wrap-providers]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  dsh-contract-smoke:
+    name: dsh contract / ${{ matrix.dsh }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dsh: 0.1.0-rc.6
+            expectedBatchAttachments: 'false'
+            expectedDimensionConfig: 'false'
+          - dsh: 0.1.0-rc.7
+            expectedBatchAttachments: 'true'
+            expectedDimensionConfig: 'false'
+          - dsh: 0.1.0-rc.8
+            expectedBatchAttachments: 'true'
+            expectedDimensionConfig: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare and pack plugin
+        shell: node {0}
+        run: |
+          require('node:fs').mkdirSync('tmp-pack', { recursive: true })
+      - run: pnpm pack --pack-destination tmp-pack
+      - name: Verify against released DSH contract
+        shell: node {0}
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+          EXPECT_BATCH_ATTACHMENTS: ${{ matrix.expectedBatchAttachments }}
+          EXPECT_DIMENSION_CONFIG: ${{ matrix.expectedDimensionConfig }}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const { createRequire } = require('node:module')
+          const { pathToFileURL } = require('node:url')
+          ;(async () => {
+            const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+            if (!tgz) throw new Error('packed plugin tarball not found')
+            const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+            const hostDir = path.join(process.env.RUNNER_TEMP, `dsh-contract-${process.env.DSH_VERSION}`)
+            fs.rmSync(hostDir, { recursive: true, force: true })
+            fs.mkdirSync(hostDir, { recursive: true })
+            const v = process.env.DSH_VERSION
+            fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+              private: true,
+              type: 'module',
+              packageManager: 'pnpm@11.20.0',
+              dependencies: {
+                'dsh-vision-router': `file:${tarball}`,
+                '@deepseek-ai/dsh-attachment': v,
+                '@deepseek-ai/dsh-attachment-local': v,
+                '@deepseek-ai/dsh-llm-deepseek': v,
+                '@deepseek-ai/dsh-anonymous-user-id': v,
+                '@deepseek-ai/dsh-settings': v,
+                '@deepseek-ai/dsh-llm': v,
+                sharp: '0.35.3',
+              },
+            }, null, 2))
+            const installed = spawnSync('pnpm', ['install'], {
+              cwd: hostDir,
+              stdio: 'inherit',
+            })
+            if (installed.status !== 0) process.exit(installed.status ?? 1)
+
+            const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
+            const pluginEntry = hostRequire.resolve('dsh-vision-router')
+            const attachmentEntry = hostRequire.resolve('@deepseek-ai/dsh-attachment')
+            const attachmentLocalEntry = hostRequire.resolve('@deepseek-ai/dsh-attachment-local')
+            const plugin = await import(pathToFileURL(pluginEntry).href)
+            const attachment = await import(pathToFileURL(attachmentEntry).href)
+            const attachmentLocal = await import(pathToFileURL(attachmentLocalEntry).href)
+            const store = Object.create(attachment.default.prototype)
+            const detected = plugin.hasBatchAttachmentContract({
+              get(name) {
+                return name === 'attachments' ? store : undefined
+              },
+            })
+            const expected = process.env.EXPECT_BATCH_ATTACHMENTS === 'true'
+            console.log({ version: v, hasSaveImages: typeof store.saveImages === 'function', detected, expected })
+            if (detected !== expected) {
+              throw new Error(`contract detector misclassified DSH ${v}: expected batch=${expected}, got ${detected}`)
+            }
+
+            // The bundle patch deliberately carries rc.8's maxImageDimension
+            // through the same attachment-local row used by rc.6/rc.7. Parsing
+            // it against each released schema proves the minimum Host does not
+            // fail merely because the newer optional key is present.
+            const resolvedLimits = attachmentLocal.default.Config({
+              maxImageBytes: 20 * 1024 * 1024,
+              maxImagePixels: 100_000_000,
+              maxImageDimension: 10_000,
+            })
+            const hasDimensionConfig = Object.prototype.hasOwnProperty.call(resolvedLimits, 'maxImageDimension')
+            const expectsDimension = process.env.EXPECT_DIMENSION_CONFIG === 'true'
+            console.log({ version: v, hasDimensionConfig, maxImageDimension: resolvedLimits.maxImageDimension })
+            if (expectsDimension) {
+              if (!hasDimensionConfig || resolvedLimits.maxImageDimension !== 10_000) {
+                throw new Error(`DSH ${v} did not retain maxImageDimension=10000`)
+              }
+
+              const sharp = hostRequire('sharp')
+              const png = async (width) => new Uint8Array(await sharp({
+                create: {
+                  width,
+                  height: 1,
+                  channels: 4,
+                  background: { r: 1, g: 2, b: 3, alpha: 1 },
+                },
+              }).png().toBuffer())
+
+              // Reproduce the real upgrade failure: an older profile-local
+              // Vision Router patch replaces the whole attachment-local config
+              // with the historical 20MiB/100MP pair, omitting rc.8's new
+              // dimension field. Schema resolution therefore restores 2000.
+              const staleResolved = attachmentLocal.default.Config({
+                maxImageBytes: 20 * 1024 * 1024,
+                maxImagePixels: 100_000_000,
+              })
+              if (staleResolved.maxImageDimension !== 2000) {
+                throw new Error(`DSH ${v} no longer reproduces the stale-overlay 2000px default`)
+              }
+              const staleStore = Object.create(attachment.default.prototype)
+              staleStore.imageLimits = Object.freeze({
+                ...staleResolved,
+                mediaTypes: Object.freeze(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+              })
+              const migrated = plugin.ensureVisionAttachmentAdmissionPolicy({
+                get(name) { return name === 'attachments' ? staleStore : undefined },
+              })
+              if (migrated.changed !== true || staleStore.imageLimits.maxImageDimension !== 10_000) {
+                throw new Error(`Vision Router did not repair the DSH ${v} stale profile overlay`)
+              }
+
+              // Exercise the official rc.8 validator with the migrated live
+              // store limits, not a hand-written comparison. 10000px must pass
+              // and 10001px must still hit the configured safety boundary.
+              await attachmentLocal.validateImageFile(
+                { data: await png(10_000), mediaType: 'image/png' },
+                staleStore.imageLimits,
+              )
+              let rejected = false
+              try {
+                await attachmentLocal.validateImageFile(
+                  { data: await png(10_001), mediaType: 'image/png' },
+                  staleStore.imageLimits,
+                )
+              } catch (error) {
+                rejected = error?.code === 'IMAGE_DIMENSION_TOO_LARGE'
+                if (!rejected) throw error
+              }
+              if (!rejected) {
+                throw new Error(`DSH ${v} admitted 10001px after the migrated maxImageDimension=10000 policy`)
+              }
+            }
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })
+
+  native-host-sharp:
+    name: host sharp / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run cross-platform runtime and benchmark fixture regression tests
+        run: node --test tests/file-logger.test.js tests/logging-ui.test.js tests/runtime-boundary-fixes.test.js tests/vision-capability-benchmark.test.js
+      - name: Prepare pack directory
+        shell: node {0}
+        run: |
+          require('node:fs').mkdirSync('tmp-pack', { recursive: true })
+      - name: Pack plugin
+        run: pnpm pack --pack-destination tmp-pack
+      - name: Install into a DSH-like host and verify one shared sharp
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const { createRequire } = require('node:module')
+          ;(async () => {
+            const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+            if (!tgz) throw new Error('packed plugin tarball not found')
+            const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+            const hostDir = path.join(process.env.RUNNER_TEMP, 'dsh-vision-router-host')
+            fs.rmSync(hostDir, { recursive: true, force: true })
+            fs.mkdirSync(hostDir, { recursive: true })
+            fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+              private: true,
+              packageManager: 'pnpm@11.20.0',
+              dependencies: {
+                sharp: '0.35.3',
+                'dsh-vision-router': `file:${tarball}`,
+              },
+            }, null, 2))
+            const cmd = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+            const installed = spawnSync(cmd, ['install'], {
+              cwd: hostDir,
+              stdio: 'inherit',
+              shell: process.platform === 'win32',
+            })
+            if (installed.status !== 0) process.exit(installed.status ?? 1)
+
+            const hostRequire = createRequire(path.join(hostDir, 'host-check.cjs'))
+            const pluginEntry = hostRequire.resolve('dsh-vision-router')
+            const pluginRequire = createRequire(pluginEntry)
+            const hostSharp = fs.realpathSync(hostRequire.resolve('sharp'))
+            const pluginSharp = fs.realpathSync(pluginRequire.resolve('sharp'))
+            console.log({ hostSharp, pluginSharp })
+            if (hostSharp !== pluginSharp) {
+              throw new Error('plugin installed/resolved a second sharp copy instead of using the host copy')
+            }
+            const sharp = hostRequire('sharp')
+            const out = await sharp({
+              create: {
+                width: 8,
+                height: 8,
+                channels: 4,
+                background: { r: 10, g: 20, b: 30, alpha: 1 },
+              },
+            }).resize(4, 4).png().toBuffer()
+            if (!Buffer.isBuffer(out) || out.length === 0) throw new Error('shared sharp pixel smoke test failed')
+            console.log(`shared sharp ${sharp.versions.sharp}; PNG bytes=${out.length}`)
+          })().catch((error) => {
+            console.error(error)
+            process.exit(1)
+          })

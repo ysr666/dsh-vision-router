@@ -1,0 +1,18 @@
+# 智谱 bigmodel.cn（大陆直连；glm-4.6v-flash 永久免费）
+llm-pi-ai:
+  providers:
+    zhipu:
+      api: openai-completions
+      baseURL: https://open.bigmodel.cn/api/paas/v4
+      apiKeyEnv: ZAI_API_KEY
+      models:
+        - id: glm-4.6v-flash
+          name: "智谱: GLM-4.6V-Flash (永久免费)"
+          contextWindow: 131072
+          maxTokens: 8192
+          input: [text, image]
+        - id: glm-4.5v
+          name: "智谱: GLM-4.5V (限时免费)"
+          contextWindow: 131072
+          maxTokens: 8192
+          input: [text, image]

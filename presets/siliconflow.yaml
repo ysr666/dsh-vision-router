@@ -1,0 +1,18 @@
+# SiliconFlow 硅基流动（大陆直连，¥14 赠金覆盖 Qwen2.5-VL）
+llm-pi-ai:
+  providers:
+    siliconflow:
+      api: openai-completions
+      baseURL: https://api.siliconflow.cn/v1
+      apiKeyEnv: SILICONFLOW_API_KEY
+      models:
+        - id: Qwen/Qwen2.5-VL-7B-Instruct
+          name: "硅基流动: Qwen2.5-VL-7B-Instruct"
+          contextWindow: 32768
+          maxTokens: 8192
+          input: [text, image]
+        - id: Qwen/Qwen2.5-VL-32B-Instruct
+          name: "硅基流动: Qwen2.5-VL-32B-Instruct"
+          contextWindow: 32768
+          maxTokens: 8192
+          input: [text, image]

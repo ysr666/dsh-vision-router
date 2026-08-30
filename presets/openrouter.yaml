@@ -1,0 +1,17 @@
+# OpenRouter 免费视觉模型（50 次/天，需 Key；免费名单轮换频繁，以官方为准）
+llm-pi-ai:
+  providers:
+    openrouter:
+      baseURL: https://openrouter.ai/api/v1
+      apiKeyEnv: OPENROUTER_API_KEY
+      models:
+        - id: google/gemma-4-31b-it:free
+          name: "OpenRouter: Gemma 4 31B (free)"
+          contextWindow: 262144
+          maxTokens: 32768
+          input: [text, image]
+        - id: google/gemma-4-26b-a4b-it:free
+          name: "OpenRouter: Gemma 4 26B A4B (free)"
+          contextWindow: 262144
+          maxTokens: 32768
+          input: [text, image]

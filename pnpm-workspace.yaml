@@ -1,0 +1,8 @@
+allowBuilds:
+  sharp: true
+# pnpm v11 defaults minimumReleaseAge to 1440 minutes: freshly published
+# versions are not resolved for 24h, so dev installs silently keep old ones.
+# Bare names / org patterns exempt every future version; a `name@x.y.z` entry
+# exempts only that one version and goes stale on the next release.
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/*'

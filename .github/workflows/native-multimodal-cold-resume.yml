@@ -1,0 +1,111 @@
+name: Native multimodal cold resume
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cold-resume:
+    name: DSH ${{ matrix.dsh }} / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.1.0-rc.7', '0.1.0-rc.8']
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack Vision Router
+        shell: node {0}
+        run: |
+          require('node:fs').mkdirSync('tmp-pack', { recursive: true })
+      - run: pnpm pack --pack-destination tmp-pack
+      - name: Reproduce image turns across DSH cold and process restarts
+        shell: node {0}
+        env:
+          DSH_VERSION: ${{ matrix.dsh }}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const hostDir = path.join(
+            process.env.RUNNER_TEMP,
+            `native-mm-cold-resume-${process.env.DSH_VERSION}-node-${process.versions.node}`,
+          )
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          const v = process.env.DSH_VERSION
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies: {
+              'dsh-vision-router': `file:${tarball}`,
+              '@deepseek-ai/dsh-anonymous-user-id': v,
+              '@deepseek-ai/dsh-llm-deepseek': v,
+              '@deepseek-ai/dsh-llm': v,
+              '@deepseek-ai/dsh-llm-pi-ai': v,
+              '@deepseek-ai/dsh-session': v,
+              '@deepseek-ai/dsh-attachment-local': v,
+              '@deepseek-ai/dsh-system-prompt': v,
+              '@deepseek-ai/dsh-tools': v,
+              '@deepseek-ai/dsh-agent': v,
+              '@deepseek-ai/dsh-agent-loop': v,
+              '@deepseek-ai/dsh-session-persistence-jsonl': v,
+              sharp: '0.35.3',
+            },
+          }, null, 2))
+          // Released provider stacks include a small set of packages whose own
+          // install scripts pnpm 11 blocks by default. Approve only those exact
+          // dependencies instead of disabling build safety for the temporary
+          // contract host.
+          fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            '  - .',
+            'allowBuilds:',
+            '  koffi: true',
+            "  '@google/genai': true",
+            '  protobufjs: true',
+            '',
+          ].join('\n'))
+
+          const installed = spawnSync('pnpm', ['install'], {
+            cwd: hostDir,
+            stdio: 'inherit',
+          })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+
+          for (const script of [
+            'tests/native-multimodal-cold-resume-contract.mjs',
+            'tests/native-multimodal-process-restart-contract.mjs',
+            'tests/pi-ai-native-process-restart-contract.mjs',
+          ]) {
+            const test = spawnSync(
+              process.execPath,
+              [path.resolve(script)],
+              {
+                cwd: process.cwd(),
+                stdio: 'inherit',
+                env: { ...process.env, DSH_CONTRACT_HOST_DIR: hostDir },
+              },
+            )
+            if (test.status !== 0) process.exit(test.status ?? 1)
+          }

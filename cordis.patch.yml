@@ -1,0 +1,44 @@
+# dsh-vision-router bundle layer: applied automatically when the package is
+# installed (package.json declares dsh.bundle.patch), i.e. a profile that
+# runs `dsh plugin add github:ysr666/dsh-vision-router` gets this wiring
+# without any manual cordis.patch.yml edits. Later layers (the profile's own
+# cordis.patch.yml, --patch overlays) override these rows by id.
+
+# 纯增量补丁（issue #34）：不碰核心行。最低支持 Host 仍保留旧兼容路径；
+# batch-attachment 合同的 Host 始终拥有 deepseek-official，插件只提供
+# 「+ 自动识图」包装路由，因此这里永远不默认禁用官方 llm-deepseek 行。
+
+# 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
+# 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
+# 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在 profile /
+# composition 补丁中显式把 progressiveTools 改回 true（启动期配置）。
+- insert:
+    - id: vision-router
+      name: dsh-vision-router
+      config:
+        progressiveTools: false
+
+# Vision Router 的附件产品契约：Host attachment store 负责保存用户提交的
+# durable 原件，具体视觉后端负责本次推理所需的 resize/tile/request budget。
+# 因此存储准入保持 20MiB / 1 亿像素，同时在 DSH rc.8 新增的单边限制上
+# 显式选择 10000px：覆盖 4K/手机原图和常见长截图，但不把 Host 的全局
+# 极端长边安全闸无限放开。该值作用于整个 attachment-local（包括原生视觉
+# provider），所以这里刻意不用 32768/无限；更大的部署需求仍可由后续
+# profile/--patch 层按实际 provider 能力覆盖。
+#
+# DSH 的 patch 是“整段 config 替换”而非深度合并。旧版 Vision Router 曾在
+# profile 自己的 cordis.patch.yml 写入同一行的 20MiB/100MP 两个字段；这层
+# 比 bundle 晚，会把这里新加的 maxImageDimension 擦掉，让 rc.8 又落回 2000。
+# 1.7.2 起运行时只对“20MiB + 100MP + rc.8 默认 2000px”这一历史指纹做一次
+# 内存态迁移到 10000px；显式自定义过 dimension 或其他附件策略一律不碰。
+# 这样升级旧 profile 不要求用户手工清理配置，同时后续 profile/--patch 的
+# 明确部署策略仍保持最终所有权。
+#
+# rc.6/rc.7 没有 maxImageDimension；发布合同 CI 会用真实旧包验证额外配置键
+# 不会破坏最低支持 Host。若旧 Host 开始严格拒绝未知键，此处必须改为按能力
+# 生成配置，而不是靠版本字符串分支。
+- id: attachment-local
+  config:
+    maxImageBytes: 20971520
+    maxImagePixels: 100000000
+    maxImageDimension: 10000

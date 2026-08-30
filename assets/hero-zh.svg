@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="640" viewBox="0 0 1600 640">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#070914"/>
+    <stop offset="0.52" stop-color="#0A0D1B"/>
+    <stop offset="1" stop-color="#080A13"/>
+  </linearGradient>
+
+  <radialGradient id="violetGlow" cx="73%" cy="49%" r="42%">
+    <stop offset="0" stop-color="#715CFF" stop-opacity=".23"/>
+    <stop offset=".45" stop-color="#604CFF" stop-opacity=".08"/>
+    <stop offset="1" stop-color="#604CFF" stop-opacity="0"/>
+  </radialGradient>
+
+  <radialGradient id="cyanGlow" cx="82%" cy="46%" r="28%">
+    <stop offset="0" stop-color="#46D8FF" stop-opacity=".15"/>
+    <stop offset="1" stop-color="#46D8FF" stop-opacity="0"/>
+  </radialGradient>
+
+  <linearGradient id="iris" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#8D7BFF"/>
+    <stop offset=".5" stop-color="#6256FF"/>
+    <stop offset="1" stop-color="#36C8FF"/>
+  </linearGradient>
+
+  <linearGradient id="route" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#695BFF"/>
+    <stop offset=".55" stop-color="#7B6DFF"/>
+    <stop offset="1" stop-color="#42D8FF"/>
+  </linearGradient>
+
+  <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#171B2C" stop-opacity=".95"/>
+    <stop offset="1" stop-color="#0D1020" stop-opacity=".95"/>
+  </linearGradient>
+
+  <filter id="blur40"><feGaussianBlur stdDeviation="40"/></filter>
+  <filter id="glow">
+    <feGaussianBlur stdDeviation="5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="softGlow">
+    <feGaussianBlur stdDeviation="12" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+
+  <pattern id="dots" width="34" height="34" patternUnits="userSpaceOnUse">
+    <circle cx="1.4" cy="1.4" r="1.35" fill="#65708A" opacity=".12"/>
+  </pattern>
+</defs>
+
+<!-- Background -->
+<rect width="1600" height="640" rx="32" fill="url(#bg)"/>
+<rect width="1600" height="640" rx="32" fill="url(#dots)" opacity=".45"/>
+<rect width="1600" height="640" rx="32" fill="url(#violetGlow)"/>
+<rect width="1600" height="640" rx="32" fill="url(#cyanGlow)"/>
+
+<!-- ambient curves -->
+<path d="M790 70 C980 15 1240 42 1515 180" fill="none" stroke="#8D7BFF" stroke-opacity=".08" stroke-width="1"/>
+<path d="M780 575 C1020 620 1300 585 1510 425" fill="none" stroke="#47CFFF" stroke-opacity=".08" stroke-width="1"/>
+<path d="M925 36 C1120 160 1380 132 1565 250" fill="none" stroke="#FFFFFF" stroke-opacity=".035" stroke-width="1"/>
+
+<!-- LEFT COPY -->
+<g transform="translate(92,86)">
+  <g>
+    <rect x="0" y="0" width="224" height="34" rx="17" fill="#111528" stroke="#7568FF" stroke-opacity=".42"/>
+    <circle cx="19" cy="17" r="4" fill="#6A5BFF" filter="url(#glow)"/>
+    <text x="33" y="22" fill="#BFB8FF" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.7">DEEPSEEK HARNESS</text>
+  </g>
+
+  <text x="0" y="101" fill="#F7F8FF" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="68" font-weight="800" letter-spacing="-2.2">DSH 视觉</text>
+  <text x="0" y="176" fill="url(#iris)" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="70" font-weight="800" letter-spacing="-2.2">路由器</text>
+
+  <text x="2" y="230" fill="#F2F5FF" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="31" font-weight="700">粘贴图片，直接就能用。</text>
+
+  <text x="2" y="270" fill="#C7CCDB" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="19" font-weight="500">DeepSeek 继续思考，Vision Router 负责看。</text>
+
+  <text x="2" y="304" fill="#7F889F" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="16.8" font-weight="500">内置免费视觉 · 无需 API Key · 无需 Python · 自动路由</text>
+
+  <!-- feature chips -->
+  <g transform="translate(0,355)">
+    <g>
+      <rect x="0" y="0" width="116" height="39" rx="12" fill="#111526" stroke="#252B42"/>
+      <circle cx="18" cy="19.5" r="4" fill="#50D890"/>
+      <text x="31" y="25" fill="#CFD5E6" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="14" font-weight="650">无需 Key</text>
+    </g>
+    <g transform="translate(129,0)">
+      <rect x="0" y="0" width="132" height="39" rx="12" fill="#111526" stroke="#252B42"/>
+      <circle cx="18" cy="19.5" r="4" fill="#7B6DFF"/>
+      <text x="31" y="25" fill="#CFD5E6" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="14" font-weight="650">自动路由</text>
+    </g>
+    <g transform="translate(274,0)">
+      <rect x="0" y="0" width="132" height="39" rx="12" fill="#111526" stroke="#252B42"/>
+      <circle cx="18" cy="19.5" r="4" fill="#4CD5FF"/>
+      <text x="31" y="25" fill="#CFD5E6" font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif" font-size="14" font-weight="650">像素循环</text>
+    </g>
+  </g>
+
+  <g transform="translate(2,438)">
+    <path d="M0 0 H422" stroke="#252A3C"/>
+    <text x="0" y="38" fill="#666F85" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">github.com/ysr666/dsh-vision-router</text>
+  </g>
+</g>
+
+<!-- RIGHT VISUAL -->
+<g>
+  <rect x="760" y="64" width="760" height="510" rx="34" fill="#0C0F1C" fill-opacity=".45" stroke="#252B40" stroke-opacity=".72"/>
+  <rect x="780" y="84" width="720" height="470" rx="26" fill="none" stroke="#FFFFFF" stroke-opacity=".035"/>
+
+  <!-- input tile -->
+  <g transform="translate(815,248)">
+    <rect x="0" y="0" width="116" height="142" rx="20" fill="url(#chip)" stroke="#2B3148"/>
+    <rect x="16" y="17" width="84" height="82" rx="13" fill="#0A0D17" stroke="#2D3550"/>
+    <rect x="28" y="31" width="23" height="23" rx="5" fill="#5C51E8"/>
+    <rect x="55" y="31" width="33" height="23" rx="5" fill="#183C58"/>
+    <rect x="28" y="58" width="38" height="28" rx="5" fill="#154A63"/>
+    <rect x="70" y="58" width="18" height="28" rx="5" fill="#7F6FFF"/>
+    <text x="58" y="121" text-anchor="middle" fill="#AEB6CC"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="13" font-weight="700">图像</text>
+  </g>
+
+  <!-- route in -->
+  <path d="M931 319 C978 319 995 319 1032 319" fill="none" stroke="url(#route)" stroke-width="2.7" stroke-linecap="round" filter="url(#glow)"/>
+  <circle cx="974" cy="319" r="4" fill="#7668FF"/>
+  <circle cx="1004" cy="319" r="3" fill="#7668FF" opacity=".65"/>
+
+  <!-- router eye -->
+  <g transform="translate(1111,319)">
+    <circle cx="0" cy="0" r="102" fill="#0D1020" stroke="#2B314B" stroke-width="1.4"/>
+    <circle cx="0" cy="0" r="87" fill="none" stroke="#6659FF" stroke-opacity=".18"/>
+    <circle cx="0" cy="0" r="68" fill="none" stroke="#46D7FF" stroke-opacity=".10"/>
+
+    <path d="M-64 0 C-35 -38 35 -38 64 0 C35 38 -35 38 -64 0Z" fill="#11162A" stroke="url(#iris)" stroke-width="2.5" filter="url(#glow)"/>
+    <circle cx="0" cy="0" r="28" fill="url(#iris)" opacity=".92" filter="url(#softGlow)"/>
+    <circle cx="0" cy="0" r="12" fill="#080B14"/>
+    <circle cx="7" cy="-8" r="4.5" fill="#DDF8FF" opacity=".9"/>
+
+    <circle cx="-91" cy="0" r="4" fill="#7568FF"/>
+    <circle cx="91" cy="-49" r="4" fill="#49D5FF"/>
+    <circle cx="101" cy="0" r="4" fill="#49D5FF"/>
+    <circle cx="91" cy="49" r="4" fill="#49D5FF"/>
+
+    <text x="0" y="132" text-anchor="middle" fill="#7A839A"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="13" font-weight="700" letter-spacing="1.0">视觉路由核心</text>
+  </g>
+
+  <!-- routes out -->
+  <path d="M1212 270 C1258 270 1260 183 1308 183" fill="none" stroke="url(#route)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M1214 319 C1264 319 1266 319 1308 319" fill="none" stroke="url(#route)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M1212 368 C1258 368 1260 455 1308 455" fill="none" stroke="url(#route)" stroke-width="2.2" stroke-linecap="round"/>
+
+  <circle cx="1268" cy="213" r="4" fill="#65D9FF" filter="url(#glow)"/>
+  <circle cx="1262" cy="319" r="4" fill="#7B6DFF" filter="url(#glow)"/>
+  <circle cx="1268" cy="425" r="4" fill="#65D9FF" filter="url(#glow)"/>
+
+  <!-- provider cards -->
+  <g transform="translate(1308,137)">
+    <rect x="0" y="0" width="164" height="92" rx="17" fill="url(#chip)" stroke="#2C334B"/>
+    <circle cx="24" cy="26" r="8" fill="#2ED887" fill-opacity=".14" stroke="#4BDB96"/>
+    <path d="M20 26 l3 3 l6 -7" fill="none" stroke="#60E6A5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="43" y="31" fill="#E0E5F2"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="14" font-weight="700">免费视觉</text>
+    <text x="22" y="61" fill="#737D94" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5">Qwen2.5-VL</text>
+    <text x="22" y="78" fill="#535D74"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="10.5">内置 · 无需 Key</text>
+  </g>
+
+  <g transform="translate(1308,273)">
+    <rect x="0" y="0" width="164" height="92" rx="17" fill="url(#chip)" stroke="#403772"/>
+    <circle cx="24" cy="26" r="8" fill="#7A6BFF" fill-opacity=".15" stroke="#7A6BFF"/>
+    <path d="M20 26 h8 M24 22 v8" stroke="#A79DFF" stroke-width="1.7" stroke-linecap="round"/>
+    <text x="43" y="31" fill="#E7E4FF"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="14" font-weight="700">故障切换</text>
+    <text x="22" y="61" fill="#8E86C9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5">provider chain</text>
+    <text x="22" y="78" fill="#615B83"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="10.5">配额 · 区域 · 429</text>
+  </g>
+
+  <g transform="translate(1308,409)">
+    <rect x="0" y="0" width="164" height="92" rx="17" fill="url(#chip)" stroke="#263D52"/>
+    <circle cx="24" cy="26" r="8" fill="#43D6FF" fill-opacity=".13" stroke="#44D6FF"/>
+    <path d="M19 26 h10 M24 21 v10" stroke="#7AE3FF" stroke-width="1.7" stroke-linecap="round"/>
+    <text x="43" y="31" fill="#DDF7FF"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="14" font-weight="700">像素工具</text>
+    <text x="22" y="61" fill="#7DB5C6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11.5">crop · diff · OCR</text>
+    <text x="22" y="78" fill="#52707D" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5">ground · trace · color</text>
+  </g>
+
+  <!-- brain stays brain -->
+  <g transform="translate(982,106)">
+    <rect x="0" y="0" width="316" height="40" rx="20" fill="#101526" stroke="#2D3450"/>
+    <circle cx="21" cy="20" r="4" fill="#A092FF"/>
+    <text x="36" y="25" fill="#BAC1D2"
+          font-family="PingFang SC, Noto Sans CJK SC, Microsoft YaHei, Inter, Arial, sans-serif"
+          font-size="13" font-weight="650">DEEPSEEK 仍是大脑</text>
+    <path d="M239 20 h46" stroke="#343C59" stroke-width="1.5"/>
+    <circle cx="291" cy="20" r="4" fill="#4BD5FF"/>
+  </g>
+</g>
+
+<rect x=".75" y=".75" width="1598.5" height="638.5" rx="31.25" fill="none" stroke="#FFFFFF" stroke-opacity=".08" stroke-width="1.5"/>
+</svg>

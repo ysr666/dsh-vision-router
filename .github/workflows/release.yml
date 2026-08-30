@@ -1,0 +1,265 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org/'
+          cache: pnpm
+
+      - name: Verify tag, source commit, and package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_TAG="v$VERSION"
+
+          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ] || {
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          }
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || {
+            echo "::error::checkout HEAD does not match the tag event SHA"
+            exit 1
+          }
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::release tag is not reachable from origin/main"
+            exit 1
+          }
+
+          # Release identity and artifact verification are hard gates. README /
+          # CHANGELOG freshness is useful documentation hygiene, but must not
+          # make an otherwise verified hotfix impossible to publish. Keep those
+          # checks visible as warnings and let the release-note step fall back
+          # to the immutable commit list when a changelog section is absent.
+          for f in README.md README.zh.md; do
+            if ! grep -q "$EXPECTED_TAG" "$f"; then
+              echo "::warning::$f does not yet mention $EXPECTED_TAG"
+            fi
+          done
+          if ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
+            echo "::warning::CHANGELOG.md has no section for $EXPECTED_TAG; release notes will use the commit list"
+          fi
+
+          node <<'NODE'
+          const pkg = require('./package.json')
+          const scripts = pkg.scripts || {}
+          const forbidden = [
+            'preinstall', 'install', 'postinstall',
+            'prepack', 'postpack', 'prepare',
+            'prepublish', 'prepublishOnly', 'publish', 'postpublish',
+          ]
+          const found = forbidden.filter(name => Object.prototype.hasOwnProperty.call(scripts, name))
+          if (found.length) {
+            console.error(`Forbidden release/install lifecycle scripts present: ${found.join(', ')}`)
+            process.exit(1)
+          }
+          NODE
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests
+        run: pnpm test
+
+  publish:
+    name: Publish verified package
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+    steps:
+      - name: Checkout exact tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js for npm trusted publishing
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org/'
+          package-manager-cache: false
+
+      - name: Pin npm trusted-publishing client
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.18.0
+          echo "node=$(node --version)"
+          echo "npm=$(npm --version)"
+          node <<'NODE'
+          const node = process.versions.node.split('.').map(Number)
+          if (node[0] < 22 || (node[0] === 22 && node[1] < 14)) {
+            throw new Error(`Node ${process.versions.node} is below the npm trusted-publishing minimum 22.14.0`)
+          }
+          NODE
+          NPM_VERSION="$(npm --version)"
+          node - "$NPM_VERSION" <<'NODE'
+          const version = process.argv[2].split('.').map(Number)
+          const min = [11, 5, 1]
+          const ok = version.some((part, i) => part > min[i] && version.slice(0, i).every((v, j) => v === min[j])) || version.every((v, i) => v === min[i])
+          if (!ok) throw new Error(`npm ${process.argv[2]} is below the trusted-publishing minimum 11.5.1`)
+          NODE
+
+      - name: Re-verify immutable release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_TAG="v$VERSION"
+          [ "$GITHUB_REF_NAME" = "$EXPECTED_TAG" ]
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$EXPECTED_TAG" >> "$GITHUB_ENV"
+
+      - name: Pack once and record exact tarball hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pack --json > pack.json
+          TARBALL="$(node -e "const p=require('./pack.json'); if(!Array.isArray(p)||p.length!==1||!p[0].filename) process.exit(1); process.stdout.write(p[0].filename)")"
+          FILE_COUNT="$(node -e "const p=require('./pack.json'); process.stdout.write(String(p[0].files?.length ?? ''))")"
+          LOCAL_SHA1="$(sha1sum "$TARBALL" | awk '{print $1}')"
+          LOCAL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
+
+          echo "PACKAGE_TARBALL=$TARBALL" >> "$GITHUB_ENV"
+          echo "PACKAGE_FILE_COUNT=$FILE_COUNT" >> "$GITHUB_ENV"
+          echo "PACKAGE_SHA1=$LOCAL_SHA1" >> "$GITHUB_ENV"
+          echo "PACKAGE_SHA256=$LOCAL_SHA256" >> "$GITHUB_ENV"
+          printf '%s  %s\n' "$LOCAL_SHA256" "$TARBALL" > SHA256SUMS.txt
+
+          echo "Packed $TARBALL"
+          echo "files=$FILE_COUNT"
+          echo "sha1=$LOCAL_SHA1"
+          echo "sha256=$LOCAL_SHA256"
+
+      - name: Check existing npm version
+        id: registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if npm view "dsh-vision-router@$RELEASE_VERSION" version >/dev/null 2>&1; then
+            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum)"
+            [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
+              echo "::error::npm already contains $RELEASE_VERSION but its tarball SHA-1 differs from this tag"
+              echo "local:  $PACKAGE_SHA1"
+              echo "remote: $REMOTE_SHA1"
+              exit 1
+            }
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "npm already contains the exact tarball for $RELEASE_VERSION"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish exact tarball to npm with trusted OIDC
+        if: steps.registry.outputs.already_published == 'false'
+        shell: bash
+        run: npm publish "$PACKAGE_TARBALL" --provenance --access public
+
+      - name: Verify npm registry tarball identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_SHA1=""
+          for attempt in 1 2 3 4 5 6; do
+            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum 2>/dev/null || true)"
+            [ -n "$REMOTE_SHA1" ] && break
+            sleep 5
+          done
+          [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
+            echo "::error::registry tarball identity verification failed"
+            echo "local:  $PACKAGE_SHA1"
+            echo "remote: ${REMOTE_SHA1:-<missing>}"
+            exit 1
+          }
+
+      - name: Compose immutable release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# $RELEASE_TAG"
+            echo
+          } > release-notes.md
+          CHANGELOG_SECTION="$(mktemp)"
+          awk -v v="$RELEASE_TAG" '$0 == "## " v { flag=1; next } /^## / && flag { exit } flag' CHANGELOG.md > "$CHANGELOG_SECTION"
+          if [ -s "$CHANGELOG_SECTION" ]; then
+            cat "$CHANGELOG_SECTION" >> release-notes.md
+          else
+            echo "> Hotfix release; see the immutable commit list below for the exact changes." >> release-notes.md
+          fi
+          rm -f "$CHANGELOG_SECTION"
+          {
+            echo
+            echo "## Commits"
+            echo
+          } >> release-notes.md
+          PREV_TAG="$(git describe --tags --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:'- %s' "$PREV_TAG..$GITHUB_SHA" >> release-notes.md
+          else
+            git log --pretty=format:'- %s' "$GITHUB_SHA" >> release-notes.md
+          fi
+          {
+            echo
+            echo
+            echo "## Supply-chain verification"
+            echo
+            echo "- Git commit: \`$GITHUB_SHA\`"
+            echo "- npm tarball SHA-1: \`$PACKAGE_SHA1\`"
+            echo "- tarball SHA-256: \`$PACKAGE_SHA256\`"
+            echo "- packed files: \`$PACKAGE_FILE_COUNT\`"
+            echo "- npm provenance: enabled via trusted publishing (OIDC)"
+          } >> release-notes.md
+
+      - name: Create GitHub Release once
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "$RELEASE_TAG already has a GitHub Release; refusing to rewrite published release notes or assets."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --notes-file release-notes.md \
+            "$PACKAGE_TARBALL" \
+            "SHA256SUMS.txt"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

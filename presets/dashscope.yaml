@@ -1,0 +1,18 @@
+# 阿里云百炼 DashScope（大陆直连，新用户每系列 100 万 token/90 天）
+llm-pi-ai:
+  providers:
+    dashscope:
+      api: openai-completions
+      baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+      apiKeyEnv: DASHSCOPE_API_KEY
+      models:
+        - id: qwen-vl-plus
+          name: "百炼: Qwen-VL-Plus"
+          contextWindow: 8000
+          maxTokens: 8192
+          input: [text, image]
+        - id: qwen2.5-vl-7b-instruct
+          name: "百炼: Qwen2.5-VL-7B-Instruct"
+          contextWindow: 32768
+          maxTokens: 8192
+          input: [text, image]

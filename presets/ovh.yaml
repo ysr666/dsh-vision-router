@@ -1,0 +1,14 @@
+# OVHcloud AI Endpoints 匿名层：免注册、免 Key（2 次/分钟/IP，尽力而为）
+# 该端点已内置为插件的默认 httpProviders，通常无需手动配置；
+# 若想把它加进 llm-pi-ai 路由链（例如供模型选择器使用），可用本段。
+llm-pi-ai:
+  providers:
+    ovh:
+      api: openai-completions
+      baseURL: https://oai.endpoints.kepler.ai.cloud.ovh.net/v1
+      models:
+        - id: Qwen2.5-VL-72B-Instruct
+          name: "OVHcloud: Qwen2.5-VL-72B-Instruct (免费匿名)"
+          contextWindow: 128000
+          maxTokens: 8192
+          input: [text, image]
