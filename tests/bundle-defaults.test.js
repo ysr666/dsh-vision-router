@@ -26,6 +26,27 @@ test('bundle declares one large-image policy for admission and alpha canonical s
   )
 })
 
+test('public docs promise Host-canonical raster rather than uploader source-byte identity', async () => {
+  const [en, zh] = await Promise.all([
+    readFile(new URL('../README.md', import.meta.url), 'utf8'),
+    readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(en, /Host-canonical image pixels on the vision model's side/)
+  assert.match(en, /Host-persisted canonical image/)
+  assert.match(en, /not preservation of the uploader's original encoded bytes/)
+  assert.doesNotMatch(en, /original pixels on the vision model's side/)
+  assert.doesNotMatch(en, /routing bridge — pixel-faithful/)
+  assert.doesNotMatch(en, /adds raw-image routing/)
+
+  assert.match(zh, /Host 规范化后的图像像素留在视觉模型侧/)
+  assert.match(zh, /Host 持久化后的 canonical image/)
+  assert.match(zh, /不是上传源文件编码字节逐字节不变/)
+  assert.doesNotMatch(zh, /原图像素留在视觉模型侧/)
+  assert.doesNotMatch(zh, /路由桥，像素保真/)
+  assert.doesNotMatch(zh, /提供"原图直看"路由/)
+})
+
 test('public plugin config defaults progressive tools off', () => {
   assert.equal(Config({}).progressiveTools, false)
 })
