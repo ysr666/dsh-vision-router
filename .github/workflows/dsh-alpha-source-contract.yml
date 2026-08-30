@@ -7,6 +7,12 @@ on:
       - 'package.json'
       - 'lib/client-host-compat-prelude.js'
       - 'lib/client-presentation-boundary.js'
+      - 'lib/settings-factory-lifecycle.js'
+      - 'lib/settings-ia-client-prelude.js'
+      - 'lib/settings-limit-client-prelude.js'
+      - 'lib/remote-settings-bridge.js'
+      - 'lib/web/index.js'
+      - 'lib/web/settings-controller.js'
       - 'lib/dsh-contract-compat.js'
       - 'lib/web-capability-boundary.js'
       - 'lib/client.js'
@@ -21,6 +27,12 @@ on:
       - 'package.json'
       - 'lib/client-host-compat-prelude.js'
       - 'lib/client-presentation-boundary.js'
+      - 'lib/settings-factory-lifecycle.js'
+      - 'lib/settings-ia-client-prelude.js'
+      - 'lib/settings-limit-client-prelude.js'
+      - 'lib/remote-settings-bridge.js'
+      - 'lib/web/index.js'
+      - 'lib/web/settings-controller.js'
       - 'lib/dsh-contract-compat.js'
       - 'lib/web-capability-boundary.js'
       - 'lib/client.js'
@@ -83,4 +95,4 @@ jobs:
 
       - name: Run DVR alpha compatibility unit contracts
         working-directory: dvr
-        run: node --test tests/alpha1-client-host-compat.test.js tests/alpha1-web-auth-boundary.test.js tests/attachment-admission-policy.test.js
+        run: node --test tests/alpha1-client-host-compat.test.js tests/alpha1-settings-factory-lifecycle.test.js tests/alpha1-web-auth-boundary.test.js tests/attachment-admission-policy.test.js
