@@ -71,7 +71,7 @@ test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () =
 })
 
 test('all GitHub Actions dependencies are pinned to immutable commit SHAs', async () => {
-  const workflows = ['ci.yml', 'release.yml', 'resource-stress.yml', 'star-history.yml']
+  const workflows = ['ci.yml', 'dsh-alpha-source-contract.yml', 'release.yml', 'resource-stress.yml', 'star-history.yml']
   for (const name of workflows) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     // YAML steps may spell this either as `- uses: ...` or as `- name: ...`

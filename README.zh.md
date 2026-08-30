@@ -64,7 +64,7 @@
 
 ## 为什么做这个
 
-大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**原图像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
+大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**Host 规范化后的图像像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
 
 - **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
 - **默认免费。** 视觉工具最终兜底为 5 个 OVHcloud 匿名视觉模型：免注册、免 Key，每 IP、每模型 2 次/分钟，独立限额理论合计约 10 次/分钟；用户自备视觉模型会优先调用。
@@ -76,11 +76,14 @@
 ## 对比同类插件
 
 **一句话讲清区别**：其他 dsh 视觉插件大多"把图片转成文字描述再喂给 DeepSeek"（描述桥，有信息损耗）；
-本插件主打"**图片轮直接交给视觉模型看原图**"（路由桥，像素保真），同时内置免 Key 免费模型兜底。
+本插件主打"**图片轮直接交给视觉模型看图像像素**"（路由桥，像素级），同时内置免 Key 免费模型兜底。
+
+> [!NOTE]
+> 在 DSH 0.1.2-alpha.1+ 上，附件仍由 Host 单一持有。Vision Router 消费的是 Host 持久化后的 canonical image：落在规范化限制内的单帧 8-bit sRGB/sRGBA 图片可以逐字节直通；需要旋转、色彩空间、元数据、动画或尺寸规范化的图片可能会被重新编码。因此像素工具承诺的是 Host canonical raster，而不是上传源文件编码字节逐字节不变。
 
 | | 手动切换模型 | MCP 视觉桥 | 本插件 |
 |---|---|---|---|
-| 像素保真 | ✅ 完整（切换后） | ❌ 只有文字描述 | ✅ 完整，图片轮内 |
+| 图像像素 | ✅ 可用（切换后） | ❌ 只有文字描述 | ✅ Host 规范化栅格，图片轮内 |
 | 自动化 | ❌ | ✅ | ✅ |
 | 日常模型不受影响 | ❌（整会话被换） | ✅ | ✅ |
 | 供应商失败恢复 | ❌ | ❌ | ✅ 降级链 |
@@ -92,7 +95,7 @@
 
 | 项目 | 思路 | 本插件的差异 |
 |---|---|---|
-| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | 图片先经外部 VLM 做 OCR/描述，描述作为会话消息交给 DeepSeek；默认 LLM7.io 匿名端点（OVHcloud 为无 Key 备选） | 描述桥方案；本插件提供"原图直看"路由，描述能力由 `vision_describe` 按需替代 |
+| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | 图片先经外部 VLM 做 OCR/描述，描述作为会话消息交给 DeepSeek；默认 LLM7.io 匿名端点（OVHcloud 为无 Key 备选） | 描述桥方案；本插件提供"图像直看"路由，描述能力由 `vision_describe` 按需替代 |
 | [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | 包装 provider 路由，请求流里把图片转译成文本再交给 DeepSeek | 转译桥方案；本插件不包装 provider，通过 `agent/request` 瀑布改写路由 |
 | [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | 注册 `DeepSeek + Vision` 组合路由：图片先经所选视觉模型转成描述，再交给 DeepSeek | 双模型桥思路；本插件在此基础上增加自动路由、降级链与工具 |
 | [modlens](https://github.com/liustack/modlens) | 最早的 dsh 视觉插件；复用本机 Claude Code/Codex/OpenCode/Pi 等登录态作为视觉引擎 | 引擎复用思路；本插件自带供应商链，不依赖本机其他 CLI |
