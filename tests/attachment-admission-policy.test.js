@@ -64,46 +64,29 @@ test('repairs a stale pre-alpha DVR profile after alpha materializes its new def
   assert.equal(Object.isFrozen(store.normalizationPolicy), true)
 })
 
-test('repairs only alpha normalization when admission already has the DVR dimension', () => {
+test('does not reinterpret an explicit 10000px admission as a stale alpha profile', () => {
   const limits = legacyLimits({ maxImageDimension: 10_000 })
-  const store = {
-    imageLimits: limits,
-    normalizationPolicy: alphaNormalizationDefaults(),
-  }
+  const normalizationPolicy = alphaNormalizationDefaults()
+  const store = { imageLimits: limits, normalizationPolicy }
   const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
 
-  assert.equal(result.changed, true)
-  assert.equal(result.reason, 'legacy-alpha-policy-repaired')
+  assert.equal(result.changed, false)
+  assert.equal(result.reason, 'not-legacy-overlay')
   assert.equal(store.imageLimits, limits)
-  assert.deepEqual(store.normalizationPolicy, {
-    maxPixels: 100_000_000,
-    maxDimension: 10_000,
-    maxBytes: 20 * 1024 * 1024,
-  })
+  assert.equal(store.normalizationPolicy, normalizationPolicy)
 })
 
 test('does not overwrite an explicit deployment dimension', () => {
-  for (const dimension of [4096, 16_384]) {
+  for (const dimension of [4096, 10_000, 16_384]) {
     const original = legacyLimits({ maxImageDimension: dimension })
-    const store = {
-      imageLimits: original,
-      normalizationPolicy: alphaNormalizationDefaults(),
-    }
+    const normalizationPolicy = alphaNormalizationDefaults()
+    const store = { imageLimits: original, normalizationPolicy }
     const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
     assert.equal(result.changed, false)
     assert.equal(result.reason, 'not-legacy-overlay')
     assert.equal(store.imageLimits, original)
-    assert.deepEqual(store.normalizationPolicy, alphaNormalizationDefaults())
+    assert.equal(store.normalizationPolicy, normalizationPolicy)
   }
-
-  // 10000px is the released DVR admission contract, so it is not rewritten;
-  // absent alpha normalization metadata remains inert on pre-alpha Hosts.
-  const original = legacyLimits({ maxImageDimension: 10_000 })
-  const store = { imageLimits: original }
-  const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
-  assert.equal(result.changed, false)
-  assert.equal(result.reason, 'not-legacy-overlay')
-  assert.equal(store.imageLimits, original)
 })
 
 test('does not overwrite any explicit alpha normalization tuple', () => {
@@ -113,7 +96,7 @@ test('does not overwrite any explicit alpha normalization tuple', () => {
     alphaNormalizationDefaults({ maxBytes: 8 * 1024 * 1024 }),
     Object.freeze({ maxPixels: 100_000_000, maxDimension: 10_000, maxBytes: 20 * 1024 * 1024 }),
   ]) {
-    const limits = legacyLimits({ maxImageDimension: 10_000 })
+    const limits = legacyLimits({ maxImageDimension: 8192 })
     const store = { imageLimits: limits, normalizationPolicy }
     const result = ensureVisionAttachmentAdmissionPolicy(contextFor(store))
     assert.equal(result.changed, false)
@@ -158,9 +141,9 @@ test('fails open when the Host exposes a read-only admission limits property', (
   assert.equal(warnings.length, 1)
 })
 
-test('reports a read-only alpha normalization policy instead of claiming support', () => {
+test('reports a read-only alpha normalization policy instead of claiming full repair', () => {
   const store = {
-    imageLimits: legacyLimits({ maxImageDimension: 10_000 }),
+    imageLimits: legacyLimits({ maxImageDimension: 8192 }),
   }
   const original = alphaNormalizationDefaults()
   Object.defineProperty(store, 'normalizationPolicy', {
@@ -174,8 +157,9 @@ test('reports a read-only alpha normalization policy instead of claiming support
     warn(...args) { warnings.push(args) },
   })
 
-  assert.equal(result.changed, false)
+  assert.equal(result.changed, true)
   assert.equal(result.reason, 'normalization-policy-readonly')
+  assert.equal(store.imageLimits.maxImageDimension, 10_000)
   assert.equal(store.normalizationPolicy, original)
   assert.equal(warnings.length, 1)
 })
