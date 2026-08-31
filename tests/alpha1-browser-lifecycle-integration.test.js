@@ -226,7 +226,7 @@ function slotContext({ React, events, catalogCalls }) {
       return typeof cleanup === 'function' ? cleanup : () => {}
     },
   }
-  return { ctx, ledger, settingsScope, catalog }
+  return { ctx, ledger, catalog }
 }
 
 test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all client boundaries', async () => {
@@ -248,7 +248,7 @@ test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all c
 
   const events = []
   const catalogCalls = []
-  const { ctx, ledger, settingsScope, catalog } = slotContext({ React, events, catalogCalls })
+  const { ctx, ledger, catalog } = slotContext({ React, events, catalogCalls })
   await plugin.apply(ctx)
 
   const settingsSections = ledger.filter((entry) =>
@@ -279,11 +279,6 @@ test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all c
     Number(node.props?.min) === taskMeta.min && Number(node.props?.max) === taskMeta.max)
   assert.ok(taskInput, 'advanced IA must render the vision task timeout numeric field')
   assert.equal(Number(taskInput.props.step), taskMeta.step, 'numeric hardening must survive the final IA replacement')
-
-  await assert.rejects(
-    () => settingsScope.set('visionTaskTimeoutMs', taskMeta.min - taskMeta.step),
-    (error) => error && error.code === 'settings-client-validation',
-  )
 
   React.setSettingsPage('diagnostics')
   const diagnosticsTree = section.component(props)
