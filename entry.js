@@ -6,6 +6,7 @@
 import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { applyVisionRuntimeComposition } from './lib/runtime-composition.js'
+import { createRuntimeI18nCoreFacade } from './lib/runtime-i18n-core.js'
 
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. This revision is also exposed as a resolved
@@ -71,8 +72,9 @@ export {
 export const Config = core.Config
 
 // Defense in depth for direct/programmatic callers is implemented by the same
-// production composition used by Cordis. This public entry intentionally owns
-// no runtime installer ordering beyond that single call.
+// production composition used by Cordis. Host-side runtime i18n is projected
+// only at the final Core boundary, so capability/routing/settings ownership
+// ahead of Core keeps the native Host context and contracts unchanged.
 export function apply(ctx, config = {}) {
-  return applyVisionRuntimeComposition(ctx, config, core)
+  return applyVisionRuntimeComposition(ctx, config, createRuntimeI18nCoreFacade(core, ctx))
 }
