@@ -3,9 +3,8 @@
 // 深挖次数上限只在工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
 // followupCompleted，模型保有提醒并可继续；成功消费最后一次额度后立即切到 stop guard，随后调用命中
 // VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
-// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；
-// vision_colors（sharp 本地、无网络）作成功调用。这里刻意不制造 provider outage，
-// 避免把熔断/失败记忆混进本测试要验证的 quota accounting。
+// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；成功证据使用同一
+// hardening wrapper 下注册的确定性 vision_ground fixture，避免把 sharp/像素量化细节混进 quota 测试。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -178,6 +177,12 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     const harness = bootHarness(config)
     const hardenedCtx = installStructuredFlowHardening(harness.ctx, Config(config))
     apply(hardenedCtx, Config(config))
+    hardenedCtx.tools.register({
+      name: 'vision_ground',
+      async execute() {
+        return JSON.stringify({ boxes: [{ x: 0, y: 0, w: 1, h: 1, label: 'verified-ui-region' }] })
+      },
+    })
 
     const session = { id: 'depth-behavior-session', events: [] }
     const exec = { agent: { session } }
@@ -228,11 +233,11 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(hasEvidenceReminder(d3), true)
     assert.equal(hasStopGuard(d3), false)
 
-    const colors = harness.toolDefs.get('vision_colors')
-    assert.ok(colors)
+    const ground = harness.toolDefs.get('vision_ground')
+    assert.ok(ground)
     const requestsBefore = server.requests.length
-    const r2 = await colors.execute({ image: pngPath }, exec)
-    assert.equal(JSON.parse(r2).ok, undefined)
+    const r2 = await ground.execute({ question: 'locate the UI region' }, exec)
+    assert.equal(Array.isArray(JSON.parse(r2).boxes), true)
     assert.equal(server.requests.length, requestsBefore)
 
     const d4 = await preStep(imagePayload, next)
