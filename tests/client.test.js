@@ -401,8 +401,9 @@ test('the settings card skips offscreen paint and reuses bounded model-option ca
   assert.equal(source.includes('React.memo(VisionRouterCard)'), true)
   assert.equal(source.includes('const cardInject = { getConnection, t, locale: ctx.locale, remote: ctx.remote, subscribeConnectionReset }'), true)
   assert.equal(source.includes("const sectionCardInject = Object.freeze({ ...cardInject, scope: primaryScope, surface: 'section' })"), true)
-  assert.equal(source.includes('const legacyEntryInject = Object.freeze({ t })'), true)
-  assert.equal(source.includes('VisionRouterLegacyEntry'), true)
+  assert.equal(source.includes('const legacyEntryInject = Object.freeze({ t })'), false)
+  assert.equal(source.includes('VisionRouterLegacyEntry'), false)
+  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), false)
 })
 
 test('guide sync never queries the DOM or forces layout when no walkthrough is active', () => {
@@ -760,9 +761,10 @@ test('hidden settings persistence still permits real state transitions', async (
 })
 
 
-test('keyed settings.plugin.item requires an explicit slot key', () => {
+test('Vision Router does not register the removed keyed settings.plugin.item surface', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.match(source, /name: 'settings\.plugin\.item',\s*key: 'vision-router',\s*id: 'vision-router'/)
+  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), false)
+  assert.doesNotMatch(source, /name: 'settings\.plugin\.item',\s*key: 'vision-router',\s*id: 'vision-router'/)
 })
 
 
@@ -819,16 +821,20 @@ test('vision catalog invalidates on provider, settings, credential and connectio
 })
 
 
-test('Vision Router owns one primary Settings section and one legacy compatibility card', () => {
+test('Vision Router owns exactly one primary Settings section', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(source.includes("ctx.slots.inject('settings.section'"), true)
   assert.equal(source.includes("name: 'settings.section'"), true)
   assert.equal(source.includes("id: 'vision-router'"), true)
   assert.equal(source.includes('order: 12'), true)
   assert.equal(source.includes("label: () => t('settingsNav')"), true)
-  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), true)
+  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), false)
   assert.equal(source.includes('VisionRouterSettingsSection'), true)
   assert.equal(source.includes("const [open, setOpen] = useState(props.surface === 'section')"), true)
+  assert.equal(source.includes('VisionRouterLegacyEntry'), false)
+  assert.equal(source.includes('legacyMovedTitle'), false)
+  assert.equal(source.includes('legacyMovedBody'), false)
+  assert.equal(source.includes('legacyOpen'), false)
 })
 
 test('beginner guide teaches only the first-class Vision Router settings path', () => {
@@ -850,7 +856,7 @@ test('remote settings UI is opt-in, first-class-only, and keeps permission local
   assert.equal(source.includes("toggleField('allowRemoteSettings')"), true)
   assert.equal(source.includes("!remoteMode ? h('div', { className: 'vr-group' }"), true)
   assert.equal(source.includes("scope: primaryScope, surface: 'section'"), true)
-  assert.equal(source.includes('VisionRouterLegacyEntry'), true)
+  assert.equal(source.includes('VisionRouterLegacyEntry'), false)
   assert.equal(source.includes("remoteSettingsDisabledTitle: '远程设置未启用'"), true)
   assert.equal(source.includes("fetch('/_dsh/vision-router/settings'"), false)
 })
@@ -1016,10 +1022,13 @@ test('remote-page selection survives Connection arriving after plugin activation
   assert.equal(bundle.shouldUseRemoteSettings(() => undefined, { hostname: 'localhost' }), false)
 })
 
-test('legacy plugin entry is navigation-only and remote host-only surfaces stay hidden', () => {
+test('removed legacy plugin entry cannot reappear and remote host-only surfaces stay hidden', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.equal(source.includes('function VisionRouterLegacyEntry(props)'), true)
-  assert.equal(source.includes('VisionRouterLegacyEntry,\n            )'), true)
+  assert.equal(source.includes('function VisionRouterLegacyEntry(props)'), false)
+  assert.equal(source.includes("ctx.slots.inject('settings.plugin.item'"), false)
+  assert.equal(source.includes('legacyMovedTitle'), false)
+  assert.equal(source.includes('legacyMovedBody'), false)
+  assert.equal(source.includes('legacyOpen'), false)
   assert.equal(source.includes("!remoteMode ? toggleField('desktopScreenshot') : null"), true)
   assert.equal(source.includes("!remoteMode ? DEVELOPER_TOGGLE_KEYS.map"), true)
   assert.equal(source.includes("!remoteMode ? TEXT_KEYS.map"), true)
