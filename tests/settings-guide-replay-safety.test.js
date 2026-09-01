@@ -6,11 +6,11 @@ import { SETTINGS_NATIVE_CARD_IA_PRELUDE } from '../lib/settings-native-card-lay
 test('guide replay cannot discard staged edits and leaves Settings before starting chat guidance', () => {
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /if\(dirty\|\|typeof helpers\.startVisionSettingsGuide!==['"]function['"]\)return/,
+    /if\(cardDirty\|\|typeof helpers\.startVisionSettingsGuide!==['"]function['"]\)return/,
   )
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /disabled:dirty\|\|typeof helpers\.startVisionSettingsGuide!==['"]function['"]/,
+    /disabled:cardDirty\|\|typeof helpers\.startVisionSettingsGuide!==['"]function['"]/,
   )
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
