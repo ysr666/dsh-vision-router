@@ -40,6 +40,7 @@ function createSettings(localeRef, visionRef = {}) {
 
 test('runtime locale maps zh variants to zh and every other explicit locale to en', () => {
   assert.equal(runtimeLanguageFor('zh-CN'), 'zh')
+  assert.equal(runtimeLanguageFor('zh-TW'), 'zh')
   assert.equal(runtimeLanguageFor('zh_Hans'), 'zh')
   assert.equal(runtimeLanguageFor('en'), 'en')
   assert.equal(runtimeLanguageFor('en-US'), 'en')
