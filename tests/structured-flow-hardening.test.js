@@ -7,10 +7,14 @@ import {
   structuredDepthLimit,
 } from '../lib/structured-flow-hardening.js'
 
-function boot(config = {}) {
+function boot(config = {}, localePreference) {
   const handlers = new Map()
   const defs = new Map()
+  const settingsService = localePreference
+    ? { get(namespace) { return namespace === 'locale' ? { preference: localePreference } : undefined } }
+    : undefined
   const ctx = {
+    get(name) { return name === 'settings' ? settingsService : undefined },
     on(event, handler) {
       handlers.set(event, handler)
       return () => handlers.delete(event)
@@ -67,19 +71,14 @@ const bootstrapSuccess = (evidence) => JSON.stringify({
   next: 'continue',
 })
 
-test('structured depth limits are hard: fast=1, standard=2, deep=4, custom=N', () => {
-  assert.equal(structuredDepthLimit('fast'), 1)
-  assert.equal(structuredDepthLimit('standard'), 2)
-  assert.equal(structuredDepthLimit('deep'), 4)
-  assert.equal(structuredDepthLimit('bogus'), 2)
-  assert.equal(structuredDepthLimit('custom', 1), 1)
-  assert.equal(structuredDepthLimit('custom', 6), 6)
-  assert.equal(structuredDepthLimit('custom', 101), 100)
-  assert.equal(structuredDepthLimit('custom', 0), undefined)
-  assert.equal(structuredDepthLimit('custom', undefined), undefined)
-  assert.equal(structuredDepthLimit('fast', 9), 1)
-  assert.equal(structuredDepthLimit('standard', 9), 2)
-  assert.equal(structuredDepthLimit('deep', 9), 4)
+test('structured depth limit is explicit-only and independent of strategy', () => {
+  for (const depth of ['fast', 'standard', 'deep', 'custom', 'bogus']) {
+    assert.equal(structuredDepthLimit(depth), undefined)
+    assert.equal(structuredDepthLimit(depth, 0), undefined)
+    assert.equal(structuredDepthLimit(depth, 1), 1)
+    assert.equal(structuredDepthLimit(depth, 6), 6)
+    assert.equal(structuredDepthLimit(depth, 101), 100)
+  }
 })
 
 test('evidence classifier rejects empty and ok:false results', () => {
@@ -108,8 +107,8 @@ test('guidance overrides are bounded, valid-only and last-wins', () => {
   assert.equal(normalized.find((row) => row.kind === 'document').text.length, 2000)
 })
 
-test('bootstrap is one-shot per turn and repeated calls never hit the backend', async () => {
-  const harness = boot({ visionDepth: 'fast' })
+test('bootstrap is one-shot per turn while fast strategy does not cap evidence calls', async () => {
+  const harness = boot({ visionDepth: 'fast', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
@@ -124,14 +123,12 @@ test('bootstrap is one-shot per turn and repeated calls never hit the backend', 
   assert.equal(second, first)
   assert.deepEqual(tools.counts(), { bootstrapCalls: 1, evidenceCalls: 0 })
 
-  await tools.describe().execute({}, exec)
-  const third = JSON.parse(await tools.describe().execute({}, exec))
-  assert.equal(third.code, 'VISION_DEPTH_LIMIT')
-  assert.deepEqual(tools.counts(), { bootstrapCalls: 1, evidenceCalls: 1 })
+  for (let i = 0; i < 4; i++) assert.equal(await tools.describe().execute({}, exec), 'evidence')
+  assert.deepEqual(tools.counts(), { bootstrapCalls: 1, evidenceCalls: 4 })
 })
 
-test('standard tier blocks the third successful deep-dive before tool execution', async () => {
-  const harness = boot({ visionDepth: 'standard' })
+test('standard strategy does not block the third or later successful deep-dive', async () => {
+  const harness = boot({ visionDepth: 'standard', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
@@ -141,64 +138,94 @@ test('standard tier blocks the third successful deep-dive before tool execution'
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
   await tools.bootstrap().execute({}, exec)
-  assert.equal(await tools.describe().execute({}, exec), 'evidence')
-  assert.equal(await tools.describe().execute({}, exec), 'evidence')
+  for (let i = 0; i < 7; i++) assert.equal(await tools.describe().execute({}, exec), 'evidence')
+  assert.equal(tools.counts().evidenceCalls, 7)
+})
+
+test('explicit positive cap blocks the next call regardless of strategy', async () => {
+  const harness = boot({ visionDepth: 'standard', visionDepthMaxCalls: 3 })
+  const tools = registerFlowTools(
+    harness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const session = {}
+  const exec = { agent: { session } }
+  await preStep(harness, session, 1)
+  await tools.bootstrap().execute({}, exec)
+  for (let i = 0; i < 3; i++) assert.equal(await tools.describe().execute({}, exec), 'evidence')
   const blocked = JSON.parse(await tools.describe().execute({}, exec))
   assert.equal(blocked.ok, false)
   assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
-  assert.equal(tools.counts().evidenceCalls, 2)
+  assert.match(blocked.reason, /configured deep-dive call cap/)
+  assert.equal(tools.counts().evidenceCalls, 3)
 })
 
-test('custom tier uses its own N and can exceed the built-in deep=4 cap', async () => {
-  const harness = boot({ visionDepth: 'custom', visionDepthMaxCalls: 6 })
+test('zero disables the cap while a retained positive cap applies to every built-in strategy', async () => {
+  const unlimitedHarness = boot({ visionDepth: 'deep', visionDepthMaxCalls: 0 })
+  const unlimitedTools = registerFlowTools(
+    unlimitedHarness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const unlimitedSession = {}
+  const unlimitedExec = { agent: { session: unlimitedSession } }
+  await preStep(unlimitedHarness, unlimitedSession, 1)
+  await unlimitedTools.bootstrap().execute({}, unlimitedExec)
+  for (let i = 0; i < 7; i++) assert.equal(await unlimitedTools.describe().execute({}, unlimitedExec), 'evidence')
+  assert.equal(unlimitedTools.counts().evidenceCalls, 7)
+
+  const cappedHarness = boot({ visionDepth: 'deep', visionDepthMaxCalls: 2 })
+  const cappedTools = registerFlowTools(
+    cappedHarness,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+  const cappedSession = {}
+  const cappedExec = { agent: { session: cappedSession } }
+  await preStep(cappedHarness, cappedSession, 1)
+  await cappedTools.bootstrap().execute({}, cappedExec)
+  for (let i = 0; i < 2; i++) assert.equal(await cappedTools.describe().execute({}, cappedExec), 'evidence')
+  const blocked = JSON.parse(await cappedTools.describe().execute({}, cappedExec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
+  assert.equal(cappedTools.counts().evidenceCalls, 2)
+})
+
+test('fast mixed flow still keeps both correctness branches', async () => {
+  const harness = boot({ visionDepth: 'fast', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
-    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
     () => 'evidence',
   )
   const session = {}
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
   await tools.bootstrap().execute({}, exec)
-  for (let i = 0; i < 6; i++) assert.equal(await tools.describe().execute({}, exec), 'evidence')
-  const blocked = JSON.parse(await tools.describe().execute({}, exec))
-  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
-  assert.equal(tools.counts().evidenceCalls, 6)
+
+  const before = await preStep(harness, session, 1)
+  const firstGuard = before.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
+  assert.ok(firstGuard)
+  assert.match(firstGuard.content[0].text, /ui/)
+  assert.match(firstGuard.content[0].text, /document/)
+
+  await tools.describe().execute({}, exec)
+  const halfDone = await preStep(harness, session, 1)
+  const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
+  assert.ok(halfGuard, 'one successful evidence call must not complete a two-branch mixed flow')
+
+  await tools.describe().execute({}, exec)
+  const complete = await preStep(harness, session, 1)
+  assert.equal(
+    complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+    false,
+  )
 })
 
-test('custom zero is unlimited while retained custom values are inactive on built-in tiers', async () => {
-  const customHarness = boot({ visionDepth: 'custom', visionDepthMaxCalls: 0 })
-  const customTools = registerFlowTools(
-    customHarness,
-    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
-    () => 'evidence',
-  )
-  const customSession = {}
-  const customExec = { agent: { session: customSession } }
-  await preStep(customHarness, customSession, 1)
-  await customTools.bootstrap().execute({}, customExec)
-  for (let i = 0; i < 7; i++) assert.equal(await customTools.describe().execute({}, customExec), 'evidence')
-  assert.equal(customTools.counts().evidenceCalls, 7)
-
-  const deepHarness = boot({ visionDepth: 'deep', visionDepthMaxCalls: 2 })
-  const deepTools = registerFlowTools(
-    deepHarness,
-    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
-    () => 'evidence',
-  )
-  const deepSession = {}
-  const deepExec = { agent: { session: deepSession } }
-  await preStep(deepHarness, deepSession, 1)
-  await deepTools.bootstrap().execute({}, deepExec)
-  for (let i = 0; i < 4; i++) assert.equal(await deepTools.describe().execute({}, deepExec), 'evidence')
-  const deepBlocked = JSON.parse(await deepTools.describe().execute({}, deepExec))
-  assert.equal(deepBlocked.code, 'VISION_DEPTH_LIMIT')
-  assert.equal(deepTools.counts().evidenceCalls, 4)
-})
-
-test('mixed flow remains incomplete after only one branch and clears after two', async () => {
+test('standard mixed flow remains incomplete after one branch and clears after two', async () => {
   const harness = boot({
     visionDepth: 'standard',
+    visionDepthMaxCalls: 0,
     guidanceOverrides: [{ kind: 'document', text: 'CUSTOM DOCUMENT CHECK' }],
   })
   const tools = registerFlowTools(
@@ -220,8 +247,7 @@ test('mixed flow remains incomplete after only one branch and clears after two',
   await tools.describe().execute({}, exec)
   const halfDone = await preStep(harness, session, 1)
   const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(halfGuard, 'one successful evidence call must not complete a two-branch mixed flow')
-  assert.match(halfGuard.content[0].text, /document/)
+  assert.ok(halfGuard)
 
   await tools.describe().execute({}, exec)
   const complete = await preStep(harness, session, 1)
