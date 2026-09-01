@@ -71,7 +71,8 @@ export {
 export const Config = core.Config
 
 // Defense in depth for direct/programmatic callers is implemented by the same
-// production composition used by Cordis.
+// production composition used by Cordis. This public entry intentionally owns
+// no runtime installer ordering beyond that single call.
 export function apply(ctx, config = {}) {
   return applyVisionRuntimeComposition(ctx, config, core)
 }
