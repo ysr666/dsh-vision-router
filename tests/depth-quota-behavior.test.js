@@ -1,25 +1,26 @@
-// 行为级深度配额测试（maintainer review 要求）：
-// 驱动真实 wrapper（apply 注册的工具），验证 fast 档深度配额只在工具真正
-// 产出证据后消费——失败调用（ok:false）不烧配额、不置 followupCompleted，
-// 模型保有提醒并可重试；成功后第三次调用命中 VISION_DEPTH_LIMIT。
-// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与失败调用；
-// vision_colors（sharp 本地、无网络）作第二次成功调用，避开 turn 级失败
-// 记忆与网络依赖。CI 安全：只依赖内置模块与本机端口。
+// 行为级独立次数上限测试：
+// 驱动真实 structured runtime wrapper（包入口同款 hardening + core 注册工具），验证用户显式开启的
+// 深挖次数上限只在工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
+// followupCompleted，模型保有提醒并可继续；成功消费最后一次额度后立即切到 stop guard，随后调用命中
+// VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
+// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；
+// vision_colors（sharp 本地、无网络）作成功调用。这里刻意不制造 provider outage，
+// 避免把熔断/失败记忆混进本测试要验证的 quota accounting。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { apply, Config } from '../index.js'
+import { apply } from '../index.js'
+import { Config } from '../entry.js'
+import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 
-// 1x1 透明 PNG，真实图片字节（sharp 可读）。
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
 )
 
-/** 本地 OpenAI 兼容假服务；responder(req, body, nth) 决定第 nth 次请求的响应。 */
 async function startFakeVisionServer(responder) {
   const requests = []
   const sockets = new Set()
@@ -63,13 +64,11 @@ async function startFakeVisionServer(responder) {
 
 const chatOk = (text) => ({ status: 200, body: JSON.stringify({ choices: [{ message: { content: text } }] }) })
 
-/** 最小 ctx harness（参照 runtime-e2e.test.js 的 bootHarness）。 */
 function bootHarness(config0 = {}) {
   const toolDefs = new Map()
   const registrations = new Map()
   const handlers = new Map()
-  let resolvedSettings = Config({ ...config0 })
-  let settingsWatcher
+  const resolvedSettings = Config({ ...config0 })
   const attachments = {
     saveImage: async (input) => ({
       attachmentId: `mock-att-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
@@ -103,12 +102,7 @@ function bootHarness(config0 = {}) {
     inject(_deps, callback) {
       const scope = {
         get: () => resolvedSettings,
-        watch: (watcher) => {
-          settingsWatcher = watcher
-          return () => {
-            if (settingsWatcher === watcher) settingsWatcher = undefined
-          }
-        },
+        watch: () => () => {},
       }
       callback({ settings: { register: () => scope }, effect: () => () => {} })
       return () => {}
@@ -137,9 +131,6 @@ function bootHarness(config0 = {}) {
       listProviders: () => [...registrations.keys()].map((id) => ({ id, name: id })),
       listModels: async () => [],
       resolveModelInfo: async () => ({ id: 'm', inputModalities: ['text', 'image'], image: true }),
-      // The real llm service routes stream() to the registered provider
-      // adapter; vision_describe goes through llm.stream(), so forward to the
-      // adapter (vision-http) instead of finishing empty.
       async *stream(options) {
         const registration = registrations.get(options && options.provider)
         if (registration && registration.adapter && typeof registration.adapter.stream === 'function') {
@@ -153,13 +144,11 @@ function bootHarness(config0 = {}) {
   return { ctx, toolDefs, handlers }
 }
 
-test('fast tier: failed evidence call does not burn the quota; success consumes it; third call hits VISION_DEPTH_LIMIT', async () => {
+test('explicit call cap: failed evidence does not consume it, successful evidence does', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vr-depth-behavior-'))
   const pngPath = path.join(dir, 'img.png')
   writeFileSync(pngPath, PNG_BYTES)
 
-  // Request 1 = bootstrap (structured schema); requests 2+ = the failed
-  // evidence call (ok:false business failure from the "backend").
   const BOOTSTRAP_JSON = JSON.stringify({
     visual_kind: 'mixed',
     mixed_of: ['document', 'ui'],
@@ -169,93 +158,93 @@ test('fast tier: failed evidence call does not burn the quota; success consumes 
     visible_text: [],
     entities: [],
   })
-  const FAIL_JSON = JSON.stringify({
+  const NO_EVIDENCE_JSON = JSON.stringify({
     ok: false,
-    code: 'VISION_BACKEND_UNAVAILABLE',
+    code: 'NO_USABLE_EVIDENCE',
     retryable: false,
-    reason: 'simulated backend outage',
+    reason: 'simulated successful request with no usable visual evidence',
   })
   const server = await startFakeVisionServer(async (_req, _body, nth) =>
-    chatOk(nth === 1 ? BOOTSTRAP_JSON : FAIL_JSON),
+    chatOk(nth === 1 ? BOOTSTRAP_JSON : NO_EVIDENCE_JSON),
   )
   try {
     const config = {
       structuredVisionBootstrap: true,
       visionDepth: 'fast',
-      freeFallback: false, // single backend only: no OVH fallback noise
+      visionDepthMaxCalls: 1,
+      freeFallback: false,
       localOllama: { enabled: true, baseURL: server.baseURL, model: 'm' },
     }
     const harness = bootHarness(config)
-    apply(harness.ctx, Config(config))
+    const hardenedCtx = installStructuredFlowHardening(harness.ctx, Config(config))
+    apply(hardenedCtx, Config(config))
 
     const session = { id: 'depth-behavior-session', events: [] }
     const exec = { agent: { session } }
-    // pre-step reads `decision.messages ?? payload.messages` — next() must
-    // carry the image turn, not an empty array.
     const imageMessages = [
       { role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'sha256:abc', mediaType: 'image/png' } }] },
     ]
     const imagePayload = { turn: 1, agent: { session }, messages: imageMessages }
     const preStep = harness.handlers.get('agent/pre-step')
-    assert.ok(preStep, 'pre-step hook must be registered')
+    assert.ok(preStep)
     const next = async () => ({ kind: 'ok', messages: imageMessages })
-    const hasFollowupReminder = (decision) =>
+    const hasEvidenceReminder = (decision) =>
       Array.isArray(decision && decision.messages) &&
-      decision.messages.some(
-        (m) => m && typeof m.id === 'string' && m.id.includes('vision-router-structured-followup-'),
+      decision.messages.some((m) => {
+        if (!m || typeof m.id !== 'string') return false
+        return m.id.includes('vision-router-structured-followup-') ||
+          m.id.includes('vision-router-structured-mixed-guard-') ||
+          m.id.includes('vision-router-structured-evidence-guard-')
+      })
+    const hasStopGuard = (decision) =>
+      Array.isArray(decision && decision.messages) &&
+      decision.messages.some((m) =>
+        m && typeof m.id === 'string' && m.id.includes('vision-router-structured-guard-stop-'),
       )
 
-    // 1. Image turn: bootstrap state created (required) + deep tools auto-mounted.
     const d1 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d1), false, 'no followup reminder before bootstrap completes')
+    assert.equal(hasEvidenceReminder(d1), false)
+    assert.equal(hasStopGuard(d1), false)
 
     const bootstrap = harness.toolDefs.get('vision_bootstrap')
-    assert.ok(bootstrap, 'vision_bootstrap must be mounted after the image turn')
+    assert.ok(bootstrap)
     const bootRaw = await bootstrap.execute({ paths: [pngPath] }, exec)
     const boot = JSON.parse(bootRaw)
-    assert.equal(boot.ok, true, 'bootstrap must succeed')
+    assert.equal(boot.ok, true)
     assert.equal(boot.phase, 'structured-bootstrap')
 
-    // 2. Bootstrap done, followup not: the followup reminder is injected.
     const d2 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d2), true, 'followup reminder injected after bootstrap')
+    assert.equal(hasEvidenceReminder(d2), true)
+    assert.equal(hasStopGuard(d2), false)
 
-    // 3. First evidence call FAILS with ok:false — must NOT burn the fast quota.
     const describe = harness.toolDefs.get('vision_describe')
-    assert.ok(describe, 'vision_describe must be mounted')
+    assert.ok(describe)
     const r1 = await describe.execute({ paths: [pngPath], question: 'what is here?' }, exec)
     const j1 = JSON.parse(r1)
-    assert.equal(j1.ok, false, 'first evidence call reports failure')
-    assert.notEqual(j1.code, 'VISION_DEPTH_LIMIT', 'a failed call must not be blocked as over-limit')
+    assert.equal(j1.ok, false)
+    assert.equal(j1.code, 'NO_USABLE_EVIDENCE')
 
-    // 4. Still no evidence produced: the followup reminder is STILL injected
-    //    (followupCompleted stays false after a failure).
     const d3 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d3), true, 'followup reminder persists after a failed evidence call')
+    assert.equal(hasEvidenceReminder(d3), true)
+    assert.equal(hasStopGuard(d3), false)
 
-    // 5. Second evidence call SUCCEEDS (vision_colors: sharp-local, no network,
-    //    immune to the turn-level failure memory) — consumes the quota.
     const colors = harness.toolDefs.get('vision_colors')
-    assert.ok(colors, 'vision_colors must be mounted')
+    assert.ok(colors)
     const requestsBefore = server.requests.length
     const r2 = await colors.execute({ image: pngPath }, exec)
-    assert.equal(JSON.parse(r2).ok, undefined, 'colors returns a plain inventory (no ok field)')
-    // If the old pre-decrement bug were present, this successful call would
-    // already be blocked (deepCalls would be 1 after the failed call).
-    assert.equal(server.requests.length, requestsBefore, 'vision_colors is sharp-local: no extra network')
+    assert.equal(JSON.parse(r2).ok, undefined)
+    assert.equal(server.requests.length, requestsBefore)
 
-    // 6. Evidence produced: the followup reminder is NO LONGER injected.
     const d4 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d4), false, 'followup reminder stops once evidence was produced')
+    assert.equal(hasEvidenceReminder(d4), false)
+    assert.equal(hasStopGuard(d4), true)
 
-    // 7. Third evidence call (same turn, fast tier): VISION_DEPTH_LIMIT,
-    //    intercepted before any network request.
     const requestsBeforeBlock = server.requests.length
     const r3 = await describe.execute({ paths: [pngPath], question: 'again' }, exec)
     const j3 = JSON.parse(r3)
     assert.equal(j3.ok, false)
-    assert.equal(j3.code, 'VISION_DEPTH_LIMIT', 'third evidence call is hard-capped')
-    assert.equal(server.requests.length, requestsBeforeBlock, 'the capped call must not reach the network')
+    assert.equal(j3.code, 'VISION_DEPTH_LIMIT')
+    assert.equal(server.requests.length, requestsBeforeBlock)
   } finally {
     await server.close()
     rmSync(dir, { recursive: true, force: true })

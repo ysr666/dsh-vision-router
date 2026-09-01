@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runWithDepthConfig } from '../lib/depth-guidance.js'
 import {
   MAX_MIXED_BRANCHES,
   buildMixedBranches,
@@ -10,13 +11,12 @@ import {
   renderMixedGuidance,
 } from '../lib/mixed-router.js'
 
-// mixed 分路识别：精度优化（避免漏判/错判另一半内容），≤2 分支成本封顶。
-// 细分来源 = bootstrap 的 mixed_of（schema 枚举，视觉模型直接输出，与
-// content_kind 同一"免费收敛"哲学）——不再用 entities 启发式推断。
+// mixed 分路识别：精度优化（避免漏判/错判另一半内容），最多保留 2 个分支。
+// 深度档位只影响查证策略，不再改变 mixed 分支覆盖或调用次数。
 
 test('normalizeMixedOf: validates, dedupes, caps at MAX_MIXED_BRANCHES, orders by priority', () => {
-  assert.deepEqual(normalizeMixedOf(['document', 'ui']), ['ui', 'document']) // ui 优先作主分支
-  assert.deepEqual(normalizeMixedOf(['ui', 'ui', 'document', 'code']), ['ui', 'document']) // 去重 + ≤2
+  assert.deepEqual(normalizeMixedOf(['document', 'ui']), ['ui', 'document'])
+  assert.deepEqual(normalizeMixedOf(['ui', 'ui', 'document', 'code']), ['ui', 'document'])
   assert.deepEqual(normalizeMixedOf(['bogus']), [])
   assert.deepEqual(normalizeMixedOf(undefined), [])
   assert.deepEqual(normalizeMixedOf('not-an-array'), [])
@@ -34,20 +34,14 @@ test('buildMixedBranches: single branch when no secondary', () => {
   assert.equal(branches[0].kind, 'document')
 })
 
-test('buildMixedBranches: general is a legal secondary branch (maintainer review)', () => {
-  // mixed_of schema allows document|ui|code|chat|general; a mixed image of
-  // "ui + general" must keep BOTH branches so the unclassifiable half is not
-  // silently dropped from the guidance. general's guidance is the release
-  // copy (model chooses the recognition method freely).
+test('buildMixedBranches: general is a legal secondary branch', () => {
   const uiGeneral = buildMixedBranches('ui', ['general'])
   assert.deepEqual(uiGeneral.map((b) => b.kind), ['ui', 'general'])
   assert.match(uiGeneral[1].guidance, /放行/)
   const documentGeneral = buildMixedBranches('document', ['general'])
   assert.deepEqual(documentGeneral.map((b) => b.kind), ['document', 'general'])
-  // Cap still applies: general counts toward MAX_MIXED_BRANCHES.
   const capped = buildMixedBranches('ui', ['document', 'general'])
   assert.equal(capped.length, 2)
-  // unknown stays skipped (invalid value; normalizer already filters it).
   const unknownOnly = buildMixedBranches('ui', ['unknown', 'general'])
   assert.deepEqual(unknownOnly.map((b) => b.kind), ['ui', 'general'])
 })
@@ -66,12 +60,13 @@ test('mixedGuidance: exact sub wins, kind falls back, default releases', () => {
   assert.match(mixedGuidance('chat'), /放行/)
 })
 
-test('planMixedBranches: mixed_of drives the branches and carries the precision note', () => {
+test('planMixedBranches: mixed_of drives branches and carries the precision note', () => {
   const plan = planMixedBranches({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] })
   assert.equal(plan.fallback, false)
   assert.equal(plan.visual_kind, 'mixed')
   assert.deepEqual(plan.branches.map((b) => b.kind), ['ui', 'document'])
   assert.match(plan.note, /精度优化/)
+  assert.match(plan.note, /最多 2 个分支/)
 })
 
 test('planMixedBranches: missing/empty mixed_of falls back (release, never hard-block)', () => {
@@ -90,23 +85,33 @@ test('renderMixedGuidance: mixed plan renders per-branch guidance; fallback rend
   assert.equal(renderMixedGuidance(planMixedBranches(undefined)), undefined)
 })
 
-test('renderMixedGuidance: fast degrades two-branch mixed to the primary branch (mixed x depth fix 1)', () => {
+test('renderMixedGuidance: fast/standard/deep keep the same two-branch correctness coverage', () => {
   const plan = planMixedBranches({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] })
   const fast = renderMixedGuidance(plan, 'fast')
-  // fast 档位与 depthLimitFor('fast')=1 的硬上限一致：只引导主分支一次，
-  // 不再要求"各分支至少一次识别调用"（否则文案 ≥2 次与硬上限 1 次矛盾，
-  // 第二次调用必被 VISION_DEPTH_LIMIT 拒绝）。
-  assert.match(fast, /本轮深度档位为 fast：先验证主分支（ui）一次/)
-  assert.doesNotMatch(fast, /各分支至少一次识别调用/)
-  assert.doesNotMatch(fast, /document：语义优先/) // 次分支引导不注入
-  // standard/deep 保持完整双分支精度引导（与 fast 文案不再冲突）。
   const standard = renderMixedGuidance(plan, 'standard')
-  assert.match(standard, /各分支至少一次识别调用/)
-  assert.match(standard, /document：语义优先/)
   const deep = renderMixedGuidance(plan, 'deep')
+  for (const text of [fast, standard, deep]) {
+    assert.match(text, /ui：detect \/ ground 优先/)
+    assert.match(text, /document：语义优先/)
+    assert.doesNotMatch(text, /升级档位|深度档位为 fast|最多.*次/)
+  }
+  assert.equal(fast, standard)
   assert.equal(deep, standard)
-  // 默认（无 depth 参数）保持完整双分支——向后兼容。
   assert.equal(renderMixedGuidance(plan), standard)
+})
+
+test('mixed guidance follows runtime host locale when called without an explicit locale', async () => {
+  const text = await runWithDepthConfig(
+    { __visionRouterLocale: 'en-US' },
+    async () => {
+      const plan = planMixedBranches({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] })
+      return renderMixedGuidance(plan, 'standard')
+    },
+  )
+  assert.match(text, /Mixed content detected/)
+  assert.match(text, /ui: prefer detect \/ ground/)
+  assert.match(text, /document: prefer semantic understanding/)
+  assert.doesNotMatch(text, /检测到混合内容|语义优先/)
 })
 
 test('index.js integration: mixed plan stored on bootstrap completion and injected in followup', () => {
@@ -116,12 +121,12 @@ test('index.js integration: mixed plan stored on bootstrap completion and inject
   assert.equal(index.includes("evidence.visual_kind === 'mixed'"), true)
 })
 
-test('mixed-router no longer uses the entities heuristic (schema convergence)', () => {
+test('mixed-router no longer uses the entities heuristic', () => {
   const source = readFileSync(new URL('../lib/mixed-router.js', import.meta.url), 'utf8')
-  assert.equal(source.includes('inferMixedKinds'), false) // 启发式已移除
-  assert.equal(source.includes('evidence.mixed_of'), true) // 消费 schema 输出
+  assert.equal(source.includes('inferMixedKinds'), false)
+  assert.equal(source.includes('evidence.mixed_of'), true)
 })
 
-test('MAX_MIXED_BRANCHES is two (cost cap)', () => {
+test('MAX_MIXED_BRANCHES is two (branch-shape cap, not a call-count cap)', () => {
   assert.equal(MAX_MIXED_BRANCHES, 2)
 })
