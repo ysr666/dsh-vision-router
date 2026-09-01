@@ -188,14 +188,17 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     const preStep = harness.handlers.get('agent/pre-step')
     assert.ok(preStep)
     const next = async () => ({ kind: 'ok', messages: imageMessages })
-    const hasFollowupReminder = (decision) =>
+    const hasEvidenceReminder = (decision) =>
       Array.isArray(decision && decision.messages) &&
-      decision.messages.some(
-        (m) => m && typeof m.id === 'string' && m.id.includes('vision-router-structured-followup-'),
-      )
+      decision.messages.some((m) => {
+        if (!m || typeof m.id !== 'string') return false
+        return m.id.includes('vision-router-structured-followup-') ||
+          m.id.includes('vision-router-structured-mixed-guard-') ||
+          m.id.includes('vision-router-structured-evidence-guard-')
+      })
 
     const d1 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d1), false)
+    assert.equal(hasEvidenceReminder(d1), false)
 
     const bootstrap = harness.toolDefs.get('vision_bootstrap')
     assert.ok(bootstrap)
@@ -205,7 +208,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(boot.phase, 'structured-bootstrap')
 
     const d2 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d2), true)
+    assert.equal(hasEvidenceReminder(d2), true)
 
     const describe = harness.toolDefs.get('vision_describe')
     assert.ok(describe)
@@ -215,7 +218,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(j1.code, 'NO_USABLE_EVIDENCE')
 
     const d3 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d3), true)
+    assert.equal(hasEvidenceReminder(d3), true)
 
     const colors = harness.toolDefs.get('vision_colors')
     assert.ok(colors)
@@ -225,7 +228,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(server.requests.length, requestsBefore)
 
     const d4 = await preStep(imagePayload, next)
-    assert.equal(hasFollowupReminder(d4), false)
+    assert.equal(hasEvidenceReminder(d4), false)
 
     const requestsBeforeBlock = server.requests.length
     const r3 = await describe.execute({ paths: [pngPath], question: 'again' }, exec)
