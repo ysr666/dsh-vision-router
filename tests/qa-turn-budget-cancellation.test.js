@@ -77,6 +77,12 @@ test('public abort compatibility restores any and timeout in a legacy Host realm
   assert.equal(immediate.aborted, true)
   assert.equal(immediate.reason, alreadyReason)
 
+  assert.throws(() => root.AbortSignal.any(), TypeError)
+  assert.throws(() => root.AbortSignal.any([{}]), TypeError)
+  assert.throws(() => root.AbortSignal.timeout('5'), TypeError)
+  assert.throws(() => root.AbortSignal.timeout(1.5), RangeError)
+  assert.throws(() => root.AbortSignal.timeout(0x1_0000_0000), RangeError)
+
   const timed = root.AbortSignal.timeout(5)
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('legacy timeout shim did not abort')), 100)
@@ -87,4 +93,47 @@ test('public abort compatibility restores any and timeout in a legacy Host realm
   })
   assert.equal(timed.aborted, true)
   assert.equal(timed.reason?.name, 'TimeoutError')
+})
+
+test('AbortSignal.any compatibility removes prior listeners if later registration fails', () => {
+  class CountingSignal extends LegacyAbortSignal {
+    constructor(failOnAdd = false) {
+      super()
+      this.failOnAdd = failOnAdd
+      this.abortListeners = 0
+    }
+
+    addEventListener(type, listener, options) {
+      if (this.failOnAdd) throw new Error('listener registration rejected')
+      if (type === 'abort') this.abortListeners += 1
+      return super.addEventListener(type, listener, options)
+    }
+
+    removeEventListener(type, listener, options) {
+      if (type === 'abort' && this.abortListeners > 0) this.abortListeners -= 1
+      return super.removeEventListener(type, listener, options)
+    }
+  }
+
+  const first = new CountingSignal()
+  const broken = new CountingSignal(true)
+  assert.throws(
+    () => LegacyAbortSignal.any([first, broken]),
+    /listener registration rejected/,
+  )
+  assert.equal(first.abortListeners, 0, 'failed composition must not leak a listener onto earlier signals')
+})
+
+test('abort compatibility never replaces native static helpers', () => {
+  class NativeSignal {}
+  class NativeController {}
+  const nativeAny = () => 'native-any'
+  const nativeTimeout = () => 'native-timeout'
+  NativeSignal.any = nativeAny
+  NativeSignal.timeout = nativeTimeout
+
+  const installed = installAbortSignalCompat({ AbortSignal: NativeSignal, AbortController: NativeController })
+  assert.deepEqual(installed, { any: true, timeout: true })
+  assert.equal(NativeSignal.any, nativeAny)
+  assert.equal(NativeSignal.timeout, nativeTimeout)
 })
