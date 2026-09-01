@@ -124,6 +124,85 @@ test('AbortSignal.any compatibility removes prior listeners if later registratio
   assert.equal(first.abortListeners, 0, 'failed composition must not leak a listener onto earlier signals')
 })
 
+test('weak AbortSignal.any compatibility releases long-lived source listeners after composite collection', () => {
+  class WeakSignal extends EventTarget {
+    constructor() {
+      super()
+      this.aborted = false
+      this.reason = undefined
+      this.abortListeners = 0
+    }
+
+    addEventListener(type, listener, options) {
+      if (type === 'abort') this.abortListeners += 1
+      return super.addEventListener(type, listener, options)
+    }
+
+    removeEventListener(type, listener, options) {
+      if (type === 'abort' && this.abortListeners > 0) this.abortListeners -= 1
+      return super.removeEventListener(type, listener, options)
+    }
+  }
+  class WeakController {
+    constructor() { this.signal = new WeakSignal() }
+    abort(reason) {
+      if (this.signal.aborted) return
+      this.signal.aborted = true
+      this.signal.reason = reason
+      this.signal.dispatchEvent(new Event('abort'))
+    }
+  }
+  class FakeWeakRef {
+    constructor(value) { this.value = value }
+    deref() { return this.value }
+  }
+  class FakeFinalizationRegistry {
+    static latest
+    constructor(callback) {
+      this.callback = callback
+      this.held = undefined
+      this.token = undefined
+      this.unregistered = false
+      FakeFinalizationRegistry.latest = this
+    }
+    register(_target, held, token) {
+      this.held = held
+      this.token = token
+    }
+    unregister(token) {
+      if (token !== this.token) return false
+      this.unregistered = true
+      this.held = undefined
+      return true
+    }
+    finalize() {
+      const held = this.held
+      this.held = undefined
+      this.callback(held)
+    }
+  }
+
+  const root = {
+    AbortSignal: WeakSignal,
+    AbortController: WeakController,
+    WeakRef: FakeWeakRef,
+    FinalizationRegistry: FakeFinalizationRegistry,
+    WeakMap,
+    DOMException,
+    setTimeout,
+  }
+  installAbortSignalCompat(root)
+  const first = new WeakSignal()
+  const second = new WeakSignal()
+  root.AbortSignal.any([first, second])
+  assert.equal(first.abortListeners, 1)
+  assert.equal(second.abortListeners, 1)
+
+  FakeFinalizationRegistry.latest.finalize()
+  assert.equal(first.abortListeners, 0)
+  assert.equal(second.abortListeners, 0)
+})
+
 test('abort compatibility never replaces native static helpers', () => {
   class NativeSignal {}
   class NativeController {}
