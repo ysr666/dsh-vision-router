@@ -1,6 +1,6 @@
 // 行为级独立次数上限测试：
-// 驱动真实 wrapper（apply 注册的工具），验证用户显式开启的深挖次数上限只在
-// 工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
+// 驱动真实 structured runtime wrapper（包入口同款 hardening + core 注册工具），验证用户显式开启的
+// 深挖次数上限只在工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
 // followupCompleted，模型保有提醒并可继续；成功后下一次调用命中
 // VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
 // 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；
@@ -12,7 +12,9 @@ import { createServer } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { apply, Config } from '../index.js'
+import { apply } from '../index.js'
+import { Config } from '../entry.js'
+import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 
 const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -174,7 +176,8 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
       localOllama: { enabled: true, baseURL: server.baseURL, model: 'm' },
     }
     const harness = bootHarness(config)
-    apply(harness.ctx, Config(config))
+    const hardenedCtx = installStructuredFlowHardening(harness.ctx, Config(config))
+    apply(hardenedCtx, Config(config))
 
     const session = { id: 'depth-behavior-session', events: [] }
     const exec = { agent: { session } }
