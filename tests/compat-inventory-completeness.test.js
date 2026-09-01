@@ -14,6 +14,7 @@ const REQUIRED_SEAMS = [
   'lib/legacy-global-proxy-boundary.js',
   'lib/legacy-core-vision-policy-bridge.js',
   'lib/tesseract-exec-compat.js',
+  'lib/abort-signal-compat.js',
 ]
 
 const REQUIRED_FIELDS = [

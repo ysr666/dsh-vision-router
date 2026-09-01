@@ -101,6 +101,15 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** local OCR no longer needs an `execFile` stdin shim **and** Core/Host exposes a native DPI-correct desktop-capture seam (or the legacy PowerShell command is removed), with Node 22/24 and Windows platform matrices proving the shared wrapper is unreachable before deletion.
 - **Tests:** `tesseract-node24-boot`, `qa-screenshot-runtime` (PMv2/PMv1 ordering, context restoration, exact-match passthrough, Windows PowerShell compile smoke), cross-platform Host tests.
 
+## `lib/abort-signal-compat.js`
+
+- **Reason:** keep Vision Router cancellation/deadline composition working when a supported DSH Host or bridge exposes `AbortSignal`/`AbortController` but omits the standard static `AbortSignal.any()` or `AbortSignal.timeout()` helpers used by the Router's runtime boundaries.
+- **Host gap:** some real Host/bridge environments can surface a partial AbortSignal runtime even though the declared Node support window normally provides both helpers, producing `AbortSignal.any is not a function` inside visual work.
+- **First needed for:** partial Host/bridge AbortSignal runtimes observed during Vision Router image execution and exact capability checks.
+- **Feature detection:** only the actual static helper presence is inspected. Existing native `AbortSignal.any` and `AbortSignal.timeout` functions are never replaced; only a missing helper is installed. No Node or DSH version persona is inferred.
+- **Removal condition:** every supported Host/runtime contract guarantees both static helpers in the actual realm used by plugin execution, and a cross-Host regression proves no supported bridge can present the partial runtime anymore.
+- **Tests:** `qa-turn-budget-cancellation` legacy-realm fallback/validation/non-intervention coverage plus Node 22/24 and DSH contract CI.
+
 ## Removal protocol
 
 A compatibility seam may be deleted only when all of the following are true:
