@@ -4,6 +4,7 @@ import {
   CAPABILITY_BENCHMARK_CLIENT,
   injectCapabilityBenchmarkClient,
 } from '../lib/vision-capability-benchmark-client.js'
+import { VISION_EXACT_CHECK_CLIENT } from '../lib/vision-exact-check-client.js'
 
 test('capability benchmark client injects once into the document head', () => {
   const html = '<!doctype html><html><head><title>DSH</title></head><body></body></html>'
@@ -21,6 +22,15 @@ test('benchmark client keeps one compact benchmark action with Quick and Full pr
   // Test Vision remains a separate exact-check client/control. The benchmark
   // client may mention that explicit path in copy, but must not own its DOM.
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /data-vision-router-exact-vision-test/)
+})
+
+test('exact image check explains the Host-owned custom-model image admission fix after proof succeeds', () => {
+  assert.match(VISION_EXACT_CHECK_CLIENT, /~\/\.dsh\/settings\.yaml/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /input: \[text, image\]/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /defaultInput: \[text, image\]/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /DSH仍判纯文本？加input:\[text,image\]/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /DSH still says text-only\? add input:\[text,image\]/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /selection\.provider==='vision-http'/)
 })
 
 test('client is scoped to the actual Vision Router model chain and never mutates settings', () => {
