@@ -14,13 +14,17 @@ test('native cards cannot bypass staged edits through immediate reset', () => {
   )
 })
 
-test('a settled save only collapses the card that started that save', () => {
+test('a settled save only collapses the disclosure that started that save', () => {
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /setCardsOpen\(function\(previous\)/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /previous\[id\]!==true/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /delete next\[id\]/)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /setCardsOpen\(\{\}\);\s*setSaveState\(\{status:['"]saved['"]/)
+})
+
+test('disclosure toggles are card-local instead of accordion-wide', () => {
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /setPage\(function\(current\)\{return current===id\?['"]['"]:current;\}\)/,
+    /function toggleCard\(id\)\{setCardsOpen\(function\(previous\)\{var next=Object\.assign\(\{\},previous\);if\(next\[id\]===true\)delete next\[id\];else next\[id\]=true;return next;\}\);\}/,
   )
-  assert.doesNotMatch(
-    SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /setSaveState\(\{status:['"]saved['"],page:id\}\);\s*setPage\(['"]['"]\)/,
-  )
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /setPage\(opened\?['"]['"]:id\)/)
 })
