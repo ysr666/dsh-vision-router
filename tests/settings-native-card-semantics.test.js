@@ -163,9 +163,9 @@ function createHarness(React, { value = baseSettings() } = {}) {
   }
 }
 
-function stateValues({ page = 'general', drafts = {}, saveState = { status: 'idle' } } = {}) {
+function stateValues({ cardsOpen = { general: true }, drafts = {}, saveState = { status: 'idle' } } = {}) {
   return [
-    page,
+    cardsOpen,
     drafts,
     undefined,
     undefined,
@@ -179,13 +179,13 @@ function stateValues({ page = 'general', drafts = {}, saveState = { status: 'idl
 
 test('hidden invalid Advanced draft does not block a valid General save', () => {
   const React = reactStub(stateValues({
-    page: 'general',
+    cardsOpen: { general: true },
     drafts: { freeFallback: false, timeoutMs: 999 },
   }))
   const harness = createHarness(React)
   const tree = harness.registeredComponent({ scope: harness.scope })
   const root = findOne(tree, (node) => node.props?.['data-vr-settings-ia'] === '1')
-  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save')
+  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save vr-ia-save')
 
   assert.equal(root.props['data-vr-dirty'], '1')
   assert.equal(root.props['data-vr-invalid'], '1')
@@ -194,12 +194,12 @@ test('hidden invalid Advanced draft does not block a valid General save', () => 
 
 test('saving General commits only General-owned fields', () => {
   const React = reactStub(stateValues({
-    page: 'general',
+    cardsOpen: { general: true },
     drafts: { freeFallback: false, timeoutMs: 130000 },
   }))
   const harness = createHarness(React)
   const tree = harness.registeredComponent({ scope: harness.scope })
-  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save')
+  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save vr-ia-save')
 
   save.props.onClick()
   assert.equal(harness.commits.length, 1)
@@ -208,7 +208,7 @@ test('saving General commits only General-owned fields', () => {
 
 test('Diagnostics never exposes a settings save/discard footer even when another card is dirty', () => {
   const React = reactStub(stateValues({
-    page: 'diagnostics',
+    cardsOpen: { diagnostics: true },
     drafts: { freeFallback: false },
   }))
   const harness = createHarness(React)
@@ -221,7 +221,7 @@ test('Diagnostics never exposes a settings save/discard footer even when another
 })
 
 test('guide replay uses the exported guide API without mounting the legacy Settings section', () => {
-  const React = reactStub(stateValues())
+  const React = reactStub(stateValues({ cardsOpen: {} }))
   const harness = createHarness(React)
   const tree = harness.registeredComponent({ scope: harness.scope })
   const guide = findOne(tree, (node) => node.props?.className === 'vr-btn vr-ia-guide-button')
