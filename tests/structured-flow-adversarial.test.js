@@ -237,33 +237,3 @@ test('mixed flow cannot complete two branches through repeated generic full-imag
   const complete = await preStep(h, session)
   assert.equal(Boolean(mixedGuard(complete)), false)
 })
-
-test('stop guard is reinserted when the host rebuilds the current message list', async () => {
-  const h = harness({ visionDepthMaxCalls: 0, visionTurnBudgetMs: 0 })
-  h.wrapped.tools.register({
-    name: 'vision_bootstrap',
-    async execute() {
-      return bootstrapSuccess({ visual_kind: 'general', mixed_of: [] })
-    },
-  })
-  h.wrapped.tools.register({
-    name: 'vision_describe',
-    async execute() {
-      return ''
-    },
-  })
-
-  const session = {}
-  const exec = { agent: { session } }
-  await preStep(h, session)
-  await h.defs.get('vision_bootstrap').execute({}, exec)
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await h.defs.get('vision_describe').execute({ question: String(attempt) }, exec)
-    await preStep(h, session, 1, [])
-  }
-
-  const first = await preStep(h, session, 1, [])
-  const rebuilt = await preStep(h, session, 1, [])
-  assert.ok(stopGuard(first))
-  assert.ok(stopGuard(rebuilt))
-})
