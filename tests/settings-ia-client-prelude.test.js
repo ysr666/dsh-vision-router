@@ -6,6 +6,11 @@ import {
   SETTINGS_IA_CLIENT_PRELUDE,
   injectSettingsIaClientPrelude,
 } from '../lib/settings-ia-client-prelude.js'
+import {
+  SETTINGS_NATIVE_CARD_IA_PRELUDE,
+  SETTINGS_NATIVE_CARD_STYLE,
+  transformSettingsIaToNativeCards,
+} from '../lib/settings-native-card-layout.js'
 
 function reactStub(stateValues = []) {
   let stateIndex = 0
@@ -89,7 +94,11 @@ function baseSettings(overrides = {}) {
   }
 }
 
-function createHarness(React, { value = baseSettings(), local = true } = {}) {
+function createHarness(React, {
+  value = baseSettings(),
+  local = true,
+  prelude = SETTINGS_IA_CLIENT_PRELUDE,
+} = {}) {
   let captured
   const loader = { load(spec) { captured = spec } }
   const sandbox = {
@@ -109,7 +118,7 @@ function createHarness(React, { value = baseSettings(), local = true } = {}) {
     Reflect,
     JSON,
   }
-  vm.runInNewContext(SETTINGS_IA_CLIENT_PRELUDE, sandbox)
+  vm.runInNewContext(prelude, sandbox)
 
   let registeredComponent
   const OriginalSection = function OriginalSection() { return { type: 'legacy-section' } }
@@ -166,6 +175,41 @@ test('settings IA replaces the legacy section and exposes five second-level dest
   const text = textOf(tree)
   for (const label of ['常规', '识图策略', '本地与设备', '高级', '诊断']) assert.match(text, new RegExp(label))
   assert.match(text, /内置免费识图/)
+})
+
+test('native card composition is parseable, drift-guarded, and removes sticky chrome', () => {
+  assert.doesNotThrow(() => new vm.Script(SETTINGS_NATIVE_CARD_IA_PRELUDE))
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-plugin-card-header/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /data-vr-guide-bridge/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /重新查看新手引导/)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-nav-item/)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /position\s*:\s*sticky/i)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /backdrop-filter/i)
+  assert.throws(
+    () => transformSettingsIaToNativeCards('not-the-settings-ia'),
+    /settings native-card transform anchor missing/,
+  )
+})
+
+test('native card composition renders five disclosure cards and restores guide replay action', () => {
+  const React = reactStub()
+  const { registeredComponent, scope } = createHarness(React, {
+    prelude: SETTINGS_NATIVE_CARD_IA_PRELUDE,
+  })
+
+  const tree = registeredComponent({ scope })
+  const headers = []
+  walk(tree, (node) => {
+    if (node && typeof node === 'object' && node.props?.className === 'vr-ia-plugin-card-header') {
+      headers.push(node)
+    }
+  })
+
+  assert.equal(headers.length, 5)
+  assert.equal(headers.filter((node) => node.props['aria-expanded'] === true).length, 1)
+  assert.match(textOf(tree), /重新查看新手引导/)
+  assert.match(textOf(tree), /内置免费识图/)
+  assert.doesNotMatch(textOf(tree), /性能与稳定性/)
 })
 
 test('general page keeps the happy path focused on model chain and free fallback', () => {
