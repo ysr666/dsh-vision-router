@@ -180,7 +180,8 @@ test('settings IA replaces the legacy section and exposes five second-level dest
 test('native card composition is parseable, drift-guarded, and removes sticky chrome', () => {
   assert.doesNotThrow(() => new vm.Script(SETTINGS_NATIVE_CARD_IA_PRELUDE))
   assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-plugin-card-header/)
-  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /data-vr-guide-bridge/)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /data-vr-guide-bridge/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /startVisionSettingsGuide/)
   assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /重新查看新手引导/)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-nav-item/)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /position\s*:\s*sticky/i)
