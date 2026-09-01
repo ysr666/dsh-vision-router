@@ -55,6 +55,25 @@ function registerFlowTools(harness, bootstrapBody, evidenceBody) {
   }
 }
 
+function registerMixedBranchTools(harness) {
+  harness.wrapped.tools.register({
+    name: 'vision_ground',
+    async execute() {
+      return JSON.stringify({ boxes: [{ x: 1, y: 1, w: 10, h: 10, label: 'ui-control' }] })
+    },
+  })
+  harness.wrapped.tools.register({
+    name: 'vision_ocr',
+    async execute() {
+      return JSON.stringify({ text: 'verified document text' })
+    },
+  })
+  return {
+    ground: () => harness.defs.get('vision_ground'),
+    ocr: () => harness.defs.get('vision_ocr'),
+  }
+}
+
 async function preStep(harness, session, turn = 1, messages = []) {
   const handler = harness.handlers.get('agent/pre-step')
   assert.ok(handler)
@@ -191,13 +210,14 @@ test('zero disables the cap while a retained positive cap applies to every built
   assert.equal(cappedTools.counts().evidenceCalls, 2)
 })
 
-test('fast mixed flow still keeps both correctness branches', async () => {
+test('fast mixed flow keeps both correctness branches until branch-specific evidence lands', async () => {
   const harness = boot({ visionDepth: 'fast', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
     () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
-    () => 'evidence',
+    () => 'generic evidence',
   )
+  const branches = registerMixedBranchTools(harness)
   const session = {}
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
@@ -209,12 +229,20 @@ test('fast mixed flow still keeps both correctness branches', async () => {
   assert.match(firstGuard.content[0].text, /ui/)
   assert.match(firstGuard.content[0].text, /document/)
 
-  await tools.describe().execute({}, exec)
+  await tools.describe().execute({ question: 'generic whole image' }, exec)
+  const stillBoth = await preStep(harness, session, 1)
+  const stillBothGuard = stillBoth.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
+  assert.ok(stillBothGuard)
+  assert.match(stillBothGuard.content[0].text, /ui/)
+  assert.match(stillBothGuard.content[0].text, /document/)
+
+  await branches.ground().execute({ question: 'locate the UI control' }, exec)
   const halfDone = await preStep(harness, session, 1)
   const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(halfGuard, 'one successful evidence call must not complete a two-branch mixed flow')
+  assert.ok(halfGuard, 'one branch-specific evidence call must leave the other mixed branch pending')
+  assert.match(halfGuard.content[0].text, /document/)
 
-  await tools.describe().execute({}, exec)
+  await branches.ocr().execute({ question: 'read the document text' }, exec)
   const complete = await preStep(harness, session, 1)
   assert.equal(
     complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
@@ -222,7 +250,7 @@ test('fast mixed flow still keeps both correctness branches', async () => {
   )
 })
 
-test('standard mixed flow remains incomplete after one branch and clears after two', async () => {
+test('standard mixed flow remains incomplete after one targeted branch and clears after both', async () => {
   const harness = boot({
     visionDepth: 'standard',
     visionDepthMaxCalls: 0,
@@ -231,8 +259,9 @@ test('standard mixed flow remains incomplete after one branch and clears after t
   const tools = registerFlowTools(
     harness,
     () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
-    () => 'evidence',
+    () => 'generic evidence',
   )
+  const branches = registerMixedBranchTools(harness)
   const session = {}
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
@@ -244,12 +273,13 @@ test('standard mixed flow remains incomplete after one branch and clears after t
   assert.match(firstGuard.content[0].text, /ui/)
   assert.match(firstGuard.content[0].text, /CUSTOM DOCUMENT CHECK/)
 
-  await tools.describe().execute({}, exec)
+  await branches.ground().execute({ question: 'locate UI' }, exec)
   const halfDone = await preStep(harness, session, 1)
   const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
   assert.ok(halfGuard)
+  assert.match(halfGuard.content[0].text, /CUSTOM DOCUMENT CHECK/)
 
-  await tools.describe().execute({}, exec)
+  await branches.ocr().execute({ question: 'verify document' }, exec)
   const complete = await preStep(harness, session, 1)
   assert.equal(
     complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
