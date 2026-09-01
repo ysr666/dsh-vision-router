@@ -22,9 +22,10 @@ const DVR_POLICY = Object.freeze({
 })
 
 const importSource = (relative) => import(pathToFileURL(path.join(dshRoot, relative)).href)
-const [attachmentLocal, compat] = await Promise.all([
+const [attachmentLocal, compat, adapterCompat] = await Promise.all([
   importSource('packages/attachment/attachment-local/src/index.ts'),
   import(pathToFileURL(path.join(dvrRoot, 'lib/dsh-contract-compat.js')).href),
+  import(pathToFileURL(path.join(dvrRoot, 'lib/adapter-update-coalescer.js')).href),
 ])
 
 const rootManifest = JSON.parse(await readFile(path.join(dshRoot, 'package.json'), 'utf8'))
@@ -112,7 +113,46 @@ assert.equal(migratedPrepared.ref.height, 2048)
 assert.equal(migratedPrepared.ref.originalDimensions, undefined)
 assert.equal(Buffer.compare(Buffer.from(migratedPrepared.data), Buffer.from(source)), 0)
 
-// 4. The two client/Web bridges must point at exact public alpha seams. Keep
+// 4. The exact alpha LLM runtime calls adapter.imageRequestPricing()
+// synchronously without optional-chaining the method itself. Reproduce that
+// call shape through DVR's private registration boundary so every duck-typed
+// adapter receives LlmAdapter's `undefined` default before registration.
+const llmSource = await readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8')
+assert.match(
+  llmSource,
+  /imageRequestPricing\(_provider: string, _model: string\): LlmImageRequestPricing \| undefined \{\s*return undefined/,
+)
+assert.match(
+  llmSource,
+  /this\.adapters\.get\(provider\)\?\.adapter\.imageRequestPricing\(provider, model\)/,
+)
+const alphaRegistrations = new Map()
+const alphaLikeLlm = {
+  registerAdapter(providers, adapter) {
+    for (const provider of providers) alphaRegistrations.set(provider, adapter)
+    return () => {}
+  },
+  imageRequestPricing(provider, model) {
+    return alphaRegistrations.get(provider)?.imageRequestPricing(provider, model)
+  },
+}
+const alphaCompatCtx = adapterCompat.contextWithCoalescedAdapterUpdates({
+  llm: alphaLikeLlm,
+  on() { return () => {} },
+})
+for (const provider of [
+  'deepseek-official-native',
+  'deepseek-official',
+  'vision-http',
+  'deepseek-vision',
+  'third-party-vision',
+  'vision-chain',
+]) {
+  alphaCompatCtx.llm.registerAdapter([provider], { async *stream() {} })
+  assert.equal(alphaLikeLlm.imageRequestPricing(provider, 'model'), undefined)
+}
+
+// 5. The two client/Web bridges must point at exact public alpha seams. Keep
 // this source-level evidence next to the runtime behavioral tests in DVR.
 const [sessionControllerSource, remoteEventsSource, connectionRpcSource] = await Promise.all([
   readFile(path.join(dshRoot, 'packages/api/session-controller/src/index.ts'), 'utf8'),

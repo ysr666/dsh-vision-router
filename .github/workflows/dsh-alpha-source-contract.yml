@@ -5,6 +5,7 @@ on:
     paths:
       - 'cordis.patch.yml'
       - 'package.json'
+      - 'lib/adapter-update-coalescer.js'
       - 'lib/client-host-compat-prelude.js'
       - 'lib/client-presentation-boundary.js'
       - 'lib/settings-factory-lifecycle.js'
@@ -17,6 +18,7 @@ on:
       - 'lib/web-capability-boundary.js'
       - 'lib/client.js'
       - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'tests/adapter-prepare-call-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
@@ -25,6 +27,7 @@ on:
     paths:
       - 'cordis.patch.yml'
       - 'package.json'
+      - 'lib/adapter-update-coalescer.js'
       - 'lib/client-host-compat-prelude.js'
       - 'lib/client-presentation-boundary.js'
       - 'lib/settings-factory-lifecycle.js'
@@ -37,6 +40,7 @@ on:
       - 'lib/web-capability-boundary.js'
       - 'lib/client.js'
       - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'tests/adapter-prepare-call-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
@@ -95,4 +99,11 @@ jobs:
 
       - name: Run DVR alpha compatibility unit contracts
         working-directory: dvr
-        run: node --test tests/alpha1-client-host-compat.test.js tests/alpha1-settings-factory-lifecycle.test.js tests/alpha1-browser-lifecycle-integration.test.js tests/alpha1-web-auth-boundary.test.js tests/attachment-admission-policy.test.js
+        run: >-
+          node --test
+          tests/adapter-prepare-call-compat.test.js
+          tests/alpha1-client-host-compat.test.js
+          tests/alpha1-settings-factory-lifecycle.test.js
+          tests/alpha1-browser-lifecycle-integration.test.js
+          tests/alpha1-web-auth-boundary.test.js
+          tests/attachment-admission-policy.test.js
