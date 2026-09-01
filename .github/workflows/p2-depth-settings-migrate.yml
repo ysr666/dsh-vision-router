@@ -32,6 +32,8 @@ jobs:
         run: node .github/scripts/p2-depth-settings-migrate-fix.mjs
       - name: Apply guarded P2 migration
         run: node .github/scripts/p2-depth-settings-migrate.mjs
+      - name: Make the final Settings IA own depth semantics
+        run: node .github/scripts/p2-depth-settings-ia-migrate.mjs
       - name: Run focused P2 regression suite
         run: |
           node --test \
