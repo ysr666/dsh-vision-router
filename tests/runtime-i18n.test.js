@@ -19,6 +19,7 @@ import {
 } from '../lib/runtime-i18n-boundary.js'
 import { createRuntimeI18nCoreFacade } from '../lib/runtime-i18n-core.js'
 import { createRuntimeI18nCoreScope } from '../lib/runtime-i18n-core-scope.js'
+import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 
 function createSettings(localeRef, visionRef = {}) {
   return {
@@ -36,6 +37,67 @@ function createSettings(localeRef, visionRef = {}) {
       }
     },
   }
+}
+
+function createStructuredGuardHarness(localePreference) {
+  const handlers = new Map()
+  const defs = new Map()
+  const config = { visionDepth: 'standard', visionDepthMaxCalls: 1 }
+  const settings = {
+    get(namespace) {
+      if (namespace === 'locale') return { preference: localePreference }
+      if (namespace === 'vision-router') return config
+      return undefined
+    },
+  }
+  const ctx = {
+    get(name) { return name === 'settings' ? settings : undefined },
+    on(event, handler) {
+      handlers.set(event, handler)
+      return () => handlers.delete(event)
+    },
+    tools: {
+      register(def) {
+        defs.set(def.name, def)
+        return () => defs.delete(def.name)
+      },
+    },
+  }
+  const wrapped = installStructuredFlowHardening(ctx, config)
+  wrapped.on('agent/pre-step', async (_payload, next) => next())
+  wrapped.tools.register({
+    name: 'vision_bootstrap',
+    async execute() {
+      return JSON.stringify({
+        ok: true,
+        phase: 'structured-bootstrap',
+        evidence: { visual_kind: 'mixed', mixed_of: ['document', 'ui'] },
+      })
+    },
+  })
+  wrapped.tools.register({ name: 'vision_describe', async execute() { return 'evidence' } })
+  return { handlers, defs }
+}
+
+async function runStructuredGuardLocale(localePreference) {
+  const harness = createStructuredGuardHarness(localePreference)
+  const session = {}
+  const exec = { agent: { session } }
+  const payload = { turn: 1, agent: { session }, messages: [] }
+  const preStep = harness.handlers.get('agent/pre-step')
+  assert.ok(preStep)
+  await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
+  await harness.defs.get('vision_bootstrap').execute({}, exec)
+  const mixedDecision = await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
+  const mixed = mixedDecision.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
+  assert.ok(mixed)
+  assert.equal(await harness.defs.get('vision_describe').execute({}, exec), 'evidence')
+  const blocked = JSON.parse(await harness.defs.get('vision_describe').execute({}, exec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
+  const stopDecision = await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
+  const stop = stopDecision.messages.find((message) => String(message.id).includes('structured-guard-stop'))
+  assert.ok(stop)
+  return { mixed: mixed.content[0].text, stop: stop.content[0].text }
 }
 
 test('runtime locale maps zh variants to zh and every other explicit locale to en', () => {
@@ -84,6 +146,26 @@ test('strategy and mixed guidance preserve zh default but render English for non
   const capped = depthCopyFor('standard', 3, 'en')
   assert.match(capped, /Vision strategy is Standard/)
   assert.match(capped, /separate deep-dive call cap.*3 successful evidence calls/i)
+})
+
+test('structured mixed and explicit-cap guards follow English host locale', async () => {
+  const { mixed, stop } = await runStructuredGuardLocale('en-US')
+  assert.match(mixed, /This mixed image still has unverified branches/)
+  assert.match(mixed, /Prioritize semantics/)
+  assert.match(mixed, /Prefer vision_detect \/ vision_ground/)
+  assert.doesNotMatch(mixed, /混合图片|语义优先|优先用/)
+  assert.match(stop, /configured deep-dive call cap has been reached/i)
+  assert.doesNotMatch(stop, /深度配额|深挖次数上限/)
+})
+
+test('structured mixed and explicit-cap guards preserve Chinese host locale', async () => {
+  const { mixed, stop } = await runStructuredGuardLocale('zh-CN')
+  assert.match(mixed, /混合图片仍有未验证分支/)
+  assert.match(mixed, /语义优先/)
+  assert.match(mixed, /优先用 vision_detect \/ vision_ground/)
+  assert.doesNotMatch(mixed, /This mixed image|Prioritize semantics/)
+  assert.match(stop, /达到本轮设置的深挖次数上限/)
+  assert.doesNotMatch(stop, /识图深度配额已耗尽/)
 })
 
 test('legacy host-injected notes are localized without translating arbitrary user text', () => {
