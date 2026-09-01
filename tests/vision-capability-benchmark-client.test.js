@@ -1,9 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import vm from 'node:vm'
 import {
   CAPABILITY_BENCHMARK_CLIENT,
   injectCapabilityBenchmarkClient,
 } from '../lib/vision-capability-benchmark-client.js'
+import {
+  CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT,
+  stabilizeCapabilityBenchmarkClient,
+} from '../lib/vision-capability-benchmark-client-lifecycle.js'
 
 test('capability benchmark client injects once into the document head', () => {
   const html = '<!doctype html><html><head><title>DSH</title></head><body></body></html>'
@@ -162,16 +167,78 @@ test('incomplete selection removes benchmark controls and observer ignores unrel
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
 })
 
-test('benchmark client self-heals after the DSH shell replaces documentElement', () => {
-  // The DSH shell swaps document.documentElement at boot, silently detaching
-  // an observer installed at head-parse time. The client must re-attach to
-  // the live root and sweep for chain rows mounted lazily by the native card
-  // layout; otherwise the benchmark controls and the Auto intro never appear.
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function armBenchObserver\(\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /benchObserverRoot\.isConnected/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /armBenchObserver\(\);scheduleScan\(false\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /completeSelection\(rowSelection\(row\)\)&&!controlFor\(row\)/)
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /setInterval\(function\(\)/)
-  // The sweep must stay idempotent and must never create controls on its own.
-  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(completeSelection\(rowSelection\(row\)\)&&!controlFor\(row\)\)\{scheduleScan\(false\);return;\}/)
+test('benchmark lifecycle observes the stable Document across shell root replacement without a polling sweep', () => {
+  let observedTarget
+  let observedOptions
+  let mutationCallback
+  let timeoutCalls = 0
+  let intervalCalls = 0
+
+  const document = {
+    documentElement: { lang: 'zh-CN' },
+    addEventListener() {},
+    querySelector() { return null },
+    querySelectorAll() { return [] },
+  }
+  const window = {
+    addEventListener() {},
+    localStorage: {
+      getItem() { return null },
+      setItem() {},
+    },
+  }
+  class MutationObserver {
+    constructor(callback) { mutationCallback = callback }
+    observe(target, options) {
+      observedTarget = target
+      observedOptions = options
+    }
+    disconnect() {}
+  }
+
+  vm.runInNewContext(CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT, {
+    document,
+    window,
+    MutationObserver,
+    setTimeout() { timeoutCalls += 1; return undefined },
+    clearTimeout() {},
+    setInterval() { intervalCalls += 1; return 1 },
+    clearInterval() {},
+    Object,
+    Array,
+    String,
+    Number,
+    Map,
+    Set,
+    WeakMap,
+    Reflect,
+    JSON,
+    Math,
+    Date,
+    Promise,
+    Error,
+    TypeError,
+  })
+
+  assert.equal(observedTarget, document)
+  assert.equal(observedOptions.childList, true)
+  assert.equal(observedOptions.subtree, true)
+  assert.equal(intervalCalls, 0)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT, /setInterval\(/)
+
+  const afterInstall = timeoutCalls
+  document.documentElement = { lang: 'zh-CN' }
+  mutationCallback([{
+    addedNodes: [{
+      nodeType: 1,
+      matches(selector) { return selector === '#vr-vision-backend-chain' },
+      querySelector() { return null },
+    }],
+  }])
+  assert.equal(timeoutCalls, afterInstall + 1)
+
+  assert.throws(
+    () => stabilizeCapabilityBenchmarkClient('missing observer anchor'),
+    /benchmark lifecycle transform anchor missing/,
+  )
 })
