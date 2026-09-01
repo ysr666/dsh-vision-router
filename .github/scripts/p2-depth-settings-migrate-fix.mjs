@@ -20,7 +20,7 @@ let source = readFileSync(file, 'utf8')
 // textual shape with a broad regex. Use its unique runtime anchor and the
 // surrounding indentation boundary instead.
 {
-  const startNeedle = "replaceRegexOnce(\n  'index.js',\n  /                  if \\(" 
+  const startNeedle = "replaceRegexOnce(\n  'index.js',\n  /                  if \\("
   const start = source.indexOf(startNeedle)
   if (start === -1) throw new Error('index quota migration block start not found')
   const endMarker = "\n)\nreplaceOnce(\n  'index.js',\n  '                      state.deepCalls = (state.deepCalls || 0) + 1\\n'"
@@ -28,6 +28,18 @@ let source = readFileSync(file, 'utf8')
   if (end === -1) throw new Error('index quota migration block end not found')
   const replacement = `{\n  const indexFile = 'index.js'\n  let indexSource = read(indexFile)\n  const anchor = indexSource.indexOf('const limit = depthLimitFor(visionDepth())')\n  if (anchor === -1) throw new Error('remove dead inner VISION_DEPTH_LIMIT guard: anchor not found')\n  const ifStart = indexSource.lastIndexOf('                  if (', anchor)\n  if (ifStart === -1) throw new Error('remove dead inner VISION_DEPTH_LIMIT guard: owner if not found')\n  const closing = '\\n                  }\\n'\n  const ifEnd = indexSource.indexOf(closing, anchor)\n  if (ifEnd === -1) throw new Error('remove dead inner VISION_DEPTH_LIMIT guard: owner end not found')\n  indexSource = indexSource.slice(0, ifStart) + indexSource.slice(ifEnd + closing.length)\n  write(indexFile, indexSource)\n}`
   source = source.slice(0, start) + replacement + source.slice(end + 2)
+}
+
+// Retire only the depth-specific shim state. The turn-budget card still owns
+// its numeric bounds and context-wrapper cache, so preserve those declarations.
+{
+  const label = source.indexOf("'remove depth constants from budget prelude'")
+  if (label === -1) throw new Error('budget prelude migration label not found')
+  const emptyReplacement = "\n  '',\n"
+  const replacementStart = source.lastIndexOf(emptyReplacement, label)
+  if (replacementStart === -1) throw new Error('budget prelude empty replacement not found')
+  const constants = "\n  `  var DEFAULT_TURN_BUDGET_MS = 0;\\n  var MIN_TURN_BUDGET_MS = 10000;\\n  var MAX_TURN_BUDGET_MS = 600000;\\n  var contexts = typeof WeakMap === 'function' ? new WeakMap() : undefined;\\n`,\n"
+  source = source.slice(0, replacementStart) + constants + source.slice(replacementStart + emptyReplacement.length)
 }
 
 writeFileSync(file, source)
