@@ -230,12 +230,14 @@ test('native disclosure state can keep multiple cards expanded at once', () => {
 
   const tree = registeredComponent({ scope })
   const headers = []
+  let generalBodyMounted = false
   walk(tree, (node) => {
     if (node && typeof node === 'object' && node.props?.className === 'vr-ia-plugin-card-header') headers.push(node)
+    if (node && typeof node === 'object' && node.props?.id === 'vr-vision-backend-chain') generalBodyMounted = true
   })
 
   assert.equal(headers.filter((node) => node.props['aria-expanded'] === true).length, 2)
-  assert.match(textOf(tree), /识图已就绪/)
+  assert.equal(generalBodyMounted, true)
   assert.match(textOf(tree), /性能与稳定性/)
 })
 
