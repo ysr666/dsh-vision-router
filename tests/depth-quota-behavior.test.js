@@ -1,10 +1,11 @@
 // 行为级独立次数上限测试：
 // 驱动真实 wrapper（apply 注册的工具），验证用户显式开启的深挖次数上限只在
-// 工具真正产出证据后消费——失败调用（ok:false）不烧配额、不置
-// followupCompleted，模型保有提醒并可重试；成功后下一次调用命中
+// 工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
+// followupCompleted，模型保有提醒并可继续；成功后下一次调用命中
 // VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
-// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与失败调用；
-// vision_colors（sharp 本地、无网络）作成功调用，避开 turn 级失败记忆与网络依赖。
+// 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；
+// vision_colors（sharp 本地、无网络）作成功调用。这里刻意不制造 provider outage，
+// 避免把熔断/失败记忆混进本测试要验证的 quota accounting。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -155,14 +156,14 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     visible_text: [],
     entities: [],
   })
-  const FAIL_JSON = JSON.stringify({
+  const NO_EVIDENCE_JSON = JSON.stringify({
     ok: false,
-    code: 'VISION_BACKEND_UNAVAILABLE',
+    code: 'NO_USABLE_EVIDENCE',
     retryable: false,
-    reason: 'simulated backend outage',
+    reason: 'simulated successful request with no usable visual evidence',
   })
   const server = await startFakeVisionServer(async (_req, _body, nth) =>
-    chatOk(nth === 1 ? BOOTSTRAP_JSON : FAIL_JSON),
+    chatOk(nth === 1 ? BOOTSTRAP_JSON : NO_EVIDENCE_JSON),
   )
   try {
     const config = {
@@ -208,7 +209,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     const r1 = await describe.execute({ paths: [pngPath], question: 'what is here?' }, exec)
     const j1 = JSON.parse(r1)
     assert.equal(j1.ok, false)
-    assert.notEqual(j1.code, 'VISION_DEPTH_LIMIT')
+    assert.equal(j1.code, 'NO_USABLE_EVIDENCE')
 
     const d3 = await preStep(imagePayload, next)
     assert.equal(hasFollowupReminder(d3), true)
