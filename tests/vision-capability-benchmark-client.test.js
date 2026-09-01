@@ -5,10 +5,6 @@ import {
   CAPABILITY_BENCHMARK_CLIENT,
   injectCapabilityBenchmarkClient,
 } from '../lib/vision-capability-benchmark-client.js'
-import {
-  CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT,
-  stabilizeCapabilityBenchmarkClient,
-} from '../lib/vision-capability-benchmark-client-lifecycle.js'
 
 test('capability benchmark client injects once into the document head', () => {
   const html = '<!doctype html><html><head><title>DSH</title></head><body></body></html>'
@@ -167,7 +163,7 @@ test('incomplete selection removes benchmark controls and observer ignores unrel
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
 })
 
-test('benchmark lifecycle observes the stable Document across shell root replacement without a polling sweep', () => {
+test('benchmark observer survives DSH documentElement replacement without a permanent DOM sweep', () => {
   let observedTarget
   let observedOptions
   let mutationCallback
@@ -193,10 +189,9 @@ test('benchmark lifecycle observes the stable Document across shell root replace
       observedTarget = target
       observedOptions = options
     }
-    disconnect() {}
   }
 
-  vm.runInNewContext(CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT, {
+  vm.runInNewContext(CAPABILITY_BENCHMARK_CLIENT, {
     document,
     window,
     MutationObserver,
@@ -224,7 +219,7 @@ test('benchmark lifecycle observes the stable Document across shell root replace
   assert.equal(observedOptions.childList, true)
   assert.equal(observedOptions.subtree, true)
   assert.equal(intervalCalls, 0)
-  assert.doesNotMatch(CAPABILITY_BENCHMARK_LIFECYCLE_CLIENT, /setInterval\(/)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /setInterval\(/)
 
   const afterInstall = timeoutCalls
   document.documentElement = { lang: 'zh-CN' }
@@ -236,9 +231,4 @@ test('benchmark lifecycle observes the stable Document across shell root replace
     }],
   }])
   assert.equal(timeoutCalls, afterInstall + 1)
-
-  assert.throws(
-    () => stabilizeCapabilityBenchmarkClient('missing observer anchor'),
-    /benchmark lifecycle transform anchor missing/,
-  )
 })
