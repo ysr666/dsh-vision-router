@@ -168,12 +168,12 @@ test('attachment compatibility follows the batch-attachment seam', () => {
   assert.equal(installs, 1)
 })
 
-test('settings card registration is a structural superset of rc6 list and newer keyed slots', async () => {
+test('settings compatibility keeps the first-class section without requiring a legacy plugin card', async () => {
   const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
-  const block = source.match(/name: 'settings\.plugin\.item',[\s\S]{0,320}VisionRouterLegacyEntry/)
-  assert.ok(block, 'settings.plugin.item registration must exist')
-  assert.match(block[0], /key: 'vision-router'/)
-  assert.match(block[0], /id: 'vision-router'/)
+  assert.match(source, /name: 'settings\.section'/)
+  assert.match(source, /id: 'vision-router'/)
+  assert.doesNotMatch(source, /name: 'settings\.plugin\.item'/)
+  assert.doesNotMatch(source, /VisionRouterLegacyEntry/)
 })
 
 test('manifest keeps the minimum rc6 host peers while admitting the rc1 host line', async () => {

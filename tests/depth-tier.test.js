@@ -168,7 +168,7 @@ test('index.js integration: deep quota consumed only after evidence', () => {
   assert.equal(index.includes('state.followupCompleted = true'), true)
 })
 
-test('client.js integration: custom depth lives in the canonical editor shared by both entry points', () => {
+test('client.js integration: custom depth lives in the canonical Settings editor', () => {
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   const prelude = readFileSync(new URL('../lib/live-model-client-prelude.js', import.meta.url), 'utf8')
   assert.equal(client.includes("const SELECT_KEYS = ['visionDepth']"), true)
@@ -183,7 +183,4 @@ test('client.js integration: custom depth lives in the canonical editor shared b
   assert.equal(prelude.includes('标准档仍固定最多 2 次'), true)
   assert.equal(prelude.includes('blank or 0 = unlimited'), true)
   assert.equal(prelude.includes('Standard remains capped at 2'), true)
-  // 两个入口只有一份编辑器：插件入口跳转到设置 → Vision Router。
-  assert.equal(client.includes("legacyMovedBody: '主设置入口现在位于「设置 → Vision Router」。此处仅保留兼容入口，不再维护第二份可编辑表单。'"), true)
-  assert.equal(client.includes("legacyOpen: '打开 Vision Router 设置'"), true)
 })

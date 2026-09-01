@@ -95,4 +95,4 @@ jobs:
 
       - name: Run DVR alpha compatibility unit contracts
         working-directory: dvr
-        run: node --test tests/alpha1-client-host-compat.test.js tests/alpha1-settings-factory-lifecycle.test.js tests/alpha1-web-auth-boundary.test.js tests/attachment-admission-policy.test.js
+        run: node --test tests/alpha1-client-host-compat.test.js tests/alpha1-settings-factory-lifecycle.test.js tests/alpha1-browser-lifecycle-integration.test.js tests/alpha1-web-auth-boundary.test.js tests/attachment-admission-policy.test.js
