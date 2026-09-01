@@ -177,22 +177,31 @@ test('settings IA replaces the legacy section and exposes five second-level dest
   assert.match(text, /内置免费识图/)
 })
 
-test('native card composition is parseable, drift-guarded, and removes sticky chrome', () => {
+test('native card composition is parseable, drift-guarded, lazy, and uses DSH chrome tokens', () => {
   assert.doesNotThrow(() => new vm.Script(SETTINGS_NATIVE_CARD_IA_PRELUDE))
   assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-plugin-card-header/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /dataCardsOpen/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /if\(!dataCardsOpen\)return function\(\)\{\}/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /cardsPair=React\.useState\(\{\}\)/)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /data-vr-guide-bridge/)
   assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /startVisionSettingsGuide/)
+  assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /readVisionGuideStep/)
   assert.match(SETTINGS_NATIVE_CARD_IA_PRELUDE, /重新查看新手引导/)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_IA_PRELUDE, /vr-ia-nav-item/)
+  assert.match(SETTINGS_NATIVE_CARD_STYLE, /--dsw-alias-border-l2/)
+  assert.match(SETTINGS_NATIVE_CARD_STYLE, /--dsw-alias-bg-layer-3/)
+  assert.match(SETTINGS_NATIVE_CARD_STYLE, /--dsw-alias-bg-layer-2/)
+  assert.match(SETTINGS_NATIVE_CARD_STYLE, /vr-ia-plugin-card-header:focus-visible/)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /position\s*:\s*sticky/i)
   assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /backdrop-filter/i)
+  assert.doesNotMatch(SETTINGS_NATIVE_CARD_STYLE, /color-mix/i)
   assert.throws(
     () => transformSettingsIaToNativeCards('not-the-settings-ia'),
     /settings native-card transform anchor missing/,
   )
 })
 
-test('native card composition renders five disclosure cards and restores guide replay action', () => {
+test('native card composition renders five independently collapsed disclosures by default', () => {
   const React = reactStub()
   const { registeredComponent, scope } = createHarness(React, {
     prelude: SETTINGS_NATIVE_CARD_IA_PRELUDE,
@@ -207,10 +216,27 @@ test('native card composition renders five disclosure cards and restores guide r
   })
 
   assert.equal(headers.length, 5)
-  assert.equal(headers.filter((node) => node.props['aria-expanded'] === true).length, 1)
+  assert.equal(headers.filter((node) => node.props['aria-expanded'] === true).length, 0)
   assert.match(textOf(tree), /重新查看新手引导/)
-  assert.match(textOf(tree), /内置免费识图/)
+  assert.doesNotMatch(textOf(tree), /识图已就绪/)
   assert.doesNotMatch(textOf(tree), /性能与稳定性/)
+})
+
+test('native disclosure state can keep multiple cards expanded at once', () => {
+  const React = reactStub([{ general: true, advanced: true }])
+  const { registeredComponent, scope } = createHarness(React, {
+    prelude: SETTINGS_NATIVE_CARD_IA_PRELUDE,
+  })
+
+  const tree = registeredComponent({ scope })
+  const headers = []
+  walk(tree, (node) => {
+    if (node && typeof node === 'object' && node.props?.className === 'vr-ia-plugin-card-header') headers.push(node)
+  })
+
+  assert.equal(headers.filter((node) => node.props['aria-expanded'] === true).length, 2)
+  assert.match(textOf(tree), /识图已就绪/)
+  assert.match(textOf(tree), /性能与稳定性/)
 })
 
 test('general page keeps the happy path focused on model chain and free fallback', () => {
