@@ -28,6 +28,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Repair guarded matcher
+        run: node .github/scripts/p2-depth-settings-migrate-fix.mjs
       - name: Apply guarded P2 migration
         run: node .github/scripts/p2-depth-settings-migrate.mjs
       - name: Run focused P2 regression suite
@@ -43,6 +45,7 @@ jobs:
         run: pnpm test
       - name: Commit migrated sources
         run: |
+          rm -f .github/scripts/p2-depth-settings-migrate-fix.mjs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
