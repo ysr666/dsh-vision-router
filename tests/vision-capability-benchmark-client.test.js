@@ -161,3 +161,17 @@ test('incomplete selection removes benchmark controls and observer ignores unrel
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
 })
+
+test('benchmark client self-heals after the DSH shell replaces documentElement', () => {
+  // The DSH shell swaps document.documentElement at boot, silently detaching
+  // an observer installed at head-parse time. The client must re-attach to
+  // the live root and sweep for chain rows mounted lazily by the native card
+  // layout; otherwise the benchmark controls and the Auto intro never appear.
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /function armBenchObserver\(\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /benchObserverRoot\.isConnected/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /armBenchObserver\(\);scheduleScan\(false\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /completeSelection\(rowSelection\(row\)\)&&!controlFor\(row\)/)
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /setInterval\(function\(\)/)
+  // The sweep must stay idempotent and must never create controls on its own.
+  assert.match(CAPABILITY_BENCHMARK_CLIENT, /if\(completeSelection\(rowSelection\(row\)\)&&!controlFor\(row\)\)\{scheduleScan\(false\);return;\}/)
+})

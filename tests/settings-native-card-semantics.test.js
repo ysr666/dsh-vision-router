@@ -84,10 +84,11 @@ function baseSettings(overrides = {}) {
   }
 }
 
-function createHarness(React, { value = baseSettings() } = {}) {
+function createHarness(React, { value = baseSettings(), guideStep } = {}) {
   let captured
   let registeredComponent
   let guideStarts = 0
+  const finishCalls = []
   const commits = []
   const loader = { load(spec) { captured = spec; return spec } }
   const sandbox = {
@@ -120,6 +121,8 @@ function createHarness(React, { value = baseSettings() } = {}) {
     factory() {
       return {
         startVisionSettingsGuide() { guideStarts += 1 },
+        readVisionGuideStep() { return guideStep },
+        finishVisionSettingsGuide(options) { finishCalls.push(options) },
         async commitSettingsPlan(_scope, items) {
           commits.push(items.map((item) => ({ key: item.key, run: item.run })))
           return { landed: true, failed: false, landedFields: items.map((item) => item.key), failures: [] }
@@ -160,6 +163,7 @@ function createHarness(React, { value = baseSettings() } = {}) {
     commits,
     registeredComponent,
     get guideStarts() { return guideStarts },
+    get finishCalls() { return finishCalls },
   }
 }
 
@@ -203,7 +207,7 @@ test('saving General commits only General-owned fields', () => {
 
   save.props.onClick()
   assert.equal(harness.commits.length, 1)
-  assert.deepEqual(harness.commits[0].map((item) => item.key), ['freeFallback'])
+  assert.deepEqual([...harness.commits[0].map((item) => item.key)], ['freeFallback'])
 })
 
 test('Diagnostics never exposes a settings save/discard footer even when another card is dirty', () => {
@@ -253,7 +257,7 @@ test('v2 routing blocks immediate writes from the stable root dirty contract', (
     },
   }
   const document = {
-    documentElement: {},
+    documentElement: { lang: 'zh-CN' },
     addEventListener(type, handler) {
       if (type === 'click') clickHandler = handler
     },
@@ -281,4 +285,77 @@ test('v2 routing blocks immediate writes from the stable root dirty contract', (
   assert.deepEqual(calls, { prevent: 1, stop: 1, immediate: 1 })
   assert.match(warning.textContent, /先保存或放弃当前修改/)
   assert.match(V2_SETTINGS_IA_CLIENT, /data-vr-dirty/)
+})
+
+test('General card renders the guide completion callout while the guide is on step 2', () => {
+  const React = reactStub(stateValues({ cardsOpen: { general: true } }))
+  const harness = createHarness(React, { guideStep: 'step2' })
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  const callout = findOne(tree, (node) => node.props?.className === 'vr-guide-callout')
+  const title = findOne(tree, (node) => node.props?.className === 'vr-guide-callout-title')
+  const done = findOne(tree, (node) => {
+    if (node.props?.className !== 'vr-btn vr-btn-save') return false
+    const children = Array.isArray(node.children) ? node.children : [node.children]
+    return children.some((child) => child === '完成')
+  })
+
+  assert.match(String(title.children), /确认识图模型/)
+  assert.equal(harness.finishCalls.length, 0)
+  done.props.onClick()
+  assert.equal(harness.finishCalls.length, 1)
+  // The options object is created inside the vm sandbox realm; compare its
+  // fields instead of deepStrictEqual against a host-realm object.
+  assert.equal(harness.finishCalls[0].complete, true)
+  assert.ok(callout)
+})
+
+test('guide completion callout stays hidden when the guide is not on step 2', () => {
+  const React = reactStub(stateValues({ cardsOpen: { general: true } }))
+  const harness = createHarness(React, { guideStep: undefined })
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  const callouts = []
+  walk(tree, (node) => { if (node.props?.className === 'vr-guide-callout') callouts.push(node) })
+  assert.equal(callouts.length, 0)
+})
+
+test('saving General completes an active guide', async () => {
+  const React = reactStub(stateValues({
+    cardsOpen: { general: true },
+    drafts: { freeFallback: false },
+  }))
+  const harness = createHarness(React, { guideStep: 'step2' })
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save vr-ia-save')
+
+  save.props.onClick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(harness.commits.length, 1)
+  assert.equal(harness.finishCalls.length, 1)
+  assert.equal(harness.finishCalls[0].complete, true)
+})
+
+test('saving General does not touch the guide when it is not active', () => {
+  const React = reactStub(stateValues({
+    cardsOpen: { general: true },
+    drafts: { freeFallback: false },
+  }))
+  const harness = createHarness(React, { guideStep: undefined })
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  const save = findOne(tree, (node) => node.props?.className === 'vr-btn vr-btn-save vr-ia-save')
+
+  save.props.onClick()
+  assert.equal(harness.commits.length, 1)
+  assert.equal(harness.finishCalls.length, 0)
+})
+
+test('guide replay button is disabled while any card has staged edits', () => {
+  const React = reactStub(stateValues({
+    cardsOpen: {},
+    drafts: { freeFallback: false },
+  }))
+  const harness = createHarness(React)
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  const guide = findOne(tree, (node) => node.props?.className === 'vr-btn vr-ia-guide-button')
+
+  assert.equal(guide.props.disabled, true)
 })
