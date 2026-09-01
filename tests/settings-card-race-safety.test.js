@@ -6,11 +6,11 @@ import { SETTINGS_NATIVE_CARD_IA_PRELUDE } from '../lib/settings-native-card-lay
 test('native cards cannot bypass staged edits through immediate reset', () => {
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /async function resetField\(key\)\{if\(dirty\|\|!scope\|\|typeof scope\.unset!==['"]function['"]\|\|!writable\|\|saving\)return/,
+    /async function resetField\(key\)\{if\(cardDirty\|\|!scope\|\|typeof scope\.unset!==['"]function['"]\|\|!writable\|\|saving\)return/,
   )
   assert.match(
     SETTINGS_NATIVE_CARD_IA_PRELUDE,
-    /className:['"]vr-reset['"],disabled:dirty\|\|!writable\|\|saving/,
+    /className:['"]vr-reset['"],disabled:cardDirty\|\|!writable\|\|saving/,
   )
 })
 
