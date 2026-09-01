@@ -18,6 +18,7 @@ import {
   installRuntimeI18nBoundary,
 } from '../lib/runtime-i18n-boundary.js'
 import { createRuntimeI18nCoreFacade } from '../lib/runtime-i18n-core.js'
+import { createRuntimeI18nCoreScope } from '../lib/runtime-i18n-core-scope.js'
 
 function createSettings(localeRef, visionRef = {}) {
   return {
@@ -108,6 +109,40 @@ test('legacy host-injected notes are localized without translating arbitrary use
 
   const arbitrary = [{ role: 'user', content: [{ type: 'text', text: '用户自己说：图片此前由视觉模型读取' }] }]
   assert.equal(localizeMessages(arbitrary, i18n, () => ({})), arbitrary)
+})
+
+test('request prompt localization rewrites only exact plugin-owned OCR signatures', () => {
+  const locale = { value: 'en' }
+  const settings = createSettings(locale)
+  const ctx = { get: (name) => (name === 'settings' ? settings : undefined) }
+  const i18n = createRuntimeI18n(ctx)
+  const { localizeRequestBody } = __runtimeI18nTest
+
+  const ocr = '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。'
+  const longOcr = '请原样转述这张长截图分片中的所有文字，保持阅读顺序（从上到下、从左到右），不要添加解释，只输出文字本身。如果画面中没有可见文字，只输出 EMPTY，不要编造内容。'
+  assert.equal(localizeRequestBody(ocr, i18n), i18n.t('ocrFallbackPrompt'))
+  assert.equal(localizeRequestBody(longOcr, i18n), i18n.t('longScreenshotOcrPrompt'))
+  assert.match(localizeRequestBody(longOcr, i18n), /EMPTY/)
+
+  const similarButNotOwned = '请原样转述图中的所有文字，并重点识别金额与合同编号。OCR 后补一句总结。'
+  assert.equal(localizeRequestBody(similarButNotOwned, i18n), similarButNotOwned)
+})
+
+test('core i18n scope is native outside run and localized only inside core ownership', () => {
+  const locale = { value: 'en' }
+  const vision = { tool: true, autoActivateOnImage: true }
+  const settings = createSettings(locale, vision)
+  const ctx = { get: (name) => (name === 'settings' ? settings : undefined) }
+  const scope = createRuntimeI18nCoreScope({ config: vision })
+  const decorated = scope.decorate(ctx)
+
+  assert.equal(decorated.get('settings'), settings)
+  scope.run(() => {
+    const coreSettings = decorated.get('settings')
+    assert.notEqual(coreSettings, settings)
+    assert.equal(coreSettings.get('vision-router').autoActivateOnImage, false)
+  })
+  assert.equal(decorated.get('settings'), settings)
 })
 
 test('core facade localizes stale guard-stop shadow with the current host locale', () => {
