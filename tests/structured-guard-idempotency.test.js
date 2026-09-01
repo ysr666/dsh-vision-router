@@ -89,8 +89,8 @@ test('budget exhaustion emits at most one stop guard across repeated pre-steps',
   }
 })
 
-test('depth exhaustion emits at most one stop guard across repeated pre-steps', async () => {
-  const harness = boot({ visionDepth: 'fast' })
+test('explicit call-cap exhaustion emits at most one stop guard across repeated pre-steps', async () => {
+  const harness = boot({ visionDepth: 'fast', visionDepthMaxCalls: 1 })
   const tools = registerTools(harness, { visual_kind: 'general', mixed_of: [] })
   const session = {}
   const exec = { agent: { session } }
