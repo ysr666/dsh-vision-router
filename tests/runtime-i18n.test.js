@@ -62,15 +62,17 @@ test('runtime translator reads locale.preference live instead of copying locale 
   assert.equal(i18n.t('attachmentName'), '图片')
 })
 
-test('depth and mixed guidance preserve zh default but render English for non-zh host locales', () => {
+test('strategy and mixed guidance preserve zh default but render English for non-zh host locales', () => {
   const zh = renderDepthGuidance({ visualKind: 'ui', depth: 'fast' })
   assert.match(zh, /检测到界面内容/)
-  assert.match(zh, /本轮深度档位为 fast/)
+  assert.match(zh, /本轮看图策略为快速/)
+  assert.doesNotMatch(zh, /最多.*次|升级档位/)
 
   const en = renderDepthGuidance({ visualKind: 'ui', depth: 'fast', locale: 'en-US' })
   assert.match(en, /UI content detected/)
-  assert.match(en, /Vision depth is fast/)
+  assert.match(en, /Vision strategy is Quick/)
   assert.doesNotMatch(en, /检测|本轮/)
+  assert.doesNotMatch(en, /at most 1 deep-evidence call/)
 
   const plan = planMixedBranches({ mixed_of: ['document', 'ui'] }, 'en')
   const mixed = renderMixedGuidance(plan, 'standard', 'en')
@@ -79,7 +81,9 @@ test('depth and mixed guidance preserve zh default but render English for non-zh
   assert.match(mixed, /ui/)
   assert.doesNotMatch(mixed, /检测到混合内容|语义优先/)
 
-  assert.match(depthCopyFor('custom', 3, 'en'), /custom limit of 3/)
+  const capped = depthCopyFor('standard', 3, 'en')
+  assert.match(capped, /Vision strategy is Standard/)
+  assert.match(capped, /separate deep-dive call cap.*3 successful evidence calls/i)
 })
 
 test('legacy host-injected notes are localized without translating arbitrary user text', () => {
@@ -222,8 +226,6 @@ test('runtime boundary replaces prose-based activation control flow with machine
 
   const wrapped = installRuntimeI18nBoundary(ctx, vision)
 
-  // Core sees auto activation disabled, because this boundary owns the stable
-  // machine-state implementation. The actual Host settings remain true.
   assert.equal(wrapped.get('settings').get('vision-router').autoActivateOnImage, false)
   assert.equal(settings.get('vision-router').autoActivateOnImage, true)
 
@@ -247,8 +249,6 @@ test('runtime boundary replaces prose-based activation control flow with machine
           return 'ok'
         },
       })
-      // Deliberately return text that does NOT contain the historical Chinese
-      // success token. Stable activation must still succeed.
       return 'totally different localized prose'
     },
   })
@@ -269,8 +269,6 @@ test('runtime boundary replaces prose-based activation control flow with machine
     ],
   }
   const decision = await preStep(payload, async () => ({ messages: payload.messages }))
-  // Manual activation already mounted the tools, so auto-mount correctly
-  // reports already-mounted internally and does not inject a duplicate notice.
   assert.equal(decision.messages.length, 1)
 })
 
