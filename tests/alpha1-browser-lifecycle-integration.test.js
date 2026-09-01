@@ -17,7 +17,8 @@ function childrenOf(value) {
 }
 
 function fakeReact() {
-  let page = 'general'
+  let cardsOpen = {}
+  let stateIndex = 0
   const Fragment = Symbol('Fragment')
   const React = {
     Fragment,
@@ -39,8 +40,18 @@ function fakeReact() {
       toArray(value) { return childrenOf(value) },
     },
     useState(initial) {
+      const index = stateIndex
+      stateIndex += 1
       const value = typeof initial === 'function' ? initial() : initial
-      return [value === 'general' ? page : value, () => {}]
+      if (index === 0) {
+        return [
+          cardsOpen,
+          (next) => {
+            cardsOpen = typeof next === 'function' ? next(cardsOpen) : next
+          },
+        ]
+      }
+      return [value, () => {}]
     },
     useMemo(fn) { return fn() },
     useEffect() {},
@@ -48,7 +59,13 @@ function fakeReact() {
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
     memo(component) { return component },
   }
-  React.setSettingsPage = (next) => { page = next }
+  React.setSettingsCardsOpen = (next) => {
+    cardsOpen = typeof next === 'function' ? next(cardsOpen) : next
+  }
+  React.renderSettings = (component, props) => {
+    stateIndex = 0
+    return component(props)
+  }
   return React
 }
 
@@ -264,15 +281,15 @@ test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all c
   const section = settingsSections[0]
   const props = section.options.inject()
 
-  React.setSettingsPage('general')
-  const generalTree = section.component(props)
+  React.setSettingsCardsOpen({ general: true })
+  const generalTree = React.renderSettings(section.component, props)
   assert.ok(findNode(generalTree, (node) => String(node.props?.className || '').split(/\s+/).includes('vr-settings-ia-root')))
   assert.ok(findNode(generalTree, (node) => node.props?.id === 'vr-vision-backend-chain'))
   assert.match(V2_SETTINGS_IA_CLIENT, /var ROOT='\.vr-settings-ia-root'/)
   assert.match(V2_SETTINGS_IA_CLIENT, /var CHAIN='#vr-vision-backend-chain'/)
 
-  React.setSettingsPage('advanced')
-  const advancedTree = section.component(props)
+  React.setSettingsCardsOpen({ advanced: true })
+  const advancedTree = React.renderSettings(section.component, props)
   const taskMeta = SETTINGS_NUMBER_META.visionTaskTimeoutMs
   const taskInput = findNode(advancedTree, (node) =>
     node.type === 'input' && node.props?.type === 'number' &&
@@ -280,8 +297,8 @@ test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all c
   assert.ok(taskInput, 'advanced IA must render the vision task timeout numeric field')
   assert.equal(Number(taskInput.props.step), taskMeta.step, 'numeric hardening must survive the final IA replacement')
 
-  React.setSettingsPage('diagnostics')
-  const diagnosticsTree = section.component(props)
+  React.setSettingsCardsOpen({ diagnostics: true })
+  const diagnosticsTree = React.renderSettings(section.component, props)
   assert.match(textOf(diagnosticsTree), /Settings contract|设置协议/)
   assert.ok(findNode(diagnosticsTree, (node) => node.props?.['data-vr-limit-diagnostics'] === '1'))
 
