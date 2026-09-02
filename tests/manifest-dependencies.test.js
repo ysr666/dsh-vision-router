@@ -60,9 +60,13 @@ test('schemastery remains a runtime dependency', async () => {
 test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () => {
   const pkg = await manifest()
   assert.match(pkg.dependencies?.undici ?? '', /^\^7\./)
+
   const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(source, /await import\(['"]undici['"]\)/)
-  assert.doesNotMatch(source, /^import .* from ['"]undici['"]/m)
+  // This is a semantic lazy-load contract, not a source-shape contract:
+  // caching import('undici') in a promise is valid and should not be forced
+  // into an `await import(...)` spelling just to satisfy this test.
+  assert.match(source, /import\(['"]undici['"]\)/)
+  assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
 })
 
 test('all GitHub Actions dependencies are pinned to immutable commit SHAs', async () => {
