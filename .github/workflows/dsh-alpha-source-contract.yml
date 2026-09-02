@@ -51,7 +51,7 @@ permissions:
 
 jobs:
   alpha-source-contract:
-    name: alpha.1 contract / ${{ matrix.os }}
+    name: alpha.4 contract / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,11 +64,11 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout exact DSH alpha.1 source
+      - name: Checkout exact DSH alpha.4 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: cd5ef8148158c3a752a658978873241fdf8e2bbc
+          ref: 4e84901e6471b79ec0338099867ebb4606d12bb5
           persist-credentials: false
           path: dsh-alpha
 
@@ -95,6 +95,8 @@ jobs:
         working-directory: dsh-alpha
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DSH_EXPECTED_VERSION: 0.1.2-alpha.4
+          DSH_EXPECTED_COMMIT: 4e84901e6471b79ec0338099867ebb4606d12bb5
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Run DVR alpha compatibility unit contracts

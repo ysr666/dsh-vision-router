@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.0.1"><img src="https://img.shields.io/badge/release-v2.0.1-5B4CF0?style=flat-square" alt="Release v2.0.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.0"><img src="https://img.shields.io/badge/release-v2.1.0-5B4CF0?style=flat-square" alt="Release v2.1.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -39,9 +39,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v2.0.0）**
+> 📌 **公告（v2.1.0）**
 >
-> **v2.0.0：Auto 能力路由+测评、输入框识图、设置 2.0。** [查看完整更新 →](docs/releases/v2.0.0.md)
+> **v2.1.0：原生五卡设置、输入框识图、运行时双语、能力路由/测评加固，并正式启用 DSH rc.8 最低支持线。** [查看完整更新 →](docs/releases/v2.1.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -411,7 +411,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持窗口：** DVR 2.0.x 支持 DSH `0.1.0-rc.6`（最低）、`0.1.0-rc.8`（上一支持线）以及当前 `0.1.1-rc.2`。DVR 2.1.0 是已公告、允许把最低 Host 提升到 `0.1.0-rc.8` 的边界；2.0.x 补丁版本不会静默提高最低 Host。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持窗口：** DVR 2.1.x 支持 DSH `0.1.0-rc.8`（最低）、`0.1.1-rc.1`（上一正式支持线）以及当前 `0.1.1-rc.2`；DSH `0.1.2-alpha.4` 仅作为 canary 兼容证据。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

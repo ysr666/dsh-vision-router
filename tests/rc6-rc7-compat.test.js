@@ -176,9 +176,9 @@ test('settings compatibility keeps the first-class section without requiring a l
   assert.doesNotMatch(source, /VisionRouterLegacyEntry/)
 })
 
-test('manifest keeps the minimum rc6 host peers while admitting the rc1 host line', async () => {
+test('manifest publishes the DVR 2.1 rc8 host floor while admitting the rc1 host line', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '^0.1.0-rc.6 || ^0.1.1-rc.1'
+  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
