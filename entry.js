@@ -6,6 +6,7 @@
 import z from '@deepseek-ai/schemastery'
 import * as core from './index.js'
 import { applyVisionRuntimeComposition } from './lib/runtime-composition.js'
+import { contextWithGroundingCoordinateFrame } from './lib/grounding-coordinate-runtime.js'
 
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. This revision is also exposed as a resolved
@@ -70,9 +71,26 @@ export {
 } from './lib/dsh-contract-compat.js'
 export const Config = core.Config
 
+function coreWithGroundingCoordinateFrame(config) {
+  return {
+    ...core,
+    apply(ctx, runtimeConfig, runtime) {
+      const framedCtx = contextWithGroundingCoordinateFrame(ctx, {
+        core,
+        config: runtimeConfig ?? config,
+        sessionVisionIndex: runtime?.sessionVision?.index,
+      })
+      return core.apply(framedCtx, runtimeConfig, runtime)
+    },
+  }
+}
+
 // Defense in depth for direct/programmatic callers is implemented by the same
 // production composition used by Cordis. This public entry intentionally owns
-// no runtime installer ordering beyond that single call.
+// no runtime installer ordering beyond that single call. The tiny core facade
+// above owns only the coordinate protocol for ground/detect registrations; it
+// receives the canonical SessionVisionIndex from runtime composition rather
+// than re-scanning attachment history independently.
 export function apply(ctx, config = {}) {
-  return applyVisionRuntimeComposition(ctx, config, core)
+  return applyVisionRuntimeComposition(ctx, config, coreWithGroundingCoordinateFrame(config))
 }
