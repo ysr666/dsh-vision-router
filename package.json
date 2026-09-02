@@ -1,6 +1,6 @@
 {
   "name": "dsh-vision-router",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Eyes for text-only DeepSeek Harness agents: built-in free vision chain (no key) + pixel-level vision tools (Q&A, grounding, crop, pixel diff, colors, OCR, SVG trace, cutout, screenshots). One-command install, no Python, image turns work like ordinary tool-calling turns.",
   "license": "MIT",
   "repository": {
@@ -54,8 +54,8 @@
     "undici": "^7.29.0"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6 || ^0.1.1-rc.1",
-    "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.6 || ^0.1.1-rc.1",
+    "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.8 || ^0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.8 || ^0.1.1-rc.1",
     "sharp": ">=0.35.3 <1"
   },
   "peerDependenciesMeta": {
