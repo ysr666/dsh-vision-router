@@ -196,6 +196,6 @@ test('oversized profile inputs fail boundedly instead of being read without a sa
 test('installed package integrity rejects wrong package identity and missing bundle patch target', () => {
   let profile = makeProfile({ manifest: bundleManifest(), installedManifest: { name: 'not-vision-router', version: '1.7.4' } })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
-  profile = makeProfile({ manifest: bundleManifest(), createInstalledTargets: false, installedManifest: { name: 'dsh-vision-router', version: '1.7.4', dsh: { bundle: { patch: './missing.yml' } } })
+  profile = makeProfile({ manifest: bundleManifest(), createInstalledTargets: false, installedManifest: { name: 'dsh-vision-router', version: '1.7.4', dsh: { bundle: { patch: './missing.yml' } } } })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
 })
