@@ -40,6 +40,7 @@ jobs:
             tests/depth-tier.test.js \
             tests/vision-turn-budget-client-prelude.test.js \
             tests/settings-section-order.test.js \
+            tests/settings-ia-client-prelude.test.js \
             tests/alpha1-browser-lifecycle-integration.test.js \
             tests/runtime-i18n.test.js \
             tests/client.test.js
