@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import vm from 'node:vm'
 import {
   CAPABILITY_BENCHMARK_CLIENT,
   injectCapabilityBenchmarkClient,
@@ -160,4 +161,74 @@ test('incomplete selection removes benchmark controls and observer ignores unrel
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /removeControl\(row\)/)
   assert.match(CAPABILITY_BENCHMARK_CLIENT, /function nodeTouchesChain/)
   assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /node\.closest&&node\.closest\(CHAIN_ROOT\)/)
+})
+
+test('benchmark observer survives DSH documentElement replacement without a permanent DOM sweep', () => {
+  let observedTarget
+  let observedOptions
+  let mutationCallback
+  let timeoutCalls = 0
+  let intervalCalls = 0
+
+  const document = {
+    documentElement: { lang: 'zh-CN' },
+    addEventListener() {},
+    querySelector() { return null },
+    querySelectorAll() { return [] },
+  }
+  const window = {
+    addEventListener() {},
+    localStorage: {
+      getItem() { return null },
+      setItem() {},
+    },
+  }
+  class MutationObserver {
+    constructor(callback) { mutationCallback = callback }
+    observe(target, options) {
+      observedTarget = target
+      observedOptions = options
+    }
+  }
+
+  vm.runInNewContext(CAPABILITY_BENCHMARK_CLIENT, {
+    document,
+    window,
+    MutationObserver,
+    setTimeout() { timeoutCalls += 1; return undefined },
+    clearTimeout() {},
+    setInterval() { intervalCalls += 1; return 1 },
+    clearInterval() {},
+    Object,
+    Array,
+    String,
+    Number,
+    Map,
+    Set,
+    WeakMap,
+    Reflect,
+    JSON,
+    Math,
+    Date,
+    Promise,
+    Error,
+    TypeError,
+  })
+
+  assert.equal(observedTarget, document)
+  assert.equal(observedOptions.childList, true)
+  assert.equal(observedOptions.subtree, true)
+  assert.equal(intervalCalls, 0)
+  assert.doesNotMatch(CAPABILITY_BENCHMARK_CLIENT, /setInterval\(/)
+
+  const afterInstall = timeoutCalls
+  document.documentElement = { lang: 'zh-CN' }
+  mutationCallback([{
+    addedNodes: [{
+      nodeType: 1,
+      matches(selector) { return selector === '#vr-vision-backend-chain' },
+      querySelector() { return null },
+    }],
+  }])
+  assert.equal(timeoutCalls, afterInstall + 1)
 })
