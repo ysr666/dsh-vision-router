@@ -63,7 +63,7 @@ import {
   structuredBootstrapQuestion,
 } from './lib/structured-bootstrap.js'
 import { planMixedBranches, renderMixedGuidance } from './lib/mixed-router.js'
-import { depthLimitFor, renderDepthGuidance } from './lib/depth-guidance.js'
+import { renderDepthGuidance } from './lib/depth-guidance.js'
 import { assertNoRepetitionLoop } from './lib/repetition-guard.js'
 import { compareRgbaStreams } from './lib/pixel-diff-stream.js'
 import {
@@ -289,11 +289,9 @@ export const Config = z.object({
   // evidence/deepening vision-tool call before answering (x >= 1). Off by
   // default because it adds at least two visual/tool calls to image turns.
   structuredVisionBootstrap: z.boolean().default(false),
-  // 看图深度档位（移植自 dsh-vision 的 PRECISION 档位概念）：
-  // fast = 本轮视觉调用上限 1 次（快速）；standard = 上限 2 次（bootstrap+1，
-  // 与现状等价）；deep = 上限 3-4 次（完整证据链）。档位只定「深度上限」，
-  // 模型在档位内按用户问题自选工具与轮次（保留 x 的自由度）。默认 standard
-  // = 现状行为逐字节不变。与场景路由正交：场景管出口、档位管深度。
+  // 看图深度档位只决定查证策略，不隐式限制调用次数：fast 整体优先，
+  // standard 围绕问题按需查证，deep 主动检查局部并交叉验证。独立的
+  // visionDepthMaxCalls 安全阀由 structured-flow hardening 统一执行。
   visionDepth: z.union(['fast', 'standard', 'deep']).default('standard'),
   // 引导文案覆盖（引导表可配置化）：kind = visual_kind（code/document/ui/chat）
   // 或 content_kind（person/animal/…/meme），text = 覆盖引导文案。
@@ -451,11 +449,11 @@ export function mediaTypeOf(path) {
 }
 
 /**
- * 看图深度档位（移植自 dsh-vision 的 PRECISION 概念）：档位定「深挖轮数
- * 上限」，bootstrap 那一遍不计入。fast=1、deep=4、standard=不硬拦（现状
- * 行为，仅提示词引导）。undefined = 不设硬上限。
+ * 兼容导出：depthLimitFor 仍保留给历史直接 index.js 使用者。当前 fast /
+ * standard / deep 只选择查证策略；只有显式 visionDepthMaxCalls > 0 时才
+ * 返回独立调用上限，0 / 未设置表示不限。
  */
-export { depthLimitFor }
+export { depthLimitFor } from './lib/depth-guidance.js'
 
 
 /**
@@ -7118,30 +7116,8 @@ ctx.logger?.info(
                         : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
                     })
                   }
-                  // 档位深度上限：fast/deep 硬拦、standard 不拦（现状行为）。
-                  // bootstrap 那 1 遍不计入；只数 evidence 深挖工具（structuredFollowupEvidenceTools）。
-                  if (
-                    structuredBootstrapEnabled() &&
-                    state &&
-                    state.required &&
-                    state.completed === true &&
-                    def.name !== 'vision_bootstrap' &&
-                    structuredFollowupEvidenceTools.has(def.name)
-                  ) {
-                    const limit = depthLimitFor(visionDepth())
-                    const used = state.deepCalls || 0
-                    if (limit !== undefined && used >= limit) {
-                      return JSON.stringify({
-                        ok: false,
-                        code: 'VISION_DEPTH_LIMIT',
-                        retryable: false,
-                        reason: `本轮深度档位为 ${visionDepth()}，深挖调用已达上限 ${limit} 次；请基于已有证据作答`,
-                      })
-                    }
-                    // 配额不在调用前预扣：失败调用（ok:false）不烧掉档位的
-                    // 深挖配额——模型保有"至少一次证据调用"提醒并可重试。
-                    // 计数移到 execute 成功后（仅产出证据才 +1）。
-                  }
+                  // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
+                  // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
                   let effectiveArgs = args
                   if (
                     structuredBootstrapEnabled() &&
@@ -7183,7 +7159,6 @@ ctx.logger?.info(
                       }
                     }
                     if (!evidenceFailure) {
-                      state.deepCalls = (state.deepCalls || 0) + 1
                       state.followupCompleted = true
                     }
                   }

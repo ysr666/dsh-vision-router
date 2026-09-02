@@ -10,6 +10,7 @@ import { SETTINGS_FACTORY_LIFECYCLE_PRELUDE } from '../lib/settings-factory-life
 import { SETTINGS_NUMBER_META } from '../lib/settings-number-contract.js'
 import { VISION_MODEL_VISIBILITY_PRELUDE } from '../lib/vision-model-visibility-boundary-main.js'
 import { V2_SETTINGS_IA_CLIENT } from '../lib/v2-settings-ia-integration.js'
+import { VISION_TURN_BUDGET_CLIENT_PRELUDE } from '../lib/vision-turn-budget-client-prelude.js'
 
 function childrenOf(value) {
   if (value === undefined || value === null || value === false) return []
@@ -142,6 +143,7 @@ function alphaHarness() {
     LIVE_MODEL_CLIENT_PRELUDE,
     VISION_MODEL_VISIBILITY_PRELUDE,
     SETTINGS_FACTORY_LIFECYCLE_PRELUDE,
+    VISION_TURN_BUDGET_CLIENT_PRELUDE,
   ]) {
     vm.runInNewContext(prelude, context)
   }
@@ -160,6 +162,9 @@ function slotContext({ React, events, catalogCalls }) {
       freeFallback: true,
       visionTaskTimeoutMs: 45000,
       visionTurnBudgetMs: 0,
+      structuredVisionBootstrap: true,
+      visionDepth: 'standard',
+      visionDepthMaxCalls: 0,
     },
     base: {},
     user: {},
@@ -268,6 +273,21 @@ test('alpha.1 real DVR browser lifecycle keeps one Settings IA surface and all c
   const generalTree = section.component(props)
   assert.ok(findNode(generalTree, (node) => String(node.props?.className || '').split(/\s+/).includes('vr-settings-ia-root')))
   assert.ok(findNode(generalTree, (node) => node.props?.id === 'vr-vision-backend-chain'))
+  React.setSettingsPage('strategy')
+  const strategyTree = section.component(props)
+  const depthSelect = findNode(strategyTree, (node) => node.props?.['data-vr-depth-strategy'] === '1')
+  assert.ok(depthSelect, 'final Settings IA must own the depth strategy selector')
+  assert.equal(depthSelect.props.value, 'standard')
+  assert.deepEqual(
+    childrenOf(depthSelect.props.children).map((option) => option.props?.value),
+    ['fast', 'standard', 'deep'],
+  )
+  const depthCap = findNode(strategyTree, (node) => node.props?.['data-vr-depth-cap'] === '1')
+  assert.ok(depthCap, 'final Settings IA must own the independent depth-call cap')
+  const depthCapToggle = findNode(depthCap, (node) => node.props?.['data-vr-depth-cap-toggle'] === '1')
+  assert.ok(depthCapToggle)
+  assert.equal(depthCapToggle.props.checked, false)
+  assert.equal(findNode(depthCap, (node) => node.props?.['data-vr-depth-cap-value'] === '1'), undefined)
   assert.match(V2_SETTINGS_IA_CLIENT, /var ROOT='\.vr-settings-ia-root'/)
   assert.match(V2_SETTINGS_IA_CLIENT, /var CHAIN='#vr-vision-backend-chain'/)
 

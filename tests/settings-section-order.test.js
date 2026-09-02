@@ -134,12 +134,15 @@ test('client copy tells users to configure models in DSH before choosing a visio
   assert.match(registeredDictionaries.en.chainHint, /Configure the model first/i)
 })
 
-test('client copy keeps standard capped at 2 while custom zero remains unlimited after live transition', () => {
+test('live-model prelude leaves depth settings copy to the client bundle', () => {
   const { registeredDictionaries } = runPreludeRegistration()
 
-  assert.match(registeredDictionaries.zh.hintVisionDepthMaxCalls, /留空或填 0 = 不限制/)
-  assert.match(registeredDictionaries.zh.hintVisionDepthMaxCalls, /标准档仍固定最多 2 次/)
-  assert.doesNotMatch(registeredDictionaries.zh.hintVisionDepthMaxCalls, /视同标准档/)
-  assert.match(registeredDictionaries.en.hintVisionDepthMaxCalls, /blank or 0 = unlimited/i)
-  assert.match(registeredDictionaries.en.hintVisionDepthMaxCalls, /Standard remains capped at 2/)
+  assert.equal(registeredDictionaries.zh.hintVisionDepthMaxCalls, 'old zh')
+  assert.equal(registeredDictionaries.zh.hintVisionDepth, 'old zh depth')
+  assert.equal(registeredDictionaries.zh.visionDepthStandard, 'old zh standard')
+  assert.equal(registeredDictionaries.zh.visionDepthDeep, 'old zh deep')
+  assert.equal(registeredDictionaries.en.hintVisionDepthMaxCalls, 'old en')
+  assert.equal(registeredDictionaries.en.hintVisionDepth, 'old en depth')
+  assert.equal(registeredDictionaries.en.visionDepthStandard, 'old en standard')
+  assert.equal(registeredDictionaries.en.visionDepthDeep, 'old en deep')
 })
