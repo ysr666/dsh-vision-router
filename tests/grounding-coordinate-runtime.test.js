@@ -28,6 +28,12 @@ function fakeCore() {
     artifactStemOf(_source, suffix) {
       return `fixture-${suffix}`
     },
+    async annotateBoxBuffer(bytes) {
+      return sharp(bytes, { failOn: 'none' }).png().toBuffer()
+    },
+    async annotateBoxesBuffer(bytes) {
+      return sharp(bytes, { failOn: 'none' }).png().toBuffer()
+    },
   }
 }
 
