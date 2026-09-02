@@ -156,10 +156,14 @@ test('real Chromium: guide completion persists onboardingSeen and clears active 
       const ctx = {
         settingsScope: { bind() { return scope } },
         slots: { register() { return noop } },
-        locale: { define() {} },
+        locale: {
+          register() { return noop },
+          define() {},
+          bind() { return (key) => key },
+        },
         sessions: {},
         remote: {},
-        effect() { return noop },
+        effect(factory) { return typeof factory === 'function' ? (factory() || noop) : noop },
         on() { return noop },
         get() { return undefined },
       }
