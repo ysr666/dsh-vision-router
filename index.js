@@ -16,6 +16,19 @@
 // process fetch to route only the `proxyHosts` domains through it; everything
 // else (DeepSeek and the rest) stays on the direct connection.
 
+// Compatibility shim: dsh 0.1.2-alpha.4 removed `session.events` in favor of
+// `session.snapshotEvents()`. This helper returns an array (or undefined) that
+// works on both old and new harness versions.
+function getSessionEvents(session) {
+  if (!session) return undefined
+  // alpha.4+ : snapshotEvents() returns a frozen array of the event log
+  if (typeof session.snapshotEvents === 'function') {
+    try { return session.snapshotEvents() } catch { return undefined }
+  }
+  // pre-alpha.4 fallback
+  try { return session.events } catch { return undefined }
+}
+
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
@@ -3236,7 +3249,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // turn/start event), so tool-side memory and pre-step bindings agree.
   const turnNumberOf = (session) => {
     try {
-      const events = session && session.events
+      const events = getSessionEvents(session)
       if (!Array.isArray(events)) return 0
       const last = events.findLast((event) => event && event.type === 'turn/start')
       return last && Number.isInteger(last.data && last.data.turn) ? last.data.turn : 0
@@ -4816,7 +4829,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     // agent/request hook must still see the state, otherwise an image turn is
     // served by the text provider and rejected (issue #74, second root cause).
     if (routingEnabled()) {
-      const events = session.events ?? []
+      const events = getSessionEvents(session) ?? []
       turnState.set(session, {
         turn: payload.turn,
         startIndex: events.length,
@@ -5030,7 +5043,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     const state = turnState.get(session)
     if (!state || state.turn !== payload.turn) return config0
     if (!state.hasImage) {
-    const events = session.events ?? []
+    const events = getSessionEvents(session) ?? []
     for (let i = state.startIndex; i < events.length; i++) {
       if (eventHasImage(events[i])) {
         state.hasImage = true
