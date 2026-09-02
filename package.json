@@ -59,15 +59,9 @@
     "sharp": ">=0.35.3 <1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-anonymous-user-id": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-llm-deepseek": {
-      "optional": true
-    },
-    "sharp": {
-      "optional": true
-    }
+    "@deepseek-ai/dsh-anonymous-user-id": { "optional": true },
+    "@deepseek-ai/dsh-llm-deepseek": { "optional": true },
+    "sharp": { "optional": true }
   },
   "devDependencies": {
     "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6",
@@ -86,9 +80,7 @@
     "test:stress": "node scripts/image-resource-stress.mjs && node --test tests/large-image-resource-integration.test.js tests/resource-retention-lifecycle.test.js"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp"
-    ]
+    "onlyBuiltDependencies": ["sharp"]
   },
   "dsh": {
     "client": {
@@ -101,8 +93,6 @@
         "@deepseek-ai/dsh-api-remotes"
       ]
     },
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
+    "bundle": { "patch": "./cordis.patch.yml" }
   }
 }
