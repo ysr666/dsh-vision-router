@@ -9,8 +9,11 @@ const dvrRoot = path.resolve(here, '..')
 const dshRoot = path.resolve(process.env.DSH_SOURCE_ROOT || '')
 if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
 
-const alphaCommit = 'cd5ef8148158c3a752a658978873241fdf8e2bbc'
-const expectedVersion = '0.1.2-alpha.1'
+const expectedVersion = String(process.env.DSH_EXPECTED_VERSION || '').trim()
+const expectedCommit = String(process.env.DSH_EXPECTED_COMMIT || '').trim()
+if (!expectedVersion) throw new Error('DSH_EXPECTED_VERSION is required')
+if (!expectedCommit) throw new Error('DSH_EXPECTED_COMMIT is required')
+
 const MiB = 1024 * 1024
 const DVR_POLICY = Object.freeze({
   maxImageBytes: 20 * MiB,
@@ -32,11 +35,11 @@ const rootManifest = JSON.parse(await readFile(path.join(dshRoot, 'package.json'
 assert.equal(rootManifest.version, expectedVersion, `expected DSH ${expectedVersion}`)
 assert.equal(rootManifest.packageManager, 'pnpm@11.7.0')
 
-// 1. The exact alpha Host schema must retain every bundle field. This also
+// 1. The exact canary Host schema must retain every bundle field. This also
 // protects the field names from drifting under us in a later source canary.
 const resolved = attachmentLocal.LocalAttachmentStore.Config(DVR_POLICY)
 for (const [key, value] of Object.entries(DVR_POLICY)) {
-  assert.equal(resolved[key], value, `alpha Host did not retain ${key}`)
+  assert.equal(resolved[key], value, `canary Host did not retain ${key}`)
 }
 
 // 2. Reproduce a real stale pre-alpha profile row. Because Cordis patch rows
@@ -79,8 +82,8 @@ assert.deepEqual(staleStore.normalizationPolicy, {
   maxBytes: DVR_POLICY.normalizedImageMaxBytes,
 })
 
-// 3. Exercise alpha's actual normalization pipeline, not a hand-written size
-// comparison. A clean 4096x2048 image exceeds alpha's default 4.2MP policy;
+// 3. Exercise the canary's actual normalization pipeline, not a hand-written
+// size comparison. A clean 4096x2048 image exceeds the stale 4.2MP policy;
 // the stale policy must shrink it, while the migrated DVR policy must retain
 // its canonical pixel dimensions and byte-identical clean source.
 const alphaRequire = createRequire(path.join(dshRoot, 'package.json'))
@@ -113,7 +116,7 @@ assert.equal(migratedPrepared.ref.height, 2048)
 assert.equal(migratedPrepared.ref.originalDimensions, undefined)
 assert.equal(Buffer.compare(Buffer.from(migratedPrepared.data), Buffer.from(source)), 0)
 
-// 4. The exact alpha LLM runtime calls adapter.imageRequestPricing()
+// 4. The exact canary LLM runtime calls adapter.imageRequestPricing()
 // synchronously without optional-chaining the method itself. Reproduce that
 // call shape through DVR's private registration boundary so every duck-typed
 // adapter receives LlmAdapter's `undefined` default before registration.
@@ -152,7 +155,7 @@ for (const provider of [
   assert.equal(alphaLikeLlm.imageRequestPricing(provider, 'model'), undefined)
 }
 
-// 5. The two client/Web bridges must point at exact public alpha seams. Keep
+// 5. The two client/Web bridges must point at exact public canary seams. Keep
 // this source-level evidence next to the runtime behavioral tests in DVR.
 const [sessionControllerSource, remoteEventsSource, connectionRpcSource] = await Promise.all([
   readFile(path.join(dshRoot, 'packages/api/session-controller/src/index.ts'), 'utf8'),
@@ -167,7 +170,7 @@ assert.match(connectionRpcSource, /requestRejection\(request: ConnectionTrustReq
 console.log(JSON.stringify({
   ok: true,
   dsh: expectedVersion,
-  alphaCommit,
+  canaryCommit: expectedCommit,
   platform: process.platform,
   node: process.version,
   staleCanonical: [stalePrepared.ref.width, stalePrepared.ref.height],
