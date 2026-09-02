@@ -82,7 +82,7 @@ test('all GitHub Actions dependencies are pinned to immutable commit SHAs', asyn
 })
 
 test('large-image stress policy cannot regress to a one-off development branch gate', async () => {
-  const workflow = await readFile(new URL('../.github/workflows/large-image-resource-stress.yml', import.meta.url), 'utf8')
+  const workflow = await readFile(new URL('../.github/workflows/resource-stress.yml', import.meta.url), 'utf8')
   assert.match(workflow, /pull_request:/)
   assert.match(workflow, /push:/)
   assert.match(workflow, /branches:\s*\[main\]/)
