@@ -42,4 +42,15 @@ let source = readFileSync(file, 'utf8')
   source = source.slice(0, replacementStart) + constants + source.slice(replacementStart + emptyReplacement.length)
 }
 
+// Preserve index.js's historical re-export without keeping a dead local import.
+// This maintains compatibility for direct index.js consumers while leaving the
+// structured hardening layer as the sole runtime owner of explicit call caps.
+{
+  const marker = '\n// Guard the migration result before tests run.\n'
+  const at = source.indexOf(marker)
+  if (at === -1) throw new Error('migration guard marker not found')
+  const additions = `\nreplaceOnce(\n  'index.js',\n  'export { depthLimitFor }',\n  "export { depthLimitFor } from './lib/depth-guidance.js'",\n  'preserve depthLimitFor compatibility re-export without local shadow import',\n)\n\nreplaceOnce(\n  'tests/settings-ia-client-prelude.test.js',\n  "test('strategy page groups tool usage, 1+x depth, and custom guidance together', () => {",\n  "test('strategy page groups tool usage, 1+x depth, independent call cap, and custom guidance together', () => {",\n  'settings IA strategy test title',\n)\nreplaceOnce(\n  'tests/settings-ia-client-prelude.test.js',\n  '  assert.match(text, /最多追加识图调用/)\\n',\n  '  assert.match(text, /限制深挖次数/)\\n  assert.match(text, /最多深挖次数/)\\n',\n  'settings IA independent depth-cap expectations',\n)\n`
+  source = source.slice(0, at) + additions + source.slice(at)
+}
+
 writeFileSync(file, source)
