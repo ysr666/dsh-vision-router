@@ -153,9 +153,19 @@ test('real Chromium: guide completion persists onboardingSeen and clears active 
         async load() {},
       }
       const noop = () => {}
+      const slots = {
+        register() { return noop },
+        inject(_name, factory) {
+          const iterator = typeof factory === 'function' ? factory() : undefined
+          if (iterator && typeof iterator.next === 'function') {
+            for (let step = iterator.next(); !step.done; step = iterator.next()) {}
+          }
+          return noop
+        },
+      }
       const ctx = {
         settingsScope: { bind() { return scope } },
-        slots: { register() { return noop } },
+        slots,
         locale: {
           register() { return noop },
           define() {},
