@@ -13,7 +13,7 @@ test('P3 support window activates the announced rc8 floor for DVR 2.1.x', () => 
   assert.equal(DSH_SUPPORT_WINDOW.minimum, '0.1.0-rc.8')
   assert.equal(DSH_SUPPORT_WINDOW.previous, '0.1.1-rc.1')
   assert.equal(DSH_SUPPORT_WINDOW.current, '0.1.1-rc.2')
-  assert.equal(DSH_SUPPORT_WINDOW.canary, '0.1.2-alpha.1')
+  assert.equal(DSH_SUPPORT_WINDOW.canary, '0.1.2-alpha.4')
   assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'next'), false)
 })
 
@@ -49,6 +49,7 @@ test('support window text exposes the active 2.1 floor without inventing a futur
   assert.ok(lines.some((line) => line.includes('DVR train: 2.1.x')))
   assert.ok(lines.some((line) => line.includes('minimum: 0.1.0-rc.8')))
   assert.ok(lines.some((line) => line.includes('previous: 0.1.1-rc.1')))
+  assert.ok(lines.some((line) => line.includes('canary only: 0.1.2-alpha.4')))
   assert.ok(lines.some((line) => line.includes('support floor: DVR 2.1.x -> DSH 0.1.0-rc.8')))
   assert.ok(lines.some((line) => line.includes('HOST_BELOW_CURRENT_FLOOR_CAPABILITIES')))
   assert.equal(lines.some((line) => line.includes('next announced floor')), false)
@@ -66,6 +67,7 @@ test('public READMEs state the active 2.1 Host floor', async () => {
     assert.match(source, /0\.1\.0-rc\.8/)
     assert.match(source, /0\.1\.1-rc\.1/)
     assert.match(source, /0\.1\.1-rc\.2/)
+    assert.match(source, /0\.1\.2-alpha\.4/)
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
     assert.doesNotMatch(source, /2\.0\.x supports DSH `0\.1\.0-rc\.6`/)
   }
