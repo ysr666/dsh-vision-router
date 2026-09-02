@@ -95,6 +95,8 @@ jobs:
         working-directory: dsh-alpha
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DSH_EXPECTED_VERSION: 0.1.2-alpha.4
+          DSH_EXPECTED_COMMIT: 4e84901e6471b79ec0338099867ebb4606d12bb5
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Run DVR alpha compatibility unit contracts
