@@ -353,6 +353,10 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   assert.equal(offButton.props['aria-pressed'], false)
   assert.equal(offButton.props.disabled, false)
   assert.equal(offButton.props['data-vision-router-mode-toggle'], 'true')
+  assert.equal(offButton.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.props.width, 14)
+  assert.equal(offButton.children[0]?.props.height, 14)
+  assert.equal(offButton.children[0]?.children[0]?.props.fill, 'currentColor')
   assert.equal(offButton.children[2], null)
   offButton.props.onClick()
   await Promise.resolve()
@@ -361,7 +365,9 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
 
   const onButton = buttonOf(harness.render())
   assert.equal(onButton.props['aria-pressed'], true)
-  assert.equal(onButton.children[2]?.children[0], '✓')
+  assert.equal(onButton.children[2]?.type, 'svg')
+  assert.equal(onButton.children[2]?.props.width, 12)
+  assert.equal(onButton.children[2]?.children[0]?.props.stroke, 'currentColor')
   assert.match(onButton.props.style.boxShadow, /brand-primary/)
   onButton.props.onClick()
   await Promise.resolve()
@@ -401,7 +407,8 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
 
   const before = buttonOf(harness.render())
   assert.equal(before.props['aria-pressed'], true)
-  assert.equal(before.children[2]?.children[0], '✓')
+  assert.equal(before.children[2]?.type, 'svg')
+  assert.equal(before.children[2]?.children[0]?.props.stroke, 'currentColor')
   before.props.onClick()
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -413,8 +420,9 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   const toast = firstChildOfType(rendered, harness.primitives.Toast)
   assert.equal(button.props['aria-pressed'], true)
   assert.equal(button.props.disabled, false)
+  assert.equal(button.children[0]?.type, 'svg')
   assert.equal(button.children[1].children[0], '识图')
-  assert.equal(button.children[2]?.children[0], '✓')
+  assert.equal(button.children[2]?.type, 'svg')
   assert.equal(button.props.title, '关闭识图模式')
   assert.ok(toast)
   assert.equal(toast.props.text, `模型操作失败：${error}`)
@@ -446,6 +454,27 @@ test('issue #284 patches onboarding copy and accurately explains the guide spotl
   assert.match(main.dictionaries.en.quickStartBody, /a ✓ means it is on/)
 })
 
+test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs', () => {
+  const harness = createBrowserHarness()
+  const offButton = buttonOf(harness.render())
+  assert.equal(offButton.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.props.viewBox, '0 0 14 14')
+  assert.equal(offButton.children[0]?.children[0]?.props.fill, 'currentColor')
+
+  harness.setSnapshot({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    groups,
+    status: 'ready',
+    error: null,
+  })
+  const onButton = buttonOf(harness.render())
+  assert.equal(onButton.children[2]?.type, 'svg')
+  assert.equal(onButton.children[2]?.props.viewBox, '0 0 14 14')
+  assert.equal(onButton.children[2]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '👁')"), false)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
+})
+
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
   const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("ctx.inject(['slots', 'modelDirectories']"), true)
@@ -454,7 +483,10 @@ test('issue #284 remains explicit and persistent with no send/image auto-reset h
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("'data-vision-router-mode-toggle': 'true'"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("require('@deepseek-ai/dsh-client-ui-primitives')"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("failed: '模型操作失败：{message}'"), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("fill: 'currentColor'"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("stroke: 'currentColor'"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '👁')"), false)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('failedShort'), false)
   assert.equal(source.includes('send-committed'), false)
   assert.equal(source.includes('conversation.input.attachments'), false)
