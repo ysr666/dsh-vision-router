@@ -187,7 +187,7 @@ test('general page keeps the happy path focused on model chain and free fallback
   assert.doesNotMatch(text, /渐进式工具暴露/)
 })
 
-test('strategy page groups tool usage, 1+x depth, and custom guidance together', () => {
+test('strategy page groups tool usage, 1+x depth, independent call cap, and custom guidance together', () => {
   const React = reactStub([
     'strategy',
     {},
@@ -205,7 +205,8 @@ test('strategy page groups tool usage, 1+x depth, and custom guidance together',
   assert.match(text, /Agent 按需使用识图工具/)
   assert.match(text, /结构化预识别（1\+x）/)
   assert.match(text, /看图深度/)
-  assert.match(text, /最多追加识图调用/)
+  assert.match(text, /限制深挖次数/)
+  assert.match(text, /最多深挖次数/)
   assert.match(text, /自定义识图引导/)
 })
 
