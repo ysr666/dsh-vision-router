@@ -9,9 +9,9 @@ Status: normative for the DVR 2.x compatibility program.
 | Minimum Supported Host | `0.1.0-rc.8` | Oldest Host generation that DVR 2.1.x publicly supports. |
 | Previous Supported Train | `0.1.1-rc.1` | Previous released Host train kept in the compatibility matrix. |
 | Current Supported Train | `0.1.1-rc.2` | Current released train used by the required current-contract gate. |
-| Canary only | `0.1.2-alpha.1` | Upstream development evidence only. It is not a released support-floor claim and does not authorize compat deletion by itself. |
+| Canary only | `0.1.2-alpha.4` | Latest upstream prerelease evidence at v2.1.0 release preparation time. It is not a released support-floor claim and does not authorize compat deletion by itself. |
 
-DVR `2.1.x` therefore supports DSH `0.1.0-rc.8` and newer trains covered by the published matrix. Runtime branching remains capability-based rather than version-string-driven.
+DVR `2.1.x` therefore supports DSH `0.1.0-rc.8` and newer released trains covered by the published matrix. Runtime branching remains capability-based rather than version-string-driven.
 
 ## Floor transition from DVR 2.0.x
 
