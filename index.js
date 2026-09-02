@@ -449,9 +449,9 @@ export function mediaTypeOf(path) {
 }
 
 /**
- * 看图深度档位（移植自 dsh-vision 的 PRECISION 概念）：档位定「深挖轮数
- * 上限」，bootstrap 那一遍不计入。fast=1、deep=4、standard=不硬拦（现状
- * 行为，仅提示词引导）。undefined = 不设硬上限。
+ * 兼容导出：depthLimitFor 仍保留给历史直接 index.js 使用者。当前 fast /
+ * standard / deep 只选择查证策略；只有显式 visionDepthMaxCalls > 0 时才
+ * 返回独立调用上限，0 / 未设置表示不限。
  */
 export { depthLimitFor } from './lib/depth-guidance.js'
 
@@ -7116,8 +7116,8 @@ ctx.logger?.info(
                         : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
                     })
                   }
-                  // 档位深度上限：fast/deep 硬拦、standard 不拦（现状行为）。
-                  // bootstrap 那 1 遍不计入；只数 evidence 深挖工具（structuredFollowupEvidenceTools）。
+                  // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
+                  // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
                   let effectiveArgs = args
                   if (
                     structuredBootstrapEnabled() &&
