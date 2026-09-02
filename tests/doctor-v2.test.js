@@ -64,14 +64,38 @@ test('dependency-only install is unhealthy because the plugin is not mounted', (
   assert.equal(report.profiles[0].installation.mode, 'unmounted')
 })
 
-test('manual cordis.patch.yml mode is healthy but bundle plus manual row is a duplicate-load error', () => {
+test('manual cordis.patch.yml mode is healthy but bundle plus manual insert is a duplicate-load error', () => {
   const manualPatch = '- insert:\n    - id: vision-router\n      name: dsh-vision-router\n'
   let profile = makeProfile({ manifest: { dependencies: { 'dsh-vision-router': '^1.7.4' } }, installedVersion: '1.7.4', patch: manualPatch })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, true)
+  assert.equal(inspectProfilePatch(path.join(profile.dir, 'cordis.patch.yml')).visionRouterRows, 1)
   profile = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4', patch: manualPatch })
   const report = doctorProfiles({ dshHome: profile.home, profile: 'web' })
   assert.equal(report.ok, false)
   assert.equal(report.profiles[0].installation.mode, 'duplicate')
+})
+
+test('bundle plus legal by-id override remains one effective Vision Router mount', () => {
+  const overridePatch = '- id: vision-router\n  config:\n    progressiveTools: true\n'
+  const { home, dir } = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4', patch: overridePatch })
+  const patch = inspectProfilePatch(path.join(dir, 'cordis.patch.yml'))
+  assert.equal(patch.visionRouterRows, 0)
+  assert.equal(patch.visionRouterOverrideRows, 1)
+  assert.equal(patch.manualVisionRouter, false)
+  const report = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.equal(report.profiles[0].installation.mode, 'bundle')
+})
+
+test('named by-id override is still an override rather than a second mount', () => {
+  const overridePatch = '- id: vision-router\n  name: dsh-vision-router\n  config:\n    progressiveTools: true\n'
+  const { home, dir } = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4', patch: overridePatch })
+  const patch = inspectProfilePatch(path.join(dir, 'cordis.patch.yml'))
+  assert.equal(patch.visionRouterRows, 0)
+  assert.equal(patch.visionRouterOverrideRows, 1)
+  const report = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.equal(report.profiles[0].installation.mode, 'bundle')
 })
 
 test('legacy static llm-deepseek disable is detected as a warning', () => {
@@ -172,6 +196,6 @@ test('oversized profile inputs fail boundedly instead of being read without a sa
 test('installed package integrity rejects wrong package identity and missing bundle patch target', () => {
   let profile = makeProfile({ manifest: bundleManifest(), installedManifest: { name: 'not-vision-router', version: '1.7.4' } })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
-  profile = makeProfile({ manifest: bundleManifest(), createInstalledTargets: false, installedManifest: { name: 'dsh-vision-router', version: '1.7.4', dsh: { bundle: { patch: './missing.yml' } } } })
+  profile = makeProfile({ manifest: bundleManifest(), createInstalledTargets: false, installedManifest: { name: 'dsh-vision-router', version: '1.7.4', dsh: { bundle: { patch: './missing.yml' } } })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
 })
