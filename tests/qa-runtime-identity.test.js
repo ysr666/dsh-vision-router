@@ -126,6 +126,9 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const backendRuntimeAt = source.indexOf(
     'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {',
   )
+  const requestAuthorityAt = source.indexOf(
+    'const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx)',
+  )
   const coreApplyAt = source.indexOf('() => core.apply(')
   const finishAt = source.indexOf('coreVisionSurfaceRuntime.finishSchemaBootstrap()', coreApplyAt)
 
@@ -165,11 +168,15 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     backendRuntimeAt > performanceAt,
     'preflight image-delivery policy must remain outermost so direct bridges bypass runtime speed sampling',
   )
-  assert.ok(coreApplyAt > backendRuntimeAt, 'core must receive the fully composed backend runtime context')
+  assert.ok(
+    requestAuthorityAt > backendRuntimeAt,
+    'agent/request call-config projection must decorate only the final Core-facing request boundary',
+  )
+  assert.ok(coreApplyAt > requestAuthorityAt, 'core must receive the fully composed request-authority context')
   assert.match(
     source.slice(coreApplyAt),
-    /^\(\) => core\.apply\(\s*backendRuntimeCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
-    'core must receive the same explicit SessionVisionRuntime and CoreVisionSurfaceRuntime owners as composition',
+    /^\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    'core must receive the explicit request-authority decorator plus the same SessionVisionRuntime and CoreVisionSurfaceRuntime owners',
   )
   assert.ok(finishAt > coreApplyAt, 'CoreVisionSurface alone owns the temporary schema-bootstrap lifecycle')
   assert.equal(
