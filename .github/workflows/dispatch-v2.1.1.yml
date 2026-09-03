@@ -1,0 +1,38 @@
+name: Dispatch v2.1.1
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch:
+    if: github.repository == 'ysr666/dsh-vision-router'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Verify release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          [ "$VERSION" = "2.1.1" ] || {
+            echo "::error::expected package version 2.1.1, got $VERSION"
+            exit 1
+          }
+      - name: Dispatch verified release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag=v2.1.1 \
+            -f target_sha="$GITHUB_SHA"
