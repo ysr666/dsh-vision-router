@@ -21,10 +21,65 @@ async function discoverTests(directory = new URL('./', import.meta.url), prefix 
   return paths.sort()
 }
 
-// Keep this list exceptional and reviewable. A test may stay outside the
-// default `pnpm test` suite only when another stable CI owner runs it for a
-// documented environment/reason. The gate below also rejects stale entries.
-const DEFAULT_TEST_EXCLUSIONS = Object.freeze([])
+// These historical contracts had no stable CI owner. Keep the package.json
+// command untouched for this closure patch, but execute the tests from this
+// already-default manifest file so `pnpm test` and the release workflow both
+// cover them immediately. A future discovery-runner migration can move these
+// back into ordinary automatic discovery without changing the contract below.
+const DEFAULT_TEST_IMPORTS = Object.freeze([
+  'tests/auto-wrap-model-removal.test.js',
+  'tests/guard-stop-surface-shadow.test.js',
+  'tests/settings-card-race-safety.test.js',
+  'tests/settings-guide-replay-safety.test.js',
+  'tests/settings-ia-targeted-adversarial.test.js',
+  'tests/v2-release-acceptance-regressions.test.js',
+  'tests/vision-turn-budget-client-prelude.test.js',
+  'tests/wrapper-scope-client-prelude.test.js',
+])
+
+for (const path of DEFAULT_TEST_IMPORTS) {
+  await import(new URL(`./${path.slice('tests/'.length)}`, import.meta.url))
+}
+
+// A test may stay outside the default `pnpm test` process only when a stable,
+// PR-triggered workflow owns the exact file. The reasons are intentionally
+// grouped by execution environment/domain instead of becoming a generic
+// quarantine list.
+const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
+  { path: 'tests/alpha1-client-host-compat.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
+  { path: 'tests/alpha1-settings-factory-lifecycle.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
+  { path: 'tests/alpha1-web-auth-boundary.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
+  { path: 'tests/browser-p1-acceptance.test.js', owner: '.github/workflows/browser-p1-acceptance.yml', reason: 'real Chromium acceptance requires a browser executable' },
+
+  { path: 'tests/architecture-contract-baseline.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/capability-shadow-retirement.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/compat-inventory-completeness.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/core-vision-surface-parity.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/final-architecture-closure.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/presentation-convergence-parity.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/presentation-switch.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/session-runtime-core-wiring.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/session-vision-runtime-parity.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+  { path: 'tests/settings-impersonation-closure.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
+
+  { path: 'tests/vision-execution-order-apply.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+  { path: 'tests/vision-execution-order-core-wiring.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+  { path: 'tests/vision-execution-order-plan-parity.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+  { path: 'tests/vision-execution-order.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+  { path: 'tests/vision-routing-evidence-parity.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+  { path: 'tests/vision-routing-runtime-parity.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
+
+  { path: 'tests/legacy-global-proxy-boundary.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
+  { path: 'tests/p2-exit-gate.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
+  { path: 'tests/session-surface-policy.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'session/data-boundary Node 22/24 matrix' },
+  { path: 'tests/session-vision-index.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'session/data-boundary Node 22/24 matrix' },
+  { path: 'tests/vision-artifact-store.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'artifact/data-boundary Node 22/24 matrix' },
+  { path: 'tests/vision-provider-transport.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
+
+  { path: 'tests/dsh-support-window.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
+  { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
+  { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
+])
 
 test('host-provided DSH packages publish the active Host floor while retaining an installable legacy dev fixture', async () => {
   const pkg = await manifest()
@@ -39,9 +94,6 @@ test('host-provided DSH packages publish the active Host floor while retaining a
     assert.equal(typeof peer, 'string', `${name} must be a peerDependency`)
     assert.match(peer, /\^0\.1\.0-rc\.8/, `${name} must publish the DVR 2.1 rc8 Host floor`)
     assert.match(peer, /\^0\.1\.1-rc\.1/, `${name} must admit the released DSH 0.1.1 train`)
-    // Keep one explicit rc.6 development fixture as a best-effort historical
-    // compatibility fence. It is not the public DVR 2.1 support floor; the
-    // optional peer declaration above is what profile installs consume.
     assert.equal(typeof pkg.devDependencies?.[name], 'string', `${name} must remain available for tests`)
     assert.match(pkg.devDependencies[name], /\^0\.1\.0-rc\.6/)
   }
@@ -49,11 +101,6 @@ test('host-provided DSH packages publish the active Host floor while retaining a
 
 test('host-provided peers are optional so profile installs never warn about missing peers', async () => {
   const pkg = await manifest()
-  // The two DSH packages are resolved by the host's own module graph, and
-  // sharp falls back to the host instance — pnpm at the profile level cannot
-  // see any of them, so a mandatory peer would print "Issues with peer
-  // dependencies found" on every user install. Optional peers keep the
-  // prefer-host semantics without the warning.
   const optionalPeers = [
     '@deepseek-ai/dsh-anonymous-user-id',
     '@deepseek-ai/dsh-llm-deepseek',
@@ -80,9 +127,6 @@ test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () =
   assert.match(pkg.dependencies?.undici ?? '', /^\^7\./)
 
   const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  // This is a semantic lazy-load contract, not a source-shape contract:
-  // caching import('undici') in a promise is valid and should not be forced
-  // into an `await import(...)` spelling just to satisfy this test.
   assert.match(source, /import\(['"]undici['"]\)/)
   assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
 })
@@ -92,13 +136,23 @@ test('default test manifest is closed-world: every test is run or explicitly own
   const defaultScript = String(pkg.scripts?.test ?? '')
   const listed = new Set(defaultScript.match(/tests\/[A-Za-z0-9._/-]+\.test\.js/g) ?? [])
   const discovered = new Set(await discoverTests())
+  const imported = new Set()
   const excluded = new Map()
+
+  for (const path of DEFAULT_TEST_IMPORTS) {
+    assert.equal(imported.has(path), false, `${path}: duplicate default import`)
+    imported.add(path)
+    assert.equal(discovered.has(path), true, `${path}: stale default import`)
+    assert.equal(listed.has(path), false, `${path}: now listed directly; remove the compatibility import`)
+  }
 
   for (const entry of DEFAULT_TEST_EXCLUSIONS) {
     assert.equal(typeof entry?.path, 'string', 'every default-test exclusion needs a path')
     assert.equal(typeof entry?.owner, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs an owner`)
     assert.equal(typeof entry?.reason, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs a reason`)
     assert.equal(excluded.has(entry.path), false, `${entry.path}: duplicate default-test exclusion`)
+    assert.equal(imported.has(entry.path), false, `${entry.path}: cannot be both imported and excluded`)
+    assert.equal(listed.has(entry.path), false, `${entry.path}: now listed directly; remove the workflow exclusion`)
     excluded.set(entry.path, entry)
     assert.equal(discovered.has(entry.path), true, `${entry.path}: stale default-test exclusion`)
   }
@@ -107,12 +161,12 @@ test('default test manifest is closed-world: every test is run or explicitly own
   assert.deepEqual(staleListed, [], `default test script references missing tests: ${staleListed.join(', ')}`)
 
   const missing = [...discovered]
-    .filter((path) => !listed.has(path) && !excluded.has(path))
+    .filter((path) => !listed.has(path) && !imported.has(path) && !excluded.has(path))
     .sort()
   assert.deepEqual(
     missing,
     [],
-    `tests can never silently escape CI; add them to scripts.test or document a stable CI owner: ${missing.join(', ')}`,
+    `tests can never silently escape CI; add them to scripts.test/default imports or document a stable CI owner: ${missing.join(', ')}`,
   )
 })
 
