@@ -102,6 +102,52 @@ test('vision_describe delegates all caching to the live order-sensitive cache wi
   assert.equal(scope.get().cache, true, 'cache suppression must remain invocation-local')
 })
 
+test('vision_describe answer cache publishes successes but never structured vision failures', async () => {
+  const harness = runtimeHarness({ scopeValue: { cache: true, cacheMaxEntries: 200, cacheTtlSeconds: 3600 } })
+  harness.wrapped.inject(['settings'], (child) => { child.settings.register('vision-router') })
+  const calls = new Map()
+  harness.wrapped.tools.register({
+    name: 'vision_describe',
+    async execute(args) {
+      const key = String(args.question)
+      calls.set(key, (calls.get(key) ?? 0) + 1)
+      if (key === 'failure') {
+        return JSON.stringify({
+          ok: false,
+          code: 'VISION_BACKEND_UNAVAILABLE',
+          retryable: false,
+          reason: 'temporary backend failure',
+        })
+      }
+      if (key === 'ordinary-json') {
+        return JSON.stringify({ ok: false, code: 'DOCUMENT_STATUS', text: 'visible evidence' })
+      }
+      return 'visible answer'
+    },
+  })
+  const exec = { agent: { session: { header: { cwd: '/workspace' } } } }
+
+  const failureArgs = { attachmentIds: ['A'], question: 'failure' }
+  const firstFailure = await harness.registered.execute(failureArgs, exec)
+  const secondFailure = await harness.registered.execute(failureArgs, exec)
+  assert.equal(firstFailure, secondFailure)
+  assert.equal(calls.get('failure'), 2, 'a repaired backend must get a fresh attempt instead of a cached failure')
+
+  const successArgs = { attachmentIds: ['A'], question: 'success' }
+  assert.equal(await harness.registered.execute(successArgs, exec), 'visible answer')
+  assert.equal(await harness.registered.execute(successArgs, exec), 'visible answer')
+  assert.equal(calls.get('success'), 1, 'successful visual knowledge remains cacheable')
+
+  const ordinaryJsonArgs = { attachmentIds: ['A'], question: 'ordinary-json' }
+  await harness.registered.execute(ordinaryJsonArgs, exec)
+  await harness.registered.execute(ordinaryJsonArgs, exec)
+  assert.equal(
+    calls.get('ordinary-json'),
+    1,
+    'only the exact Vision Router failure-code contract is excluded from the answer cache',
+  )
+})
+
 function legacyLimits() {
   return Object.freeze({
     maxImageBytes: 20 * 1024 * 1024,
