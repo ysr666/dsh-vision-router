@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { rewriteHistoryImages } from '../index.js'
+import { currentCoreVisionSurface } from '../lib/core-vision-surface.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import {
   IMAGE_OWNERSHIP,
@@ -9,7 +9,6 @@ import {
   currentSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
-import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
 function session(provider, model = 'model') {
@@ -126,11 +125,7 @@ function composeBridge(harness, options = {}) {
     ? installVisionToolRuntimeBoundary(harness.ctx, harness.persisted)
     : harness.ctx
   const native = contextWithNativeImageCoexistence(runtimeCtx, harness.persisted)
-  const bridge = installLegacyCoreVisionPolicyBridge(
-    native.ctx,
-    native.config,
-    { rewriteHistoryImages },
-  )
+  const bridge = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
   return { native, bridge }
 }
 
@@ -147,7 +142,7 @@ async function runCoreLikePreStep(harness, bridge, provider, messages, observe) 
   )
 }
 
-test('text-only session uses the canonical core writer even when a global wrapper exists', async () => {
+test('text-only session preserves the durable image even when a global wrapper exists', async () => {
   const harness = bridgeHarness({ inputModalities: ['text'] })
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const { bridge } = composeBridge(harness)
@@ -160,46 +155,42 @@ test('text-only session uses the canonical core writer even when a global wrappe
     messages,
     () => {
       const policy = currentSessionVisionPolicy()
+      const surface = currentCoreVisionSurface(harness.persisted)
       assert.equal(policy.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
-      assert.equal(policy.rewriteCurrentImages, true)
+      // The legacy policy producer may still expose rewriteCurrentImages, but
+      // the Core-facing surface permanently denies that destructive grant.
+      assert.equal(surface.preserveRawImages, true)
+      assert.equal(surface.rewriteCurrentImages, false)
+      assert.equal(surface.rewriteEnabled, false)
       assert.equal(bridge.config, harness.persisted)
       assert.equal(bridge.config.rewriteImages, true)
     },
   )
 
-  assert.deepEqual(result.messages[0].content[0].content, [
-    {
-      type: 'text',
-      text: '[attached image: sha256:text-route] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["sha256:text-route"] and a specific question.',
-    },
-  ])
+  assert.equal(result.messages, messages)
+  assert.equal(result.messages[0].content[0].content[0].type, 'image')
+  assert.equal(
+    result.messages[0].content[0].content[0].attachment.attachmentId,
+    'sha256:text-route',
+  )
 })
 
-test('text-only fallback reuses the exact core session memory instead of degrading cached descriptions', async () => {
+test('text-only pre-step never substitutes cached descriptions into the durable user message', async () => {
   const harness = bridgeHarness({ inputModalities: ['text'] })
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
   const { bridge } = composeBridge(harness)
-  const selectedSession = session('deepseek-official')
   const messages = [imageMessage('sha256:cached')]
-  const visionState = createSessionVisionStateStore()
 
-  bridge.ctx.on('agent/pre-step', async (payload) => {
-    const memory = visionState.memoryForSession(payload.agent.session)
-    memory.set('sha256:cached', '缓存里的电路图描述')
-    return { kind: 'continue', messages: payload.messages }
-  })
-
-  const handler = harness.handlers.get('agent/pre-step')
-  assert.ok(handler)
-  const result = await handler(
-    { agent: { session: selectedSession }, messages },
-    async () => ({ kind: 'continue', messages }),
+  const result = await runCoreLikePreStep(
+    harness,
+    bridge,
+    'deepseek-official',
+    messages,
   )
 
-  const text = result.messages[0].content[0].content[0].text
-  assert.match(text, /此前由视觉模型读取/)
-  assert.match(text, /缓存里的电路图描述/)
-  assert.doesNotMatch(text, /call vision_describe/)
+  assert.equal(result.messages, messages)
+  assert.equal(result.messages[0].content[0].content[0].type, 'image')
+  assert.equal(result.messages[0].content[0].content[0].attachment.attachmentId, 'sha256:cached')
 })
 
 test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary', async () => {
@@ -210,12 +201,16 @@ test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary
 
   const result = await runCoreLikePreStep(harness, bridge, 'owned-route', messages, () => {
     const policy = currentSessionVisionPolicy()
+    const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
     assert.equal(policy.preserveRawImages, true)
+    assert.equal(surface.preserveRawImages, true)
+    assert.equal(surface.rewriteEnabled, false)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
   })
 
+  assert.equal(result.messages, messages)
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
@@ -229,10 +224,16 @@ test('native session preserves pixels, suppresses automatic orchestration, and k
 
   const result = await runCoreLikePreStep(harness, bridge, 'deepseek-official', messages, () => {
     const policy = currentSessionVisionPolicy()
+    const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.NATIVE)
     assert.equal(policy.preserveRawImages, true)
     assert.equal(policy.suppressGenericAutoMount, true)
     assert.equal(policy.allowStructuredBootstrap, false)
+    assert.equal(surface.preserveRawImages, true)
+    assert.equal(surface.rewriteEnabled, false)
+    assert.equal(surface.instantDescribe, false)
+    assert.equal(surface.autoActivateOnImage, false)
+    assert.equal(surface.structuredBootstrap, false)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
     assert.equal(bridge.config.instantDescribe, true)
@@ -241,6 +242,7 @@ test('native session preserves pixels, suppresses automatic orchestration, and k
     assert.equal(bridge.config.tool, true)
   })
 
+  assert.equal(result.messages, messages)
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
@@ -251,16 +253,20 @@ test('UNKNOWN capability preserves the existing Host image contract instead of f
 
   const result = await runCoreLikePreStep(harness, bridge, 'native-pi', messages, () => {
     const policy = currentSessionVisionPolicy()
+    const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
     assert.equal(policy.preserveRawImages, true)
+    assert.equal(surface.preserveRawImages, true)
+    assert.equal(surface.rewriteEnabled, false)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
   })
 
+  assert.equal(result.messages, messages)
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('tool=false stays real through the pre-step bridge while execution follows live settings', async () => {
+test('tool=false stays real through the retired bridge while execution follows live settings', async () => {
   const harness = bridgeHarness({ config: { tool: false } })
   const { bridge } = composeBridge(harness, { toolRuntime: true })
 
