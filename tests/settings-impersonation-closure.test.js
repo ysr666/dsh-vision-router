@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 
-test('legacy pre-step compatibility cannot impersonate Settings, scopes, injected children or config', async () => {
+test('retired legacy bridge cannot impersonate Settings, pre-step messages, injected children or config', async () => {
   const source = await readFile(
     new URL('../lib/legacy-core-vision-policy-bridge.js', import.meta.url),
     'utf8',
@@ -18,15 +18,19 @@ test('legacy pre-step compatibility cannot impersonate Settings, scopes, injecte
     'childContextView',
     'settingsCache',
     'finishSchemaBootstrap',
+    'rewriteHistoryImages',
+    'appendVisionRouterAttachmentHint',
+    'rewriteTextOnlyDecision',
   ]) {
-    assert.equal(source.includes(forbidden), false, `${forbidden} must not return to the legacy bridge`)
+    assert.equal(source.includes(forbidden), false, `${forbidden} must not return to the retired bridge`)
   }
   assert.doesNotMatch(source, /property === ['"]get['"]/, 'bridge must not intercept ctx.get/settings')
   assert.doesNotMatch(source, /property === ['"]inject['"]/, 'bridge must not intercept injected Settings children')
-  assert.match(source, /property === ['"]on['"]/, 'the retained compatibility seam is pre-step only')
+  assert.doesNotMatch(source, /property === ['"]on['"]/, 'bridge must not intercept agent/pre-step')
+  assert.doesNotMatch(source, /new Proxy\(/, 'retired bridge must remain an identity boundary')
 })
 
-test('legacy pre-step compatibility preserves real config and Settings identities', () => {
+test('retired legacy bridge preserves real context, config and Settings identities', () => {
   const config = Object.freeze({
     tool: false,
     rewriteImages: true,
@@ -47,6 +51,7 @@ test('legacy pre-step compatibility preserves real config and Settings identitie
   }
 
   const bridge = installLegacyCoreVisionPolicyBridge(ctx, config)
+  assert.equal(bridge.ctx, ctx)
   assert.equal(bridge.config, config)
   assert.equal(bridge.ctx.get('settings'), settings)
 
