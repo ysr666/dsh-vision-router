@@ -27,7 +27,7 @@ test('retired legacy bridge cannot impersonate Settings, pre-step messages, inje
   assert.doesNotMatch(source, /property === ['"]get['"]/, 'bridge must not intercept ctx.get/settings')
   assert.doesNotMatch(source, /property === ['"]inject['"]/, 'bridge must not intercept injected Settings children')
   assert.doesNotMatch(source, /property === ['"]on['"]/, 'bridge must not intercept agent/pre-step')
-  assert.doesNotMatch(source, /agent\/pre-step/, 'model-only content must not be synthesized through pre-step')
+  assert.doesNotMatch(source, /new Proxy\(/, 'retired bridge must remain an identity boundary')
 })
 
 test('retired legacy bridge preserves real context, config and Settings identities', () => {
