@@ -8,6 +8,24 @@ async function manifest() {
   return JSON.parse(await readFile(manifestPath, 'utf8'))
 }
 
+async function discoverTests(directory = new URL('./', import.meta.url), prefix = 'tests') {
+  const paths = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const relative = `${prefix}/${entry.name}`
+    if (entry.isDirectory()) {
+      paths.push(...await discoverTests(new URL(`${entry.name}/`, directory), relative))
+    } else if (entry.isFile() && entry.name.endsWith('.test.js')) {
+      paths.push(relative)
+    }
+  }
+  return paths.sort()
+}
+
+// Keep this list exceptional and reviewable. A test may stay outside the
+// default `pnpm test` suite only when another stable CI owner runs it for a
+// documented environment/reason. The gate below also rejects stale entries.
+const DEFAULT_TEST_EXCLUSIONS = Object.freeze([])
+
 test('host-provided DSH packages publish the active Host floor while retaining an installable legacy dev fixture', async () => {
   const pkg = await manifest()
   const hostPeers = [
@@ -67,6 +85,35 @@ test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () =
   // into an `await import(...)` spelling just to satisfy this test.
   assert.match(source, /import\(['"]undici['"]\)/)
   assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
+})
+
+test('default test manifest is closed-world: every test is run or explicitly owned elsewhere', async () => {
+  const pkg = await manifest()
+  const defaultScript = String(pkg.scripts?.test ?? '')
+  const listed = new Set(defaultScript.match(/tests\/[A-Za-z0-9._/-]+\.test\.js/g) ?? [])
+  const discovered = new Set(await discoverTests())
+  const excluded = new Map()
+
+  for (const entry of DEFAULT_TEST_EXCLUSIONS) {
+    assert.equal(typeof entry?.path, 'string', 'every default-test exclusion needs a path')
+    assert.equal(typeof entry?.owner, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs an owner`)
+    assert.equal(typeof entry?.reason, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs a reason`)
+    assert.equal(excluded.has(entry.path), false, `${entry.path}: duplicate default-test exclusion`)
+    excluded.set(entry.path, entry)
+    assert.equal(discovered.has(entry.path), true, `${entry.path}: stale default-test exclusion`)
+  }
+
+  const staleListed = [...listed].filter((path) => !discovered.has(path)).sort()
+  assert.deepEqual(staleListed, [], `default test script references missing tests: ${staleListed.join(', ')}`)
+
+  const missing = [...discovered]
+    .filter((path) => !listed.has(path) && !excluded.has(path))
+    .sort()
+  assert.deepEqual(
+    missing,
+    [],
+    `tests can never silently escape CI; add them to scripts.test or document a stable CI owner: ${missing.join(', ')}`,
+  )
 })
 
 test('all GitHub Actions dependencies are pinned to immutable commit SHAs', async () => {
