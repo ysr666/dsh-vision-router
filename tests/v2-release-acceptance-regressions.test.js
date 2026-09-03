@@ -135,7 +135,7 @@ test('deployment-level unavailable stop survives profiler recreation and blocks 
   assert.equal(snapshot.deferred[0]?.retryable, false)
 })
 
-test('persisted visual-proof stop remains axis-scoped after restart', async () => {
+test('visual-proof failure is transient and axis-scoped without surviving restart', async () => {
   const config = configFor('opencode-go', 'kimi-k3')
   const stops = memoryStopStore()
   const first = profilerFor(config, async () => {
@@ -145,15 +145,19 @@ test('persisted visual-proof stop remains axis-scoped after restart', async () =
     throw error
   }, stops)
   await first.tick()
+  const firstSnapshot = first.snapshot()
   first.stop()
-  assert.equal(stops.records[0]?.axis, 'ocr')
-  assert.equal(stops.records[0]?.errorClass, 'visual-proof')
+
+  assert.equal(stops.records.length, 0)
+  assert.equal(firstSnapshot.deferred[0]?.axis, 'ocr')
+  assert.equal(firstSnapshot.deferred[0]?.errorClass, 'visual-proof')
+  assert.equal(firstSnapshot.deferred[0]?.retryable, true)
 
   const seen = []
   const restarted = profilerFor(config, async ({ axis }) => { seen.push(axis) }, stops)
   await restarted.tick()
   restarted.stop()
-  assert.deepEqual(seen, ['general'])
+  assert.deepEqual(seen, ['ocr'])
 })
 
 test('manual benchmark default budgets allow six legitimate 120s fixtures plus cleanup margin', async () => {
