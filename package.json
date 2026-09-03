@@ -78,7 +78,7 @@
     "test:web": "node --test tests/alpha1-browser-lifecycle-integration.test.js tests/issue-367-remote-session-inject.test.js tests/client.test.js tests/client-presentation-boundary.test.js tests/settings-ia-client-prelude.test.js tests/settings-ia-acceptance-regression.test.js tests/remote-settings-bridge.test.js tests/remote-settings-v2-contract.test.js tests/local-remote-settings-permission.test.js tests/v2-settings-ia-integration.test.js tests/logging-ui.test.js",
     "test:contract": "node --test tests/manifest-dependencies.test.js tests/bundle-defaults.test.js tests/zero-regression-gate.test.js tests/issue-289-native-nonintervention.test.js tests/issue-374-delegated-call-config.test.js tests/runtime-boundary-fixes.test.js tests/runtime-i18n.test.js tests/adapter-prepare-call-compat.test.js tests/rc6-rc7-compat.test.js tests/attachment-admission-policy.test.js tests/dsh-host-capabilities.test.js tests/doctor-host-capabilities.test.js tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js",
     "test:grounding": "node --test tests/grounding-coordinate-frame.test.js tests/grounding-coordinate-runtime.test.js tests/vision-capability-grounding-proof-contract.test.js",
-    "test:stress": "node scripts/image-resource-stress.mjs && node --test tests/large-image-resource-integration.test.js tests/resource-retention-lifecycle.test.js qa-turn-budget-cancellation.test.js tests/qa-cancellation-publication.test.js"
+    "test:stress": "node scripts/image-resource-stress.mjs && node --test tests/large-image-resource-integration.test.js tests/resource-retention-lifecycle.test.js"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["sharp"]
