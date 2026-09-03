@@ -134,10 +134,15 @@ test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () =
 test('default test manifest is closed-world: every test is run or explicitly owned elsewhere', async () => {
   const pkg = await manifest()
   const defaultScript = String(pkg.scripts?.test ?? '')
-  const listed = new Set(defaultScript.match(/tests\/[A-Za-z0-9._/-]+\.test\.js/g) ?? [])
+  const listedPaths = defaultScript.match(/tests\/[A-Za-z0-9._/-]+\.test\.js/g) ?? []
+  const listed = new Set(listedPaths)
   const discovered = new Set(await discoverTests())
   const imported = new Set()
   const excluded = new Map()
+  const workflowSources = new Map()
+
+  const duplicateListed = [...new Set(listedPaths.filter((path, index) => listedPaths.indexOf(path) !== index))].sort()
+  assert.deepEqual(duplicateListed, [], `default test script lists tests more than once: ${duplicateListed.join(', ')}`)
 
   for (const path of DEFAULT_TEST_IMPORTS) {
     assert.equal(imported.has(path), false, `${path}: duplicate default import`)
@@ -148,13 +153,29 @@ test('default test manifest is closed-world: every test is run or explicitly own
 
   for (const entry of DEFAULT_TEST_EXCLUSIONS) {
     assert.equal(typeof entry?.path, 'string', 'every default-test exclusion needs a path')
-    assert.equal(typeof entry?.owner, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs an owner`)
-    assert.equal(typeof entry?.reason, 'string', `${entry?.path ?? '<unknown>'}: exclusion needs a reason`)
+    assert.match(entry.path, /^tests\/.+\.test\.js$/, `${entry.path}: exclusion path must be a test file`)
+    assert.equal(typeof entry?.owner, 'string', `${entry.path}: exclusion needs an owner`)
+    assert.match(entry.owner, /^\.github\/workflows\/.+\.ya?ml$/, `${entry.path}: owner must be a workflow file`)
+    assert.equal(typeof entry?.reason, 'string', `${entry.path}: exclusion needs a reason`)
+    assert.ok(entry.reason.trim().length > 0, `${entry.path}: exclusion reason must not be blank`)
     assert.equal(excluded.has(entry.path), false, `${entry.path}: duplicate default-test exclusion`)
     assert.equal(imported.has(entry.path), false, `${entry.path}: cannot be both imported and excluded`)
     assert.equal(listed.has(entry.path), false, `${entry.path}: now listed directly; remove the workflow exclusion`)
     excluded.set(entry.path, entry)
     assert.equal(discovered.has(entry.path), true, `${entry.path}: stale default-test exclusion`)
+
+    let workflow = workflowSources.get(entry.owner)
+    if (workflow === undefined) {
+      workflow = await readFile(new URL(`../${entry.owner}`, import.meta.url), 'utf8')
+      workflowSources.set(entry.owner, workflow)
+      assert.match(workflow, /^\s{0,2}pull_request\s*:/m, `${entry.owner}: specialist owner must run on pull requests`)
+      assert.notEqual(workflow.indexOf('node --test'), -1, `${entry.owner}: specialist owner must execute Node tests`)
+    }
+    const commandStart = workflow.indexOf('node --test')
+    assert.ok(
+      workflow.lastIndexOf(entry.path) > commandStart,
+      `${entry.path}: ${entry.owner} does not execute the claimed test`,
+    )
   }
 
   const staleListed = [...listed].filter((path) => !discovered.has(path)).sort()
