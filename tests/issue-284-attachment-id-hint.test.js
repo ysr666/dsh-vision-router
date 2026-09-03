@@ -91,16 +91,12 @@ function harness({ inputModalities = ['text'] } = {}) {
 }
 
 function installPreStep(h, native) {
-  const bridge = installLegacyCoreVisionPolicyBridge(native.ctx, native.config, {
-    rewriteHistoryImages(messages) {
-      return { messages, attachments: [] }
-    },
-  })
+  const bridge = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
   bridge.ctx.on('agent/pre-step', async (_payload, next) => next())
   return bridge
 }
 
-test('issue #284 Vision Router-owned image route tells the model the exact durable attachment id', async () => {
+test('issue #284 Vision Router-owned image route keeps the exact durable user message and adds no synthetic hint', async () => {
   const h = harness({ inputModalities: ['text'] })
   const native = contextWithNativeImageCoexistence(h.ctx, h.config)
   native.ctx.llm.registerAdapter(['opencode-go-vision'], { stream() {} })
@@ -118,17 +114,17 @@ test('issue #284 Vision Router-owned image route tells the model the exact durab
     async () => ({ kind: 'continue', messages }),
   )
 
-  assert.equal(result.messages.length, 2)
-  assert.equal(result.messages[0].content[0].type, 'image', 'raw pixels must stay available')
-  const hint = result.messages[1]
-  assert.equal(hint.id, 'vision-router-attachment-refs-7-1')
-  assert.equal(hint.source.plugin, 'dsh-vision-router')
-  assert.equal(hint.content[0].text.includes(realId), true)
-  assert.match(hint.content[0].text, /use only these exact ids/i)
-  assert.match(hint.content[0].text, /Never guess or invent/i)
+  assert.equal(result.messages, messages)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content[0].type, 'image')
+  assert.equal(result.messages[0].content[0].attachment.attachmentId, realId)
+  assert.equal(
+    result.messages.some((message) => String(message?.id).startsWith('vision-router-attachment-refs-')),
+    false,
+  )
 })
 
-test('issue #284 ordinary Host-native image routes do not receive Vision Router attachment hints', async () => {
+test('issue #284 ordinary Host-native image routes remain untouched', async () => {
   const h = harness({ inputModalities: ['text', 'image'] })
   h.ctx.llm.registerAdapter(['native-image'], { stream() {} })
   const native = contextWithNativeImageCoexistence(h.ctx, h.config)
@@ -145,11 +141,11 @@ test('issue #284 ordinary Host-native image routes do not receive Vision Router 
     async () => ({ kind: 'continue', messages }),
   )
 
-  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages, messages)
   assert.equal(result.messages[0], messages[0])
 })
 
-test('issue #284 attachment hint collects nested image refs without fabricating ids', async () => {
+test('nested image refs stay in the original transcript shape without fabricated model-only user messages', async () => {
   const h = harness({ inputModalities: ['text'] })
   const native = contextWithNativeImageCoexistence(h.ctx, h.config)
   native.ctx.llm.registerAdapter(['owned-vision'], { stream() {} })
@@ -180,8 +176,8 @@ test('issue #284 attachment hint collects nested image refs without fabricating 
     async () => ({ kind: 'continue', messages }),
   )
 
-  const text = result.messages.at(-1).content[0].text
-  assert.equal(text.includes(first), true)
-  assert.equal(text.includes(second), true)
-  assert.equal(text.includes('7f8e9d0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d'), false)
+  assert.equal(result.messages, messages)
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content[0].content[0].attachment.attachmentId, first)
+  assert.equal(result.messages[0].content[0].content[2].attachment.attachmentId, second)
 })
