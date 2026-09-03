@@ -22,6 +22,9 @@ function visionPolicy(ownership, overrides = {}) {
   return {
     ownership,
     preserveRawImages: native || pluginOwned || ownership === 'unknown',
+    // Keep the historical producer shape in the fixture: the surface policy
+    // must ignore this legacy grant rather than depending on every caller being
+    // migrated in lock-step.
     rewriteCurrentImages: textOnly,
     suppressGenericAutoMount: native,
     allowStructuredBootstrap: !native,
@@ -75,19 +78,35 @@ test('Vision Router-owned session preserves pixels while retaining Router orches
   assert.deepEqual(policy.legacyConfigOverrides, { rewriteImages: false })
 })
 
-test('text-only session keeps the current rewrite bridge and optional orchestration surface', () => {
+test('text-only session preserves the durable image and disables Core pre-step rewriting', () => {
   const policy = resolveSessionSurfacePolicy({
     visionPolicy: visionPolicy('text-only'),
     config: config(),
   })
 
   assert.equal(policy.ownership, 'text-only')
-  assert.equal(policy.preserveRawImages, false)
-  assert.equal(policy.rewriteCurrentImages, true)
-  assert.equal(policy.surface.rewriteCurrentImages, true)
+  assert.equal(policy.preserveRawImages, true)
+  assert.equal(policy.rewriteCurrentImages, false)
+  assert.equal(policy.surface.preserveRawImages, true)
+  assert.equal(policy.surface.rewriteCurrentImages, false)
   assert.equal(policy.surface.structuredBootstrap, true)
   assert.equal(policy.surface.genericAutoMount, true)
-  assert.deepEqual(policy.legacyConfigOverrides, {})
+  assert.deepEqual(policy.legacyConfigOverrides, { rewriteImages: false })
+})
+
+test('legacy rewriteCurrentImages evidence can never grant a destructive transcript rewrite', () => {
+  const policy = resolveSessionSurfacePolicy({
+    visionPolicy: visionPolicy('text-only', {
+      preserveRawImages: false,
+      rewriteCurrentImages: true,
+    }),
+    config: config({ rewriteImages: true }),
+  })
+
+  assert.equal(policy.preserveRawImages, true)
+  assert.equal(policy.rewriteCurrentImages, false)
+  assert.equal(policy.surface.rewriteCurrentImages, false)
+  assert.equal(policy.legacyConfigOverrides.rewriteImages, false)
 })
 
 test('explicit UNKNOWN session remains non-destructive without being misclassified as text-only', () => {
@@ -141,7 +160,7 @@ test('explicit user-off settings remain off and are never expanded by the surfac
   })
 
   assert.deepEqual(policy.surface, {
-    preserveRawImages: false,
+    preserveRawImages: true,
     rewriteCurrentImages: false,
     visionTools: false,
     structuredBootstrap: false,
