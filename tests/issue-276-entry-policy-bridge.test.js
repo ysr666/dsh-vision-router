@@ -8,13 +8,11 @@ import {
   contextWithNativeImageCoexistence,
   currentSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
-import { currentSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
 import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
-function session(provider, model = 'model', modelSelectionState) {
+function session(provider, model = 'model') {
   return {
-    modelSelectionState,
     requestHeader() {
       return { config: { provider, model } }
     },
@@ -39,7 +37,6 @@ function bridgeHarness({ inputModalities = ['text'], resolveThrows = false, conf
   const handlers = new Map()
   const adapters = new Map()
   const tools = new Map()
-  const restrictions = new WeakMap()
   let catalogThrows = resolveThrows
   const persisted = {
     tool: true,
@@ -89,48 +86,18 @@ function bridgeHarness({ inputModalities = ['text'], resolveThrows = false, conf
       return { provider, id: model, inputModalities }
     },
   }
-  const visibleDefinitions = (agent) => {
-    let defs = [...tools.values()]
-    if (agent) {
-      const filters = restrictions.get(agent) ?? []
-      for (const filter of filters) {
-        if (Array.isArray(filter.allow)) {
-          const allow = new Set(filter.allow)
-          defs = defs.filter((def) => allow.has(def.name))
-        }
-        if (Array.isArray(filter.deny)) {
-          const deny = new Set(filter.deny)
-          defs = defs.filter((def) => !deny.has(def.name))
-        }
-      }
-    }
-    return defs
-  }
-  const toolService = {
-    register(definition) {
-      tools.set(definition.name, definition)
-      return () => {
-        if (tools.get(definition.name) === definition) tools.delete(definition.name)
-      }
-    },
-    schemas(agent) {
-      return visibleDefinitions(agent).map((definition) => ({ name: definition.name }))
-    },
-  }
-  const sessionProjections = {
-    stateOf(value, key) {
-      assert.equal(key, 'modelSelection')
-      return value?.modelSelectionState ?? { lastUsed: null, pending: null }
-    },
-  }
   const ctx = {
     llm,
-    tools: toolService,
-    sessionProjections,
+    tools: {
+      register(definition) {
+        tools.set(definition.name, definition)
+        return () => {
+          if (tools.get(definition.name) === definition) tools.delete(definition.name)
+        }
+      },
+    },
     get(name) {
-      if (name === 'settings') return settings
-      if (name === 'sessionProjections') return sessionProjections
-      return undefined
+      return name === 'settings' ? settings : undefined
     },
     on(event, handler) {
       handlers.set(event, handler)
@@ -141,41 +108,12 @@ function bridgeHarness({ inputModalities = ['text'], resolveThrows = false, conf
     },
     effect() {},
   }
-  const makeAgent = (sessionValue) => {
-    const agent = { session: sessionValue }
-    agent.ctx = {
-      tools: {
-        restrict(filter) {
-          const current = restrictions.get(agent) ?? []
-          const record = {
-            ...(Array.isArray(filter?.allow) ? { allow: [...filter.allow] } : {}),
-            ...(Array.isArray(filter?.deny) ? { deny: [...filter.deny] } : {}),
-          }
-          current.push(record)
-          restrictions.set(agent, current)
-          let active = true
-          return () => {
-            if (!active) return
-            active = false
-            const next = (restrictions.get(agent) ?? []).filter((entry) => entry !== record)
-            if (next.length === 0) restrictions.delete(agent)
-            else restrictions.set(agent, next)
-          }
-        },
-        schemas() {
-          return toolService.schemas(agent)
-        },
-      },
-    }
-    return agent
-  }
   return {
     ctx,
     handlers,
     adapters,
     tools,
     persisted,
-    makeAgent,
     setCatalogThrows(value) {
       catalogThrows = value
     },
@@ -191,17 +129,15 @@ function composeBridge(harness, options = {}) {
   return { native, bridge }
 }
 
-async function runCoreLikePreStep(harness, bridge, provider, messages, observe, options = {}) {
+async function runCoreLikePreStep(harness, bridge, provider, messages, observe) {
   bridge.ctx.on('agent/pre-step', async (payload) => {
     observe?.(payload)
     return { kind: 'continue', messages: payload.messages }
   })
   const handler = harness.handlers.get('agent/pre-step')
   assert.ok(handler)
-  const sessionValue = options.session ?? session(provider, options.model ?? 'model', options.modelSelectionState)
-  const agent = options.agent ?? harness.makeAgent(sessionValue)
   return handler(
-    { turn: options.turn ?? 1, agent, messages },
+    { agent: { session: session(provider) }, messages },
     async () => ({ kind: 'continue', messages }),
   )
 }
@@ -221,13 +157,9 @@ test('text-only session preserves the durable image even when a global wrapper e
       const policy = currentSessionVisionPolicy()
       const surface = currentCoreVisionSurface(harness.persisted)
       assert.equal(policy.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
-      assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
-      // The legacy policy producer may still expose rewriteCurrentImages, but
-      // the Core-facing surface permanently denies that destructive grant.
       assert.equal(surface.preserveRawImages, true)
       assert.equal(surface.rewriteCurrentImages, false)
       assert.equal(surface.rewriteEnabled, false)
-      assert.equal(surface.toolAvailable, false)
       assert.equal(bridge.config, harness.persisted)
       assert.equal(bridge.config.rewriteImages, true)
     },
@@ -259,7 +191,7 @@ test('text-only pre-step never substitutes cached descriptions into the durable 
   assert.equal(result.messages[0].content[0].content[0].attachment.attachmentId, 'sha256:cached')
 })
 
-test('Vision Router-owned adapter keeps raw image blocks and grants the Router surface', async () => {
+test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary', async () => {
   const harness = bridgeHarness({ inputModalities: ['text'] })
   const { native, bridge } = composeBridge(harness)
   native.ctx.llm.registerAdapter(['owned-route'], { stream() {} })
@@ -269,11 +201,9 @@ test('Vision Router-owned adapter keeps raw image blocks and grants the Router s
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
-    assert.equal(currentSessionVisionModeAuthority()?.enabled, true)
     assert.equal(policy.preserveRawImages, true)
     assert.equal(surface.preserveRawImages, true)
     assert.equal(surface.rewriteEnabled, false)
-    assert.equal(surface.toolAvailable, true)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
   })
@@ -282,7 +212,7 @@ test('Vision Router-owned adapter keeps raw image blocks and grants the Router s
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('native session preserves pixels while the ordinary route keeps Vision Router off', async () => {
+test('native session preserves pixels, suppresses automatic orchestration, and keeps tools optional', async () => {
   const harness = bridgeHarness({
     inputModalities: ['text', 'image'],
     config: { structuredVisionBootstrap: true },
@@ -294,14 +224,14 @@ test('native session preserves pixels while the ordinary route keeps Vision Rout
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.NATIVE)
-    assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
     assert.equal(policy.preserveRawImages, true)
+    assert.equal(policy.suppressGenericAutoMount, true)
+    assert.equal(policy.allowStructuredBootstrap, false)
     assert.equal(surface.preserveRawImages, true)
     assert.equal(surface.rewriteEnabled, false)
     assert.equal(surface.instantDescribe, false)
     assert.equal(surface.autoActivateOnImage, false)
     assert.equal(surface.structuredBootstrap, false)
-    assert.equal(surface.toolAvailable, false)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
     assert.equal(bridge.config.instantDescribe, true)
@@ -314,7 +244,7 @@ test('native session preserves pixels while the ordinary route keeps Vision Rout
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('UNKNOWN capability preserves pixels but cannot invent Vision Router mode', async () => {
+test('UNKNOWN capability preserves the existing Host image contract instead of forcing a text bridge', async () => {
   const harness = bridgeHarness({ resolveThrows: true })
   const { bridge } = composeBridge(harness)
   const messages = [imageMessage('sha256:cold-resume')]
@@ -323,11 +253,9 @@ test('UNKNOWN capability preserves pixels but cannot invent Vision Router mode',
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
-    assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
     assert.equal(policy.preserveRawImages, true)
     assert.equal(surface.preserveRawImages, true)
     assert.equal(surface.rewriteEnabled, false)
-    assert.equal(surface.toolAvailable, false)
     assert.equal(bridge.config, harness.persisted)
     assert.equal(bridge.config.rewriteImages, true)
   })
@@ -336,134 +264,7 @@ test('UNKNOWN capability preserves pixels but cannot invent Vision Router mode',
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('pending OFF selection beats a stale wrapper request header and hides/guards vision tools', async () => {
-  const harness = bridgeHarness({
-    inputModalities: ['text'],
-    config: { structuredVisionBootstrap: true },
-  })
-  const { native, bridge } = composeBridge(harness)
-  native.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-
-  let calls = 0
-  bridge.ctx.tools.register({
-    name: 'vision_describe',
-    async execute() {
-      calls += 1
-      return 'seen'
-    },
-  })
-  bridge.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
-
-  const selected = {
-    lastUsed: { provider: 'deepseek-vision', model: 'model' },
-    pending: { provider: 'deepseek-official', model: 'model' },
-  }
-  const staleWrapperSession = session('deepseek-vision', 'model', selected)
-  const agent = harness.makeAgent(staleWrapperSession)
-  let observed
-
-  await runCoreLikePreStep(
-    harness,
-    bridge,
-    'deepseek-vision',
-    [],
-    () => {
-      const surface = currentCoreVisionSurface(harness.persisted)
-      observed = {
-        authority: currentSessionVisionModeAuthority(),
-        toolAvailable: surface.toolAvailable,
-        structuredBootstrap: surface.structuredBootstrap,
-      }
-    },
-    { session: staleWrapperSession, agent },
-  )
-
-  assert.equal(observed.authority.enabled, false)
-  assert.deepEqual(observed.authority.route, { provider: 'deepseek-official', model: 'model' })
-  assert.equal(observed.toolAvailable, false)
-  assert.equal(observed.structuredBootstrap, false)
-  assert.deepEqual(agent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
-
-  const registered = harness.tools.get('vision_describe')
-  await assert.rejects(
-    () => registered.execute({}, { agent }),
-    (error) => error?.code === 'VISION_MODE_DISABLED',
-  )
-  assert.equal(calls, 0)
-})
-
-test('pending ON selection beats stale source history, restores scoped tools, and snapshots one whole step', async () => {
-  const harness = bridgeHarness({
-    inputModalities: ['text', 'image'],
-    config: { structuredVisionBootstrap: true },
-  })
-  const { native, bridge } = composeBridge(harness)
-  native.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-
-  let calls = 0
-  bridge.ctx.tools.register({
-    name: 'vision_describe',
-    async execute() {
-      calls += 1
-      return 'seen'
-    },
-  })
-  bridge.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
-
-  const selectionState = {
-    lastUsed: { provider: 'deepseek-official', model: 'model' },
-    pending: { provider: 'deepseek-vision', model: 'model' },
-  }
-  const staleSourceSession = session('deepseek-official', 'model', selectionState)
-  const agent = harness.makeAgent(staleSourceSession)
-
-  await runCoreLikePreStep(
-    harness,
-    bridge,
-    'deepseek-official',
-    [],
-    () => {
-      const surface = currentCoreVisionSurface(harness.persisted)
-      assert.equal(currentSessionVisionModeAuthority()?.enabled, true)
-      assert.equal(surface.toolAvailable, true)
-      assert.equal(surface.structuredBootstrap, true)
-    },
-    { session: staleSourceSession, agent, turn: 1 },
-  )
-
-  assert.deepEqual(
-    agent.ctx.tools.schemas().map((schema) => schema.name).sort(),
-    ['bash', 'vision_describe'],
-  )
-
-  // A model switch during the already-assembled step belongs to the next step.
-  // The current tool call must use the captured ON snapshot rather than tearing
-  // the prompt/tool surface in half.
-  selectionState.pending = { provider: 'deepseek-official', model: 'model' }
-  const registered = harness.tools.get('vision_describe')
-  assert.equal(await registered.execute({}, { agent }), 'seen')
-  assert.equal(calls, 1)
-
-  await runCoreLikePreStep(
-    harness,
-    bridge,
-    'deepseek-official',
-    [],
-    () => {
-      assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
-      assert.equal(currentCoreVisionSurface(harness.persisted).toolAvailable, false)
-    },
-    { session: staleSourceSession, agent, turn: 2 },
-  )
-  assert.deepEqual(agent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
-  await assert.rejects(
-    () => registered.execute({}, { agent }),
-    (error) => error?.code === 'VISION_MODE_DISABLED',
-  )
-  assert.equal(calls, 1)
-})
-
-test('tool=false stays real through the authority bridge while execution follows live settings', async () => {
+test('tool=false stays real through the retired bridge while execution follows live settings', async () => {
   const harness = bridgeHarness({ config: { tool: false } })
   const { bridge } = composeBridge(harness, { toolRuntime: true })
 
