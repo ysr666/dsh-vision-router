@@ -392,6 +392,7 @@ test('ON and OFF Sessions stay isolated although vision definitions are global',
   const { mode } = compose(harness)
   mode.ctx.tools.register({ name: 'vision_ocr', async execute() { return 'ocr' } })
   mode.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
+  harness.ctx.tools.register({ name: 'vision_foreign', async execute() { return 'foreign' } })
 
   const onAgent = harness.makeAgent(session('deepseek-vision', 'm', {
     lastUsed: { provider: 'deepseek-vision', model: 'm' }, pending: null,
@@ -402,15 +403,19 @@ test('ON and OFF Sessions stay isolated although vision definitions are global',
   await runPreStep(harness, mode, offAgent, 1)
   await runPreStep(harness, mode, onAgent, 1)
 
-  assert.deepEqual(offAgent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
+  assert.deepEqual(
+    offAgent.ctx.tools.schemas().map((schema) => schema.name).sort(),
+    ['bash', 'vision_foreign'],
+  )
   assert.deepEqual(
     onAgent.ctx.tools.schemas().map((schema) => schema.name).sort(),
-    ['bash', 'vision_ocr'],
+    ['bash', 'vision_foreign', 'vision_ocr'],
   )
   await assert.rejects(
     () => harness.defs.get('vision_ocr').execute({}, { agent: offAgent }),
     (error) => error?.code === 'VISION_MODE_DISABLED',
   )
+  assert.equal(await harness.defs.get('vision_foreign').execute({}, { agent: offAgent }), 'foreign')
   assert.equal(await harness.defs.get('vision_ocr').execute({}, { agent: onAgent }), 'ocr')
 })
 
