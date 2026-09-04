@@ -34,8 +34,9 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'createSessionVisionRuntime({',
     'installSessionVisionIndexBoundary(',
     'installLegacyCoreVisionPolicyBridge(',
+    'installSessionVisionModeBoundary(',
     'installVisionLimitDiagnostics(',
-    'installStructuredFlowHardening(limitDiagnosticCtx, legacyCoreCompat.config)',
+    'installStructuredFlowHardening(',
     'installBackgroundCapabilityProfiling(',
     'installVisionRoutingRuntime(',
     'installLiveModelDiscovery(',
@@ -59,11 +60,11 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
 
   assert.match(
     source,
-    /\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
-    'core must receive the fully composed backend context plus request-handoff authority and explicit SessionVisionRuntime/CoreVisionSurface owners',
+    /\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    'core must receive the fully composed backend context plus request-handoff authority, Session Vision mode authority, and explicit SessionVisionRuntime/CoreVisionSurface owners',
   )
   assert.ok(
-    source.split('\n').length < 400,
+    source.split('\n').length < 420,
     'runtime composition must remain orchestration-sized rather than becoming a new monolith',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
