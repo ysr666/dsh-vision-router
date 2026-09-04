@@ -150,10 +150,14 @@ test('a picker change during one step is applied before the next prompt assembly
       variables.set(name, provider)
       return () => variables.delete(name)
     },
-    assemble(agent) {
+    async assemble(agent) {
       const context = { agent, scope: agent }
       for (const provider of variables.values()) provider(context)
-      return { tools: tools.schemas(agent) }
+      const assembly = { tools: tools.schemas(agent) }
+      const handler = handlers.get('system-prompt/assemble')
+      return typeof handler === 'function'
+        ? handler(assembly, context, async () => assembly)
+        : assembly
     },
   }
   const ctx = {
@@ -189,6 +193,9 @@ test('a picker change during one step is applied before the next prompt assembly
     },
   })
   mode.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
+  // Same prefix, different owner: the Session switch must not suppress a tool
+  // that another plugin registered directly on the Host runtime.
+  tools.register({ name: 'vision_foreign', async execute() { return 'foreign' } })
 
   const session = {
     selectionState: {
@@ -225,8 +232,11 @@ test('a picker change during one step is applied before the next prompt assembly
   const preStep = handlers.get('agent/pre-step')
   assert.ok(preStep)
 
-  const firstAssembly = systemPrompt.assemble(agent)
-  assert.deepEqual(firstAssembly.tools.map((tool) => tool.name).sort(), ['bash', 'vision_describe'])
+  const firstAssembly = await systemPrompt.assemble(agent)
+  assert.deepEqual(
+    firstAssembly.tools.map((tool) => tool.name).sort(),
+    ['bash', 'vision_describe', 'vision_foreign'],
+  )
 
   // DSH snapshots model selection at prompt assembly. A concurrent picker OFF
   // after that point must not tear the already assembled step in half.
@@ -241,10 +251,33 @@ test('a picker change during one step is applied before the next prompt assembly
   assert.equal(await definitions.get('vision_describe').execute({}, { agent }), 'seen')
   assert.equal(calls, 1)
 
+  // The final assembly gate is authoritative even on a support-window Host
+  // whose Agent context has no scoped tools.restrict() API. It removes only
+  // tools registered through Vision Router's boundary.
+  const noRestrictSession = {
+    selectionState: {
+      lastUsed: { provider: 'deepseek-official', model: 'm' },
+      pending: { provider: 'deepseek-official', model: 'm' },
+    },
+    requestHeader() {
+      return { config: { provider: 'deepseek-official', model: 'm' } }
+    },
+  }
+  const noRestrictAgent = { session: noRestrictSession, ctx: { tools: {} } }
+  const fallbackAssembly = await systemPrompt.assemble(noRestrictAgent)
+  assert.deepEqual(
+    fallbackAssembly.tools.map((tool) => tool.name).sort(),
+    ['bash', 'vision_foreign'],
+  )
+  assert.equal(await definitions.get('vision_foreign').execute({}, { agent: noRestrictAgent }), 'foreign')
+
   // The next assembly runs the private pre-tool sync again even though the
   // Agent never left running state between tool-loop steps.
-  const secondAssembly = systemPrompt.assemble(agent)
-  assert.deepEqual(secondAssembly.tools.map((tool) => tool.name), ['bash'])
+  const secondAssembly = await systemPrompt.assemble(agent)
+  assert.deepEqual(
+    secondAssembly.tools.map((tool) => tool.name).sort(),
+    ['bash', 'vision_foreign'],
+  )
   await preStep(
     { turn: 1, agent, messages: [] },
     async () => {
