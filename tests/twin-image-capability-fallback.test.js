@@ -73,7 +73,9 @@ test('classifier matches explicit image-capability rejection only', () => {
     ),
     true,
   )
-  assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_CONTENT' }), true)
+  assert.equal(isImageInputUnsupportedFailure({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' }), true)
+  assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_IMAGE_INPUT' }), true)
+  assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_CONTENT' }), false)
   assert.equal(
     isImageInputUnsupportedFailure({
       code: 'UNSUPPORTED_CONTENT',
@@ -83,6 +85,7 @@ test('classifier matches explicit image-capability rejection only', () => {
   )
   assert.equal(isImageInputUnsupportedFailure(new Error('400 max_tokens must be <= 1024')), false)
   assert.equal(isImageInputUnsupportedFailure(new Error('429 rate limited')), false)
+  assert.equal(isImageInputUnsupportedFailure(new Error('unsupported image format: bmp')), false)
 })
 
 test('recursive request image detection includes nested tool-result images', () => {
@@ -351,6 +354,40 @@ test('provisional usage from a rejected pre-validation attempt is not published'
     chunks.filter((chunk) => chunk.type === 'usage').map((chunk) => chunk.inputTokens),
     [10],
   )
+})
+
+test('frozen source adapters do not violate Proxy invariants during scoped retry', async () => {
+  const seenImages = []
+  const source = Object.freeze({
+    async resolveModel() {
+      return Object.freeze({ id: 'm', inputModalities: Object.freeze(['text', 'image']) })
+    },
+    async *stream(options) {
+      const hasImage = twinRequestHasImage(options.messages)
+      seenImages.push(hasImage)
+      if (hasImage) {
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: { message: 'model does not support image inputs' },
+          },
+        }
+      } else {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    },
+  })
+  const harness = makeHarness(source)
+  const privateCtx = contextWithTwinImageCapabilityFallback(harness.ctx)
+  privateCtx.llm.registerAdapter(['src-vision'], makeGeneratedTwin(privateCtx))
+
+  await collect(
+    harness.registrations
+      .get('src-vision')
+      .adapter.stream({ model: 'm', messages: imageMessages() }),
+  )
+  assert.deepEqual(seenImages, [true, false])
 })
 
 test('configured main wrapper route is excluded from generated-twin interception', () => {
