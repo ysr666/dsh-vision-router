@@ -119,6 +119,57 @@ test('production authority configuration excludes custom wrapper and chain route
   assert.equal(registrations.get('chain-vision').adapter, chainWrapper)
 })
 
+test('a former custom wrapper name can become an ordinary generated twin after live Settings move', () => {
+  const registrations = new Map([['src', { adapter: sourceAdapter() }]])
+  let live = { wrapperRoute: 'src-vision', chainRoute: 'vision-chain' }
+  const ctx = {
+    get(service) {
+      if (service !== 'settings') return undefined
+      return {
+        get(namespace) {
+          return namespace === 'vision-router' ? live : undefined
+        },
+      }
+    },
+    llm: {
+      registerAdapter(providers, adapter) {
+        for (const provider of providers) registrations.set(provider, { adapter })
+        return () => {}
+      },
+      registration(provider) {
+        const hit = registrations.get(provider)
+        if (!hit) throw new Error(`no adapter ${provider}`)
+        return hit
+      },
+    },
+  }
+  configureAgentRequestRouteAuthority(ctx, {
+    wrapperRoute: 'src-vision',
+    chainRoute: 'vision-chain',
+  })
+  const wrapped = contextWithAgentRequestRouteAuthority(ctx)
+  const oldMain = {
+    async *stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  wrapped.llm.registerAdapter(['src-vision'], oldMain)
+  assert.equal(registrations.get('src-vision').adapter, oldMain)
+
+  live = { wrapperRoute: 'other-vision', chainRoute: 'vision-chain' }
+  const generated = {
+    async *stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  wrapped.llm.registerAdapter(['src-vision'], generated)
+  assert.notEqual(
+    registrations.get('src-vision').adapter,
+    generated,
+    'once Settings moves the main route, the old name must re-enter generated-twin fallback ownership',
+  )
+})
+
 test('generated twin registered before its settings-backed source still gains runtime fallback', async () => {
   const registrations = new Map()
   const seenImages = []
