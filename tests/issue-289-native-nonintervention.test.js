@@ -8,14 +8,21 @@ import {
   currentSessionVisionPolicy,
   resolveSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
-import { currentSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
+import {
+  currentSessionVisionModeAuthority,
+  effectiveSessionModelSelection,
+  resolveSessionVisionModeAuthority,
+} from '../lib/session-vision-mode-authority.js'
 import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-boundary.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 import { REMOTE_SETTINGS_READABLE_FIELDS } from '../lib/remote-settings-bridge.js'
 
-function session(provider, model = 'model') {
+const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
+
+function session(provider, model = 'model', selectionState) {
   return {
+    selectionState,
     requestHeader() {
       return { config: { provider, model } }
     },
@@ -26,6 +33,7 @@ function boot() {
   const handlers = new Map()
   const defs = new Map()
   const adapters = new Map()
+  const restrictions = new WeakMap()
   const persisted = {
     tool: true,
     rewriteImages: true,
@@ -73,16 +81,44 @@ function boot() {
       }
     },
   }
+
+  const visibleDefinitions = (agent) => {
+    let definitions = [...defs.values()]
+    for (const filter of restrictions.get(agent) ?? []) {
+      if (filter.allow) {
+        const allow = new Set(filter.allow)
+        definitions = definitions.filter((definition) => allow.has(definition.name))
+      }
+      if (filter.deny) {
+        const deny = new Set(filter.deny)
+        definitions = definitions.filter((definition) => !deny.has(definition.name))
+      }
+    }
+    return definitions
+  }
+  const tools = {
+    register(def) {
+      defs.set(def.name, def)
+      return () => defs.delete(def.name)
+    },
+    schemas(agent) {
+      return visibleDefinitions(agent).map((definition) => ({ name: definition.name }))
+    },
+  }
+  const sessionProjections = {
+    stateOf(value, key) {
+      assert.equal(key, 'modelSelection')
+      return value?.selectionState ?? { lastUsed: null, pending: null }
+    },
+  }
   const ctx = {
     llm,
-    tools: {
-      register(def) {
-        defs.set(def.name, def)
-        return () => defs.delete(def.name)
-      },
-    },
+    tools,
+    sessionProjections,
     get(name) {
-      return name === 'settings' ? settings : undefined
+      if (name === 'settings') return settings
+      if (name === 'sessionProjections') return sessionProjections
+      return undefined
     },
     inject(_dependencies, callback) {
       return callback({ settings })
@@ -92,7 +128,54 @@ function boot() {
       return () => handlers.delete(event)
     },
   }
-  return { ctx, handlers, defs, persisted }
+
+  function makeAgent(sessionValue) {
+    const agent = { session: sessionValue }
+    agent.ctx = {
+      tools: {
+        restrict(filter) {
+          const record = {
+            ...(Array.isArray(filter?.allow) ? { allow: [...filter.allow] } : {}),
+            ...(Array.isArray(filter?.deny) ? { deny: [...filter.deny] } : {}),
+          }
+          const current = restrictions.get(agent) ?? []
+          current.push(record)
+          restrictions.set(agent, current)
+          let active = true
+          return () => {
+            if (!active) return
+            active = false
+            const next = (restrictions.get(agent) ?? []).filter((entry) => entry !== record)
+            if (next.length === 0) restrictions.delete(agent)
+            else restrictions.set(agent, next)
+          }
+        },
+        schemas() {
+          return tools.schemas(agent)
+        },
+      },
+    }
+    return agent
+  }
+
+  return {
+    ctx,
+    handlers,
+    defs,
+    adapters,
+    persisted,
+    makeAgent,
+    registerOrdinary(route) {
+      const adapter = { stream() {} }
+      adapters.set(route, adapter)
+      return adapter
+    },
+    registerOwned(route) {
+      const adapter = { stream() {}, [OWNER]: { route } }
+      adapters.set(route, adapter)
+      return adapter
+    },
+  }
 }
 
 function compose(harness) {
@@ -100,6 +183,19 @@ function compose(harness) {
   const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
   const mode = installSessionVisionModeBoundary(legacy.ctx, legacy.config)
   return { native, legacy, mode }
+}
+
+async function runPreStep(harness, mode, agent, turn = 1, observe) {
+  mode.ctx.on('agent/pre-step', async (payload, next) => {
+    observe?.(payload)
+    return next()
+  })
+  const handler = harness.handlers.get('agent/pre-step')
+  assert.ok(handler)
+  return handler(
+    { turn, agent, messages: [] },
+    async () => ({ kind: 'continue', messages: [] }),
+  )
 }
 
 test('Host-native image ownership remains distinct from Vision Router mode authority', async () => {
@@ -201,6 +297,132 @@ test('an ordinary native model cannot call Vision Router tools while composer Vi
     () => harness.defs.get('vision_ocr').execute({}, { agent }),
     (error) => error?.code === 'VISION_MODE_DISABLED',
   )
+})
+
+test('pending composer OFF beats a stale wrapper request header', async () => {
+  const harness = boot()
+  harness.registerOrdinary('deepseek-official')
+  harness.registerOwned('deepseek-vision')
+  const { mode } = compose(harness)
+
+  let calls = 0
+  mode.ctx.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      calls += 1
+      return 'seen'
+    },
+  })
+  mode.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
+
+  const state = {
+    lastUsed: { provider: 'deepseek-vision', model: 'm' },
+    pending: { provider: 'deepseek-official', model: 'm' },
+  }
+  const staleWrapper = session('deepseek-vision', 'm', state)
+  const agent = harness.makeAgent(staleWrapper)
+
+  assert.deepEqual(effectiveSessionModelSelection(harness.ctx, agent), {
+    provider: 'deepseek-official',
+    model: 'm',
+  })
+  await runPreStep(harness, mode, agent, 1, () => {
+    assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
+    assert.equal(currentCoreVisionSurface(mode.config).toolAvailable, false)
+  })
+  assert.deepEqual(agent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
+  await assert.rejects(
+    () => harness.defs.get('vision_describe').execute({}, { agent }),
+    (error) => error?.code === 'VISION_MODE_DISABLED',
+  )
+  assert.equal(calls, 0)
+})
+
+test('pending composer ON beats stale source history and snapshots one complete step', async () => {
+  const harness = boot()
+  harness.registerOrdinary('deepseek-official')
+  harness.registerOwned('deepseek-vision')
+  const { mode } = compose(harness)
+
+  let calls = 0
+  mode.ctx.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      calls += 1
+      return 'seen'
+    },
+  })
+  mode.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
+
+  const state = {
+    lastUsed: { provider: 'deepseek-official', model: 'm' },
+    pending: { provider: 'deepseek-vision', model: 'm' },
+  }
+  const staleSource = session('deepseek-official', 'm', state)
+  const agent = harness.makeAgent(staleSource)
+
+  await runPreStep(harness, mode, agent, 1, () => {
+    assert.equal(currentSessionVisionModeAuthority()?.enabled, true)
+    assert.equal(currentCoreVisionSurface(mode.config).toolAvailable, true)
+  })
+  assert.deepEqual(
+    agent.ctx.tools.schemas().map((schema) => schema.name).sort(),
+    ['bash', 'vision_describe'],
+  )
+
+  state.pending = { provider: 'deepseek-official', model: 'm' }
+  assert.equal(await harness.defs.get('vision_describe').execute({}, { agent }), 'seen')
+  assert.equal(calls, 1)
+
+  await runPreStep(harness, mode, agent, 2, () => {
+    assert.equal(currentSessionVisionModeAuthority()?.enabled, false)
+  })
+  assert.deepEqual(agent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
+  await assert.rejects(
+    () => harness.defs.get('vision_describe').execute({}, { agent }),
+    (error) => error?.code === 'VISION_MODE_DISABLED',
+  )
+  assert.equal(calls, 1)
+})
+
+test('ON and OFF Sessions stay isolated although vision definitions are global', async () => {
+  const harness = boot()
+  harness.registerOrdinary('deepseek-official')
+  harness.registerOwned('deepseek-vision')
+  const { mode } = compose(harness)
+  mode.ctx.tools.register({ name: 'vision_ocr', async execute() { return 'ocr' } })
+  mode.ctx.tools.register({ name: 'bash', async execute() { return 'ok' } })
+
+  const onAgent = harness.makeAgent(session('deepseek-vision', 'm', {
+    lastUsed: { provider: 'deepseek-vision', model: 'm' }, pending: null,
+  }))
+  const offAgent = harness.makeAgent(session('deepseek-official', 'm', {
+    lastUsed: { provider: 'deepseek-official', model: 'm' }, pending: null,
+  }))
+  await runPreStep(harness, mode, offAgent, 1)
+  await runPreStep(harness, mode, onAgent, 1)
+
+  assert.deepEqual(offAgent.ctx.tools.schemas().map((schema) => schema.name), ['bash'])
+  assert.deepEqual(
+    onAgent.ctx.tools.schemas().map((schema) => schema.name).sort(),
+    ['bash', 'vision_ocr'],
+  )
+  await assert.rejects(
+    () => harness.defs.get('vision_ocr').execute({}, { agent: offAgent }),
+    (error) => error?.code === 'VISION_MODE_DISABLED',
+  )
+  assert.equal(await harness.defs.get('vision_ocr').execute({}, { agent: onAgent }), 'ocr')
+})
+
+test('a foreign adapter on the configured wrapper route cannot manufacture Vision authority', () => {
+  const harness = boot()
+  harness.registerOrdinary('deepseek-vision')
+  const agent = harness.makeAgent(session('deepseek-vision', 'm', {
+    lastUsed: { provider: 'deepseek-vision', model: 'm' }, pending: null,
+  }))
+  const authority = resolveSessionVisionModeAuthority(harness.ctx, agent, harness.persisted)
+  assert.equal(authority.enabled, false)
+  assert.equal(authority.reason, 'ordinary-route')
 })
 
 test('the turn budget is available through the trusted remote settings channel', () => {
