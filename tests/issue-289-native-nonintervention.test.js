@@ -9,6 +9,7 @@ import {
   resolveSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
 import { currentSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
+import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-boundary.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 import { REMOTE_SETTINGS_READABLE_FIELDS } from '../lib/remote-settings-bridge.js'
@@ -94,6 +95,13 @@ function boot() {
   return { ctx, handlers, defs, persisted }
 }
 
+function compose(harness) {
+  const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
+  const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
+  const mode = installSessionVisionModeBoundary(legacy.ctx, legacy.config)
+  return { native, legacy, mode }
+}
+
 test('Host-native image ownership remains distinct from Vision Router mode authority', async () => {
   const harness = boot()
   const native = await resolveSessionVisionPolicy(
@@ -117,19 +125,18 @@ test('Host-native image ownership remains distinct from Vision Router mode autho
 
 test('ordinary native and text routes keep the Router surface off without mutating Settings/config', async () => {
   const harness = boot()
-  const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
+  const { mode } = compose(harness)
   let observed
 
-  legacy.ctx.on('agent/pre-step', async (payload, next) => {
-    const surface = currentCoreVisionSurface(legacy.config)
+  mode.ctx.on('agent/pre-step', async (payload, next) => {
+    const surface = currentCoreVisionSurface(mode.config)
     observed = {
       ownership: currentSessionVisionPolicy()?.ownership,
       modeEnabled: currentSessionVisionModeAuthority()?.enabled,
       surfaceStructuredBootstrap: surface.structuredBootstrap,
       surfaceToolAvailable: surface.toolAvailable,
-      persistedStructuredBootstrap: legacy.config.structuredVisionBootstrap,
-      persistedTool: legacy.config.tool,
+      persistedStructuredBootstrap: mode.config.structuredVisionBootstrap,
+      persistedTool: mode.config.tool,
     }
     return next()
   })
@@ -165,9 +172,8 @@ test('ordinary native and text routes keep the Router surface off without mutati
 
 test('an ordinary native model cannot call Vision Router tools while composer Vision mode is off', async () => {
   const harness = boot()
-  const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
-  const structured = installStructuredFlowHardening(legacy.ctx, legacy.config)
+  const { mode } = compose(harness)
+  const structured = installStructuredFlowHardening(mode.ctx, mode.config)
   const nativeSession = session('native-provider')
   const agent = { session: nativeSession }
 
