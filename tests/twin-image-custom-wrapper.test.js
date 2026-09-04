@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { contextWithAgentRequestRouteAuthority } from '../lib/agent-request-route-authority.js'
+import {
+  configureAgentRequestRouteAuthority,
+  contextWithAgentRequestRouteAuthority,
+} from '../lib/agent-request-route-authority.js'
 import {
   contextWithTwinImageCapabilityFallback,
   isImageInputUnsupportedFailure,
@@ -91,12 +94,13 @@ test('live custom wrapper and chain routes are never mistaken for generated twin
   )
 })
 
-test('composition-time custom wrapper and chain routes stay excluded before Settings mounts', () => {
+test('production authority configuration excludes custom wrapper and chain routes before Settings mounts', () => {
   const { ctx, registrations } = registrationHarness(undefined)
-  const wrapped = contextWithAgentRequestRouteAuthority(ctx, {
+  configureAgentRequestRouteAuthority(ctx, {
     wrapperRoute: 'src-vision',
     chainRoute: 'chain-vision',
   })
+  const wrapped = contextWithAgentRequestRouteAuthority(ctx)
   const mainWrapper = {
     async *stream() {
       yield { type: 'finish', reason: { kind: 'stop' } }
