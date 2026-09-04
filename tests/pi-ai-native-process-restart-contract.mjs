@@ -120,6 +120,14 @@ function hasVisionTool(request) {
   })
 }
 
+function assertRouterToolsAbsent(requests) {
+  assert.equal(
+    requests.some(hasVisionTool),
+    false,
+    'ordinary native pi-ai route must keep Vision Router tools out while composer Vision mode is off',
+  )
+}
+
 async function mockOpenAiServer() {
   const requests = []
   const paths = []
@@ -225,7 +233,7 @@ try {
     ])
     assert.equal(server.requests.length, 3)
     assert.ok(server.requests.every(hasInlineImage), 'real pi-ai must materialize durable image refs onto the wire')
-    assert.ok(server.requests.some(hasVisionTool), 'Vision Router visual tools must reach the real pi-ai request')
+    assertRouterToolsAbsent(server.requests)
     assertPluginMessagesIdentified(handle.agent.session.deriveMessages())
     const route = handle.agent.session.requestHeader()?.config
     assert.equal(route?.provider, 'native-pi')
@@ -250,6 +258,7 @@ try {
     await turn(handle.agent, [{ type: 'text', text: 'continue after restart' }])
     assert.equal(server.requests.length, 1)
     assert.ok(hasInlineImage(server.requests[0]), 'post-restart text turn must rematerialize historical images for pi-ai')
+    assertRouterToolsAbsent(server.requests)
 
     await turn(handle.agent, [
       { type: 'text', text: 'new image after restart' },
@@ -257,7 +266,7 @@ try {
     ])
     assert.equal(server.requests.length, 2)
     assert.ok(hasInlineImage(server.requests[1]))
-    assert.ok(hasVisionTool(server.requests[1]))
+    assertRouterToolsAbsent(server.requests)
     await ctx.sessions.flush(handle.agent.session)
     console.log('real pi-ai native phase after: OK')
   }
