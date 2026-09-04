@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { contextWithAgentRequestRouteAuthority } from '../lib/agent-request-route-authority.js'
 import {
   contextWithTwinImageCapabilityFallback,
   isImageInputUnsupportedFailure,
@@ -101,7 +102,7 @@ test('recursive request image detection includes nested tool-result images', () 
   )
 })
 
-test('false-positive image metadata retries once through the canonical bridge', async () => {
+test('Core-facing authority boundary retries false-positive image metadata through canonical bridge', async () => {
   const seenImages = []
   const source = {
     async resolveModel() {
@@ -131,9 +132,8 @@ test('false-positive image metadata retries once through the canonical bridge', 
   }
   const { ctx, registrations } = makeHarness(source)
   const logs = []
-  const privateCtx = contextWithTwinImageCapabilityFallback(ctx, {
-    logger: { warn: (...args) => logs.push(args) },
-  })
+  ctx.logger = { warn: (...args) => logs.push(args) }
+  const privateCtx = contextWithAgentRequestRouteAuthority(ctx)
   privateCtx.llm.registerAdapter(['src-vision'], makeGeneratedTwin(privateCtx))
 
   const chunks = await collect(
