@@ -130,8 +130,6 @@ class NativeAdapter extends LlmAdapter {
     return Promise.resolve({ provider, id: model, name: model, inputModalities: ['text', 'image'] })
   }
   async *stream(options) {
-    // This scenario uses the provider directly, not its -vision twin. Durable
-    // same-provider replay identity must therefore already be native-mm.
     for (const message of options.messages ?? []) {
       if (message?.role !== 'assistant' || message?.source?.replayState?.response?.kind !== 'pi-ai') continue
       assert.equal(message.source.provider, 'native-mm')
@@ -178,13 +176,18 @@ function assertPluginMessagesIdentified(messages) {
     message?.role === 'user'
       && message?.source?.kind === 'plugin'
       && message?.source?.plugin === 'dsh-vision-router')
-  // A native multimodal route may need no durable Vision Router reminder at
-  // all. The corruption invariant is narrower: if the plugin does persist a
-  // boundary/reminder message, it must be fully identified for cold replay.
   for (const message of pluginMessages) {
     assert.equal(typeof message.id, 'string')
     assert.ok(message.id.length > 0, 'persisted Vision Router message must have an id')
   }
+}
+
+function assertRouterToolsAbsent(requests) {
+  assert.equal(
+    requests.some((request) => toolNames(request).some((name) => name.startsWith('vision_'))),
+    false,
+    'ordinary native multimodal route must keep Vision Router tools out while composer Vision mode is off',
+  )
 }
 
 if (phase === 'before') {
@@ -208,10 +211,7 @@ if (phase === 'before') {
   assert.equal(adapter.requests.length, 3)
   assert.ok(adapter.requests.every((request) => request.provider === 'native-mm'))
   assert.deepEqual(imageIds(adapter.requests.at(-1).messages).sort(), refs.map((ref) => String(ref.attachmentId)).sort())
-  assert.ok(
-    adapter.requests.some((request) => toolNames(request).some((name) => name.startsWith('vision_'))),
-    'native multimodal model should receive Vision Router visual tools on image turns',
-  )
+  assertRouterToolsAbsent(adapter.requests)
   assertPluginMessagesIdentified(handle.agent.session.deriveMessages())
   const route = handle.agent.session.requestHeader()?.config
   assert.equal(route?.provider, 'native-mm')
@@ -246,7 +246,7 @@ if (phase === 'before') {
   ])
   assert.equal(adapter.requests.length, 2)
   assert.ok(imageIds(adapter.requests[1].messages).includes(String(state.refs[0].attachmentId)))
-  assert.ok(toolNames(adapter.requests[1]).some((name) => name.startsWith('vision_')))
+  assertRouterToolsAbsent(adapter.requests)
   await ctx.sessions.flush(handle.agent.session)
   await handle.dispose()
   await ctx.fiber.dispose()

@@ -157,8 +157,6 @@ test('text-only session preserves the durable image even when a global wrapper e
       const policy = currentSessionVisionPolicy()
       const surface = currentCoreVisionSurface(harness.persisted)
       assert.equal(policy.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
-      // The legacy policy producer may still expose rewriteCurrentImages, but
-      // the Core-facing surface permanently denies that destructive grant.
       assert.equal(surface.preserveRawImages, true)
       assert.equal(surface.rewriteCurrentImages, false)
       assert.equal(surface.rewriteEnabled, false)

@@ -32,13 +32,18 @@ function visionPolicy(ownership, overrides = {}) {
   }
 }
 
-test('native session preserves pixels, suppresses automatic orchestration, but keeps explicit tools available', () => {
+function mode(enabled) {
+  return { enabled, reason: enabled ? 'vision-router-route' : 'ordinary-route' }
+}
+
+test('native session preserves pixels but Vision Router stays off on the ordinary route', () => {
   const policy = resolveSessionSurfacePolicy({
     visionPolicy: visionPolicy('native-image'),
     config: config(),
   })
 
   assert.equal(policy.ownership, 'native-image')
+  assert.equal(policy.visionModeEnabled, false)
   assert.equal(policy.preserveRawImages, true)
   assert.equal(policy.rewriteCurrentImages, false)
   assert.equal(policy.allowStructuredBootstrap, false)
@@ -46,13 +51,14 @@ test('native session preserves pixels, suppresses automatic orchestration, but k
   assert.deepEqual(policy.surface, {
     preserveRawImages: true,
     rewriteCurrentImages: false,
-    visionTools: true,
+    visionTools: false,
     structuredBootstrap: false,
     genericAutoMount: false,
     instantDescribe: false,
   })
   assert.deepEqual(policy.legacyConfigOverrides, {
     rewriteImages: false,
+    tool: false,
     instantDescribe: false,
     autoActivateOnImage: false,
     structuredVisionBootstrap: false,
@@ -66,6 +72,7 @@ test('Vision Router-owned session preserves pixels while retaining Router orches
   })
 
   assert.equal(policy.ownership, 'vision-router-owned')
+  assert.equal(policy.visionModeEnabled, true)
   assert.equal(policy.participates, true)
   assert.deepEqual(policy.surface, {
     preserveRawImages: true,
@@ -78,20 +85,31 @@ test('Vision Router-owned session preserves pixels while retaining Router orches
   assert.deepEqual(policy.legacyConfigOverrides, { rewriteImages: false })
 })
 
-test('text-only session preserves the durable image and disables Core pre-step rewriting', () => {
+test('text-only session preserves the durable image while the plugin mode stays off', () => {
   const policy = resolveSessionSurfacePolicy({
     visionPolicy: visionPolicy('text-only'),
     config: config(),
   })
 
   assert.equal(policy.ownership, 'text-only')
+  assert.equal(policy.visionModeEnabled, false)
   assert.equal(policy.preserveRawImages, true)
   assert.equal(policy.rewriteCurrentImages, false)
-  assert.equal(policy.surface.preserveRawImages, true)
-  assert.equal(policy.surface.rewriteCurrentImages, false)
-  assert.equal(policy.surface.structuredBootstrap, true)
-  assert.equal(policy.surface.genericAutoMount, true)
-  assert.deepEqual(policy.legacyConfigOverrides, { rewriteImages: false })
+  assert.deepEqual(policy.surface, {
+    preserveRawImages: true,
+    rewriteCurrentImages: false,
+    visionTools: false,
+    structuredBootstrap: false,
+    genericAutoMount: false,
+    instantDescribe: false,
+  })
+  assert.deepEqual(policy.legacyConfigOverrides, {
+    rewriteImages: false,
+    tool: false,
+    instantDescribe: false,
+    autoActivateOnImage: false,
+    structuredVisionBootstrap: false,
+  })
 })
 
 test('legacy rewriteCurrentImages evidence can never grant a destructive transcript rewrite', () => {
@@ -109,26 +127,69 @@ test('legacy rewriteCurrentImages evidence can never grant a destructive transcr
   assert.equal(policy.legacyConfigOverrides.rewriteImages, false)
 })
 
-test('explicit UNKNOWN session remains non-destructive without being misclassified as text-only', () => {
+test('explicit UNKNOWN session preserves pixels but cannot invent Vision-mode authority', () => {
   const policy = resolveSessionSurfacePolicy({
     visionPolicy: visionPolicy('unknown'),
     config: config(),
   })
 
   assert.equal(policy.ownership, 'unknown')
+  assert.equal(policy.visionModeEnabled, false)
   assert.equal(policy.preserveRawImages, true)
   assert.equal(policy.rewriteCurrentImages, false)
-  assert.equal(policy.surface.visionTools, true)
-  assert.equal(policy.surface.structuredBootstrap, true)
+  assert.equal(policy.surface.visionTools, false)
+  assert.equal(policy.surface.structuredBootstrap, false)
+  assert.deepEqual(policy.legacyConfigOverrides, {
+    rewriteImages: false,
+    tool: false,
+    instantDescribe: false,
+    autoActivateOnImage: false,
+    structuredVisionBootstrap: false,
+  })
+})
+
+test('explicit mode snapshot beats stale native ownership when Vision was just turned on', () => {
+  const policy = resolveSessionSurfacePolicy({
+    visionPolicy: visionPolicy('native-image'),
+    visionModeAuthority: mode(true),
+    config: config(),
+  })
+
+  assert.equal(policy.ownership, 'native-image', 'image capability evidence may still describe the previous request')
+  assert.equal(policy.visionModeEnabled, true)
+  assert.deepEqual(policy.surface, {
+    preserveRawImages: true,
+    rewriteCurrentImages: false,
+    visionTools: true,
+    structuredBootstrap: true,
+    genericAutoMount: true,
+    instantDescribe: true,
+  })
   assert.deepEqual(policy.legacyConfigOverrides, { rewriteImages: false })
 })
 
-test('absence of a session policy never invents UNKNOWN non-intervention authority', () => {
+test('explicit OFF snapshot beats stale wrapper ownership after the composer toggles off', () => {
+  const policy = resolveSessionSurfacePolicy({
+    visionPolicy: visionPolicy('vision-router-owned'),
+    visionModeAuthority: mode(false),
+    config: config(),
+  })
+
+  assert.equal(policy.ownership, 'vision-router-owned')
+  assert.equal(policy.visionModeEnabled, false)
+  assert.equal(policy.surface.visionTools, false)
+  assert.equal(policy.surface.structuredBootstrap, false)
+  assert.equal(policy.surface.genericAutoMount, false)
+  assert.equal(policy.surface.instantDescribe, false)
+})
+
+test('absence of a session policy keeps boot-time config semantics without inventing Session authority', () => {
   const policy = resolveSessionSurfacePolicy({
     config: config(),
   })
 
   assert.equal(policy.ownership, undefined)
+  assert.equal(policy.visionModeEnabled, true)
   assert.equal(policy.participates, false)
   assert.equal(policy.preserveRawImages, false)
   assert.equal(policy.rewriteCurrentImages, false)
@@ -137,14 +198,12 @@ test('absence of a session policy never invents UNKNOWN non-intervention authori
 
 test('schema bootstrap may expose definitions without granting live tool execution', () => {
   const policy = resolveSessionSurfacePolicy({
-    visionPolicy: visionPolicy('native-image'),
     config: config({ tool: false }),
     schemaBootstrapping: true,
   })
 
   assert.equal(policy.surface.visionTools, false)
-  assert.equal(policy.legacyConfigOverrides.tool, true)
-  assert.equal(policy.legacyConfigOverrides.structuredVisionBootstrap, false)
+  assert.deepEqual(policy.legacyConfigOverrides, { tool: true })
 })
 
 test('explicit user-off settings remain off and are never expanded by the surface policy', () => {
