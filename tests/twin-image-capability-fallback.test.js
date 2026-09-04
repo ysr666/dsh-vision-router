@@ -75,6 +75,11 @@ test('classifier matches explicit image-capability rejection only', () => {
   )
   assert.equal(isImageInputUnsupportedFailure({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' }), true)
   assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_IMAGE_INPUT' }), true)
+  assert.equal(
+    isImageInputUnsupportedFailure({ error: { code: 'UNSUPPORTED_IMAGE_INPUT' } }),
+    true,
+    'stable capability codes remain usable when a Host nests the provider failure',
+  )
   assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_CONTENT' }), false)
   assert.equal(
     isImageInputUnsupportedFailure({
@@ -86,6 +91,21 @@ test('classifier matches explicit image-capability rejection only', () => {
   assert.equal(isImageInputUnsupportedFailure(new Error('400 max_tokens must be <= 1024')), false)
   assert.equal(isImageInputUnsupportedFailure(new Error('429 rate limited')), false)
   assert.equal(isImageInputUnsupportedFailure(new Error('unsupported image format: bmp')), false)
+  assert.equal(
+    isImageInputUnsupportedFailure(new Error('model does not support image inputs larger than 10 MB')),
+    false,
+    'a size restriction is not proof that the model is text-only',
+  )
+  assert.equal(
+    isImageInputUnsupportedFailure(new Error('model does not support image input with media type image/bmp')),
+    false,
+    'a media-type restriction must not poison native multimodal capability',
+  )
+  assert.equal(
+    isImageInputUnsupportedFailure(new Error('model cannot process images wider than 4096 px')),
+    false,
+    'a dimension restriction must remain the provider error instead of triggering a text bridge',
+  )
 })
 
 test('recursive request image detection includes nested tool-result images', () => {
@@ -196,6 +216,52 @@ test('negative runtime proof skips known-bad raw image until source adapter chan
   harness.registrations.set('src', { adapter: goodSource })
   await collect(twin.stream({ model: 'm', messages: imageMessages('three') }))
   assert.deepEqual(newSeen, [true], 'adapter replacement must invalidate the negative proof')
+})
+
+test('negative runtime proof is isolated by provider when one adapter serves multiple routes', async () => {
+  const seen = []
+  const shared = {
+    async resolveModel(provider) {
+      return { provider, id: 'm', inputModalities: ['text', 'image'] }
+    },
+    async *stream(options) {
+      const hasImage = twinRequestHasImage(options.messages)
+      seen.push([options.provider, hasImage])
+      if (options.provider === 'src' && hasImage) {
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: { message: 'model does not support image inputs' },
+          },
+        }
+        return
+      }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const harness = makeHarness(shared)
+  harness.registrations.set('src2', { adapter: shared })
+  const privateCtx = contextWithTwinImageCapabilityFallback(harness.ctx)
+  privateCtx.llm.registerAdapter(['src-vision'], makeGeneratedTwin(privateCtx, 'src'))
+  privateCtx.llm.registerAdapter(['src2-vision'], makeGeneratedTwin(privateCtx, 'src2'))
+
+  await collect(
+    harness.registrations
+      .get('src-vision')
+      .adapter.stream({ model: 'm', messages: imageMessages('one') }),
+  )
+  await collect(
+    harness.registrations
+      .get('src2-vision')
+      .adapter.stream({ model: 'm', messages: imageMessages('two') }),
+  )
+
+  assert.deepEqual(seen, [
+    ['src', true],
+    ['src', false],
+    ['src2', true],
+  ])
 })
 
 test('unrelated provider failures are not retried', async () => {
