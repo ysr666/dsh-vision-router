@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { contextWithAgentRequestRouteAuthority } from '../lib/agent-request-route-authority.js'
 import {
   contextWithTwinImageCapabilityFallback,
   isImageInputUnsupportedFailure,
@@ -32,16 +33,16 @@ async function collect(iterable) {
   return out
 }
 
-test('live custom main wrapper route is never mistaken for a generated twin', () => {
+function registrationHarness(settingsValue) {
   const registrations = new Map([['src', { adapter: sourceAdapter() }]])
-  const settings = {
-    get(namespace) {
-      return namespace === 'vision-router' ? { wrapperRoute: 'src-vision' } : undefined
-    },
-  }
   const ctx = {
     get(service) {
-      return service === 'settings' ? settings : undefined
+      if (service !== 'settings' || settingsValue === undefined) return undefined
+      return {
+        get(namespace) {
+          return namespace === 'vision-router' ? settingsValue : undefined
+        },
+      }
     },
     llm: {
       registerAdapter(providers, adapter) {
@@ -55,20 +56,63 @@ test('live custom main wrapper route is never mistaken for a generated twin', ()
       },
     },
   }
+  return { ctx, registrations }
+}
 
+test('live custom wrapper and chain routes are never mistaken for generated twins', () => {
+  const { ctx, registrations } = registrationHarness({
+    wrapperRoute: 'src-vision',
+    chainRoute: 'chain-vision',
+  })
   const wrapped = contextWithTwinImageCapabilityFallback(ctx)
   const mainWrapper = {
     async *stream() {
       yield { type: 'finish', reason: { kind: 'stop' } }
     },
   }
+  const chainWrapper = {
+    async *stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+
   wrapped.llm.registerAdapter(['src-vision'], mainWrapper)
+  wrapped.llm.registerAdapter(['chain-vision'], chainWrapper)
 
   assert.equal(
     registrations.get('src-vision').adapter,
     mainWrapper,
     'the live Settings wrapperRoute is a distinct product route, not a generated source twin',
   )
+  assert.equal(
+    registrations.get('chain-vision').adapter,
+    chainWrapper,
+    'the live Settings chainRoute must not be wrapped as a generated source twin',
+  )
+})
+
+test('composition-time custom wrapper and chain routes stay excluded before Settings mounts', () => {
+  const { ctx, registrations } = registrationHarness(undefined)
+  const wrapped = contextWithAgentRequestRouteAuthority(ctx, {
+    wrapperRoute: 'src-vision',
+    chainRoute: 'chain-vision',
+  })
+  const mainWrapper = {
+    async *stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const chainWrapper = {
+    async *stream() {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+
+  wrapped.llm.registerAdapter(['src-vision'], mainWrapper)
+  wrapped.llm.registerAdapter(['chain-vision'], chainWrapper)
+
+  assert.equal(registrations.get('src-vision').adapter, mainWrapper)
+  assert.equal(registrations.get('chain-vision').adapter, chainWrapper)
 })
 
 test('generated twin registered before its settings-backed source still gains runtime fallback', async () => {
