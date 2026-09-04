@@ -25,6 +25,13 @@ function fakeCore() {
     isAttachmentIdInput(value) {
       return typeof value === 'string' && /^[a-z0-9]+:[0-9a-f]{32,}$/i.test(value.trim())
     },
+    collectEventAttachmentRefs(events) {
+      const refs = []
+      for (const event of events ?? []) {
+        if (Array.isArray(event?.data?.refs)) refs.push(...event.data.refs)
+      }
+      return refs
+    },
     artifactStemOf(_source, suffix) {
       return `fixture-${suffix}`
     },
@@ -79,8 +86,13 @@ function harness(workspace, { attachmentBytes, attachmentId } = {}) {
   }
 }
 
-function execFor(workspace) {
-  return { agent: { session: { header: { cwd: workspace } } } }
+function execFor(workspace, { events = [], inbox } = {}) {
+  return {
+    agent: {
+      session: { header: { cwd: workspace }, events },
+      ...(inbox === undefined ? {} : { inbox }),
+    },
+  }
 }
 
 test('vision_ground sends a real 1000x1000 letterbox raster and remaps a wide-image box to source pixels', async () => {
@@ -237,7 +249,179 @@ test('attachment ids are resolved through the canonical SessionVisionIndex befor
   assert.deepEqual(h.counts(), { fsReads: 0, attachmentReads: 1 })
 })
 
-test('non-grounding tools pass through without execute replacement', () => {
+test('DSH text-only sha256 prefix is canonicalized before grounding and never falls through to a path', async () => {
+  const workspace = await mkdtemp(path.join(tmpdir(), 'vr-ground-short-handle-'))
+  const width = 1200
+  const height = 600
+  const prefix = '2e73d462'
+  const attachmentId = `sha256:${prefix}${'a'.repeat(56)}`
+  const handle = `sha256:${prefix}`
+  const ref = { attachmentId, mediaType: 'image/png', width, height, bytes: 1 }
+  const bytes = await sharp({
+    create: { width, height, channels: 3, background: { r: 230, g: 230, b: 230 } },
+  }).png().toBuffer()
+  ref.bytes = bytes.length
+  const h = harness(workspace, { attachmentBytes: bytes, attachmentId })
+  const lookedUp = []
+  const wrapped = contextWithGroundingCoordinateFrame(h.ctx, {
+    core: fakeCore(),
+    config: {},
+    sessionVisionIndex: {
+      lookupAttachment(_session, id) {
+        lookedUp.push(id)
+        return id === attachmentId ? ref : undefined
+      },
+      recordAttachments() {},
+    },
+  })
+  wrapped.tools.register({
+    name: 'vision_ground',
+    async execute() {
+      return JSON.stringify({ x1: 0, y1: 0, x2: 1000, y2: 1000 })
+    },
+  })
+
+  const result = JSON.parse(await h.registered.get('vision_ground').execute(
+    { image: handle, target: 'whole image', annotate: false },
+    execFor(workspace, { events: [{ type: 'user/message', data: { refs: [ref] } }] }),
+  ))
+  assert.equal(result.width, width)
+  assert.equal(result.height, height)
+  assert.deepEqual(lookedUp, [attachmentId, attachmentId])
+  assert.deepEqual(h.counts(), { fsReads: 0, attachmentReads: 1 })
+})
+
+test('vision_describe canonicalizes projected handles in attachmentIds and paths but leaves prose untouched', async () => {
+  const workspace = process.cwd()
+  const prefix = '1234abcd'
+  const attachmentId = `sha256:${prefix}${'b'.repeat(56)}`
+  const handle = `sha256:${prefix}`
+  const ref = { attachmentId, mediaType: 'image/png', width: 1, height: 1, bytes: 1 }
+  const h = harness(workspace)
+  const wrapped = contextWithGroundingCoordinateFrame(h.ctx, {
+    core: fakeCore(),
+    config: {},
+    sessionVisionIndex: {
+      lookupAttachment(_session, id) {
+        return id === attachmentId ? ref : undefined
+      },
+      recordAttachments() {},
+    },
+  })
+  let observed
+  wrapped.tools.register({
+    name: 'vision_describe',
+    execute(args) {
+      observed = args
+      return 'ok'
+    },
+  })
+  const exec = execFor(workspace, { events: [{ type: 'user/message', data: { refs: [ref] } }] })
+  const question = `what does ${handle} mean as text?`
+  assert.equal(
+    h.registered.get('vision_describe').execute({
+      attachmentIds: [handle],
+      paths: [handle, 'local.png'],
+      question,
+    }, exec),
+    'ok',
+  )
+  assert.deepEqual(observed.attachmentIds, [attachmentId])
+  assert.deepEqual(observed.paths, [attachmentId, 'local.png'])
+  assert.equal(observed.question, question)
+})
+
+test('projected handles fail closed on unknown, ambiguous, and cross-session references', () => {
+  const workspace = process.cwd()
+  const prefix = 'deadbeef'
+  const handle = `sha256:${prefix}`
+  const first = { attachmentId: `sha256:${prefix}${'1'.repeat(56)}`, mediaType: 'image/png' }
+  const second = { attachmentId: `sha256:${prefix}${'2'.repeat(56)}`, mediaType: 'image/png' }
+  const h = harness(workspace)
+  const wrapped = contextWithGroundingCoordinateFrame(h.ctx, {
+    core: fakeCore(),
+    config: {},
+    sessionVisionIndex: {
+      lookupAttachment() {
+        throw new Error('lookup must not authorize an unknown prefix by itself')
+      },
+      recordAttachments() {},
+    },
+  })
+  let delegated = 0
+  wrapped.tools.register({
+    name: 'vision_materialize',
+    execute() {
+      delegated += 1
+      return 'should-not-run'
+    },
+  })
+
+  assert.throws(
+    () => h.registered.get('vision_materialize').execute(
+      { image: handle },
+      execFor(workspace),
+    ),
+    /unknown attachment handle/,
+  )
+  assert.throws(
+    () => h.registered.get('vision_materialize').execute(
+      { image: handle },
+      execFor(workspace, { events: [{ data: { refs: [first, second] } }] }),
+    ),
+    /ambiguous attachment handle/,
+  )
+  const foreignExec = execFor(workspace, { events: [{ data: { refs: [first] } }] })
+  const currentExec = execFor(workspace)
+  assert.ok(foreignExec.agent.session.events.length > 0)
+  assert.throws(
+    () => h.registered.get('vision_materialize').execute({ image: handle }, currentExec),
+    /unknown attachment handle/,
+  )
+  assert.equal(delegated, 0)
+})
+
+test('pending current-session image refs can authorize the same projected handle without global lookup', () => {
+  const workspace = process.cwd()
+  const prefix = 'cafebabe'
+  const attachmentId = `sha256:${prefix}${'c'.repeat(56)}`
+  const handle = `sha256:${prefix}`
+  const ref = { attachmentId, mediaType: 'image/png', width: 1, height: 1, bytes: 1 }
+  const h = harness(workspace)
+  const wrapped = contextWithGroundingCoordinateFrame(h.ctx, {
+    core: fakeCore(),
+    config: {},
+    sessionVisionIndex: {
+      lookupAttachment(_session, id) {
+        return id === attachmentId ? ref : undefined
+      },
+      recordAttachments() {},
+    },
+  })
+  let observed
+  wrapped.tools.register({
+    name: 'vision_pixel_diff',
+    execute(args) {
+      observed = args
+      return 'ok'
+    },
+  })
+  const inbox = {
+    nextTurn: [{ role: 'user', content: [{ type: 'image', attachment: ref }] }],
+    nextStep: [],
+  }
+  assert.equal(
+    h.registered.get('vision_pixel_diff').execute(
+      { original: handle, rebuilt: 'rebuilt.png' },
+      execFor(workspace, { inbox }),
+    ),
+    'ok',
+  )
+  assert.equal(observed.original, attachmentId)
+  assert.equal(observed.rebuilt, 'rebuilt.png')
+})
+
+test('non-grounding tools pass through without execute replacement when no SessionVisionIndex is installed', () => {
   const h = harness(process.cwd())
   const wrapped = contextWithGroundingCoordinateFrame(h.ctx, { core: fakeCore(), config: {} })
   const execute = async () => 'ok'
