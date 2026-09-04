@@ -8,6 +8,7 @@ import {
   currentSessionVisionPolicy,
   resolveSessionVisionPolicy,
 } from '../lib/native-image-coexistence.js'
+import { currentSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 import { REMOTE_SETTINGS_READABLE_FIELDS } from '../lib/remote-settings-bridge.js'
@@ -93,7 +94,7 @@ function boot() {
   return { ctx, handlers, defs, persisted }
 }
 
-test('Host-native image models make structured bootstrap optional, not tools unavailable', async () => {
+test('Host-native image ownership remains distinct from Vision Router mode authority', async () => {
   const harness = boot()
   const native = await resolveSessionVisionPolicy(
     harness.ctx,
@@ -114,7 +115,7 @@ test('Host-native image models make structured bootstrap optional, not tools una
   assert.equal(text.allowStructuredBootstrap, true)
 })
 
-test('explicit CoreVisionSurface suppresses native 1+x without mutating Settings/config', async () => {
+test('ordinary native and text routes keep the Router surface off without mutating Settings/config', async () => {
   const harness = boot()
   const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
@@ -124,6 +125,7 @@ test('explicit CoreVisionSurface suppresses native 1+x without mutating Settings
     const surface = currentCoreVisionSurface(legacy.config)
     observed = {
       ownership: currentSessionVisionPolicy()?.ownership,
+      modeEnabled: currentSessionVisionModeAuthority()?.enabled,
       surfaceStructuredBootstrap: surface.structuredBootstrap,
       surfaceToolAvailable: surface.toolAvailable,
       persistedStructuredBootstrap: legacy.config.structuredVisionBootstrap,
@@ -140,8 +142,9 @@ test('explicit CoreVisionSurface suppresses native 1+x without mutating Settings
   )
   assert.deepEqual(observed, {
     ownership: IMAGE_OWNERSHIP.NATIVE,
+    modeEnabled: false,
     surfaceStructuredBootstrap: false,
-    surfaceToolAvailable: true,
+    surfaceToolAvailable: false,
     persistedStructuredBootstrap: true,
     persistedTool: true,
   })
@@ -152,19 +155,21 @@ test('explicit CoreVisionSurface suppresses native 1+x without mutating Settings
   )
   assert.deepEqual(observed, {
     ownership: IMAGE_OWNERSHIP.TEXT_ONLY,
-    surfaceStructuredBootstrap: true,
-    surfaceToolAvailable: true,
+    modeEnabled: false,
+    surfaceStructuredBootstrap: false,
+    surfaceToolAvailable: false,
     persistedStructuredBootstrap: true,
     persistedTool: true,
   })
 })
 
-test('a native model may still explicitly call a Vision Router tool', async () => {
+test('an ordinary native model cannot call Vision Router tools while composer Vision mode is off', async () => {
   const harness = boot()
   const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
   const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
   const structured = installStructuredFlowHardening(legacy.ctx, legacy.config)
   const nativeSession = session('native-provider')
+  const agent = { session: nativeSession }
 
   structured.tools.register({
     name: 'vision_ocr',
@@ -177,20 +182,19 @@ test('a native model may still explicitly call a Vision Router tool', async () =
   const handler = harness.handlers.get('agent/pre-step')
   assert.ok(handler)
   const decision = await handler(
-    { turn: 1, agent: { session: nativeSession }, messages: [] },
+    { turn: 1, agent, messages: [] },
     async () => ({ kind: 'continue', messages: [] }),
   )
   assert.equal(
     decision.messages.some((message) => String(message?.id).includes('structured-')),
     false,
-    'native direct turns must not receive a mandatory 1+x guard before choosing a tool',
+    'ordinary native turns must not receive a Router 1+x guard while Vision mode is off',
   )
 
-  const result = await harness.defs.get('vision_ocr').execute(
-    {},
-    { agent: { session: nativeSession } },
+  await assert.rejects(
+    () => harness.defs.get('vision_ocr').execute({}, { agent }),
+    (error) => error?.code === 'VISION_MODE_DISABLED',
   )
-  assert.equal(result, 'native-requested OCR evidence')
 })
 
 test('the turn budget is available through the trusted remote settings channel', () => {
