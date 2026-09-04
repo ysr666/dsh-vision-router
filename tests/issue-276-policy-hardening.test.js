@@ -150,8 +150,12 @@ test('a picker change during one step is applied before the next prompt assembly
       variables.set(name, provider)
       return () => variables.delete(name)
     },
-    async assemble(agent) {
-      const context = { agent, scope: agent }
+    async assemble(agent, options = {}) {
+      const context = {
+        agent,
+        scope: agent,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }
       for (const provider of variables.values()) provider(context)
       const assembly = { tools: tools.schemas(agent) }
       const handler = handlers.get('system-prompt/assemble')
@@ -231,8 +235,9 @@ test('a picker change during one step is applied before the next prompt assembly
   mode.ctx.on('agent/pre-step', async (_payload, next) => next())
   const preStep = handlers.get('agent/pre-step')
   assert.ok(preStep)
+  const turnSignal = new AbortController().signal
 
-  const firstAssembly = await systemPrompt.assemble(agent)
+  const firstAssembly = await systemPrompt.assemble(agent, { signal: turnSignal })
   assert.deepEqual(
     firstAssembly.tools.map((tool) => tool.name).sort(),
     ['bash', 'vision_describe', 'vision_foreign'],
@@ -247,6 +252,15 @@ test('a picker change during one step is applied before the next prompt assembly
       assert.equal(currentSessionVisionModeAuthority()?.enabled, true)
       return { kind: 'continue', messages: [] }
     },
+  )
+
+  // An out-of-band prompt render may observe the new OFF selection while the
+  // old ON step is still executing. It must filter its own returned assembly
+  // without clearing the current step snapshot or mutating its tool mask.
+  const diagnosticAssembly = await systemPrompt.assemble(agent)
+  assert.deepEqual(
+    diagnosticAssembly.tools.map((tool) => tool.name).sort(),
+    ['bash', 'vision_foreign'],
   )
   assert.equal(await definitions.get('vision_describe').execute({}, { agent }), 'seen')
   assert.equal(calls, 1)
@@ -271,9 +285,9 @@ test('a picker change during one step is applied before the next prompt assembly
   )
   assert.equal(await definitions.get('vision_foreign').execute({}, { agent: noRestrictAgent }), 'foreign')
 
-  // The next assembly runs the private pre-tool sync again even though the
-  // Agent never left running state between tool-loop steps.
-  const secondAssembly = await systemPrompt.assemble(agent)
+  // The next real Agent-loop assembly carries the turn signal. It stages OFF
+  // for the immediately following pre-step and updates that Agent's tool mask.
+  const secondAssembly = await systemPrompt.assemble(agent, { signal: turnSignal })
   assert.deepEqual(
     secondAssembly.tools.map((tool) => tool.name).sort(),
     ['bash', 'vision_foreign'],
