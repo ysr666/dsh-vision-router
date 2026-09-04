@@ -285,6 +285,27 @@ test('a picker change during one step is applied before the next prompt assembly
   )
   assert.equal(await definitions.get('vision_foreign').execute({}, { agent: noRestrictAgent }), 'foreign')
 
+  // Global Settings remain an independent capability gate. A Router-owned
+  // model selection cannot make registered vision definitions visible while
+  // the user has disabled the visual-tool surface in Settings.
+  const toolDisabledSession = {
+    selectionState: {
+      lastUsed: { provider: 'deepseek-vision', model: 'm' },
+      pending: { provider: 'deepseek-vision', model: 'm' },
+    },
+    requestHeader() {
+      return { config: { provider: 'deepseek-vision', model: 'm' } }
+    },
+  }
+  const toolDisabledAgent = { session: toolDisabledSession, ctx: { tools: {} } }
+  config.tool = false
+  const toolDisabledAssembly = await systemPrompt.assemble(toolDisabledAgent)
+  assert.deepEqual(
+    toolDisabledAssembly.tools.map((tool) => tool.name).sort(),
+    ['bash', 'vision_foreign'],
+  )
+  config.tool = true
+
   // The next real Agent-loop assembly carries the turn signal. It stages OFF
   // for the immediately following pre-step and updates that Agent's tool mask.
   const secondAssembly = await systemPrompt.assemble(agent, { signal: turnSignal })
