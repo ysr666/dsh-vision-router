@@ -111,11 +111,14 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const bridgeAt = source.indexOf(
     'const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(',
   )
+  const sessionModeAt = source.indexOf(
+    'const sessionVisionModeCompat = installSessionVisionModeBoundary(',
+  )
   const diagnosticsAt = source.indexOf(
     'const limitDiagnosticCtx = installVisionLimitDiagnostics(',
   )
   const structuredAt = source.indexOf(
-    'const structuredCtx = installStructuredFlowHardening(limitDiagnosticCtx, legacyCoreCompat.config)',
+    'const structuredCtx = installStructuredFlowHardening(',
   )
   const executionAt = source.indexOf(
     'const executionCtx = contextWithVisionExecutionPolicy(reconciledCtx, {',
@@ -155,8 +158,12 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     'the retained pre-step compatibility boundary must consume the indexed session-scoped ownership policy',
   )
   assert.ok(
-    diagnosticsAt > bridgeAt,
-    'limit diagnostics must observe the final pre-step compatibility view and may not become an execution policy itself',
+    sessionModeAt > bridgeAt,
+    'Session Vision mode authority must remain outside the retired identity-only compatibility bridge',
+  )
+  assert.ok(
+    diagnosticsAt > sessionModeAt,
+    'limit diagnostics must observe the Session mode boundary without becoming an execution policy itself',
   )
   assert.ok(
     structuredAt > diagnosticsAt,
@@ -175,8 +182,8 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(coreApplyAt > requestAuthorityAt, 'core must receive the fully composed request-authority context')
   assert.match(
     source.slice(coreApplyAt),
-    /^\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*legacyCoreCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
-    'core must receive the explicit request-authority decorator plus the same SessionVisionRuntime and CoreVisionSurfaceRuntime owners',
+    /^\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    'core must receive the explicit request-authority decorator plus the Session mode config and same runtime owners',
   )
   assert.ok(finishAt > coreApplyAt, 'CoreVisionSurface alone owns the temporary schema-bootstrap lifecycle')
   assert.equal(
