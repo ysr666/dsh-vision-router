@@ -104,7 +104,7 @@ test('explicit call-cap exhaustion emits at most one stop guard across repeated 
   assert.equal(await countRepeatedGuards(harness, session, 'structured-guard-stop'), 1)
 })
 
-test('mixed guard is idempotent while state is unchanged and can advance once evidence changes', async () => {
+test('mixed classification uses only the generic evidence guard and clears it after usable evidence', async () => {
   const harness = boot({ visionDepth: 'standard' })
   const tools = registerTools(harness, { visual_kind: 'mixed', mixed_of: ['ui', 'document'] })
   const session = {}
@@ -112,10 +112,13 @@ test('mixed guard is idempotent while state is unchanged and can advance once ev
 
   await preStep(harness, session, 1)
   await tools.bootstrap.execute({}, exec)
-  assert.equal(await countRepeatedGuards(harness, session, 'structured-mixed-guard'), 1)
+
+  assert.equal(await countRepeatedGuards(harness, session, 'structured-evidence-guard'), 1)
+  assert.equal(await countRepeatedGuards(harness, session, 'structured-mixed-guard'), 0)
 
   assert.equal(await tools.describe.execute({}, exec), 'visible evidence')
-  assert.equal(await countRepeatedGuards(harness, session, 'structured-mixed-guard'), 1)
+  assert.equal(await countRepeatedGuards(harness, session, 'structured-evidence-guard'), 0)
+  assert.equal(await countRepeatedGuards(harness, session, 'structured-mixed-guard'), 0)
 })
 
 test('evidence guard is emitted only once across repeated pre-steps', async () => {
