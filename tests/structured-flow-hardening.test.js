@@ -210,7 +210,7 @@ test('zero disables the cap while a retained positive cap applies to every built
   assert.equal(cappedTools.counts().evidenceCalls, 2)
 })
 
-test('fast mixed flow keeps both correctness branches until branch-specific evidence lands', async () => {
+test('mixed bootstrap is advisory: one task-directed branch observation satisfies x>=1', async () => {
   const harness = boot({ visionDepth: 'fast', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
@@ -224,67 +224,82 @@ test('fast mixed flow keeps both correctness branches until branch-specific evid
   await tools.bootstrap().execute({}, exec)
 
   const before = await preStep(harness, session, 1)
-  const firstGuard = before.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(firstGuard)
-  assert.match(firstGuard.content[0].text, /ui/)
-  assert.match(firstGuard.content[0].text, /document/)
+  assert.equal(
+    before.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+    false,
+    'hardening must not turn bootstrap mixed_of into branch quotas',
+  )
+  assert.equal(
+    before.messages.some((message) => String(message.id).includes('structured-evidence-guard')),
+    true,
+    'x>=1 still requires one usable task-directed observation',
+  )
 
-  await tools.describe().execute({ question: 'generic whole image' }, exec)
-  const stillBoth = await preStep(harness, session, 1)
-  const stillBothGuard = stillBoth.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(stillBothGuard)
-  assert.match(stillBothGuard.content[0].text, /ui/)
-  assert.match(stillBothGuard.content[0].text, /document/)
-
-  await branches.ground().execute({ question: 'locate the UI control' }, exec)
-  const halfDone = await preStep(harness, session, 1)
-  const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(halfGuard, 'one branch-specific evidence call must leave the other mixed branch pending')
-  assert.match(halfGuard.content[0].text, /document/)
-
-  await branches.ocr().execute({ question: 'read the document text' }, exec)
+  await branches.ground().execute({ target: 'the relevant UI control' }, exec)
   const complete = await preStep(harness, session, 1)
+  assert.equal(
+    complete.messages.some((message) => String(message.id).includes('structured-evidence-guard')),
+    false,
+  )
   assert.equal(
     complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
     false,
   )
 })
 
-test('standard mixed flow remains incomplete after one targeted branch and clears after both', async () => {
-  const harness = boot({
-    visionDepth: 'standard',
-    visionDepthMaxCalls: 0,
-    guidanceOverrides: [{ kind: 'document', text: 'CUSTOM DOCUMENT CHECK' }],
-  })
+test('mixed bootstrap accepts a generic task-directed observation instead of inferring a branch from tool name', async () => {
+  const harness = boot({ visionDepth: 'standard', visionDepthMaxCalls: 0 })
   const tools = registerFlowTools(
     harness,
     () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
-    () => 'generic evidence',
+    () => 'focused evidence for the user question',
+  )
+  const session = {}
+  const exec = { agent: { session } }
+  await preStep(harness, session, 1)
+  await tools.bootstrap().execute({}, exec)
+  await tools.describe().execute({ question: 'verify only what matters to the user' }, exec)
+
+  const complete = await preStep(harness, session, 1)
+  assert.equal(
+    complete.messages.some((message) => String(message.id).includes('structured-evidence-guard')),
+    false,
+  )
+  assert.equal(
+    complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+    false,
+  )
+})
+
+test('mixed bootstrap and a one-call cap do not create an impossible two-branch requirement', async () => {
+  const harness = boot({ visionDepth: 'standard', visionDepthMaxCalls: 1 })
+  const tools = registerFlowTools(
+    harness,
+    () => bootstrapSuccess({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] }),
+    () => 'evidence',
   )
   const branches = registerMixedBranchTools(harness)
   const session = {}
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
   await tools.bootstrap().execute({}, exec)
+  await branches.ground().execute({ target: 'the UI control relevant to the question' }, exec)
 
-  const before = await preStep(harness, session, 1)
-  const firstGuard = before.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(firstGuard)
-  assert.match(firstGuard.content[0].text, /ui/)
-  assert.match(firstGuard.content[0].text, /CUSTOM DOCUMENT CHECK/)
-
-  await branches.ground().execute({ question: 'locate UI' }, exec)
-  const halfDone = await preStep(harness, session, 1)
-  const halfGuard = halfDone.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(halfGuard)
-  assert.match(halfGuard.content[0].text, /CUSTOM DOCUMENT CHECK/)
-
-  await branches.ocr().execute({ question: 'verify document' }, exec)
-  const complete = await preStep(harness, session, 1)
+  const decision = await preStep(harness, session, 1)
   assert.equal(
-    complete.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+    decision.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
     false,
   )
+  assert.equal(
+    decision.messages.some((message) => String(message.id).includes('structured-evidence-guard')),
+    false,
+  )
+  const stop = decision.messages.find((message) => String(message.id).includes('structured-guard-stop'))
+  assert.ok(stop)
+  assert.match(stop.content[0].text, /深挖次数上限/)
+
+  const blocked = JSON.parse(await branches.ocr().execute({}, exec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
 })
 
 test('empty evidence cannot silently complete the required x>=1 step', async () => {
@@ -328,7 +343,7 @@ test('turn budget stops new visual calls and removes impossible followup reminde
 
     const decision = await preStep(harness, session, 1)
     assert.equal(
-      decision.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+      decision.messages.some((message) => String(message.id).includes('structured-evidence-guard')),
       false,
     )
     const stop = decision.messages.find((message) => String(message.id).includes('structured-guard-stop'))

@@ -51,6 +51,10 @@ function mixedGuard(decision) {
   return decision.messages.find((message) => String(message?.id).includes('structured-mixed-guard'))
 }
 
+function evidenceGuard(decision) {
+  return decision.messages.find((message) => String(message?.id).includes('structured-evidence-guard'))
+}
+
 test('quota evidence classifier rejects empty containers and metadata-only success', () => {
   for (const empty of [
     undefined,
@@ -188,7 +192,7 @@ test('a successful evidence advance resets the non-progress fuse', async () => {
   assert.equal(Boolean(stopGuard(decision)), false)
 })
 
-test('mixed flow cannot complete two branches through repeated generic full-image describe calls', async () => {
+test('mixed classification is advisory and one usable task-directed observation completes x>=1', async () => {
   const h = harness({ visionDepthMaxCalls: 0, visionTurnBudgetMs: 0 })
   h.wrapped.tools.register({
     name: 'vision_bootstrap',
@@ -199,13 +203,7 @@ test('mixed flow cannot complete two branches through repeated generic full-imag
   h.wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
-      return 'generic whole-image evidence'
-    },
-  })
-  h.wrapped.tools.register({
-    name: 'vision_ground',
-    async execute() {
-      return JSON.stringify({ boxes: [{ x: 1, y: 1, w: 10, h: 10 }] })
+      return 'generic whole-image evidence relevant to the user task'
     },
   })
 
@@ -215,25 +213,15 @@ test('mixed flow cannot complete two branches through repeated generic full-imag
   await h.defs.get('vision_bootstrap').execute({}, exec)
 
   const before = await preStep(h, session)
-  assert.match(mixedGuard(before)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(before)?.content?.[0]?.text ?? '', /ui/)
+  assert.equal(Boolean(mixedGuard(before)), false)
+  assert.ok(evidenceGuard(before))
 
-  await h.defs.get('vision_describe').execute({ question: 'describe the image' }, exec)
-  const afterFirst = await preStep(h, session)
-  assert.match(mixedGuard(afterFirst)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(afterFirst)?.content?.[0]?.text ?? '', /ui/)
+  assert.equal(
+    await h.defs.get('vision_describe').execute({ question: 'verify what matters to the user' }, exec),
+    'generic whole-image evidence relevant to the user task',
+  )
 
-  await h.defs.get('vision_describe').execute({ question: 'describe the image' }, exec)
-  const afterSecond = await preStep(h, session)
-  assert.match(mixedGuard(afterSecond)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(afterSecond)?.content?.[0]?.text ?? '', /ui/)
-
-  await h.defs.get('vision_ground').execute({ question: 'locate the UI control' }, exec)
-  const oneLeft = await preStep(h, session)
-  assert.match(mixedGuard(oneLeft)?.content?.[0]?.text ?? '', /document/)
-  assert.doesNotMatch(mixedGuard(oneLeft)?.content?.[0]?.text ?? '', /unverified branches: ui|未验证分支：ui/)
-
-  await h.defs.get('vision_describe').execute({ question: 'read the remaining document branch' }, exec)
   const complete = await preStep(h, session)
+  assert.equal(Boolean(evidenceGuard(complete)), false)
   assert.equal(Boolean(mixedGuard(complete)), false)
 })
