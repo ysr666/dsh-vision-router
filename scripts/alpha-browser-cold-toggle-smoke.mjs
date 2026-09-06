@@ -149,9 +149,6 @@ async function captureFailureState({ page, error, stage, kind, detail, diagnosti
 }
 
 async function dismissFirstRunOverlays(page) {
-  // A fresh DSH_HOME intentionally exercises first-run UI. Dismiss the Vision
-  // Router onboarding through its real secondary action instead of force-clicking
-  // through the backdrop: the smoke must preserve browser pointer semantics.
   const vrOnboarding = page.locator('.vr-onboarding-backdrop')
   try {
     await vrOnboarding.waitFor({ state: 'visible', timeout: 5_000 })
@@ -161,10 +158,6 @@ async function dismissFirstRunOverlays(page) {
     await vrOnboarding.waitFor({ state: 'hidden', timeout: 15_000 })
   }
 
-  // Exact alpha.4 also shows its versioned internal-testing notice on a fresh
-  // profile. The Playwright context is pinned to en-US, so use the exact owner
-  // copy from that pinned DSH source and wait for the persisted acknowledgement
-  // to close the modal before touching the sidebar.
   const welcome = page.getByRole('dialog', { name: 'Internal Testing Notice', exact: true })
   try {
     await welcome.waitFor({ state: 'visible', timeout: 5_000 })
@@ -176,35 +169,28 @@ async function dismissFirstRunOverlays(page) {
 }
 
 async function adoptRealWorkspace(page, workspacePath) {
-  // With zero registered Workspaces, exact alpha.4 consumes the hero's
-  // "Choose workspace" request directly into the occupied directory-flow
-  // instead of rendering a one-item "Add workspace…" menu. On headless Linux
-  // directory-picker-auto resolves to the in-app browse backend, so this is a
-  // real Host-backed workspace mutation without an OS chooser or RPC shortcut.
+  // Exact alpha.4 consumes the zero-workspace hero request directly into its
+  // only directory flow. Headless Linux resolves the auto picker to the
+  // in-app browse backend, so this remains a real Host-backed UI mutation.
   const chooseWorkspace = page.getByRole('button', { name: 'Choose workspace', exact: true })
   await chooseWorkspace.waitFor({ state: 'visible', timeout: 30_000 })
   await chooseWorkspace.click()
 
   const picker = page.getByRole('dialog', { name: 'Select Workspace Directory', exact: true })
   await picker.waitFor({ state: 'visible', timeout: 30_000 })
-
-  const editPath = picker.getByRole('button', { name: 'Edit path', exact: true })
-  await editPath.waitFor({ state: 'visible', timeout: 30_000 })
-  await editPath.click()
+  await picker.getByRole('button', { name: 'Edit path', exact: true }).click()
 
   const pathInput = picker.getByRole('textbox', { name: 'Edit path', exact: true })
   await pathInput.waitFor({ state: 'visible', timeout: 10_000 })
   await pathInput.fill(workspacePath)
   await pathInput.press('Enter')
-  // Successful submitted navigation closes the path editor. Waiting for that
-  // edge proves the Host resolved the exact path before Open can adopt it.
+  // Successful submitted navigation closes the editor only after the Host has
+  // resolved the requested path.
   await pathInput.waitFor({ state: 'hidden', timeout: 30_000 })
 
-  const open = picker.getByRole('button', { name: 'Open', exact: true })
-  // Open is disabled while navigation/loading/draft state is pending, so its
-  // ordinary click actionability wait prevents accidentally adopting the old
-  // home-directory target.
-  await open.click({ timeout: 30_000 })
+  // Open stays disabled while navigation/draft state is pending. Ordinary
+  // Playwright actionability therefore prevents adopting the stale home path.
+  await picker.getByRole('button', { name: 'Open', exact: true }).click({ timeout: 30_000 })
   await picker.waitFor({ state: 'hidden', timeout: 30_000 })
 }
 
@@ -229,17 +215,9 @@ let detail = 'none'
 let failed = false
 
 try {
-  // Resolve and load Playwright from the exact DSH web workspace package.
-  // createRequire preserves the package's CommonJS/conditional-export shape;
-  // importing its resolved entry URL can expose only `default` under Node 22,
-  // leaving a named `chromium` destructure undefined.
   const playwright = webRequire('playwright')
   const chromium = playwright?.chromium
-  if (
-    !chromium ||
-    typeof chromium.executablePath !== 'function' ||
-    typeof chromium.launch !== 'function'
-  ) {
+  if (!chromium || typeof chromium.executablePath !== 'function' || typeof chromium.launch !== 'function') {
     throw new Error('Playwright chromium API is unavailable from @deepseek-ai/dsh-web-frontend')
   }
 
@@ -290,13 +268,15 @@ try {
   await newSession.waitFor({ timeout: 30_000 })
   await newSession.click()
 
+  // Only the real Workspace-to-Session transition onward belongs to #387's
+  // cold model-directory seam.
+  diagnostics = []
   stage = 'workspace-picker'
   await adoptRealWorkspace(page, workspacePath)
 
   stage = 'workspace-adopt'
-  // Prove the Host mutation landed through an alpha.4-owned surface instead
-  // of coupling the smoke to the chat composer's internal DOM shape. The
-  // workspace selector is the durable browser projection of createWorkspace.
+  // Prove the Host mutation landed through an alpha.4-owned projection instead
+  // of coupling this smoke to the composer's editor implementation.
   const workspaceSelector = page.getByRole('button', { name: 'Choose workspace', exact: true })
   await workspaceSelector.waitFor({ state: 'visible', timeout: 30_000 })
   const selectedWorkspace = (await workspaceSelector.innerText()).trim()
@@ -304,24 +284,16 @@ try {
     throw new Error(`workspace adoption did not project the expected selection (got ${JSON.stringify(selectedWorkspace)})`)
   }
 
+  // Acceptance edge: exact alpha.4 InputBar renders conversation.input.right
+  // before conversation.input.model. DVR registers the Vision toggle in the
+  // right slot; the stock model seat is the next consumer of the same
+  // per-session ModelDirectory. This fresh browser + fresh Session Intent is
+  // therefore the real first-render seam relevant to #387. Reloading here is
+  // invalid because an unsent Session Intent is intentionally page-local.
   stage = 'session-scope'
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
-
-  // A hard refresh recreates the browser-side ModelDirectoryResolver and its
-  // cache. Do not open the stock model picker before waiting for the Vision
-  // Router toggle: its slot injection must be able to perform the first cold
-  // directoryFor(sessionId) call itself.
-  stage = 'cold-reload'
-  diagnostics = []
-  await page.reload({ waitUntil: 'domcontentloaded' })
-
-  stage = 'cold-toggle'
-  await page.locator('[data-vision-router-mode-toggle="true"]').waitFor({
-    state: 'visible',
-    timeout: 30_000,
-  })
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(750)
 
   stage = 'diagnostics'
   const injectionErrors = diagnostics.filter((line) =>
@@ -329,11 +301,11 @@ try {
   )
   if (injectionErrors.length > 0) {
     failureKind = 'product-injection-regression'
-    throw new Error(`cold Vision toggle hit the Cordis injection regression:\n${injectionErrors.join('\n')}`)
+    throw new Error(`first cold Vision toggle hit the Cordis injection regression:\n${injectionErrors.join('\n')}`)
   }
   if (diagnostics.some((line) => line.startsWith('pageerror:'))) {
     failureKind = 'browser-pageerror'
-    throw new Error(`browser pageerror during cold Vision toggle smoke:\n${diagnostics.join('\n')}`)
+    throw new Error(`browser pageerror during first cold Vision toggle smoke:\n${diagnostics.join('\n')}`)
   }
 
   stage = 'complete'
@@ -342,9 +314,10 @@ try {
     ok: true,
     dsh: process.env.DSH_EXPECTED_VERSION || 'unknown',
     dvr: 'current-checkout',
-    workspaceAdopted: true,
-    sessionScopedComposerVisible: true,
-    toggleVisibleAfterColdReload: true,
+    workspaceAdoptedThroughRealUi: true,
+    firstSessionIntentVisionToggleVisible: true,
+    nativeModelPickerOpened: false,
+    modelRequestSent: false,
   }))
 } catch (error) {
   failed = true
@@ -357,18 +330,8 @@ try {
     failureKind = classifyBrowserLaunch(message)
   }
   detail = `${detail}; ${message}`
-  const failureState = await captureFailureState({
-    page,
-    error,
-    stage,
-    kind: failureKind,
-    detail,
-    diagnostics,
-  })
-  console.error(JSON.stringify({
-    ok: false,
-    ...failureState,
-  }))
+  const failureState = await captureFailureState({ page, error, stage, kind: failureKind, detail, diagnostics })
+  console.error(JSON.stringify({ ok: false, ...failureState }))
 } finally {
   await browser?.close()
   if (child && child.exitCode === null) {
