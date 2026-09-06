@@ -1,8 +1,8 @@
 // 行为级独立次数上限测试：
 // 驱动真实 structured runtime wrapper（包入口同款 hardening + core 注册工具），验证用户显式开启的
-// 深挖次数上限只在工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额、不置
-// followupCompleted，模型保有提醒并可继续；成功消费最后一次额度后立即切到 stop guard，随后调用命中
-// VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
+// 深挖次数上限只在工具真正产出证据后消费——ok:false 的“无可用证据”结果不烧配额；Core 的一次性
+// follow-up 不会重放，而 Hardening 会继续发出 evidence guard。成功消费最后一次额度后立即切到 stop
+// guard，随后调用命中 VISION_DEPTH_LIMIT。深度策略本身不提供次数上限。
 // 不 stub fetch：本地 OpenAI 兼容假服务驱动 bootstrap 与“无可用证据”调用；成功证据使用同一
 // hardening wrapper 下注册的确定性 vision_ground fixture，避免把 sharp/像素量化细节混进 quota 测试。
 import { test } from 'node:test'
@@ -193,14 +193,16 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     const preStep = harness.handlers.get('agent/pre-step')
     assert.ok(preStep)
     const next = async () => ({ kind: 'ok', messages: imageMessages })
-    const hasEvidenceReminder = (decision) =>
+    const hasCoreFollowup = (decision) =>
       Array.isArray(decision && decision.messages) &&
-      decision.messages.some((m) => {
-        if (!m || typeof m.id !== 'string') return false
-        return m.id.includes('vision-router-structured-followup-') ||
-          m.id.includes('vision-router-structured-mixed-guard-') ||
-          m.id.includes('vision-router-structured-evidence-guard-')
-      })
+      decision.messages.some((m) =>
+        m && typeof m.id === 'string' && m.id.includes('vision-router-structured-followup-'),
+      )
+    const hasEvidenceGuard = (decision) =>
+      Array.isArray(decision && decision.messages) &&
+      decision.messages.some((m) =>
+        m && typeof m.id === 'string' && m.id.includes('vision-router-structured-evidence-guard-'),
+      )
     const hasStopGuard = (decision) =>
       Array.isArray(decision && decision.messages) &&
       decision.messages.some((m) =>
@@ -208,7 +210,8 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
       )
 
     const d1 = await preStep(imagePayload, next)
-    assert.equal(hasEvidenceReminder(d1), false)
+    assert.equal(hasCoreFollowup(d1), false)
+    assert.equal(hasEvidenceGuard(d1), false)
     assert.equal(hasStopGuard(d1), false)
 
     const bootstrap = harness.toolDefs.get('vision_bootstrap')
@@ -219,7 +222,8 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(boot.phase, 'structured-bootstrap')
 
     const d2 = await preStep(imagePayload, next)
-    assert.equal(hasEvidenceReminder(d2), true)
+    assert.equal(hasCoreFollowup(d2), true)
+    assert.equal(hasEvidenceGuard(d2), false)
     assert.equal(hasStopGuard(d2), false)
 
     const describe = harness.toolDefs.get('vision_describe')
@@ -230,7 +234,8 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(j1.code, 'NO_USABLE_EVIDENCE')
 
     const d3 = await preStep(imagePayload, next)
-    assert.equal(hasEvidenceReminder(d3), true)
+    assert.equal(hasCoreFollowup(d3), false)
+    assert.equal(hasEvidenceGuard(d3), true)
     assert.equal(hasStopGuard(d3), false)
 
     const ground = harness.toolDefs.get('vision_ground')
@@ -241,7 +246,8 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(server.requests.length, requestsBefore)
 
     const d4 = await preStep(imagePayload, next)
-    assert.equal(hasEvidenceReminder(d4), false)
+    assert.equal(hasCoreFollowup(d4), false)
+    assert.equal(hasEvidenceGuard(d4), false)
     assert.equal(hasStopGuard(d4), true)
 
     const requestsBeforeBlock = server.requests.length
