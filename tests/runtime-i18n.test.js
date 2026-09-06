@@ -196,6 +196,23 @@ test('legacy host-injected notes are localized without translating arbitrary use
   assert.match(fresh, /^\[Received image “image”/)
   assert.match(fresh, /sha256:abc/)
 
+  const staleStructuredOcr =
+    '不要默认把 OCR 当第二步：OCR 是逐字转写，对 1/l、0/O、空格、换行存在系统性混淆，逐字结果往往比结合上下文的语义理解（vision_describe / vision_detect）更不可靠；' +
+    '仅当需要逐字保真且无法靠上下文恢复时才用 vision_ocr（如可执行代码、需精确引用的长文档/合同/表单、表格数字、验证码、无语义锚点的生僻字）。' +
+    '若确实调用 vision_ocr，把它当需要交叉验证的证据，而不是最终事实。UI/截图语义验证优先 vision_detect 或聚焦的 vision_describe；局部目标可用 vision_ground。' +
+    '结构化模式下若确实调用 vision_ocr，未指定 engine 或 engine=auto 时会直接使用视觉模型 OCR（engine=vision），而不是先接受本地 Tesseract 的非空结果；' +
+    '显式 engine=tesseract 或 engine=vision 始终保留。这样优先保证中文/UI 文字准确率。完成至少 1 次后续证据调用后再进入自由 Agent 循环，可继续调用更多工具或作答。'
+  const corrected = translateLegacyRuntimeText(staleStructuredOcr, i18n)
+  assert.match(corrected, /engine=auto always tries local Tesseract first/)
+  assert.match(corrected, /structured mode does not change this order/)
+  assert.doesNotMatch(corrected, /uses vision-model OCR .* directly/)
+
+  const staleEnglishStructuredOcr =
+    'In structured mode, vision_ocr with an omitted engine or engine=auto uses vision-model OCR (engine=vision) directly instead of accepting the first non-empty local Tesseract result; explicit engine=tesseract or engine=vision is always preserved.'
+  const correctedEnglish = translateLegacyRuntimeText(staleEnglishStructuredOcr, i18n)
+  assert.match(correctedEnglish, /engine=auto always tries local Tesseract first/)
+  assert.doesNotMatch(correctedEnglish, /uses vision-model OCR .* directly/)
+
   const arbitrary = [{ role: 'user', content: [{ type: 'text', text: '用户自己说：图片此前由视觉模型读取' }] }]
   assert.equal(localizeMessages(arbitrary, i18n, () => ({})), arbitrary)
 })
