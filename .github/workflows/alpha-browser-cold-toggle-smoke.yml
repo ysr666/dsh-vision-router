@@ -235,7 +235,8 @@ jobs:
           steps.smoke.outputs.status == 'pass' &&
           steps.sensitivity.outputs.status == 'fail' &&
           steps.sensitivity.outputs.kind == 'product-injection-regression'
-        run: echo 'Real DSH Host + Chromium cold Vision toggle smoke passed and the pre-fix baseline reproduced #387.'
+        run: |
+          echo 'Real DSH Host + Chromium cold Vision toggle smoke passed and the pre-fix baseline reproduced #387.'
 
       - name: Fail classified smoke
         if: steps.smoke.outputs.status == 'fail'
