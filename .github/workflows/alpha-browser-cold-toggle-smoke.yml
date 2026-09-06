@@ -155,13 +155,25 @@ jobs:
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'open-page'
         run: echo 'Smoke failed while opening the real DSH Web page.'
 
-      - name: Classified harness stage — create session
-        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'new-session'
-        run: echo 'Smoke failed while creating a fresh session.'
+      - name: Classified harness stage — first-run overlays
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'first-run-overlays'
+        run: echo 'Smoke failed while dismissing the real first-run browser overlays.'
 
-      - name: Classified harness stage — initial toggle
-        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'initial-toggle'
-        run: echo 'Smoke failed before the first Vision toggle became visible.'
+      - name: Classified harness stage — create session intent
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'new-session'
+        run: echo 'Smoke failed while creating a fresh Session Intent.'
+
+      - name: Classified harness stage — choose workspace
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'workspace-picker'
+        run: echo 'Smoke failed while adopting a real Workspace through the alpha.4 directory flow.'
+
+      - name: Classified harness stage — workspace adoption
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'workspace-adopt'
+        run: echo 'Smoke failed after the Workspace picker closed but before the session-scoped composer became available.'
+
+      - name: Classified harness stage — initial session scope
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'session-scope'
+        run: echo 'Smoke failed before the first session-scoped Vision toggle became visible.'
 
       - name: Classified harness stage — cold reload
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-reload'

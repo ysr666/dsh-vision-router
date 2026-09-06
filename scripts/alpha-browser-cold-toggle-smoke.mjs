@@ -294,12 +294,15 @@ try {
   await adoptRealWorkspace(page, workspacePath)
 
   stage = 'workspace-adopt'
-  // The hero's workspace-blocked placeholder is the exact alpha.4 signal that
-  // the Session Intent still lacks a target. Its replacement proves the real
-  // Workspace has been adopted before we attribute a missing toggle to DVR.
-  await page.getByPlaceholder('Describe what you want to build... / commands, @ files or sessions', {
-    exact: true,
-  }).waitFor({ state: 'visible', timeout: 30_000 })
+  // Prove the Host mutation landed through an alpha.4-owned surface instead
+  // of coupling the smoke to the chat composer's internal DOM shape. The
+  // workspace selector is the durable browser projection of createWorkspace.
+  const workspaceSelector = page.getByRole('button', { name: 'Choose workspace', exact: true })
+  await workspaceSelector.waitFor({ state: 'visible', timeout: 30_000 })
+  const selectedWorkspace = (await workspaceSelector.innerText()).trim()
+  if (selectedWorkspace !== 'workspace') {
+    throw new Error(`workspace adoption did not project the expected selection (got ${JSON.stringify(selectedWorkspace)})`)
+  }
 
   stage = 'session-scope'
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
