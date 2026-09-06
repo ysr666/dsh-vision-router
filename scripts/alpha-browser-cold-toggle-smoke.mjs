@@ -11,8 +11,9 @@ const dshRoot = resolve(process.env.DSH_SOURCE_ROOT || '')
 if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
 
 const dshRequire = createRequire(join(dshRoot, 'package.json'))
+const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
-const { chromium } = await import(pathToFileURL(dshRequire.resolve('playwright')).href)
+const { chromium } = await import(pathToFileURL(webRequire.resolve('playwright')).href)
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
 
 function waitForReadyLine(child) {
