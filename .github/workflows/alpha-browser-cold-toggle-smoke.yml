@@ -33,6 +33,14 @@ jobs:
           persist-credentials: false
           path: dvr
 
+      - name: Checkout pre-#388 Vision Router baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ysr666/dsh-vision-router
+          ref: c7c92d25f7c5ced65871db4cb40b00b5d5493ce9
+          persist-credentials: false
+          path: dvr-before-388
+
       - name: Checkout exact DSH alpha.4 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -78,6 +86,33 @@ jobs:
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/alpha-browser-smoke-diagnostic.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/alpha-browser-smoke-page.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+
+      - name: Reproduce #387 with the real pre-fix plugin
+        id: sensitivity
+        if: steps.smoke.outputs.status == 'pass'
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr-before-388
+          DSH_EXPECTED_VERSION: 0.1.2-alpha.4
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/alpha-browser-baseline-diagnostic.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/alpha-browser-baseline-page.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+
+      - name: Verify #387 sensitivity baseline
+        if: steps.smoke.outputs.status == 'pass'
+        env:
+          BASELINE_STATUS: ${{ steps.sensitivity.outputs.status }}
+          BASELINE_STAGE: ${{ steps.sensitivity.outputs.stage }}
+          BASELINE_KIND: ${{ steps.sensitivity.outputs.kind }}
+          BASELINE_DETAIL: ${{ steps.sensitivity.outputs.detail }}
+        run: |
+          printf 'historical status=%s stage=%s kind=%s\n' "$BASELINE_STATUS" "$BASELINE_STAGE" "$BASELINE_KIND"
+          if [[ "$BASELINE_STATUS" != 'fail' || "$BASELINE_KIND" != 'product-injection-regression' ]]; then
+            printf 'Historical c7c92d25 baseline did not reproduce #387 exactly.\n%s\n' "$BASELINE_DETAIL"
+            exit 1
+          fi
+          echo 'Historical c7c92d25 baseline reproduced #387 as product-injection-regression.'
 
       - name: Smoke failure detail
         if: steps.smoke.outputs.status == 'fail'
@@ -196,8 +231,11 @@ jobs:
         run: echo 'Smoke failed waiting for the Vision toggle after a cold reload.'
 
       - name: Cold Vision toggle smoke passed
-        if: steps.smoke.outputs.status == 'pass'
-        run: echo 'Real DSH Host + Chromium cold Vision toggle smoke passed.'
+        if: >-
+          steps.smoke.outputs.status == 'pass' &&
+          steps.sensitivity.outputs.status == 'fail' &&
+          steps.sensitivity.outputs.kind == 'product-injection-regression'
+        run: echo 'Real DSH Host + Chromium cold Vision toggle smoke passed and the pre-fix baseline reproduced #387.'
 
       - name: Fail classified smoke
         if: steps.smoke.outputs.status == 'fail'
