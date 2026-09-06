@@ -59,13 +59,13 @@ function registerMixedBranchTools(harness) {
   harness.wrapped.tools.register({
     name: 'vision_ground',
     async execute() {
-      return JSON.stringify({ boxes: [{ x: 1, y: 1, w: 10, h: 10, label: 'ui-control' }] })
+      return JSON.stringify({ x1: 1, y1: 1, x2: 11, y2: 11, width: 100, height: 100 })
     },
   })
   harness.wrapped.tools.register({
     name: 'vision_ocr',
     async execute() {
-      return JSON.stringify({ text: 'verified document text' })
+      return JSON.stringify({ engine: 'vision', text: 'verified document text' })
     },
   })
   return {

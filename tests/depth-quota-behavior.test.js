@@ -180,7 +180,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     hardenedCtx.tools.register({
       name: 'vision_ground',
       async execute() {
-        return JSON.stringify({ boxes: [{ x: 0, y: 0, w: 1, h: 1, label: 'verified-ui-region' }] })
+        return JSON.stringify({ x1: 0, y1: 0, x2: 10, y2: 10, width: 100, height: 100 })
       },
     })
 
@@ -242,7 +242,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.ok(ground)
     const requestsBefore = server.requests.length
     const r2 = await ground.execute({ question: 'locate the UI region' }, exec)
-    assert.equal(Array.isArray(JSON.parse(r2).boxes), true)
+    assert.deepEqual(JSON.parse(r2), { x1: 0, y1: 0, x2: 10, y2: 10, width: 100, height: 100 })
     assert.equal(server.requests.length, requestsBefore)
 
     const d4 = await preStep(imagePayload, next)
