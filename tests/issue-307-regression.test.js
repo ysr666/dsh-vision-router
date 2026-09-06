@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
+import { readFileSync } from 'node:fs'
+
+function requireSource(relative) {
+  return readFileSync(new URL(relative, import.meta.url), 'utf8')
+}
+
 
 import {
   SETTINGS_NUMBER_META,
@@ -50,6 +56,22 @@ function textOf(React, node) {
   if (!React.isValidElement(node)) return ''
   return React.Children.toArray(node.props?.children).map((child) => textOf(React, child)).join(' ')
 }
+
+test('issue 307: vision task timeout default is coherent across public, legacy, and local fallback layers', () => {
+  const entry = requireSource('../entry.js')
+  const core = requireSource('../index.js')
+  const client = requireSource('../lib/client.js')
+  const stabilizer = requireSource('../lib/local-vision-stabilizer.js')
+  assert.equal(entry.includes("core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))"), true)
+  assert.equal(core.includes("visionTaskTimeoutMs: z.number().step(1).min(1000).max(180000).default(120000)"), true)
+  const getterStart = core.indexOf('const visionTaskTimeoutMs = () => {')
+  const getterEnd = core.indexOf('const ocrBudgetMs = () => {', getterStart)
+  assert.ok(getterStart >= 0 && getterEnd > getterStart)
+  assert.equal(core.slice(getterStart, getterEnd).includes('? value : 120000'), true)
+  assert.equal(client.includes('一次识图任务（含全部 provider、回退与重试）共享的总时限；默认 120000。'), true)
+  assert.equal(client.includes('One vision task (all providers, fallbacks and retries) shares this wall-clock budget; default 120000.'), true)
+  assert.equal(stabilizer.includes('positive(value.visionTaskTimeoutMs, 120000)'), true)
+})
 
 test('issue 307: numeric client contract matches the final public timeout steps', () => {
   assert.deepEqual(SETTINGS_NUMBER_META.visionTaskTimeoutMs, { min: 1000, max: 180000, step: 1000 })

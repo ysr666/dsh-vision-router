@@ -352,7 +352,7 @@ export const Config = z.object({
   // provider, fallback and retry inside it) shares this single wall-clock
   // budget. Per-provider requests are capped by min(timeoutMs, remaining
   // budget), so a chain of slow backends can never multiply the wait.
-  visionTaskTimeoutMs: z.number().step(1).min(1000).max(180000).default(45000),
+  visionTaskTimeoutMs: z.number().step(1).min(1000).max(180000).default(120000),
   // Total budget for one OCR task. Local tesseract gets at most 12s of it
   // (its own cap) and the vision-model fallback only the rest — never two
   // full timeouts added together.
@@ -3135,7 +3135,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // schema docs). Every provider/fallback/retry draws from the same deadline.
   const visionTaskTimeoutMs = () => {
     const value = current().visionTaskTimeoutMs
-    return Number.isFinite(value) && value > 0 ? value : 45000
+    return Number.isFinite(value) && value > 0 ? value : 120000
   }
   // One OCR task shares this budget: tesseract gets a capped slice, the
   // vision fallback only the remainder.
