@@ -191,6 +191,20 @@ test('default test manifest is closed-world: every test is run or explicitly own
   )
 })
 
+test('alpha source contract follows the presentation implementation on PRs and main pushes', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8')
+  const pullStart = workflow.indexOf('  pull_request:')
+  const pushStart = workflow.indexOf('  push:')
+  const dispatchStart = workflow.indexOf('  workflow_dispatch:')
+  assert.ok(pullStart !== -1 && pushStart > pullStart && dispatchStart > pushStart, 'alpha source workflow trigger sections must stay explicit')
+
+  const implementationPath = "- 'lib/client-presentation-boundary-main.js'"
+  const pullTrigger = workflow.slice(pullStart, pushStart)
+  const pushTrigger = workflow.slice(pushStart, dispatchStart)
+  assert.match(pullTrigger, /lib\/client-presentation-boundary-main\.js/, `${implementationPath} must trigger exact-alpha PR contracts`)
+  assert.match(pushTrigger, /lib\/client-presentation-boundary-main\.js/, `${implementationPath} must trigger exact-alpha main-push contracts`)
+})
+
 test('all GitHub Actions dependencies are pinned to immutable commit SHAs', async () => {
   const workflowDir = new URL('../.github/workflows/', import.meta.url)
   const names = await readdir(workflowDir)
