@@ -75,31 +75,35 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.2-alpha.4
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/alpha-browser-smoke-diagnostic.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/alpha-browser-smoke-page.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
 
-      - name: Browser launch detail
-        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
+      - name: Smoke failure detail
+        if: steps.smoke.outputs.status == 'fail'
         env:
+          SMOKE_STAGE: ${{ steps.smoke.outputs.stage }}
+          SMOKE_KIND: ${{ steps.smoke.outputs.kind }}
           SMOKE_DETAIL: ${{ steps.smoke.outputs.detail }}
-          SMOKE_DETAIL_PATH: ${{ runner.temp }}/alpha-browser-launch-detail.txt
         run: |
-          printf '%s\n' "$SMOKE_DETAIL"
-          printf '%s\n' "$SMOKE_DETAIL" > "$SMOKE_DETAIL_PATH"
+          printf 'stage=%s\nkind=%s\n%s\n' "$SMOKE_STAGE" "$SMOKE_KIND" "$SMOKE_DETAIL"
           escaped="${SMOKE_DETAIL//'%'/'%25'}"
           escaped="${escaped//$'\r'/'%0D'}"
           escaped="${escaped//$'\n'/'%0A'}"
-          printf '::error title=Chromium launch failed::%s\n' "$escaped"
+          printf '::error title=Alpha browser smoke failed (%s)::%s\n' "$SMOKE_STAGE" "$escaped"
           {
-            printf '### Browser launch detail\n\n'
+            printf '### Alpha browser smoke failure\n\n'
+            printf -- '- stage: `%s`\n' "$SMOKE_STAGE"
+            printf -- '- kind: `%s`\n\n' "$SMOKE_KIND"
             printf '```text\n%s\n```\n' "$SMOKE_DETAIL"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload browser launch diagnostic
-        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
+      - name: Upload smoke diagnostic
+        if: steps.smoke.outputs.status == 'fail'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: alpha-browser-launch-detail
-          path: ${{ runner.temp }}/alpha-browser-launch-detail.txt
+          name: alpha-browser-smoke-diagnostic
+          path: ${{ runner.temp }}/alpha-browser-smoke-*
           if-no-files-found: error
           retention-days: 1
 
