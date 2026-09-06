@@ -79,12 +79,19 @@ class FakeClipboardEvent {
 function runtime(options = {}) {
   const listeners = new Map()
   const dispatched = []
+  let drawnBitmap = null
   const canvas = {
     width: 0,
     height: 0,
     getContext(type) {
       assert.equal(type, '2d')
-      return { drawImage() {} }
+      return {
+        drawImage(bitmap) { drawnBitmap = bitmap },
+        getImageData() {
+          const pixels = drawnBitmap?.pixels ?? new Uint8Array([0, 0, 0, 255])
+          return { data: Uint8Array.from(pixels) }
+        },
+      }
     },
     toBlob(callback, type) {
       assert.equal(type, 'image/png')
@@ -120,7 +127,10 @@ function runtime(options = {}) {
     ClipboardEvent: options.withoutReplayApis ? undefined : FakeClipboardEvent,
     File: FakeFile,
     Blob: FakeBlob,
-    createImageBitmap: async () => ({ width: 2, height: 3, close() {} }),
+    createImageBitmap: async (file) => {
+      if (typeof options.createImageBitmap === 'function') return options.createImageBitmap(file)
+      return { width: 2, height: 3, pixels: new Uint8Array([0, 0, 0, 255]), close() {} }
+    },
   }
   let registered
   window.__ModuleLoader__ = {
@@ -172,6 +182,16 @@ function bmpBytes(width = 2, height = 3) {
   view.setUint16(28, 24, true)
   view.setUint32(34, 4, true)
   bytes[54] = 255
+  return bytes
+}
+
+function pngBytes(width = 2, height = 1, tail = []) {
+  const bytes = new Uint8Array(24 + tail.length)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(16, width, false)
+  view.setUint32(20, height, false)
+  bytes.set(tail, 24)
   return bytes
 }
 
@@ -289,4 +309,117 @@ test('oversized BMP dimensions are never decoded before DSH admission', async ()
   await settleUntil(() => rt.dispatched.length === 1)
   assert.equal(decoded, 0)
   assert.equal(rt.dispatched[0].clipboardData.files[0], huge)
+})
+
+test('same-byte supported images with different names are deduped within one paste batch', async () => {
+  const rt = runtime()
+  let decoded = 0
+  rt.window.createImageBitmap = async () => { decoded += 1; throw new Error('exact duplicate must not decode') }
+  const bytes = new Uint8Array([1, 2, 3, 4, 5])
+  const first = new FakeFile([bytes], 'a.png', { type: 'image/png' })
+  const second = new FakeFile([bytes], 'b.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([first, second], 'caption'))
+  rt.paste(event)
+  assert.equal(event.prevented, true)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(rt.dispatched[0].clipboardData.files.length, 1)
+  assert.equal(rt.dispatched[0].clipboardData.files[0].name, 'a.png')
+  assert.equal(rt.dispatched[0].clipboardData.getData('text/plain'), 'caption')
+  assert.equal(decoded, 0)
+})
+
+test('same-name supported images with different bytes are never deduped', async () => {
+  const rt = runtime()
+  const first = new FakeFile([new Uint8Array([1, 2, 3, 4])], 'same.png', { type: 'image/png' })
+  const second = new FakeFile([new Uint8Array([4, 3, 2, 1])], 'same.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([first, second]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(rt.dispatched[0].clipboardData.files.length, 2)
+  assert.equal(rt.dispatched[0].clipboardData.files[0], first)
+  assert.equal(rt.dispatched[0].clipboardData.files[1], second)
+})
+
+test('synthetic bitmap-style PNG and named FileDrop PNG dedupe by identical pixels without re-encoding', async () => {
+  let decoded = 0
+  const rt = runtime({
+    createImageBitmap: async (file) => {
+      decoded += 1
+      return {
+        width: 2,
+        height: 1,
+        pixels: file.name === 'image.png'
+          ? new Uint8Array([9, 8, 7, 255, 1, 2, 3, 255])
+          : new Uint8Array([9, 8, 7, 255, 1, 2, 3, 255]),
+        close() {},
+      }
+    },
+  })
+  const bitmapView = new FakeFile([pngBytes(2, 1, [1])], 'image.png', { type: 'image/png' })
+  const fileDrop = new FakeFile([pngBytes(2, 1, [2, 2, 2])], 'QQ-shot.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([bitmapView, fileDrop], 'keep'))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  const files = rt.dispatched[0].clipboardData.files
+  assert.equal(files.length, 1)
+  assert.equal(files[0], fileDrop)
+  assert.equal(rt.dispatched[0].clipboardData.getData('text/plain'), 'keep')
+  assert.equal(decoded, 2)
+})
+
+test('synthetic and named images with different pixels remain distinct', async () => {
+  const rt = runtime({
+    createImageBitmap: async (file) => ({
+      width: 1,
+      height: 1,
+      pixels: file.name === 'image.png'
+        ? new Uint8Array([1, 2, 3, 255])
+        : new Uint8Array([4, 5, 6, 255]),
+      close() {},
+    }),
+  })
+  const first = new FakeFile([pngBytes(1, 1, [1])], 'image.png', { type: 'image/png' })
+  const second = new FakeFile([pngBytes(1, 1, [2, 2, 2])], 'real.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([first, second]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(rt.dispatched[0].clipboardData.files.length, 2)
+})
+
+test('ordinary multi-image paste with no duplicate signal stays on the native DSH path', async () => {
+  const rt = runtime()
+  const first = new FakeFile([new Uint8Array([1, 2, 3])], 'first.png', { type: 'image/png' })
+  const second = new FakeFile([new Uint8Array([4, 5, 6, 7])], 'second.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([first, second]))
+  rt.paste(event)
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(event.prevented, false)
+  assert.equal(event.stopped, false)
+  assert.equal(rt.dispatched.length, 0)
+})
+
+test('oversized suspicious duplicate candidates fail open without pixel decoding', async () => {
+  let decoded = 0
+  const rt = runtime({ createImageBitmap: async () => { decoded += 1; throw new Error('must not decode') } })
+  const first = new FakeFile([pngBytes(2, 1, [1])], 'image.png', { type: 'image/png' })
+  const second = new FakeFile([pngBytes(2, 1, [2])], 'real.png', { type: 'image/png' })
+  Object.defineProperty(first, 'size', { value: 17 * 1024 * 1024 })
+  Object.defineProperty(second, 'size', { value: 17 * 1024 * 1024 })
+  const event = originalPaste(rt.editable, clipboard([first, second]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(rt.dispatched[0].clipboardData.files.length, 2)
+  assert.equal(decoded, 0)
+})
+
+test('oversized PNG dimensions are rejected before visual duplicate decoding', async () => {
+  let decoded = 0
+  const rt = runtime({ createImageBitmap: async () => { decoded += 1; throw new Error('must not decode oversized PNG') } })
+  const first = new FakeFile([pngBytes(5000, 2000, [1])], 'image.png', { type: 'image/png' })
+  const second = new FakeFile([pngBytes(5000, 2000, [2, 2])], 'real.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([first, second]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(rt.dispatched[0].clipboardData.files.length, 2)
+  assert.equal(decoded, 0)
 })
