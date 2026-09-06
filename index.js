@@ -1780,6 +1780,13 @@ export function posterizeSvgColor(data, info, palette, timeoutMs = 60000) {
   })
 }
 
+/** Resolve the effective vision_ocr engine without hiding explicit user/model intent. */
+export function resolveVisionOcrEngine(requestedEngine, structuredFollowup = false) {
+  if (requestedEngine === 'tesseract' || requestedEngine === 'vision') return requestedEngine
+  if (structuredFollowup && (requestedEngine === undefined || requestedEngine === 'auto')) return 'vision'
+  return 'auto'
+}
+
 /** OCR image bytes with a local tesseract binary (chi_sim+eng) when available. */
 export async function ocrWithTesseract(bytes, timeoutMs = 60000) {
   const exec = promisify(execFile)
@@ -4839,7 +4846,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     let bootstrapState = structuredBootstrapTurnState.get(session)
     const bootstrapRequired = hasImage && toolEnabled() && structuredBootstrapEnabled()
     if (!bootstrapState || bootstrapState.turn !== payload.turn) {
-      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupCompleted: false, failed: false }
+      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupGuidanceEmitted: false, failed: false }
       structuredBootstrapTurnState.set(session, bootstrapState)
     } else if (bootstrapRequired) {
       bootstrapState.required = true
@@ -4873,7 +4880,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     } else if (
       bootstrapState.required &&
       bootstrapState.completed === true &&
-      bootstrapState.followupCompleted !== true &&
+      bootstrapState.followupGuidanceEmitted !== true &&
       bootstrapState.failed !== true
     ) {
       if (toolEnabled()) activateDeepTools()
@@ -4900,8 +4907,9 @@ export function apply(ctx, config = {}, runtime = {}) {
         '仅当需要逐字保真且无法靠上下文恢复时才用 vision_ocr（如可执行代码、需精确引用的长文档/合同/表单、表格数字、验证码、无语义锚点的生僻字）。' +
         '若确实调用 vision_ocr，把它当需要交叉验证的证据，而不是最终事实。' +
         'UI/截图语义验证优先 vision_detect 或聚焦的 vision_describe；局部目标可用 vision_ground。' +
-        '结构化模式下若确实调用 vision_ocr 且未显式指定引擎，会自动使用视觉模型 OCR（engine=vision）而不是先接受本地 Tesseract 的非空结果，' +
-        '以提高中文/UI 文字准确率。' +
+        '结构化模式下若确实调用 vision_ocr，未指定 engine 或 engine=auto 时会直接使用视觉模型 OCR（engine=vision），' +
+        '而不是先接受本地 Tesseract 的非空结果；显式 engine=tesseract 或 engine=vision 始终保留。' +
+        '这样优先保证中文/UI 文字准确率。' +
         '完成至少 1 次后续证据调用后再进入自由 Agent 循环，可继续调用更多工具或作答。'
       bootstrapReminder = {
         role: 'user',
@@ -4914,6 +4922,18 @@ export function apply(ctx, config = {}, runtime = {}) {
         ],
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
       }
+    }
+    const appendStructuredReminder = (baseMessages) => {
+      if (!bootstrapReminder) return baseMessages
+      const nextMessages = [...baseMessages, bootstrapReminder]
+      if (
+        bootstrapState &&
+        typeof bootstrapReminder.id === 'string' &&
+        bootstrapReminder.id.includes('vision-router-structured-followup-')
+      ) {
+        bootstrapState.followupGuidanceEmitted = true
+      }
+      return nextMessages
     }
     if (hasImage) {
       // ── dsh-vision 并入：pre-step 即时本地翻译 ───────────────────────────
@@ -4993,7 +5013,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               : messages
           return {
             ...decision,
-            messages: [...base, reminder, ...(bootstrapReminder ? [bootstrapReminder] : [])],
+            messages: appendStructuredReminder([...base, reminder]),
           }
         }
       }
@@ -5004,11 +5024,11 @@ export function apply(ctx, config = {}, runtime = {}) {
         const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
         return {
           ...decision,
-          messages: bootstrapReminder ? [...rewrittenHistory, bootstrapReminder] : rewrittenHistory,
+          messages: appendStructuredReminder(rewrittenHistory),
         }
       }
       if (bootstrapReminder) {
-        return { ...decision, messages: [...messages, bootstrapReminder] }
+        return { ...decision, messages: appendStructuredReminder(messages) }
       }
     }
     // Text-only turn after images entered the conversation: replace image
@@ -5022,12 +5042,12 @@ export function apply(ctx, config = {}, runtime = {}) {
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
           ...decision,
-          messages: bootstrapReminder ? [...cleaned.messages, bootstrapReminder] : cleaned.messages,
+          messages: appendStructuredReminder(cleaned.messages),
         }
       }
     }
     if (!hasImage && bootstrapReminder) {
-      return { ...decision, messages: [...messages, bootstrapReminder] }
+      return { ...decision, messages: appendStructuredReminder(messages) }
     }
     return sanitizedToolResults.changed ? { ...decision, messages } : decision
   })
@@ -5652,7 +5672,6 @@ ctx.logger?.info(
         // At least one task-directed evidence tool must run after this baseline.
         if (bootstrapState) {
           bootstrapState.completed = true
-          bootstrapState.followupCompleted = false
         }
         const evidence = normalizeStructuredBootstrapResult(parsed, raw)
         // 存 visual_kind（媒介）与 content_kind（内容主体，general 图的大小类判定键），
@@ -6460,9 +6479,11 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_ocr',
       description:
-        'Transcribe TEXT from an image. Uses the local tesseract engine (chi_sim+eng) when ' +
-        'available — fast, free, offline — and falls back to a vision model otherwise. ' +
-        'Returns the text and which engine produced it. ' +
+        'Transcribe TEXT from an image. ENGINE POLICY: outside a structured 1+x follow-up, omitted ' +
+        'engine / engine=auto tries local Tesseract (chi_sim+eng) first — fast, free, offline — then ' +
+        'falls back to a vision model. During a structured 1+x follow-up, omitted engine / engine=auto ' +
+        'resolves directly to vision-model OCR for accuracy. Explicit engine=tesseract or engine=vision ' +
+        'is always honored. Returns the text and which engine produced it. ' +
         'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
         'as a fallback when vision_describe fails to identify who/what is in a picture ("这是谁" / ' +
         '"这是什么东西" questions are answered by vision_describe, not OCR). If vision_describe returns ' +
@@ -6479,7 +6500,7 @@ ctx.logger?.info(
           image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
           engine: {
             type: 'string',
-            description: '"auto" (default): local tesseract first, vision model fallback; or force "tesseract"/"vision"',
+            description: '"auto" (default): normally Tesseract first then vision fallback; in a structured 1+x follow-up, omitted/"auto" resolves directly to "vision". Explicit "tesseract"/"vision" is always honored.',
           },
         },
         required: ['image'],
@@ -6488,7 +6509,16 @@ ctx.logger?.info(
       output: stringOutput,
       async execute(args, exec) {
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
-        const engine = args.engine === 'tesseract' || args.engine === 'vision' ? args.engine : 'auto'
+        const session = exec && exec.agent && exec.agent.session
+        const bootstrapState = session ? structuredBootstrapTurnState.get(session) : undefined
+        const structuredFollowup = Boolean(
+          structuredBootstrapEnabled() &&
+          bootstrapState &&
+          bootstrapState.required === true &&
+          bootstrapState.completed === true &&
+          bootstrapState.failed !== true
+        )
+        const engine = resolveVisionOcrEngine(args.engine, structuredFollowup)
         // ONE OCR budget shared by tesseract AND the vision fallback: tesseract
         // gets a capped slice (never more than 12s), the vision model only the
         // remainder. The two timeouts can never stack into a multi-minute wait.
@@ -7098,15 +7128,6 @@ ctx.logger?.info(
     // ── progressive exposure: one bootstrap tool + the vision-tools skill ──
     let deepActive = false
     const deepDisposers = []
-    const structuredFollowupEvidenceTools = new Set([
-      'vision_describe',
-      'vision_ground',
-      'vision_detect',
-      'vision_ocr',
-      'vision_colors',
-      'vision_pixel_diff',
-      'vision_long_screenshot_ocr',
-    ])
     activateDeepTools = () => {
       if (deepActive) return '视觉深看工具已在挂载状态。'
       deepActive = true
@@ -7131,50 +7152,9 @@ ctx.logger?.info(
                   }
                   // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
                   // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
-                  let effectiveArgs = args
-                  if (
-                    structuredBootstrapEnabled() &&
-                    state &&
-                    state.required &&
-                    state.completed === true &&
-                    def.name === 'vision_ocr' &&
-                    (!args || args.engine === undefined || args.engine === 'auto')
-                  ) {
-                    // Local Tesseract auto mode accepts any non-empty result, which is often noisy on Chinese/UI screenshots.
-                    // In the experimental structured flow, make OCR an accuracy-first visual verification unless explicitly forced local.
-                    effectiveArgs = { ...(args ?? {}), engine: 'vision' }
-                  }
-                  const result = await def.execute(effectiveArgs, exec)
-                  if (
-                    structuredBootstrapEnabled() &&
-                    state &&
-                    state.required &&
-                    state.completed === true &&
-                    state.failed !== true &&
-                    structuredFollowupEvidenceTools.has(def.name)
-                  ) {
-                    // 只在实际产出证据后递增配额并标记完成：后端故障/适配器
-                    // 错误（ok:false，对象或 JSON 字符串）不计数、不置完成，
-                    // 模型仍保有提醒并可重试（maintainer review blocking 2）。
-                    // 各证据工具的成功形态不同（纯文本 / 数组 JSON / ok:true
-                    // JSON），统一以"结果不含 ok:false"判定产出证据。
-                    let evidenceFailure = false
-                    if (result && typeof result === 'object' && result.ok === false) {
-                      evidenceFailure = true
-                    } else if (typeof result === 'string' && result.trim() !== '') {
-                      try {
-                        const parsed = JSON.parse(result)
-                        if (parsed && typeof parsed === 'object' && parsed.ok === false) {
-                          evidenceFailure = true
-                        }
-                      } catch {
-                        evidenceFailure = false // plain text = evidence produced
-                      }
-                    }
-                    if (!evidenceFailure) {
-                      state.followupCompleted = true
-                    }
-                  }
+                  // Tool-specific execution policy belongs to the tool itself; this wrapper owns
+                  // only bootstrap ordering and never rewrites model/user arguments.
+                  const result = await def.execute(args, exec)
                   return result
                 },
               }

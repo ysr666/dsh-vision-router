@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   installStructuredFlowHardening,
-  producedUsableStructuredEvidence,
+  producedUsableToolEvidence,
 } from '../lib/structured-flow-hardening.js'
 
 function harness(config = {}) {
@@ -51,25 +51,112 @@ function mixedGuard(decision) {
   return decision.messages.find((message) => String(message?.id).includes('structured-mixed-guard'))
 }
 
-test('quota evidence classifier rejects empty containers and metadata-only success', () => {
-  for (const empty of [
-    undefined,
-    null,
-    '',
-    [],
-    {},
-    { ok: true },
-    { elements: [] },
-    { ok: true, elements: [] },
-    JSON.stringify({ ok: true, elements: [] }),
-  ]) {
-    assert.equal(producedUsableStructuredEvidence(empty), false)
-  }
+function evidenceGuard(decision) {
+  return decision.messages.find((message) => String(message?.id).includes('structured-evidence-guard'))
+}
 
-  assert.equal(producedUsableStructuredEvidence('visible text'), true)
-  assert.equal(producedUsableStructuredEvidence({ elements: [{ label: 'button' }] }), true)
-  assert.equal(producedUsableStructuredEvidence({ match: false }), true)
-  assert.equal(producedUsableStructuredEvidence({ count: 0 }), true)
+test('tool-specific evidence semantics distinguish observations from empty or malformed results', () => {
+  const cases = [
+    ['vision_describe', 'visible text', {}, true],
+    ['vision_describe', '(the vision model returned empty content)', {}, false],
+    ['vision_describe', JSON.stringify({ ok: false, code: 'VISION_TIMEOUT' }), {}, false],
+    [
+      'vision_describe',
+      JSON.stringify({ summary: 'No matching control is visible.', layout: [], entities: [], text: '' }),
+      { json: true },
+      true,
+    ],
+    [
+      'vision_describe',
+      JSON.stringify({ summary: '', layout: [], entities: [], text: '' }),
+      { json: true },
+      false,
+    ],
+    [
+      'vision_describe',
+      'vision_describe: the model did not produce valid JSON. Raw output:\nbutton',
+      { json: true },
+      false,
+    ],
+    ['vision_ground', JSON.stringify({ x1: 2, y1: 3, x2: 20, y2: 30, width: 100, height: 80 }), {}, true],
+    ['vision_ground', JSON.stringify({ count: 0 }), {}, false],
+    ['vision_detect', JSON.stringify({ width: 100, height: 80, elements: [] }), {}, true],
+    [
+      'vision_detect',
+      JSON.stringify({ width: 100, height: 80, elements: [{ number: 2, label: 'button', box: { x1: 1, y1: 1, x2: 10, y2: 10 } }] }),
+      {},
+      false,
+    ],
+    ['vision_detect', JSON.stringify({ elements: [] }), {}, false],
+    ['vision_ocr', JSON.stringify({ engine: 'tesseract', text: '' }), {}, true],
+    ['vision_ocr', JSON.stringify({ engine: 'vision', text: '42' }), {}, true],
+    ['vision_ocr', JSON.stringify({ engine: 'none', text: '' }), {}, false],
+    ['vision_colors', JSON.stringify([]), {}, true],
+    ['vision_colors', JSON.stringify([{ hex: '#102030', count: 8, share: 0.5 }]), {}, true],
+    ['vision_colors', JSON.stringify([{ hex: '#102030', count: 0, share: 0 }]), {}, false],
+    ['vision_colors', JSON.stringify([{ hex: 'blue', count: 8, share: 0.5 }]), {}, false],
+    [
+      'vision_pixel_diff',
+      JSON.stringify({ width: 10, height: 10, differingPixels: 0, totalPixels: 100, diffRatio: 0, worstRegions: [] }),
+      {},
+      true,
+    ],
+    [
+      'vision_pixel_diff',
+      JSON.stringify({ width: 10, height: 10, differingPixels: 101, totalPixels: 100, diffRatio: 1, worstRegions: [] }),
+      {},
+      false,
+    ],
+    ['vision_pixel_diff', JSON.stringify({ diffRatio: 0 }), {}, false],
+    [
+      'vision_long_screenshot_ocr',
+      JSON.stringify({
+        text: '',
+        chunks: 2,
+        engines: { tesseract: 2 },
+        markdownPath: '/tmp/ocr.md',
+        manifestPath: '/tmp/manifest.json',
+        artifactsDir: '/tmp/ocr',
+      }),
+      {},
+      true,
+    ],
+    [
+      'vision_long_screenshot_ocr',
+      JSON.stringify({
+        text: '',
+        chunks: 2,
+        engines: { tesseract: '2' },
+        markdownPath: '/tmp/ocr.md',
+        manifestPath: '/tmp/manifest.json',
+        artifactsDir: '/tmp/ocr',
+      }),
+      {},
+      false,
+    ],
+    [
+      'vision_long_screenshot_ocr',
+      JSON.stringify({
+        text: '',
+        chunks: 2,
+        engines: { failed: 1, skipped: 1 },
+        markdownPath: '/tmp/ocr.md',
+        manifestPath: '/tmp/manifest.json',
+        artifactsDir: '/tmp/ocr',
+      }),
+      {},
+      false,
+    ],
+    ['vision_crop', JSON.stringify({ path: '/tmp/crop.png' }), {}, false],
+  ]
+
+  for (const [toolName, value, args, expected] of cases) {
+    assert.equal(
+      producedUsableToolEvidence(toolName, value, args),
+      expected,
+      `${toolName}: ${value}`,
+    )
+  }
 })
 
 test('explicit deep-dive cap applies globally even when bootstrap is not used', async () => {
@@ -104,7 +191,7 @@ test('empty successful-looking results do not consume the explicit call cap', as
     async execute() {
       calls += 1
       return calls === 1
-        ? JSON.stringify({ ok: true, elements: [] })
+        ? '(the vision model returned empty content)'
         : 'real evidence'
     },
   })
@@ -112,7 +199,7 @@ test('empty successful-looking results do not consume the explicit call cap', as
   const session = {}
   const exec = { agent: { session } }
   await preStep(h, session)
-  assert.match(await h.defs.get('vision_describe').execute({ question: 'empty' }, exec), /"elements":\[\]/)
+  assert.equal(await h.defs.get('vision_describe').execute({ question: 'empty' }, exec), '(the vision model returned empty content)')
   assert.equal(await h.defs.get('vision_describe').execute({ question: 'real' }, exec), 'real evidence')
   const blocked = JSON.parse(await h.defs.get('vision_describe').execute({ question: 'third' }, exec))
   assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
@@ -132,7 +219,7 @@ test('three consecutive no-progress follow-ups trip a bounded fuse with unlimite
     name: 'vision_describe',
     async execute() {
       evidenceCalls += 1
-      return JSON.stringify({ ok: true, elements: [] })
+      return '(the vision model returned empty content)'
     },
   })
 
@@ -169,7 +256,7 @@ test('a successful evidence advance resets the non-progress fuse', async () => {
     name: 'vision_describe',
     async execute() {
       evidenceCalls += 1
-      if (evidenceCalls <= 2) return JSON.stringify({ ok: true, elements: [] })
+      if (evidenceCalls <= 2) return '(the vision model returned empty content)'
       return 'usable evidence'
     },
   })
@@ -188,7 +275,7 @@ test('a successful evidence advance resets the non-progress fuse', async () => {
   assert.equal(Boolean(stopGuard(decision)), false)
 })
 
-test('mixed flow cannot complete two branches through repeated generic full-image describe calls', async () => {
+test('mixed classification is advisory and one usable task-directed observation completes x>=1', async () => {
   const h = harness({ visionDepthMaxCalls: 0, visionTurnBudgetMs: 0 })
   h.wrapped.tools.register({
     name: 'vision_bootstrap',
@@ -199,13 +286,7 @@ test('mixed flow cannot complete two branches through repeated generic full-imag
   h.wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
-      return 'generic whole-image evidence'
-    },
-  })
-  h.wrapped.tools.register({
-    name: 'vision_ground',
-    async execute() {
-      return JSON.stringify({ boxes: [{ x: 1, y: 1, w: 10, h: 10 }] })
+      return 'generic whole-image evidence relevant to the user task'
     },
   })
 
@@ -215,25 +296,15 @@ test('mixed flow cannot complete two branches through repeated generic full-imag
   await h.defs.get('vision_bootstrap').execute({}, exec)
 
   const before = await preStep(h, session)
-  assert.match(mixedGuard(before)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(before)?.content?.[0]?.text ?? '', /ui/)
+  assert.equal(Boolean(mixedGuard(before)), false)
+  assert.ok(evidenceGuard(before))
 
-  await h.defs.get('vision_describe').execute({ question: 'describe the image' }, exec)
-  const afterFirst = await preStep(h, session)
-  assert.match(mixedGuard(afterFirst)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(afterFirst)?.content?.[0]?.text ?? '', /ui/)
+  assert.equal(
+    await h.defs.get('vision_describe').execute({ question: 'verify what matters to the user' }, exec),
+    'generic whole-image evidence relevant to the user task',
+  )
 
-  await h.defs.get('vision_describe').execute({ question: 'describe the image' }, exec)
-  const afterSecond = await preStep(h, session)
-  assert.match(mixedGuard(afterSecond)?.content?.[0]?.text ?? '', /document/)
-  assert.match(mixedGuard(afterSecond)?.content?.[0]?.text ?? '', /ui/)
-
-  await h.defs.get('vision_ground').execute({ question: 'locate the UI control' }, exec)
-  const oneLeft = await preStep(h, session)
-  assert.match(mixedGuard(oneLeft)?.content?.[0]?.text ?? '', /document/)
-  assert.doesNotMatch(mixedGuard(oneLeft)?.content?.[0]?.text ?? '', /unverified branches: ui|未验证分支：ui/)
-
-  await h.defs.get('vision_describe').execute({ question: 'read the remaining document branch' }, exec)
   const complete = await preStep(h, session)
+  assert.equal(Boolean(evidenceGuard(complete)), false)
   assert.equal(Boolean(mixedGuard(complete)), false)
 })

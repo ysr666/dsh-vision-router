@@ -677,6 +677,11 @@ test('Test 7: injected descriptions forbid OCR-as-retry and demand stop-on-backe
   assert.ok(ocr.description.includes('does NOT recognize people'), ocr.description)
   assert.ok(ocr.description.includes('vision_ocr reads letters'), ocr.description)
   assert.ok(ocr.description.includes('do not chain these tools as retries'), ocr.description)
+  assert.ok(ocr.description.includes('outside a structured 1+x follow-up'), ocr.description)
+  assert.ok(ocr.description.includes('omitted engine / engine=auto'), ocr.description)
+  assert.ok(ocr.description.includes('Explicit engine=tesseract or engine=vision is always honored'), ocr.description)
+  assert.ok(ocr.parameters.properties.engine.description.includes('structured 1+x follow-up'))
+  assert.ok(ocr.parameters.properties.engine.description.includes('Explicit "tesseract"/"vision" is always honored'))
 
   const describe = findTool(mock, 'vision_describe')
   assert.ok(describe.description.includes('FAILURE SEMANTICS'), describe.description)
