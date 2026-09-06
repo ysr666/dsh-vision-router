@@ -221,7 +221,7 @@ test('issue #284 browser toggle infers a unique custom wrapper when settings sco
     inject(dependencies, callback) { injection = { dependencies, callback } },
   }
   plugin.apply(ctx)
-  assert.deepEqual(Array.from(injection.dependencies), ['slots', 'modelDirectories'])
+  assert.deepEqual(Array.from(injection.dependencies), ['slots', 'modelDirectories', 'sessions', 'remote'])
 
   let registration
   let Component
