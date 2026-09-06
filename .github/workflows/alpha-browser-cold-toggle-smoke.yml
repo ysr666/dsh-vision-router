@@ -177,7 +177,19 @@ jobs:
 
       - name: Classified harness stage — cold reload
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-reload'
-        run: echo 'Smoke failed while hard-refreshing the cold browser state.'
+        run: echo 'Smoke failed while hard-refreshing the browser before the required cold-session retest.'
+
+      - name: Classified harness stage — cold first-run overlays
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-overlays'
+        run: echo 'Smoke failed while restoring the refreshed browser to an interactive state.'
+
+      - name: Classified harness stage — refreshed Session Intent
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-session-intent'
+        run: echo 'Smoke failed while creating a new Session Intent after the hard refresh.'
+
+      - name: Classified harness stage — refreshed Workspace selection
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-workspace'
+        run: echo 'Smoke failed while binding the refreshed Session Intent to the persisted real Workspace.'
 
       - name: Classified harness stage — cold toggle
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-toggle'

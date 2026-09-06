@@ -194,6 +194,27 @@ async function adoptRealWorkspace(page, workspacePath) {
   await picker.waitFor({ state: 'hidden', timeout: 30_000 })
 }
 
+async function selectedWorkspaceName(page) {
+  const selector = page.getByRole('button', { name: 'Choose workspace', exact: true })
+  await selector.waitFor({ state: 'visible', timeout: 30_000 })
+  return { selector, name: (await selector.innerText()).trim() }
+}
+
+async function ensureExistingWorkspaceSelected(page, expectedName) {
+  let current = await selectedWorkspaceName(page)
+  if (current.name === expectedName) return
+
+  await current.selector.click()
+  const item = page.getByRole('menuitem', { name: expectedName, exact: true })
+  await item.waitFor({ state: 'visible', timeout: 30_000 })
+  await item.click()
+
+  current = await selectedWorkspaceName(page)
+  if (current.name !== expectedName) {
+    throw new Error(`workspace selection did not project ${JSON.stringify(expectedName)} (got ${JSON.stringify(current.name)})`)
+  }
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-browser-smoke-'))
 const workspacePath = join(root, 'workspace')
 mkdirSync(workspacePath)
@@ -277,26 +298,19 @@ try {
   stage = 'workspace-adopt'
   // Prove the Host mutation landed through an alpha.4-owned projection instead
   // of coupling this smoke to the composer's editor implementation.
-  const workspaceSelector = page.getByRole('button', { name: 'Choose workspace', exact: true })
-  await workspaceSelector.waitFor({ state: 'visible', timeout: 30_000 })
-  const selectedWorkspace = (await workspaceSelector.innerText()).trim()
-  if (selectedWorkspace !== 'workspace') {
-    throw new Error(`workspace adoption did not project the expected selection (got ${JSON.stringify(selectedWorkspace)})`)
-  }
+  await ensureExistingWorkspaceSelected(page, 'workspace')
 
   // Acceptance edge: exact alpha.4 InputBar renders conversation.input.right
   // before conversation.input.model. DVR registers the Vision toggle in the
   // right slot; the stock model seat is the next consumer of the same
-  // per-session ModelDirectory. This fresh browser + fresh Session Intent is
-  // therefore the real first-render seam relevant to #387. Reloading here is
-  // invalid because an unsent Session Intent is intentionally page-local.
+  // per-session ModelDirectory. This first fresh Session Intent is a baseline
+  // that proves the real browser path is healthy before the required reload.
   stage = 'session-scope'
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
   await page.waitForTimeout(750)
 
-  stage = 'diagnostics'
-  const injectionErrors = diagnostics.filter((line) =>
+  let injectionErrors = diagnostics.filter((line) =>
     /cannot get property ["']remote\.session["'] without inject/i.test(line),
   )
   if (injectionErrors.length > 0) {
@@ -308,6 +322,47 @@ try {
     throw new Error(`browser pageerror during first cold Vision toggle smoke:\n${diagnostics.join('\n')}`)
   }
 
+  // #387 explicitly requires a real Host retest after page refresh. An unsent
+  // Session Intent is intentionally page-local, so do not expect that draft
+  // intent to survive reload. Reload the browser (cold ModelDirectoryResolver),
+  // then create a NEW Session Intent against the persisted real Workspace.
+  stage = 'cold-reload'
+  diagnostics = []
+  await page.reload({ waitUntil: 'domcontentloaded' })
+
+  stage = 'cold-overlays'
+  await dismissFirstRunOverlays(page)
+
+  stage = 'cold-session-intent'
+  const coldNewSession = page.getByRole('button', { name: 'New session', exact: true }).first()
+  await coldNewSession.waitFor({ state: 'visible', timeout: 30_000 })
+  await coldNewSession.click()
+
+  stage = 'cold-workspace'
+  await ensureExistingWorkspaceSelected(page, 'workspace')
+
+  // Do not open the stock model picker. The Vision slot must be the first
+  // consumer that can cold-resolve this session-scoped model directory.
+  stage = 'cold-toggle'
+  await page.locator('[data-vision-router-mode-toggle="true"]').waitFor({
+    state: 'visible',
+    timeout: 30_000,
+  })
+  await page.waitForTimeout(750)
+
+  stage = 'diagnostics'
+  injectionErrors = diagnostics.filter((line) =>
+    /cannot get property ["']remote\.session["'] without inject/i.test(line),
+  )
+  if (injectionErrors.length > 0) {
+    failureKind = 'product-injection-regression'
+    throw new Error(`refreshed cold Vision toggle hit the Cordis injection regression:\n${injectionErrors.join('\n')}`)
+  }
+  if (diagnostics.some((line) => line.startsWith('pageerror:'))) {
+    failureKind = 'browser-pageerror'
+    throw new Error(`browser pageerror during refreshed cold Vision toggle smoke:\n${diagnostics.join('\n')}`)
+  }
+
   stage = 'complete'
   detail = 'passed'
   console.log(JSON.stringify({
@@ -316,6 +371,7 @@ try {
     dvr: 'current-checkout',
     workspaceAdoptedThroughRealUi: true,
     firstSessionIntentVisionToggleVisible: true,
+    refreshedSessionIntentVisionToggleVisible: true,
     nativeModelPickerOpened: false,
     modelRequestSent: false,
   }))
