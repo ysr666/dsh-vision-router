@@ -32,13 +32,14 @@ test('core owns bootstrap presentation while hardening is the sole x>=1 evidence
   assert.doesNotMatch(hardening, /mixedAttemptSignatures/)
 
   // OCR execution policy is tool-owned and model-visible: the generic deep-tool
-  // wrapper must not rewrite arguments, while vision_ocr resolves auto/omitted
-  // engine from the same structured follow-up state and preserves explicit engines.
-  assert.match(core, /const engine = resolveVisionOcrEngine\(args\.engine, structuredFollowup\)/)
-  assert.match(core, /During a structured 1\+x follow-up, omitted engine \/ engine=auto/)
-  assert.match(core, /resolves directly to vision-model OCR for accuracy/)
-  assert.match(core, /Explicit engine=tesseract or engine=vision/)
+  // wrapper must not rewrite arguments, and structured mode must not silently
+  // change the public auto=Tesseract-first-then-vision-fallback contract.
+  assert.match(core, /const engine = resolveVisionOcrEngine\(args\.engine\)/)
+  assert.match(core, /engine \/ engine=auto always tries local/)
+  assert.match(core, /Structured 1\+x follow-up does not change this order/)
+  assert.match(core, /engine=tesseract or engine=vision/)
   assert.match(core, /is always honored\. Returns the text and which engine produced it/)
+  assert.doesNotMatch(core, /resolveVisionOcrEngine\(args\.engine, structuredFollowup\)/)
   assert.doesNotMatch(core, /effectiveArgs = \{ \.\.\.\(args \?\? \{\}\), engine: 'vision' \}/)
   assert.doesNotMatch(core, /def\.name === 'vision_ocr' &&/)
 })

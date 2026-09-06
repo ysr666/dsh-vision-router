@@ -1781,9 +1781,8 @@ export function posterizeSvgColor(data, info, palette, timeoutMs = 60000) {
 }
 
 /** Resolve the effective vision_ocr engine without hiding explicit user/model intent. */
-export function resolveVisionOcrEngine(requestedEngine, structuredFollowup = false) {
+export function resolveVisionOcrEngine(requestedEngine) {
   if (requestedEngine === 'tesseract' || requestedEngine === 'vision') return requestedEngine
-  if (structuredFollowup && (requestedEngine === undefined || requestedEngine === 'auto')) return 'vision'
   return 'auto'
 }
 
@@ -4907,9 +4906,8 @@ export function apply(ctx, config = {}, runtime = {}) {
         '仅当需要逐字保真且无法靠上下文恢复时才用 vision_ocr（如可执行代码、需精确引用的长文档/合同/表单、表格数字、验证码、无语义锚点的生僻字）。' +
         '若确实调用 vision_ocr，把它当需要交叉验证的证据，而不是最终事实。' +
         'UI/截图语义验证优先 vision_detect 或聚焦的 vision_describe；局部目标可用 vision_ground。' +
-        '结构化模式下若确实调用 vision_ocr，未指定 engine 或 engine=auto 时会直接使用视觉模型 OCR（engine=vision），' +
-        '而不是先接受本地 Tesseract 的非空结果；显式 engine=tesseract 或 engine=vision 始终保留。' +
-        '这样优先保证中文/UI 文字准确率。' +
+        'vision_ocr 的 engine=auto 始终先尝试本地 Tesseract，失败或空结果时再回退视觉模型；' +
+        '结构化模式不会改变这个执行顺序。若需要强制视觉模型 OCR，请显式指定 engine=vision。' +
         '完成至少 1 次后续证据调用后再进入自由 Agent 循环，可继续调用更多工具或作答。'
       bootstrapReminder = {
         role: 'user',
@@ -6479,11 +6477,10 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_ocr',
       description:
-        'Transcribe TEXT from an image. ENGINE POLICY: outside a structured 1+x follow-up, omitted ' +
-        'engine / engine=auto tries local Tesseract (chi_sim+eng) first — fast, free, offline — then ' +
-        'falls back to a vision model. During a structured 1+x follow-up, omitted engine / engine=auto ' +
-        'resolves directly to vision-model OCR for accuracy. Explicit engine=tesseract or engine=vision ' +
-        'is always honored. Returns the text and which engine produced it. ' +
+        'Transcribe TEXT from an image. ENGINE POLICY: omitted engine / engine=auto always tries local ' +
+        'Tesseract (chi_sim+eng) first — fast, free, offline — then falls back to a vision model if local ' +
+        'OCR fails or returns no text. Structured 1+x follow-up does not change this order. Explicit ' +
+        'engine=tesseract or engine=vision is always honored. Returns the text and which engine produced it. ' +
         'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
         'as a fallback when vision_describe fails to identify who/what is in a picture ("这是谁" / ' +
         '"这是什么东西" questions are answered by vision_describe, not OCR). If vision_describe returns ' +
@@ -6500,7 +6497,7 @@ ctx.logger?.info(
           image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
           engine: {
             type: 'string',
-            description: '"auto" (default): normally Tesseract first then vision fallback; in a structured 1+x follow-up, omitted/"auto" resolves directly to "vision". Explicit "tesseract"/"vision" is always honored.',
+            description: '"auto" (default): always try local Tesseract first, then fall back to the vision model if local OCR fails or returns no text. Structured 1+x does not change this order; use explicit "tesseract"/"vision" to force an engine.',
           },
         },
         required: ['image'],
@@ -6509,16 +6506,7 @@ ctx.logger?.info(
       output: stringOutput,
       async execute(args, exec) {
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
-        const session = exec && exec.agent && exec.agent.session
-        const bootstrapState = session ? structuredBootstrapTurnState.get(session) : undefined
-        const structuredFollowup = Boolean(
-          structuredBootstrapEnabled() &&
-          bootstrapState &&
-          bootstrapState.required === true &&
-          bootstrapState.completed === true &&
-          bootstrapState.failed !== true
-        )
-        const engine = resolveVisionOcrEngine(args.engine, structuredFollowup)
+        const engine = resolveVisionOcrEngine(args.engine)
         // ONE OCR budget shared by tesseract AND the vision fallback: tesseract
         // gets a capped slice (never more than 12s), the vision model only the
         // remainder. The two timeouts can never stack into a multi-minute wait.
