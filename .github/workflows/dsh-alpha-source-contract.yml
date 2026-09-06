@@ -22,6 +22,7 @@ on:
       - 'tests/adapter-prepare-call-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
+      - 'tests/clipboard-image-paste-compat.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   push:
     branches: [main]
@@ -45,6 +46,7 @@ on:
       - 'tests/adapter-prepare-call-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
+      - 'tests/clipboard-image-paste-compat.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   workflow_dispatch:
 
@@ -111,3 +113,4 @@ jobs:
           tests/alpha1-browser-lifecycle-integration.test.js
           tests/alpha1-web-auth-boundary.test.js
           tests/attachment-admission-policy.test.js
+          tests/clipboard-image-paste-compat.test.js
