@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -94,6 +94,21 @@ async function captureFailureState({ page, error, stage, kind, detail, diagnosti
           visible: Boolean(button.offsetWidth || button.offsetHeight || button.getClientRects().length),
           outerHTML: button.outerHTML.slice(0, 800),
         })),
+        inputs: Array.from(document.querySelectorAll('input, textarea')).slice(0, 30).map((input, index) => ({
+          index,
+          tag: input.tagName.toLowerCase(),
+          value: 'value' in input ? String(input.value).slice(0, 500) : null,
+          placeholder: input.getAttribute('placeholder'),
+          ariaLabel: input.getAttribute('aria-label'),
+          disabled: 'disabled' in input ? Boolean(input.disabled) : false,
+          visible: Boolean(input.offsetWidth || input.offsetHeight || input.getClientRects().length),
+        })),
+        dialogs: Array.from(document.querySelectorAll('[role="dialog"]')).slice(0, 10).map((dialog, index) => ({
+          index,
+          text: (dialog.textContent || '').trim().slice(0, 2_000),
+          ariaLabel: dialog.getAttribute('aria-label'),
+          ariaLabelledBy: dialog.getAttribute('aria-labelledby'),
+        })),
         bodyText: (document.body?.innerText || '').slice(0, 12_000),
       }))
     } catch (captureError) {
@@ -160,7 +175,42 @@ async function dismissFirstRunOverlays(page) {
   }
 }
 
+async function adoptRealWorkspace(page, workspacePath) {
+  // With zero registered Workspaces, exact alpha.4 consumes the hero's
+  // "Choose workspace" request directly into the occupied directory-flow
+  // instead of rendering a one-item "Add workspace…" menu. On headless Linux
+  // directory-picker-auto resolves to the in-app browse backend, so this is a
+  // real Host-backed workspace mutation without an OS chooser or RPC shortcut.
+  const chooseWorkspace = page.getByRole('button', { name: 'Choose workspace', exact: true })
+  await chooseWorkspace.waitFor({ state: 'visible', timeout: 30_000 })
+  await chooseWorkspace.click()
+
+  const picker = page.getByRole('dialog', { name: 'Select Workspace Directory', exact: true })
+  await picker.waitFor({ state: 'visible', timeout: 30_000 })
+
+  const editPath = picker.getByRole('button', { name: 'Edit path', exact: true })
+  await editPath.waitFor({ state: 'visible', timeout: 30_000 })
+  await editPath.click()
+
+  const pathInput = picker.getByRole('textbox', { name: 'Edit path', exact: true })
+  await pathInput.waitFor({ state: 'visible', timeout: 10_000 })
+  await pathInput.fill(workspacePath)
+  await pathInput.press('Enter')
+  // Successful submitted navigation closes the path editor. Waiting for that
+  // edge proves the Host resolved the exact path before Open can adopt it.
+  await pathInput.waitFor({ state: 'hidden', timeout: 30_000 })
+
+  const open = picker.getByRole('button', { name: 'Open', exact: true })
+  // Open is disabled while navigation/loading/draft state is pending, so its
+  // ordinary click actionability wait prevents accidentally adopting the old
+  // home-directory target.
+  await open.click({ timeout: 30_000 })
+  await picker.waitFor({ state: 'hidden', timeout: 30_000 })
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-browser-smoke-'))
+const workspacePath = join(root, 'workspace')
+mkdirSync(workspacePath)
 const env = {
   ...process.env,
   DSH_HOME: join(root, '.dsh'),
@@ -240,7 +290,18 @@ try {
   await newSession.waitFor({ timeout: 30_000 })
   await newSession.click()
 
-  stage = 'initial-toggle'
+  stage = 'workspace-picker'
+  await adoptRealWorkspace(page, workspacePath)
+
+  stage = 'workspace-adopt'
+  // The hero's workspace-blocked placeholder is the exact alpha.4 signal that
+  // the Session Intent still lacks a target. Its replacement proves the real
+  // Workspace has been adopted before we attribute a missing toggle to DVR.
+  await page.getByPlaceholder('Describe what you want to build... / commands, @ files or sessions', {
+    exact: true,
+  }).waitFor({ state: 'visible', timeout: 30_000 })
+
+  stage = 'session-scope'
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
 
@@ -278,6 +339,8 @@ try {
     ok: true,
     dsh: process.env.DSH_EXPECTED_VERSION || 'unknown',
     dvr: 'current-checkout',
+    workspaceAdopted: true,
+    sessionScopedComposerVisible: true,
     toggleVisibleAfterColdReload: true,
   }))
 } catch (error) {
