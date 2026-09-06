@@ -69,9 +69,62 @@ jobs:
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
 
       - name: Run cold Vision toggle against real Host and Chromium
+        id: smoke
         working-directory: dsh-alpha
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.2-alpha.4
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+
+      - name: Classified product regression — remote.session injection
+        if: steps.smoke.outputs.kind == 'product-injection-regression'
+        run: echo 'Cold toggle reproduced the remote.session injection regression.'
+
+      - name: Classified browser regression — pageerror
+        if: steps.smoke.outputs.kind == 'browser-pageerror'
+        run: echo 'Cold toggle produced a browser pageerror.'
+
+      - name: Classified harness stage — resolve Playwright
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'resolve-playwright'
+        run: echo 'Smoke failed while resolving Playwright.'
+
+      - name: Classified harness stage — install plugin
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'plugin-install'
+        run: echo 'Smoke failed while installing the current DVR checkout.'
+
+      - name: Classified harness stage — start Host
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'host-start'
+        run: echo 'Smoke failed while starting the real DSH Host.'
+
+      - name: Classified harness stage — launch browser
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
+        run: echo 'Smoke failed while launching Chromium.'
+
+      - name: Classified harness stage — open page
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'open-page'
+        run: echo 'Smoke failed while opening the real DSH Web page.'
+
+      - name: Classified harness stage — create session
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'new-session'
+        run: echo 'Smoke failed while creating a fresh session.'
+
+      - name: Classified harness stage — initial toggle
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'initial-toggle'
+        run: echo 'Smoke failed before the first Vision toggle became visible.'
+
+      - name: Classified harness stage — cold reload
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-reload'
+        run: echo 'Smoke failed while hard-refreshing the cold browser state.'
+
+      - name: Classified harness stage — cold toggle
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'cold-toggle'
+        run: echo 'Smoke failed waiting for the Vision toggle after a cold reload.'
+
+      - name: Cold Vision toggle smoke passed
+        if: steps.smoke.outputs.status == 'pass'
+        run: echo 'Real DSH Host + Chromium cold Vision toggle smoke passed.'
+
+      - name: Fail classified smoke
+        if: steps.smoke.outputs.status == 'fail'
+        run: exit 1
