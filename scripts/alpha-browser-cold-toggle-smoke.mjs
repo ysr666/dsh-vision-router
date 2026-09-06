@@ -90,7 +90,19 @@ let detail = 'none'
 let failed = false
 
 try {
-  const { chromium } = await import(pathToFileURL(webRequire.resolve('playwright')).href)
+  // Resolve and load Playwright from the exact DSH web workspace package.
+  // createRequire preserves the package's CommonJS/conditional-export shape;
+  // importing its resolved entry URL can expose only `default` under Node 22,
+  // leaving a named `chromium` destructure undefined.
+  const playwright = webRequire('playwright')
+  const chromium = playwright?.chromium
+  if (
+    !chromium ||
+    typeof chromium.executablePath !== 'function' ||
+    typeof chromium.launch !== 'function'
+  ) {
+    throw new Error('Playwright chromium API is unavailable from @deepseek-ai/dsh-web-frontend')
+  }
 
   stage = 'plugin-install'
   installCurrentPlugin(env)
