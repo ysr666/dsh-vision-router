@@ -239,6 +239,68 @@ test('BMP clipboard image is converted to PNG and text/plain is preserved for DS
   assert.equal(rt.listeners.has('paste:true'), false)
 })
 
+test('QQ/WeChat .png declared as image/png but carrying JPEG bytes is corrected before DSH intake', async () => {
+  const rt = runtime()
+  let decoded = 0
+  rt.window.createImageBitmap = async () => { decoded += 1; throw new Error('canonical JPEG retype must not decode') }
+  const mislabeled = new FakeFile([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10])], 'qq-export.png', {
+    type: 'image/png',
+    lastModified: 9,
+  })
+  const event = originalPaste(rt.editable, clipboard([mislabeled], 'caption'))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
+  const file = rt.dispatched[0].clipboardData.files[0]
+  assert.equal(file.type, 'image/jpeg')
+  assert.equal(file.name, 'qq-export.jpg')
+  assert.equal(file.lastModified, 9)
+  assert.equal(rt.dispatched[0].clipboardData.getData('text/plain'), 'caption')
+  assert.equal(decoded, 0)
+})
+
+test('supported MIME mismatch is reconciled in both directions from magic bytes', async () => {
+  const rt = runtime()
+  const mislabeled = new FakeFile([pngBytes(2, 1, [7])], 'wechat.jpg', { type: 'image/jpeg' })
+  const event = originalPaste(rt.editable, clipboard([mislabeled]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  const file = rt.dispatched[0].clipboardData.files[0]
+  assert.equal(file.type, 'image/png')
+  assert.equal(file.name, 'wechat.png')
+})
+
+test('supported MIME that hides BMP bytes is converted instead of merely retyped', async () => {
+  const rt = runtime()
+  let decoded = 0
+  rt.window.createImageBitmap = async () => {
+    decoded += 1
+    return { width: 2, height: 3, close() {} }
+  }
+  const mislabeled = new FakeFile([bmpBytes()], 'clipboard.png', { type: 'image/png' })
+  const event = originalPaste(rt.editable, clipboard([mislabeled]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  const file = rt.dispatched[0].clipboardData.files[0]
+  assert.equal(file.type, 'image/png')
+  assert.equal(file.name, 'clipboard.png')
+  assert.equal(decoded, 1)
+})
+
+test('image-like filename is reconciled even when the browser declares application/octet-stream', async () => {
+  const rt = runtime()
+  const mislabeled = new FakeFile([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], 'qq-cache.png', {
+    type: 'application/octet-stream',
+  })
+  const event = originalPaste(rt.editable, clipboard([mislabeled]))
+  rt.paste(event)
+  await settleUntil(() => rt.dispatched.length === 1)
+  const file = rt.dispatched[0].clipboardData.files[0]
+  assert.equal(file.type, 'image/jpeg')
+  assert.equal(file.name, 'qq-cache.jpg')
+})
+
 test('empty MIME with PNG bytes is retyped without image decoding', async () => {
   const rt = runtime()
   let decoded = 0
@@ -251,15 +313,18 @@ test('empty MIME with PNG bytes is retyped without image decoding', async () => 
   assert.equal(decoded, 0)
 })
 
-test('ordinary supported image paste is byte-path transparent', async () => {
+test('ordinary supported image is magic-checked but replayed as the original File without decoding or re-encoding', async () => {
   const rt = runtime()
-  const png = new FakeFile([new Uint8Array([1, 2, 3])], 'ok.png', { type: 'image/png' })
+  let decoded = 0
+  rt.window.createImageBitmap = async () => { decoded += 1; throw new Error('canonical PNG must not decode') }
+  const png = new FakeFile([pngBytes(2, 1, [1])], 'ok.png', { type: 'image/png' })
   const event = originalPaste(rt.editable, clipboard([png]))
   rt.paste(event)
-  await new Promise(resolve => setTimeout(resolve, 0))
-  assert.equal(event.prevented, false)
-  assert.equal(event.stopped, false)
-  assert.equal(rt.dispatched.length, 0)
+  await settleUntil(() => rt.dispatched.length === 1)
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
+  assert.equal(rt.dispatched[0].clipboardData.files[0], png)
+  assert.equal(decoded, 0)
 })
 
 test('non-composer paste and empty-MIME non-image paste fail open', async () => {
@@ -386,16 +451,17 @@ test('synthetic and named images with different pixels remain distinct', async (
   assert.equal(rt.dispatched[0].clipboardData.files.length, 2)
 })
 
-test('ordinary multi-image paste with no duplicate signal stays on the native DSH path', async () => {
+test('ordinary multi-image paste is inspected once but preserves distinct canonical File objects', async () => {
   const rt = runtime()
-  const first = new FakeFile([new Uint8Array([1, 2, 3])], 'first.png', { type: 'image/png' })
-  const second = new FakeFile([new Uint8Array([4, 5, 6, 7])], 'second.png', { type: 'image/png' })
+  const first = new FakeFile([pngBytes(1, 1, [1])], 'first.png', { type: 'image/png' })
+  const second = new FakeFile([pngBytes(1, 1, [2, 2])], 'second.png', { type: 'image/png' })
   const event = originalPaste(rt.editable, clipboard([first, second]))
   rt.paste(event)
-  await new Promise(resolve => setTimeout(resolve, 0))
-  assert.equal(event.prevented, false)
-  assert.equal(event.stopped, false)
-  assert.equal(rt.dispatched.length, 0)
+  await settleUntil(() => rt.dispatched.length === 1)
+  const files = rt.dispatched[0].clipboardData.files
+  assert.equal(files.length, 2)
+  assert.equal(files[0], first)
+  assert.equal(files[1], second)
 })
 
 test('oversized suspicious duplicate candidates fail open without pixel decoding', async () => {
