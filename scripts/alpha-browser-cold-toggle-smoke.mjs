@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -72,6 +72,67 @@ function classifyBrowserLaunch(message) {
   return 'browser-launch-other'
 }
 
+async function captureFailureState({ page, error, stage, kind, detail, diagnostics }) {
+  const diagnosticPath = process.env.SMOKE_DIAGNOSTIC_PATH
+  const screenshotPath = process.env.SMOKE_SCREENSHOT_PATH
+  const captureErrors = []
+  let pageState
+
+  if (page) {
+    try {
+      pageState = await page.evaluate(() => ({
+        url: location.href,
+        title: document.title,
+        lang: document.documentElement.lang || null,
+        readyState: document.readyState,
+        buttons: Array.from(document.querySelectorAll('button')).slice(0, 50).map((button, index) => ({
+          index,
+          text: (button.innerText || '').trim().slice(0, 200),
+          ariaLabel: button.getAttribute('aria-label'),
+          title: button.getAttribute('title'),
+          disabled: button.disabled,
+          visible: Boolean(button.offsetWidth || button.offsetHeight || button.getClientRects().length),
+          outerHTML: button.outerHTML.slice(0, 800),
+        })),
+        bodyText: (document.body?.innerText || '').slice(0, 12_000),
+      }))
+    } catch (captureError) {
+      captureErrors.push(`page-state: ${captureError instanceof Error ? captureError.message : String(captureError)}`)
+    }
+
+    if (screenshotPath) {
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true })
+      } catch (captureError) {
+        captureErrors.push(`screenshot: ${captureError instanceof Error ? captureError.message : String(captureError)}`)
+      }
+    }
+  }
+
+  const payload = {
+    stage,
+    kind,
+    detail,
+    error: {
+      name: error instanceof Error ? error.name : 'Error',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack?.slice(0, 8_000) : undefined,
+    },
+    diagnostics,
+    page: pageState,
+    captureErrors,
+  }
+
+  if (diagnosticPath) {
+    try {
+      writeFileSync(diagnosticPath, `${JSON.stringify(payload, null, 2)}\n`)
+    } catch (captureError) {
+      console.error(`failed to write smoke diagnostic: ${captureError instanceof Error ? captureError.message : String(captureError)}`)
+    }
+  }
+  return payload
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-browser-smoke-'))
 const env = {
   ...process.env,
@@ -84,6 +145,7 @@ const env = {
 let stage = 'resolve-playwright'
 let child
 let browser
+let page
 let diagnostics = []
 let failureKind = 'harness-or-host'
 let detail = 'none'
@@ -128,7 +190,7 @@ try {
   }
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ locale: 'en-US' })
-  const page = await context.newPage()
+  page = await context.newPage()
 
   page.on('pageerror', (error) => {
     diagnostics.push(`pageerror: ${error.message}`)
@@ -199,12 +261,17 @@ try {
     failureKind = classifyBrowserLaunch(message)
   }
   detail = `${detail}; ${message}`
-  console.error(JSON.stringify({
-    ok: false,
+  const failureState = await captureFailureState({
+    page,
+    error,
     stage,
     kind: failureKind,
     detail,
     diagnostics,
+  })
+  console.error(JSON.stringify({
+    ok: false,
+    ...failureState,
   }))
 } finally {
   await browser?.close()
