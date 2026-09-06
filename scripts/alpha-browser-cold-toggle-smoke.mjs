@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -64,6 +64,14 @@ function installCurrentPlugin(env) {
   }
 }
 
+function classifyBrowserLaunch(message) {
+  if (/executable.*(?:doesn['’]?t exist|not found)|ENOENT/i.test(message)) return 'browser-executable-missing'
+  if (/error while loading shared libraries|cannot open shared object file/i.test(message)) return 'browser-missing-library'
+  if (/sandbox|No usable sandbox|SUID sandbox/i.test(message)) return 'browser-sandbox'
+  if (/browser.*(?:closed|crash)|Target page, context or browser has been closed/i.test(message)) return 'browser-process-crash'
+  return 'browser-launch-other'
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-browser-smoke-'))
 const env = {
   ...process.env,
@@ -78,6 +86,7 @@ let child
 let browser
 let diagnostics = []
 let failureKind = 'harness-or-host'
+let detail = 'none'
 let failed = false
 
 try {
@@ -99,6 +108,12 @@ try {
   const readyUrl = await waitForReadyLine(child)
 
   stage = 'browser-launch'
+  const browserExecutable = chromium.executablePath()
+  detail = existsSync(browserExecutable) ? 'executable-present' : 'executable-missing'
+  if (!existsSync(browserExecutable)) {
+    failureKind = 'browser-executable-missing'
+    throw new Error(`Playwright Chromium executable does not exist: ${browserExecutable}`)
+  }
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ locale: 'en-US' })
   const page = await context.newPage()
@@ -154,6 +169,7 @@ try {
   }
 
   stage = 'complete'
+  detail = 'passed'
   console.log(JSON.stringify({
     ok: true,
     dsh: process.env.DSH_EXPECTED_VERSION || 'unknown',
@@ -167,12 +183,15 @@ try {
     failureKind = 'product-injection-regression'
   } else if (/pageerror:/i.test(message)) {
     failureKind = 'browser-pageerror'
+  } else if (stage === 'browser-launch') {
+    failureKind = classifyBrowserLaunch(message)
   }
+  detail = `${detail}; ${message}`
   console.error(JSON.stringify({
     ok: false,
     stage,
     kind: failureKind,
-    error: message,
+    detail,
     diagnostics,
   }))
 } finally {
@@ -188,3 +207,4 @@ try {
 setOutput('status', failed ? 'fail' : 'pass')
 setOutput('stage', stage)
 setOutput('kind', failed ? failureKind : 'none')
+setOutput('detail', detail)
