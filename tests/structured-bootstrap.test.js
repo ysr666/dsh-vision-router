@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { normalizeStructuredBootstrapResult, structuredBootstrapQuestion, structuredBootstrapMemory } from '../lib/structured-bootstrap.js'
+import { resolveVisionOcrEngine } from '../index.js'
 
 test('bootstrap is task-independent and does not default to OCR', () => {
   const prompt = structuredBootstrapQuestion()
@@ -70,14 +71,33 @@ test('bootstrap schema carries mixed_of and normalizer validates, prioritizes, t
   assert.deepEqual(normalizeStructuredBootstrapResult({ visual_kind: 'document', mixed_of: ['ui'] }).mixed_of, [])
 })
 
-test('runtime removes goal and makes structured OCR vision-first', () => {
+test('structured OCR engine policy preserves explicit intent and makes auto vision-first only in follow-up', () => {
+  for (const structuredFollowup of [false, true]) {
+    assert.equal(resolveVisionOcrEngine('tesseract', structuredFollowup), 'tesseract')
+    assert.equal(resolveVisionOcrEngine('vision', structuredFollowup), 'vision')
+  }
+  assert.equal(resolveVisionOcrEngine(undefined, false), 'auto')
+  assert.equal(resolveVisionOcrEngine('auto', false), 'auto')
+  assert.equal(resolveVisionOcrEngine(undefined, true), 'vision')
+  assert.equal(resolveVisionOcrEngine('auto', true), 'vision')
+  assert.equal(resolveVisionOcrEngine('unknown-engine', true), 'auto')
+  assert.equal(resolveVisionOcrEngine(null, true), 'auto')
+  assert.equal(resolveVisionOcrEngine('', true), 'auto')
+})
+
+test('runtime removes goal and keeps structured OCR policy tool-owned and model-visible', () => {
   const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(index.includes("required: ['goal']"), false)
   assert.equal(index.includes('structuredBootstrapQuestion()'), true)
   assert.equal(index.includes('structuredBootstrapMemory(evidence)'), true)
-  assert.equal(index.includes("def.name === 'vision_ocr'"), true)
-  assert.equal(index.includes("effectiveArgs = { ...(args ?? {}), engine: 'vision' }"), true)
+  assert.equal(index.includes('const engine = resolveVisionOcrEngine(args.engine, structuredFollowup)'), true)
+  assert.equal(index.includes("effectiveArgs = { ...(args ?? {}), engine: 'vision' }"), false)
+  assert.equal(index.includes('During a structured 1+x follow-up, omitted engine / engine=auto'), true)
+  assert.equal(index.includes('resolves directly to vision-model OCR for accuracy'), true)
+  assert.equal(index.includes('Explicit engine=tesseract or engine=vision'), true)
+  assert.equal(index.includes('is always honored. Returns the text and which engine produced it'), true)
   assert.equal(client.includes('不读取具体任务目标'), true)
-  assert.equal(client.includes('自动模式会优先使用视觉模型'), true)
+  assert.equal(client.includes('未指定 engine 或 engine=auto 时会直接使用视觉模型'), true)
+  assert.equal(client.includes('显式 tesseract/vision 不会被改写'), true)
 })
