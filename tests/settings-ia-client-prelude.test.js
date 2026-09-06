@@ -250,6 +250,8 @@ test('advanced page consolidates performance, wrapper scope, compatibility, netw
   assert.match(text, /兼容模式/)
   assert.match(text, /整轮视觉路由（旧工作流）/)
   assert.match(text, /开发者设置/)
+  assert.match(text, /渐进式工具暴露/)
+  assert.match(text, /保存后需重启 DSH 才生效/)
 })
 
 test('remote view does not expose local backend and privileged network controls', () => {
