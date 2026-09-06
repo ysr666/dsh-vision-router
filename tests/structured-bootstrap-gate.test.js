@@ -2,16 +2,37 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-test('one bootstrap call cannot directly finish a task-independent structured-bootstrap turn', async () => {
-  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(source, /followupCompleted: false/)
-  assert.match(source, /structuredFollowupEvidenceTools/)
-  assert.match(source, /state\.followupCompleted = true/)
-  assert.match(source, /STRUCTURED_BOOTSTRAP_REQUIRED/)
-  assert.match(source, /至少 1 个能新增或验证证据的视觉工具/)
-  assert.match(source, /normalizeStructuredBootstrapResult\(parsed, raw\)/)
-  assert.match(source, /该预识别只建立任务无关的视觉底图，不携带也不生成 goal/)
-  assert.doesNotMatch(source, /并把真实任务写进 goal/)
-  assert.match(source, /def\.name === 'vision_ocr'/)
-  assert.match(source, /effectiveArgs = \{ \.\.\.\(args \?\? \{\}\), engine: 'vision' \}/)
+test('core owns bootstrap presentation while hardening is the sole x>=1 evidence authority', async () => {
+  const core = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  const hardening = await readFile(new URL('../lib/structured-flow-hardening.js', import.meta.url), 'utf8')
+
+  // Core owns only the ordered bootstrap protocol and the model-visible
+  // transition into the task-directed 1+x phase. Its only follow-up latch is
+  // presentation state: whether that guidance was actually emitted.
+  assert.match(core, /STRUCTURED_BOOTSTRAP_REQUIRED/)
+  assert.match(core, /至少 1 个能新增或验证证据的视觉工具/)
+  assert.match(core, /normalizeStructuredBootstrapResult\(parsed, raw\)/)
+  assert.match(core, /该预识别只建立任务无关的视觉底图，不携带也不生成 goal/)
+  assert.match(core, /followupGuidanceEmitted: false/)
+  assert.match(core, /const appendStructuredReminder = \(baseMessages\) =>/)
+  assert.match(core, /bootstrapState\.followupGuidanceEmitted = true/)
+  assert.equal(core.match(/followupGuidanceEmitted = true/g)?.length ?? 0, 1)
+  assert.doesNotMatch(core, /followupCompleted/)
+  assert.doesNotMatch(core, /structuredFollowupEvidenceTools/)
+  assert.doesNotMatch(core, /evidenceFailure/)
+  assert.doesNotMatch(core, /并把真实任务写进 goal/)
+
+  // The outer structured-flow boundary is the sole hard completion authority.
+  // It asks only whether at least one usable task-directed evidence call landed;
+  // mixed classifications must not become branch quotas inferred from tool names.
+  assert.match(hardening, /successfulEvidenceCalls/)
+  assert.match(hardening, /return state\.successfulEvidenceCalls >= 1 \? 0 : 1/)
+  assert.doesNotMatch(hardening, /function inferBranchForTool/)
+  assert.doesNotMatch(hardening, /completedBranches/)
+  assert.doesNotMatch(hardening, /mixedAttemptSignatures/)
+
+  // OCR's structured-mode engine override is intentionally unchanged in PR 1;
+  // model-visible OCR/runtime alignment belongs to Vision Agent Quality PR 3.
+  assert.match(core, /def\.name === 'vision_ocr'/)
+  assert.match(core, /effectiveArgs = \{ \.\.\.\(args \?\? \{\}\), engine: 'vision' \}/)
 })

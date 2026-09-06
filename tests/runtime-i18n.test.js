@@ -88,16 +88,20 @@ async function runStructuredGuardLocale(localePreference) {
   assert.ok(preStep)
   await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
   await harness.defs.get('vision_bootstrap').execute({}, exec)
-  const mixedDecision = await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
-  const mixed = mixedDecision.messages.find((message) => String(message.id).includes('structured-mixed-guard'))
-  assert.ok(mixed)
+  const evidenceDecision = await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
+  const evidence = evidenceDecision.messages.find((message) => String(message.id).includes('structured-evidence-guard'))
+  assert.ok(evidence)
+  assert.equal(
+    evidenceDecision.messages.some((message) => String(message.id).includes('structured-mixed-guard')),
+    false,
+  )
   assert.equal(await harness.defs.get('vision_describe').execute({}, exec), 'evidence')
   const blocked = JSON.parse(await harness.defs.get('vision_describe').execute({}, exec))
   assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
   const stopDecision = await preStep(payload, async () => ({ kind: 'ok', messages: [] }))
   const stop = stopDecision.messages.find((message) => String(message.id).includes('structured-guard-stop'))
   assert.ok(stop)
-  return { mixed: mixed.content[0].text, stop: stop.content[0].text }
+  return { evidence: evidence.content[0].text, stop: stop.content[0].text }
 }
 
 test('runtime locale maps zh variants to zh and every other explicit locale to en', () => {
@@ -148,22 +152,20 @@ test('strategy and mixed guidance preserve zh default but render English for non
   assert.match(capped, /separate deep-dive call cap.*3 successful evidence calls/i)
 })
 
-test('structured mixed and explicit-cap guards follow English host locale', async () => {
-  const { mixed, stop } = await runStructuredGuardLocale('en-US')
-  assert.match(mixed, /This mixed image still has unverified branches/)
-  assert.match(mixed, /Prioritize semantics/)
-  assert.match(mixed, /Prefer vision_detect \/ vision_ground/)
-  assert.doesNotMatch(mixed, /混合图片|语义优先|优先用/)
+test('structured evidence and explicit-cap guards follow English host locale', async () => {
+  const { evidence, stop } = await runStructuredGuardLocale('en-US')
+  assert.match(evidence, /structured bootstrap is complete/i)
+  assert.match(evidence, /no usable task-directed visual evidence/i)
+  assert.doesNotMatch(evidence, /mixed image|unverified branches|混合图片/)
   assert.match(stop, /configured deep-dive call cap has been reached/i)
   assert.doesNotMatch(stop, /深度配额|深挖次数上限/)
 })
 
-test('structured mixed and explicit-cap guards preserve Chinese host locale', async () => {
-  const { mixed, stop } = await runStructuredGuardLocale('zh-CN')
-  assert.match(mixed, /混合图片仍有未验证分支/)
-  assert.match(mixed, /语义优先/)
-  assert.match(mixed, /优先用 vision_detect \/ vision_ground/)
-  assert.doesNotMatch(mixed, /This mixed image|Prioritize semantics/)
+test('structured evidence and explicit-cap guards preserve Chinese host locale', async () => {
+  const { evidence, stop } = await runStructuredGuardLocale('zh-CN')
+  assert.match(evidence, /结构化预识别已经完成/)
+  assert.match(evidence, /还没有产出可用的任务定向视觉证据/)
+  assert.doesNotMatch(evidence, /混合图片仍有未验证分支|This mixed image/)
   assert.match(stop, /达到本轮设置的深挖次数上限/)
   assert.doesNotMatch(stop, /识图深度配额已耗尽/)
 })
@@ -237,7 +239,6 @@ test('core facade localizes stale guard-stop shadow with the current host locale
   const settings = createSettings(locale)
   const hostCtx = { get: (name) => (name === 'settings' ? settings : undefined) }
   const core = {
-    apply() {},
     planGuardStopShadows() {
       return [{ data: { content: [{ type: 'text', text: '[vision-router: 系统提示已过期]' }] } }]
     },

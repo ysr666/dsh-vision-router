@@ -184,14 +184,18 @@ test('guidanceOverrides: empty/undefined overrides keep built-in behavior', () =
   assert.match(withEmpty, /语义优先/)
 })
 
-test('index.js integration: explicit call caps have one runtime owner', () => {
+test('integration: explicit call caps and structured x>=1 each have one runtime owner', () => {
   const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const hardening = readFileSync(new URL('../lib/structured-flow-hardening.js', import.meta.url), 'utf8')
   assert.equal(index.includes("visionDepth: z.union(['fast', 'standard', 'deep']).default('standard')"), true)
   assert.equal(index.includes('depthLimitFor(visionDepth())'), false)
   assert.equal(index.includes('state.deepCalls'), false)
   assert.equal(index.includes("code: 'VISION_DEPTH_LIMIT'"), false)
   assert.equal(index.includes('renderDepthGuidance({'), true)
-  assert.equal(index.includes('state.followupCompleted = true'), true)
+  assert.equal(hardening.includes('structuredDepthLimit(depthOf(config), config?.visionDepthMaxCalls)'), true)
+  assert.equal(hardening.includes('return state.successfulEvidenceCalls >= 1 ? 0 : 1'), true)
+  assert.equal(hardening.includes('function inferBranchForTool'), false)
+  assert.equal(hardening.includes('completedBranches'), false)
 })
 
 test('client presentation: depth strategy and optional cap are first-class bilingual controls', () => {
