@@ -81,8 +81,10 @@ jobs:
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
         env:
           SMOKE_DETAIL: ${{ steps.smoke.outputs.detail }}
+          SMOKE_DETAIL_PATH: ${{ runner.temp }}/alpha-browser-launch-detail.txt
         run: |
           printf '%s\n' "$SMOKE_DETAIL"
+          printf '%s\n' "$SMOKE_DETAIL" > "$SMOKE_DETAIL_PATH"
           escaped="${SMOKE_DETAIL//'%'/'%25'}"
           escaped="${escaped//$'\r'/'%0D'}"
           escaped="${escaped//$'\n'/'%0A'}"
@@ -91,6 +93,15 @@ jobs:
             printf '### Browser launch detail\n\n'
             printf '```text\n%s\n```\n' "$SMOKE_DETAIL"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload browser launch diagnostic
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: alpha-browser-launch-detail
+          path: ${{ runner.temp }}/alpha-browser-launch-detail.txt
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Classified product regression — remote.session injection
         if: steps.smoke.outputs.kind == 'product-injection-regression'
