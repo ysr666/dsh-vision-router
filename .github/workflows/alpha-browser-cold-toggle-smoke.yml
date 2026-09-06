@@ -77,6 +77,12 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.2-alpha.4
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
 
+      - name: Browser launch detail
+        if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
+        env:
+          SMOKE_DETAIL: ${{ steps.smoke.outputs.detail }}
+        run: printf '%s\n' "$SMOKE_DETAIL"
+
       - name: Classified product regression — remote.session injection
         if: steps.smoke.outputs.kind == 'product-injection-regression'
         run: echo 'Cold toggle reproduced the remote.session injection regression.'
