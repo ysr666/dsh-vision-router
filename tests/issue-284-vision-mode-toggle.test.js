@@ -345,7 +345,7 @@ test('issue #284 rejects lookalikes and exact-model mismatches', () => {
 
 test('issue #284 browser prelude wires the right-slot toggle to shared directory and settings scopes', async () => {
   const harness = createBrowserHarness()
-  assert.deepEqual(Array.from(harness.dependencyInjection.dependencies), ['slots', 'modelDirectories'])
+  assert.deepEqual(Array.from(harness.dependencyInjection.dependencies), ['slots', 'modelDirectories', 'sessions', 'remote'])
   assert.equal(harness.slotName, 'conversation.input.right')
   assert.equal(harness.registration.id, 'vision-router-mode-toggle')
 
@@ -477,7 +477,7 @@ test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs'
 
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
   const source = readFileSync(new URL('../lib/client-presentation-boundary.js', import.meta.url), 'utf8')
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("ctx.inject(['slots', 'modelDirectories']"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("ctx.inject(['slots', 'modelDirectories', 'sessions', 'remote']"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("scope.slots.inject('conversation.input.right'"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("id: 'vision-router-mode-toggle'"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("'data-vision-router-mode-toggle': 'true'"), true)
