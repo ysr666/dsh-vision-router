@@ -1,0 +1,77 @@
+name: Alpha browser cold toggle smoke
+
+on:
+  pull_request:
+    paths:
+      - 'lib/client-presentation-boundary-main.js'
+      - 'lib/client-presentation-boundary.js'
+      - 'lib/client.js'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/client-presentation-boundary-main.js'
+      - 'lib/client-presentation-boundary.js'
+      - 'lib/client.js'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  alpha-browser-cold-toggle:
+    name: alpha.4 real Host + Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+
+      - name: Checkout exact DSH alpha.4 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4e84901e6471b79ec0338099867ebb4606d12bb5
+          persist-credentials: false
+          path: dsh-alpha
+
+      - name: Install alpha package manager
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.7.0
+
+      - name: Install Node 22 browser runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          cache-dependency-path: dsh-alpha/pnpm-lock.yaml
+
+      - name: Install exact alpha workspace dependencies
+        working-directory: dsh-alpha
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build exact alpha web runtime
+        working-directory: dsh-alpha
+        run: pnpm run build
+
+      - name: Install Chromium for DSH Playwright
+        working-directory: dsh-alpha
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+
+      - name: Run cold Vision toggle against real Host and Chromium
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.2-alpha.4
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
