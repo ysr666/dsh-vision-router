@@ -81,7 +81,16 @@ jobs:
         if: steps.smoke.outputs.status == 'fail' && steps.smoke.outputs.stage == 'browser-launch'
         env:
           SMOKE_DETAIL: ${{ steps.smoke.outputs.detail }}
-        run: printf '%s\n' "$SMOKE_DETAIL"
+        run: |
+          printf '%s\n' "$SMOKE_DETAIL"
+          escaped="${SMOKE_DETAIL//'%'/'%25'}"
+          escaped="${escaped//$'\r'/'%0D'}"
+          escaped="${escaped//$'\n'/'%0A'}"
+          printf '::error title=Chromium launch failed::%s\n' "$escaped"
+          {
+            printf '### Browser launch detail\n\n'
+            printf '```text\n%s\n```\n' "$SMOKE_DETAIL"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Classified product regression — remote.session injection
         if: steps.smoke.outputs.kind == 'product-injection-regression'
