@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -13,8 +13,13 @@ if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
 const dshRequire = createRequire(join(dshRoot, 'package.json'))
 const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
-const { chromium } = await import(pathToFileURL(webRequire.resolve('playwright')).href)
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
+
+function setOutput(name, value) {
+  const output = process.env.GITHUB_OUTPUT
+  if (!output) return
+  appendFileSync(output, `${name}=${String(value).replace(/[\r\n]+/g, ' ')}\n`)
+}
 
 function waitForReadyLine(child) {
   return new Promise((resolveReady, reject) => {
@@ -68,10 +73,20 @@ const env = {
   TSX_TSCONFIG_PATH: join(dshRoot, 'tsconfig.json'),
 }
 
+let stage = 'resolve-playwright'
 let child
 let browser
+let diagnostics = []
+let failureKind = 'harness-or-host'
+let failed = false
+
 try {
+  const { chromium } = await import(pathToFileURL(webRequire.resolve('playwright')).href)
+
+  stage = 'plugin-install'
   installCurrentPlugin(env)
+
+  stage = 'host-start'
   child = spawn(
     process.execPath,
     ['--import', tsxLoader, cli, 'web', '--no-open', '--port', '0'],
@@ -81,12 +96,12 @@ try {
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   )
-
   const readyUrl = await waitForReadyLine(child)
+
+  stage = 'browser-launch'
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ locale: 'en-US' })
   const page = await context.newPage()
-  const diagnostics = []
 
   page.on('pageerror', (error) => {
     diagnostics.push(`pageerror: ${error.message}`)
@@ -98,11 +113,15 @@ try {
     }
   })
 
+  stage = 'open-page'
   await page.goto(readyUrl)
+
+  stage = 'new-session'
   const newSession = page.getByRole('button', { name: 'New session', exact: true }).first()
   await newSession.waitFor({ timeout: 30_000 })
   await newSession.click()
 
+  stage = 'initial-toggle'
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
 
@@ -110,29 +129,51 @@ try {
   // cache. Do not open the stock model picker before waiting for the Vision
   // Router toggle: its slot injection must be able to perform the first cold
   // directoryFor(sessionId) call itself.
-  diagnostics.length = 0
+  stage = 'cold-reload'
+  diagnostics = []
   await page.reload({ waitUntil: 'domcontentloaded' })
+
+  stage = 'cold-toggle'
   await page.locator('[data-vision-router-mode-toggle="true"]').waitFor({
     state: 'visible',
     timeout: 30_000,
   })
   await page.waitForTimeout(500)
 
+  stage = 'diagnostics'
   const injectionErrors = diagnostics.filter((line) =>
     /cannot get property ["']remote\.session["'] without inject/i.test(line),
   )
   if (injectionErrors.length > 0) {
+    failureKind = 'product-injection-regression'
     throw new Error(`cold Vision toggle hit the Cordis injection regression:\n${injectionErrors.join('\n')}`)
   }
   if (diagnostics.some((line) => line.startsWith('pageerror:'))) {
+    failureKind = 'browser-pageerror'
     throw new Error(`browser pageerror during cold Vision toggle smoke:\n${diagnostics.join('\n')}`)
   }
 
+  stage = 'complete'
   console.log(JSON.stringify({
     ok: true,
     dsh: process.env.DSH_EXPECTED_VERSION || 'unknown',
     dvr: 'current-checkout',
     toggleVisibleAfterColdReload: true,
+  }))
+} catch (error) {
+  failed = true
+  const message = error instanceof Error ? error.message : String(error)
+  if (/cannot get property ["']remote\.session["'] without inject/i.test(message)) {
+    failureKind = 'product-injection-regression'
+  } else if (/pageerror:/i.test(message)) {
+    failureKind = 'browser-pageerror'
+  }
+  console.error(JSON.stringify({
+    ok: false,
+    stage,
+    kind: failureKind,
+    error: message,
+    diagnostics,
   }))
 } finally {
   await browser?.close()
@@ -143,3 +184,7 @@ try {
   }
   rmSync(root, { recursive: true, force: true })
 }
+
+setOutput('status', failed ? 'fail' : 'pass')
+setOutput('stage', stage)
+setOutput('kind', failed ? failureKind : 'none')
