@@ -133,6 +133,33 @@ async function captureFailureState({ page, error, stage, kind, detail, diagnosti
   return payload
 }
 
+async function dismissFirstRunOverlays(page) {
+  // A fresh DSH_HOME intentionally exercises first-run UI. Dismiss the Vision
+  // Router onboarding through its real secondary action instead of force-clicking
+  // through the backdrop: the smoke must preserve browser pointer semantics.
+  const vrOnboarding = page.locator('.vr-onboarding-backdrop')
+  try {
+    await vrOnboarding.waitFor({ state: 'visible', timeout: 5_000 })
+  } catch (_) {}
+  if (await vrOnboarding.isVisible()) {
+    await vrOnboarding.locator('.vr-onboarding-secondary').click()
+    await vrOnboarding.waitFor({ state: 'hidden', timeout: 15_000 })
+  }
+
+  // Exact alpha.4 also shows its versioned internal-testing notice on a fresh
+  // profile. The Playwright context is pinned to en-US, so use the exact owner
+  // copy from that pinned DSH source and wait for the persisted acknowledgement
+  // to close the modal before touching the sidebar.
+  const welcome = page.getByRole('dialog', { name: 'Internal Testing Notice', exact: true })
+  try {
+    await welcome.waitFor({ state: 'visible', timeout: 5_000 })
+  } catch (_) {}
+  if (await welcome.isVisible()) {
+    await welcome.getByRole('button', { name: 'Continue', exact: true }).click()
+    await welcome.waitFor({ state: 'hidden', timeout: 30_000 })
+  }
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-browser-smoke-'))
 const env = {
   ...process.env,
@@ -204,6 +231,9 @@ try {
 
   stage = 'open-page'
   await page.goto(readyUrl)
+
+  stage = 'first-run-overlays'
+  await dismissFirstRunOverlays(page)
 
   stage = 'new-session'
   const newSession = page.getByRole('button', { name: 'New session', exact: true }).first()
