@@ -4839,7 +4839,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     let bootstrapState = structuredBootstrapTurnState.get(session)
     const bootstrapRequired = hasImage && toolEnabled() && structuredBootstrapEnabled()
     if (!bootstrapState || bootstrapState.turn !== payload.turn) {
-      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupCompleted: false, failed: false }
+      bootstrapState = { turn: payload.turn, required: bootstrapRequired, completed: false, followupGuidanceEmitted: false, failed: false }
       structuredBootstrapTurnState.set(session, bootstrapState)
     } else if (bootstrapRequired) {
       bootstrapState.required = true
@@ -4873,7 +4873,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     } else if (
       bootstrapState.required &&
       bootstrapState.completed === true &&
-      bootstrapState.followupCompleted !== true &&
+      bootstrapState.followupGuidanceEmitted !== true &&
       bootstrapState.failed !== true
     ) {
       if (toolEnabled()) activateDeepTools()
@@ -4914,6 +4914,18 @@ export function apply(ctx, config = {}, runtime = {}) {
         ],
         source: { kind: 'plugin', plugin: 'dsh-vision-router' },
       }
+    }
+    const appendStructuredReminder = (baseMessages) => {
+      if (!bootstrapReminder) return baseMessages
+      const nextMessages = [...baseMessages, bootstrapReminder]
+      if (
+        bootstrapState &&
+        typeof bootstrapReminder.id === 'string' &&
+        bootstrapReminder.id.includes('vision-router-structured-followup-')
+      ) {
+        bootstrapState.followupGuidanceEmitted = true
+      }
+      return nextMessages
     }
     if (hasImage) {
       // ── dsh-vision 并入：pre-step 即时本地翻译 ───────────────────────────
@@ -4993,7 +5005,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               : messages
           return {
             ...decision,
-            messages: [...base, reminder, ...(bootstrapReminder ? [bootstrapReminder] : [])],
+            messages: appendStructuredReminder([...base, reminder]),
           }
         }
       }
@@ -5004,11 +5016,11 @@ export function apply(ctx, config = {}, runtime = {}) {
         const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
         return {
           ...decision,
-          messages: bootstrapReminder ? [...rewrittenHistory, bootstrapReminder] : rewrittenHistory,
+          messages: appendStructuredReminder(rewrittenHistory),
         }
       }
       if (bootstrapReminder) {
-        return { ...decision, messages: [...messages, bootstrapReminder] }
+        return { ...decision, messages: appendStructuredReminder(messages) }
       }
     }
     // Text-only turn after images entered the conversation: replace image
@@ -5022,12 +5034,12 @@ export function apply(ctx, config = {}, runtime = {}) {
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
           ...decision,
-          messages: bootstrapReminder ? [...cleaned.messages, bootstrapReminder] : cleaned.messages,
+          messages: appendStructuredReminder(cleaned.messages),
         }
       }
     }
     if (!hasImage && bootstrapReminder) {
-      return { ...decision, messages: [...messages, bootstrapReminder] }
+      return { ...decision, messages: appendStructuredReminder(messages) }
     }
     return sanitizedToolResults.changed ? { ...decision, messages } : decision
   })
@@ -5652,7 +5664,6 @@ ctx.logger?.info(
         // At least one task-directed evidence tool must run after this baseline.
         if (bootstrapState) {
           bootstrapState.completed = true
-          bootstrapState.followupCompleted = false
         }
         const evidence = normalizeStructuredBootstrapResult(parsed, raw)
         // 存 visual_kind（媒介）与 content_kind（内容主体，general 图的大小类判定键），
@@ -7098,15 +7109,6 @@ ctx.logger?.info(
     // ── progressive exposure: one bootstrap tool + the vision-tools skill ──
     let deepActive = false
     const deepDisposers = []
-    const structuredFollowupEvidenceTools = new Set([
-      'vision_describe',
-      'vision_ground',
-      'vision_detect',
-      'vision_ocr',
-      'vision_colors',
-      'vision_pixel_diff',
-      'vision_long_screenshot_ocr',
-    ])
     activateDeepTools = () => {
       if (deepActive) return '视觉深看工具已在挂载状态。'
       deepActive = true
@@ -7145,36 +7147,6 @@ ctx.logger?.info(
                     effectiveArgs = { ...(args ?? {}), engine: 'vision' }
                   }
                   const result = await def.execute(effectiveArgs, exec)
-                  if (
-                    structuredBootstrapEnabled() &&
-                    state &&
-                    state.required &&
-                    state.completed === true &&
-                    state.failed !== true &&
-                    structuredFollowupEvidenceTools.has(def.name)
-                  ) {
-                    // 只在实际产出证据后递增配额并标记完成：后端故障/适配器
-                    // 错误（ok:false，对象或 JSON 字符串）不计数、不置完成，
-                    // 模型仍保有提醒并可重试（maintainer review blocking 2）。
-                    // 各证据工具的成功形态不同（纯文本 / 数组 JSON / ok:true
-                    // JSON），统一以"结果不含 ok:false"判定产出证据。
-                    let evidenceFailure = false
-                    if (result && typeof result === 'object' && result.ok === false) {
-                      evidenceFailure = true
-                    } else if (typeof result === 'string' && result.trim() !== '') {
-                      try {
-                        const parsed = JSON.parse(result)
-                        if (parsed && typeof parsed === 'object' && parsed.ok === false) {
-                          evidenceFailure = true
-                        }
-                      } catch {
-                        evidenceFailure = false // plain text = evidence produced
-                      }
-                    }
-                    if (!evidenceFailure) {
-                      state.followupCompleted = true
-                    }
-                  }
                   return result
                 },
               }
