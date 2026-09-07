@@ -93,9 +93,9 @@ test('runtime depth locale follows the host locale when no explicit locale is pa
 })
 
 test('sceneGuidanceFor: known kinds have guidance, general/unknown/mixed release', () => {
-  assert.match(sceneGuidanceFor('code'), /逐字/)
+  assert.match(sceneGuidanceFor('code'), /只有当.*依赖可执行或逐字代码.*逐字保真/)
   assert.match(sceneGuidanceFor('document'), /语义优先/)
-  assert.match(sceneGuidanceFor('ui'), /detect/)
+  assert.match(sceneGuidanceFor('ui'), /最小必要证据/)
   assert.match(sceneGuidanceFor('chat'), /气泡/)
   assert.equal(sceneGuidanceFor('general'), '')
   assert.equal(sceneGuidanceFor('unknown'), '')
@@ -134,7 +134,7 @@ test('renderDepthGuidance: general falls to self-judge guidance when content_kin
 
 test('renderDepthGuidance: fast stays lightweight without forbidding further evidence', () => {
   const text = renderDepthGuidance({ visualKind: 'ui', depth: 'fast' })
-  assert.match(text, /detect/)
+  assert.match(text, /最小必要证据/)
   assert.match(text, /看图策略为快速/)
   assert.match(text, /关键证据不确定/)
   assert.doesNotMatch(text, /升级档位|最多.*次/)
@@ -228,5 +228,5 @@ test('depth guidance separates scene, strategy, and optional cap sentences', () 
   const cap = depthCopyFor('standard', 6, 'en-US')
   assert.ok(cap.includes('\nA separate deep-dive call cap'))
   const rendered = renderDepthGuidance({ visualKind: 'ui', depth: 'standard', locale: 'en-US' })
-  assert.ok(rendered.includes('(ground).\nVision strategy is Standard'))
+  assert.ok(rendered.includes('do not require a fixed tool combination.\nVision strategy is Standard'))
 })

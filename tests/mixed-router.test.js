@@ -55,7 +55,7 @@ test('planMixedBranches: ui+general mixed_of keeps both branches', () => {
 test('mixedGuidance: exact sub wins, kind falls back, default releases', () => {
   assert.match(mixedGuidance('document', 'code'), /逐字/)
   assert.match(mixedGuidance('document', 'table'), /逐字/)
-  assert.match(mixedGuidance('ui'), /detect/)
+  assert.match(mixedGuidance('ui'), /不固定工具组合/)
   assert.match(mixedGuidance('document'), /语义优先/)
   assert.match(mixedGuidance('chat'), /放行/)
 })
@@ -79,8 +79,8 @@ test('renderMixedGuidance: mixed plan renders per-branch guidance; fallback rend
   const plan = planMixedBranches({ visual_kind: 'mixed', mixed_of: ['document', 'ui'] })
   const text = renderMixedGuidance(plan)
   assert.match(text, /检测到混合内容（ui \+ document）/)
-  assert.match(text, /精度优化/)
-  assert.match(text, /detect \/ ground 优先/)
+  assert.match(text, /只关注与用户问题相关的分支/)
+  assert.match(text, /不固定工具组合/)
   assert.match(text, /语义优先/)
   assert.equal(renderMixedGuidance(planMixedBranches(undefined)), undefined)
 })
@@ -91,7 +91,7 @@ test('renderMixedGuidance: fast/standard/deep keep the same two-branch correctne
   const standard = renderMixedGuidance(plan, 'standard')
   const deep = renderMixedGuidance(plan, 'deep')
   for (const text of [fast, standard, deep]) {
-    assert.match(text, /ui：detect \/ ground 优先/)
+    assert.match(text, /ui：按问题需要选择语义复核、元素盘点或精确定位，不固定工具组合/)
     assert.match(text, /document：语义优先/)
     assert.doesNotMatch(text, /升级档位|深度档位为 fast|最多.*次/)
   }
@@ -109,7 +109,8 @@ test('mixed guidance follows runtime host locale when called without an explicit
     },
   )
   assert.match(text, /Mixed content detected/)
-  assert.match(text, /ui: prefer detect \/ ground/)
+  assert.match(text, /Focus on the branch or branches relevant to the user question/)
+  assert.match(text, /ui: choose semantic verification, element inventory, or precise localization/)
   assert.match(text, /document: prefer semantic understanding/)
   assert.doesNotMatch(text, /检测到混合内容|语义优先/)
 })
