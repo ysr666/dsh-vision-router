@@ -2171,6 +2171,24 @@ test('normalizeDetectResult preserves explicit zero detections but rejects parti
   assert.equal(normalizeDetectResult({ elements: [{ label: '', box: { x1: 1, y1: 1, x2: 10, y2: 10 } }] }, 640, 480), undefined)
   assert.equal(normalizeDetectResult({ elements: [{ label: 'button', box: { x1: '1', y1: 1, x2: 10, y2: 10 } }] }, 640, 480), undefined)
   assert.equal(normalizeDetectResult({ elements: [{ label: 'button', box: { x1: 50, y1: 50, x2: 10, y2: 10 } }] }, 640, 480), undefined)
+  // Small overlaps are clampable, but fully out-of-frame boxes are not real
+  // detections and must never collapse into synthetic edge evidence.
+  assert.deepEqual(
+    normalizeDetectResult({ elements: [{ label: 'button', box: { x1: -5, y1: 2, x2: 30, y2: 40 } }] }, 640, 480),
+    { width: 640, height: 480, elements: [{ number: 1, label: 'button', box: { x1: 0, y1: 2, x2: 30, y2: 40 } }] },
+  )
+  assert.deepEqual(
+    normalizeDetectResult({ elements: [{ label: 'button', box: { x1: 630, y1: 2, x2: 650, y2: 40 } }] }, 640, 480),
+    { width: 640, height: 480, elements: [{ number: 1, label: 'button', box: { x1: 630, y1: 2, x2: 640, y2: 40 } }] },
+  )
+  for (const box of [
+    { x1: -100, y1: 10, x2: -50, y2: 20 },
+    { x1: 700, y1: 10, x2: 750, y2: 20 },
+    { x1: 10, y1: -100, x2: 20, y2: -50 },
+    { x1: 10, y1: 500, x2: 20, y2: 550 },
+  ]) {
+    assert.equal(normalizeDetectResult({ elements: [{ label: 'button', box }] }, 640, 480), undefined)
+  }
 })
 
 test('normalizeDescribeResult fills the documented keys', () => {

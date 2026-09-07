@@ -1490,6 +1490,12 @@ export function normalizeDetectResult(parsed, width, height) {
     const raw = [item.box.x1, item.box.y1, item.box.x2, item.box.y2]
     if (!raw.every((value) => typeof value === 'number' && Number.isFinite(value))) return undefined
     const [x1, y1, x2, y2] = raw.map(Math.round)
+    // Preserve small coordinate drift by clamping only boxes that still
+    // describe a real rectangle intersecting the image. A box entirely
+    // outside the frame must not collapse into a synthetic 1px edge box and
+    // become fake positive evidence.
+    if (x2 <= x1 || y2 <= y1) return undefined
+    if (x2 <= 0 || y2 <= 0 || x1 >= width || y1 >= height) return undefined
     const box = {
       x1: clamp(x1, 0, width - 1),
       y1: clamp(y1, 0, height - 1),
