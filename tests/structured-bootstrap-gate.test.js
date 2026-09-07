@@ -26,7 +26,10 @@ test('core owns bootstrap presentation while hardening is the sole x>=1 evidence
   // It asks only whether at least one usable task-directed evidence call landed;
   // mixed classifications must not become branch quotas inferred from tool names.
   assert.match(hardening, /successfulEvidenceCalls/)
-  assert.match(hardening, /return state\.successfulEvidenceCalls >= 1 \? 0 : 1/)
+  assert.match(hardening, /postBootstrapEvidenceCalls/)
+  assert.match(hardening, /return state\.postBootstrapEvidenceCalls >= 1 \? 0 : 1/)
+  assert.match(hardening, /state\.successfulEvidenceCalls \+= 1/)
+  assert.match(hardening, /if \(state\.bootstrapDone\) state\.postBootstrapEvidenceCalls \+= 1/)
   assert.doesNotMatch(hardening, /function inferBranchForTool/)
   assert.doesNotMatch(hardening, /completedBranches/)
   assert.doesNotMatch(hardening, /mixedAttemptSignatures/)
