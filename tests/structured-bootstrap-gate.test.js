@@ -10,7 +10,7 @@ test('core owns bootstrap presentation while hardening is the sole x>=1 evidence
   // transition into the task-directed 1+x phase. Its only follow-up latch is
   // presentation state: whether that guidance was actually emitted.
   assert.match(core, /STRUCTURED_BOOTSTRAP_REQUIRED/)
-  assert.match(core, /至少 1 个能新增或验证证据的视觉工具/)
+  assert.match(core, /至少调用 1 个能新增或验证所需证据的视觉工具/)
   assert.match(core, /normalizeStructuredBootstrapResult\(parsed, raw\)/)
   assert.match(core, /该预识别只建立任务无关的视觉底图，不携带也不生成 goal/)
   assert.match(core, /followupGuidanceEmitted: false/)
