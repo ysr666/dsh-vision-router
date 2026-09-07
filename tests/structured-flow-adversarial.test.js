@@ -88,6 +88,18 @@ test('tool-specific evidence semantics distinguish observations from empty or ma
       false,
     ],
     ['vision_detect', JSON.stringify({ elements: [] }), {}, false],
+    [
+      'vision_detect',
+      JSON.stringify({ width: 100, height: 80, elements: [{ number: 1, label: 'button' }] }),
+      {},
+      false,
+    ],
+    [
+      'vision_detect',
+      JSON.stringify({ width: 100, height: 80, elements: [{ number: 1, label: '', box: { x1: 1, y1: 1, x2: 10, y2: 10 } }] }),
+      {},
+      false,
+    ],
     ['vision_ocr', JSON.stringify({ engine: 'tesseract', text: '' }), {}, true],
     ['vision_ocr', JSON.stringify({ engine: 'vision', text: '42' }), {}, true],
     ['vision_ocr', JSON.stringify({ engine: 'none', text: '' }), {}, false],
@@ -157,6 +169,64 @@ test('tool-specific evidence semantics distinguish observations from empty or ma
       `${toolName}: ${value}`,
     )
   }
+})
+
+test('pre-bootstrap evidence cannot satisfy post-bootstrap x>=1', async () => {
+  const h = harness({ visionDepth: 'standard', visionDepthMaxCalls: 0, visionTurnBudgetMs: 0 })
+  let evidenceCalls = 0
+  h.wrapped.tools.register({
+    name: 'vision_bootstrap',
+    async execute() {
+      return bootstrapSuccess({ visual_kind: 'ui', mixed_of: [] })
+    },
+  })
+  h.wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      evidenceCalls += 1
+      return `evidence-${evidenceCalls}`
+    },
+  })
+
+  const session = {}
+  const exec = { agent: { session } }
+  await preStep(h, session)
+
+  assert.equal(await h.defs.get('vision_describe').execute({ question: 'too early' }, exec), 'evidence-1')
+  assert.match(await h.defs.get('vision_bootstrap').execute({}, exec), /structured-bootstrap/)
+
+  const afterBootstrap = await preStep(h, session)
+  assert.ok(evidenceGuard(afterBootstrap), 'bootstrap must still require a post-bootstrap evidence call')
+  assert.equal(stopGuard(afterBootstrap), undefined)
+
+  assert.equal(await h.defs.get('vision_describe').execute({ question: 'required follow-up' }, exec), 'evidence-2')
+  const complete = await preStep(h, session)
+  assert.equal(evidenceGuard(complete), undefined)
+  assert.equal(stopGuard(complete), undefined)
+  assert.equal(evidenceCalls, 2)
+})
+
+test('pre-bootstrap evidence still consumes the explicit all-turn call cap', async () => {
+  const h = harness({ visionDepth: 'standard', visionDepthMaxCalls: 1, visionTurnBudgetMs: 0 })
+  h.wrapped.tools.register({
+    name: 'vision_bootstrap',
+    async execute() {
+      return bootstrapSuccess({ visual_kind: 'ui', mixed_of: [] })
+    },
+  })
+  h.wrapped.tools.register({ name: 'vision_describe', async execute() { return 'early evidence' } })
+
+  const session = {}
+  const exec = { agent: { session } }
+  await preStep(h, session)
+  assert.equal(await h.defs.get('vision_describe').execute({ question: 'too early' }, exec), 'early evidence')
+  assert.match(await h.defs.get('vision_bootstrap').execute({}, exec), /structured-bootstrap/)
+
+  const stopped = await preStep(h, session)
+  assert.equal(evidenceGuard(stopped), undefined, 'the explicit cap stop takes precedence over an impossible follow-up')
+  assert.match(stopGuard(stopped)?.content?.[0]?.text ?? '', /深挖次数上限/)
+  const blocked = JSON.parse(await h.defs.get('vision_describe').execute({ question: 'over cap' }, exec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT')
 })
 
 test('explicit deep-dive cap applies globally even when bootstrap is not used', async () => {

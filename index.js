@@ -1469,26 +1469,37 @@ export function visionDescribePrompt(question, wantJson = false) {
  * usable inventory.
  */
 export function normalizeDetectResult(parsed, width, height) {
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.elements)) return undefined
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Array.isArray(parsed.elements)) return undefined
   const clamp = (value, min, max) => Math.max(min, Math.min(value, max))
   const elements = []
   for (const item of parsed.elements) {
-    if (!item || typeof item !== 'object' || !item.box || typeof item.box !== 'object') continue
-    const x1 = Math.round(Number(item.box.x1))
-    const y1 = Math.round(Number(item.box.y1))
-    const x2 = Math.round(Number(item.box.x2))
-    const y2 = Math.round(Number(item.box.y2))
-    if (![x1, y1, x2, y2].every(Number.isFinite)) continue
+    // An explicit empty array is the only zero-detection contract. If the
+    // model claims an element exists, every required structural field must be
+    // present; silently dropping or inventing fields would turn malformed
+    // output into a false negative observation that can satisfy structured x.
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      Array.isArray(item) ||
+      typeof item.label !== 'string' ||
+      item.label.trim() === '' ||
+      !item.box ||
+      typeof item.box !== 'object' ||
+      Array.isArray(item.box)
+    ) return undefined
+    const raw = [item.box.x1, item.box.y1, item.box.x2, item.box.y2]
+    if (!raw.every((value) => typeof value === 'number' && Number.isFinite(value))) return undefined
+    const [x1, y1, x2, y2] = raw.map(Math.round)
     const box = {
       x1: clamp(x1, 0, width - 1),
       y1: clamp(y1, 0, height - 1),
       x2: clamp(x2, 1, width),
       y2: clamp(y2, 1, height),
     }
-    if (box.x2 <= box.x1 || box.y2 <= box.y1) continue
+    if (box.x2 <= box.x1 || box.y2 <= box.y1) return undefined
     elements.push({
       number: elements.length + 1,
-      label: typeof item.label === 'string' && item.label.trim() !== '' ? item.label.trim() : `element ${elements.length + 1}`,
+      label: item.label.trim(),
       box,
     })
   }
@@ -6137,20 +6148,24 @@ ctx.logger?.info(
         if (vision.ok === false) return JSON.stringify(vision)
         let text = vision.text
         let parsed = extractJson(text)
-        if (parsed === undefined) {
-          // One stricter retry: keep the schema, demand bare JSON.
+        let result = normalizeDetectResult(parsed, width, height)
+        if (result === undefined) {
+          // One stricter retry covers both syntax errors and partial/malformed
+          // inventories. A claimed element may not be silently discarded into
+          // a canonical elements:[] negative observation.
           const retry = await answerVisionForTool(
             exec,
             bytes,
             mediaType,
             visionDetectInstruction(target, width, height) +
-              '\nYour previous answer was not valid JSON. Respond with ONLY the JSON object, no prose, no fences.',
+              '\nYour previous answer was invalid or did not satisfy the exact elements/label/box schema. ' +
+              'Respond with ONLY the complete JSON object, no prose, no fences.',
           )
           if (retry.ok === false) return JSON.stringify(retry)
           parsed = extractJson(retry.text)
           text = retry.text
+          result = normalizeDetectResult(parsed, width, height)
         }
-        const result = normalizeDetectResult(parsed, width, height)
         if (result === undefined) {
           throw new Error(`vision_detect: the vision model did not return a valid inventory. Raw output: ${text.slice(0, 500)}`)
         }

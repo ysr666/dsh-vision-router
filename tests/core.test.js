@@ -2152,21 +2152,25 @@ test('describeStructuredInstruction demands the evidence contract', () => {
   assert.ok(text.includes('text'))
 })
 
-test('normalizeDetectResult clamps boxes and numbers elements', () => {
+test('normalizeDetectResult preserves explicit zero detections but rejects partial element schemas', () => {
   const parsed = {
     elements: [
       { label: '发送按钮', box: { x1: -5, y1: 2, x2: 30, y2: 40 } },
-      { label: 'bad box', box: { x1: 50, y1: 50, x2: 10, y2: 10 } },
-      { label: '', box: { x1: 100, y1: 100, x2: 300, y2: 200 } },
+      { label: '搜索框', box: { x1: 100.2, y1: 100.4, x2: 300.4, y2: 200.2 } },
     ],
   }
   const out = normalizeDetectResult(parsed, 640, 480)
   assert.equal(out.elements.length, 2)
   assert.equal(out.elements[0].number, 1)
   assert.deepEqual(out.elements[0].box, { x1: 0, y1: 2, x2: 30, y2: 40 })
-  assert.equal(out.elements[1].label, 'element 2')
+  assert.equal(out.elements[1].label, '搜索框')
+  assert.deepEqual(normalizeDetectResult({ elements: [] }, 640, 480), { width: 640, height: 480, elements: [] })
   assert.equal(normalizeDetectResult({}, 640, 480), undefined)
   assert.equal(normalizeDetectResult({ elements: 'nope' }, 640, 480), undefined)
+  assert.equal(normalizeDetectResult({ elements: [{ label: 'button' }] }, 640, 480), undefined)
+  assert.equal(normalizeDetectResult({ elements: [{ label: '', box: { x1: 1, y1: 1, x2: 10, y2: 10 } }] }, 640, 480), undefined)
+  assert.equal(normalizeDetectResult({ elements: [{ label: 'button', box: { x1: '1', y1: 1, x2: 10, y2: 10 } }] }, 640, 480), undefined)
+  assert.equal(normalizeDetectResult({ elements: [{ label: 'button', box: { x1: 50, y1: 50, x2: 10, y2: 10 } }] }, 640, 480), undefined)
 })
 
 test('normalizeDescribeResult fills the documented keys', () => {
