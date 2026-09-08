@@ -8,6 +8,7 @@ import {
 } from '../lib/vision-capability-benchmark-service.js'
 import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
 import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
+import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
 
 function createCapabilityBenchmarkManager(...args) {
   const manager = createCapabilityBenchmarkManagerRaw(...args)
@@ -189,13 +190,15 @@ test('exact invoker sends one selected vision-http provider directly and never e
   })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].messages[0].content[0].type, 'image_url')
-  assert.equal(calls[0].callOptions.sessionId, 'vision-benchmark-00000000-0000-4000-8000-000000000410')
+  assert.equal(calls[0].callOptions.sessionId, undefined)
+  assert.equal(calls[0].callOptions.affinityId, 'vision-benchmark-00000000-0000-4000-8000-000000000410')
   assert.equal(result.output, 'exact answer')
   assert.equal(result.transport, 'http-direct')
 })
 
 test('endpoint-scoped DSH provider uses its exact registered adapter before considering HTTP bridge', async () => {
   const adapterCalls = []
+  let adapterAffinity
   let directCalls = 0
   const invoke = createExactCapabilityInvoker(fakeCtx(), fakeCore(), {
     key: 'zhipu-glm/glm-4.6v',
@@ -209,6 +212,7 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
     renderFixture: async () => Buffer.from('png'),
     streamExact: (call) => {
       adapterCalls.push(call)
+      adapterAffinity = currentVisionSessionAffinityId()
       return asyncTextStream('[672,672,901,813]')
     },
     callDirect: async () => {
@@ -233,7 +237,8 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
   assert.equal(adapterCalls.length, 1)
   assert.equal(adapterCalls[0].provider, 'zhipu-glm')
   assert.equal(adapterCalls[0].model, 'glm-4.6v')
-  assert.equal(adapterCalls[0].sessionId, 'vision-benchmark-11111111-1111-4111-8111-111111111410')
+  assert.equal(adapterCalls[0].sessionId, undefined)
+  assert.equal(adapterAffinity, 'vision-benchmark-11111111-1111-4111-8111-111111111410')
   assert.equal(adapterCalls[0].messages[0].content[0].type, 'image')
   assert.equal(directCalls, 0)
   assert.equal(result.output, '[672,672,901,813]')

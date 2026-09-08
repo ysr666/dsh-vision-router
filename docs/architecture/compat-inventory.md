@@ -40,12 +40,12 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/pi-ai-bridge-wire-compat.js`
 
-- **Reason:** make the legacy direct image bridge transport-equivalent to pi-ai declared wire compatibility without reading credentials or changing provider priority.
-- **Host gap:** the direct bridge predates route/model wire metadata such as max-token fields and route-owned headers.
-- **First needed for:** DSH 0.1.1 pi-ai declared provider/wire compatibility.
-- **Feature detection:** exact non-streaming OpenAI-compatible image bridge fingerprint plus resolved route/model facts; normal streaming Host traffic does not match.
-- **Removal condition:** the direct bridge is removed or every supported Host executes this image path through the native pi-ai wire seam.
-- **Tests:** `pi-ai-bridge-wire-compat`, native process-restart/cold-resume contract.
+- **Reason:** keep the legacy direct image bridge transport-equivalent to pi-ai declared wire compatibility and, while upstream lacks the OpenCode-specific carrier, project Vision Router-owned session affinity onto the final Go wire without taking ownership of ordinary Host traffic. `lib/session-affinity-runtime.js` is the scoped AsyncLocalStorage companion; it carries affinity only while a Router-owned lazy stream is executing.
+- **Host gap:** the direct bridge predates route/model wire metadata such as max-token fields and route-owned headers; current DSH/pi-ai accepts `GenerateOptions.sessionId` but emits generic affinity carriers rather than OpenCode Go's required `x-opencode-session`.
+- **First needed for:** DSH 0.1.1 pi-ai declared provider/wire compatibility; OpenCode Go's September 2026 required session header.
+- **Feature detection:** legacy wire recovery still requires the exact non-streaming OpenAI-compatible image bridge fingerprint plus resolved route/model facts. OpenCode affinity requires an active Vision Router AsyncLocalStorage scope, the exact official HTTPS `opencode.ai/zen/go...` endpoint, and absence of an upstream-native `x-opencode-session`; unrelated Host/plugin traffic is inert.
+- **Removal condition:** remove legacy bridge recovery when every supported Host executes that image path through native pi-ai wire facts; remove the scoped OpenCode projection independently once every supported DSH/pi-ai path emits `x-opencode-session` from `GenerateOptions.sessionId`. The native header must win before deletion so the compatibility rule self-retires.
+- **Tests:** `pi-ai-bridge-wire-compat`, real `opencode-session-wire-contract`, native process-restart/cold-resume contract.
 
 ## `lib/settings-client-rc8-lifecycle.js`
 

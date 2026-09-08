@@ -4,6 +4,7 @@
 // coverage for the pure resilience primitives.
 
 import { test } from 'node:test'
+import { sessionIdentityOf } from '../lib/session-affinity.js'
 import assert from 'node:assert/strict'
 import {
   classifyVisionFailure,
@@ -21,6 +22,21 @@ import {
 } from '../index.js'
 
 // ── pure primitives ────────────────────────────────────────────────────────
+
+test('wire-invalid DSH session ids remain isolated in internal turn memory', () => {
+  const memory = createVisionTurnMemory()
+  const a = sessionIdentityOf({ id: 'A'.repeat(513) })
+  const b = sessionIdentityOf({ id: 'B'.repeat(513) })
+  const scopeA = `${a}:1`
+  const scopeB = `${b}:1`
+  assert.notEqual(scopeA, scopeB)
+  memory.bindSession(a, scopeA)
+  memory.record(scopeA, 'backend-a', 'INVALID_REQUEST')
+  memory.markAllFailed(scopeA)
+  memory.bindSession(b, scopeB)
+  assert.equal(memory.allFailed(scopeB), false)
+  assert.deepEqual(memory.attempted(scopeB), [])
+})
 
 test('classifyVisionFailure maps status, codes and prose into the shared taxonomy', () => {
   const auth = new Error('qwen-token-plan-cn/qwen3.6-flash: 401 Invalid API-key provided')
