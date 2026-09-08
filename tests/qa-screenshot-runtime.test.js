@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { createSecureHtmlScreenshotExecute } from '../lib/adversarial-hardening.js'
 import {
   buildPerMonitorWindowsScreenshotScript,
-  isLegacyWindowsScreenshotScript,
-  rewriteWindowsScreenshotExecArgs,
-} from '../lib/windows-screenshot-dpi-compat.js'
-import { installVisionRouterExecFileCompat } from '../lib/tesseract-exec-compat.js'
+  captureWindowsDesktop,
+  createWindowsCaptureTempDir,
+  isAsciiWindowsPath,
+} from '../lib/windows-desktop-capture.js'
 
 function screenshotHarness({ hangGoto = false } = {}) {
   const resolveCalls = []
@@ -108,18 +108,6 @@ test('aborting an active secure screenshot closes Chrome and prevents artifact p
   assert.equal(harness.artifactWrites, 0)
 })
 
-function legacyDesktopScreenshotScript(outputPath) {
-  return [
-    'Add-Type -AssemblyName System.Windows.Forms,System.Drawing',
-    '$b=[System.Windows.Forms.SystemInformation]::VirtualScreen',
-    '$bmp=New-Object System.Drawing.Bitmap($b.Width,$b.Height)',
-    '$g=[System.Drawing.Graphics]::FromImage($bmp)',
-    '$g.CopyFromScreen($b.X,$b.Y,0,0,$bmp.Size)',
-    `$bmp.Save('${String(outputPath).replace(/'/g, "''")}')`,
-    '$g.Dispose();$bmp.Dispose()',
-  ].join('; ')
-}
-
 test('Windows desktop capture enters per-monitor v2 on the exact capture thread and restores it', () => {
   const script = buildPerMonitorWindowsScreenshotScript("C:\\shot's\\screen.png")
   const captureAt = script.indexOf('public static void Capture(string outputPath)')
@@ -141,88 +129,132 @@ test('Windows desktop capture enters per-monitor v2 on the exact capture thread 
   assert.match(script, /C:\\shot''s\\screen\.png/)
 })
 
-test('the compatibility matcher stays pinned to the legacy screenshot command emitted by core', async () => {
+test('production Windows screenshot directly owns PMv2 capture and no longer depends on execFile rewriting', async () => {
   const core = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  const assemblyAt = core.indexOf("'Add-Type -AssemblyName System.Windows.Forms,System.Drawing'")
-  const boundsAt = core.indexOf("'$b=[System.Windows.Forms.SystemInformation]::VirtualScreen'", assemblyAt)
-  const graphicsAt = core.indexOf("'$g=[System.Drawing.Graphics]::FromImage($bmp)'", boundsAt)
-  const copyAt = core.indexOf("'$g.CopyFromScreen($b.X,$b.Y,0,0,$bmp.Size)'", graphicsAt)
-  const saveOffset = core.slice(copyAt).search(
-    /`\$bmp\.Save\('\$\{tmp\.replace\(\/'\/g,\s*\\?"''\\?"\)\}'\)`/,
-  )
-  const saveAt = saveOffset < 0 ? -1 : copyAt + saveOffset
+  const execCompat = await readFile(new URL('../lib/tesseract-exec-compat.js', import.meta.url), 'utf8')
 
-  assert.ok(
-    assemblyAt >= 0 && boundsAt > assemblyAt && graphicsAt > boundsAt && copyAt > graphicsAt && saveAt > copyAt,
-    'if core changes the legacy Windows capture command, update the exact compatibility matcher in the same change',
-  )
-  assert.equal(isLegacyWindowsScreenshotScript(legacyDesktopScreenshotScript('C:\\tmp\\shot.png')), true)
+  assert.match(core, /import \{ captureWindowsDesktop \} from '\.\/lib\/windows-desktop-capture\.js'/)
+  assert.match(core, /await captureWindowsDesktop\(tmp, \{/)
+  assert.doesNotMatch(core, /\$b=\[System\.Windows\.Forms\.SystemInformation\]::VirtualScreen/)
+  assert.doesNotMatch(core, /\$g\.CopyFromScreen\(\$b\.X,\$b\.Y,0,0,\$bmp\.Size\)/)
+  assert.doesNotMatch(execCompat, /rewriteWindowsScreenshotExecArgs/)
+  assert.doesNotMatch(execCompat, /Windows DPI capture shims/)
 })
 
-test('only the exact legacy Windows desktop screenshot command is rewritten', () => {
-  const original = ['-NoProfile', '-STA', '-Command', legacyDesktopScreenshotScript('C:\\tmp\\shot.png')]
-  const rewritten = rewriteWindowsScreenshotExecArgs('powershell.exe', original, { platform: 'win32' })
-  assert.notEqual(rewritten, original)
-  assert.match(rewritten[3], /DshVisionDesktopCapture/)
-
-  assert.equal(rewriteWindowsScreenshotExecArgs('powershell.exe', original, { platform: 'linux' }), original)
-  assert.equal(rewriteWindowsScreenshotExecArgs('cmd.exe', original, { platform: 'win32' }), original)
-  const unrelated = ['-NoProfile', '-Command', 'Write-Output hello']
-  assert.equal(rewriteWindowsScreenshotExecArgs('powershell.exe', unrelated, { platform: 'win32' }), unrelated)
-})
-
-test('the shared execFile seam rewrites desktop screenshot calls without disturbing unrelated calls', async () => {
+test('Windows capture isolates CodeDom TEMP/TMP to a writable ASCII directory', async () => {
   const calls = []
-  const originalCustom = async (file, args, options) => {
-    calls.push({ file, args, options })
-    return { stdout: 'ok', stderr: '' }
+  const made = []
+  const removed = []
+  const controller = new AbortController()
+  const env = {
+    TEMP: 'C:\\Users\\张三\\AppData\\Local\\Temp',
+    TMP: 'C:\\Users\\张三\\AppData\\Local\\Temp',
+    SystemRoot: 'C:\\Windows',
+    KEEP_ME: 'yes',
   }
-  const lockedExecFile = function lockedExecFile(_file, _args, _options, callback) {
-    callback?.(null, 'callback-ok', '')
-    return { pid: 1 }
-  }
-  Object.defineProperty(lockedExecFile, promisify.custom, {
-    configurable: false,
-    enumerable: false,
-    writable: false,
-    value: originalCustom,
-  })
-  const fakeModule = { execFile: lockedExecFile }
-  const dispose = installVisionRouterExecFileCompat(undefined, {
-    childProcessModule: fakeModule,
-    platform: 'win32',
+  const original = { ...env }
+
+  await captureWindowsDesktop('C:\\Users\\张三\\AppData\\Local\\Temp\\screen.png', {
+    env,
+    tmpRoot: env.TEMP,
+    timeoutMs: 4321,
+    signal: controller.signal,
+    async mkdtemp(prefix) {
+      made.push(prefix)
+      return `${prefix}ABC123`
+    },
+    async rm(dir, options) {
+      removed.push({ dir, options })
+    },
+    async execFileAsync(file, args, options) {
+      calls.push({ file, args, options })
+      return { stdout: '', stderr: '' }
+    },
   })
 
-  try {
-    await promisify(fakeModule.execFile)(
-      'powershell.exe',
-      ['-NoProfile', '-STA', '-Command', legacyDesktopScreenshotScript("C:\\tmp\\O'Brien.png")],
-      { timeout: 1000 },
-    )
-    await promisify(fakeModule.execFile)('node', ['--version'], {})
-  } finally {
-    dispose()
-  }
-
-  assert.equal(calls.length, 2)
-  assert.match(calls[0].args[3], /PerMonitorV2/)
-  assert.match(calls[0].args[3], /O''Brien\.png/)
-  assert.deepEqual(calls[1].args, ['--version'])
-  assert.equal(fakeModule.execFile, lockedExecFile)
+  assert.deepEqual(env, original, 'capture must never mutate process-style environment input')
+  assert.equal(made.length, 1)
+  assert.equal(made[0], 'C:\\Windows\\Temp\\dsh-vision-router-capture-')
+  assert.equal(isAsciiWindowsPath(made[0]), true)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].file, 'powershell.exe')
+  assert.deepEqual(calls[0].args.slice(0, 4), ['-NoProfile', '-NonInteractive', '-STA', '-Command'])
+  assert.match(calls[0].args[4], /PerMonitorV2/)
+  assert.match(calls[0].args[4], /DshVisionDesktopCapture/)
+  assert.match(calls[0].args[4], /C:\\Users\\张三\\AppData\\Local\\Temp\\screen\.png/)
+  assert.equal(calls[0].options.timeout, 4321)
+  assert.equal(calls[0].options.signal, controller.signal)
+  assert.equal(calls[0].options.env.KEEP_ME, 'yes')
+  assert.equal(calls[0].options.env.TEMP, 'C:\\Windows\\Temp\\dsh-vision-router-capture-ABC123')
+  assert.equal(calls[0].options.env.TMP, calls[0].options.env.TEMP)
+  assert.equal(calls[0].options.cwd, calls[0].options.env.TEMP)
+  assert.equal(isAsciiWindowsPath(calls[0].options.env.TEMP), true)
+  assert.equal(removed.length, 1)
+  assert.equal(removed[0].dir, calls[0].options.env.TEMP)
+  assert.equal(removed[0].options.recursive, true)
+  assert.equal(removed[0].options.force, true)
 })
 
-test('Windows PowerShell compiles the helper and can enter and restore a per-monitor DPI context', {
+test('Windows capture fails closed and never falls back to the legacy logical-coordinate script', async () => {
+  const calls = []
+  const removed = []
+  await assert.rejects(
+    captureWindowsDesktop('C:\\tmp\\screen.png', {
+      env: { TEMP: 'C:\\Temp', SystemRoot: 'C:\\Windows' },
+      tmpRoot: 'C:\\Temp',
+      async mkdtemp(prefix) { return `${prefix}ABC123` },
+      async rm(dir) { removed.push(dir) },
+      async execFileAsync(file, args, options) {
+        calls.push({ file, args, options })
+        throw new Error('Add-Type failed')
+      },
+    }),
+    (error) => error?.code === 'WINDOWS_DPI_CAPTURE_FAILED' && /Add-Type failed/.test(error.message),
+  )
+
+  assert.equal(calls.length, 1, 'a failed PMv2 capture must not trigger a second legacy attempt')
+  assert.match(calls[0].args[4], /DshVisionDesktopCapture/)
+  assert.doesNotMatch(calls[0].args[4], /\$b=\[System\.Windows\.Forms\.SystemInformation\]::VirtualScreen/)
+  assert.equal(removed.length, 1)
+})
+
+test('Windows capture refuses to run when no writable ASCII CodeDom temp root exists', async () => {
+  let executions = 0
+  await assert.rejects(
+    captureWindowsDesktop('C:\\tmp\\screen.png', {
+      env: {
+        TEMP: 'C:\\Users\\张三\\Temp',
+        TMP: 'C:\\Users\\张三\\Temp',
+        SystemRoot: 'C:\\Windows',
+      },
+      tmpRoot: 'C:\\Users\\张三\\Temp',
+      async mkdtemp() { throw new Error('access denied') },
+      async execFileAsync() { executions += 1 },
+    }),
+    (error) => error?.code === 'WINDOWS_CAPTURE_TEMP_UNAVAILABLE',
+  )
+  assert.equal(executions, 0)
+})
+
+test('Windows PowerShell compiles the helper with isolated ASCII TEMP/TMP and can enter/restore PM context', {
   skip: process.platform !== 'win32',
 }, async () => {
-  const script = buildPerMonitorWindowsScreenshotScript('C:\\unused\\dpi-context-probe.png').replace(
-    /\[DshVisionDesktopCapture\]::Capture\([^\r\n]+\)\s*$/,
-    '[DshVisionDesktopCapture]::ValidateDpiContext()',
-  )
-  await promisify(execFile)('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
-    // Hosted Windows images occasionally cold-start Add-Type far slower than
-    // the ~5s warm run. Keep this probe below product screenshot deadlines but
-    // high enough that CI load is not mistaken for a DPI implementation bug.
-    timeout: 60000,
-    windowsHide: true,
-  })
+  const scratch = await createWindowsCaptureTempDir()
+  try {
+    const script = buildPerMonitorWindowsScreenshotScript('C:\\unused\\dpi-context-probe.png').replace(
+      /\[DshVisionDesktopCapture\]::Capture\([^\r\n]+\)\s*$/,
+      '[DshVisionDesktopCapture]::ValidateDpiContext()',
+    )
+    await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-Command', script], {
+      // Hosted Windows images occasionally cold-start Add-Type far slower than
+      // the ~5s warm run. Keep this probe below product screenshot deadlines but
+      // high enough that CI load is not mistaken for a DPI implementation bug.
+      timeout: 60000,
+      windowsHide: true,
+      cwd: scratch,
+      env: { ...process.env, TEMP: scratch, TMP: scratch },
+    })
+  } finally {
+    await rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+  }
 })
