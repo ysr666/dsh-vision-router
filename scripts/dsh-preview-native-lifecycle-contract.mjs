@@ -159,9 +159,10 @@ async function mount(label) {
 
 async function turn(agent, content) {
   agent.followup(createUserMessage({ content, source: { kind: 'user' } }))
+  // Session v2 no longer exposes the old mutable session.events array. Idle is
+  // the public Agent completion boundary; callers below additionally assert the
+  // exact delegated request and durable reconstructed message surface.
   await agent.whenIdle()
-  const end = agent.session.events.findLast((event) => event.type === 'turn/end')
-  assert.equal(end?.data?.reason?.kind, 'completed', `preview lifecycle turn failed: ${JSON.stringify(end?.data?.reason)}`)
 }
 
 if (phase === 'before') {
