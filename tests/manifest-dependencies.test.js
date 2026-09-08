@@ -94,6 +94,7 @@ test('host-provided DSH packages publish the active Host floor while retaining a
     assert.equal(typeof peer, 'string', `${name} must be a peerDependency`)
     assert.match(peer, /\^0\.1\.0-rc\.8/, `${name} must publish the DVR 2.1 rc8 Host floor`)
     assert.match(peer, /\^0\.1\.1-rc\.1/, `${name} must admit the released DSH 0.1.1 train`)
+    assert.match(peer, /\^0\.1\.3-alpha\.2/, `${name} must admit the verified DSH 0.1.3 alpha train`)
     assert.equal(typeof pkg.devDependencies?.[name], 'string', `${name} must remain available for tests`)
     assert.match(pkg.devDependencies[name], /\^0\.1\.0-rc\.6/)
   }
