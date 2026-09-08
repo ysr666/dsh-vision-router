@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
 import { parseVersionComparator } from '../lib/version-range.js'
+import { directSessionAffinityHeaders, sessionAffinityIdOf } from '../lib/session-affinity.js'
 import {
   mediaTypeOf,
   sniffMediaType,
@@ -327,6 +328,116 @@ test('callOpenAICompatible posts keyless when apiKeyEnv is empty', async () => {
     assert.equal(captured.url, 'https://example.com/v1/chat/completions')
     assert.equal(captured.init.headers.authorization, undefined)
     assert.equal(JSON.parse(captured.init.body).stream, false)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('session affinity keeps DSH opaque ids stable across live/header/requestHeader session shapes', () => {
+  assert.equal(sessionAffinityIdOf({ id: 'session-abc-123' }), 'session-abc-123')
+  assert.equal(sessionAffinityIdOf({ header: { id: 'persisted-session' } }), 'persisted-session')
+  assert.equal(sessionAffinityIdOf({ requestHeader: () => ({ id: 'request-session' }) }), 'request-session')
+  assert.equal(sessionAffinityIdOf({ id: 'bad\r\nid' }), undefined)
+  assert.deepEqual(
+    directSessionAffinityHeaders(
+      { name: 'custom-name', baseURL: 'https://opencode.ai/zen/go/v1' },
+      'session-opaque-value',
+    ),
+    { 'x-opencode-session': 'session-opaque-value' },
+  )
+  assert.deepEqual(
+    directSessionAffinityHeaders({ name: 'ordinary', baseURL: 'https://example.com/v1' }, undefined),
+    {},
+  )
+  assert.deepEqual(
+    directSessionAffinityHeaders(
+      { name: 'opencode-go', baseURL: 'https://example.com/v1' },
+      'must-not-leak',
+    ),
+    {},
+  )
+})
+
+test('callOpenAICompatible sends x-opencode-session only on the direct OpenCode Go transport', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), headers: init.headers }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const text = await callOpenAICompatible(
+      { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go/v1', model: 'm', apiKeyEnv: '' },
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      { sessionId: 'session-410-direct' },
+    )
+    assert.equal(text, 'OK')
+    assert.equal(captured.headers['x-opencode-session'], 'session-410-direct')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('direct OpenCode Go transport fails before fetch when no stable session identity exists', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls += 1
+    throw new Error('must not fetch')
+  }
+  try {
+    await assert.rejects(
+      callOpenAICompatible(
+        { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go/v1', model: 'm', apiKeyEnv: '' },
+        [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      ),
+      (error) => error?.code === 'OPENCODE_SESSION_REQUIRED',
+    )
+    assert.equal(calls, 0)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+
+test('vision-http adapter preserves DSH sessionId into the direct OpenCode Go request', async () => {
+  const config = {
+    freeFallback: false,
+    httpProviders: [
+      {
+        name: 'opencode-go',
+        baseURL: 'https://opencode.ai/zen/go/v1',
+        model: 'vision-model',
+        apiKeyEnv: '',
+      },
+    ],
+  }
+  const { ctx, adapters } = mockHarnessCtx({ config0: config })
+  apply(ctx, Config(config))
+  const adapter = adapters.get('vision-http')
+  assert.ok(adapter)
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (_url, init) => {
+    captured = init.headers
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    for await (const _chunk of adapter.stream({
+      provider: 'vision-http',
+      model: 'opencode-go/vision-model',
+      sessionId: 'session-410-http-adapter',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    })) {
+      // drain
+    }
+    assert.equal(captured?.['x-opencode-session'], 'session-410-http-adapter')
   } finally {
     globalThis.fetch = original
   }
@@ -1424,6 +1535,7 @@ test('catalog correction answers opencode-go/qwen3.6-plus on the Anthropic endpo
     for await (const chunk of chain.stream({
       provider: 'vision-chain',
       model: 'opencode-go/qwen3.6-plus',
+      sessionId: 'session-410-chain',
       messages: [
         {
           role: 'user',
@@ -1441,6 +1553,7 @@ test('catalog correction answers opencode-go/qwen3.6-plus on the Anthropic endpo
     assert.equal(captured.url, 'https://opencode.ai/zen/go/v1/messages')
     assert.equal(captured.headers['x-api-key'], 'sk-opencode')
     assert.equal(captured.headers['anthropic-version'], '2023-06-01')
+    assert.equal(captured.headers['x-opencode-session'], 'session-410-chain')
     assert.equal(captured.body.model, 'qwen3.6-plus')
     assert.ok(
       captured.body.messages[0].content.some((block) => block.type === 'image'),
@@ -1457,6 +1570,51 @@ test('catalog correction answers opencode-go/qwen3.6-plus on the Anthropic endpo
   }
 })
 
+test('vision_describe threads the live DSH session id into its child Harness call', async () => {
+  const config = {
+    providers: [{ provider: 'opencode-go', model: 'qwen3.6-plus' }],
+    downscale: false,
+  }
+  const { ctx, captured } = mockHarnessCtx({
+    opencodeGo: 'fixed',
+    attachments: true,
+    config0: config,
+  })
+  const originalGet = ctx.get.bind(ctx)
+  ctx.get = (name) => {
+    if (name === 'fs') {
+      return {
+        resolve: async (value) => value,
+        readBytes: async () => Buffer.from('fake-png-bytes'),
+      }
+    }
+    return originalGet(name)
+  }
+  let seen
+  ctx.llm.stream = async function* (options) {
+    seen = options
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: 'saw it' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: 'saw it' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+
+  apply(ctx, Config(config))
+  const activate = captured.tools.find((entry) => entry?.name === 'vision_activate')
+  assert.ok(activate)
+  await activate.execute({}, {})
+  const describe = captured.tools.find((entry) => entry?.name === 'vision_describe')
+  assert.ok(describe)
+  const result = await describe.execute(
+    { paths: ['/tmp/fake.png'], question: 'what is here?' },
+    { agent: { session: { header: { id: 'session-410-tool' }, events: [] } } },
+  )
+  assert.equal(result, 'saw it')
+  assert.equal(seen?.provider, 'opencode-go')
+  assert.equal(seen?.model, 'qwen3.6-plus')
+  assert.equal(seen?.sessionId, 'session-410-tool')
+})
+
 test('the correction stands down once the catalog routes the pair correctly', async () => {
   const { ctx, adapters } = mockHarnessCtx({
     opencodeGo: 'fixed',
@@ -1466,6 +1624,11 @@ test('the correction stands down once the catalog routes the pair correctly', as
   apply(ctx, Config(opencodeGoChainConfig))
   const chain = adapters.get('vision-chain')
   assert.ok(chain)
+  let seenHarnessOptions
+  ctx.llm.stream = async function* (options) {
+    seenHarnessOptions = options
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
 
   const original = globalThis.fetch
   let fetchCalls = 0
@@ -1481,11 +1644,13 @@ test('the correction stands down once the catalog routes the pair correctly', as
     for await (const chunk of chain.stream({
       provider: 'vision-chain',
       model: 'opencode-go/qwen3.6-plus',
+      sessionId: 'session-410-normal-chain',
       messages: [{ role: 'user', content: [{ type: 'text', text: 'What is this?' }] }],
     })) {
       chunks.push(chunk)
     }
     assert.equal(fetchCalls, 0, 'the corrected Anthropic path must not run once upstream is fixed')
+    assert.equal(seenHarnessOptions?.sessionId, 'session-410-normal-chain')
     assert.deepEqual(chunks.at(-1), { type: 'finish', reason: { kind: 'stop' } })
   } finally {
     globalThis.fetch = original
