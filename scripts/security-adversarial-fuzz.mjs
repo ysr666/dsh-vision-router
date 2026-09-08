@@ -10,7 +10,7 @@ import { redactDiagnosticText } from '../lib/diagnostic-redaction.js'
 import { resolveVisionRoutingAuthority } from '../lib/vision-routing-authority.js'
 import { isOfficialOpenCodeGoUrl, wireSessionAffinityId } from '../lib/session-affinity.js'
 
-const cases = Math.max(100, Math.min(100_000, Number(process.env.DVR_FUZZ_CASES) || 1_500))
+const cases = Math.max(100, Math.min(10_000, Number(process.env.DVR_FUZZ_CASES) || 500))
 let state = Number(process.env.DVR_FUZZ_SEED) || 0x5eedc0de
 
 function random() {
@@ -82,6 +82,29 @@ for (let i = 0; i < cases; i += 1) {
     assert.match(wire, /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/)
   }
 }
+// Exercise the exact bounded extremes once instead of rebuilding an enormous
+// random shape thousands of times. Random cases search shape combinations; this
+// deterministic case proves the provider/fallback caps themselves.
+const boundaryConfig = normalizeRuntimeVisionConfig({
+  providers: Array.from({ length: MAX_RUNTIME_PROVIDER_ROWS + 16 }, (_, index) => ({
+    provider: `provider-${index}`,
+    model: `model-${index}`,
+    fallbacks: Array.from(
+      { length: MAX_RUNTIME_FALLBACKS_PER_ROW + 16 },
+      (_, fallback) => `fallback-${fallback}`,
+    ),
+  })),
+  fallbacks: Array.from(
+    { length: MAX_RUNTIME_FALLBACKS_PER_ROW + 16 },
+    (_, index) => `root-${index}`,
+  ),
+})
+assert.equal(boundaryConfig.providers.length, MAX_RUNTIME_PROVIDER_ROWS)
+assert.equal(boundaryConfig.fallbacks.length, MAX_RUNTIME_FALLBACKS_PER_ROW)
+for (const row of boundaryConfig.providers) {
+  assert.equal(row.fallbacks.length, MAX_RUNTIME_FALLBACKS_PER_ROW)
+}
+
 const bearer = `Bearer ${'A'.repeat(48)}`
 const apiKey = `sk-proj-${'B'.repeat(32)}`
 const diagnostic = redactDiagnosticText(

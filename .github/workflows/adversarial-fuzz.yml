@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      DVR_FUZZ_CASES: ${{ github.event_name == 'schedule' && '10000' || '1500' }}
+      DVR_FUZZ_CASES: ${{ github.event_name == 'schedule' && '1500' || '500' }}
       DVR_FUZZ_SEED: '1592639710'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
