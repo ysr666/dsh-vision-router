@@ -23,7 +23,7 @@ on:
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
-      - 'tests/clipboard-bitmap-resource-budget.test.js'
+      - 'tests/client-presentation-boundary.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   push:
     branches: [main]
@@ -48,7 +48,7 @@ on:
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
-      - 'tests/clipboard-bitmap-resource-budget.test.js'
+      - 'tests/client-presentation-boundary.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   workflow_dispatch:
 
@@ -116,4 +116,4 @@ jobs:
           tests/alpha1-web-auth-boundary.test.js
           tests/attachment-admission-policy.test.js
           tests/clipboard-image-paste-compat.test.js
-          tests/clipboard-bitmap-resource-budget.test.js
+          tests/client-presentation-boundary.test.js
