@@ -23,6 +23,7 @@ jobs:
           EVENT_REVIEW_TYPE: ${{ github.event.review.user.type }}
           EVENT_REVIEW_STATE: ${{ github.event.review.state }}
           EVENT_REVIEW_COMMIT_SHA: ${{ github.event.review.commit_id }}
+          EVENT_REVIEW_BODY: ${{ github.event.review.body }}
         shell: bash
         run: |
           set -euo pipefail
@@ -31,7 +32,9 @@ jobs:
             && "$EVENT_REVIEW_LOGIN" == "copilot-pull-request-reviewer[bot]" \
             && "$EVENT_REVIEW_TYPE" == "Bot" \
             && "$EVENT_REVIEW_COMMIT_SHA" == "$HEAD_SHA" \
-            && "$EVENT_REVIEW_STATE" != "DISMISSED" ]]; then
+            && "$EVENT_REVIEW_STATE" != "DISMISSED" \
+            && "$EVENT_REVIEW_BODY" == *"<summary>Review details</summary>"* \
+            && "$EVENT_REVIEW_BODY" == *"Files reviewed:"* ]]; then
             echo "Copilot review event covers current PR head $HEAD_SHA"
             exit 0
           fi
@@ -39,7 +42,7 @@ jobs:
           MATCHING_REVIEW_ID="$(
             gh api --paginate \
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\") | .id" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and ((.body // \"\") | contains(\"<summary>Review details</summary>\")) and ((.body // \"\") | contains(\"Files reviewed:\"))) | .id" \
               | sed -n '1p'
           )"
 
