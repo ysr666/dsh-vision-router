@@ -97,21 +97,19 @@ test('OpenAI-compatible listing normalization proves existence only and de-dupli
   )
 })
 
-test('route fingerprint uses non-secret route identity and ignores credential values', () => {
+test('route fingerprint is credential-independent and covers only provider transport identity', () => {
   const base = {
     provider: 'zai',
     baseURL: 'https://example.test/v1',
     api: 'openai-completions',
-    credentialRef: 'ZAI_API_KEY',
-    credentialSource: 'credentials',
   }
   assert.equal(routeFingerprint(base), routeFingerprint({ ...base }))
   assert.equal(
-    routeFingerprint({ ...base, apiKey: 'secret-alpha' }),
-    routeFingerprint({ ...base, apiKey: 'secret-beta' }),
+    routeFingerprint({ ...base, apiKey: 'secret-alpha', apiKeyEnv: 'ALPHA_KEY' }),
+    routeFingerprint({ ...base, apiKey: 'secret-beta', apiKeyEnv: 'BETA_KEY' }),
   )
-  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, credentialRef: 'OTHER_API_KEY' }))
-  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, credentialSource: 'launch-environment' }))
+  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, provider: 'other' }))
+  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, api: 'openai-responses' }))
   assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, baseURL: 'https://other.test/v1' }))
 })
 
