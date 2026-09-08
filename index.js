@@ -44,6 +44,7 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
+import { directSessionAffinityHeaders, sessionAffinityIdOf, normalizeSessionAffinityId } from './lib/session-affinity.js'
 import {
   routingCorrectionFor,
   toAnthropicMessages,
@@ -2214,6 +2215,9 @@ export async function callLocalBackend(provider, messages, options = {}) {
         signal: options.signal,
         allowKeyless: true,
         system: system.join('\n').trim(),
+        ...(normalizeSessionAffinityId(options.sessionId) === undefined
+          ? {}
+          : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
         ...(typeof options.resolveCredential === 'function'
           ? { resolveCredential: options.resolveCredential }
           : {}),
@@ -2224,6 +2228,9 @@ export async function callLocalBackend(provider, messages, options = {}) {
   return callOpenAICompatible(provider, messages, {
     maxTokens,
     signal: options.signal,
+    ...(normalizeSessionAffinityId(options.sessionId) === undefined
+      ? {}
+      : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
     ...(typeof options.resolveCredential === 'function'
       ? { resolveCredential: options.resolveCredential }
       : {}),
@@ -2350,7 +2357,10 @@ export function toAnthropicContent(content) {
 }
 
 export async function callOpenAICompatible(provider, messages, options = {}) {
-  const headers = { 'content-type': 'application/json' }
+  const headers = {
+    'content-type': 'application/json',
+    ...directSessionAffinityHeaders(provider, options.sessionId),
+  }
   const apiKeyEnv = typeof provider.apiKeyEnv === 'string' ? provider.apiKeyEnv : ''
   let resolvedApiKey = ''
   if (apiKeyEnv !== '') {
@@ -3281,13 +3291,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       return 0
     }
   }
-  const sessionIdOf = (session) => {
-    try {
-      return session && session.id !== undefined ? String(session.id) : 'anon'
-    } catch {
-      return 'anon'
-    }
-  }
+  const sessionIdOf = (session) => sessionAffinityIdOf(session) ?? 'anon'
   const visionScopeOf = (session) => `${sessionIdOf(session)}:${turnNumberOf(session)}`
 
   /** Stable, never-logged fingerprint of the credential a backend will use. */
@@ -3654,11 +3658,13 @@ export function apply(ctx, config = {}, runtime = {}) {
             ? callLocalBackend(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
+                sessionId: options.sessionId,
                 resolveCredential,
               })
             : callOpenAICompatible(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
+                sessionId: options.sessionId,
                 resolveCredential,
               }))
         } catch (error) {
@@ -4164,7 +4170,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     return undefined
   }
-  const directChannelVisionAnswer = async (provider, model, blocks, instruction, signal) => {
+  const directChannelVisionAnswer = async (provider, model, blocks, instruction, options = {}) => {
     const plan = channelBridgePlan(provider, model)
     if (!plan.ok) throw new Error(`vision bridge unavailable: ${plan.reason}`)
     const apiKey = await resolveChannelApiKey(plan)
@@ -4188,7 +4194,12 @@ export function apply(ctx, config = {}, runtime = {}) {
         apiKeyEnv: '__vision-router-channel__',
       },
       [{ role: 'user', content: [...content, { type: 'text', text: instruction }] }],
-      { maxTokens: 4096, signal, resolveCredential: () => apiKey },
+      {
+        maxTokens: 4096,
+        signal: options.signal,
+        sessionId: options.sessionId,
+        resolveCredential: () => apiKey,
+      },
     )
   }
 
@@ -4267,6 +4278,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         system: anthropic.system,
         maxTokens: options.maxTokens ?? 4096,
         signal: options.signal,
+        sessionId: options.sessionId,
         apiKey,
       },
     )
@@ -4282,6 +4294,9 @@ export function apply(ctx, config = {}, runtime = {}) {
       messages,
       maxTokens: options.maxTokens ?? 4096,
       signal: options.signal,
+      ...(normalizeSessionAffinityId(options.sessionId) === undefined
+        ? {}
+        : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
     })
   }
 
@@ -4328,7 +4343,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           pair.model,
           options.bridgeBlocks,
           options.bridgeInstruction,
-          options.signal,
+          { signal: options.signal, sessionId: options.sessionId },
         )
       }
       throw error
@@ -4583,6 +4598,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               const text = await correctedVisionAnswer(pair, messages, {
                 maxTokens: options.maxTokens ?? 65536,
                 signal: attemptSignal,
+                sessionId: options.sessionId,
               })
               if (text === undefined) {
                 yield* ctx.llm.stream({
@@ -5311,6 +5327,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         // later calls answer instantly — no network, no re-hitting a tripped
         // 401 provider, no minutes of "deep diving".
         const session = exec && exec.agent && exec.agent.session
+        const sessionId = sessionAffinityIdOf(session)
         const scope = visionScopeOf(session)
         if (visionTurnMemory.allFailed(scope)) {
           return JSON.stringify(
@@ -5384,6 +5401,7 @@ export function apply(ctx, config = {}, runtime = {}) {
             let text = await callVisionPairWithOptionalBridge(pair, messages, {
               maxTokens: 4096,
               signal,
+              sessionId,
               capability,
               bridgeBlocks: blocks,
               bridgeInstruction: promptText,
@@ -5422,6 +5440,7 @@ ctx.logger?.info(
                   text = await callVisionPairWithOptionalBridge(pair, messages, {
                     maxTokens: 4096,
                     signal,
+                    sessionId,
                     capability,
                     bridgeBlocks: blocks,
                     bridgeInstruction:
@@ -5525,6 +5544,7 @@ ctx.logger?.info(
                 {
                   maxTokens: provider.maxTokens ?? 4096,
                   signal: attemptSignal,
+                  sessionId,
                   resolveCredential,
                 },
               )
@@ -5967,6 +5987,7 @@ ctx.logger?.info(
             {
               maxTokens: 4096,
               signal: attemptSignal,
+              sessionId: options.sessionId,
               capability: pairCapability,
               bridgeBlocks: [block],
               bridgeInstruction: instruction,
@@ -6005,6 +6026,7 @@ ctx.logger?.info(
                 deadline.signal(),
                 AbortSignal.timeout(timeoutMs()),
               ),
+              sessionId: options.sessionId,
               resolveCredential,
             },
           )
@@ -6021,11 +6043,14 @@ ctx.logger?.info(
 
     // Tool-facing wrapper: binds the caller's session+turn scope so the
     // breaker and the turn memory act per conversation turn.
-    const answerVisionForTool = (exec, imageBytes, mediaType, instruction, options = {}) =>
-      answerVision(imageBytes, mediaType, instruction, {
-        scope: visionScopeOf(exec && exec.agent && exec.agent.session),
+    const answerVisionForTool = (exec, imageBytes, mediaType, instruction, options = {}) => {
+      const session = exec && exec.agent && exec.agent.session
+      return answerVision(imageBytes, mediaType, instruction, {
+        scope: visionScopeOf(session),
+        sessionId: sessionAffinityIdOf(session),
         ...options,
       })
+    }
 
     deepToolDefs.push({
       name: 'vision_ground',

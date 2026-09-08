@@ -25,6 +25,7 @@ async function collect(iterable) {
 function fixture({ inputModalities, bridgeSupported = true } = {}) {
   let adapterCalls = 0
   let directCalls = 0
+  let directSessionId
   let registered
   const profile = {
     piProvider: {
@@ -113,8 +114,9 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
     isOpenAIHttpBridgeTransport(transport) {
       return transport?.api === 'openai-completions' && /^https?:/.test(String(transport.baseURL))
     },
-    async callOpenAICompatible(_provider, messages) {
+    async callOpenAICompatible(_provider, messages, callOptions) {
       directCalls += 1
+      directSessionId = callOptions?.sessionId
       assert.equal(messages[0].content.some((block) => block.type === 'image_url'), true)
       return '731'
     },
@@ -134,6 +136,7 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
           ],
         }],
         maxTokens: 64,
+        sessionId: 'session-410-preflight',
       }))
     },
   })
@@ -141,6 +144,7 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
     run: () => registered.execute(),
     adapterCalls: () => adapterCalls,
     directCalls: () => directCalls,
+    directSessionId: () => directSessionId,
   }
 }
 
@@ -156,6 +160,7 @@ test('text-projected explicit visual backend uses direct bridge before adapter d
   const chunks = await f.run()
   assert.equal(f.adapterCalls(), 0)
   assert.equal(f.directCalls(), 1)
+  assert.equal(f.directSessionId(), 'session-410-preflight')
   assert.equal(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === '731'), true)
 })
 

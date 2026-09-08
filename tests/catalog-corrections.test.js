@@ -237,12 +237,13 @@ test('callAnthropicCompatible posts /v1/messages with anthropic auth and parses 
     const text = await callAnthropicCompatible(
       { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go/', model: 'qwen3.6-plus' },
       [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-      { maxTokens: 1024, apiKey: 'secret', system: 'be terse' },
+      { maxTokens: 1024, apiKey: 'secret', system: 'be terse', sessionId: 'session-catalog-test' },
     )
     assert.equal(text, 'Hello world')
     assert.equal(captured.url, 'https://opencode.ai/zen/go/v1/messages')
     assert.equal(captured.headers['x-api-key'], 'secret')
     assert.equal(captured.headers['anthropic-version'], '2023-06-01')
+    assert.equal(captured.headers['x-opencode-session'], 'session-catalog-test')
     assert.equal(captured.body.model, 'qwen3.6-plus')
     assert.equal(captured.body.max_tokens, 1024)
     assert.equal(captured.body.system, 'be terse')
@@ -264,7 +265,7 @@ test('callAnthropicCompatible types 429 with retry-after like the OpenAI client'
       callAnthropicCompatible(
         { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go', model: 'qwen3.6-plus' },
         [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-        { maxTokens: 1024, apiKey: 'secret' },
+        { maxTokens: 1024, apiKey: 'secret', sessionId: 'session-catalog-test' },
       ),
       (error) => {
         assert.equal(error.status, 429)
@@ -298,7 +299,7 @@ test('callAnthropicCompatible refuses a missing key and empty content', async ()
       callAnthropicCompatible(
         { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go', model: 'qwen3.6-plus' },
         [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
-        { maxTokens: 1024, apiKey: 'secret' },
+        { maxTokens: 1024, apiKey: 'secret', sessionId: 'session-catalog-test' },
       ),
       /no text content/,
     )

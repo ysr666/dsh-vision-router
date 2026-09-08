@@ -167,11 +167,12 @@ test('exact invoker sends one selected vision-http provider directly and never e
   const calls = []
   const invoke = createExactCapabilityInvoker(fakeCtx(), core, candidate, {}, {
     renderFixture: async () => Buffer.from('png'),
-    callDirect: async (provider, messages) => {
-      calls.push({ provider, messages })
+    callDirect: async (provider, messages, callOptions) => {
+      calls.push({ provider, messages, callOptions })
       return 'exact answer'
     },
     streamExact: async () => { throw new Error('vision-http must not enter DSH adapter path') },
+    randomUUID: () => '00000000-0000-4000-8000-000000000410',
   })
   const backend = {
     provider: candidate.provider,
@@ -188,6 +189,7 @@ test('exact invoker sends one selected vision-http provider directly and never e
   })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].messages[0].content[0].type, 'image_url')
+  assert.equal(calls[0].callOptions.sessionId, 'vision-benchmark-00000000-0000-4000-8000-000000000410')
   assert.equal(result.output, 'exact answer')
   assert.equal(result.transport, 'http-direct')
 })
@@ -213,6 +215,7 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
       directCalls += 1
       throw new Error('HTTP bridge must not run after successful adapter call')
     },
+    randomUUID: () => '11111111-1111-4111-8111-111111111410',
   })
   const backend = {
     provider: 'zhipu-glm',
@@ -230,6 +233,7 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
   assert.equal(adapterCalls.length, 1)
   assert.equal(adapterCalls[0].provider, 'zhipu-glm')
   assert.equal(adapterCalls[0].model, 'glm-4.6v')
+  assert.equal(adapterCalls[0].sessionId, 'vision-benchmark-11111111-1111-4111-8111-111111111410')
   assert.equal(adapterCalls[0].messages[0].content[0].type, 'image')
   assert.equal(directCalls, 0)
   assert.equal(result.output, '[672,672,901,813]')
