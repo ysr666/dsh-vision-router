@@ -214,7 +214,7 @@ test('openLogDirectory accepts a numeric explorer relay exit code on Windows', a
   }
 })
 
-test('openLogDirectory falls back to cmd start for a Windows spawn-level failure', async () => {
+test('openLogDirectory falls back without a command shell for a Windows spawn-level failure', async () => {
   const calls = []
   const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-win-fallback-'))
   const exec = async (...args) => {
@@ -229,7 +229,7 @@ test('openLogDirectory falls back to cmd start for a Windows spawn-level failure
     await openLogDirectory(root, { platform: 'win32', exec })
     assert.deepEqual(calls.map(([command, args]) => [command, args]), [
       ['explorer.exe', [root]],
-      ['cmd.exe', ['/d', '/s', '/c', `start "" "${root}"`]],
+      ['rundll32.exe', ['url.dll,FileProtocolHandler', root]],
     ])
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -240,7 +240,7 @@ test('openLogDirectory reports both Windows launch failures when fallback also f
   const root = await mkdtemp(path.join(tmpdir(), 'vision-router-open-win-fail-'))
   const exec = async (command) => {
     const error = new Error(`failed ${command}`)
-    error.code = command === 'explorer.exe' ? 'ENOENT' : 2
+    error.code = command === 'explorer.exe' ? 'ENOENT' : 'EACCES'
     throw error
   }
   try {
@@ -249,8 +249,8 @@ test('openLogDirectory reports both Windows launch failures when fallback also f
       (error) => {
         assert.equal(error.code, 'OPEN_LOG_DIRECTORY_FAILED')
         assert.equal(error.explorer?.code, 'ENOENT')
-        assert.equal(error.start?.code, 2)
-        assert.match(error.message, /explorer\.exe spawn failed \(ENOENT\); cmd start failed \(2\)/)
+        assert.equal(error.fallback?.code, 'EACCES')
+        assert.match(error.message, /explorer\.exe spawn failed \(ENOENT\); rundll32 fallback failed \(EACCES\)/)
         return true
       },
     )
