@@ -6,3 +6,8 @@ allowBuilds:
 # exempts only that one version and goes stale on the next release.
 minimumReleaseAgeExclude:
   - '@deepseek-ai/*'
+
+# potrace -> Jimp 0.14 accepts phin's callback API; pin the patched major so
+# Jimp cannot retain the vulnerable redirect/header implementation (GHSA-x565-32qp-m3vf).
+overrides:
+  phin: 3.7.1
