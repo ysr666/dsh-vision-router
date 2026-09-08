@@ -36,6 +36,65 @@ test('vision tool promise rejects promptly when the agent execution is cancelled
   finishUnderlying?.('late')
 })
 
+test('vision task deadline releases a turn when an uncooperative Host attachment save never settles', { timeout: 2_000 }, async () => {
+  let registered
+  let finishUnderlying
+  let observeLateSignal
+  const lateSignal = new Promise((resolve) => { observeLateSignal = resolve })
+  const attachments = {
+    saveImage() {
+      return new Promise((resolve) => { finishUnderlying = resolve })
+    },
+  }
+  const ctx = {
+    get(name) {
+      return name === 'attachments' ? attachments : undefined
+    },
+    fs: {
+      async readBytes(_target, signal) {
+        observeLateSignal?.(signal)
+        signal?.throwIfAborted?.()
+        return Buffer.from('late')
+      },
+    },
+    tools: {
+      register(def) {
+        registered = def
+        return () => {}
+      },
+    },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(ctx, { visionTaskTimeoutMs: 25 })
+  wrapped.tools.register({
+    name: 'vision_present',
+    async execute() {
+      await wrapped.get('attachments').saveImage({ data: Buffer.from('png'), mediaType: 'image/png' })
+      await wrapped.fs.readBytes('late.png')
+      return 'late-success'
+    },
+  })
+
+  // AbortSignal.timeout() intentionally does not keep Node's event loop alive.
+  // A real DSH Host has server/runtime handles; this isolated test otherwise has
+  // only the deliberately never-settling Promise on Node 22, which would make
+  // node:test exit before the deadline can fire. Keep one test-only handle live.
+  const keepAlive = setInterval(() => {}, 1_000)
+  try {
+    await assert.rejects(
+      registered.execute({}, { agent: { session: { header: { cwd: '/workspace' } } } }),
+      (error) => error?.code === 'ABORT_ERR',
+    )
+    // The current Host contract cannot cancel saveImage itself. Drain the fake
+    // continuation explicitly: the runtime promise has already released the turn
+    // and no late completion may become an unhandled rejection.
+    finishUnderlying?.({ attachmentId: 'late' })
+    const signal = await lateSignal
+    assert.equal(signal?.aborted, true, 'detached late continuation must inherit the spent task signal')
+  } finally {
+    clearInterval(keepAlive)
+  }
+})
+
 test('cancelled vision work cannot publish a temp artifact to its final target', async () => {
   const controller = new AbortController()
   const events = []

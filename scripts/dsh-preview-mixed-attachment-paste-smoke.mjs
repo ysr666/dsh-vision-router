@@ -86,6 +86,34 @@ async function adoptRealWorkspace(page, workspacePath) {
   await picker.waitFor({ state: 'hidden', timeout: 30_000 })
 }
 
+async function waitForNativeComposerPasteReady(page) {
+  const probe = '__dvr_native_paste_ready_probe__'
+  await page.waitForFunction((token) => {
+    const target = document.querySelector('[data-composer-input]')
+    if (!(target instanceof HTMLElement)) return false
+    if (target.textContent?.includes(token)) return true
+    const transfer = new DataTransfer()
+    transfer.setData('text/plain', token)
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: transfer,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    }))
+    return false
+  }, probe, { polling: 100, timeout: 30_000 })
+
+  const composer = page.locator('[data-composer-input]').first()
+  await composer.fill('')
+  await page.waitForFunction(() => {
+    const input = document.querySelector('[data-composer-input]')
+    return (input?.textContent ?? '') === ''
+  }, undefined, { timeout: 10_000 })
+  await page.evaluate(() => {
+    globalThis.__DVR_SMOKE_COMPOSER_PASTE_DISPATCHES__ = 0
+  })
+}
+
 async function dispatchMixedPaste(page) {
   await page.evaluate(() => {
     const target = document.querySelector('[data-composer-input]')
@@ -140,6 +168,8 @@ async function capturePageState(page) {
       })),
       composerCardText: (document.querySelector('[data-composer-card]')?.textContent ?? '').trim().slice(0, 4000),
       bodyTextTail: (document.body?.textContent ?? '').trim().slice(-4000),
+      clipboardCompatHookReady: globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ === true,
+      composerPasteDispatches: Number(globalThis.__DVR_SMOKE_COMPOSER_PASTE_DISPATCHES__ ?? 0),
     }))
   } catch (error) {
     return { available: false, captureError: error instanceof Error ? error.message : String(error) }
@@ -182,6 +212,35 @@ try {
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ locale: 'en-US' })
   page = await context.newPage()
+  // Observe the real client lifecycle before any page script runs. The Router
+  // installs its clipboard compatibility as a document-level capture listener;
+  // composer visibility and the Vision slot can become visible before that
+  // Cordis effect has actually executed. Waiting on this registration avoids
+  // racing a synthetic paste into a not-yet-owned event boundary without adding
+  // a production-only readiness marker or arbitrary sleeps.
+  await page.addInitScript(() => {
+    globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ = false
+    const original = EventTarget.prototype.addEventListener
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      if (this === document && type === 'paste' && options === true && typeof listener === 'function') {
+        try {
+          const source = Function.prototype.toString.call(listener)
+          if (source.includes('replayed.has(event)') && source.includes('needsInspection')) {
+            globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ = true
+          }
+        } catch {}
+      }
+      return Reflect.apply(original, this, [type, listener, options])
+    }
+    globalThis.__DVR_SMOKE_COMPOSER_PASTE_DISPATCHES__ = 0
+    const originalDispatch = EventTarget.prototype.dispatchEvent
+    EventTarget.prototype.dispatchEvent = function(event) {
+      if (event?.type === 'paste' && this instanceof Element && this.matches('[data-composer-input]')) {
+        globalThis.__DVR_SMOKE_COMPOSER_PASTE_DISPATCHES__ += 1
+      }
+      return Reflect.apply(originalDispatch, this, [event])
+    }
+  })
   page.on('pageerror', error => pageErrors.push(error.message))
 
   await page.goto(readyUrl)
@@ -193,7 +252,18 @@ try {
 
   const composer = page.locator('[data-composer-input]').first()
   await composer.waitFor({ state: 'visible', timeout: 30_000 })
+  await waitForNativeComposerPasteReady(page)
+  await page.waitForFunction(
+    () => globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ === true,
+    undefined,
+    { timeout: 30_000 },
+  )
   await dispatchMixedPaste(page)
+  await page.waitForFunction(
+    () => Number(globalThis.__DVR_SMOKE_COMPOSER_PASTE_DISPATCHES__ ?? 0) >= 2,
+    undefined,
+    { timeout: 30_000 },
+  )
 
   await page.waitForFunction(() => {
     const input = document.querySelector('[data-composer-input]')
