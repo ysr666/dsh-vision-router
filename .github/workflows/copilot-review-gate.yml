@@ -1,51 +1,75 @@
 name: Copilot review gate
 
 on:
-  pull_request_review:
-    types: [submitted, dismissed]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions: {}
 
+concurrency:
+  group: copilot-review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   copilot-review-gate:
-    name: Copilot review gate
+    if: ${{ !github.event.pull_request.draft }}
+    name: Copilot review gate authority
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pull-requests: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      STATUS_CONTEXT: Copilot review gate
     steps:
-      - name: Require Copilot review of current PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          EVENT_ACTION: ${{ github.event.action }}
-          EVENT_REVIEW_LOGIN: ${{ github.event.review.user.login }}
-          EVENT_REVIEW_TYPE: ${{ github.event.review.user.type }}
-          EVENT_REVIEW_STATE: ${{ github.event.review.state }}
-          EVENT_REVIEW_COMMIT_SHA: ${{ github.event.review.commit_id }}
+      - name: Require current-head Copilot review
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::invalid PR number"; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid PR head SHA"; exit 1; }
 
-          if [[ "$EVENT_ACTION" == "submitted" \
-            && "$EVENT_REVIEW_LOGIN" == "copilot-pull-request-reviewer[bot]" \
-            && "$EVENT_REVIEW_TYPE" == "Bot" \
-            && "$EVENT_REVIEW_COMMIT_SHA" == "$HEAD_SHA" \
-            && "$EVENT_REVIEW_STATE" != "DISMISSED" ]]; then
-            echo "Copilot review event covers current PR head $HEAD_SHA"
-            exit 0
-          fi
+          set_status() {
+            local state="$1" description="$2"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+              -f state="$state" \
+              -f context="$STATUS_CONTEXT" \
+              -f description="$description" >/dev/null
+          }
 
-          MATCHING_REVIEW_ID="$(
-            gh api --paginate \
-              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\") | .id" \
-              | sed -n '1p'
-          )"
+          set_status pending "Waiting for Copilot review of current PR head"
+          trap 'rc=$?; if (( rc != 0 )); then set_status failure "Copilot review gate did not complete" || true; fi' EXIT
 
-          if [[ -z "$MATCHING_REVIEW_ID" ]]; then
-            echo "::error::Copilot has not completed a review for current PR head $HEAD_SHA"
-            exit 1
-          fi
+          for attempt in $(seq 1 48); do
+            MATCHING_REVIEW_ID="$(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+                --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and ((.body // \"\") | contains(\"<summary>Review details</summary>\")) and ((.body // \"\") | contains(\"Files reviewed:\"))) | .id" \
+                | sed -n '1p'
+            )"
+            if [[ -n "$MATCHING_REVIEW_ID" ]]; then
+              set_status success "Copilot reviewed current PR head"
+              trap - EXIT
+              echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
+              exit 0
+            fi
 
-          echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
+            QUOTA_FAILURE_ID="$(
+              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+                --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and (((.body // \"\") | ascii_downcase) | test(\"quota limit|rate limit|usage limit|ai credits\"))) | .id" \
+                | sed -n '1p'
+            )"
+            if [[ -n "$QUOTA_FAILURE_ID" ]]; then
+              set_status failure "Copilot quota or rate limit blocked review"
+              trap - EXIT
+              echo "::error::Copilot quota/rate limit blocked review of current PR head $HEAD_SHA"
+              exit 1
+            fi
+
+            if (( attempt < 48 )); then sleep 15; fi
+          done
+
+          echo "::error::No complete Copilot review for current PR head."
+          exit 1
