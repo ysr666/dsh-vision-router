@@ -44,7 +44,14 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
-import { directSessionAffinityHeaders, sessionAffinityIdOf, normalizeSessionAffinityId } from './lib/session-affinity.js'
+import {
+  directSessionAffinityHeaders,
+  isOfficialOpenCodeGoUrl,
+  openCodeSessionAffinityHeaderForUrl,
+  rawSessionIdentity,
+  sessionIdentityOf,
+} from './lib/session-affinity.js'
+import { runWithVisionSessionAffinity, streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
 import {
   routingCorrectionFor,
   toAnthropicMessages,
@@ -2215,9 +2222,9 @@ export async function callLocalBackend(provider, messages, options = {}) {
         signal: options.signal,
         allowKeyless: true,
         system: system.join('\n').trim(),
-        ...(normalizeSessionAffinityId(options.sessionId) === undefined
+        ...(rawSessionIdentity(options.sessionId) === undefined
           ? {}
-          : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
+          : { sessionId: rawSessionIdentity(options.sessionId) }),
         ...(typeof options.resolveCredential === 'function'
           ? { resolveCredential: options.resolveCredential }
           : {}),
@@ -2228,9 +2235,9 @@ export async function callLocalBackend(provider, messages, options = {}) {
   return callOpenAICompatible(provider, messages, {
     maxTokens,
     signal: options.signal,
-    ...(normalizeSessionAffinityId(options.sessionId) === undefined
+    ...(rawSessionIdentity(options.sessionId) === undefined
       ? {}
-      : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
+      : { sessionId: rawSessionIdentity(options.sessionId) }),
     ...(typeof options.resolveCredential === 'function'
       ? { resolveCredential: options.resolveCredential }
       : {}),
@@ -2359,7 +2366,7 @@ export function toAnthropicContent(content) {
 export async function callOpenAICompatible(provider, messages, options = {}) {
   const headers = {
     'content-type': 'application/json',
-    ...directSessionAffinityHeaders(provider, options.sessionId),
+    ...directSessionAffinityHeaders(provider, options.affinityId ?? options.sessionId),
   }
   const apiKeyEnv = typeof provider.apiKeyEnv === 'string' ? provider.apiKeyEnv : ''
   let resolvedApiKey = ''
@@ -2504,11 +2511,13 @@ export function createChunkAssembler() {
 }
 
 async function visionAnswer(llm, options) {
-  const assembler = createChunkAssembler()
-  for await (const chunk of llm.stream(options)) {
-    assembler.push(chunk)
-  }
-  return assembler.finish()
+  return runWithVisionSessionAffinity(options?.sessionId, async () => {
+    const assembler = createChunkAssembler()
+    for await (const chunk of llm.stream(options)) {
+      assembler.push(chunk)
+    }
+    return assembler.finish()
+  })
 }
 
 /** Environment shim for `resolveAdapterOptions`: `{ get: (name) => ({ value }) }`. */
@@ -3291,7 +3300,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       return 0
     }
   }
-  const sessionIdOf = (session) => sessionAffinityIdOf(session) ?? 'anon'
+  const sessionIdOf = (session) => sessionIdentityOf(session) ?? 'anon'
   const visionScopeOf = (session) => `${sessionIdOf(session)}:${turnNumberOf(session)}`
 
   /** Stable, never-logged fingerprint of the credential a backend will use. */
@@ -4139,6 +4148,16 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     return { ok: true, rawProfile, resolvedProfile, transport }
   }
+  const assertOpenCodeGoAffinityForPair = (pair, sessionId) => {
+    const plan = channelBridgePlan(pair.provider, pair.model)
+    const baseURL = plan?.transport?.baseURL
+    if (!isOfficialOpenCodeGoUrl(baseURL)) return
+    // Validation only: Host receives the unmodified DSH sessionId, while the
+    // scoped final-wire compatibility layer owns x-opencode-session. Fail here
+    // before pi-ai can turn a non-ByteString id into an opaque SDK error.
+    openCodeSessionAffinityHeaderForUrl(baseURL, sessionId)
+  }
+
   const resolveChannelApiKey = async (plan) => {
     const ref = plan && plan.transport && plan.transport.apiKeyEnv
     if (typeof ref === 'string' && ref !== '') {
@@ -4288,15 +4307,16 @@ export function apply(ctx, config = {}, runtime = {}) {
   const callVisionPair = async (pair, messages, options = {}) => {
     const corrected = await correctedVisionAnswer(pair, messages, options)
     if (corrected !== undefined) return corrected
+    assertOpenCodeGoAffinityForPair(pair, options.sessionId)
     return visionAnswer(ctx.llm, {
       provider: pair.provider,
       model: pair.model,
       messages,
       maxTokens: options.maxTokens ?? 4096,
       signal: options.signal,
-      ...(normalizeSessionAffinityId(options.sessionId) === undefined
+      ...(rawSessionIdentity(options.sessionId) === undefined
         ? {}
-        : { sessionId: normalizeSessionAffinityId(options.sessionId) }),
+        : { sessionId: rawSessionIdentity(options.sessionId) }),
     })
   }
 
@@ -4601,14 +4621,15 @@ export function apply(ctx, config = {}, runtime = {}) {
                 sessionId: options.sessionId,
               })
               if (text === undefined) {
-                yield* ctx.llm.stream({
+                assertOpenCodeGoAffinityForPair(pair, options.sessionId)
+                yield* streamWithVisionSessionAffinity(options.sessionId, () => ctx.llm.stream({
                   ...options,
                   provider: pair.provider,
                   model: pair.model,
                   reasoningEffort: undefined,
                   messages,
                   signal: attemptSignal,
-                })
+                }))
                 return
               }
               if (text !== '') {
@@ -5327,7 +5348,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         // later calls answer instantly — no network, no re-hitting a tripped
         // 401 provider, no minutes of "deep diving".
         const session = exec && exec.agent && exec.agent.session
-        const sessionId = sessionAffinityIdOf(session)
+        const sessionId = sessionIdentityOf(session)
         const scope = visionScopeOf(session)
         if (visionTurnMemory.allFailed(scope)) {
           return JSON.stringify(
@@ -6046,9 +6067,9 @@ ctx.logger?.info(
     const answerVisionForTool = (exec, imageBytes, mediaType, instruction, options = {}) => {
       const session = exec && exec.agent && exec.agent.session
       return answerVision(imageBytes, mediaType, instruction, {
-        scope: visionScopeOf(session),
-        sessionId: sessionAffinityIdOf(session),
         ...options,
+        scope: visionScopeOf(session),
+        sessionId: sessionIdentityOf(session),
       })
     }
 

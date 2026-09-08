@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
 import { parseVersionComparator } from '../lib/version-range.js'
-import { directSessionAffinityHeaders, sessionAffinityIdOf } from '../lib/session-affinity.js'
+import { directSessionAffinityHeaders, sessionIdentityOf, wireSessionAffinityId } from '../lib/session-affinity.js'
+import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
 import {
   mediaTypeOf,
   sniffMediaType,
@@ -333,11 +334,21 @@ test('callOpenAICompatible posts keyless when apiKeyEnv is empty', async () => {
   }
 })
 
-test('session affinity keeps DSH opaque ids stable across live/header/requestHeader session shapes', () => {
-  assert.equal(sessionAffinityIdOf({ id: 'session-abc-123' }), 'session-abc-123')
-  assert.equal(sessionAffinityIdOf({ header: { id: 'persisted-session' } }), 'persisted-session')
-  assert.equal(sessionAffinityIdOf({ requestHeader: () => ({ id: 'request-session' }) }), 'request-session')
-  assert.equal(sessionAffinityIdOf({ id: 'bad\r\nid' }), undefined)
+test('session identity keeps internal DSH authority separate from HTTP wire admission', () => {
+  assert.equal(sessionIdentityOf({ id: 'session-abc-123' }), 'session-abc-123')
+  assert.equal(sessionIdentityOf({ header: { id: 'persisted-session' } }), 'persisted-session')
+  assert.equal(sessionIdentityOf({ requestHeader: () => ({ id: 'request-session' }) }), 'request-session')
+  const longA = 'A'.repeat(513)
+  const longB = 'B'.repeat(513)
+  assert.equal(sessionIdentityOf({ id: longA }), longA)
+  assert.equal(sessionIdentityOf({ id: longB }), longB)
+  assert.notEqual(sessionIdentityOf({ id: longA }), sessionIdentityOf({ id: longB }))
+  assert.equal(sessionIdentityOf({ id: 'bad\r\nid' }), 'bad\r\nid')
+  assert.equal(wireSessionAffinityId('session-opaque-value'), 'session-opaque-value')
+  assert.equal(wireSessionAffinityId(' bad-space '), undefined)
+  assert.equal(wireSessionAffinityId('会话-123'), undefined)
+  assert.equal(wireSessionAffinityId('session-😀'), undefined)
+  assert.equal(wireSessionAffinityId(longA), undefined)
   assert.deepEqual(
     directSessionAffinityHeaders(
       { name: 'custom-name', baseURL: 'https://opencode.ai/zen/go/v1' },
@@ -402,6 +413,27 @@ test('direct OpenCode Go transport fails before fetch when no stable session ide
   }
 })
 
+
+test('direct OpenCode Go rejects non-ByteString or rewritten session ids before fetch', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => { calls += 1; throw new Error('must not fetch') }
+  try {
+    for (const sessionId of ['会话-123', 'session-😀', ' padded ']) {
+      await assert.rejects(
+        callOpenAICompatible(
+          { name: 'opencode-go', baseURL: 'https://opencode.ai/zen/go/v1', model: 'm', apiKeyEnv: '' },
+          [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+          { sessionId },
+        ),
+        (error) => error?.code === 'OPENCODE_SESSION_INVALID',
+      )
+    }
+    assert.equal(calls, 0)
+  } finally {
+    globalThis.fetch = original
+  }
+})
 
 test('vision-http adapter preserves DSH sessionId into the direct OpenCode Go request', async () => {
   const config = {
@@ -1591,8 +1623,10 @@ test('vision_describe threads the live DSH session id into its child Harness cal
     return originalGet(name)
   }
   let seen
+  let seenAffinityScope
   ctx.llm.stream = async function* (options) {
     seen = options
+    seenAffinityScope = currentVisionSessionAffinityId()
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: 'saw it' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: 'saw it' } }
@@ -1613,6 +1647,41 @@ test('vision_describe threads the live DSH session id into its child Harness cal
   assert.equal(seen?.provider, 'opencode-go')
   assert.equal(seen?.model, 'qwen3.6-plus')
   assert.equal(seen?.sessionId, 'session-410-tool')
+  assert.equal(seenAffinityScope, 'session-410-tool')
+})
+
+test('Host OpenCode Go path rejects a non-wire-safe session before pi-ai starts', async () => {
+  const config = {
+    providers: [{ provider: 'opencode-go', model: 'qwen3.6-plus' }],
+    routing: true,
+    freeFallback: false,
+    downscale: false,
+  }
+  const { ctx, adapters } = mockHarnessCtx({
+    opencodeGo: 'fixed',
+    attachments: true,
+    config0: config,
+  })
+  apply(ctx, Config(config))
+  const chain = adapters.get('vision-chain')
+  assert.ok(chain)
+  let hostCalls = 0
+  ctx.llm.stream = async function* () {
+    hostCalls += 1
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const chunk of chain.stream({
+    provider: 'vision-chain',
+    model: 'opencode-go/qwen3.6-plus',
+    sessionId: '会话-123',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'What is this?' }] }],
+  })) chunks.push(chunk)
+  assert.equal(hostCalls, 0)
+  const finish = chunks.at(-1)
+  assert.equal(finish?.type, 'finish')
+  assert.equal(finish?.reason?.kind, 'error')
+  assert.match(finish?.reason?.failure?.message ?? '', /not safe for an HTTP header/)
 })
 
 test('the correction stands down once the catalog routes the pair correctly', async () => {
@@ -1625,8 +1694,10 @@ test('the correction stands down once the catalog routes the pair correctly', as
   const chain = adapters.get('vision-chain')
   assert.ok(chain)
   let seenHarnessOptions
+  let seenAffinityScope
   ctx.llm.stream = async function* (options) {
     seenHarnessOptions = options
+    seenAffinityScope = currentVisionSessionAffinityId()
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 
@@ -1651,6 +1722,7 @@ test('the correction stands down once the catalog routes the pair correctly', as
     }
     assert.equal(fetchCalls, 0, 'the corrected Anthropic path must not run once upstream is fixed')
     assert.equal(seenHarnessOptions?.sessionId, 'session-410-normal-chain')
+    assert.equal(seenAffinityScope, 'session-410-normal-chain')
     assert.deepEqual(chunks.at(-1), { type: 'finish', reason: { kind: 'stop' } })
   } finally {
     globalThis.fetch = original

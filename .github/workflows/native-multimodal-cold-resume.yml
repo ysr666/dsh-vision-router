@@ -97,6 +97,7 @@ jobs:
             'tests/native-multimodal-cold-resume-contract.mjs',
             'tests/native-multimodal-process-restart-contract.mjs',
             'tests/pi-ai-native-process-restart-contract.mjs',
+            'tests/opencode-session-wire-contract.mjs',
           ]) {
             const test = spawnSync(
               process.execPath,
