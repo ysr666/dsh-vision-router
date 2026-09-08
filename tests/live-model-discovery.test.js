@@ -7,6 +7,8 @@ import vm from 'node:vm'
 
 import {
   createLiveModelDiscoveryManager,
+  installLiveModelDiscovery,
+  LIVE_MODEL_CACHE_VERSION,
   liveModelCachePath,
   normalizeOpenAIModelListing,
   routeFingerprint,
@@ -95,15 +97,21 @@ test('OpenAI-compatible listing normalization proves existence only and de-dupli
   )
 })
 
-test('route fingerprint changes with endpoint, protocol, or credential fingerprint', () => {
+test('route fingerprint uses non-secret route identity and ignores credential values', () => {
   const base = {
     provider: 'zai',
     baseURL: 'https://example.test/v1',
     api: 'openai-completions',
-    credentialFingerprint: 'a',
+    credentialRef: 'ZAI_API_KEY',
+    credentialSource: 'credentials',
   }
   assert.equal(routeFingerprint(base), routeFingerprint({ ...base }))
-  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, credentialFingerprint: 'b' }))
+  assert.equal(
+    routeFingerprint({ ...base, apiKey: 'secret-alpha' }),
+    routeFingerprint({ ...base, apiKey: 'secret-beta' }),
+  )
+  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, credentialRef: 'OTHER_API_KEY' }))
+  assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, credentialSource: 'launch-environment' }))
   assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, baseURL: 'https://other.test/v1' }))
 })
 
@@ -147,6 +155,7 @@ test('Host discovery uses configured transport/credential and disk cache is disp
 
     const cacheText = await readFile(liveModelCachePath(dshHome), 'utf8')
     assert.equal(cacheText.includes('super-secret-live-discovery-key'), false)
+    assert.equal(JSON.parse(cacheText).version, LIVE_MODEL_CACHE_VERSION)
     assert.match(cacheText, /glm-4v-flash/)
 
     const cachedManager = createLiveModelDiscoveryManager(ctx, {
@@ -166,6 +175,115 @@ test('Host discovery uses configured transport/credential and disk cache is disp
     assert.equal(cachedManager.hasModel('zai', 'glm-4v-flash'), false)
     await cachedManager.dispose()
   } finally {
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
+
+test('credential rotation invalidates live evidence through current and legacy Host events without hashing the key', async () => {
+  const dshHome = await mkdtemp(path.join(os.tmpdir(), 'vision-router-credential-events-'))
+  let apiKey = 'rotation-alpha'
+  let lifecycleCleanup
+  const listeners = new Map()
+  const calls = []
+  const blocked = []
+  const settings = {
+    get(namespace) {
+      if (namespace === 'llm-pi-ai') {
+        return {
+          providers: {
+            zai: {
+              baseURL: 'https://example.test/v1',
+              api: 'openai-completions',
+              apiKeyEnv: 'ZAI_API_KEY',
+            },
+          },
+        }
+      }
+      if (namespace === 'vision-router') {
+        return { providers: [{ provider: 'zai', model: 'glm-live', fallbacks: [] }] }
+      }
+      return undefined
+    },
+  }
+  const ctx = {
+    llm: { registration() { return undefined } },
+    get(name) {
+      if (name === 'settings') return settings
+      if (name === 'credentials') {
+        return { async resolve() { return { value: apiKey, source: 'memory' } } }
+      }
+      return undefined
+    },
+    on(event, handler) {
+      listeners.set(event, handler)
+      return () => listeners.delete(event)
+    },
+    inject() {},
+    effect(factory) {
+      lifecycleCleanup = factory()
+      return lifecycleCleanup
+    },
+  }
+  const manager = installLiveModelDiscovery(ctx, {
+    dshHome,
+    fetchImpl: async (_url, options) => {
+      const call = { authorization: options?.headers?.authorization }
+      calls.push(call)
+      if (calls.length > 1) {
+        await new Promise((resolve) => blocked.push(resolve))
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'glm-live' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  const waitFor = async (predicate, timeoutMs = 1500) => {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (predicate()) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error('timed out waiting for credential invalidation')
+  }
+
+  try {
+    await manager.ready()
+    manager.queueConfigured()
+    await waitForSettled(manager)
+    assert.equal(manager.hasModel('zai', 'glm-live'), true)
+    assert.deepEqual(calls, [{ authorization: 'Bearer rotation-alpha' }])
+    assert.equal(listeners.has('credentials/reference-updated'), true)
+    assert.equal(listeners.has('credentials/updated'), true)
+
+    const versionBefore = (await manager.snapshot()).version
+    apiKey = 'rotation-beta'
+    listeners.get('credentials/reference-updated')('ZAI_API_KEY')
+    assert.equal(manager.hasModel('zai', 'glm-live'), false, 'current Host event must revoke evidence synchronously')
+    listeners.get('credentials/updated')('ZAI_API_KEY')
+    await Promise.resolve()
+    await waitFor(() => calls.length === 2 && blocked.length === 1)
+    assert.equal((await manager.snapshot()).version, versionBefore + 1)
+    assert.equal(manager.hasModel('zai', 'glm-live'), false)
+    assert.equal(calls[1].authorization, 'Bearer rotation-beta')
+    blocked.shift()()
+    await waitForSettled(manager)
+    assert.equal(manager.hasModel('zai', 'glm-live'), true)
+    assert.equal(calls.length, 2, 'current+legacy aliases in one turn must coalesce to one refresh')
+
+    apiKey = 'rotation-gamma'
+    listeners.get('credentials/updated')('ZAI_API_KEY')
+    await Promise.resolve()
+    await waitFor(() => calls.length === 3 && blocked.length === 1)
+    assert.equal(manager.hasModel('zai', 'glm-live'), false)
+    assert.equal(calls[2].authorization, 'Bearer rotation-gamma')
+    blocked.shift()()
+    await waitForSettled(manager)
+    assert.equal(manager.hasModel('zai', 'glm-live'), true)
+  } finally {
+    lifecycleCleanup?.()
+    await manager.dispose()
     await rm(dshHome, { recursive: true, force: true })
   }
 })

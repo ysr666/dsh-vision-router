@@ -142,8 +142,20 @@ test('root hardening rewrites only the existing #284 seams and removes the offic
   assert.match(hardened, /raw\.status === 'selecting' \|\| raw\.status === 'loading'/)
 })
 
-function scriptsOf(html) {
-  return [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((match) => match[1])
+function scriptsOfInjectedFixture(html) {
+  const scripts = []
+  let cursor = 0
+  while (cursor < html.length) {
+    const open = html.indexOf('<script', cursor)
+    if (open === -1) break
+    const body = html.indexOf('>', open + '<script'.length)
+    const close = body === -1 ? -1 : html.indexOf('</script>', body + 1)
+    assert.notEqual(body, -1, 'generated fixture script tag must have an opening delimiter')
+    assert.notEqual(close, -1, 'generated fixture script tag must have a closing delimiter')
+    scripts.push(html.slice(body + 1, close))
+    cursor = close + '</script>'.length
+  }
+  return scripts
 }
 
 test('root hardening patches a loader returned from create and every later global loader replacement', () => {
@@ -173,7 +185,7 @@ test('root hardening patches a loader returned from create and every later globa
     Error,
     console,
   }
-  for (const source of scriptsOf(html)) vm.runInNewContext(source, context)
+  for (const source of scriptsOfInjectedFixture(html)) vm.runInNewContext(source, context)
 
   const created = initial.create()
   assert.equal(created, returned)
@@ -187,7 +199,7 @@ test('root hardening patches a loader returned from create and every later globa
 test('selection transport rejection is recoverable without mutating the Host directory store and identical double-clicks coalesce', async () => {
   const window = { fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }) }
   const html = hardenVisionToggleHtml('<html><head></head></html>')
-  const source = scriptsOf(html).find((script) => script.includes('__dshVisionRouterRootHardening'))
+  const source = scriptsOfInjectedFixture(html).find((script) => script.includes('__dshVisionRouterRootHardening'))
   assert.ok(source)
   vm.runInNewContext(source, {
     window,

@@ -2337,10 +2337,11 @@ test('hostMatchesAny matches exact hosts and subdomains only', () => {
 })
 
 test('DEFAULT_PROXY_HOSTS covers the common foreign AI API domains', () => {
+  const proxyHosts = new Set(DEFAULT_PROXY_HOSTS)
   for (const host of ['api.openrouter.ai', 'openrouter.ai', 'api.openai.com', 'api.anthropic.com', 'api.mistral.ai', 'api.together.xyz']) {
-    assert.ok(DEFAULT_PROXY_HOSTS.includes(host), `missing ${host}`)
+    assert.equal(proxyHosts.has(host), true, `missing ${host}`)
   }
-  assert.ok(!DEFAULT_PROXY_HOSTS.includes('api.deepseek.com'), 'DeepSeek stays direct')
+  assert.equal(proxyHosts.has('api.deepseek.com'), false, 'DeepSeek stays direct')
 })
 
 // ── batch 1: vision_detect + structured describe ────────────────────────────
