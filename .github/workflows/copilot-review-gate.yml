@@ -24,6 +24,7 @@ jobs:
           EVENT_REVIEW_STATE: ${{ github.event.review.state }}
           EVENT_REVIEW_COMMIT_SHA: ${{ github.event.review.commit_id }}
           EVENT_REVIEW_BODY: ${{ github.event.review.body }}
+          EVENT_REVIEW_ASSOCIATION: ${{ github.event.review.author_association }}
         shell: bash
         run: |
           set -euo pipefail
@@ -46,9 +47,29 @@ jobs:
               | sed -n '1p'
           )"
 
-          if [[ -z "$MATCHING_REVIEW_ID" ]]; then
-            echo "::error::Copilot has not completed a review for current PR head $HEAD_SHA"
-            exit 1
+          if [[ -n "$MATCHING_REVIEW_ID" ]]; then
+            echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
+            exit 0
           fi
 
-          echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
+          QUOTA_FAILURE_ID="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and (((.body // \"\") | ascii_downcase) | test(\"quota limit|rate limit|usage limit|ai credits\"))) | .id" \
+              | sed -n '1p'
+          )"
+
+          OWNER_FALLBACK_ID="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+              --jq ".[] | select(.commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and .author_association == \"OWNER\" and ((.body // \"\") | contains(\"[DVR_COPILOT_QUOTA_FALLBACK]\"))) | .id" \
+              | sed -n '1p'
+          )"
+
+          if [[ -n "$QUOTA_FAILURE_ID" && -n "$OWNER_FALLBACK_ID" ]]; then
+            echo "Copilot quota fallback review $OWNER_FALLBACK_ID covers current PR head $HEAD_SHA after quota failure $QUOTA_FAILURE_ID"
+            exit 0
+          fi
+
+          echo "::error::Copilot has not completed a review for current PR head $HEAD_SHA; quota fallback requires a current-head OWNER review marked [DVR_COPILOT_QUOTA_FALLBACK] after an explicit Copilot quota/rate-limit failure"
+          exit 1
