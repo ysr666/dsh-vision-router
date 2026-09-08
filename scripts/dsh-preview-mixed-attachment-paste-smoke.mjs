@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -15,6 +15,8 @@ const dshRequire = createRequire(join(dshRoot, 'package.json'))
 const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
+const diagnosticPath = process.env.SMOKE_DIAGNOSTIC_PATH || ''
+const screenshotPath = process.env.SMOKE_SCREENSHOT_PATH || ''
 
 function waitForReadyLine(child) {
   return new Promise((resolveReady, reject) => {
@@ -124,6 +126,26 @@ async function dispatchMixedPaste(page) {
   })
 }
 
+async function capturePageState(page) {
+  if (!page) return { available: false }
+  try {
+    return await page.evaluate(() => ({
+      available: true,
+      composerText: document.querySelector('[data-composer-input]')?.textContent ?? null,
+      imageAlts: Array.from(document.querySelectorAll('img')).map((node) => node.getAttribute('alt')),
+      titledNodes: Array.from(document.querySelectorAll('[title]')).map((node) => ({
+        tag: node.tagName,
+        title: node.getAttribute('title'),
+        text: (node.textContent ?? '').trim().slice(0, 500),
+      })),
+      composerCardText: (document.querySelector('[data-composer-card]')?.textContent ?? '').trim().slice(0, 4000),
+      bodyTextTail: (document.body?.textContent ?? '').trim().slice(-4000),
+    }))
+  } catch (error) {
+    return { available: false, captureError: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 const root = mkdtempSync(join(tmpdir(), 'dvr-alpha-mixed-paste-'))
 const workspacePath = join(root, 'workspace')
 mkdirSync(workspacePath)
@@ -210,6 +232,23 @@ try {
     duplicateDrafts: false,
     genericUploadsReachedReady: true,
   }))
+} catch (error) {
+  const state = await capturePageState(page)
+  const diagnostic = {
+    ok: false,
+    dsh: process.env.DSH_EXPECTED_VERSION || 'unknown',
+    error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : String(error),
+    pageErrors,
+    state,
+  }
+  try {
+    if (diagnosticPath) writeFileSync(diagnosticPath, `${JSON.stringify(diagnostic, null, 2)}\n`)
+  } catch {}
+  try {
+    if (page && screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true })
+  } catch {}
+  console.error(JSON.stringify(diagnostic))
+  throw error
 } finally {
   try { await browser?.close() } catch {}
   if (child && child.exitCode === null) {
