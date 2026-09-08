@@ -74,16 +74,25 @@ test('vision task deadline releases a turn when an uncooperative Host attachment
     },
   })
 
-  await assert.rejects(
-    registered.execute({}, { agent: { session: { header: { cwd: '/workspace' } } } }),
-    (error) => error?.code === 'ABORT_ERR',
-  )
-  // The current Host contract cannot cancel saveImage itself. Drain the fake
-  // continuation explicitly: the runtime promise has already released the turn
-  // and no late completion may become an unhandled rejection.
-  finishUnderlying?.({ attachmentId: 'late' })
-  const signal = await lateSignal
-  assert.equal(signal?.aborted, true, 'detached late continuation must inherit the spent task signal')
+  // AbortSignal.timeout() intentionally does not keep Node's event loop alive.
+  // A real DSH Host has server/runtime handles; this isolated test otherwise has
+  // only the deliberately never-settling Promise on Node 22, which would make
+  // node:test exit before the deadline can fire. Keep one test-only handle live.
+  const keepAlive = setInterval(() => {}, 1_000)
+  try {
+    await assert.rejects(
+      registered.execute({}, { agent: { session: { header: { cwd: '/workspace' } } } }),
+      (error) => error?.code === 'ABORT_ERR',
+    )
+    // The current Host contract cannot cancel saveImage itself. Drain the fake
+    // continuation explicitly: the runtime promise has already released the turn
+    // and no late completion may become an unhandled rejection.
+    finishUnderlying?.({ attachmentId: 'late' })
+    const signal = await lateSignal
+    assert.equal(signal?.aborted, true, 'detached late continuation must inherit the spent task signal')
+  } finally {
+    clearInterval(keepAlive)
+  }
 })
 
 test('cancelled vision work cannot publish a temp artifact to its final target', async () => {
