@@ -3,8 +3,8 @@ import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 
-const hostDir = process.env.HOST_DIR
-if (!hostDir) throw new Error('HOST_DIR is required')
+const hostDir = process.env.HOST_DIR ?? process.env.DSH_CONTRACT_HOST_DIR
+if (!hostDir) throw new Error('HOST_DIR or DSH_CONTRACT_HOST_DIR is required')
 const requireFromHost = createRequire(path.join(hostDir, 'package.json'))
 const expectBatch = process.env.EXPECT_BATCH === 'true'
 const expectDimension = process.env.EXPECT_DIMENSION === 'true'

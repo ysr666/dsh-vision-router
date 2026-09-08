@@ -1,0 +1,109 @@
+name: Latest DSH Alpha Canary
+
+on:
+  schedule:
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest-alpha:
+    name: latest-alpha / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Resolve latest published DSH alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          DSH_VERSION="$(npm view @deepseek-ai/dsh dist-tags.alpha)"
+          test -n "$DSH_VERSION"
+          echo "DSH_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
+          echo "Testing latest published DSH alpha family: $DSH_VERSION"
+      - run: pnpm install --frozen-lockfile
+      - name: Pack plugin
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+      - name: Install isolated alpha Host family
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const v = process.env.DSH_VERSION
+          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-alpha-${v}-${process.versions.node}`)
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies: {
+              'dsh-vision-router': `file:${tarball}`,
+              '@deepseek-ai/dsh-anonymous-user-id': v,
+              '@deepseek-ai/dsh-attachment': v,
+              '@deepseek-ai/dsh-attachment-local': v,
+              '@deepseek-ai/dsh-llm': v,
+              '@deepseek-ai/dsh-llm-deepseek': v,
+              '@deepseek-ai/dsh-llm-pi-ai': v,
+              '@deepseek-ai/dsh-settings': v,
+              '@deepseek-ai/dsh-system-prompt': v,
+              '@deepseek-ai/dsh-tools': v,
+              '@deepseek-ai/dsh-session': v,
+              '@deepseek-ai/dsh-session-projection': v,
+              '@deepseek-ai/dsh-session-persistence-jsonl': v,
+              '@deepseek-ai/dsh-agent': v,
+              '@deepseek-ai/dsh-agent-loop': v,
+              sharp: '0.35.3',
+            },
+          }, null, 2))
+          fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            '  - .',
+            'allowBuilds:',
+            '  koffi: true',
+            '  fs-ext: true',
+            "  '@google/genai': true",
+            '  protobufjs: true',
+            '',
+          ].join('\n'))
+          const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+          fs.appendFileSync(process.env.GITHUB_ENV, `DSH_CONTRACT_HOST_DIR=${hostDir}\n`)
+      - name: Verify alpha Host capability contract
+        env:
+          EXPECT_BATCH: 'true'
+          EXPECT_DIMENSION: 'true'
+          EXPECT_CURRENT: 'true'
+        run: node scripts/dsh-host-contract-smoke.mjs
+      - name: Verify alpha pi-ai final OpenCode wire
+        run: node tests/opencode-session-wire-contract.mjs
+      - name: Verify alpha Session v2 native image process-restart lifecycle
+        run: node scripts/dsh-preview-native-lifecycle-contract.mjs
+      - name: Compatibility investigation hint
+        if: failure()
+        run: |
+          {
+            echo '## Latest DSH alpha compatibility investigation required'
+            echo
+            echo "The scheduled canary failed against @deepseek-ai/dsh ${DSH_VERSION}."
+            echo 'Do not advance the tested-preview support evidence until the failing Host/wire/lifecycle contract is understood.'
+          } >> "$GITHUB_STEP_SUMMARY"
