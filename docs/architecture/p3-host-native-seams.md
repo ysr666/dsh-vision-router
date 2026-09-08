@@ -2,7 +2,9 @@
 
 Decision date: 2026-08-28
 
-Support window: DVR `2.0.x` / minimum DSH `0.1.0-rc.6` / previous `0.1.0-rc.8` / current `0.1.1-rc.2`.
+Status: historical P3-D audit snapshot. It records the support policy in force when this decision was made; it is **not** the current Host support policy. See [`dsh-support-window.md`](dsh-support-window.md) for the normative current policy and verification evidence.
+
+Support window at decision time: DVR `2.0.x` / minimum DSH `0.1.0-rc.6` / previous `0.1.0-rc.8` / current `0.1.1-rc.2`.
 
 P3-D permits a migration only when all four conditions are true:
 

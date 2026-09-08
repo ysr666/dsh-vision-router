@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { probeDoctorHostCapabilities } from '../lib/doctor-cli-p0.js'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { probeDoctorHostCapabilities, run } from '../lib/doctor-cli-p0.js'
 
 test('Doctor consumes the live Host capability endpoint without version inference', async () => {
   let requestUrl
@@ -57,4 +60,30 @@ test('missing capability route is advisory rather than a Doctor failure', async 
   assert.equal(probe.ok, false)
   assert.equal(probe.status, 404)
   assert.equal(probe.capabilities.registrationReplace, 'unknown')
+})
+
+
+test('Doctor JSON keeps public support policy separate from verification evidence', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dvr-host-policy-'))
+  const stdout = []
+  const stderr = []
+  await run(['doctor', '--no-runtime', '--json'], {
+    log: (value) => stdout.push(String(value)),
+    error: (value) => stderr.push(String(value)),
+  }, { DSH_HOME: home })
+
+  const report = JSON.parse(stdout.join('\n'))
+  assert.deepEqual(report.hostSupportWindow, {
+    dvrTrain: '2.1.x',
+    minimum: '0.1.0-rc.8',
+    currentStable: '0.1.2-rc.1',
+  })
+  assert.deepEqual(report.hostVerificationEvidence, {
+    exactStable: '0.1.2-rc.1',
+    exactPreview: '0.1.3-alpha.2',
+    stableCanaryDistTag: 'latest',
+    previewCanaryDistTag: 'alpha',
+  })
+  assert.equal(Object.hasOwn(report.hostSupportWindow, 'canary'), false)
+  assert.equal(Object.hasOwn(report.hostSupportWindow, 'preview'), false)
 })

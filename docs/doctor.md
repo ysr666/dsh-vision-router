@@ -91,6 +91,9 @@ Doctor reports the local platform, Node version, and whether it can find:
 
 Tesseract, Chromium and profile-local Sharp are advisory because the corresponding optional tool may be unused or supplied by the host through another resolution path.
 
+
+Doctor also keeps **public Host support policy** separate from **compatibility verification evidence**. Human output lists the DVR support floor/current stable Host in the support section, then lists exact stable/preview CI evidence and moving npm canary channels in a separate verification section. In `--json`, these are separate `hostSupportWindow` and `hostVerificationEvidence` objects; preview/canary values never appear inside `hostSupportWindow`.
+
 ### Scan historical sessions
 
 Session scanning is opt-in because a large session store can take longer to read/decompress:

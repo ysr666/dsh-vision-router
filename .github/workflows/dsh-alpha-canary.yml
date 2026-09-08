@@ -105,5 +105,5 @@ jobs:
             echo '## Latest DSH alpha compatibility investigation required'
             echo
             echo "The scheduled canary failed against @deepseek-ai/dsh ${DSH_VERSION}."
-            echo 'Do not advance the tested-preview support evidence until the failing Host/wire/lifecycle contract is understood.'
+            echo 'Do not advance the exact preview verification evidence until the failing Host/wire/lifecycle contract is understood.'
           } >> "$GITHUB_STEP_SUMMARY"
