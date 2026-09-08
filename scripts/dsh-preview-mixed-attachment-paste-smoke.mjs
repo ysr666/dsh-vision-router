@@ -140,6 +140,7 @@ async function capturePageState(page) {
       })),
       composerCardText: (document.querySelector('[data-composer-card]')?.textContent ?? '').trim().slice(0, 4000),
       bodyTextTail: (document.body?.textContent ?? '').trim().slice(-4000),
+      clipboardCompatHookReady: globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ === true,
     }))
   } catch (error) {
     return { available: false, captureError: error instanceof Error ? error.message : String(error) }
@@ -182,6 +183,27 @@ try {
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ locale: 'en-US' })
   page = await context.newPage()
+  // Observe the real client lifecycle before any page script runs. The Router
+  // installs its clipboard compatibility as a document-level capture listener;
+  // composer visibility and the Vision slot can become visible before that
+  // Cordis effect has actually executed. Waiting on this registration avoids
+  // racing a synthetic paste into a not-yet-owned event boundary without adding
+  // a production-only readiness marker or arbitrary sleeps.
+  await page.addInitScript(() => {
+    globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ = false
+    const original = EventTarget.prototype.addEventListener
+    EventTarget.prototype.addEventListener = function(type, listener, options) {
+      if (this === document && type === 'paste' && options === true && typeof listener === 'function') {
+        try {
+          const source = Function.prototype.toString.call(listener)
+          if (source.includes('replayed.has(event)') && source.includes('needsInspection')) {
+            globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ = true
+          }
+        } catch {}
+      }
+      return Reflect.apply(original, this, [type, listener, options])
+    }
+  })
   page.on('pageerror', error => pageErrors.push(error.message))
 
   await page.goto(readyUrl)
@@ -193,6 +215,11 @@ try {
 
   const composer = page.locator('[data-composer-input]').first()
   await composer.waitFor({ state: 'visible', timeout: 30_000 })
+  await page.waitForFunction(
+    () => globalThis.__DVR_SMOKE_CLIPBOARD_COMPAT_READY__ === true,
+    undefined,
+    { timeout: 30_000 },
+  )
   await dispatchMixedPaste(page)
 
   await page.waitForFunction(() => {
