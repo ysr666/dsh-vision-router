@@ -55,6 +55,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   alpha-source-contract:
     name: 0.1.3-alpha.2 contract / ${{ matrix.os }}

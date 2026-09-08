@@ -186,6 +186,48 @@ test('Copilot review gate requires a bot review for the current PR head', async 
   assert.match(workflow, /Copilot has not completed a review for current PR head/)
 })
 
+
+
+test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm setup', async () => {
+  const { readdir } = await import('node:fs/promises')
+  const workflowDir = new URL('../.github/workflows/', import.meta.url)
+  const names = await readdir(workflowDir)
+
+  for (const name of names.filter((entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'))) {
+    const source = await readFile(new URL(name, workflowDir), 'utf8')
+    if (!source.includes('\n  pull_request:')) continue
+    assert.match(source, /^concurrency:/m, `${name}: PR workflow must define concurrency`)
+    assert.match(source, /github\.event\.pull_request\.number \|\| github\.ref/, `${name}: concurrency must be PR-scoped`)
+    assert.match(source, /cancel-in-progress:/, `${name}: superseded PR heads must be cancellable`)
+  }
+
+  const hardening = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
+  const start = hardening.indexOf('  windows-node24-screenshot:')
+  const end = hardening.indexOf('\n  preview-host-contract:', start)
+  const windows = hardening.slice(start, end)
+  assert.match(windows, /timeout-minutes: 5/)
+  assert.match(windows, /actions\/setup-node@/)
+  assert.doesNotMatch(windows, /pnpm\/action-setup|pnpm install|cache: pnpm/)
+})
+
+test('CI impact classifier stays fail-closed while shadow routing is observational', async () => {
+  const { classifyCiImpact } = await import('../scripts/ci-impact-classifier.mjs')
+  const workflow = await readFile(new URL('../.github/workflows/ci-impact-shadow.yml', import.meta.url), 'utf8')
+
+  assert.equal(classifyCiImpact(['docs/doctor.md', 'README.md']).docsOnly, true)
+  assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
+  assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).full, false)
+  assert.equal(classifyCiImpact(['lib/client.js']).browser, true)
+  assert.equal(classifyCiImpact(['package.json']).full, true)
+  assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
+  assert.equal(classifyCiImpact([]).full, true)
+
+  assert.match(workflow, /No jobs are skipped|observation-only|shadow/i)
+  assert.match(workflow, /pull-requests: read/)
+  assert.match(workflow, /persist-credentials: false/)
+  assert.doesNotMatch(workflow, /contents: write|pull_request_target/)
+})
+
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const runtimeComposition = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
