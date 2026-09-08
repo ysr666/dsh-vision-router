@@ -95,6 +95,64 @@ test('vision task deadline releases a turn when an uncooperative Host attachment
   }
 })
 
+test('live visionTaskTimeoutMs changes govern the next Host attachment save', { timeout: 2_500 }, async () => {
+  let registered
+  let watchCallback
+  let finishUnderlying
+  let config = { visionTaskTimeoutMs: 1_400 }
+  const scope = {
+    get() { return config },
+    watch(callback) { watchCallback = callback; return () => {} },
+  }
+  const ctx = {
+    get(name) {
+      if (name !== 'attachments') return undefined
+      return {
+        saveImage() {
+          return new Promise((resolve) => { finishUnderlying = resolve })
+        },
+      }
+    },
+    inject(deps, callback) {
+      if (!deps.includes('settings')) return undefined
+      return callback({ settings: { register() { return scope } } })
+    },
+    tools: {
+      register(def) { registered = def; return () => {} },
+    },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(ctx)
+  wrapped.inject(['settings'], (child) => {
+    child.settings.register('vision-router').watch(() => {})
+  })
+  wrapped.tools.register({
+    name: 'vision_present',
+    async execute() {
+      await wrapped.get('attachments').saveImage({ data: Buffer.from('png'), mediaType: 'image/png' })
+      return 'late-success'
+    },
+  })
+
+  config = { visionTaskTimeoutMs: 30 }
+  watchCallback?.()
+
+  const keepAlive = setInterval(() => {}, 1_000)
+  const started = Date.now()
+  try {
+    await assert.rejects(
+      registered.execute({}, { agent: { session: { header: { cwd: '/workspace' } } } }),
+      (error) => error?.code === 'ABORT_ERR',
+    )
+    assert.ok(
+      Date.now() - started < 700,
+      'the next invocation must use the hot 30 ms deadline rather than the stale 1400 ms boot value',
+    )
+  } finally {
+    finishUnderlying?.({ attachmentId: 'late' })
+    clearInterval(keepAlive)
+  }
+})
+
 test('cancelled vision work cannot publish a temp artifact to its final target', async () => {
   const controller = new AbortController()
   const events = []
