@@ -35,9 +35,17 @@ permissions:
 
 jobs:
   preview-browser:
-    name: DSH 0.1.3-alpha.2 real Host + Chromium
+    name: DSH ${{ matrix.dsh }} real Host + Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dsh: 0.1.2-rc.1
+            mixedGenericFiles: false
+          - dsh: 0.1.3-alpha.2
+            mixedGenericFiles: true
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -45,7 +53,17 @@ jobs:
           persist-credentials: false
           path: dvr
 
+      - name: Checkout immutable DSH 0.1.2-rc.1 source
+        if: matrix.dsh == '0.1.2-rc.1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.1.2-rc.1
+          persist-credentials: false
+          path: dsh-preview
+
       - name: Checkout immutable DSH 0.1.3-alpha.2 source
+        if: matrix.dsh == '0.1.3-alpha.2'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
@@ -86,17 +104,18 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-preview
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.3-alpha.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/preview-browser-smoke-diagnostic.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/preview-browser-smoke-page.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
 
       - name: Run mixed text + normalized image + generic-file paste lifecycle
+        if: matrix.mixedGenericFiles
         working-directory: dsh-preview
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-preview
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.3-alpha.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-diagnostic.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-page.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
@@ -105,7 +124,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dsh-preview-browser-diagnostic
+          name: dsh-preview-browser-diagnostic-${{ matrix.dsh }}
           path: ${{ runner.temp }}/preview-browser-smoke-*
           if-no-files-found: ignore
           retention-days: 2

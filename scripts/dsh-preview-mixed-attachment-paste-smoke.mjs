@@ -103,10 +103,16 @@ async function waitForNativeComposerPasteReady(page) {
     return false
   }, probe, { polling: 100, timeout: 30_000 })
 
-  const composer = page.locator('[data-composer-input]').first()
-  await composer.fill('')
+  // Clear the Lexical draft through the same real gesture contract DSH uses
+  // in its own composer E2E tests. Playwright `fill('')` can mutate the DOM
+  // before Lexical has committed the paste, after which Lexical restores the
+  // probe and this readiness check false-times-out.
+  const composer = page.locator('[data-composer-input][contenteditable="true"]').first()
+  await composer.click()
+  await page.keyboard.press('ControlOrMeta+KeyA')
+  await page.keyboard.press('Delete')
   await page.waitForFunction(() => {
-    const input = document.querySelector('[data-composer-input]')
+    const input = document.querySelector('[data-composer-input][contenteditable="true"]')
     return (input?.textContent ?? '') === ''
   }, undefined, { timeout: 10_000 })
   await page.evaluate(() => {
