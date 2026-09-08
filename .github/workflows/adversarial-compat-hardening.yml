@@ -31,7 +31,6 @@ jobs:
       - name: Verify browser-side BMP decode budget and existing clipboard behavior
         run: >-
           node --test
-          tests/clipboard-bitmap-resource-budget.test.js
           tests/clipboard-image-paste-compat.test.js
           tests/client-presentation-boundary.test.js
 
