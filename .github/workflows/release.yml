@@ -134,8 +134,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" 2>/dev/null)"; then
-            REMOTE_TAG_SHA="$(printf '%s' "$TAG_JSON" | jq -r '.object.sha')"
+          if REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null)"; then
             [ "$REMOTE_TAG_SHA" = "$RELEASE_SHA" ] || {
               echo "::error::$RELEASE_TAG already exists at $REMOTE_TAG_SHA, expected $RELEASE_SHA"
               exit 1
