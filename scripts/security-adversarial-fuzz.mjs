@@ -1,0 +1,108 @@
+import assert from 'node:assert/strict'
+import {
+  MAX_RUNTIME_FALLBACKS_PER_ROW,
+  MAX_RUNTIME_MODEL_ID_CHARS,
+  MAX_RUNTIME_PROVIDER_ROWS,
+  normalizeRuntimeVisionConfig,
+} from '../lib/runtime-config-normalizer.js'
+import { normalizeDshHostCapabilities } from '../lib/dsh-host-capabilities.js'
+import { redactDiagnosticText } from '../lib/diagnostic-redaction.js'
+import { resolveVisionRoutingAuthority } from '../lib/vision-routing-authority.js'
+import { isOfficialOpenCodeGoUrl, wireSessionAffinityId } from '../lib/session-affinity.js'
+
+const cases = Math.max(100, Math.min(100_000, Number(process.env.DVR_FUZZ_CASES) || 1_500))
+let state = Number(process.env.DVR_FUZZ_SEED) || 0x5eedc0de
+
+function random() {
+  state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+  return state / 0x100000000
+}
+
+function pick(values) { return values[Math.floor(random() * values.length)] }
+function text(max = 128) {
+  const size = Math.floor(random() * max)
+  const alphabet = 'abcXYZ09:/._- <>\t\n\u0000世界'
+  let out = ''
+  for (let i = 0; i < size; i += 1) out += alphabet[Math.floor(random() * alphabet.length)]
+  return out
+}
+function scalar() {
+  return pick([undefined, null, true, false, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, text()])
+}
+
+function providerRow() {
+  const fallbacks = Array.from({ length: Math.floor(random() * 48) }, () => pick([text(), scalar()]))
+  return pick([
+    scalar(),
+    { provider: text(), model: text(), fallbacks },
+    { provider: text(MAX_RUNTIME_MODEL_ID_CHARS + 300), model: text(), fallbacks },
+    { provider: 'p', model: 'm', fallbacks, extra: scalar() },
+  ])
+}
+
+function configValue() {
+  return pick([
+    scalar(),
+    [],
+    {
+      providers: Array.from({ length: Math.floor(random() * 48) }, providerRow),
+      fallbacks: Array.from({ length: Math.floor(random() * 48) }, () => pick([text(), scalar()])),
+      routingMode: scalar(),
+      routingPreference: scalar(),
+      backgroundBenchmarking: scalar(),
+      visionGuideStep: scalar(),
+      instantDescribe: scalar(),
+      localDescribeStyle: scalar(),
+    },
+  ])
+}
+for (let i = 0; i < cases; i += 1) {
+  const normalized = normalizeRuntimeVisionConfig(configValue())
+  assert.ok(normalized && typeof normalized === 'object')
+  assert.ok(Array.isArray(normalized.providers) && normalized.providers.length <= MAX_RUNTIME_PROVIDER_ROWS)
+  assert.ok(Array.isArray(normalized.fallbacks) && normalized.fallbacks.length <= MAX_RUNTIME_FALLBACKS_PER_ROW)
+  for (const row of normalized.providers) {
+    assert.ok(typeof row.provider === 'string' && row.provider.length <= MAX_RUNTIME_MODEL_ID_CHARS)
+    assert.ok(typeof row.model === 'string' && row.model.length <= MAX_RUNTIME_MODEL_ID_CHARS)
+    assert.ok(Array.isArray(row.fallbacks) && row.fallbacks.length <= MAX_RUNTIME_FALLBACKS_PER_ROW)
+  }
+
+  const caps = normalizeDshHostCapabilities(configValue())
+  for (const value of Object.values(caps)) assert.ok(value === true || value === false || value === 'unknown')
+
+  const authority = resolveVisionRoutingAuthority(configValue())
+  assert.ok(['ordered', 'auto'].includes(authority.execution))
+  assert.ok(['off', 'local-free', 'all'].includes(authority.backgroundMeasurement))
+
+  const affinity = pick([scalar(), text(700), 'session-123', ' x ', 'line\nbreak', '世界'])
+  const wire = wireSessionAffinityId(affinity)
+  if (wire !== undefined) {
+    assert.equal(wire, String(affinity))
+    assert.ok(wire.length <= 512)
+    assert.match(wire, /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/)
+  }
+}
+const bearer = `Bearer ${'A'.repeat(48)}`
+const apiKey = `sk-proj-${'B'.repeat(32)}`
+const diagnostic = redactDiagnosticText(
+  `Authorization: ${bearer} https://example.invalid/x?token=${apiKey} api_key=${apiKey}`,
+  400,
+)
+assert.equal(diagnostic.includes('A'.repeat(48)), false)
+assert.equal(diagnostic.includes('B'.repeat(32)), false)
+assert.ok(diagnostic.length <= 400)
+
+for (const url of [
+  'https://opencode.ai/zen/go',
+  'https://opencode.ai/zen/go/v1',
+]) assert.equal(isOfficialOpenCodeGoUrl(url), true)
+
+for (const url of [
+  'http://opencode.ai/zen/go',
+  'https://opencode.ai.evil.example/zen/go',
+  'https://evil.example/?next=https://opencode.ai/zen/go',
+  'https://opencode.ai/zen/gopher',
+  'not a url',
+]) assert.equal(isOfficialOpenCodeGoUrl(url), false)
+
+console.log(`security adversarial fuzz passed: cases=${cases} seed=${state >>> 0}`)
