@@ -156,17 +156,26 @@ intentional: standing background authority is the user's permission to verify
 capability within the selected local/free/paid cost boundary, not permission to
 trust possibly stale Host modality metadata as ground truth.
 
-Transient failure state is scoped to the exact deployment fingerprint plus model
-and axis. Network, timeout, and rate-limit conditions receive retry backoff.
-Clear deployment-level non-retryable failures such as authentication failure,
-unavailable model, and unsupported protocol are persisted for the same exact
-fingerprint and stop unattended measurement across axes, including after process
-restart. Visual-proof and Benchmark-infrastructure failures remain axis-scoped;
-they do not manufacture a text-only verdict or disable other axes. An explicit
-image-input rejection is persisted separately as a measured text-only verdict.
-Ordinary settings refreshes, adapter notifications, and process restart do not
-silently clear these same-fingerprint stops. A changed deployment fingerprint
-creates a new evidence scope, and an explicit successful Test Vision clears the
+Failure lifetime follows the narrowest authority that can explain the failure.
+Timeout, network, visual-proof, and Benchmark-infrastructure failures remain
+model/axis-scoped, so one failed axis does not suppress another axis or an
+independent route. Authentication and unsupported-protocol failures apply to the
+same transport scope (provider + endpoint + protocol + credential reference), and
+rate-limit backoff is shared by sibling models on that same scope, preventing an
+invalid or throttled account/endpoint from rotating through every model and axis
+at the normal 15-second background gap.
+
+Authentication stops are process-local and bounded; Vision Router never persists
+an API-key value or deterministic derivative just to recognize a later key
+rotation. Current `credentials/reference-updated` and legacy
+`credentials/updated` notifications synchronously revoke the in-memory AUTH stop
+and rescan with the new credential. Unsupported-protocol and unavailable-model
+stops remain bounded persistent evidence (the former also suppresses sibling
+models on the same transport; the latter stays model-specific). Visual-proof and
+Benchmark-infrastructure failures do not manufacture a text-only verdict or
+disable other axes. An explicit image-input rejection is persisted separately as
+a measured text-only verdict. A changed deployment fingerprint creates a new
+evidence scope, and an explicit successful Test Vision clears the corresponding
 same-fingerprint stop. Public background status exposes only a sanitized failure
 class/code; raw provider responses and credentials are not published to the
 browser.

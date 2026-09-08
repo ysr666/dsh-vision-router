@@ -230,6 +230,53 @@ test('partial profile fills only the first missing axis instead of restarting co
   assert.deepEqual(seen, ['document'])
 })
 
+test('rate-limit backoff pauses sibling models on the same transport until retry time', async () => {
+  const config = configFor([
+    ['relay', 'vision-a'],
+    ['relay', 'vision-b'],
+  ])
+  const ctx = fakeCtx(config, {
+    piProviders: {
+      relay: {
+        baseURL: 'https://relay.example/v1',
+        api: 'openai-completions',
+        apiKeyEnv: 'RELAY_KEY',
+      },
+    },
+  })
+  let clock = 50_000
+  const seen = []
+  const profiler = createBackgroundCapabilityProfiler({
+    ctx,
+    config,
+    core: fakeCore(),
+    store: memoryStore(),
+    now: () => clock,
+    idleMs: 0,
+    gapMs: 0,
+    scanMs: 0,
+    setTimer: inertTimer,
+    clearTimer() {},
+    runAxisBenchmark: async ({ candidate, axis }) => {
+      seen.push([candidate.key, axis])
+      const error = new Error('HTTP 429 too many requests')
+      error.status = 429
+      error.code = 'RATE_LIMITED'
+      throw error
+    },
+  })
+
+  await profiler.tick()
+  assert.deepEqual(seen, [['relay/vision-a', 'ocr']])
+  await profiler.tick()
+  assert.deepEqual(seen, [['relay/vision-a', 'ocr']], 'sibling model must share the transport cooldown')
+
+  clock += 30 * 60 * 1000 + 1
+  await profiler.tick()
+  assert.equal(seen.length, 2, 'transport becomes eligible after the bounded transient retry window')
+  profiler.stop()
+})
+
 test('background failure classification distinguishes permanent and transient causes', () => {
   const auth = Object.assign(new Error('HTTP 401 unauthorized'), { status: 401 })
   assert.deepEqual(classifyBackgroundBenchmarkFailure(auth), {

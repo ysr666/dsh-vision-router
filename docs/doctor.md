@@ -79,7 +79,7 @@ or `DSH_WEB_URL`. To perform offline checks only:
 npx dsh-vision-router doctor --no-runtime
 ```
 
-An unreachable DSH process is advisory rather than a doctor failure; offline checks still complete. When `--profile` is used against a reachable runtime, doctor does not attribute green route health to that profile unless the runtime exposes a verified Vision Router profile identity. If ownership cannot be proven, the human report shows `? runtime profile ownership unknown` instead of a false green binding.
+An unreachable DSH process is advisory rather than a doctor failure; offline checks still complete. DSH Web may also require its signed browser-session cookie before any `/api` route is visible. If every side-effect-free route probe is rejected with `401`, Doctor reports the runtime as **reachable but authentication-required** and keeps plugin route health/ownership unknown instead of printing false route failures or bypassing Host authentication. The JSON report exposes `runtime.authenticationRequired: true`; capability support advice remains unknown because no Host seam was actually observed. When `--profile` is used against an authenticated reachable runtime, Doctor still does not attribute green route health to that profile unless the runtime exposes a verified Vision Router profile identity. If ownership cannot be proven, the human report shows `? runtime profile ownership unknown` instead of a false green binding.
 
 ### Local capability diagnostics
 
