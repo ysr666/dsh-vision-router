@@ -171,6 +171,21 @@ test('release workflow confines write tokens to non-executing tag/release phases
   assert.match(workflow, /sha256sum --check --strict/)
 })
 
+test('Copilot review gate requires a bot review for the current PR head', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/copilot-review-gate.yml', import.meta.url), 'utf8')
+
+  assert.match(workflow, /pull_request_review:/)
+  assert.match(workflow, /types: \[submitted, dismissed\]/)
+  assert.match(workflow, /^permissions: \{\}$/m)
+  assert.match(workflow, /pull-requests: read/)
+  assert.doesNotMatch(workflow, /contents: write|statuses: write|actions\/checkout/)
+  assert.match(workflow, /copilot-pull-request-reviewer\[bot\]/)
+  assert.match(workflow, /EVENT_REVIEW_COMMIT_SHA.*HEAD_SHA/s)
+  assert.match(workflow, /\.commit_id == \\"\$HEAD_SHA\\"/)
+  assert.match(workflow, /\.state != \\"DISMISSED\\"/)
+  assert.match(workflow, /Copilot has not completed a review for current PR head/)
+})
+
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const runtimeComposition = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
