@@ -185,7 +185,7 @@ test('cached checker turns registry failures into non-fatal status objects', asy
   assert.equal(result.currentVersion, '1.1.1')
   assert.equal(result.packageSpec, undefined)
   assert.match(result.error, /offline/)
-  assert.equal(result.error.includes('registry.npmjs.org'), true)
+  assert.equal(result.registry, 'https://registry.npmjs.org')
 })
 
 
