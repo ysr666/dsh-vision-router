@@ -1,4 +1,4 @@
-name: Latest DSH Canary
+name: DSH Release Channel Canary
 
 on:
   schedule:
@@ -9,9 +9,17 @@ permissions:
   contents: read
 
 jobs:
-  latest-dsh:
-    name: latest-dsh
+  release-channel:
+    name: ${{ matrix.channel }}-${{ matrix.dist_tag }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: stable
+            dist_tag: latest
+          - channel: preview
+            dist_tag: alpha
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -22,14 +30,19 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-      - name: Resolve latest released DSH
+      - name: Resolve DSH release channel
         shell: bash
+        env:
+          DSH_CHANNEL: ${{ matrix.channel }}
+          DSH_DIST_TAG: ${{ matrix.dist_tag }}
         run: |
           set -euo pipefail
-          DSH_VERSION="$(npm view @deepseek-ai/dsh version)"
+          DSH_VERSION="$(npm view @deepseek-ai/dsh "dist-tags.${DSH_DIST_TAG}")"
           test -n "$DSH_VERSION"
+          echo "DSH_CHANNEL=$DSH_CHANNEL" >> "$GITHUB_ENV"
+          echo "DSH_DIST_TAG=$DSH_DIST_TAG" >> "$GITHUB_ENV"
           echo "DSH_VERSION=$DSH_VERSION" >> "$GITHUB_ENV"
-          echo "Testing latest published DSH release family: $DSH_VERSION"
+          echo "Testing DSH ${DSH_CHANNEL} channel (${DSH_DIST_TAG}): $DSH_VERSION"
       - name: Verify DSH release family is published
         shell: bash
         run: |
@@ -52,7 +65,7 @@ jobs:
             fi
           done
           if (( ${#missing[@]} > 0 )); then
-            echo "DSH root package @deepseek-ai/dsh@$DSH_VERSION is published, but the Host contract package family is incomplete:" >&2
+            echo "DSH ${DSH_CHANNEL} root package @deepseek-ai/dsh@$DSH_VERSION is published, but the Host contract package family is incomplete:" >&2
             for package in "${missing[@]}"; do
               printf '  - %s@%s\n' "$package" "$DSH_VERSION" >&2
             done
@@ -63,7 +76,7 @@ jobs:
         run: |
           mkdir -p tmp-pack
           pnpm pack --pack-destination tmp-pack
-      - name: Install isolated latest Host fixture
+      - name: Install isolated channel Host fixture
         shell: node {0}
         run: |
           const fs = require('node:fs')
@@ -72,7 +85,7 @@ jobs:
           const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
           if (!tgz) throw new Error('packed plugin tarball not found')
           const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
-          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-latest-${process.env.DSH_VERSION}`)
+          const hostDir = path.join(process.env.RUNNER_TEMP, `dvr-${process.env.DSH_CHANNEL}-${process.env.DSH_VERSION}`)
           fs.rmSync(hostDir, { recursive: true, force: true })
           fs.mkdirSync(hostDir, { recursive: true })
           const v = process.env.DSH_VERSION
@@ -96,7 +109,7 @@ jobs:
           const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
           if (installed.status !== 0) process.exit(installed.status ?? 1)
           fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
-      - name: Verify latest Host contract
+      - name: Verify channel Host contract
         env:
           EXPECT_BATCH: 'true'
           EXPECT_DIMENSION: 'true'
@@ -107,8 +120,8 @@ jobs:
         shell: bash
         run: |
           {
-            echo '## Latest DSH compatibility investigation required'
+            echo "## DSH ${DSH_CHANNEL} compatibility investigation required"
             echo
-            echo "The scheduled canary failed against the @deepseek-ai/dsh ${DSH_VERSION} release family."
+            echo "The scheduled canary failed against the @deepseek-ai/dsh ${DSH_VERSION} release family from the ${DSH_DIST_TAG} dist-tag."
             echo 'This job is intentionally non-gating for normal pull requests. Confirm whether the release family is fully published and then confirm the changed Host capability before changing the supported contract or adding compatibility code.'
           } >> "$GITHUB_STEP_SUMMARY"
