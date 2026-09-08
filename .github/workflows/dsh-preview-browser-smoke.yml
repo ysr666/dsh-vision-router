@@ -43,10 +43,8 @@ jobs:
       matrix:
         include:
           - dsh: 0.1.2-rc.1
-            ref: dsh-v0.1.2-rc.1
             mixedGenericFiles: false
           - dsh: 0.1.3-alpha.2
-            ref: dsh-v0.1.3-alpha.2
             mixedGenericFiles: true
     steps:
       - name: Checkout Vision Router
@@ -55,11 +53,21 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout immutable DSH release source
+      - name: Checkout immutable DSH 0.1.2-rc.1 source
+        if: matrix.dsh == '0.1.2-rc.1'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ matrix.ref }}
+          ref: dsh-v0.1.2-rc.1
+          persist-credentials: false
+          path: dsh-preview
+
+      - name: Checkout immutable DSH 0.1.3-alpha.2 source
+        if: matrix.dsh == '0.1.3-alpha.2'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: dsh-v0.1.3-alpha.2
           persist-credentials: false
           path: dsh-preview
 

@@ -193,7 +193,13 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   assert.match(hostGate, /if: matrix\.dsh == '0\.1\.3-alpha\.2'/)
   assert.match(browserGate, /dsh: 0\.1\.2-rc\.1[\s\S]*?mixedGenericFiles: false/)
   assert.match(browserGate, /dsh: 0\.1\.3-alpha\.2[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.2-rc\.1/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.3-alpha\.2/)
+  assert.doesNotMatch(browserGate, /ref: \$\{\{ matrix\./)
   assert.match(browserGate, /if: matrix\.mixedGenericFiles/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.2-rc\.1/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.3-alpha\.2/)
+  assert.doesNotMatch(browserGate, /ref:\s*\$\{\{\s*matrix\./)
 })
 
 test('bundle patch defines Vision Router attachment storage admission including rc8 dimensions', async () => {
