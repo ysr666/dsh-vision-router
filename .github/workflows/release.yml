@@ -15,6 +15,10 @@ on:
         required: true
         type: string
 
+# Deny the implicit GITHUB_TOKEN by default. Each release phase opts into only
+# the capability it needs.
+permissions: {}
+
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
@@ -25,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: write
+      contents: read
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
@@ -111,15 +115,26 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+
+  tag:
+    name: Materialize verified release tag
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+    steps:
       - name: Ensure immutable release tag exists at verified SHA
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
 
-          if [ -n "$REMOTE_TAG_SHA" ]; then
+          if REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null)"; then
             [ "$REMOTE_TAG_SHA" = "$RELEASE_SHA" ] || {
               echo "::error::$RELEASE_TAG already exists at $REMOTE_TAG_SHA, expected $RELEASE_SHA"
               exit 1
@@ -133,13 +148,19 @@ jobs:
             exit 1
           }
 
+          CURRENT_MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [ "$CURRENT_MAIN_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::current main moved to $CURRENT_MAIN_SHA after verification; refusing to tag $RELEASE_SHA"
+            exit 1
+          }
+
           gh api \
             --method POST \
             "repos/$GITHUB_REPOSITORY/git/refs" \
             -f ref="refs/tags/$RELEASE_TAG" \
             -f sha="$RELEASE_SHA"
 
-          CREATED_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+          CREATED_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha')"
           [ "$CREATED_SHA" = "$RELEASE_SHA" ] || {
             echo "::error::created tag does not resolve to verified release SHA"
             exit 1
@@ -147,12 +168,18 @@ jobs:
 
   publish:
     name: Publish verified package
-    needs: verify
+    needs: tag
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
       id-token: write
+    outputs:
+      release_version: ${{ steps.identity.outputs.version }}
+      package_tarball: ${{ steps.package.outputs.tarball }}
+      package_file_count: ${{ steps.package.outputs.file_count }}
+      package_sha1: ${{ steps.package.outputs.sha1 }}
+      package_sha256: ${{ steps.package.outputs.sha256 }}
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -172,11 +199,25 @@ jobs:
           registry-url: 'https://registry.npmjs.org/'
           package-manager-cache: false
 
-      - name: Pin npm trusted-publishing client
+      - name: Pin npm trusted-publishing client by verified tarball
         shell: bash
+        env:
+          NPM_CLI_VERSION: '11.18.0'
+          NPM_CLI_SHA256: '73f6155215ebabf4ed96dca1f567c2372cc713c33af2e5b9b62fde4e92373e2e'
         run: |
           set -euo pipefail
-          npm install --global npm@11.18.0
+          NPM_ROOT="$RUNNER_TEMP/npm-cli-$NPM_CLI_VERSION"
+          NPM_TARBALL="$RUNNER_TEMP/npm-$NPM_CLI_VERSION.tgz"
+          curl --fail --silent --show-error --location \
+            "https://registry.npmjs.org/npm/-/npm-$NPM_CLI_VERSION.tgz" \
+            --output "$NPM_TARBALL"
+          printf '%s  %s\n' "$NPM_CLI_SHA256" "$NPM_TARBALL" | sha256sum --check --strict
+          rm -rf "$NPM_ROOT"
+          mkdir -p "$NPM_ROOT" "$RUNNER_TEMP/npm-cli-bin"
+          tar -xzf "$NPM_TARBALL" -C "$NPM_ROOT" --strip-components=1
+          ln -sfn "$NPM_ROOT/bin/npm-cli.js" "$RUNNER_TEMP/npm-cli-bin/npm"
+          echo "$RUNNER_TEMP/npm-cli-bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/npm-cli-bin:$PATH"
           echo "node=$(node --version)"
           echo "npm=$(npm --version)"
           node <<'NODE'
@@ -194,6 +235,7 @@ jobs:
           NODE
 
       - name: Re-verify immutable release identity
+        id: identity
         shell: bash
         run: |
           set -euo pipefail
@@ -209,8 +251,10 @@ jobs:
           }
 
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Pack once and record exact tarball hashes
+        id: package
         shell: bash
         run: |
           set -euo pipefail
@@ -224,6 +268,10 @@ jobs:
           echo "PACKAGE_FILE_COUNT=$FILE_COUNT" >> "$GITHUB_ENV"
           echo "PACKAGE_SHA1=$LOCAL_SHA1" >> "$GITHUB_ENV"
           echo "PACKAGE_SHA256=$LOCAL_SHA256" >> "$GITHUB_ENV"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "file_count=$FILE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "sha1=$LOCAL_SHA1" >> "$GITHUB_OUTPUT"
+          echo "sha256=$LOCAL_SHA256" >> "$GITHUB_OUTPUT"
           printf '%s  %s\n' "$LOCAL_SHA256" "$TARBALL" > SHA256SUMS.txt
 
           echo "Packed $TARBALL"
@@ -271,6 +319,47 @@ jobs:
             echo "remote: ${REMOTE_SHA1:-<missing>}"
             exit 1
           }
+
+
+  github-release:
+    name: Publish immutable GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_VERSION: ${{ needs.publish.outputs.release_version }}
+      PACKAGE_TARBALL: ${{ needs.publish.outputs.package_tarball }}
+      PACKAGE_FILE_COUNT: ${{ needs.publish.outputs.package_file_count }}
+      PACKAGE_SHA1: ${{ needs.publish.outputs.package_sha1 }}
+      PACKAGE_SHA256: ${{ needs.publish.outputs.package_sha256 }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Rehydrate exact npm release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location \
+            "https://registry.npmjs.org/dsh-vision-router/-/dsh-vision-router-$RELEASE_VERSION.tgz" \
+            --output "$PACKAGE_TARBALL"
+          [ "$(sha1sum "$PACKAGE_TARBALL" | awk '{print $1}')" = "$PACKAGE_SHA1" ] || {
+            echo "::error::downloaded npm release asset SHA-1 differs from verified publish output"
+            exit 1
+          }
+          [ "$(sha256sum "$PACKAGE_TARBALL" | awk '{print $1}')" = "$PACKAGE_SHA256" ] || {
+            echo "::error::downloaded npm release asset SHA-256 differs from verified publish output"
+            exit 1
+          }
+          printf '%s  %s\n' "$PACKAGE_SHA256" "$PACKAGE_TARBALL" > SHA256SUMS.txt
 
       - name: Compose immutable release notes
         shell: bash

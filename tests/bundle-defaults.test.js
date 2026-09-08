@@ -145,6 +145,32 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
 })
 
+test('release workflow confines write tokens to non-executing tag/release phases', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+  const verifyStart = workflow.indexOf('  verify:')
+  const tagStart = workflow.indexOf('  tag:', verifyStart + 1)
+  const publishStart = workflow.indexOf('  publish:', tagStart + 1)
+  const releaseStart = workflow.indexOf('  github-release:', publishStart + 1)
+  assert.ok(verifyStart > 0 && tagStart > verifyStart && publishStart > tagStart && releaseStart > publishStart)
+
+  const verify = workflow.slice(verifyStart, tagStart)
+  const tag = workflow.slice(tagStart, publishStart)
+  const publish = workflow.slice(publishStart, releaseStart)
+  const release = workflow.slice(releaseStart)
+
+  assert.match(workflow, /^permissions: \{\}$/m)
+  assert.match(verify, /permissions:[\s\S]*contents: read/)
+  assert.doesNotMatch(verify, /contents: write/)
+  assert.match(tag, /needs: verify[\s\S]*permissions:[\s\S]*contents: write/)
+  assert.doesNotMatch(tag, /pnpm install|pnpm test|npm pack|npm publish/)
+  assert.match(publish, /needs: tag[\s\S]*contents: read[\s\S]*id-token: write/)
+  assert.doesNotMatch(publish, /contents: write/)
+  assert.match(release, /needs: publish[\s\S]*permissions:[\s\S]*contents: write/)
+  assert.doesNotMatch(workflow, /npm install --global/)
+  assert.match(workflow, /NPM_CLI_SHA256: '[0-9a-f]{64}'/)
+  assert.match(workflow, /sha256sum --check --strict/)
+})
+
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const runtimeComposition = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
