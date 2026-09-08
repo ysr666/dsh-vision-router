@@ -1,0 +1,51 @@
+name: CI impact shadow
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-impact-shadow-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    if: ${{ !github.event.pull_request.draft }}
+    name: trusted impact shadow
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout trusted base classifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          path: trusted-base      - name: Install Node 24 for trusted classifier
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+
+      - name: Collect changed filenames as JSON lines
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::invalid PR number"; exit 1; }
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            --jq '.[].filename | @json' \
+            > "$RUNNER_TEMP/dvr-ci-impact-files.jsonl"
+          test -s "$RUNNER_TEMP/dvr-ci-impact-files.jsonl"
+
+      - name: Report trusted shadow decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          node trusted-base/scripts/ci-impact-classifier.mjs --json-lines \
+            < "$RUNNER_TEMP/dvr-ci-impact-files.jsonl"

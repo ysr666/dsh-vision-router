@@ -38,16 +38,21 @@ const ROUTING_META = [
   /^tests\/bundle-defaults\.test\.js$/,
 ]
 
+const failClosedImpact = (reason) => ({
+  files: [], docsOnly: false, core: true, browser: true, host: true, windows: true, resource: true, native: true, full: true, reasons: [reason],
+})
+
 export function classifyCiImpact(paths) {
-  const normalized = paths.map((value) => String(value).trim()).filter(Boolean)
+  const normalized = paths.map((value) => String(value))
   const inputBytes = normalized.reduce((total, value) => total + Buffer.byteLength(value, 'utf8') + 1, 0)
   if (normalized.length > MAX_CI_IMPACT_PATHS || inputBytes > MAX_CI_IMPACT_INPUT_BYTES) {
-    return { files: [], docsOnly: false, core: true, browser: true, host: true, windows: true, resource: true, native: true, full: true, reasons: ['change-set exceeds classifier budget: fail closed'] }
+    return failClosedImpact('change-set exceeds classifier budget: fail closed')
   }
   const files = [...new Set(normalized)].sort()
-  if (files.length === 0) {
-    return { files, docsOnly: false, core: true, browser: true, host: true, windows: true, resource: true, native: true, full: true, reasons: ['empty-change-set: fail closed'] }
-  }
+  if (files.length === 0) return failClosedImpact('empty-change-set: fail closed')
+  const unsafe = files.filter((path) => path === '' || /[\u0000-\u001f\u007f]/.test(path)
+    || path.startsWith('/') || path.startsWith('./') || path === '..' || path.startsWith('../') || path.includes('/../'))
+  if (unsafe.length > 0) return failClosedImpact('unsafe changed path encoding: fail closed')
 
   const docsOnly = files.every((path) => matches(path, DOCS))
   const result = {
@@ -76,6 +81,28 @@ export function classifyCiImpact(paths) {
   return result
 }
 
+export function classifyCiImpactJsonLines(input) {
+  const text = String(input ?? '')
+  if (Buffer.byteLength(text, 'utf8') > MAX_CI_IMPACT_INPUT_BYTES) {
+    return failClosedImpact('change-set input exceeds classifier budget: fail closed')
+  }
+  const lines = text.split(/\r?\n/).filter((line) => line !== '')
+  if (lines.length > MAX_CI_IMPACT_PATHS) {
+    return failClosedImpact('change-set exceeds classifier path budget: fail closed')
+  }
+  const paths = []
+  try {
+    for (const line of lines) {
+      const value = JSON.parse(line)
+      if (typeof value !== 'string') throw new TypeError('changed-file entry must be a JSON string')
+      paths.push(value)
+    }
+  } catch {
+    return failClosedImpact('invalid JSON-lines changed-file input: fail closed')
+  }
+  return classifyCiImpact(paths)
+}
+
 async function main() {
   let stdin = ''
   let inputBytes = 0
@@ -90,8 +117,10 @@ async function main() {
     stdin += chunk
   }
   const result = oversized
-    ? classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('oversized'))
-    : classifyCiImpact(stdin.split(/\r?\n/))
+    ? failClosedImpact('change-set input exceeds classifier budget: fail closed')
+    : process.argv.includes('--json-lines')
+      ? classifyCiImpactJsonLines(stdin)
+      : classifyCiImpact(stdin.split(/\r?\n/).filter((line) => line !== ''))
   process.stdout.write(`${JSON.stringify(result)}\n`)
   const summary = process.env.GITHUB_STEP_SUMMARY
   if (summary) {

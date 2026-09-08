@@ -222,8 +222,8 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
   assert.doesNotMatch(windows, /pnpm\/action-setup|pnpm install|cache: pnpm/)
 })
 
-test('CI impact classifier is fail-closed before trusted-base shadow wiring', async () => {
-  const { classifyCiImpact, MAX_CI_IMPACT_INPUT_BYTES, MAX_CI_IMPACT_PATHS } = await import('../scripts/ci-impact-classifier.mjs')
+test('CI impact classifier is bounded and fail-closed for trusted shadow input', async () => {
+  const { classifyCiImpact, classifyCiImpactJsonLines, MAX_CI_IMPACT_INPUT_BYTES, MAX_CI_IMPACT_PATHS } = await import('../scripts/ci-impact-classifier.mjs')
 
   assert.equal(classifyCiImpact(['docs/doctor.md', 'README.md']).docsOnly, true)
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
@@ -235,6 +235,27 @@ test('CI impact classifier is fail-closed before trusted-base shadow wiring', as
   assert.equal(classifyCiImpact([]).full, true)
   assert.equal(classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('lib/client.js')).full, true)
   assert.equal(classifyCiImpact(['x'.repeat(MAX_CI_IMPACT_INPUT_BYTES + 1)]).full, true)
+
+  assert.equal(classifyCiImpactJsonLines('\"docs/doctor.md\"\n\"README.md\"\n').docsOnly, true)
+  assert.equal(classifyCiImpactJsonLines('\"docs/ok.md\\nREADME.md\"\n').full, true)
+  assert.equal(classifyCiImpactJsonLines('{not-json}\n').full, true)
+  assert.equal(classifyCiImpactJsonLines('42\n').full, true)
+})
+
+test('CI impact shadow executes only the trusted base classifier', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/ci-impact-shadow.yml', import.meta.url), 'utf8')
+
+  assert.match(workflow, /pull_request_target:/)
+  assert.match(workflow, /contents: read/)
+  assert.match(workflow, /pull-requests: read/)
+  assert.doesNotMatch(workflow, /contents: write|statuses: write|id-token: write|secrets\./)
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/)
+  assert.match(workflow, /persist-credentials: false/)
+  assert.match(workflow, /path: trusted-base/)
+  assert.doesNotMatch(workflow, /pull_request\.head/)
+  assert.match(workflow, /\.filename \| @json/)
+  assert.match(workflow, /node trusted-base\/scripts\/ci-impact-classifier\.mjs --json-lines/)
+  assert.match(workflow, /timeout-minutes: 2/)
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
