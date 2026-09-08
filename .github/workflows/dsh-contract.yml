@@ -84,6 +84,16 @@ jobs:
             packageManager: 'pnpm@11.20.0',
             dependencies,
           }, null, 2))
+          if (process.env.EXPECT_CURRENT === 'true') {
+            fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
+              'packages:',
+              '  - .',
+              'allowBuilds:',
+              "  '@google/genai': true",
+              '  protobufjs: true',
+              '',
+            ].join('\n'))
+          }
           const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
           if (installed.status !== 0) process.exit(installed.status ?? 1)
           fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
