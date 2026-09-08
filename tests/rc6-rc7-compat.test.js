@@ -185,6 +185,17 @@ test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified sta
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
+test('release evidence gates keep stable and preview contracts capability-scoped', async () => {
+  const hostGate = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
+  const browserGate = await readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8')
+
+  assert.match(hostGate, /dsh: \['0\.1\.2-rc\.1', '0\.1\.3-alpha\.2'\]/)
+  assert.match(hostGate, /if: matrix\.dsh == '0\.1\.3-alpha\.2'/)
+  assert.match(browserGate, /dsh: 0\.1\.2-rc\.1[\s\S]*?mixedGenericFiles: false/)
+  assert.match(browserGate, /dsh: 0\.1\.3-alpha\.2[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /if: matrix\.mixedGenericFiles/)
+})
+
 test('bundle patch defines Vision Router attachment storage admission including rc8 dimensions', async () => {
   const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
   assert.match(patch, /^\s*- id:\s*attachment-local/m)
