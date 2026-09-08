@@ -171,28 +171,32 @@ test('release workflow confines write tokens to non-executing tag/release phases
   assert.match(workflow, /sha256sum --check --strict/)
 })
 
-test('Copilot review gate requires a bot review for the current PR head', async () => {
+test('Copilot review gate is trusted-base authority for the current PR head', async () => {
   const workflow = await readFile(new URL('../.github/workflows/copilot-review-gate.yml', import.meta.url), 'utf8')
 
-  assert.match(workflow, /pull_request_review:/)
-  assert.match(workflow, /types: \[submitted, dismissed\]/)
+  assert.match(workflow, /pull_request_target:/)
+  assert.doesNotMatch(workflow, /pull_request_review:/)
   assert.match(workflow, /^permissions: \{\}$/m)
   assert.match(workflow, /pull-requests: read/)
-  assert.doesNotMatch(workflow, /contents: write|statuses: write|actions\/checkout/)
+  assert.match(workflow, /statuses: write/)
+  assert.doesNotMatch(workflow, /contents: write|actions\/checkout|pull_request\.head\.ref/)
+  assert.match(workflow, /github\.event\.pull_request\.head\.sha/)
+  assert.match(workflow, /\^\[0-9a-f\]\{40\}\$/)
+  assert.match(workflow, /statuses\/\$HEAD_SHA/)
+  assert.match(workflow, /STATUS_CONTEXT: Copilot review gate/)
+  assert.match(workflow, /set_status pending/)
+  assert.match(workflow, /set_status success/)
+  assert.match(workflow, /set_status failure/)
   assert.match(workflow, /copilot-pull-request-reviewer\[bot\]/)
-  assert.match(workflow, /EVENT_REVIEW_COMMIT_SHA.*HEAD_SHA/s)
-  assert.match(workflow, /EVENT_REVIEW_BODY/)
-  assert.match(workflow, /EVENT_REVIEW_ASSOCIATION/)
   assert.match(workflow, /<summary>Review details<\/summary>/)
   assert.match(workflow, /Files reviewed:/)
-  assert.match(workflow, /DVR_COPILOT_QUOTA_FALLBACK/)
-  assert.match(workflow, /author_association == \\"OWNER\\"/)
   assert.match(workflow, /quota limit\|rate limit\|usage limit\|ai credits/)
+  assert.match(workflow, /Copilot quota\/rate limit blocked review/)
+  assert.doesNotMatch(workflow, /OWNER_FALLBACK|DVR_COPILOT_QUOTA_FALLBACK|author_association/)
   assert.match(workflow, /\.commit_id == \\"\$HEAD_SHA\\"/)
-  assert.match(workflow, /\.state != \\"DISMISSED\\"/)
-  assert.match(workflow, /Copilot has not completed a review for current PR head/)
+  assert.match(workflow, /sleep 15/)
+  assert.match(workflow, /timeout-minutes: 15/)
 })
-
 
 
 test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm setup', async () => {
