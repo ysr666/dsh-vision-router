@@ -33,6 +33,22 @@ test('runtime probe uses a side-effect-free rejected method and catches SPA fall
   assert.equal(report.ok, false)
 })
 
+test('token-authenticated DSH Web is reachable but keeps runtime route health advisory', async () => {
+  const report = await probeRuntime({
+    requestedProfile: 'web',
+    dshHome: '/tmp/dsh-home',
+    applicableProfiles: ['web'],
+    fetchImpl: async () => response(401),
+  })
+  assert.equal(report.reachable, true)
+  assert.equal(report.authenticationRequired, true)
+  assert.equal(report.routeOk, false)
+  assert.equal(report.ok, true, 'browser authentication must not make offline/static Doctor checks fail')
+  assert.equal(report.ownership.verified, false)
+  assert.equal(report.ownership.reason, 'runtime-auth-required')
+  assert.ok(report.routes.every((item) => item.status === 401 && item.ok === false))
+})
+
 test('405 plus the exact Allow contract confirms unbound routes without executing them', async () => {
   const report = await probeRuntime({ fetchImpl: async (url, init) => {
     assert.equal(init.redirect, 'manual')
@@ -114,4 +130,5 @@ test('support report is schema-versioned, identifies doctor version, and omits r
   assert.equal(json.includes('private-session-id'), false)
   assert.equal(json.includes('raw-secret-error'), false)
   assert.equal(report.runtime.baseUrl, 'http://127.0.0.1:3080/private')
+  assert.equal(report.runtime.authenticationRequired, false)
 })

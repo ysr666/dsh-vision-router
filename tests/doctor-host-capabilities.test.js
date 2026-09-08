@@ -52,6 +52,18 @@ test('Doctor capability probe fails open to unknown', async () => {
   assert.equal(probe.capabilities.prepareCall, 'unknown')
 })
 
+test('authenticated capability route reports auth-required unknown without claiming Host capabilities', async () => {
+  const probe = await probeDoctorHostCapabilities({
+    baseUrl: 'http://127.0.0.1:3080',
+    fetchImpl: async () => ({ ok: false, status: 401 }),
+  })
+  assert.equal(probe.ok, false)
+  assert.equal(probe.source, 'runtime-auth-required')
+  assert.equal(probe.status, 401)
+  assert.equal(probe.capabilities.batchAttachments, 'unknown')
+  assert.equal(probe.capabilities.prepareCall, 'unknown')
+})
+
 test('missing capability route is advisory rather than a Doctor failure', async () => {
   const probe = await probeDoctorHostCapabilities({
     baseUrl: 'http://127.0.0.1:3080',

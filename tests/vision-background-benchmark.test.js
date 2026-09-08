@@ -385,6 +385,29 @@ test('manual benchmark lease pauses and preempts background profiling until all 
   profiler.stop()
 })
 
+test('installed profiler subscribes to current and legacy credential invalidation events', () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  const listeners = new Map()
+  const base = fakeCtx(config)
+  const ctx = {
+    ...base,
+    on(event, handler) {
+      listeners.set(event, handler)
+      return () => listeners.delete(event)
+    },
+  }
+  const store = memoryStore()
+  const installed = installBackgroundCapabilityProfiling(ctx, config, fakeCore(), store, {
+    idleMs: 60_000,
+    setTimer: inertTimer,
+    clearTimer() {},
+    runAxisBenchmark: async () => {},
+  })
+  assert.equal(typeof listeners.get('credentials/reference-updated'), 'function')
+  assert.equal(typeof listeners.get('credentials/updated'), 'function')
+  installed.profiler.stop()
+})
+
 test('installed profiler is shared through the capability store without becoming enumerable persisted data', () => {
   const config = settings()
   const store = memoryStore()
