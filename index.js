@@ -98,6 +98,7 @@ import {
 import { writeArtifactFile } from './lib/artifact-boundary.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
 import { parseVersionComparator } from './lib/version-range.js'
+import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
 
 // sharp is a native module with platform-specific prebuilt binaries. It used
 // to be imported statically, so a missing, broken, or conflicting install
@@ -6960,7 +6961,7 @@ ctx.logger?.info(
     })
 
     // ── dsh-vision 并入：屏幕截图（vision_screenshot）───────────────────────
-    // 截取用户桌面。平台命令：Windows PowerShell CopyFromScreen（虚拟屏幕）、
+    // 截取用户桌面。平台命令：Windows PMv2-aware PowerShell helper（虚拟屏幕）、
     // macOS screencapture（主显示器）、Linux ImageMagick import（回退 scrot，
     // 两者均为系统外部依赖）。产物写入工作区 artifacts 目录。
     // Boot-time opt-in: the tool is registered ONLY when desktopScreenshot is
@@ -6971,7 +6972,7 @@ ctx.logger?.info(
         name: 'vision_screenshot',
       description:
         'Capture the user\'s desktop screen as a PNG artifact (the virtual screen on Windows; the main display on macOS; the root display on Linux). ' +
-        'Windows: PowerShell CopyFromScreen; macOS: screencapture; Linux: ImageMagick import (falls back to scrot; either command must be installed). ' +
+        'Windows: per-monitor-DPI-aware PowerShell capture; macOS: screencapture; Linux: ImageMagick import (falls back to scrot; either command must be installed). ' +
         'This privacy-sensitive tool is disabled by default and works only after the user explicitly enables Desktop screenshot in Vision Router settings. ' +
         'Use it when you need to see what is on the user\'s screen right now — e.g. their current GUI, an app, or a page outside this browser. ' +
         'Optional identify=true also runs local recognition on the capture using the enabled local backends (Ollama, then LM Studio) and returns the description alongside the path.',
@@ -7000,18 +7001,13 @@ ctx.logger?.info(
         const platform = process.platform
         try {
           if (platform === 'win32') {
-            const script = [
-              'Add-Type -AssemblyName System.Windows.Forms,System.Drawing',
-              '$b=[System.Windows.Forms.SystemInformation]::VirtualScreen',
-              '$bmp=New-Object System.Drawing.Bitmap($b.Width,$b.Height)',
-              '$g=[System.Drawing.Graphics]::FromImage($bmp)',
-              '$g.CopyFromScreen($b.X,$b.Y,0,0,$bmp.Size)',
-              `$bmp.Save('${tmp.replace(/'/g, "''")}')`,
-              '$g.Dispose();$bmp.Dispose()',
-            ].join('; ')
-            await promisify(execFile)('powershell.exe', ['-NoProfile', '-STA', '-Command', script], {
-              timeout: timeoutMs(),
-              windowsHide: true,
+            // #409: own the DPI-aware capture here instead of emitting the
+            // known-broken logical-coordinate script and hoping a global
+            // promisify(execFile) shim rewrites it later. The helper also
+            // isolates CodeDom TEMP/TMP to a writable ASCII path.
+            await captureWindowsDesktop(tmp, {
+              timeoutMs: timeoutMs(),
+              signal: exec?.signal,
             })
           } else if (platform === 'darwin') {
             // Without -m, screencapture writes one file per display. The code

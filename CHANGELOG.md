@@ -5,6 +5,11 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+### 修复 / Fixes
+
+- **Windows `vision_screenshot` 高 DPI / 中文用户名根修（#409）**：Windows 桌面截图现在直接由 PMv2 → PMv1 DPI-aware capture owner 执行，不再先生成逻辑坐标截图再依赖全局 `promisify(execFile)` 重写；`Add-Type` 编译使用隔离的纯 ASCII `TEMP/TMP`，避免中文用户目录导致 CodeDom 初始化失败。无法获得正确 DPI 上下文时继续 fail-closed，不会静默回退到已知会截缺底边/任务栏的 legacy 路径；macOS / Linux 截图、artifact 与识别契约不变。
+- **Windows `vision_screenshot` high-DPI / non-ASCII profile root fix (#409)**: Windows desktop capture is now owned directly by the PMv2 → PMv1 DPI-aware path instead of emitting a logical-coordinate screenshot and relying on a global `promisify(execFile)` rewrite. `Add-Type` compilation runs with isolated ASCII `TEMP/TMP`, avoiding CodeDom failures under non-ASCII user temp paths. If a correct DPI context cannot be established the tool still fails closed rather than silently falling back to the known-broken legacy capture; macOS/Linux capture, artifact, and recognition contracts are unchanged.
+
 ### 聊天识图模式 / Composer Vision mode
 
 - **输入框旁新增显式「👁 识图」开关（#284 / #286）**：普通模型仍由 DSH 原生模型选择器负责；需要发图时用户主动开启识图，底层切到同一 provider/model 的 Vision Router wrapper。开关默认关闭、发送后不复位，关闭时切回同一普通模型；只修改 reasoning effort 保持识图开启，手动选择另一个普通模型则退出 wrapper。DeepSeek 默认 `deepseek-official <-> deepseek-vision`，并支持自定义 `wrapperRoute`。
