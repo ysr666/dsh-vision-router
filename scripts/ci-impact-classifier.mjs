@@ -59,7 +59,7 @@ export function classifyCiImpact(paths) {
     return result
   }
 
-  const known = (path) => matches(path, [...DOCS, ...BROWSER, ...HOST, ...WINDOWS, ...RESOURCE, ...NATIVE])
+  const known = (path) => matches(path, [...DOCS, ...BROWSER, ...HOST, ...WINDOWS, ...RESOURCE, ...NATIVE, ...ROUTING_META])
   const unknown = files.filter((path) => !known(path))
   if (files.some((path) => matches(path, ROUTING_META))) result.reasons.push('CI/package routing metadata changed')
   if (unknown.length) result.reasons.push(`unclassified paths fail closed: ${unknown.join(', ')}`)
