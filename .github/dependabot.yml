@@ -5,3 +5,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+
+  # Keep ordinary npm version churn out of the support policy. DSH latest/preview
+  # movement is handled by the dedicated canaries; this entry exists so
+  # Dependabot can still open vulnerability-only package updates.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 0
