@@ -108,6 +108,7 @@ jobs:
               '@deepseek-ai/dsh-system-prompt': v,
               '@deepseek-ai/dsh-tools': v,
               '@deepseek-ai/dsh-session': v,
+              '@deepseek-ai/dsh-session-projection': v,
               '@deepseek-ai/dsh-session-persistence-jsonl': v,
               '@deepseek-ai/dsh-agent': v,
               '@deepseek-ai/dsh-agent-loop': v,
@@ -138,8 +139,5 @@ jobs:
         run: node scripts/dsh-host-contract-smoke.mjs
       - name: Verify preview pi-ai final OpenCode wire
         run: node tests/opencode-session-wire-contract.mjs
-      - name: Verify preview native image cold/restart lifecycle
-        run: |
-          node tests/native-multimodal-cold-resume-contract.mjs
-          node tests/native-multimodal-process-restart-contract.mjs
-          node tests/pi-ai-native-process-restart-contract.mjs
+      - name: Verify preview Session v2 native image process-restart lifecycle
+        run: node scripts/dsh-preview-native-lifecycle-contract.mjs
