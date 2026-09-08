@@ -119,6 +119,7 @@ jobs:
             '  - .',
             'allowBuilds:',
             '  koffi: true',
+            '  fs-ext: true',
             "  '@google/genai': true",
             '  protobufjs: true',
             '',
