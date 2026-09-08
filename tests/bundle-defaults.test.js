@@ -215,7 +215,7 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
 })
 
 test('CI impact classifier is fail-closed before trusted-base shadow wiring', async () => {
-  const { classifyCiImpact } = await import('../scripts/ci-impact-classifier.mjs')
+  const { classifyCiImpact, MAX_CI_IMPACT_INPUT_BYTES, MAX_CI_IMPACT_PATHS } = await import('../scripts/ci-impact-classifier.mjs')
 
   assert.equal(classifyCiImpact(['docs/doctor.md', 'README.md']).docsOnly, true)
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
@@ -225,6 +225,8 @@ test('CI impact classifier is fail-closed before trusted-base shadow wiring', as
   assert.deepEqual(classifyCiImpact(['package.json']).reasons, ['CI/package routing metadata changed'])
   assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
   assert.equal(classifyCiImpact([]).full, true)
+  assert.equal(classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('lib/client.js')).full, true)
+  assert.equal(classifyCiImpact(['x'.repeat(MAX_CI_IMPACT_INPUT_BYTES + 1)]).full, true)
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {

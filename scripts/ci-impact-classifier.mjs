@@ -1,4 +1,8 @@
+import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+
+export const MAX_CI_IMPACT_INPUT_BYTES = 1024 * 1024
+export const MAX_CI_IMPACT_PATHS = 5000
 
 const matches = (path, patterns) => patterns.some((pattern) => (
   typeof pattern === 'string' ? path === pattern || path.startsWith(`${pattern}/`) : pattern.test(path)
@@ -35,7 +39,12 @@ const ROUTING_META = [
 ]
 
 export function classifyCiImpact(paths) {
-  const files = [...new Set(paths.map((value) => String(value).trim()).filter(Boolean))].sort()
+  const normalized = paths.map((value) => String(value).trim()).filter(Boolean)
+  const inputBytes = normalized.reduce((total, value) => total + Buffer.byteLength(value, 'utf8') + 1, 0)
+  if (normalized.length > MAX_CI_IMPACT_PATHS || inputBytes > MAX_CI_IMPACT_INPUT_BYTES) {
+    return { files: [], docsOnly: false, core: true, browser: true, host: true, windows: true, resource: true, native: true, full: true, reasons: ['change-set exceeds classifier budget: fail closed'] }
+  }
+  const files = [...new Set(normalized)].sort()
   if (files.length === 0) {
     return { files, docsOnly: false, core: true, browser: true, host: true, windows: true, resource: true, native: true, full: true, reasons: ['empty-change-set: fail closed'] }
   }
@@ -69,9 +78,20 @@ export function classifyCiImpact(paths) {
 
 async function main() {
   let stdin = ''
+  let inputBytes = 0
+  let oversized = false
   process.stdin.setEncoding('utf8')
-  for await (const chunk of process.stdin) stdin += chunk
-  const result = classifyCiImpact(stdin.split(/\r?\n/))
+  for await (const chunk of process.stdin) {
+    inputBytes += Buffer.byteLength(chunk, 'utf8')
+    if (inputBytes > MAX_CI_IMPACT_INPUT_BYTES) {
+      oversized = true
+      break
+    }
+    stdin += chunk
+  }
+  const result = oversized
+    ? classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('oversized'))
+    : classifyCiImpact(stdin.split(/\r?\n/))
   process.stdout.write(`${JSON.stringify(result)}\n`)
   const summary = process.env.GITHUB_STEP_SUMMARY
   if (summary) {
@@ -82,6 +102,6 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   await main()
 }
