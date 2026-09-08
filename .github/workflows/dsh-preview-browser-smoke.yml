@@ -97,6 +97,8 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-preview
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.3-alpha.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-diagnostic.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-page.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
 
       - name: Upload classified browser diagnostics
