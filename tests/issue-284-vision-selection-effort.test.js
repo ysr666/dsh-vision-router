@@ -53,7 +53,7 @@ test('issue #284 choosing another provider while Vision is on leaves the wrapper
   assert.equal(Object.prototype.hasOwnProperty.call(mapped, 'reasoningEffort'), false)
 })
 
-test('issue #284 choosing another model in the same provider leaves Vision and preserves Provider Default semantics', () => {
+test('issue #431 choosing another model in the same wrapped provider keeps Vision and Provider Default semantics', () => {
   const mapped = mapVisionPresentationSelection(
     activeState(),
     { provider: 'alpha', model: 'alpha-2' },
@@ -61,7 +61,7 @@ test('issue #284 choosing another model in the same provider leaves Vision and p
   )
 
   assert.deepEqual(mapped, {
-    provider: 'alpha',
+    provider: 'alpha-vision',
     model: 'alpha-2',
   })
   assert.equal(Object.prototype.hasOwnProperty.call(mapped, 'reasoningEffort'), false)
@@ -143,9 +143,9 @@ test('issue #284 a nested -vision-vision lookalike is never treated as a Vision 
   ), { mode: 'unavailable' })
 })
 
-test('issue #284 guide copy says a manual ordinary-model change turns Vision off', () => {
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('手动切回普通模型'), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('manually switch back to a normal model'), true)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('切换聊天模型时也会继续保持识图模式'), false)
-  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('Changing chat models keeps Vision mode on'), false)
+test('issue #431 guide copy explains when model changes preserve or leave Vision mode', () => {
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('同一模型组内切换到另一个支持识图模式的模型也会保持开启'), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('switch to another Vision-enabled model in the same model group'), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('没有对应识图模式的普通模型'), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('normal model with no matching Vision route'), true)
 })
