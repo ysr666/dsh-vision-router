@@ -208,8 +208,9 @@ test('generated twin registered before its settings-backed source still gains ru
     },
   }
 
-  // Core explicitly supports this lifecycle: wrappedProviders may create the
-  // twin before a settings-backed source adapter has mounted.
+  // The compatibility wrapper remains tolerant of this historical ordering
+  // even though current Core (#446) waits for a live source before publishing
+  // a configured twin.
   wrapped.llm.registerAdapter(['src-vision'], generatedTwin)
   assert.equal(registrations.has('src'), false)
 

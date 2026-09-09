@@ -1231,7 +1231,11 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
       },
     }
     adapters.set('deepseek-official', stock)
-    registrations.set('deepseek-official', { adapter: stock, retryPolicy: 'retry' })
+    registrations.set('deepseek-official', {
+      adapter: stock,
+      provider: { id: 'deepseek-official', name: 'DeepSeek' },
+      retryPolicy: 'retry',
+    })
   }
   if (opencodeGo) {
     // A pi-ai-shaped adapter for the opencode-go route: the catalog-correction
@@ -1272,7 +1276,11 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
       },
     }
     adapters.set('opencode-go', adapter)
-    registrations.set('opencode-go', { adapter, retryPolicy: undefined })
+    registrations.set('opencode-go', {
+      adapter,
+      provider: { id: 'opencode-go', name: 'OpenCode Go' },
+      retryPolicy: undefined,
+    })
   }
   const ctx = {
     get(name) {
@@ -1330,27 +1338,66 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
     tools: { register: (tool) => { captured.tools.push(tool); return () => {} } },
     llm: {
       registerAdapter(providers, adapter) {
-        for (const provider of providers) {
-          if (adapters.has(provider)) {
-            const error = new Error(`an adapter for provider "${provider}" is already registered`)
-            error.code = 'DUPLICATE_ADAPTER'
+        const owned = new Set()
+        let released = false
+        const prepare = (next) => {
+          const prepared = []
+          const seen = new Set()
+          for (const provider of next) {
+            if (seen.has(provider) || (adapters.has(provider) && !owned.has(provider))) {
+              const error = new Error(`an adapter for provider "${provider}" is already registered`)
+              error.code = 'DUPLICATE_ADAPTER'
+              throw error
+            }
+            const info = adapter.providerInfo ? adapter.providerInfo(provider) : { id: provider, name: provider }
+            if (!info || info.id !== provider || typeof info.name !== 'string' || info.name === '') {
+              const error = new Error(`invalid adapter metadata for provider "${provider}"`)
+              error.code = 'INVALID_ADAPTER'
+              throw error
+            }
+            seen.add(provider)
+            prepared.push({
+              provider,
+              info: { id: info.id, name: info.name },
+              retryPolicy: adapter.providerRetryPolicy ? adapter.providerRetryPolicy(provider) : undefined,
+            })
+          }
+          return prepared
+        }
+        const commit = (prepared) => {
+          for (const provider of owned) {
+            if (adapters.get(provider) === adapter) adapters.delete(provider)
+            const registration = registrations.get(provider)
+            if (registration && registration.adapter === adapter) registrations.delete(provider)
+          }
+          owned.clear()
+          for (const entry of prepared) {
+            adapters.set(entry.provider, adapter)
+            registrations.set(entry.provider, {
+              adapter,
+              provider: entry.info,
+              retryPolicy: entry.retryPolicy,
+            })
+            owned.add(entry.provider)
+          }
+        }
+        commit(prepare(providers))
+        // Mirror DSH's registration handle closely enough to catch snapshot
+        // metadata regressions: providerInfo/retryPolicy are captured at commit
+        // time, and replace() re-reads them before an atomic same-route swap.
+        const handle = () => {
+          if (released) return
+          released = true
+          commit([])
+        }
+        handle.replace = (next) => {
+          if (released) {
+            const error = new Error('registration disposed')
+            error.code = 'REGISTRATION_DISPOSED'
             throw error
           }
+          commit(prepare(next))
         }
-        for (const provider of providers) {
-          adapters.set(provider, adapter)
-          registrations.set(provider, { adapter, retryPolicy: adapter.providerRetryPolicy(provider) })
-        }
-        // mirror the real handle: calling it disposes the registration
-        const handle = () => {
-          for (const provider of providers) {
-            if (adapters.get(provider) === adapter) adapters.delete(provider)
-            if (registrations.get(provider) && registrations.get(provider).adapter === adapter) {
-              registrations.delete(provider)
-            }
-          }
-        }
-        handle.replace = () => {}
         return handle
       },
       registration(provider) {
@@ -1363,15 +1410,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
         return { replace: () => {} }
       },
       listProviders() {
-        return [...registrations.entries()].map(([provider, registration]) => {
-          let info
-          try {
-            info = registration.adapter.providerInfo ? registration.adapter.providerInfo(provider) : undefined
-          } catch {
-            info = undefined
-          }
-          return { id: provider, name: info && info.name ? info.name : provider }
-        })
+        return [...registrations.values()].map((registration) => ({ ...registration.provider }))
       },
       async listModels(provider) {
         const hit = registrations.get(provider)
@@ -2085,21 +2124,19 @@ test('twin wrapper leaves the effort untouched when nothing was seen or configur
   assert.equal(calls[0].reasoningEffort, undefined)
 })
 
-test('twin route registers before its source adapter appears (live provider registration)', async () => {
-  // llm-pi-ai mounts dormant: its routes (openrouter/deepseek) register LIVE
-  // once the settings document loads, i.e. AFTER other plugins' apply().
-  // wrappedProviders must therefore register the twin up front and resolve
-  // the source adapter lazily per call.
-  const { ctx, adapters } = mockHarnessCtx()
+test('issue #446 keeps explicit wrapper intent dormant until the source route is live', async () => {
+  // llm-pi-ai-style providers can be configured before their adapter route is
+  // registered. Publishing the twin early makes DSH snapshot the fallback
+  // route id as its display name and the browser then fails closed forever.
+  const { ctx, adapters, captured } = mockHarnessCtx()
   apply(ctx, Config({
-    wrappedProviders: [{ provider: 'opencode-go', models: [] }],
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'ctyun', models: [] }],
   }))
-  assert.ok(adapters.has('opencode-go-vision'), 'expected the twin route before the source adapter exists')
-  const twin = adapters.get('opencode-go-vision')
-  // before the source appears: empty catalog, no crash
-  assert.deepEqual(await twin.listModels('opencode-go-vision'), [])
+  assert.equal(adapters.has('ctyun-vision'), false, 'dormant intent must not publish a ghost twin')
+
   const thirdParty = {
-    providerInfo: (p) => ({ id: p, name: 'Opencode' }),
+    providerInfo: (p) => ({ id: p, name: '天翼云' }),
     providerRetryPolicy: () => 'retry',
     listModels: async (p) => [
       { provider: p, id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
@@ -2112,13 +2149,175 @@ test('twin route registers before its source adapter appears (live provider regi
       yield { type: 'finish', reason: { kind: 'stop' } }
     },
   }
-  ctx.llm.registerAdapter(['opencode-go'], thirdParty)
-  // after the source appears: mirrored catalog with image input declared
-  const listed = await twin.listModels('opencode-go-vision')
+  ctx.llm.registerAdapter(['ctyun'], thirdParty)
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire, 'expected the adapters-updated listener to be registered')
+  fire()
+
+  const twin = adapters.get('ctyun-vision')
+  assert.ok(twin, 'expected the twin after the source adapter becomes live')
+  assert.deepEqual(
+    ctx.llm.listProviders().find((entry) => entry.id === 'ctyun-vision'),
+    { id: 'ctyun-vision', name: '天翼云 + 自动识图' },
+  )
+  const listed = await twin.listModels('ctyun-vision')
   assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
   for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
-  const resolved = await twin.resolveModel('opencode-go-vision', 'deepseek-v4-flash')
+  const resolved = await twin.resolveModel('ctyun-vision', 'deepseek-v4-flash')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+})
+
+test('issue #446 atomically refreshes twin presentation metadata without changing its adapter instance', () => {
+  const { ctx, adapters, captured } = mockHarnessCtx()
+  let displayName = '天翼云'
+  const source = {
+    providerInfo: (p) => ({ id: p, name: displayName }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async () => [],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const sourceHandle = ctx.llm.registerAdapter(['ctyun'], source)
+  apply(ctx, Config({
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'ctyun', models: [] }],
+  }))
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire)
+  const twin = adapters.get('ctyun-vision')
+  assert.ok(twin)
+  assert.equal(
+    ctx.llm.listProviders().find((entry) => entry.id === 'ctyun-vision')?.name,
+    '天翼云 + 自动识图',
+  )
+
+  displayName = '天翼云模型服务'
+  sourceHandle.replace(['ctyun'])
+  fire()
+  assert.strictEqual(adapters.get('ctyun-vision'), twin, 'same twin adapter should survive metadata refresh')
+  assert.equal(
+    ctx.llm.listProviders().find((entry) => entry.id === 'ctyun-vision')?.name,
+    '天翼云模型服务 + 自动识图',
+  )
+})
+
+test('issue #446 withdraws a twin when its live source disappears and restores it when the source returns', () => {
+  const { ctx, adapters, captured } = mockHarnessCtx()
+  const makeSource = (name) => ({
+    providerInfo: (p) => ({ id: p, name }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async () => [],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  })
+  let sourceHandle = ctx.llm.registerAdapter(['ctyun'], makeSource('天翼云'))
+  apply(ctx, Config({
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'ctyun', models: [] }],
+  }))
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire)
+  assert.ok(adapters.has('ctyun-vision'))
+
+  sourceHandle()
+  fire()
+  assert.equal(adapters.has('ctyun-vision'), false)
+
+  sourceHandle = ctx.llm.registerAdapter(['ctyun'], makeSource('天翼云重载'))
+  fire()
+  assert.ok(adapters.has('ctyun-vision'))
+  assert.equal(
+    ctx.llm.listProviders().find((entry) => entry.id === 'ctyun-vision')?.name,
+    '天翼云重载 + 自动识图',
+  )
+  sourceHandle()
+})
+
+test('issue #446 twin reconciliation converges under synchronous adapters-updated re-entry', () => {
+  const { ctx, adapters, captured } = mockHarnessCtx()
+  apply(ctx, Config({
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'ctyun', models: [] }],
+  }))
+  const fire = captured.on.get('llm/adapters-updated')
+  assert.ok(fire)
+
+  // The real DSH registry emits adapters-updated synchronously from register,
+  // replace and disposal. Decorate this test mock after apply so a twin
+  // mutation re-enters syncTwins exactly while the outer reconciliation runs.
+  const rawRegister = ctx.llm.registerAdapter.bind(ctx.llm)
+  ctx.llm.registerAdapter = (providers, adapter) => {
+    const rawHandle = rawRegister(providers, adapter)
+    const handle = () => {
+      rawHandle()
+      fire()
+    }
+    handle.replace = (next) => {
+      rawHandle.replace(next)
+      fire()
+    }
+    fire()
+    return handle
+  }
+
+  let displayName = '天翼云'
+  const source = {
+    providerInfo: (p) => ({ id: p, name: displayName }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async () => [],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const sourceHandle = ctx.llm.registerAdapter(['ctyun'], source)
+  assert.ok(adapters.has('ctyun-vision'))
+
+  displayName = '天翼云模型服务'
+  sourceHandle.replace(['ctyun'])
+  assert.equal(
+    ctx.llm.listProviders().find((entry) => entry.id === 'ctyun-vision')?.name,
+    '天翼云模型服务 + 自动识图',
+  )
+
+  sourceHandle()
+  assert.equal(adapters.has('ctyun-vision'), false)
+})
+
+test('issue #446 model-filter edits refresh one live twin without replacing its adapter instance', async () => {
+  const userDoc = {
+    autoWrapProviders: false,
+    wrappedProviders: [{ provider: 'ctyun', models: ['model-a'] }],
+  }
+  const { ctx, adapters, settingsWatchers } = mockHarnessCtx({ config0: userDoc })
+  const source = {
+    providerInfo: (p) => ({ id: p, name: '天翼云' }),
+    providerRetryPolicy: () => 'retry',
+    listModels: async (p) => [
+      { provider: p, id: 'model-a', name: 'A', inputModalities: ['text'] },
+      { provider: p, id: 'model-b', name: 'B', inputModalities: ['text'] },
+    ],
+    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  ctx.llm.registerAdapter(['ctyun'], source)
+  apply(ctx, Config(userDoc))
+  const twin = adapters.get('ctyun-vision')
+  assert.ok(twin)
+  assert.deepEqual((await twin.listModels('ctyun-vision')).map((model) => model.id), ['model-a'])
+
+  userDoc.wrappedProviders = [{ provider: 'ctyun', models: ['model-b'] }]
+  assert.ok(settingsWatchers.length > 0)
+  for (const watch of settingsWatchers) watch()
+
+  assert.strictEqual(adapters.get('ctyun-vision'), twin)
+  assert.deepEqual((await twin.listModels('ctyun-vision')).map((model) => model.id), ['model-b'])
 })
 
 test('auto-wrap also exposes a twin for an already image-capable GLM model', async () => {
