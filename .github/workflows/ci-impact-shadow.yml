@@ -21,13 +21,32 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - name: Checkout trusted base classifier
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-          path: trusted-base
+      - name: Fetch trusted base classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid base SHA"; exit 1; }
+          gh api \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/ci-impact-classifier.mjs?ref=$BASE_SHA" \
+            > "$RUNNER_TEMP/dvr-ci-impact-classifier.json"
+          test "$(jq -r '.encoding' "$RUNNER_TEMP/dvr-ci-impact-classifier.json")" = 'base64'
+          jq -r '.content' "$RUNNER_TEMP/dvr-ci-impact-classifier.json" \
+            | tr -d '\n' \
+            | base64 --decode \
+            > "$RUNNER_TEMP/dvr-ci-impact-classifier.mjs"
+          CLASSIFIER_BYTES="$(wc -c < "$RUNNER_TEMP/dvr-ci-impact-classifier.mjs")"
+          (( CLASSIFIER_BYTES > 0 && CLASSIFIER_BYTES <= 65536 )) || {
+            echo "::error::trusted classifier size out of bounds"
+            exit 1
+          }
+          EXPECTED_BLOB="$(jq -r '.sha' "$RUNNER_TEMP/dvr-ci-impact-classifier.json")"
+          ACTUAL_BLOB="$(git hash-object "$RUNNER_TEMP/dvr-ci-impact-classifier.mjs")"
+          [[ "$EXPECTED_BLOB" =~ ^[0-9a-f]{40}$ && "$ACTUAL_BLOB" = "$EXPECTED_BLOB" ]] || {
+            echo "::error::trusted classifier blob mismatch"
+            exit 1
+          }
 
       - name: Install Node 24 for trusted classifier
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -49,5 +68,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node trusted-base/scripts/ci-impact-classifier.mjs --json-lines \
+          node "$RUNNER_TEMP/dvr-ci-impact-classifier.mjs" --json-lines \
             < "$RUNNER_TEMP/dvr-ci-impact-files.jsonl"
