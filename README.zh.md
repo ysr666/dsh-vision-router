@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.0"><img src="https://img.shields.io/badge/release-v2.1.0-5B4CF0?style=flat-square" alt="Release v2.1.0" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.5"><img src="https://img.shields.io/badge/release-v2.1.5-5B4CF0?style=flat-square" alt="Release v2.1.5" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -39,9 +39,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v2.1.0）**
+> 📌 **公告（v2.1.5）**
 >
-> **v2.1.0：原生五卡设置、输入框识图、运行时双语、能力路由/测评加固，并正式启用 DSH rc.8 最低支持线。** [查看完整更新 →](docs/releases/v2.1.0.md)
+> **v2.1.5：已完成 DSH `0.1.5-alpha.1` 精确兼容验证，修复识图模式下同源 wrapper 模型切换，并加固 Web 激活与发版/安全链路；稳定 Host 支持仍到 `0.1.2-rc.1`。** [查看完整更新 →](docs/releases/v2.1.5.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
