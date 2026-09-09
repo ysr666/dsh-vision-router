@@ -43,22 +43,14 @@ jobs:
           set_status pending "Checking optional Copilot review for current PR head"
           trap 'rc=$?; if (( rc != 0 )); then set_status failure "Copilot review advisory check errored" || true; fi' EXIT
 
-          REVIEWS="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")"
+          # Give an automatically-started review a short chance to land, but never
+          # turn an exhausted Copilot quota into a merge blocker.
+          sleep 15
 
-          # Keep the historical source-contract anchors while the gate changes from
-          # mandatory polling to best-effort observation: .commit_id == \"$HEAD_SHA\"
-          # Historical polling anchor retained for regression readability: sleep 15
           MATCHING_REVIEW_ID="$(
-            jq -r --arg head "$HEAD_SHA" '
-              .[]
-              | select(.user.login == "copilot-pull-request-reviewer[bot]")
-              | select(.user.type == "Bot")
-              | select(.commit_id == $head)
-              | select(.state != "DISMISSED")
-              | select((.body // "") | contains("<summary>Review details</summary>"))
-              | select((.body // "") | contains("Files reviewed:"))
-              | .id
-            ' <<<"$REVIEWS" | sed -n '1p'
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and ((.body // \"\") | contains(\"<summary>Review details</summary>\")) and ((.body // \"\") | contains(\"Files reviewed:\"))) | .id" \
+              | sed -n '1p'
           )"
           if [[ -n "$MATCHING_REVIEW_ID" ]]; then
             set_status success "Copilot reviewed current PR head"
@@ -68,15 +60,9 @@ jobs:
           fi
 
           QUOTA_FAILURE_ID="$(
-            jq -r --arg head "$HEAD_SHA" '
-              .[]
-              | select(.user.login == "copilot-pull-request-reviewer[bot]")
-              | select(.user.type == "Bot")
-              | select(.commit_id == $head)
-              | select(.state != "DISMISSED")
-              | select(((.body // "") | ascii_downcase) | test("quota limit|rate limit|usage limit|ai credits"))
-              | .id
-            ' <<<"$REVIEWS" | sed -n '1p'
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and (((.body // \"\") | ascii_downcase) | test(\"quota limit|rate limit|usage limit|ai credits\"))) | .id" \
+              | sed -n '1p'
           )"
           if [[ -n "$QUOTA_FAILURE_ID" ]]; then
             set_status success "Copilot quota/rate limit; review skipped"
