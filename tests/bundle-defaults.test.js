@@ -263,7 +263,7 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
 })
 
 test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
-  const cacheSha = '0400d5f644dc74513175e3cd8d07132dd4860809'
+  const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [
     ['dsh-preview-browser-smoke.yml', 'dsh-preview', 'Build preview web runtime', 'Run cold Vision toggle against preview Host and Chromium'],
     ['alpha-browser-cold-toggle-smoke.yml', 'dsh-alpha', 'Build exact alpha web runtime', 'Run cold Vision toggle against real Host and Chromium'],
