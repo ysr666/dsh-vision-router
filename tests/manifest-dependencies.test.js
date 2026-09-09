@@ -117,6 +117,14 @@ test('host-provided peers are optional so profile installs never warn about miss
   }
 })
 
+test('development sharp stays on the patched libheif security floor', async () => {
+  const pkg = await manifest()
+  const lock = await readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')
+
+  assert.equal(pkg.devDependencies?.sharp, '^0.35.4')
+  assert.doesNotMatch(lock, /(?:^|\s)sharp@0\.35\.3(?=[:(])/m)
+})
+
 test('schemastery remains a runtime dependency', async () => {
   const pkg = await manifest()
   assert.equal(typeof pkg.dependencies?.['@deepseek-ai/schemastery'], 'string')
