@@ -14,9 +14,10 @@ promise.
 
 ## Reporting a vulnerability
 
-Please use GitHub **Private Vulnerability Reporting** for security issues:
+Please use [GitHub **Private Vulnerability Reporting**](https://github.com/ysr666/dsh-vision-router/security)
+for security issues. Private vulnerability reporting is enabled for this repository.
 
-1. Open this repository's **Security** tab.
+1. Open the linked **Security** page.
 2. Choose **Report a vulnerability**.
 3. Include the affected Vision Router/DSH versions, platform, reproduction steps,
    impact, and the smallest safe proof of concept you can provide.
