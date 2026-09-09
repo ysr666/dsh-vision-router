@@ -106,6 +106,7 @@ import {
 import { writeArtifactFile } from './lib/artifact-boundary.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
 import { parseVersionComparator } from './lib/version-range.js'
+import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
 
 import {
@@ -1250,8 +1251,9 @@ export function apply(ctx, config = {}, runtime = {}) {
   // A session model on a third-party text-only route (e.g. opencode-go) is
   // rejected by the host admission once the session contains images, because
   // that route's catalog declares input:[text] and the admission runs before
-  // any plugin can rewrite the turn. `wrappedProviders` registers a twin
-  // route "<provider>-vision" that mirrors the original models but declares
+  // any plugin can rewrite the turn. `wrappedProviders` declares a twin
+  // route "<provider>-vision" that is materialized while its source is live,
+  // mirrors the original models, and declares
   // image input, so the user gets an image-capable entry for exactly the
   // routes they use. Text turns delegate byte-for-byte to the original
   // adapter; image blocks are handled by the shared wrapper body (cached
@@ -1266,36 +1268,40 @@ export function apply(ctx, config = {}, runtime = {}) {
         (route) => route !== undefined && route !== null && route !== '',
       ),
     )
-  // Auto-discovery is registry-driven rather than settings-file-driven. This
-  // intentionally follows the providers DSH can actually serve right now and
-  // reacts to later Settings changes through llm/adapters-updated. Explicit
-  // wrappedProviders entries below override the auto-discovered model filter.
-  const autoWrappedProviders = () => {
-    if (current().autoWrapProviders !== true || typeof ctx.llm.listProviders !== 'function') return []
+  // Auto-discovery is registry-driven rather than settings-file-driven. A
+  // configured wrapper is intent only: materialize its twin only while the
+  // source route is live, so provider metadata is never snapshotted from the
+  // fallback route id before a settings-backed adapter has registered.
+  const liveProviderDirectory = () => {
+    if (typeof ctx.llm.listProviders !== 'function') return new Map()
     try {
-      return ctx.llm
-        .listProviders()
-        .map((entry) => (entry && typeof entry.id === 'string' ? entry.id : ''))
-        .filter(
-          (provider) =>
-            provider !== '' &&
-            !ownRoutes().has(provider) &&
-            !provider.endsWith('-vision'),
-        )
+      return new Map(
+        ctx.llm
+          .listProviders()
+          .filter((entry) => entry && typeof entry.id === 'string' && entry.id !== '')
+          .map((entry) => [
+            entry.id,
+            {
+              id: entry.id,
+              name:
+                typeof entry.name === 'string' && entry.name !== ''
+                  ? entry.name
+                  : entry.id,
+            },
+          ]),
+      )
     } catch {
-      return []
+      return new Map()
     }
   }
-  // The twin must NOT resolve its source adapter eagerly: providers backed by
-  // user settings (llm-pi-ai's openrouter/deepseek) register their routes LIVE
-  // once the settings document loads, i.e. AFTER this plugin's apply. Same for
-  // wrappedProviders itself: the settings document loads asynchronously, so at
-  // apply time the scope may only contain composition defaults. The twins are
-  // therefore synced reactively — on settings changes and on every
-  // `llm/adapters-updated` event — and each twin delegates lazily per call.
-  const twinHandles = new Map() // provider -> { handle, modelsKey }
+  // Twins still delegate lazily per call because a live source adapter may be
+  // replaced without changing its route. The registration itself, however,
+  // is reconciled against live topology so a dormant configured provider does
+  // not publish a ghost `*-vision` route.
+  const twinHandles = new Map() // provider -> { handle, state, key }
   const twinModelsKey = (models) => models.slice().sort().join('\u0000')
-  const makeTwinAdapter = (provider, models) => {
+  const twinSpecKey = (models, sourceName) => JSON.stringify([twinModelsKey(models), sourceName])
+  const makeTwinAdapter = (provider, state) => {
     const twinRoute = `${provider}-vision`
     const originalAdapter = () => {
       try {
@@ -1322,14 +1328,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     // later steps that arrive without one.
     return {
       providerInfo() {
-        const original = originalAdapter()
-        let info
-        try {
-          info = original && typeof original.providerInfo === 'function' ? original.providerInfo(provider) : undefined
-        } catch {
-          info = undefined
-        }
-        return { id: twinRoute, name: `${info && info.name ? info.name : provider} + 自动识图` }
+        return { id: twinRoute, name: `${state.sourceName} + 自动识图` }
       },
       providerRetryPolicy() {
         const original = originalAdapter()
@@ -1347,7 +1346,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         try {
           const listed = await original.listModels(provider)
           return listed
-            .filter((model) => models.length === 0 || models.includes(model.id))
+            .filter((model) => state.models.length === 0 || state.models.includes(model.id))
             .map((model) => ({ ...model, provider: twinRoute, inputModalities: ['text', 'image'] }))
         } catch {
           return []
@@ -1375,43 +1374,88 @@ export function apply(ctx, config = {}, runtime = {}) {
       }),
     }
   }
-  const syncTwins = () => {
+  const reconcileTwins = () => {
+    const liveProviders = liveProviderDirectory()
     const wanted = new Map()
     // Default path: every live non-router provider gets a twin. The source
     // route remains untouched, including native multimodal models; this adds a
     // separate + auto-vision choice that deliberately uses vision-router.
-    for (const provider of autoWrappedProviders()) wanted.set(provider, [])
+    if (current().autoWrapProviders === true) {
+      for (const [provider, info] of liveProviders) {
+        if (ownRoutes().has(provider) || provider.endsWith('-vision')) continue
+        wanted.set(provider, { models: [], sourceName: info.name })
+      }
+    }
     // Explicit settings win for a provider and can narrow the twin to selected
-    // model ids. They still work when auto discovery is disabled, and can be
-    // registered before a settings-backed source adapter appears.
+    // model ids. A dormant entry remains configuration intent only; the twin
+    // appears when the source route becomes live and `llm/adapters-updated`
+    // drives this reconciliation again.
     for (const entry of wrappedProviders()) {
       const provider = entry.provider
       if (ownRoutes().has(provider) || provider.endsWith('-vision')) continue
+      const source = liveProviders.get(provider)
+      if (source === undefined) continue
       const models = Array.isArray(entry.models)
         ? entry.models.filter((model) => typeof model === 'string' && model !== '')
         : []
-      wanted.set(provider, models)
+      wanted.set(provider, { models, sourceName: source.name })
     }
-    // Drop twins that are no longer wanted, and rebuild ones whose model
-    // selection changed (the adapter closure captures the model filter).
+
+    // Withdraw twins whose source/intent disappeared. For a still-live twin,
+    // update presentation metadata/model filters through the Host's atomic
+    // registration replace seam: DSH re-reads providerInfo/retryPolicy before
+    // publishing, so active sessions never observe a dispose/register gap.
     for (const [provider, held] of [...twinHandles.entries()]) {
-      const models = wanted.get(provider)
-      if (models === undefined || twinModelsKey(models) !== held.key) {
-        held.handle()
-        twinHandles.delete(provider)
-      } else {
-        wanted.delete(provider) // already current
+      const spec = wanted.get(provider)
+      if (spec === undefined) {
+        try {
+          held.handle()
+          twinHandles.delete(provider)
+        } catch (error) {
+          ctx.logger?.warn(
+            'vision-router: twin route %s disposal failed: %s',
+            `${provider}-vision`,
+            error && error.message ? error.message : String(error),
+          )
+        }
+        continue
       }
+      const nextKey = twinSpecKey(spec.models, spec.sourceName)
+      if (nextKey !== held.key) {
+        const previousModels = held.state.models
+        const previousSourceName = held.state.sourceName
+        held.state.models = spec.models
+        held.state.sourceName = spec.sourceName
+        try {
+          held.handle.replace([`${provider}-vision`])
+          held.key = nextKey
+        } catch (error) {
+          held.state.models = previousModels
+          held.state.sourceName = previousSourceName
+          ctx.logger?.warn(
+            'vision-router: twin route %s refresh failed: %s',
+            `${provider}-vision`,
+            error && error.message ? error.message : String(error),
+          )
+        }
+      }
+      wanted.delete(provider)
     }
-    // Register the missing twins. Runs idempotently: our own registration
-    // emits llm/adapters-updated, and the second pass sees the generated
-    // `*-vision` route but excludes it from auto discovery.
-    for (const [provider, models] of wanted) {
+
+    // Register only twins whose source is live. Registration publishes the
+    // correct display name on the first snapshot, fixing #446 without weakening
+    // the client's fail-closed ownership/name checks.
+    for (const [provider, spec] of wanted) {
       const twinRoute = `${provider}-vision`
+      const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const handle = ctx.llm.registerAdapter([twinRoute], makeTwinAdapter(provider, models))
+        const handle = ctx.llm.registerAdapter([twinRoute], makeTwinAdapter(provider, state))
         ctx.effect(() => handle, `vision-router: twin route ${twinRoute}`)
-        twinHandles.set(provider, { handle, key: twinModelsKey(models) })
+        twinHandles.set(provider, {
+          handle,
+          state,
+          key: twinSpecKey(spec.models, spec.sourceName),
+        })
       } catch (error) {
         ctx.logger?.warn(
           'vision-router: twin route %s registration failed: %s',
@@ -1421,6 +1465,14 @@ export function apply(ctx, config = {}, runtime = {}) {
       }
     }
   }
+  const syncTwins = createCoalescingRunner(reconcileTwins, {
+    onNonConverging({ passes }) {
+      ctx.logger?.error?.(
+        'vision-router: twin reconciliation did not converge after %d synchronous passes; stopping this cycle',
+        passes,
+      )
+    },
+  })
   syncTwins()
   ctx.on('llm/adapters-updated', syncTwins)
 
