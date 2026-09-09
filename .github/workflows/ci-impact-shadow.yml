@@ -27,7 +27,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-          path: trusted-base      - name: Install Node 24 for trusted classifier
+          path: trusted-base
+
+      - name: Install Node 24 for trusted classifier
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
