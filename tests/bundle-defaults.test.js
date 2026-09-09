@@ -252,7 +252,7 @@ test('CI impact shadow executes only the trusted base classifier', async () => {
 test('security policy links reporters to enabled private vulnerability reporting', async () => {
   const policy = await readFile(new URL('../SECURITY.md', import.meta.url), 'utf8')
   assert.match(policy, /Private Vulnerability Reporting/)
-  assert.match(policy, /https:\/\/github\.com\/ysr666\/dsh-vision-router\/security/)
+  assert.equal(policy.includes('https://github.com/ysr666/dsh-vision-router/security'), true)
   assert.match(policy, /Do \*\*not\*\* post exploit details/)
 })
 
