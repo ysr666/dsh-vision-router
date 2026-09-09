@@ -12,6 +12,9 @@ const DOCS = [/^README(?:\.[^/]+)?$/i, /^docs\//, /^SECURITY\.md$/, /^LICENSE(?:
 const BROWSER = [
   /^lib\/client(?:-|\.)/, /^lib\/web\//, /^lib\/settings(?:-|\.)/, /^lib\/session-affinity/,
   /^lib\/.*-client-prelude\.js$/, /^lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
+  'lib/guide-vision-toggle-highlight.js', 'lib/remote-settings-risk-confirmation.js',
+  'lib/v2-settings-ia-integration.js', 'lib/vision-capability-benchmark-client.js',
+  'lib/vision-exact-check-client.js', 'lib/vision-routing-settings-prelude.js',
   /^scripts\/.*browser.*\.mjs$/, 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs',
   /^tests\/.*(?:browser|client|settings).*\.test\.js$/,
   'tests/clipboard-image-paste-compat.test.js', 'tests/issue-367-remote-session-inject.test.js',
