@@ -87,6 +87,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-preview/pnpm-lock.yaml
 
+      - name: Compute exact DSH web build cache key
+        id: dsh-build-key
+        working-directory: dsh-preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          [[ "$DSH_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid DSH source SHA"; exit 1; }
+          [[ "$LOCK_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH lock hash"; exit 1; }
+          [[ "$TREE_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH build-input hash"; exit 1; }
+          KEY="dsh-web-v1-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+          printf 'Exact DSH build cache key: %s\n' "$KEY"
+
       - name: Install preview workspace dependencies
         working-directory: dsh-preview
         env:
@@ -94,9 +110,32 @@ jobs:
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
 
+      - name: Restore trusted DSH web build cache
+        id: dsh-build-cache
+        uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            dsh-preview/lib
+            dsh-preview/packages/*/*/lib
+            dsh-preview/apps/web/dist
+            dsh-preview/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
+
       - name: Build preview web runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-preview
         run: pnpm run build
+
+      - name: Save trusted DSH web build cache from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.dsh-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            dsh-preview/lib
+            dsh-preview/packages/*/*/lib
+            dsh-preview/apps/web/dist
+            dsh-preview/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
 
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-preview
