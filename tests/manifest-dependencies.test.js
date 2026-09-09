@@ -117,10 +117,11 @@ test('host-provided peers are optional so profile installs never warn about miss
   }
 })
 
-test('development sharp stays on the patched libheif security floor', async () => {
+test('development sharp is patched without raising the supported Host peer floor', async () => {
   const pkg = await manifest()
   const lock = await readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8')
 
+  assert.equal(pkg.peerDependencies?.sharp, '>=0.35.3 <1', 'rc8/stable/preview Host sharp 0.35.3 must remain installable')
   assert.equal(pkg.devDependencies?.sharp, '^0.35.4')
   assert.doesNotMatch(lock, /(?:^|\s)sharp@0\.35\.3(?=[:(])/m)
 })
