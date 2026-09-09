@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -30,6 +31,10 @@ const [attachmentLocal, compat, adapterCompat] = await Promise.all([
   import(pathToFileURL(path.join(dvrRoot, 'lib/dsh-contract-compat.js')).href),
   import(pathToFileURL(path.join(dvrRoot, 'lib/adapter-update-coalescer.js')).href),
 ])
+
+const actualCommit = execFileSync('git', ['-C', dshRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+assert.match(expectedCommit, /^[0-9a-f]{40}$/, 'DSH_EXPECTED_COMMIT must be a full Git commit SHA')
+assert.equal(actualCommit, expectedCommit, `expected DSH source commit ${expectedCommit}`)
 
 const rootManifest = JSON.parse(await readFile(path.join(dshRoot, 'package.json'), 'utf8'))
 assert.equal(rootManifest.version, expectedVersion, `expected DSH ${expectedVersion}`)
@@ -170,7 +175,7 @@ assert.match(connectionRpcSource, /requestRejection\(request: ConnectionTrustReq
 console.log(JSON.stringify({
   ok: true,
   dsh: expectedVersion,
-  canaryCommit: expectedCommit,
+  canaryCommit: actualCommit,
   platform: process.platform,
   node: process.version,
   staleCanonical: [stalePrepared.ref.width, stalePrepared.ref.height],

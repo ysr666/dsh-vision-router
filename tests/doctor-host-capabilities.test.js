@@ -92,7 +92,7 @@ test('Doctor JSON keeps public support policy separate from verification evidenc
   })
   assert.deepEqual(report.hostVerificationEvidence, {
     exactStable: '0.1.2-rc.1',
-    exactPreview: '0.1.3-alpha.2',
+    exactPreview: '0.1.5-alpha.1',
     stableCanaryDistTag: 'latest',
     previewCanaryDistTag: 'alpha',
   })

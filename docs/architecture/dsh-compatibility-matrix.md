@@ -11,7 +11,7 @@ The matrix is capability-based. Runtime code must feature-detect the seam it nee
 | `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x public support starts at rc.8. |
 | `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
 | `current-contract` | `0.1.2-rc.1` | Current stable Host contract baseline. Must remain green. |
-| exact preview gates | `0.1.3-alpha.2` | Required verification evidence only; not a public preview-support claim. |
+| exact preview gates | `0.1.5-alpha.1` | Required verification evidence only; not a public preview-support claim. |
 | `latest-dsh` / alpha canaries | resolved dynamically from npm dist-tags | Scheduled drift surveillance only. Never changes support policy by itself. |
 
 Node 22 and Node 24 remain the general required runtime matrix. The Host contract jobs are additive; they do not replace the normal test matrix.

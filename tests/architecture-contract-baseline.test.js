@@ -84,7 +84,7 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /0\.1\.0-rc\.6/)
   assert.match(support, /Minimum Supported Host[^\n]*0\.1\.0-rc\.8/)
   assert.match(support, /Current Stable Host[^\n]*0\.1\.2-rc\.1/)
-  assert.match(support, /Exact preview evidence[^\n]*0\.1\.3-alpha\.2/)
+  assert.match(support, /Exact preview evidence[^\n]*0\.1\.5-alpha\.1/)
   assert.match(support, /not a preview support promise/i)
   assert.match(support, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)

@@ -4,9 +4,20 @@
 # without any manual cordis.patch.yml edits. Later layers (the profile's own
 # cordis.patch.yml, --patch overlays) override these rows by id.
 
-# 纯增量补丁（issue #34）：不碰核心行。最低支持 Host 仍保留旧兼容路径；
+# 纯增量补丁（issue #34）：不替换/禁用核心行。最低支持 Host 仍保留旧兼容路径；
 # batch-attachment 合同的 Host 始终拥有 deepseek-official，插件只提供
 # 「+ 自动识图」包装路由，因此这里永远不默认禁用官方 llm-deepseek 行。
+#
+# DSH 0.1.5-alpha.1 的 client-modules Node half 在 webServer 尚未可用时会走
+# ctx.inject() 延迟注册路径；Linux 并行 Loader 激活可在安装额外 client bundle 后
+# 命中 Cordis 的 service-access 竞态（"webServer without inject"）。rc.8 至当前
+# Web bundle 都使用同一个 modules row，因此只给该既有行追加显式 webServer
+# activation dependency：不替换 row，不改变 client graph，只把官方已经需要的
+# Web carrier 依赖从运行时探测收敛成 Loader 顺序。非 Web surface 缺少该 row 时
+# Include 按官方 patch 语义仅跳过此 overlay。上游修复该竞态后可重新审计删除。
+- id: modules
+  name: '@deepseek-ai/dsh-client-modules'
+  inject: [webServer]
 
 # 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
 # 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
