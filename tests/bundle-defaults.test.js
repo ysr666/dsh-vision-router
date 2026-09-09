@@ -201,6 +201,16 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).full, false)
   assert.equal(classifyCiImpact(['lib/client.js']).browser, true)
+  const issue431 = classifyCiImpact([
+    'lib/client-presentation-boundary-main.js',
+    'lib/vision-model-visibility-boundary-main.js',
+    'tests/issue-284-model-visibility.test.js',
+    'tests/issue-284-vision-selection-effort.test.js',
+  ])
+  assert.equal(issue431.browser, true)
+  assert.equal(issue431.host, false)
+  assert.equal(issue431.full, false)
+  assert.deepEqual(issue431.reasons, [])
   assert.equal(classifyCiImpact(['package.json']).full, true)
   assert.deepEqual(classifyCiImpact(['package.json']).reasons, ['CI/package routing metadata changed'])
   assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
@@ -228,6 +238,24 @@ test('CI impact shadow executes only the trusted base classifier', async () => {
   assert.match(workflow, /\.filename \| @json/)
   assert.match(workflow, /node trusted-base\/scripts\/ci-impact-classifier\.mjs --json-lines/)
   assert.match(workflow, /timeout-minutes: 2/)
+})
+
+test('model visibility boundary changes always trigger the real browser and alpha source gates', async () => {
+  const workflows = [
+    'dsh-preview-browser-smoke.yml',
+    'alpha-browser-cold-toggle-smoke.yml',
+    'dsh-alpha-source-contract.yml',
+  ]
+  for (const name of workflows) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    for (const path of [
+      'lib/vision-model-visibility-boundary-main.js',
+      'lib/vision-model-visibility-boundary.js',
+    ]) {
+      const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      assert.equal((source.match(new RegExp(escaped, 'g')) ?? []).length, 2, `${name}: ${path} must trigger PR and main`)
+    }
+  }
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
@@ -271,7 +299,7 @@ test('real DSH browser workflows use exact main-written build caches without ski
 
   for (const [name, root, buildName, smokeName] of cases) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v4.2.4`)
+    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v6.1.0`)
     assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
     assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
     assert.match(source, /KEY="dsh-web-v1-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)

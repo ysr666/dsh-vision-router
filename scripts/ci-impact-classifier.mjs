@@ -11,7 +11,9 @@ const matches = (path, patterns) => patterns.some((pattern) => (
 const DOCS = [/^README(?:\.[^/]+)?$/i, /^docs\//, /^SECURITY\.md$/, /^LICENSE(?:\.[^/]+)?$/]
 const BROWSER = [
   /^lib\/client(?:-|\.)/, /^lib\/web\//, /^lib\/settings(?:-|\.)/, /^lib\/session-affinity/,
+  /^lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
   /^scripts\/.*browser.*\.mjs$/, /^tests\/.*(?:browser|client|settings).*\.test\.js$/,
+  /^tests\/issue-284-(?:model-visibility|vision-selection-effort)\.test\.js$/,
 ]
 const HOST = [
   'entry.js', 'index.js', 'package.json', 'pnpm-lock.yaml', 'cordis.patch.yml',
