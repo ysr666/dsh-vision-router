@@ -269,7 +269,7 @@ test('issue #284 changing only reasoning effort while Vision is on keeps the hid
   assert.equal(selected[0].reasoningEffort, 'low')
 })
 
-test('issue #284 selecting a different model while Vision is on leaves the wrapper and turns Vision off', async () => {
+test('issue #431 selecting another model in the same wrapped provider keeps Vision on', async () => {
   const input = state({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
     groups: [
@@ -284,8 +284,45 @@ test('issue #284 selecting a different model while Vision is on leaves the wrapp
 
   await visibleDirectory.select({ provider: 'opencode-go', model: 'other-model' })
   assert.equal(selected.length, 1)
-  assert.equal(selected[0].provider, 'opencode-go')
+  assert.equal(selected[0].provider, 'opencode-go-vision')
   assert.equal(selected[0].model, 'other-model')
+  assert.equal(Object.prototype.hasOwnProperty.call(selected[0], 'reasoningEffort'), false)
+})
+
+test('issue #431 DeepSeek V4 Flash to V4 Pro stays on the configured wrapper before Host selection', async () => {
+  const input = state({
+    current: { provider: 'deepseek-vision', model: 'deepseek-v4-flash', reasoningEffort: 'high' },
+    groups: [
+      group('deepseek-official', 'DeepSeek', ['deepseek-v4-flash', 'deepseek-v4-pro']),
+      group('deepseek-vision', 'DeepSeek + 自动识图', ['deepseek-v4-flash', 'deepseek-v4-pro']),
+    ],
+  })
+  const { visibleDirectory, selected } = visibilityPluginHarness(input, {
+    autoWrapProviders: true,
+    wrapperRoute: 'deepseek-vision',
+  })
+
+  await visibleDirectory.select({ provider: 'deepseek-official', model: 'deepseek-v4-pro' })
+  assert.equal(selected.length, 1)
+  assert.equal(selected[0].provider, 'deepseek-vision')
+  assert.equal(selected[0].model, 'deepseek-v4-pro')
+})
+
+test('issue #431 same-provider model without a wrapper counterpart still turns Vision off', async () => {
+  const input = state({
+    current: { provider: 'vendor-vision', model: 'wrapped-model', reasoningEffort: 'high' },
+    groups: [
+      group('vendor', 'Vendor', ['wrapped-model', 'plain-model']),
+      group('vendor-vision', 'Vendor + 自动识图', ['wrapped-model']),
+    ],
+  })
+  const { visibleDirectory, selected } = visibilityPluginHarness(input, {
+    autoWrapProviders: true,
+    wrapperRoute: 'deepseek-vision',
+  })
+
+  await visibleDirectory.select({ provider: 'vendor', model: 'plain-model' })
+  assert.deepEqual(selected, [{ provider: 'vendor', model: 'plain-model' }])
 })
 
 test('issue #284 selecting another provider while Vision is on submits that ordinary route and turns Vision off', async () => {
