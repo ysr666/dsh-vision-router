@@ -227,6 +227,23 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
     assert.equal(browserOnly.host, false, `${path}: not a Host boundary`)
     assert.equal(browserOnly.full, false, `${path}: known browser-scoped change`)
   }
+  for (const path of [
+    'lib/client-host-compat-prelude.js',
+    'lib/guide-vision-toggle-highlight.js',
+    'lib/remote-settings-risk-confirmation.js',
+    'lib/settings-client-rc8-lifecycle.js',
+    'lib/settings-factory-lifecycle.js',
+    'lib/settings-native-card-layout.js',
+    'lib/v2-settings-ia-integration.js',
+    'lib/vision-capability-benchmark-client.js',
+    'lib/vision-exact-check-client.js',
+    'lib/vision-routing-settings-prelude.js',
+  ]) {
+    const browserOnly = classifyCiImpact([path])
+    assert.equal(browserOnly.browser, true, `${path}: audited browser boundary`)
+    assert.equal(browserOnly.host, false, `${path}: not a Host boundary`)
+    assert.equal(browserOnly.full, false, `${path}: browser-scoped change`)
+  }
   assert.equal(classifyCiImpact(['package.json']).full, true)
   assert.deepEqual(classifyCiImpact(['package.json']).reasons, ['CI/package routing metadata changed'])
   assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
@@ -283,6 +300,34 @@ test('client prelude changes always trigger the real browser and alpha source ga
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     const trigger = "      - 'lib/*-client-prelude.js'"
     assert.equal(source.split(trigger).length - 1, 2, `${name}: client preludes must trigger PR and main`)
+  }
+})
+
+test('audited browser integration modules always trigger every real browser and alpha source gate', async () => {
+  const workflows = [
+    'dsh-preview-browser-smoke.yml',
+    'alpha-browser-cold-toggle-smoke.yml',
+    'dsh-alpha-source-contract.yml',
+  ]
+  const boundaries = [
+    'lib/client-host-compat-prelude.js',
+    'lib/guide-vision-toggle-highlight.js',
+    'lib/remote-settings-risk-confirmation.js',
+    'lib/settings-client-rc8-lifecycle.js',
+    'lib/settings-factory-lifecycle.js',
+    'lib/settings-native-card-layout.js',
+    'lib/v2-settings-ia-integration.js',
+    'lib/vision-capability-benchmark-client.js',
+    'lib/vision-exact-check-client.js',
+    'lib/vision-routing-settings-prelude.js',
+  ]
+  for (const name of workflows) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    assert.equal(source.split("      - 'lib/web/**'").length - 1, 2, `${name}: lib/web must trigger PR and main`)
+    for (const path of boundaries) {
+      const trigger = `      - '${path}'`
+      assert.equal(source.split(trigger).length - 1, 2, `${name}: ${path} must trigger PR and main`)
+    }
   }
 })
 
