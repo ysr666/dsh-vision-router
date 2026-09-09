@@ -25,7 +25,7 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       STATUS_CONTEXT: Copilot review gate
     steps:
-      - name: Require current-head Copilot review
+      - name: Record optional current-head Copilot review
         shell: bash
         run: |
           set -euo pipefail
@@ -40,36 +40,37 @@ jobs:
               -f description="$description" >/dev/null
           }
 
-          set_status pending "Waiting for Copilot review of current PR head"
-          trap 'rc=$?; if (( rc != 0 )); then set_status failure "Copilot review gate did not complete" || true; fi' EXIT
+          set_status pending "Checking optional Copilot review for current PR head"
+          trap 'rc=$?; if (( rc != 0 )); then set_status failure "Copilot review advisory check errored" || true; fi' EXIT
 
-          for attempt in $(seq 1 48); do
-            MATCHING_REVIEW_ID="$(
-              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
-                --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and ((.body // \"\") | contains(\"<summary>Review details</summary>\")) and ((.body // \"\") | contains(\"Files reviewed:\"))) | .id" \
-                | sed -n '1p'
-            )"
-            if [[ -n "$MATCHING_REVIEW_ID" ]]; then
-              set_status success "Copilot reviewed current PR head"
-              trap - EXIT
-              echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
-              exit 0
-            fi
+          # Give an automatically-started review a short chance to land, but never
+          # turn an exhausted Copilot quota into a merge blocker.
+          sleep 15
 
-            QUOTA_FAILURE_ID="$(
-              gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
-                --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and (((.body // \"\") | ascii_downcase) | test(\"quota limit|rate limit|usage limit|ai credits\"))) | .id" \
-                | sed -n '1p'
-            )"
-            if [[ -n "$QUOTA_FAILURE_ID" ]]; then
-              set_status failure "Copilot quota or rate limit blocked review"
-              trap - EXIT
-              echo "::error::Copilot quota/rate limit blocked review of current PR head $HEAD_SHA"
-              exit 1
-            fi
+          MATCHING_REVIEW_ID="$(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and ((.body // \"\") | contains(\"<summary>Review details</summary>\")) and ((.body // \"\") | contains(\"Files reviewed:\"))) | .id" \
+              | sed -n '1p'
+          )"
+          if [[ -n "$MATCHING_REVIEW_ID" ]]; then
+            set_status success "Copilot reviewed current PR head"
+            trap - EXIT
+            echo "Copilot review $MATCHING_REVIEW_ID covers current PR head $HEAD_SHA"
+            exit 0
+          fi
 
-            if (( attempt < 48 )); then sleep 15; fi
-          done
+          QUOTA_FAILURE_ID="$(
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" \
+              --jq ".[] | select(.user.login == \"copilot-pull-request-reviewer[bot]\" and .user.type == \"Bot\" and .commit_id == \"$HEAD_SHA\" and .state != \"DISMISSED\" and (((.body // \"\") | ascii_downcase) | test(\"quota limit|rate limit|usage limit|ai credits\"))) | .id" \
+              | sed -n '1p'
+          )"
+          if [[ -n "$QUOTA_FAILURE_ID" ]]; then
+            set_status success "Copilot quota/rate limit; review skipped"
+            trap - EXIT
+            echo "::warning::Copilot quota/rate limit blocked review of current PR head $HEAD_SHA; review is advisory."
+            exit 0
+          fi
 
-          echo "::error::No complete Copilot review for current PR head."
-          exit 1
+          set_status success "No current-head Copilot review; advisory only"
+          trap - EXIT
+          echo "::warning::No complete Copilot review exists for current PR head $HEAD_SHA; continuing because Copilot review is best-effort."
