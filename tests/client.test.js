@@ -627,7 +627,7 @@ test('the vision-backend override editor mirrors the chain rows with two selects
 
 
 test('auto-discovered inferred vision models retain bridge capability state', () => {
-  const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const source = [readFileSync(new URL('../index.js', import.meta.url), 'utf8'), readFileSync(new URL('../lib/core-primitives.js', import.meta.url), 'utf8')].join('\n')
   assert.equal(source.includes('const pairKey = `${pair.provider}/${pair.model}`'), true)
   assert.equal(source.includes('pairCapabilities.set(pairKey, pairCapability)'), true)
   assert.equal(source.includes('resolvedPiAiProfileOf'), true)
@@ -635,7 +635,7 @@ test('auto-discovered inferred vision models retain bridge capability state', ()
 })
 
 test('the twin preserves the picker-chosen reasoningEffort across steps (issue #103)', () => {
-  const serverSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const serverSource = [readFileSync(new URL('../index.js', import.meta.url), 'utf8'), readFileSync(new URL('../lib/core-primitives.js', import.meta.url), 'utf8')].join('\n')
   // The reasoning level belongs to the chat page's bottom-right picker: the
   // plugin never configures or invents one. The wrapper body only remembers
   // the last explicitly seen effort per delegate and re-injects it on the
