@@ -413,7 +413,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 2.1.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.2-rc.1`. Exact `0.1.3-alpha.2` coverage is **verification evidence only**, not a preview support promise; scheduled `latest`/`alpha` canaries monitor drift without changing the support policy. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
+- **DSH Host support policy:** DVR 2.1.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.2-rc.1`. Exact `0.1.5-alpha.1` coverage is **verification evidence only**, not a preview support promise; scheduled `latest`/`alpha` canaries monitor drift without changing the support policy. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.

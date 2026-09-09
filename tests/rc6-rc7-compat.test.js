@@ -178,7 +178,7 @@ test('settings compatibility keeps the first-class section without requiring a l
 
 test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified stable and alpha host trains', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2'
+  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
@@ -189,13 +189,13 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   const hostGate = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
   const browserGate = await readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8')
 
-  assert.match(hostGate, /dsh: \['0\.1\.2-rc\.1', '0\.1\.3-alpha\.2'\]/)
-  assert.match(hostGate, /if: matrix\.dsh == '0\.1\.3-alpha\.2'/)
+  assert.match(hostGate, /dsh: \['0\.1\.2-rc\.1', '0\.1\.5-alpha\.1'\]/)
+  assert.match(hostGate, /if: matrix\.dsh == '0\.1\.5-alpha\.1'/)
   assert.match(browserGate, /dsh: 0\.1\.2-rc\.1[\s\S]*?mixedGenericFiles: false/)
-  assert.match(browserGate, /dsh: 0\.1\.3-alpha\.2[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /dsh: 0\.1\.5-alpha\.1[\s\S]*?mixedGenericFiles: true/)
   assert.match(browserGate, /if: matrix\.mixedGenericFiles/)
   assert.match(browserGate, /ref: dsh-v0\.1\.2-rc\.1/)
-  assert.match(browserGate, /ref: dsh-v0\.1\.3-alpha\.2/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.5-alpha\.1/)
   assert.doesNotMatch(browserGate, /ref:\s*\$\{\{\s*matrix\./)
 })
 

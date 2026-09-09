@@ -22,7 +22,7 @@ Compatibility evidence answers a different question: what exact upstream release
 | Evidence role | DSH source | Meaning |
 |---|---|---|
 | Exact stable evidence | `0.1.2-rc.1` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
-| Exact preview evidence | `0.1.3-alpha.2` | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
+| Exact preview evidence | `0.1.5-alpha.1` | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
 | Preview drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance with preview-specific lifecycle coverage. A failure does not rewrite support policy. |
 
