@@ -185,6 +185,14 @@ test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified sta
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
+test('web client modules wait for the official webServer carrier across supported Host trains', async () => {
+  const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+  assert.match(
+    patch,
+    /- id: modules\s+name: '@deepseek-ai\/dsh-client-modules'\s+inject: \[webServer\]/,
+  )
+})
+
 test('release evidence gates keep stable and preview contracts capability-scoped', async () => {
   const hostGate = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
   const browserGate = await readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8')

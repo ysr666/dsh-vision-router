@@ -98,7 +98,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 82a5fd61a7cf5c293cec4bdff68f455398d685e9
+          ref: 5dda764ed3aa172535a7967b06ff95d9cbfe536a
           persist-credentials: false
           path: dsh-alpha
 
@@ -126,7 +126,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DSH_EXPECTED_VERSION: 0.1.5-alpha.1
-          DSH_EXPECTED_COMMIT: 82a5fd61a7cf5c293cec4bdff68f455398d685e9
+          DSH_EXPECTED_COMMIT: 5dda764ed3aa172535a7967b06ff95d9cbfe536a
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Run DVR alpha compatibility unit contracts
