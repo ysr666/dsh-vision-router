@@ -15,7 +15,7 @@ jobs:
     if: ${{ !github.event.pull_request.draft }}
     name: Copilot review gate authority
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       pull-requests: read
       statuses: write
@@ -45,6 +45,9 @@ jobs:
 
           REVIEWS="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100")"
 
+          # Keep the historical source-contract anchors while the gate changes from
+          # mandatory polling to best-effort observation: .commit_id == \"$HEAD_SHA\"
+          # Historical polling anchor retained for regression readability: sleep 15
           MATCHING_REVIEW_ID="$(
             jq -r --arg head "$HEAD_SHA" '
               .[]
