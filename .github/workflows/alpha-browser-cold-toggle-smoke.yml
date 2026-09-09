@@ -5,6 +5,7 @@ on:
     paths:
       - 'lib/client-presentation-boundary-main.js'
       - 'lib/client-presentation-boundary.js'
+      - 'lib/*-client-prelude.js'
       - 'lib/vision-model-visibility-boundary-main.js'
       - 'lib/vision-model-visibility-boundary.js'
       - 'lib/client.js'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'lib/client-presentation-boundary-main.js'
       - 'lib/client-presentation-boundary.js'
+      - 'lib/*-client-prelude.js'
       - 'lib/vision-model-visibility-boundary-main.js'
       - 'lib/vision-model-visibility-boundary.js'
       - 'lib/client.js'

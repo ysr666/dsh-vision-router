@@ -211,6 +211,22 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
   assert.equal(issue431.host, false)
   assert.equal(issue431.full, false)
   assert.deepEqual(issue431.reasons, [])
+  for (const path of [
+    'lib/live-model-client-prelude.js',
+    'lib/settings-ia-client-prelude.js',
+    'lib/settings-limit-client-prelude.js',
+    'lib/strict-live-model-client-prelude.js',
+    'lib/vision-turn-budget-client-prelude.js',
+    'lib/wrapper-scope-client-prelude.js',
+    'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs',
+    'tests/clipboard-image-paste-compat.test.js',
+    'tests/issue-367-remote-session-inject.test.js',
+  ]) {
+    const browserOnly = classifyCiImpact([path])
+    assert.equal(browserOnly.browser, true, `${path}: browser boundary`)
+    assert.equal(browserOnly.host, false, `${path}: not a Host boundary`)
+    assert.equal(browserOnly.full, false, `${path}: known browser-scoped change`)
+  }
   assert.equal(classifyCiImpact(['package.json']).full, true)
   assert.deepEqual(classifyCiImpact(['package.json']).reasons, ['CI/package routing metadata changed'])
   assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
@@ -255,6 +271,19 @@ test('security policy links reporters to enabled private vulnerability reporting
   const reportingLine = policy.split('\n').find((line) => line.startsWith('Please use [GitHub **Private Vulnerability Reporting**]'))
   assert.equal(reportingLine, 'Please use [GitHub **Private Vulnerability Reporting**](https://github.com/ysr666/dsh-vision-router/security)')
   assert.match(policy, /Do \*\*not\*\* post exploit details/)
+})
+
+test('client prelude changes always trigger the real browser and alpha source gates', async () => {
+  const workflows = [
+    'dsh-preview-browser-smoke.yml',
+    'alpha-browser-cold-toggle-smoke.yml',
+    'dsh-alpha-source-contract.yml',
+  ]
+  for (const name of workflows) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    const trigger = "      - 'lib/*-client-prelude.js'"
+    assert.equal(source.split(trigger).length - 1, 2, `${name}: client preludes must trigger PR and main`)
+  }
 })
 
 test('model visibility boundary changes always trigger the real browser and alpha source gates', async () => {

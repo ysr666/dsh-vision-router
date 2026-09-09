@@ -11,8 +11,10 @@ const matches = (path, patterns) => patterns.some((pattern) => (
 const DOCS = [/^README(?:\.[^/]+)?$/i, /^docs\//, /^SECURITY\.md$/, /^LICENSE(?:\.[^/]+)?$/]
 const BROWSER = [
   /^lib\/client(?:-|\.)/, /^lib\/web\//, /^lib\/settings(?:-|\.)/, /^lib\/session-affinity/,
-  /^lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
-  /^scripts\/.*browser.*\.mjs$/, /^tests\/.*(?:browser|client|settings).*\.test\.js$/,
+  /^lib\/.*-client-prelude\.js$/, /^lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
+  /^scripts\/.*browser.*\.mjs$/, 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs',
+  /^tests\/.*(?:browser|client|settings).*\.test\.js$/,
+  'tests/clipboard-image-paste-compat.test.js', 'tests/issue-367-remote-session-inject.test.js',
   /^tests\/issue-284-(?:model-visibility|vision-selection-effort)\.test\.js$/,
 ]
 const HOST = [
