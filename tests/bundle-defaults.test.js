@@ -261,3 +261,34 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
     await assert.rejects(readFile(new URL(path, import.meta.url)), (error) => error?.code === 'ENOENT')
   }
 })
+
+test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
+  const cacheSha = '0400d5f644dc74513175e3cd8d07132dd4860809'
+  const cases = [
+    ['dsh-preview-browser-smoke.yml', 'dsh-preview', 'Build preview web runtime', 'Run cold Vision toggle against preview Host and Chromium'],
+    ['alpha-browser-cold-toggle-smoke.yml', 'dsh-alpha', 'Build exact alpha web runtime', 'Run cold Vision toggle against real Host and Chromium'],
+  ]
+
+  for (const [name, root, buildName, smokeName] of cases) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v4.2.4`)
+    assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
+    assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
+    assert.match(source, /KEY="dsh-web-v1-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
+    assert.match(source, /DSH_SHA="\$\(git rev-parse HEAD\)"/)
+    assert.match(source, /LOCK_SHA="\$\(sha256sum pnpm-lock\.yaml/)
+    assert.match(source, /TREE_SHA="\$\(git ls-tree -r --full-tree HEAD/)
+    assert.match(source, /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main' && steps\.dsh-build-cache\.outputs\.cache-hit != 'true'/)
+    assert.match(source, new RegExp(`- name: ${buildName}\\n\\s+if: steps\\.dsh-build-cache\\.outputs\\.cache-hit != 'true'`))
+    assert.match(source, new RegExp(`${root}/lib[\\s\\S]*${root}/packages/\\*/\\*/lib[\\s\\S]*${root}/apps/web/dist[\\s\\S]*${root}/\\.dsh-build`))
+
+    const install = source.indexOf('pnpm install --frozen-lockfile')
+    const restore = source.indexOf('Restore trusted DSH web build cache')
+    const build = source.indexOf(`- name: ${buildName}`)
+    const save = source.indexOf('Save trusted DSH web build cache from main')
+    const chromium = source.indexOf('Install Chromium for DSH Playwright')
+    const smoke = source.indexOf(smokeName)
+    assert.ok(install >= 0 && restore > install && build > restore && save > build && chromium > save && smoke > chromium,
+      `${name}: cache may skip only DSH build; dependency install, Chromium, and real Host smoke stay live`)
+  }
+})
