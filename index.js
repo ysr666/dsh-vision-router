@@ -106,6 +106,7 @@ import {
 import { writeArtifactFile } from './lib/artifact-boundary.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
 import { effectiveProxyUrlForUndici } from './lib/proxy-url-compat.js'
+import { markVisionProxyDispatcher } from './lib/proxy-routing.js'
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
@@ -2256,21 +2257,22 @@ export function apply(ctx, config = {}, runtime = {}) {
       // different Undici major can disturb the dispatcher used by the host's
       // built-in fetch even when Vision Router's own proxy setting is empty.
       // Load ProxyAgent only when this plugin's selective proxy is actually used.
-      cachedAgentPromise = import('undici')
+      const agentPromise = import('undici')
         .then(({ ProxyAgent }) => {
           if (typeof ProxyAgent !== 'function') {
             throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
           }
-          return new ProxyAgent(url)
+          return markVisionProxyDispatcher(new ProxyAgent(url))
         })
         .catch((error) => {
-          if (cachedAgentUrl === url) {
+          if (cachedAgentUrl === url && cachedAgentPromise === agentPromise) {
             cachedAgentUrl = undefined
             cachedAgentPromise = undefined
           }
           throw error
         })
-      return cachedAgentPromise
+      cachedAgentPromise = agentPromise
+      return agentPromise
     }
     const patchedFetch = (input, init) => {
       const proxyUrl = currentProxyUrl()

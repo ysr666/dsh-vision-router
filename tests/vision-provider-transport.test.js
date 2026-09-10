@@ -10,6 +10,7 @@ import {
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
+import { isVisionProxyDispatcher } from '../lib/proxy-routing.js'
 
 function okOpenAI(text = 'ok') {
   return new Response(JSON.stringify({ choices: [{ message: { content: text } }] }), {
@@ -248,6 +249,61 @@ test('legacy socks5h settings are projected only for admitted proxy hosts and sh
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   assert.equal(imports, 1, 'canonical-equivalent settings must reuse the cached dispatcher')
   assert.equal(calls[2].init.dispatcher, firstDispatcher)
+})
+
+test('proxy host admission canonicalizes case, whitespace, trailing dot and IDNA without broadening suffixes', async () => {
+  const calls = []
+  class FakeProxyAgent { constructor(url) { this.url = url } }
+  const transport = createVisionProviderTransport({
+    config: {
+      proxy: 'http://127.0.0.1:7890',
+      proxyHosts: [' API.EXAMPLE.COM ', 'BÜCHER.DE'],
+    },
+    fetchImpl: async (input, init) => { calls.push({ input: String(input), init }); return okOpenAI() },
+    importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+  })
+
+  await transport.fetch('https://api.example.com./v1/chat/completions', requestInit())
+  await transport.fetch('https://bücher.de/v1/chat/completions', requestInit())
+  await transport.fetch('https://api.example.com.evil.test/v1/chat/completions', requestInit())
+
+  assert.equal(isVisionProxyDispatcher(calls[0].init.dispatcher), true)
+  assert.equal(isVisionProxyDispatcher(calls[1].init.dispatcher), true)
+  assert.equal(calls[2].init.dispatcher, undefined)
+  assert.equal(transport.proxyDecision('https://API.EXAMPLE.COM./x').proxied, true)
+})
+
+test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy race', async () => {
+  const imports = []
+  class FakeProxyAgent { constructor(url) { this.url = url } }
+  let config = { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] }
+  const transport = createVisionProviderTransport({
+    config: () => config,
+    fetchImpl: async (_input, init) => init.dispatcher,
+    importUndici: () => new Promise((resolve, reject) => imports.push({ resolve, reject })),
+  })
+
+  const firstA = transport.fetch('https://api.example.com/a')
+  config = { ...config, proxy: 'http://proxy-b.test:8080' }
+  const requestB = transport.fetch('https://api.example.com/b')
+  config = { ...config, proxy: 'http://proxy-a.test:8080' }
+  const secondA = transport.fetch('https://api.example.com/a2')
+  assert.equal(imports.length, 3)
+
+  imports[0].reject(new Error('stale A failed'))
+  await assert.rejects(firstA, /stale A failed/)
+
+  const reusedA = transport.fetch('https://api.example.com/a3')
+  assert.equal(imports.length, 3, 'stale A rejection must not evict the newer A promise')
+
+  imports[2].resolve({ ProxyAgent: FakeProxyAgent })
+  const [a2, a3] = await Promise.all([secondA, reusedA])
+  assert.equal(a2, a3)
+  assert.equal(a2.url, 'http://proxy-a.test:8080')
+
+  imports[1].resolve({ ProxyAgent: FakeProxyAgent })
+  const b = await requestB
+  assert.equal(b.url, 'http://proxy-b.test:8080')
 })
 
 test('settings copy recommends native socks5 while documenting legacy socks5h compatibility', async () => {
