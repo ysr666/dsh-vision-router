@@ -9,6 +9,7 @@ import {
 } from '../lib/vision-provider-transport.js'
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
+import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
 
 function okOpenAI(text = 'ok') {
   return new Response(JSON.stringify({ choices: [{ message: { content: text } }] }), {
@@ -179,4 +180,80 @@ test('public entry installs the provider transport before legacy core apply', as
   assert.ok(installAt >= 0)
   assert.ok(applyAt > installAt)
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
+})
+
+
+test('proxy compatibility projection changes only the historical socks5h scheme', () => {
+  assert.equal(
+    effectiveProxyUrlForUndici('socks5h://127.0.0.1:7890'),
+    'socks5://127.0.0.1:7890',
+  )
+  assert.equal(
+    effectiveProxyUrlForUndici('SOCKS5H://user:pass@[::1]:7890/path?q=1#x'),
+    'socks5://user:pass@[::1]:7890/path?q=1#x',
+  )
+  assert.equal(
+    effectiveProxyUrlForUndici('  socks5h://127.0.0.1:7890'),
+    '  socks5://127.0.0.1:7890',
+  )
+  for (const value of [
+    'http://127.0.0.1:7890',
+    'https://proxy.example:8443',
+    'socks://127.0.0.1:7890',
+    'socks5://127.0.0.1:7890',
+    'socks4://127.0.0.1:7890',
+    'ftp://proxy.example',
+    'not-a-url',
+  ]) {
+    assert.equal(effectiveProxyUrlForUndici(value), value)
+  }
+})
+
+test('legacy socks5h settings are projected only for admitted proxy hosts and share effective dispatcher identity', async () => {
+  const calls = []
+  const constructed = []
+  let imports = 0
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      constructed.push(url)
+    }
+  }
+  let config = {
+    proxy: 'socks5h://user:pass@[::1]:7890',
+    proxyHosts: ['api.example.com'],
+  }
+  const transport = createVisionProviderTransport({
+    config: () => config,
+    fetchImpl: async (input, init) => {
+      calls.push({ input: String(input), init })
+      return okOpenAI()
+    },
+    importUndici: async () => {
+      imports += 1
+      return { ProxyAgent: FakeProxyAgent }
+    },
+  })
+
+  await transport.fetch('https://maintenance.example/v1/chat/completions', requestInit())
+  assert.equal(imports, 0, 'non-matching hosts must preserve the #149 no-Undici path')
+  assert.equal(calls[0].init.dispatcher, undefined)
+
+  await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
+  assert.equal(imports, 1)
+  assert.deepEqual(constructed, ['socks5://user:pass@[::1]:7890'])
+  const firstDispatcher = calls[1].init.dispatcher
+
+  config = { ...config, proxy: 'socks5://user:pass@[::1]:7890' }
+  await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
+  assert.equal(imports, 1, 'canonical-equivalent settings must reuse the cached dispatcher')
+  assert.equal(calls[2].init.dispatcher, firstDispatcher)
+})
+
+test('settings copy recommends native socks5 while documenting legacy socks5h compatibility', async () => {
+  const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /或 socks5:\/\/127\.0\.0\.1:10808；兼容旧配置 socks5h:\/\//)
+  assert.match(source, /or socks5:\/\/127\.0\.0\.1:10808; legacy socks5h:\/\/ values are also supported/)
+  assert.doesNotMatch(source, /或 socks5h:\/\/127\.0\.0\.1:10808/)
+  assert.doesNotMatch(source, /or socks5h:\/\/127\.0\.0\.1:10808/)
 })
