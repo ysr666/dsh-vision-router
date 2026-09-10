@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Config as EntryConfig, SETTINGS_CONTRACT_REVISION } from '../entry.js'
+import { classifyWebModulesRows } from '../scripts/dsh-web-modules-overlay-contract.mjs'
 import {
   attachmentContextForContract,
   hasBatchAttachmentContract,
@@ -183,6 +184,26 @@ test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified sta
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
+})
+
+test('modules/webServer overlay lifecycle classifies required, retire-ready, and dangerous Host drift', () => {
+  const base = { id: 'modules', name: '@deepseek-ai/dsh-client-modules' }
+  assert.equal(classifyWebModulesRows([base]).status, 'shim-required')
+  assert.equal(classifyWebModulesRows([{ ...base, inject: [] }]).status, 'shim-required')
+  assert.equal(classifyWebModulesRows([{ ...base, inject: ['webServer'] }]).status, 'retire-ready')
+  assert.equal(
+    classifyWebModulesRows([{ ...base, inject: ['newCarrier', 'webServer'] }]).status,
+    'retire-ready',
+  )
+  assert.equal(
+    classifyWebModulesRows([{ ...base, inject: ['newCarrier'] }]).status,
+    'dangerous-drift',
+  )
+  assert.equal(
+    classifyWebModulesRows([{ ...base, name: '@deepseek-ai/renamed-modules' }]).status,
+    'dangerous-drift',
+  )
+  assert.equal(classifyWebModulesRows([]).status, 'dangerous-drift')
 })
 
 test('web client modules wait for the official webServer carrier across supported Host trains', async () => {
