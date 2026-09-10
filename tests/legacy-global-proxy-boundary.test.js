@@ -105,7 +105,7 @@ test('live settings switch the global compatibility seam on and off without rest
   }
 })
 
-test('Host-owned socks5h compatibility intercepts only admitted hosts and retires on live scheme change', async () => {
+test('Host-owned socks5h compatibility intercepts only admitted hosts and preserves mature native-scheme routing', async () => {
   const saved = globalThis.fetch
   const originalCalls = []
   let legacyCalls = 0
@@ -149,7 +149,7 @@ test('Host-owned socks5h compatibility intercepts only admitted hosts and retire
 
   try {
     globalThis.fetch = legacyFetch
-    installLegacyGlobalProxyBoundary(ctx, config, {
+    const dispose = installLegacyGlobalProxyBoundary(ctx, config, {
       originalFetch,
       importUndici: async () => {
         imports += 1
@@ -174,8 +174,11 @@ test('Host-owned socks5h compatibility intercepts only admitted hosts and retire
     await globalThis.fetch('https://api.example.com/v1')
     assert.equal(legacyCalls, 2, 'native schemes must continue through the mature legacy patch unchanged')
     assert.equal(imports, 1)
+    assert.equal(closes, 0, 'live config changes must not race-close a dispatcher admitted by an earlier request')
+
+    dispose()
     await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(closes, 1, 'leaving the compatibility scheme must retire its dedicated dispatcher')
+    assert.equal(closes, 1, 'plugin disposal must release the compatibility dispatcher')
   } finally {
     for (const dispose of effects.reverse()) dispose?.()
     globalThis.fetch = saved
