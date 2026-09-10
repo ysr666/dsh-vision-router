@@ -29,7 +29,9 @@ on:
       - 'lib/vision-exact-check-client.js'
       - 'lib/vision-routing-settings-prelude.js'
       - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'tests/adapter-prepare-call-compat.test.js'
+      - 'tests/rc6-rc7-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
@@ -64,7 +66,9 @@ on:
       - 'lib/vision-exact-check-client.js'
       - 'lib/vision-routing-settings-prelude.js'
       - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'tests/adapter-prepare-call-compat.test.js'
+      - 'tests/rc6-rc7-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
@@ -128,6 +132,13 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.5-alpha.1
           DSH_EXPECTED_COMMIT: 5dda764ed3aa172535a7967b06ff95d9cbfe536a
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+
+      - name: Assert modules -> webServer compatibility overlay still belongs to DVR
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DSH_MODULES_WEBSERVER_EXPECTED: shim-required
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
 
       - name: Run DVR alpha compatibility unit contracts
         working-directory: dvr
