@@ -105,6 +105,7 @@ import {
 } from './lib/http-body-limit.js'
 import { writeArtifactFile } from './lib/artifact-boundary.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
+import { effectiveProxyUrlForUndici } from './lib/proxy-url-compat.js'
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
@@ -2283,7 +2284,8 @@ export function apply(ctx, config = {}, runtime = {}) {
         return originalFetch(input, init)
       }
       if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
-      return agentFor(proxyUrl).then((dispatcher) =>
+      const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)
+      return agentFor(effectiveProxyUrl).then((dispatcher) =>
         originalFetch(input, { ...(init ?? {}), dispatcher }),
       )
     }

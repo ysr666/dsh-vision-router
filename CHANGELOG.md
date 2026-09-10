@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **代理 URL 历史兼容（#455）**：设置页不再把 Undici 不接受的 `socks5h://` 作为新配置示例，改为推荐原生 `socks5://`；此前按旧提示保存的 `socks5h://` 不迁移、不改写持久化数据，只在真正命中 `proxyHosts` 并创建 ProxyAgent 时投影为 `socks5://`。其他 scheme、非代理请求、Host 原始 `fetch` 与 #149 的 Undici 懒加载边界保持不变。
+- **Legacy proxy URL compatibility (#455)**: Settings now recommends Undici-native `socks5://` instead of teaching new users the unsupported `socks5h://` spelling. Existing persisted `socks5h://` values are not migrated or rewritten; they are projected to `socks5://` only after a request is admitted by `proxyHosts` and a ProxyAgent is actually needed. Other schemes, non-proxied traffic, the Host's original `fetch`, and #149's lazy-Undici boundary remain unchanged.
+
 - **Windows `vision_screenshot` 高 DPI / 中文用户名根修（#409）**：Windows 桌面截图现在直接由 PMv2 → PMv1 DPI-aware capture owner 执行，不再先生成逻辑坐标截图再依赖全局 `promisify(execFile)` 重写；`Add-Type` 编译使用隔离的纯 ASCII `TEMP/TMP`，避免中文用户目录导致 CodeDom 初始化失败。无法获得正确 DPI 上下文时继续 fail-closed，不会静默回退到已知会截缺底边/任务栏的 legacy 路径；macOS / Linux 截图、artifact 与识别契约不变。
 - **Windows `vision_screenshot` high-DPI / non-ASCII profile root fix (#409)**: Windows desktop capture is now owned directly by the PMv2 → PMv1 DPI-aware path instead of emitting a logical-coordinate screenshot and relying on a global `promisify(execFile)` rewrite. `Add-Type` compilation runs with isolated ASCII `TEMP/TMP`, avoiding CodeDom failures under non-ASCII user temp paths. If a correct DPI context cannot be established the tool still fails closed rather than silently falling back to the known-broken legacy capture; macOS/Linux capture, artifact, and recognition contracts are unchanged.
 

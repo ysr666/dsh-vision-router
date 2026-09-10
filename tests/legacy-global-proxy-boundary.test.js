@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 
 import {
   LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION,
@@ -175,4 +176,27 @@ test('cleanup preserves a later plugin wrapper', async () => {
 test('removal condition is explicit and tied to the minimum Host proxy seam', () => {
   assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /minimum supported DSH/i)
   assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /provider-scoped\/shared HTTP proxy seam/i)
+})
+
+
+test('legacy selective proxy projects socks5h only after host admission and before dispatcher caching', async () => {
+  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(
+    source,
+    /import \{ effectiveProxyUrlForUndici \} from '\.\/lib\/proxy-url-compat\.js'/,
+  )
+  const hostAdmission = source.indexOf(
+    'if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)',
+  )
+  const projection = source.indexOf(
+    'const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)',
+    hostAdmission,
+  )
+  const dispatch = source.indexOf(
+    'return agentFor(effectiveProxyUrl).then((dispatcher) =>',
+    projection,
+  )
+  assert.ok(hostAdmission >= 0)
+  assert.ok(projection > hostAdmission, 'compat projection must not run before proxyHosts admission')
+  assert.ok(dispatch > projection, 'effective URL must become the dispatcher cache identity')
 })
