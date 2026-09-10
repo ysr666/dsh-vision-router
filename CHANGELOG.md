@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **代理所有权与主机匹配加固**：ProxyAgent 生命周期不再根据请求 URL 猜测 dispatcher 所有权，只回收 Vision Router 实际创建的 dispatcher；`proxyHosts` 在 Router-owned、legacy 与诊断路径统一处理大小写、首尾空白、尾点和 IDNA，且 A→B→A 热切代理时旧失败不会清掉新 dispatcher 缓存。
+- **Proxy ownership and host-matching hardening**: ProxyAgent lifecycle no longer infers dispatcher ownership from the request URL and retires only dispatchers actually created by Vision Router. Router-owned, legacy and diagnostic `proxyHosts` matching now shares case/whitespace/trailing-dot/IDNA normalization, and stale A→B→A proxy failures cannot evict a newer dispatcher promise.
+
 - **代理 URL 历史兼容（#455）**：设置页不再把 Undici 不接受的 `socks5h://` 作为新配置示例，改为推荐原生 `socks5://`；此前按旧提示保存的 `socks5h://` 不迁移、不改写持久化数据，只在真正命中 `proxyHosts` 并创建 ProxyAgent 时投影为 `socks5://`。其他 scheme、非代理请求、Host 原始 `fetch` 与 #149 的 Undici 懒加载边界保持不变。
 - **Legacy proxy URL compatibility (#455)**: Settings now recommends Undici-native `socks5://` instead of teaching new users the unsupported `socks5h://` spelling. Existing persisted `socks5h://` values are not migrated or rewritten; they are projected to `socks5://` only after a request is admitted by `proxyHosts` and a ProxyAgent is actually needed. Other schemes, non-proxied traffic, the Host's original `fetch`, and #149's lazy-Undici boundary remain unchanged.
 

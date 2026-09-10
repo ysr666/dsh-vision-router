@@ -28,7 +28,8 @@ import {
   detectRepetitionLoop,
   sampleForRepetition,
 } from '../lib/repetition-guard.js'
-import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
+import { getVisionToolRuntimeState, installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
+import { markVisionProxyDispatcher } from '../lib/proxy-routing.js'
 
 async function exists(target) {
   try { await access(target); return true } catch { return false }
@@ -139,6 +140,37 @@ test('proxy dispatcher tracker gracefully retires each replaced pool once', asyn
   await tracker.drain()
 
   assert.deepEqual(closed.sort(), ['a', 'b', 'c'])
+})
+
+test('proxy lifecycle never infers dispatcher ownership from a matching URL', async () => {
+  const savedFetch = globalThis.fetch
+  const disposers = []
+  const closed = []
+  try {
+    globalThis.fetch = async () => new Response('ok')
+    const ctx = {
+      effect(factory) {
+        const dispose = factory()
+        if (typeof dispose === 'function') disposers.push(dispose)
+        return dispose
+      },
+    }
+    const wrapped = installVisionToolRuntimeBoundary(ctx, {
+      proxy: 'http://127.0.0.1:7890',
+      proxyHosts: [' API.EXAMPLE.COM '],
+    })
+    const foreign = { async close() { closed.push('foreign') } }
+    const owned = markVisionProxyDispatcher({ async close() { closed.push('owned') } })
+
+    await globalThis.fetch('https://api.example.com/v1', { dispatcher: foreign })
+    await globalThis.fetch('https://api.example.com/v1', { dispatcher: owned })
+
+    for (const dispose of disposers.reverse()) dispose()
+    await getVisionToolRuntimeState(wrapped).proxyDispatchers.drain()
+    assert.deepEqual(closed, ['owned'])
+  } finally {
+    globalThis.fetch = savedFetch
+  }
 })
 
 test('same artifact name in concurrent runs cannot overwrite or mix', async () => {

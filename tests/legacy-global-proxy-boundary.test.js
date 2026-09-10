@@ -185,6 +185,12 @@ test('legacy selective proxy projects socks5h only after host admission and befo
     source,
     /import \{ effectiveProxyUrlForUndici \} from '\.\/lib\/proxy-url-compat\.js'/,
   )
+  assert.match(
+    source,
+    /import \{ markVisionProxyDispatcher \} from '\.\/lib\/proxy-routing\.js'/,
+  )
+  assert.match(source, /markVisionProxyDispatcher\(new ProxyAgent\(url\)\)/)
+  assert.match(source, /cachedAgentPromise === agentPromise/)
   const hostAdmission = source.indexOf(
     'if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)',
   )
