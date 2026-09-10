@@ -31,7 +31,7 @@ jobs:
             dimension: 'true'
             current: 'false'
           - name: current-contract
-            dsh: 0.1.2-rc.1
+            dsh: 0.1.5-rc.1
             batch: 'true'
             dimension: 'true'
             current: 'true'

@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dsh: ['0.1.2-rc.1', '0.1.5-alpha.1']
+        dsh: ['0.1.5-rc.1', '0.1.5-alpha.2']
         node: ['22', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -139,6 +139,5 @@ jobs:
         run: node scripts/dsh-host-contract-smoke.mjs
       - name: Verify release pi-ai final OpenCode wire
         run: node tests/opencode-session-wire-contract.mjs
-      - name: Verify preview Session v2 native image process-restart lifecycle
-        if: matrix.dsh == '0.1.5-alpha.1'
+      - name: Verify release-family Session native image process-restart lifecycle
         run: node scripts/dsh-preview-native-lifecycle-contract.mjs

@@ -41,7 +41,7 @@
 > [!WARNING]
 > 📌 **公告（v2.1.5）**
 >
-> **v2.1.5：已完成 DSH `0.1.5-alpha.1` 精确兼容验证，修复识图模式下同源 wrapper 模型切换，并加固 Web 激活与发版/安全链路；稳定 Host 支持仍到 `0.1.2-rc.1`。** [查看完整更新 →](docs/releases/v2.1.5.md)
+> **v2.1.5：已支持当前 DSH 稳定版 `0.1.5-rc.1`，修复 live provider 变化时 Vision twin 对账与识图模式下 wrapper 模型切换，并加固 Web 激活与发版/安全链路。** [查看完整更新 →](docs/releases/v2.1.5.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -411,7 +411,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略：** DVR 2.1.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前正式发布通道已验证并支持到 `0.1.2-rc.1`。对 `0.1.5-alpha.1` 的精确覆盖**只属于验证证据**，不代表对 preview 的公开支持承诺；定时 `latest`/`alpha` canary 只负责发现上游漂移，也不会自动改变支持策略。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持策略：** DVR 2.1.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前正式发布通道已验证并支持到 `0.1.5-rc.1`。对 `0.1.5-alpha.2` 的精确覆盖**只属于验证证据**，不代表对 preview 的公开支持承诺；定时 `latest`/`alpha` canary 只负责发现上游漂移，也不会自动改变支持策略。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

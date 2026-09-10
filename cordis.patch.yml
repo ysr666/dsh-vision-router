@@ -8,7 +8,7 @@
 # batch-attachment 合同的 Host 始终拥有 deepseek-official，插件只提供
 # 「+ 自动识图」包装路由，因此这里永远不默认禁用官方 llm-deepseek 行。
 #
-# DSH 0.1.5-alpha.1 的 client-modules Node half 在 webServer 尚未可用时会走
+# DSH 0.1.5 family（含当前 0.1.5-rc.1）的 client-modules Node half 在 webServer 尚未可用时会走
 # ctx.inject() 延迟注册路径；Linux 并行 Loader 激活可在安装额外 client bundle 后
 # 命中 Cordis 的 service-access 竞态（"webServer without inject"）。rc.8 至当前
 # Web bundle 都使用同一个 modules row，因此只给该既有行追加显式 webServer
