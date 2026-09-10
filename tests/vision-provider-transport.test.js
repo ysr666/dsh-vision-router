@@ -66,6 +66,38 @@ test('Router-owned OpenAI compatibility bypasses the caller/global fetch once tr
   assert.equal(currentVisionProviderTransport(), undefined)
 })
 
+test('blank plugin proxy inherits the ambient Host dispatcher without importing ProxyAgent', async () => {
+  const { MockAgent, getGlobalDispatcher, setGlobalDispatcher } = await import('undici')
+  const previous = getGlobalDispatcher()
+  const hostDispatcher = new MockAgent()
+  hostDispatcher.disableNetConnect()
+  hostDispatcher
+    .get('https://host-proxy-proof.invalid')
+    .intercept({ path: '/proof', method: 'GET' })
+    .reply(200, 'HOST-DISPATCHER')
+  setGlobalDispatcher(hostDispatcher)
+  let imports = 0
+  try {
+    // createVisionProviderTransport captured globalThis.fetch when the module was
+    // imported, before this test installed the Host dispatcher. A successful
+    // interception therefore proves the captured fetch resolves ambient Host
+    // dispatcher state at request time rather than freezing a direct route.
+    const transport = createVisionProviderTransport({
+      config: { proxy: '', proxyHosts: ['host-proxy-proof.invalid'] },
+      importUndici: async () => {
+        imports += 1
+        throw new Error('blank plugin proxy must not import ProxyAgent')
+      },
+    })
+    const response = await transport.fetch('https://host-proxy-proof.invalid/proof')
+    assert.equal(await response.text(), 'HOST-DISPATCHER')
+    assert.equal(imports, 0)
+  } finally {
+    setGlobalDispatcher(previous)
+    await hostDispatcher.close()
+  }
+})
+
 test('provider-scoped proxy uses an explicit dispatcher only for configured hosts', async () => {
   const calls = []
   class FakeProxyAgent {
@@ -309,7 +341,7 @@ test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy ra
 test('settings copy recommends native socks5 while documenting legacy socks5h compatibility', async () => {
   const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(source, /或 socks5:\/\/127\.0\.0\.1:10808；兼容旧配置 socks5h:\/\//)
-  assert.match(source, /or socks5:\/\/127\.0\.0\.1:10808; legacy socks5h:\/\/ values are also supported/)
+  assert.match(source, /or socks5:\/\/127\.0\.0\.1:10808; legacy socks5h:\/\/ values are supported/)
   assert.doesNotMatch(source, /或 socks5h:\/\/127\.0\.0\.1:10808/)
   assert.doesNotMatch(source, /or socks5h:\/\/127\.0\.0\.1:10808/)
 })

@@ -12,9 +12,10 @@
 // are downscaled with sharp, results are cached by content hash + question,
 // and an optional JSON mode validates structured output.
 //
-// Proxy: an optional `proxy` config (e.g. http://127.0.0.1:10808) patches the
-// process fetch to route only the `proxyHosts` domains through it; everything
-// else (DeepSeek and the rest) stays on the direct connection.
+// Proxy: network egress is Host-owned by default. A blank `proxy` leaves fetch
+// entirely on DSH/Host's current network path. An explicit plugin proxy is an
+// advanced vision-only override for `proxyHosts`; the legacy process-fetch patch
+// exists only for Host-owned/raw-fetch visual providers that still need it.
 
 // Compatibility shim: dsh 0.1.2-alpha.4 removed `session.events` in favor of
 // `session.snapshotEvents()`. This helper returns an array (or undefined) that
@@ -2229,11 +2230,12 @@ export function apply(ctx, config = {}, runtime = {}) {
   // #208: attachment refs, description memory and the event-log cursor are
   // owned by the same bounded SessionVisionStateStore above.
 
-  // ── optional fetch proxy for the vision provider hosts ─────────────────────
+  // ── legacy advanced proxy override for Host-owned visual providers ────────
   //
-  // Resolved per request from the live settings section (`current()`), so the
-  // Web settings panel can change the proxy URL and host list without a
-  // restart. The fetch patcher itself is installed once for the plugin fiber.
+  // Host/DSH owns network egress when `proxy` is blank. This patch remains only
+  // for the compatibility case where a user explicitly asks Vision Router to
+  // override selected `proxyHosts` for a Host-owned/raw-fetch visual provider.
+  // Values are still resolved per request so the override can change live.
 
   const currentProxyUrl = () => {
     const value = current().proxy
