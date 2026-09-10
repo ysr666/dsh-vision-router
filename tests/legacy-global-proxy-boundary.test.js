@@ -105,6 +105,124 @@ test('live settings switch the global compatibility seam on and off without rest
   }
 })
 
+test('Host-owned socks5h compatibility intercepts only admitted hosts and retires on live scheme change', async () => {
+  const saved = globalThis.fetch
+  const originalCalls = []
+  let legacyCalls = 0
+  let imports = 0
+  let closes = 0
+  const constructed = []
+
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      constructed.push(url)
+    }
+    async close() {
+      closes += 1
+    }
+  }
+
+  const originalFetch = async (input, init) => {
+    originalCalls.push({ input: String(input), init })
+    return response('original')
+  }
+  const legacyFetch = async () => {
+    legacyCalls += 1
+    return response('legacy')
+  }
+  let config = {
+    providers: [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }],
+    proxy: 'socks5h://user:pass@[::1]:1080',
+    proxyHosts: ['api.example.com'],
+  }
+  const effects = []
+  const ctx = {
+    get(name) {
+      if (name === 'settings') return { get: () => config }
+      return undefined
+    },
+    effect(factory) {
+      effects.push(factory())
+    },
+  }
+
+  try {
+    globalThis.fetch = legacyFetch
+    installLegacyGlobalProxyBoundary(ctx, config, {
+      originalFetch,
+      importUndici: async () => {
+        imports += 1
+        return { ProxyAgent: FakeProxyAgent }
+      },
+    })
+
+    await globalThis.fetch('https://maintenance.example.test/v1')
+    assert.equal(legacyCalls, 1)
+    assert.equal(imports, 0, '#149: a non-admitted host must not lazy-load userland Undici')
+    assert.equal(originalCalls.length, 0)
+
+    await globalThis.fetch('https://api.example.com/v1')
+    assert.equal(imports, 1)
+    assert.equal(legacyCalls, 1, 'admitted socks5h traffic must bypass the incompatible inner ProxyAgent path')
+    assert.deepEqual(constructed, ['socks5://user:pass@[::1]:1080'])
+    assert.equal(originalCalls.length, 1)
+    assert.ok(originalCalls[0].init.dispatcher instanceof FakeProxyAgent)
+    assert.equal(originalCalls[0].init.dispatcher.url, 'socks5://user:pass@[::1]:1080')
+
+    config = { ...config, proxy: 'socks5://user:pass@[::1]:1080' }
+    await globalThis.fetch('https://api.example.com/v1')
+    assert.equal(legacyCalls, 2, 'native schemes must continue through the mature legacy patch unchanged')
+    assert.equal(imports, 1)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(closes, 1, 'leaving the compatibility scheme must retire its dedicated dispatcher')
+  } finally {
+    for (const dispose of effects.reverse()) dispose?.()
+    globalThis.fetch = saved
+  }
+})
+
+test('Router-owned socks5h config still bypasses the legacy seam without importing Undici', async () => {
+  const saved = globalThis.fetch
+  let originalCalls = 0
+  let legacyCalls = 0
+  let imports = 0
+  const originalFetch = async () => {
+    originalCalls += 1
+    return response('original')
+  }
+  const legacyFetch = async () => {
+    legacyCalls += 1
+    return response('legacy')
+  }
+  const config = {
+    providers: [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }],
+    proxy: 'socks5h://127.0.0.1:1080',
+    proxyHosts: ['api.example.com'],
+  }
+
+  try {
+    globalThis.fetch = legacyFetch
+    installLegacyGlobalProxyBoundary(
+      { get() { return undefined } },
+      config,
+      {
+        originalFetch,
+        importUndici: async () => {
+          imports += 1
+          throw new Error('must not import')
+        },
+      },
+    )
+    await globalThis.fetch('https://api.example.com/v1')
+    assert.equal(originalCalls, 1)
+    assert.equal(legacyCalls, 0)
+    assert.equal(imports, 0)
+  } finally {
+    globalThis.fetch = saved
+  }
+})
+
 test('outermost cleanup restores original fetch and retained gate cannot resurface', async () => {
   const saved = globalThis.fetch
   let originalCalls = 0
