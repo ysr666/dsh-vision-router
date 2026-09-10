@@ -7,6 +7,10 @@ import {
   currentVisionProviderTransport,
   installVisionProviderTransport,
 } from '../lib/vision-provider-transport.js'
+import {
+  needsSocks5hProxyCompat,
+  normalizeProxyUrlForUndici,
+} from '../lib/proxy-url-compat.js'
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 
@@ -95,6 +99,80 @@ test('provider-scoped proxy uses an explicit dispatcher only for configured host
   config = { ...config, proxy: '' }
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   assert.equal(calls[2].init.dispatcher, undefined, 'live proxy disable must take effect without restart')
+})
+
+test('proxy URL compatibility rewrites only the historical socks5h scheme', () => {
+  assert.equal(needsSocks5hProxyCompat('socks5h://127.0.0.1:1080'), true)
+  assert.equal(needsSocks5hProxyCompat('SOCKS5H://127.0.0.1:1080'), true)
+  assert.equal(
+    normalizeProxyUrlForUndici('socks5h://user:pass@[::1]:1080/path?x=%2F#frag'),
+    'socks5://user:pass@[::1]:1080/path?x=%2F#frag',
+  )
+  assert.equal(
+    normalizeProxyUrlForUndici('SOCKS5H://127.0.0.1:1080'),
+    'socks5://127.0.0.1:1080',
+  )
+
+  for (const value of [
+    'http://127.0.0.1:8080',
+    'https://127.0.0.1:8080',
+    'socks://127.0.0.1:1080',
+    'socks5://127.0.0.1:1080',
+    'socks4://127.0.0.1:1080',
+    'ftp://127.0.0.1:21',
+    'not-a-url',
+    ' socks5h://127.0.0.1:1080',
+  ]) {
+    assert.equal(normalizeProxyUrlForUndici(value), value, `${value} must remain byte-identical`)
+  }
+})
+
+test('socks5h compatibility preserves selective admission and canonical dispatcher identity', async () => {
+  const calls = []
+  const constructed = []
+  let imports = 0
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      constructed.push(url)
+    }
+  }
+  let config = {
+    proxy: 'socks5h://user:pass@[::1]:1080',
+    proxyHosts: ['api.example.com'],
+  }
+  const transport = createVisionProviderTransport({
+    config: () => config,
+    fetchImpl: async (input, init) => {
+      calls.push({ input: String(input), init })
+      return okOpenAI()
+    },
+    importUndici: async () => {
+      imports += 1
+      return { ProxyAgent: FakeProxyAgent }
+    },
+  })
+
+  await transport.fetch('https://maintenance.example/v1/chat/completions', requestInit())
+  await transport.fetch(
+    'https://api.example.com/v1/chat/completions',
+    requestInit(),
+    { allowProxy: false },
+  )
+  assert.equal(imports, 0, '#149: bypassed requests must not lazy-load userland Undici')
+  assert.equal(calls[0].init.dispatcher, undefined)
+  assert.equal(calls[1].init.dispatcher, undefined)
+
+  await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
+  assert.equal(imports, 1)
+  assert.deepEqual(constructed, ['socks5://user:pass@[::1]:1080'])
+  const legacySpellingDispatcher = calls[2].init.dispatcher
+  assert.ok(legacySpellingDispatcher instanceof FakeProxyAgent)
+
+  config = { ...config, proxy: 'socks5://user:pass@[::1]:1080' }
+  await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
+  assert.equal(imports, 1, 'equivalent legacy/native spellings must share the dispatcher cache key')
+  assert.equal(calls[3].init.dispatcher, legacySpellingDispatcher)
 })
 
 test('active=false compatibility traffic is not claimed by the Router provider transport', async () => {
