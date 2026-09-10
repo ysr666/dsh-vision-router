@@ -74,7 +74,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - dsh: 0.1.5-rc.1
+          - dsh: 0.1.5-rc.2
             mixedGenericFiles: true
           - dsh: 0.1.5-alpha.2
             mixedGenericFiles: true
@@ -85,12 +85,12 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout immutable DSH 0.1.5-rc.1 source
-        if: matrix.dsh == '0.1.5-rc.1'
+      - name: Checkout immutable DSH 0.1.5-rc.2 source
+        if: matrix.dsh == '0.1.5-rc.2'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.1.5-rc.1
+          ref: fb2c4b9e698e30edb738bca4cf0618587db7d203
           persist-credentials: false
           path: dsh-preview
 

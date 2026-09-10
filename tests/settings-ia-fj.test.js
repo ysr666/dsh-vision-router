@@ -183,6 +183,28 @@ test('F: diagnostics is a real read-only status surface, not a placeholder', () 
   assert.doesNotMatch(text, /诊断页将在下一阶段/)
 })
 
+test('H1: Advanced network copy makes DSH/Host the default egress authority', () => {
+  const { registeredComponent, scope } = harness({
+    stateValues: [
+      'advanced',
+      {},
+      undefined,
+      undefined,
+      undefined,
+      { status: 'idle' },
+      { status: 'idle' },
+      { ollama: false, lmstudio: false, developer: false },
+    ],
+  })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /DSH\/Host/)
+  assert.match(text, /视觉专用代理覆盖/)
+  assert.match(text, /留空即沿用 DSH\/Host/)
+  assert.match(SETTINGS_IA_CLIENT_PRELUDE, /Vision-only proxy override/)
+  assert.match(SETTINGS_IA_CLIENT_PRELUDE, /Leave empty to follow DSH\/Host/)
+  assert.doesNotMatch(SETTINGS_IA_CLIENT_PRELUDE, /Leave empty to disable/)
+})
+
 test('G: onboarding copy teaches the composer Vision control instead of wrapper groups', () => {
   const dictionaries = {
     zh: {

@@ -76,12 +76,12 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/legacy-global-proxy-boundary.js`
 
-- **Reason:** retain the process-global proxy patch only for Host-owned/raw-fetch visual providers that still lack a provider-scoped proxy seam. Router-owned `vision-http` and direct protocol-correction traffic already uses `VisionProviderTransport` with an explicit dispatcher.
-- **Host gap:** the supported Host window does not yet guarantee one provider-scoped/shared HTTP proxy seam that third-party Host-owned adapters can consume without a process-global fetch wrapper.
-- **First needed for:** legacy/custom Host-owned visual provider compatibility when users configure Vision Router proxy routing.
-- **Feature detection:** live visual-chain ownership. Router-owned routes bypass the legacy patch; any unknown/Host-owned provider conservatively keeps it available. This is capability/ownership detection, not a Host-version persona.
-- **Removal condition:** **the minimum supported DSH provides a provider-scoped/shared HTTP proxy seam** that covers the remaining Host-owned/raw-fetch provider compatibility requirement.
-- **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, `adversarial-hardening`, P2 Data Boundary Node 22/24.
+- **Reason:** preserve the explicit Vision Router proxy override for Host-owned/raw-fetch visual providers. Router-owned `vision-http` and direct protocol-correction traffic already use `VisionProviderTransport`; with blank `proxy`, every Host-owned path bypasses this seam and follows Host egress directly.
+- **Host gap:** DSH 0.1.5 already owns ordinary process egress, so generic Host proxy support is no longer the blocker. The remaining compatibility requirement is narrower: a user may explicitly request a Vision Router-only proxy (including SOCKS/selective `proxyHosts`) for a Host-owned provider whose request does not pass through Router-owned transport.
+- **First needed for:** legacy/custom Host-owned visual provider compatibility when users configure a Vision Router-specific proxy override.
+- **Feature detection:** live visual-chain ownership **and** an explicit non-empty plugin proxy. Router-owned routes and blank-proxy configurations bypass the legacy patch. This is capability/ownership detection, not a Host-version persona.
+- **Removal condition:** explicit Vision Router proxy overrides no longer require process-global mutation for supported Host-owned visual providers, or that override is retired/re-scoped by product policy.
+- **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, exact Host proxy egress contract, `adversarial-hardening`, P2 Data Boundary Node 22/24.
 
 ## `lib/legacy-core-vision-policy-bridge.js`
 

@@ -9,9 +9,11 @@ The public support policy contains only released Host semantics. Preview/canary 
 | Role | DSH train | Meaning |
 |---|---|---|
 | Minimum Supported Host | `0.1.0-rc.8` | Oldest Host generation that DVR 2.1.x publicly supports. |
-| Current Stable Host | `0.1.5-rc.1` | Current npm stable-channel release covered by required exact Host and browser evidence. |
+| Current Stable Host | `0.1.5-rc.2` | Current npm stable-channel release covered by required exact Host and browser evidence. |
 
 DVR `2.1.x` therefore keeps `0.1.0-rc.8` as its public floor and supports released Host trains through the current stable channel. Runtime branching remains capability-based rather than version-string-driven.
+
+DSH `0.1.5-rc.1` remains explicitly admitted for existing installations; current exact stable evidence has advanced to `0.1.5-rc.2`. Advancing this evidence does not raise the public minimum.
 
 No later support-floor increase is currently announced.
 
@@ -21,7 +23,7 @@ Compatibility evidence answers a different question: what exact upstream release
 
 | Evidence role | DSH source | Meaning |
 |---|---|---|
-| Exact stable evidence | `0.1.5-rc.1` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
+| Exact stable evidence | `0.1.5-rc.2` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
 | Exact preview evidence | `0.1.5-alpha.2` | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
 | Preview drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance with preview-specific lifecycle coverage. A failure does not rewrite support policy. |

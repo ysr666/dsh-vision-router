@@ -88,10 +88,10 @@ test('Doctor JSON keeps public support policy separate from verification evidenc
   assert.deepEqual(report.hostSupportWindow, {
     dvrTrain: '2.1.x',
     minimum: '0.1.0-rc.8',
-    currentStable: '0.1.5-rc.1',
+    currentStable: '0.1.5-rc.2',
   })
   assert.deepEqual(report.hostVerificationEvidence, {
-    exactStable: '0.1.5-rc.1',
+    exactStable: '0.1.5-rc.2',
     exactPreview: '0.1.5-alpha.2',
     stableCanaryDistTag: 'latest',
     previewCanaryDistTag: 'alpha',

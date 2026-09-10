@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **Host-first H1 出站合同 + DSH 0.1.5-rc.2**：不为普通 `fetch` 引入第二套 Host 代理路由判断；新增基于 DSH 真实 `installProxyFromEnvironment()` 的 exact-source 出站测试，验证空 `proxy` 请求确实由 Host 代理，`NO_PROXY` 和 redirect 每跳匹配仍由 Host 权威处理，且不加载 Vision Router ProxyAgent。当前 stable/exact 验证前移到 `0.1.5-rc.2`，`0.1.5-rc.1` 仍保留精确 peer 兼容，公开最低 Host 仍为 `0.1.0-rc.8`。
+- **Host-first H1 egress contract + DSH 0.1.5-rc.2**: ordinary `fetch` deliberately gains no second Host-proxy route decision. Exact-source tests now drive Vision Router through DSH's real `installProxyFromEnvironment()` and prove that blank-plugin-proxy traffic follows Host proxy policy, `NO_PROXY` and redirect hops remain Host-authoritative, and Vision Router never loads its private ProxyAgent. Current stable/exact evidence advances to `0.1.5-rc.2`; `0.1.5-rc.1` remains explicitly peer-compatible and the public minimum stays `0.1.0-rc.8`.
+
 - **Host-first 代理架构收敛**：`proxy` 留空现在被明确固定为“沿用 DSH/Host 网络路径”，Host-owned 视觉 provider 在未配置插件代理时会直接绕过 legacy global-fetch 兼容层；只有“显式 Vision Router 代理 + Host-owned/raw-fetch provider”才允许旧兼容层参与。设置页和 README 同步把插件代理降级为视觉请求的高级覆盖，旧 Host、SOCKS5 与既有 `proxy/proxyHosts` 配置继续兼容。
 - **Host-first proxy convergence**: an empty `proxy` is now explicitly frozen as “follow the DSH/Host network path”. Host-owned visual providers bypass the legacy global-fetch compatibility seam when no plugin proxy is configured; that seam may participate only for an explicit Vision Router proxy override combined with a Host-owned/raw-fetch provider. Settings and README now present the plugin proxy as an advanced vision-only override while preserving older Hosts, SOCKS5, and existing `proxy/proxyHosts` configurations.
 

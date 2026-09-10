@@ -189,9 +189,10 @@ test('cleanup preserves a later plugin wrapper', async () => {
   }
 })
 
-test('removal condition is explicit and tied to the minimum Host proxy seam', () => {
-  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /minimum supported DSH/i)
-  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /provider-scoped\/shared HTTP proxy seam/i)
+test('removal condition names the remaining explicit-override blocker', () => {
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /explicit Vision Router proxy overrides/i)
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /Host-owned visual providers/i)
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /retired by product policy/i)
 })
 
 

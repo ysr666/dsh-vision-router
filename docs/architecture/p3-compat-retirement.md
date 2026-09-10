@@ -24,7 +24,7 @@ P3-B is intentionally a retirement audit, not a quota to delete files. Under the
 | replay envelope v2 compatibility | old durable histories remain valid inputs even when the live Host is newer | only when the supported history/runtime window no longer needs producer rebinding or Host provides an equivalent native replay identity seam |
 | adapter prepareCall/coalescing compatibility | the support matrix still spans Host generations with different adapter-registration/update behavior | only when the minimum Host and every DVR-owned adapter satisfy one stable registration/update contract |
 | pi-ai bridge wire compatibility | legacy direct-bridge traffic remains a supported route shape | only after the direct bridge is retired or all supported Hosts execute that path through an equivalent native wire seam |
-| process-global proxy compatibility | P2-E already reduced this to Host-owned/raw-fetch compatibility only; the minimum Host still lacks a provider-scoped/shared proxy seam | when the minimum supported Host provides a provider-scoped/shared HTTP proxy seam |
+| process-global proxy compatibility | Host-first H0/H1 makes DSH/Host authoritative whenever plugin `proxy` is blank; the seam remains only for an explicit Vision Router proxy override + Host-owned/raw-fetch visual provider | when that explicit override no longer needs process-global mutation for supported Host-owned providers, or the override is retired/re-scoped by product policy |
 
 ## First planned deletion window
 
