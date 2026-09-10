@@ -40,7 +40,7 @@ A green test run while the old path can still silently rescue the new path is no
 | session surface repair | existing `surfaceOp: { op: 'replace' }` and `sourceEventSeqs` semantics remain compatible |
 | attachment identity | durable attachment ids remain Host/session identities; no cross-session lookup is introduced |
 | artifact publication | existing public derived-artifact paths/return values remain compatible; managed run cleanup remains confined to Router-owned provenance/namespaces |
-| proxy setting | existing proxy/proxyHosts behavior remains compatible; Router-owned HTTP stays independent of process-global fetch mutation |
+| proxy setting | persisted `proxy` / `proxyHosts` remain compatible; blank `proxy` means Host-owned egress, while an explicit value remains a vision-only advanced override. Router-owned HTTP stays independent of process-global fetch mutation |
 | Doctor | Closure does not turn advisory architecture/support diagnostics into new failure exit codes |
 | support window | DVR 2.0.x continues to support the published minimum/previous/current DSH window; rc.6 support is not removed by a patch-level closure |
 | runtime platforms | Node 22/24 and the existing Ubuntu/macOS/Windows host-sharp contract remain supported |

@@ -370,8 +370,17 @@ Everything is optional; defaults work out of the box. Prefer **Settings → Visi
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | vision answer cache |
 | `timeoutMs` | `120000` | per vision call deadline |
 | `artifactsDir` | `.dsh-vision-router/artifacts` | artifact directory (relative to the session workspace) |
-| `proxy` / `proxyHosts` | `''` / openrouter hosts | optional proxy for vision provider hosts only |
+| `proxy` / `proxyHosts` | `''` / openrouter hosts | **advanced override**: empty follows the DSH/Host network path; only an explicit value proxies selected vision hosts through Vision Router |
 | `catalogCorrections` | `true` | built-in catalog-routing corrections for known upstream wire-protocol mismatches; each correction disarms itself once the catalog is fixed upstream |
+
+
+### Network proxy: DSH/Host first
+
+Vision Router does **not own network egress by default**. When `proxy` is empty, Router-owned vision HTTP injects no private dispatcher and Host-owned vision traffic bypasses the legacy global-proxy compatibility seam, so requests continue on the current DSH/Host network path.
+
+On the DSH 0.1.5 line (rc.1+), the Host provides process-wide outbound proxy policy from `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`; TUN mode also works transparently below the process. DSH does not automatically read the macOS/Windows “system proxy” switch, so enabling only an app's System Proxy is not the same as proxying the CLI.
+
+Set `proxy` only when you intentionally need a **vision-only proxy override**. It remains available for older Hosts, SOCKS5 users, and deployments that need selected vision domains to take a different route; `proxyHosts` scopes only this plugin override and does not redefine the Host's global proxy policy.
 
 ### Local Ollama vision backend (merged from dsh-vision)
 

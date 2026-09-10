@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **Host-first 代理架构收敛**：`proxy` 留空现在被明确固定为“沿用 DSH/Host 网络路径”，Host-owned 视觉 provider 在未配置插件代理时会直接绕过 legacy global-fetch 兼容层；只有“显式 Vision Router 代理 + Host-owned/raw-fetch provider”才允许旧兼容层参与。设置页和 README 同步把插件代理降级为视觉请求的高级覆盖，旧 Host、SOCKS5 与既有 `proxy/proxyHosts` 配置继续兼容。
+- **Host-first proxy convergence**: an empty `proxy` is now explicitly frozen as “follow the DSH/Host network path”. Host-owned visual providers bypass the legacy global-fetch compatibility seam when no plugin proxy is configured; that seam may participate only for an explicit Vision Router proxy override combined with a Host-owned/raw-fetch provider. Settings and README now present the plugin proxy as an advanced vision-only override while preserving older Hosts, SOCKS5, and existing `proxy/proxyHosts` configurations.
+
 - **代理所有权与主机匹配加固**：ProxyAgent 生命周期不再根据请求 URL 猜测 dispatcher 所有权，只回收 Vision Router 实际创建的 dispatcher；`proxyHosts` 在 Router-owned、legacy 与诊断路径统一处理大小写、首尾空白、尾点和 IDNA，且 A→B→A 热切代理时旧失败不会清掉新 dispatcher 缓存。
 - **Proxy ownership and host-matching hardening**: ProxyAgent lifecycle no longer infers dispatcher ownership from the request URL and retires only dispatchers actually created by Vision Router. Router-owned, legacy and diagnostic `proxyHosts` matching now shares case/whitespace/trailing-dot/IDNA normalization, and stale A→B→A proxy failures cannot evict a newer dispatcher promise.
 

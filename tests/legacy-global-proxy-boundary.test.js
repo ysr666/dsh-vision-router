@@ -37,25 +37,38 @@ test('default and Router-owned visual chains do not require the legacy global pr
   )
 })
 
-test('unknown or mixed Host-owned providers conservatively retain the compatibility seam', () => {
+test('Host-owned providers retain the legacy seam only for an explicit plugin proxy override', () => {
+  const hostOwned = [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }]
+  assert.equal(
+    legacyGlobalProxyRequired({ providers: hostOwned }),
+    false,
+    'blank proxy must leave egress entirely to DSH/Host',
+  )
+  assert.equal(
+    legacyGlobalProxyRequired({ proxy: '  ', providers: hostOwned }),
+    false,
+    'whitespace-only proxy is not an override',
+  )
   assert.equal(
     legacyGlobalProxyRequired({
-      providers: [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }],
+      proxy: 'http://127.0.0.1:7890',
+      providers: hostOwned,
     }),
     true,
   )
   assert.equal(
     legacyGlobalProxyRequired({
+      proxy: 'socks5://127.0.0.1:7890',
       providers: [
         { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] },
-        { provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] },
+        ...hostOwned,
       ],
     }),
     true,
   )
 })
 
-test('live settings switch the global compatibility seam on and off without restart', async () => {
+test('live settings keep Host authority by default and enable legacy seam only for an explicit override', async () => {
   const saved = globalThis.fetch
   let originalCalls = 0
   let legacyCalls = 0
@@ -68,7 +81,7 @@ test('live settings switch the global compatibility seam on and off without rest
     return response('legacy')
   }
   let config = {
-    providers: [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }],
+    providers: [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }],
   }
   const effects = []
   const ctx = {
@@ -85,21 +98,24 @@ test('live settings switch the global compatibility seam on and off without rest
     globalThis.fetch = legacyFetch
     installLegacyGlobalProxyBoundary(ctx, config, { originalFetch })
 
-    await globalThis.fetch('https://maintenance.example.test')
-    assert.equal(originalCalls, 1)
-    assert.equal(legacyCalls, 0, 'Router-only chain must bypass the process-global compatibility patch')
-
-    config = {
-      providers: [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }],
-    }
     await globalThis.fetch('https://provider.example.test')
-    assert.equal(legacyCalls, 1, 'Host-owned provider must keep the legacy compatibility seam available')
+    assert.equal(originalCalls, 1)
+    assert.equal(legacyCalls, 0, 'Host-owned provider without plugin proxy must stay on Host fetch')
+
+    config = { ...config, proxy: 'http://127.0.0.1:7890' }
+    await globalThis.fetch('https://provider.example.test')
+    assert.equal(legacyCalls, 1, 'explicit plugin proxy enables the compatibility seam live')
+
+    config = { ...config, proxy: '' }
+    await globalThis.fetch('https://provider.example.test')
+    assert.equal(originalCalls, 2, 'clearing plugin proxy restores Host authority immediately')
 
     config = {
+      proxy: 'http://127.0.0.1:7890',
       providers: [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }],
     }
     await globalThis.fetch('https://provider.example.test')
-    assert.equal(originalCalls, 2, 'returning to Router-owned transport must narrow the seam immediately')
+    assert.equal(originalCalls, 3, 'Router-owned transport never needs the legacy global seam')
   } finally {
     for (const dispose of effects.reverse()) dispose?.()
     globalThis.fetch = saved
@@ -121,7 +137,7 @@ test('outermost cleanup restores original fetch and retained gate cannot resurfa
   let cleanup
   const ctx = {
     get() {
-      return { get: () => ({ providers: [{ provider: 'custom-host-provider', model: 'vl', fallbacks: [] }] }) }
+      return { get: () => ({ proxy: 'http://127.0.0.1:7890', providers: [{ provider: 'custom-host-provider', model: 'vl', fallbacks: [] }] }) }
     },
     effect(factory) {
       cleanup = factory()
