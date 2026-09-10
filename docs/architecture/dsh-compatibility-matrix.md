@@ -10,8 +10,8 @@ The matrix is capability-based. Runtime code must feature-detect the seam it nee
 | --- | --- | --- |
 | `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x public support starts at rc.8. |
 | `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
-| `current-contract` | `0.1.2-rc.1` | Current stable Host contract baseline. Must remain green. |
-| exact preview gates | `0.1.5-alpha.1` | Required verification evidence only; not a public preview-support claim. |
+| `current-contract` | `0.1.5-rc.1` | Current stable Host contract baseline. Must remain green. |
+| exact preview gates | `0.1.5-alpha.2` | Required verification evidence only; not a public preview-support claim. |
 | `latest-dsh` / alpha canaries | resolved dynamically from npm dist-tags | Scheduled drift surveillance only. Never changes support policy by itself. |
 
 Node 22 and Node 24 remain the general required runtime matrix. The Host contract jobs are additive; they do not replace the normal test matrix.
@@ -20,7 +20,7 @@ Node 22 and Node 24 remain the general required runtime matrix. The Host contrac
 
 `yes` means the fixture has a direct positive test or feature probe. `no` means a direct negative probe exists. `compat` means the fixture proves Vision Router can safely carry the newer input/config through that Host, but does **not** claim the Host owns that capability. `probe` means the capability is intentionally not inferred from the version label and is verified at runtime/contract-test time.
 
-| Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.1 (0.1.2) | Evidence / detection |
+| Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.1 (0.1.5) | Evidence / detection |
 | --- | --- | --- | --- | --- |
 | Batch attachment save | no | yes | yes | `hasBatchAttachmentContract()` checks the released `attachments.saveImages` prototype; `tests/rc6-rc7-compat.test.js`; contract CI. |
 | Max image dimension policy | compat | yes | yes | All fixtures parse the complete attachment-local row; rc.8/current positively retain the field and the established admission tests exercise the 10000/10001 boundary. Older Schemastery passthrough is not treated as ownership evidence. |

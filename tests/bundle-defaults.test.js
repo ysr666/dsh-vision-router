@@ -381,6 +381,19 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   }
 })
 
+test('DSH release evidence changes always trigger exact source and real browser gates', async () => {
+  const [browser, source] = await Promise.all([
+    readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
+  ])
+
+  for (const path of ["'package.json'", "'lib/dsh-support-window.js'"]) {
+    assert.equal((browser.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
+  }
+  assert.equal((source.match(/'package\.json'/g) ?? []).length, 2)
+  assert.equal((source.match(/'lib\/dsh-support-window\.js'/g) ?? []).length, 2)
+})
+
 test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [

@@ -179,7 +179,7 @@ test('settings compatibility keeps the first-class section without requiring a l
 
 test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified stable and alpha host trains', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1'
+  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1 || 0.1.5-alpha.2 || 0.1.5-rc.1'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
@@ -215,17 +215,33 @@ test('web client modules wait for the official webServer carrier across supporte
 })
 
 test('release evidence gates keep stable and preview contracts capability-scoped', async () => {
-  const hostGate = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
-  const browserGate = await readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8')
+  const [hostGate, browserGate, sourceGate] = await Promise.all([
+    readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
+  ])
 
-  assert.match(hostGate, /dsh: \['0\.1\.2-rc\.1', '0\.1\.5-alpha\.1'\]/)
-  assert.match(hostGate, /if: matrix\.dsh == '0\.1\.5-alpha\.1'/)
-  assert.match(browserGate, /dsh: 0\.1\.2-rc\.1[\s\S]*?mixedGenericFiles: false/)
-  assert.match(browserGate, /dsh: 0\.1\.5-alpha\.1[\s\S]*?mixedGenericFiles: true/)
+  assert.match(hostGate, /dsh: \['0\.1\.5-rc\.1', '0\.1\.5-alpha\.2'\]/)
+  assert.match(hostGate, /Verify release-family Session native image process-restart lifecycle[\s\S]*?run: node scripts\/dsh-preview-native-lifecycle-contract\.mjs/)
+  assert.doesNotMatch(hostGate, /if: matrix\.dsh ==/)
+  assert.match(browserGate, /dsh: 0\.1\.5-rc\.1[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /dsh: 0\.1\.5-alpha\.2[\s\S]*?mixedGenericFiles: true/)
   assert.match(browserGate, /if: matrix\.mixedGenericFiles/)
-  assert.match(browserGate, /ref: dsh-v0\.1\.2-rc\.1/)
-  assert.match(browserGate, /ref: dsh-v0\.1\.5-alpha\.1/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.5-rc\.1/)
+  assert.match(browserGate, /ref: dsh-v0\.1\.5-alpha\.2/)
   assert.doesNotMatch(browserGate, /ref:\s*\$\{\{\s*matrix\./)
+
+  assert.match(sourceGate, /name: DSH exact source contract/)
+  assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.1/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/dsh: 0\.1\.5-alpha\.2/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/183f08e9c6dde7e36cd2318eaee70b0da08fb35e/g) ?? []).length, 2)
+  assert.equal((sourceGate.match(/b2e3b2a0125854567a4a5fcba75782e42fe84901/g) ?? []).length, 2)
+  assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
+  assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
+  assert.doesNotMatch(sourceGate, /cache-dependency-path:/)
+  for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
+    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 2)
+  }
 })
 
 test('bundle patch defines Vision Router attachment storage admission including rc8 dimensions', async () => {
