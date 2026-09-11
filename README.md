@@ -356,7 +356,7 @@ Everything is optional; defaults work out of the box. Prefer **Settings → Visi
 | `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | optional manual wrapper scope `{ provider, models[] }`, used after disabling auto-wrap or to restrict which models can enter an internal wrapper through “👁 Vision”; changes apply live, no restart |
 | `routing` | `false` | legacy whole-turn chain routing (one-shot answer). `false` = tools-first flow (recommended) |
 | `reverseRouting` | `true` | with `routing: true`, route text turns back to `textProvider` |
-| `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | admission wrapper route name / fallback chain route name (empty disables) |
+| `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | developer route names. Leaving either field blank in current Settings clears the override and restores its default; explicitly blank values are retained only for legacy/manual persisted-config compatibility. |
 | `stealth` | `false` | take over the official `deepseek-official` route (official row only; custom routes are auto-wrapped by default) |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | the model that reasons (your daily model) |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | vision tools on / progressive mounting (off by default for a stable tool schema) / image-turn auto-mount when progressive mode is enabled; `progressiveTools` is boot-time config |
