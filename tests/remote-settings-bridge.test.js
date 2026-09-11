@@ -175,12 +175,25 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
   const indexTaps = []
   const ctx = {
     inject(deps, callback) {
-      if (deps.length === 2 && deps[0] === 'settings' && deps[1] === 'connection') {
-        callback({
+      if (deps[0] === 'settings' && deps[1] === 'connection') {
+        assert.deepEqual(deps, ['settings', 'connection', 'webServer'])
+        const declared = new Set(deps)
+        const remoteCtx = {
           settings: makeSettings().settings,
-          connection: { rpc: { handle(channel, _handler, options) { registrations.push([channel, options]); return () => {} } } },
+          webServer: { register() { return () => {} } },
           effect(factory) { factory() },
-        })
+        }
+        remoteCtx.connection = {
+          rpc: {
+            handle(channel, _handler, options) {
+              if (!declared.has('webServer')) throw new Error('cannot get property "webServer" without inject')
+              remoteCtx.webServer.register({ kind: 'prefix', path: channel })
+              registrations.push([channel, options])
+              return () => {}
+            },
+          },
+        }
+        callback(remoteCtx)
         return
       }
       if (deps.length === 1 && deps[0] === 'webServer') {
