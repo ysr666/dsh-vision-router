@@ -232,3 +232,43 @@ test('wrong-suite evidence is ignored rather than compared with the current suit
   })
   assert.deepEqual(await createCapabilityProfileStore({ cacheFile, fsOps: mem.ops }).list(), [])
 })
+
+test('capability profile live state is bounded on load and matches persisted survivors after put', async () => {
+  const cacheFile = '/virtual/capability-profiles.json'
+  const profiles = Array.from({ length: 5 }, (_, index) => recordBase({
+    fingerprint: `ep2_${(index + 1).toString(16).padStart(32, '0')}`,
+    model: `model-${index + 1}`,
+    measuredAt: index + 1,
+    measuredAtByAxis: { general: index + 1 },
+  }))
+  const mem = memoryFs({
+    [cacheFile]: JSON.stringify({ version: CAPABILITY_PROFILE_CACHE_VERSION, profiles }),
+  })
+  const store = createCapabilityProfileStore({ cacheFile, fsOps: mem.ops, maxEntries: 3 })
+
+  const loaded = await store.list()
+  assert.equal(loaded.length, 3)
+  assert.deepEqual(loaded.map((item) => item.measuredAt), [5, 4, 3])
+
+  const newestFingerprint = `ep2_${'f'.repeat(32)}`
+  assert.ok(await store.put(recordBase({
+    fingerprint: newestFingerprint,
+    model: 'newest',
+    measuredAt: 100,
+    measuredAtByAxis: { general: 100 },
+  })))
+  const live = await store.list()
+  assert.equal(live.length, 3)
+  await store.flush()
+  const disk = JSON.parse(mem.files.get(cacheFile)).profiles
+  assert.deepEqual(disk.map((item) => item.fingerprint), live.map((item) => item.fingerprint))
+
+  const tooOldFingerprint = `ep2_${'e'.repeat(32)}`
+  assert.equal(await store.put(recordBase({
+    fingerprint: tooOldFingerprint,
+    model: 'too-old',
+    measuredAt: 1,
+    measuredAtByAxis: { general: 1 },
+  })), undefined)
+  assert.equal((await store.list()).some((item) => item.fingerprint === tooOldFingerprint), false)
+})
