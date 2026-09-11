@@ -39,6 +39,29 @@ function requestInit(body = {}) {
   }
 }
 
+const defaultFakeHostDispatcher = Object.freeze({
+  dispatch() { return 'host' },
+})
+
+function fakeUndiciModule(ProxyAgent, fallbackDispatcher = defaultFakeHostDispatcher) {
+  if (typeof ProxyAgent.prototype.dispatch !== 'function') {
+    Object.defineProperty(ProxyAgent.prototype, 'dispatch', {
+      configurable: true,
+      value() { return this },
+    })
+  }
+  return {
+    ProxyAgent,
+    getGlobalDispatcher: () => fallbackDispatcher,
+  }
+}
+
+function selectedDispatcher(dispatcher, input) {
+  if (!dispatcher || typeof dispatcher.dispatch !== 'function') return dispatcher
+  const origin = new URL(String(input)).origin
+  return dispatcher.dispatch({ origin }, {})
+}
+
 test('Router-owned OpenAI compatibility bypasses the caller/global fetch once transport is installed', async () => {
   const calls = []
   const original = async (input, init) => {
@@ -128,20 +151,165 @@ test('provider-scoped proxy uses an explicit dispatcher only for configured host
       calls.push({ input: String(input), init })
       return okOpenAI()
     },
-    importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent),
   })
 
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   await transport.fetch('https://maintenance.example/v1/chat/completions', requestInit())
 
   assert.equal(calls.length, 2)
-  assert.ok(calls[0].init.dispatcher instanceof FakeProxyAgent)
-  assert.equal(calls[0].init.dispatcher.url, 'http://127.0.0.1:7890')
+  const firstProxyDispatcher = selectedDispatcher(calls[0].init.dispatcher, calls[0].input)
+  assert.ok(firstProxyDispatcher instanceof FakeProxyAgent)
+  assert.equal(firstProxyDispatcher.url, 'http://127.0.0.1:7890')
   assert.equal(calls[1].init.dispatcher, undefined)
 
   config = { ...config, proxy: '' }
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   assert.equal(calls[2].init.dispatcher, undefined, 'live proxy disable must take effect without restart')
+})
+
+test('redirect hops outside proxyHosts return to the inherited Host dispatcher', async () => {
+  const { MockAgent } = await import('undici')
+  const proxyPath = new MockAgent()
+  const hostPath = new MockAgent()
+  proxyPath.disableNetConnect()
+  hostPath.disableNetConnect()
+  proxyPath
+    .get('https://api.example.com')
+    .intercept({ path: '/start', method: 'GET' })
+    .reply(302, '', { headers: { location: 'https://cdn.example.net/final' } })
+  hostPath
+    .get('https://cdn.example.net')
+    .intercept({ path: '/final', method: 'GET' })
+    .reply(200, 'HOST-FINAL')
+
+  let proxyDispatches = 0
+  class FakeProxyAgent {
+    constructor(url) { this.url = url }
+    dispatch(options, handler) {
+      proxyDispatches += 1
+      return proxyPath.dispatch(options, handler)
+    }
+    async close() {}
+  }
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy.test:8080', proxyHosts: ['api.example.com'] },
+    fetchImpl: globalThis.fetch.bind(globalThis),
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent, hostPath),
+  })
+
+  try {
+    const response = await transport.fetch('https://api.example.com/start')
+    assert.equal(await response.text(), 'HOST-FINAL')
+    assert.equal(proxyDispatches, 1, 'only the admitted first hop may use the DVR proxy')
+  } finally {
+    await transport.dispose()
+    await proxyPath.close()
+    await hostPath.close()
+  }
+})
+
+test('initial non-matching host remains fully Host-owned across a later redirect into proxyHosts', async () => {
+  const { MockAgent, getGlobalDispatcher, setGlobalDispatcher } = await import('undici')
+  const previous = getGlobalDispatcher()
+  const hostPath = new MockAgent()
+  hostPath.disableNetConnect()
+  hostPath
+    .get('https://entry.example')
+    .intercept({ path: '/start', method: 'GET' })
+    .reply(302, '', { headers: { location: 'https://api.example.com/final' } })
+  hostPath
+    .get('https://api.example.com')
+    .intercept({ path: '/final', method: 'GET' })
+    .reply(200, 'HOST-ONLY')
+  setGlobalDispatcher(hostPath)
+  let imports = 0
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy.test:8080', proxyHosts: ['api.example.com'] },
+    importUndici: async () => {
+      imports += 1
+      throw new Error('initial non-matching admission must not load DVR Undici')
+    },
+  })
+
+  try {
+    const response = await transport.fetch('https://entry.example/start')
+    assert.equal(await response.text(), 'HOST-ONLY')
+    assert.equal(imports, 0, 'first-hop admission preserves the #149 no-Undici boundary')
+  } finally {
+    await transport.dispose()
+    setGlobalDispatcher(previous)
+    await hostPath.close()
+  }
+})
+
+test('per-hop selector fails closed to fallback when dispatcher origin is malformed', async () => {
+  const routed = []
+  const fallback = {
+    dispatch(options) {
+      routed.push({ owner: 'fallback', origin: String(options.origin) })
+      return 'fallback'
+    },
+  }
+  class FakeProxyAgent {
+    dispatch(options) {
+      routed.push({ owner: 'proxy', origin: String(options.origin) })
+      return 'proxy'
+    }
+    async close() {}
+  }
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy.test:8080', proxyHosts: ['api.example.com'] },
+    fetchImpl: async (_input, init) => {
+      assert.equal(init.dispatcher.dispatch({ origin: 'not a valid origin' }, {}), 'fallback')
+      return okOpenAI()
+    },
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent, fallback),
+  })
+
+  try {
+    await transport.fetch('https://api.example.com/start')
+    assert.deepEqual(routed, [{ owner: 'fallback', origin: 'not a valid origin' }])
+  } finally {
+    await transport.dispose()
+  }
+})
+
+test('per-hop selector preserves an explicit caller dispatcher for non-matching redirects', async () => {
+  const routed = []
+  const callerDispatcher = {
+    dispatch(options) {
+      routed.push({ owner: 'caller', origin: String(options.origin) })
+      return 'caller'
+    },
+  }
+  class FakeProxyAgent {
+    constructor(url) { this.url = url }
+    dispatch(options) {
+      routed.push({ owner: 'proxy', origin: String(options.origin) })
+      return 'proxy'
+    }
+    async close() {}
+  }
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy.test:8080', proxyHosts: ['api.example.com'] },
+    fetchImpl: async (_input, init) => {
+      assert.equal(init.dispatcher.dispatch({ origin: 'https://api.example.com' }, {}), 'proxy')
+      assert.equal(init.dispatcher.dispatch({ origin: 'https://cdn.example.net' }, {}), 'caller')
+      return okOpenAI()
+    },
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent),
+  })
+
+  try {
+    await transport.fetch('https://api.example.com/start', { dispatcher: callerDispatcher })
+    assert.deepEqual(routed, [
+      { owner: 'proxy', origin: 'https://api.example.com' },
+      { owner: 'caller', origin: 'https://cdn.example.net' },
+    ])
+  } finally {
+    await transport.dispose()
+  }
 })
 
 test('active=false compatibility traffic is not claimed by the Router provider transport', async () => {
@@ -281,7 +449,7 @@ test('legacy socks5h settings are projected only for admitted proxy hosts and sh
     },
     importUndici: async () => {
       imports += 1
-      return { ProxyAgent: FakeProxyAgent }
+      return fakeUndiciModule(FakeProxyAgent)
     },
   })
 
@@ -292,12 +460,12 @@ test('legacy socks5h settings are projected only for admitted proxy hosts and sh
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   assert.equal(imports, 1)
   assert.deepEqual(constructed, ['socks5://user:pass@[::1]:7890'])
-  const firstDispatcher = calls[1].init.dispatcher
+  const firstDispatcher = selectedDispatcher(calls[1].init.dispatcher, calls[1].input)
 
   config = { ...config, proxy: 'socks5://user:pass@[::1]:7890' }
   await transport.fetch('https://api.example.com/v1/chat/completions', requestInit())
   assert.equal(imports, 1, 'canonical-equivalent settings must reuse the cached dispatcher')
-  assert.equal(calls[2].init.dispatcher, firstDispatcher)
+  assert.equal(selectedDispatcher(calls[2].init.dispatcher, calls[2].input), firstDispatcher)
 })
 
 test('proxy host admission canonicalizes case, whitespace, trailing dot and IDNA without broadening suffixes', async () => {
@@ -309,15 +477,15 @@ test('proxy host admission canonicalizes case, whitespace, trailing dot and IDNA
       proxyHosts: [' API.EXAMPLE.COM ', 'BÜCHER.DE'],
     },
     fetchImpl: async (input, init) => { calls.push({ input: String(input), init }); return okOpenAI() },
-    importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent),
   })
 
   await transport.fetch('https://api.example.com./v1/chat/completions', requestInit())
   await transport.fetch('https://bücher.de/v1/chat/completions', requestInit())
   await transport.fetch('https://api.example.com.evil.test/v1/chat/completions', requestInit())
 
-  assert.equal(isVisionProxyDispatcher(calls[0].init.dispatcher), true)
-  assert.equal(isVisionProxyDispatcher(calls[1].init.dispatcher), true)
+  assert.equal(isVisionProxyDispatcher(selectedDispatcher(calls[0].init.dispatcher, calls[0].input)), true)
+  assert.equal(isVisionProxyDispatcher(selectedDispatcher(calls[1].init.dispatcher, calls[1].input)), true)
   assert.equal(calls[2].init.dispatcher, undefined)
   assert.equal(transport.proxyDecision('https://API.EXAMPLE.COM./x').proxied, true)
 })
@@ -328,7 +496,7 @@ test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy ra
   let config = { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] }
   const transport = createVisionProviderTransport({
     config: () => config,
-    fetchImpl: async (_input, init) => init.dispatcher,
+    fetchImpl: async (input, init) => selectedDispatcher(init.dispatcher, input),
     importUndici: () => new Promise((resolve, reject) => imports.push({ resolve, reject })),
   })
 
@@ -346,12 +514,12 @@ test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy ra
   const reusedA = transport.fetch('https://api.example.com/a3')
   assert.equal(imports.length, 3, 'stale A rejection must not evict the newer A promise')
 
-  imports[2].resolve({ ProxyAgent: FakeProxyAgent })
+  imports[2].resolve(fakeUndiciModule(FakeProxyAgent))
   const [a2, a3] = await Promise.all([secondA, reusedA])
   assert.equal(a2, a3)
   assert.equal(a2.url, 'http://proxy-a.test:8080')
 
-  imports[1].resolve({ ProxyAgent: FakeProxyAgent })
+  imports[1].resolve(fakeUndiciModule(FakeProxyAgent))
   const b = await requestB
   assert.equal(b.url, 'http://proxy-b.test:8080')
 })
@@ -378,9 +546,9 @@ test('hot proxy replacement retires the old dispatcher only after its in-flight 
         enteredA()
         await aBarrier
       }
-      return init.dispatcher ?? 'direct'
+      return selectedDispatcher(init.dispatcher, input) ?? 'direct'
     },
-    importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+    importUndici: async () => fakeUndiciModule(FakeProxyAgent),
   })
 
   const requestA = transport.fetch('https://api.example.com/a')
@@ -419,8 +587,8 @@ test('clearing the live proxy retires an idle cached dispatcher without importin
   const calls = []
   const transport = createVisionProviderTransport({
     config: () => config,
-    fetchImpl: async (_input, init) => { calls.push(init.dispatcher); return okOpenAI() },
-    importUndici: async () => { imports += 1; return { ProxyAgent: FakeProxyAgent } },
+    fetchImpl: async (input, init) => { calls.push(selectedDispatcher(init.dispatcher, input)); return okOpenAI() },
+    importUndici: async () => { imports += 1; return fakeUndiciModule(FakeProxyAgent) },
   })
 
   await transport.fetch('https://api.example.com/first')
@@ -448,7 +616,7 @@ test('dispose during pending ProxyAgent construction lets the admitted request f
   }
   const transport = createVisionProviderTransport({
     config: { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] },
-    fetchImpl: async (_input, init) => { calls.push(init.dispatcher); return okOpenAI() },
+    fetchImpl: async (input, init) => { calls.push(selectedDispatcher(init.dispatcher, input)); return okOpenAI() },
     importUndici: () => importGate,
   })
   const release = installVisionProviderTransport(transport)
@@ -456,7 +624,7 @@ test('dispose during pending ProxyAgent construction lets the admitted request f
   release()
   const disposal = transport.dispose()
 
-  resolveImport({ ProxyAgent: FakeProxyAgent })
+  resolveImport(fakeUndiciModule(FakeProxyAgent))
   await request
   await disposal
   assert.equal(calls.length, 1)
@@ -475,11 +643,11 @@ test('synchronous Undici loader failure does not poison lifecycle disposal or a 
   }
   const transport = createVisionProviderTransport({
     config: { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] },
-    fetchImpl: async (_input, init) => init.dispatcher,
+    fetchImpl: async (input, init) => selectedDispatcher(init.dispatcher, input),
     importUndici: () => {
       attempts += 1
       if (attempts === 1) throw new Error('sync loader failed')
-      return { ProxyAgent: FakeProxyAgent }
+      return fakeUndiciModule(FakeProxyAgent)
     },
   })
 

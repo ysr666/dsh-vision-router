@@ -380,7 +380,7 @@ Vision Router does **not own network egress by default**. When `proxy` is empty,
 
 On the DSH 0.1.5 line (rc.1+), the Host provides process-wide outbound proxy policy from `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`; TUN mode also works transparently below the process. DSH does not automatically read the macOS/Windows “system proxy” switch, so enabling only an app's System Proxy is not the same as proxying the CLI.
 
-Set `proxy` only when you intentionally need a **vision-only proxy override**. It remains available for older Hosts, SOCKS5 users, and deployments that need selected vision domains to take a different route; `proxyHosts` scopes only this plugin override and does not redefine the Host's global proxy policy.
+Set `proxy` only when you intentionally need a **vision-only proxy override**. It remains available for older Hosts, SOCKS5 users, and deployments that need selected vision domains to take a different route; `proxyHosts` scopes only this plugin override and does not redefine the Host's global proxy policy. Redirects cannot widen that scope: once a DVR-proxied request redirects to a host outside `proxyHosts`, that hop returns to the request's inherited Host/caller dispatcher. A request whose initial URL is outside `proxyHosts` stays fully Host-owned, even if a later redirect enters the list.
 
 ### Local Ollama vision backend (merged from dsh-vision)
 
