@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **DSH 0.1.5 远程设置 `webServer` 注入根修（#465）**：远程设置 RPC 现在在同一个 Cordis caller fiber 上显式声明 `settings`、`connection` 与 `webServer`。DSH 0.1.5 的 `connection.rpc.handle()` 会把通道路由注册到调用方 Context 的 `webServer`；此前只注入前两项会在 rc.1/rc.2 的严格 service-access 语义下触发 `cannot get property "webServer" without inject`。修复不修改 Host bundle overlay，也不放宽远程设置的 trusted-host / allow-list 安全边界。
+- **DSH 0.1.5 remote-settings `webServer` injection fix (#465)**: remote-settings RPC registration now declares `settings`, `connection`, and `webServer` on the same Cordis caller fiber. DSH 0.1.5 `connection.rpc.handle()` mounts its channel route through the caller Context's `webServer`; injecting only the first two services could therefore throw `cannot get property "webServer" without inject` under rc.1/rc.2 strict service-access semantics. The fix does not change the Host bundle overlay or relax the trusted-host / allow-list security boundary.
+
 - **代理生命周期单一所有权收敛**：#462/#463 后所有 DVR ProxyAgent 已由共享 lease/retire dispatcher pool 显式拥有，删除已不可达的 `ProxyDispatcherTracker`、`vision-tool-runtime-boundary` 全局 `fetch` 观察器以及仅为该观察器存在的 WeakSet dispatcher 标记。运行时不再维护第三套“看到 dispatcher 再猜所有权并关闭”的生命周期；Router-owned 与 Host-owned scoped 两条显式代理路径继续由同一 pool 负责热切换、清空配置、同步失败、pending construction 与卸载回收。
 - **Single-owner proxy lifecycle convergence**: after #462/#463 every DVR ProxyAgent is explicitly owned by the shared lease/retire dispatcher pool, so the now-unreachable `ProxyDispatcherTracker`, the `vision-tool-runtime-boundary` global-`fetch` observer, and its marker-only WeakSet are removed. Runtime no longer keeps a third lifecycle system that observes dispatchers and infers ownership after the fact; Router-owned and scoped Host-owned proxy paths continue to share the same pool for hot replacement, proxy clear, synchronous failure, pending construction, and unload cleanup.
 
