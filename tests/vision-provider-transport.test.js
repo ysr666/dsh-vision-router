@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { once } from 'node:events'
+import { createServer as createHttpServer } from 'node:http'
+import { createConnection, createServer as createNetServer } from 'node:net'
 
 import {
   createVisionProviderTransport,
@@ -59,6 +62,105 @@ function selectedDispatcher(dispatcher, input) {
   if (!dispatcher || typeof dispatcher.dispatch !== 'function') return dispatcher
   const origin = new URL(String(input)).origin
   return dispatcher.dispatch({ origin }, {})
+}
+
+const loopbackSockets = new WeakMap()
+
+async function listenLoopback(server) {
+  const sockets = new Set()
+  loopbackSockets.set(server, sockets)
+  server.on('connection', (socket) => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  return address.port
+}
+
+async function closeLoopbackServer(server) {
+  for (const socket of loopbackSockets.get(server) ?? []) socket.destroy()
+  if (!server.listening) return
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+}
+
+function createLoopbackHttpConnectProxy(observed, targetPort) {
+  const server = createHttpServer()
+  server.on('connect', (request, client, head) => {
+    observed.push({ method: request.method, target: request.url, host: request.headers.host })
+    const upstream = createConnection({ host: '127.0.0.1', port: targetPort })
+    const fail = () => {
+      client.destroy()
+      upstream.destroy()
+    }
+    client.once('error', fail)
+    upstream.once('error', fail)
+    upstream.once('connect', () => {
+      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head.length > 0) upstream.write(head)
+      client.pipe(upstream)
+      upstream.pipe(client)
+    })
+  })
+  return server
+}
+
+function socks5DomainRequest(buffer) {
+  if (buffer.length < 5 || buffer[0] !== 0x05 || buffer[1] !== 0x01 || buffer[3] !== 0x03) return undefined
+  const hostLength = buffer[4]
+  const total = 5 + hostLength + 2
+  if (buffer.length < total) return undefined
+  return {
+    bytes: total,
+    host: buffer.subarray(5, 5 + hostLength).toString('utf8'),
+    port: buffer.readUInt16BE(5 + hostLength),
+    atyp: buffer[3],
+  }
+}
+
+function createLoopbackSocks5Server(observed, targetPort) {
+  return createNetServer((client) => {
+    let buffer = Buffer.alloc(0)
+    let state = 'greeting'
+    let upstream
+    const fail = () => {
+      client.destroy()
+      upstream?.destroy()
+    }
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk])
+      if (state === 'greeting') {
+        if (buffer.length < 2) return
+        const methodsLength = buffer[1]
+        const total = 2 + methodsLength
+        if (buffer.length < total) return
+        const methods = buffer.subarray(2, total)
+        if (!methods.includes(0x00)) return fail()
+        buffer = buffer.subarray(total)
+        client.write(Buffer.from([0x05, 0x00]))
+        state = 'request'
+      }
+      if (state !== 'request') return
+      const request = socks5DomainRequest(buffer)
+      if (!request) return
+      observed.push({ host: request.host, port: request.port, atyp: request.atyp })
+      buffer = buffer.subarray(request.bytes)
+      state = 'connecting'
+      upstream = createConnection({ host: '127.0.0.1', port: targetPort })
+      upstream.once('error', fail)
+      upstream.once('connect', () => {
+        client.write(Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]))
+        client.removeListener('data', onData)
+        if (buffer.length > 0) upstream.write(buffer)
+        client.pipe(upstream)
+        upstream.pipe(client)
+      })
+    }
+    client.on('data', onData)
+    client.once('error', fail)
+  })
 }
 
 test('Router-owned OpenAI compatibility bypasses the caller/global fetch once transport is installed', async () => {
@@ -307,6 +409,82 @@ test('per-hop selector preserves an explicit caller dispatcher for non-matching 
       { owner: 'caller', origin: 'https://cdn.example.net' },
     ])
   } finally {
+    await transport.dispose()
+  }
+})
+
+test('real loopback HTTP proxy receives CONNECT for an admitted provider and tunnels the request', async () => {
+  const targetRequests = []
+  const proxyConnects = []
+  const target = createHttpServer((request, response) => {
+    targetRequests.push({ url: request.url, host: request.headers.host })
+    response.writeHead(200, { 'content-type': 'text/plain', connection: 'close' })
+    response.end('HTTP-PROXY-OK')
+  })
+  const targetPort = await listenLoopback(target)
+  const proxy = createLoopbackHttpConnectProxy(proxyConnects, targetPort)
+  const proxyPort = await listenLoopback(proxy)
+  const transport = createVisionProviderTransport({
+    config: {
+      proxy: `http://127.0.0.1:${proxyPort}`,
+      proxyHosts: ['dvr-http-target.invalid'],
+    },
+  })
+
+  try {
+    const response = await transport.fetch(`http://dvr-http-target.invalid:${targetPort}/v1/probe?via=proxy`, {
+      signal: AbortSignal.timeout(10_000),
+    })
+    assert.equal(await response.text(), 'HTTP-PROXY-OK')
+    assert.deepEqual(proxyConnects, [{
+      method: 'CONNECT',
+      target: `dvr-http-target.invalid:${targetPort}`,
+      host: `dvr-http-target.invalid:${targetPort}`,
+    }])
+    assert.deepEqual(targetRequests, [{
+      url: '/v1/probe?via=proxy',
+      host: `dvr-http-target.invalid:${targetPort}`,
+    }])
+  } finally {
+    await closeLoopbackServer(proxy)
+    await closeLoopbackServer(target)
+    await transport.dispose()
+  }
+})
+
+test('real loopback SOCKS5 keeps legacy socks5h target DNS on the proxy side', async () => {
+  const targetRequests = []
+  const socksConnects = []
+  const target = createHttpServer((request, response) => {
+    targetRequests.push({ url: request.url, host: request.headers.host })
+    response.writeHead(200, { 'content-type': 'text/plain', connection: 'close' })
+    response.end('SOCKS5-OK')
+  })
+  const targetPort = await listenLoopback(target)
+  const socks = createLoopbackSocks5Server(socksConnects, targetPort)
+  const socksPort = await listenLoopback(socks)
+  const transport = createVisionProviderTransport({
+    config: {
+      proxy: `socks5h://127.0.0.1:${socksPort}`,
+      proxyHosts: ['dvr-socks-target.invalid'],
+    },
+  })
+
+  try {
+    const response = await transport.fetch(`http://dvr-socks-target.invalid:${targetPort}/through-socks`, { signal: AbortSignal.timeout(10_000) })
+    assert.equal(await response.text(), 'SOCKS5-OK')
+    assert.deepEqual(socksConnects, [{
+      host: 'dvr-socks-target.invalid',
+      port: targetPort,
+      atyp: 0x03,
+    }], 'the SOCKS proxy must receive the unresolved domain name')
+    assert.deepEqual(targetRequests, [{
+      url: '/through-socks',
+      host: `dvr-socks-target.invalid:${targetPort}`,
+    }])
+  } finally {
+    await closeLoopbackServer(socks)
+    await closeLoopbackServer(target)
     await transport.dispose()
   }
 })
