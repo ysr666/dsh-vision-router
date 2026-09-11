@@ -5,6 +5,8 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v2.1.6
+
 ### 修复 / Fixes
 
 - **DSH 0.1.5 远程设置 `webServer` 注入根修（#465）**：远程设置 RPC 现在在同一个 Cordis caller fiber 上显式声明 `settings`、`connection` 与 `webServer`。DSH 0.1.5 的 `connection.rpc.handle()` 会把通道路由注册到调用方 Context 的 `webServer`；此前只注入前两项会在 rc.1/rc.2 的严格 service-access 语义下触发 `cannot get property "webServer" without inject`。修复不修改 Host bundle overlay，也不放宽远程设置的 trusted-host / allow-list 安全边界。
