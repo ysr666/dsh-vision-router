@@ -1049,100 +1049,110 @@ test('reverse-proxy route failures are classified with an actionable UI path', a
 })
 
 
-test('presented image resource cache pins active URLs and revokes them once idle', async () => {
+test('presented image resource cache keeps hard bounds even when the loaded history stays mounted', async () => {
   const bundle = loadClientBundle()
   const revoked = []
   let nextUrl = 0
   const cache = bundle.createPresentedImageResourceCache({
-    maxIdleEntries: 0,
-    maxIdleBytes: 0,
-    createObjectURL: () => `blob:test-${++nextUrl}`,
+    maxEntries: 2,
+    maxBytes: 6,
+    createObjectURL: () => `blob:bounded-${++nextUrl}`,
     revokeObjectURL: (url) => revoked.push(url),
   })
-
-  cache.pin('session:attachment')
-  const url = await cache.load('session:attachment', async () => ({
-    data: new Uint8Array(8),
+  const ownerB = {}
+  const ownerC = {}
+  const ownerD = {}
+  const load = (key, bytes, ownerToken) => cache.load(key, async () => ({
+    data: new Uint8Array(bytes),
     mediaType: 'image/png',
-  }))
-  assert.equal(url, 'blob:test-1')
-  assert.deepEqual(revoked, [])
+  }), ownerToken)
+
+  await load('idle-a', 4)
+  await load('owned-b', 4, ownerB)
+  assert.deepEqual(revoked, ['blob:bounded-1'], 'unowned entries are evicted before owned entries')
   assert.deepEqual(cache.stats(), {
     entries: 1,
-    pinnedKeys: 1,
-    idleEntries: 0,
-    idleBytes: 0,
+    settledEntries: 1,
+    residentBytes: 4,
+    ownedEntries: 1,
     disposed: false,
   })
 
-  cache.unpin('session:attachment')
-  assert.deepEqual(revoked, ['blob:test-1'])
-  assert.equal(cache.stats().entries, 0)
+  await load('owned-c', 2, ownerC)
+  await load('owned-d', 1, ownerD)
+  assert.deepEqual(
+    revoked,
+    ['blob:bounded-1', 'blob:bounded-2'],
+    'the oldest owned entry is still evicted when the hard budget requires it',
+  )
+  assert.deepEqual(cache.stats(), {
+    entries: 2,
+    settledEntries: 2,
+    residentBytes: 3,
+    ownedEntries: 2,
+    disposed: false,
+  })
 })
 
-test('presented image resource cache enforces both idle entry and byte budgets in LRU order', async () => {
+test('presented image resource cache deduplicates owners and purges only after the final card releases', async () => {
   const bundle = loadClientBundle()
   const revoked = []
-  let nextUrl = 0
-  const cache = bundle.createPresentedImageResourceCache({
-    maxIdleEntries: 2,
-    maxIdleBytes: 6,
-    createObjectURL: () => `blob:lru-${++nextUrl}`,
-    revokeObjectURL: (url) => revoked.push(url),
-  })
-  const load = (key, bytes) => cache.load(key, async () => ({
-    data: new Uint8Array(bytes),
-    mediaType: 'image/png',
-  }))
-
-  await load('a', 4)
-  await load('b', 4)
-  assert.deepEqual(revoked, ['blob:lru-1'])
-  assert.equal(cache.stats().idleBytes, 4)
-
-  await load('c', 2)
-  assert.equal(cache.stats().idleEntries, 2)
-  assert.equal(cache.stats().idleBytes, 6)
-  await load('d', 1)
-  assert.deepEqual(revoked, ['blob:lru-1', 'blob:lru-2'])
-  assert.equal(cache.stats().idleEntries, 2)
-  assert.equal(cache.stats().idleBytes, 3)
-})
-
-test('presented image resource cache deduplicates inflight loads and permits retry after failure', async () => {
-  const bundle = loadClientBundle()
   let calls = 0
-  let release
-  const gate = new Promise((resolve) => { release = resolve })
+  let releaseLoad
+  const gate = new Promise((resolve) => { releaseLoad = resolve })
   const cache = bundle.createPresentedImageResourceCache({
     createObjectURL: () => 'blob:shared',
-    revokeObjectURL: () => {},
+    revokeObjectURL: (url) => revoked.push(url),
   })
+  const ownerA = {}
+  const ownerB = {}
   const loader = async () => {
     calls += 1
     await gate
-    return { data: new Uint8Array(1), mediaType: 'image/png' }
+    return { data: new Uint8Array(8), mediaType: 'image/png' }
   }
-  const first = cache.load('same', loader)
-  const second = cache.load('same', loader)
+
+  const first = cache.load('same', loader, ownerA)
+  const second = cache.load('same', loader, ownerB)
   assert.equal(first, second)
-  release()
+  releaseLoad()
   assert.equal(await first, 'blob:shared')
   assert.equal(calls, 1)
+  assert.equal(cache.stats().ownedEntries, 1)
 
-  await assert.rejects(cache.load('retry', async () => { throw new Error('first failure') }), /first failure/)
+  assert.equal(cache.release('same', ownerA, { purge: true }), true)
+  assert.deepEqual(revoked, [])
+  assert.equal(cache.release('same', ownerB, { purge: true }), true)
+  assert.deepEqual(revoked, ['blob:shared'])
+  assert.equal(cache.stats().entries, 0)
+})
+
+test('presented image resource cache permits retry after a failed owned load', async () => {
+  const bundle = loadClientBundle()
+  const owner = {}
+  const cache = bundle.createPresentedImageResourceCache({
+    createObjectURL: () => 'blob:retry',
+    revokeObjectURL: () => {},
+  })
+
+  await assert.rejects(
+    cache.load('retry', async () => { throw new Error('first failure') }, owner),
+    /first failure/,
+  )
+  assert.equal(cache.stats().entries, 0)
   assert.equal(await cache.load('retry', async () => ({
     data: new Uint8Array(1),
     mediaType: 'image/png',
-  })), 'blob:shared')
+  }), owner), 'blob:retry')
+  assert.equal(cache.stats().ownedEntries, 1)
 })
 
 test('presented image resource cache disposal rejects late loads without creating orphan URLs', async () => {
   const bundle = loadClientBundle()
   const created = []
   const revoked = []
-  let release
-  const gate = new Promise((resolve) => { release = resolve })
+  let releaseLoad
+  const gate = new Promise((resolve) => { releaseLoad = resolve })
   const cache = bundle.createPresentedImageResourceCache({
     createObjectURL: () => {
       created.push('blob:late')
@@ -1151,21 +1161,20 @@ test('presented image resource cache disposal rejects late loads without creatin
     revokeObjectURL: (url) => revoked.push(url),
   })
 
-  cache.pin('late')
   const pending = cache.load('late', async () => {
     await gate
     return { data: new Uint8Array(16), mediaType: 'image/png' }
-  })
+  }, {})
   cache.dispose()
-  release()
+  releaseLoad()
   await assert.rejects(pending, /cache disposed/)
   assert.deepEqual(created, [])
   assert.deepEqual(revoked, [])
   assert.deepEqual(cache.stats(), {
     entries: 0,
-    pinnedKeys: 0,
-    idleEntries: 0,
-    idleBytes: 0,
+    settledEntries: 0,
+    residentBytes: 0,
+    ownedEntries: 0,
     disposed: true,
   })
 })
