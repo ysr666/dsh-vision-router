@@ -74,7 +74,15 @@ The final Host-owned compatibility wrapper remains justified until both conditio
 
 ### Post-H3 dispatcher lifecycle hardening
 
-Router-owned `VisionProviderTransport` owns the lifecycle of every ProxyAgent it constructs. A live proxy identity change retires the previous dispatcher immediately as an authority decision, but request leases prevent graceful close until already-admitted fetch calls have released it. Clearing the plugin proxy retires the cached dispatcher without constructing a replacement, and plugin fiber cleanup unregisters the transport registry before calling `dispose()`. Pending constructors that resolve after replacement or unload are still retired and closed; synchronous loader failures cannot poison the cache or disposal state. This lifecycle work is the prerequisite for any later per-redirect dispatcher selector, because a selector may create/retain more than one routing dispatcher over one Fetch redirect chain.
+Both explicit DVR proxy paths now use one `createProxyDispatcherPool()` lease/retire owner. A live proxy identity change retires the previous dispatcher immediately as an authority decision, but request leases prevent graceful close until already-admitted fetch calls have handed control back. Clearing the plugin proxy retires the cached dispatcher without constructing a replacement, Router-owned plugin cleanup calls `transport.dispose()`, and the Host-owned compatibility boundary disposes its pool with its own fiber. Pending constructors that resolve after replacement or unload are still retired and closed; synchronous loader/fetch failures cannot strand leases or poison the cache.
+
+### Per-hop redirect authority
+
+`proxyHosts` is an authorization upper bound, not merely a first-request filter. DVR first checks the original request URL before importing its userland Undici; if that URL is not listed, the entire request remains on the inherited Host path, including any later redirect into a listed domain. This deliberately preserves #149's no-Undici boundary for non-admitted traffic.
+
+When the original URL is listed, DVR supplies Fetch with a tiny request-scoped dispatcher selector rather than a fixed ProxyAgent. Each Undici `dispatch()` re-checks `options.origin`: listed hops use the leased DVR ProxyAgent; non-listed or malformed origins use the dispatcher that the request inherited at admission time (an explicit caller dispatcher when present, otherwise Undici's current Host global dispatcher snapshot). The selector borrows that fallback and never owns or closes it. Fetch/Undici therefore remains authoritative for redirect status handling, method/body rewriting, replay, credential/header stripping, redirect limits, and cancellation.
+
+This also preserves the DSH 0.1.5 Host policy across the repository's Undici-major split: Undici 8 publishes its Dispatcher v2 globally and a `Dispatcher1Wrapper` under the legacy global symbol; DVR's Undici 7 reads that legacy symbol, so a non-listed redirect hop can safely delegate back to the Host-owned dispatcher instead of manufacturing a direct connection.
 
 ## System proxy terminology
 

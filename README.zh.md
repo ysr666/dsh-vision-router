@@ -378,7 +378,7 @@ Vision Router 默认**不接管网络出口**。`proxy` 留空时，Router-owned
 
 在 DSH 0.1.5 系列（rc.1+）中，Host 已提供统一出网代理：`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` 在启动时解析并应用；TUN 模式也会在更底层透明生效。DSH 本身不会自动读取 macOS/Windows 的“系统代理”开关，所以仅打开代理软件的 System Proxy 并不等价于 CLI 已经走代理。
 
-只有在你确实需要“**视觉请求单独走另一条代理**”时才填写 `proxy`。这仍保留给旧 Host、SOCKS5 用户和按视觉域名定向覆盖的高级场景；`proxyHosts` 只约束这一插件级覆盖，不会重定义 Host 的全局代理策略。
+只有在你确实需要“**视觉请求单独走另一条代理**”时才填写 `proxy`。这仍保留给旧 Host、SOCKS5 用户和按视觉域名定向覆盖的高级场景；`proxyHosts` 只约束这一插件级覆盖，不会重定义 Host 的全局代理策略。 Redirect 也不会扩大这个范围：已进入 DVR 代理的请求一旦跳转到 `proxyHosts` 之外，该跳立即回到请求原本继承的 Host/caller dispatcher；首个 URL 不在 `proxyHosts` 的请求则全程保持 Host-owned，即使后续跳转进入名单也不会临时加载 DVR 代理。
 
 ### 本地 Ollama 视觉后端（并入自 dsh-vision）
 

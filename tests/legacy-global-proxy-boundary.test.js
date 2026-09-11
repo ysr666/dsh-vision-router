@@ -30,6 +30,29 @@ async function drain(stream) {
   return out
 }
 
+const defaultFakeHostDispatcher = Object.freeze({
+  dispatch() { return 'host' },
+})
+
+function fakeUndiciModule(ProxyAgent, fallbackDispatcher = defaultFakeHostDispatcher) {
+  if (typeof ProxyAgent.prototype.dispatch !== 'function') {
+    Object.defineProperty(ProxyAgent.prototype, 'dispatch', {
+      configurable: true,
+      value() { return this },
+    })
+  }
+  return {
+    ProxyAgent,
+    getGlobalDispatcher: () => fallbackDispatcher,
+  }
+}
+
+function selectedDispatcher(dispatcher, input) {
+  if (!dispatcher || typeof dispatcher.dispatch !== 'function') return dispatcher
+  const origin = new URL(String(input)).origin
+  return dispatcher.dispatch({ origin }, {})
+}
+
 test('default and Router-owned visual chains do not require the legacy compatibility seam', () => {
   assert.equal(legacyGlobalProxyRequired({}), false)
   assert.equal(legacyGlobalProxyRequired({ proxy: 'http://127.0.0.1:7890' }), false)
@@ -123,7 +146,7 @@ test('scoped Host-owned visual fetch gets the DVR dispatcher while concurrent sa
     }
   }
   const originalFetch = async (input, init = {}) => {
-    calls.push({ input: String(input), dispatcher: init.dispatcher })
+    calls.push({ input: String(input), dispatcher: selectedDispatcher(init.dispatcher, input) })
     return new Response('ok')
   }
   const config = baseConfig()
@@ -132,7 +155,7 @@ test('scoped Host-owned visual fetch gets the DVR dispatcher while concurrent sa
   try {
     globalThis.fetch = originalFetch
     installLegacyGlobalProxyBoundary(ctx, config, {
-      importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+      importUndici: async () => fakeUndiciModule(FakeProxyAgent),
     })
 
     const scoped = streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
@@ -159,19 +182,67 @@ test('scoped Host-owned visual fetch gets the DVR dispatcher while concurrent sa
   }
 })
 
+test('Host-owned scoped redirect leaves the DVR proxy when the next hop is outside proxyHosts', async () => {
+  const savedFetch = globalThis.fetch
+  const { MockAgent } = await import('undici')
+  const proxyPath = new MockAgent()
+  const hostPath = new MockAgent()
+  proxyPath.disableNetConnect()
+  hostPath.disableNetConnect()
+  proxyPath
+    .get('https://provider.example.test')
+    .intercept({ path: '/start', method: 'GET' })
+    .reply(302, '', { headers: { location: 'https://cdn.example.test/final' } })
+  hostPath
+    .get('https://cdn.example.test')
+    .intercept({ path: '/final', method: 'GET' })
+    .reply(200, 'HOST-FINAL')
+
+  let proxyDispatches = 0
+  class FakeProxyAgent {
+    constructor(url) { this.url = url }
+    dispatch(options, handler) {
+      proxyDispatches += 1
+      return proxyPath.dispatch(options, handler)
+    }
+  }
+  const config = baseConfig()
+  const ctx = { get() { return { get: () => config } } }
+
+  try {
+    globalThis.fetch = savedFetch
+    installLegacyGlobalProxyBoundary(ctx, config, {
+      originalFetch: savedFetch,
+      importUndici: async () => fakeUndiciModule(FakeProxyAgent, hostPath),
+    })
+    const output = await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        const response = await globalThis.fetch('https://provider.example.test/start')
+        yield await response.text()
+      },
+    })))
+    assert.deepEqual(output, ['HOST-FINAL'])
+    assert.equal(proxyDispatches, 1, 'only the listed first hop may use the DVR proxy')
+  } finally {
+    globalThis.fetch = savedFetch
+    await proxyPath.close()
+    await hostPath.close()
+  }
+})
+
 test('live proxy clearing takes effect inside an already scoped stream', async () => {
   const saved = globalThis.fetch
   const calls = []
   class FakeProxyAgent { constructor(url) { this.url = url } }
   let config = baseConfig()
   const ctx = { get() { return { get: () => config } } }
-  const originalFetch = async (_input, init = {}) => {
-    calls.push(init.dispatcher)
+  const originalFetch = async (input, init = {}) => {
+    calls.push(selectedDispatcher(init.dispatcher, input))
     return new Response('ok')
   }
   try {
     globalThis.fetch = originalFetch
-    installLegacyGlobalProxyBoundary(ctx, config, { importUndici: async () => ({ ProxyAgent: FakeProxyAgent }) })
+    installLegacyGlobalProxyBoundary(ctx, config, { importUndici: async () => fakeUndiciModule(FakeProxyAgent) })
     await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
       async *[Symbol.asyncIterator]() {
         await globalThis.fetch('https://provider.example.test/one')
@@ -192,14 +263,14 @@ test('legacy direct whole-turn fallback preserves existing unscoped behavior nar
   const calls = []
   class FakeProxyAgent { constructor(url) { this.url = url } }
   const config = baseConfig({ routing: true, chainRoute: '' })
-  const originalFetch = async (_input, init = {}) => {
-    calls.push(init.dispatcher)
+  const originalFetch = async (input, init = {}) => {
+    calls.push(selectedDispatcher(init.dispatcher, input))
     return new Response('ok')
   }
   try {
     globalThis.fetch = originalFetch
     installLegacyGlobalProxyBoundary({ get() { return { get: () => config } } }, config, {
-      importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+      importUndici: async () => fakeUndiciModule(FakeProxyAgent),
     })
     await globalThis.fetch('https://provider.example.test/direct-turn')
     assert.equal(isVisionProxyDispatcher(calls[0]), true)
@@ -232,6 +303,81 @@ test('synchronous Undici loader failure does not poison the dispatcher cache', a
     await assert.rejects(once(), /sync import failure/)
     assert.equal(imports, 2, 'a rejected lazy import must not leave a poisoned cached promise')
   } finally {
+    globalThis.fetch = saved
+  }
+})
+
+test('legacy proxy lease releases and closes its Agent after a synchronous fetch failure', async () => {
+  const saved = globalThis.fetch
+  const agents = []
+  class FakeProxyAgent {
+    constructor(url) { this.url = url; this.closed = 0; agents.push(this) }
+    async close() { this.closed += 1 }
+  }
+  const config = baseConfig()
+  const originalFetch = () => { throw new Error('sync fetch failure') }
+  let dispose
+  try {
+    globalThis.fetch = originalFetch
+    dispose = installLegacyGlobalProxyBoundary({ get() { return { get: () => config } } }, config, {
+      originalFetch,
+      importUndici: async () => fakeUndiciModule(FakeProxyAgent),
+    })
+    const run = () => drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        await globalThis.fetch('https://provider.example.test/fail')
+        yield 'unreachable'
+      },
+    })))
+    await assert.rejects(run(), /sync fetch failure/)
+    assert.equal(agents.length, 1)
+    dispose()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(agents[0].closed, 1, 'failed fetch must not strand a leased ProxyAgent')
+  } finally {
+    dispose?.()
+    globalThis.fetch = saved
+  }
+})
+
+test('legacy proxy clear retires the cached Agent and boundary cleanup retires its replacement', async () => {
+  const saved = globalThis.fetch
+  const agents = []
+  class FakeProxyAgent {
+    constructor(url) { this.url = url; this.closed = 0; agents.push(this) }
+    async close() { this.closed += 1 }
+  }
+  let config = baseConfig()
+  const originalFetch = async (input, init = {}) => {
+    selectedDispatcher(init.dispatcher, input)
+    return new Response('ok')
+  }
+  let dispose
+  try {
+    globalThis.fetch = originalFetch
+    dispose = installLegacyGlobalProxyBoundary({ get() { return { get: () => config } } }, config, {
+      originalFetch,
+      importUndici: async () => fakeUndiciModule(FakeProxyAgent),
+    })
+    await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        await globalThis.fetch('https://provider.example.test/one')
+        config = { ...config, proxy: '' }
+        await globalThis.fetch('https://provider.example.test/direct')
+        config = baseConfig({ proxy: 'http://127.0.0.1:7891' })
+        await globalThis.fetch('https://provider.example.test/two')
+        yield 'done'
+      },
+    })))
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(agents.length, 2)
+    assert.equal(agents[0].closed, 1, 'clearing proxy must retire the old Agent')
+    assert.equal(agents[1].closed, 0)
+    dispose()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(agents[1].closed, 1, 'boundary cleanup must retire the replacement Agent')
+  } finally {
+    dispose?.()
     globalThis.fetch = saved
   }
 })
@@ -274,9 +420,10 @@ test('removal condition names both remaining blockers', () => {
 })
 
 test('H2 moves ProxyAgent ownership out of Core and scopes every DVR-owned Host adapter stream', async () => {
-  const [core, boundary, benchmark] = await Promise.all([
+  const [core, boundary, pool, benchmark] = await Promise.all([
     readFile(new URL('../index.js', import.meta.url), 'utf8'),
     readFile(new URL('../lib/legacy-global-proxy-boundary.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/proxy-dispatcher-pool.js', import.meta.url), 'utf8'),
     readFile(new URL('../lib/vision-capability-benchmark-service.js', import.meta.url), 'utf8'),
   ])
   assert.doesNotMatch(core, /new ProxyAgent\(/)
@@ -284,9 +431,11 @@ test('H2 moves ProxyAgent ownership out of Core and scopes every DVR-owned Host 
   assert.doesNotMatch(core, /globalThis\.fetch = patchedFetch/)
   assert.ok((core.match(/streamWithLegacyGlobalProxyScope\(/g) ?? []).length >= 2)
   assert.match(benchmark, /streamWithLegacyGlobalProxyScope\(/)
-  assert.match(boundary, /new ProxyAgent\(url\)/)
-  const hostAdmission = boundary.indexOf('if (!proxyHostMatchesAny(url.hostname, proxyHostsOf(current)))')
+  assert.doesNotMatch(boundary, /new ProxyAgent\(/)
+  assert.match(pool, /new ProxyAgent\(proxyUrl\)/)
+  const hostAdmission = boundary.indexOf('if (!proxyHostMatchesAny(url.hostname, proxyHosts))')
   const projection = boundary.indexOf('const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)', hostAdmission)
   assert.ok(hostAdmission >= 0)
   assert.ok(projection > hostAdmission, 'proxy URL compatibility projection must stay after host admission')
+  assert.match(boundary, /createPerHopProxyDispatcher\(proxyDispatcher, fallbackDispatcher, proxyHosts\)/)
 })
