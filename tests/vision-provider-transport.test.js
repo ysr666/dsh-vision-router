@@ -98,6 +98,19 @@ test('blank plugin proxy inherits the ambient Host dispatcher without importing 
   }
 })
 
+test('Host-first production path does not import the Host proxy package or duplicate its route decision', async () => {
+  const files = await Promise.all([
+    readFile(new URL('../lib/vision-provider-transport.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/public-entry.js', import.meta.url), 'utf8'),
+    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+  ])
+  for (const source of files) {
+    assert.doesNotMatch(source, /@deepseek-ai\/dsh-http-proxy/)
+    assert.doesNotMatch(source, /proxyRouteFor\s*\(/)
+  }
+})
+
 test('provider-scoped proxy uses an explicit dispatcher only for configured hosts', async () => {
   const calls = []
   class FakeProxyAgent {

@@ -1,8 +1,8 @@
 # Host-first Proxy Convergence
 
-Status: **approved migration direction; Phase H0 implemented without raising the DSH support floor**
+Status: **H0 + H1 implemented without raising the DSH support floor**
 
-Baseline: `main@e39eaa72c7c1ee56d3f5d0043781e56f357c68a3`
+H1 baseline: `main@9fb7f1736813f1f5c63c1f0e8214eb12a779f24e`
 
 ## Decision
 
@@ -16,7 +16,7 @@ An explicit non-empty `proxy` keeps the existing Vision Router behavior for user
 
 DSH's 0.1.5 line introduced a process-wide outbound proxy subsystem (`@deepseek-ai/dsh-http-proxy`) with one Host policy and a public `proxyRouteFor()` transport seam. Keeping a second generic proxy authority inside Vision Router would duplicate routing, redirect, dispatcher-lifecycle, and ownership policy.
 
-The plugin must not import or require that Host package yet: the current public support window still includes older DSH releases. H0 changes semantics only where behavior was already effectively a no-op and adds tests proving Host inheritance.
+The production plugin does not import or require that Host package. The current public support window still includes older DSH releases, and the upstream package contract explicitly says ordinary `fetch()` callers should do nothing: the Host global dispatcher already owns routing. Calling `proxyRouteFor()` is reserved for consumers that must branch on proxy state or own a transport that cannot use normal fetch. H1 therefore adopts the Host capability by preserving plain fetch and proving the behavior against exact Host source, rather than adding a second route decision.
 
 ## Compatibility matrix
 
@@ -37,11 +37,19 @@ The plugin must not import or require that Host package yet: the current public 
 5. No schema migration, no setting rewrite, no DSH peer-range increase, and no new dependency on `@deepseek-ai/dsh-http-proxy`.
 6. The legacy seam remains available only for the intersection: explicit plugin proxy **and** Host-owned/raw-fetch visual provider.
 
+## H1 — Host capability adoption
+
+H1 is complete as an egress contract, not as a new production dependency. Exact DSH source gates now run a local fake proxy through the Host's real `installProxyFromEnvironment()` implementation and drive Vision Router's shipping provider transport with `proxy: ''`. The contract proves all of the following:
+
+1. Host proxy policy receives Vision Router egress while Vision Router reports no private override and never imports its ProxyAgent.
+2. Host `NO_PROXY` remains authoritative for a bypassed target.
+3. A redirect from a proxied origin to a `NO_PROXY` origin is re-evaluated by the Host dispatcher per hop; the first-hop proxy decision is not pinned across the redirect.
+4. The same contract runs against the exact current stable Host and exact preview evidence on Linux, macOS, and Windows through the existing source-contract matrix.
+5. Production code contains no `@deepseek-ai/dsh-http-proxy` dependency or import. `proxyRouteFor()` is used only by the exact-source test as an oracle for the Host decision.
+
+The current stable evidence advances to DSH `0.1.5-rc.2`; `0.1.5-rc.1` remains explicitly peer-admitted, and the public minimum remains `0.1.0-rc.8`.
+
 ## Next phases
-
-### H1 — Host capability adoption
-
-When the minimum supported DSH window can safely expose the Host proxy seam, detect/use the Host-owned route directly rather than inferring network behavior. Characterize parity against real DSH egress tests first. Do not silently change SOCKS or selective-domain behavior.
 
 ### H2 — Retire the process-global compatibility patch
 

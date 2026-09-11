@@ -13,7 +13,7 @@ test('P3 support policy contains only public stable support semantics', () => {
   assert.deepEqual(DSH_SUPPORT_WINDOW, {
     dvrTrain: '2.1.x',
     minimum: '0.1.0-rc.8',
-    currentStable: '0.1.5-rc.1',
+    currentStable: '0.1.5-rc.2',
   })
   assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'previous'), false)
   assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'canary'), false)
@@ -23,7 +23,7 @@ test('P3 support policy contains only public stable support semantics', () => {
 
 test('preview and dynamic canaries are verification evidence, not support-window fields', () => {
   assert.deepEqual(DSH_VERIFICATION_EVIDENCE, {
-    exactStable: '0.1.5-rc.1',
+    exactStable: '0.1.5-rc.2',
     exactPreview: '0.1.5-alpha.2',
     stableCanaryDistTag: 'latest',
     previewCanaryDistTag: 'alpha',
@@ -50,7 +50,7 @@ test('Doctor text separates public support policy from verification evidence', (
   const evidenceAt = lines.indexOf('DSH compatibility verification evidence:')
   assert.ok(evidenceAt > 0)
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.0-rc.8')))
-  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.1')))
+  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.2')))
   assert.equal(lines.slice(0, evidenceAt).some((line) => /alpha|canary/i.test(line)), false)
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact preview (not a support claim): 0.1.5-alpha.2')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag latest')))
@@ -68,7 +68,7 @@ test('public READMEs separate stable support from preview verification evidence'
   for (const source of [english, chinese]) {
     assert.match(source, /2\.1\.x/)
     assert.match(source, /0\.1\.0-rc\.8/)
-    assert.match(source, /0\.1\.5-rc\.1/)
+    assert.match(source, /0\.1\.5-rc\.2/)
     assert.match(source, /0\.1\.5-alpha\.2/)
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
     assert.doesNotMatch(source, /0\.1\.2-alpha\.4/)
@@ -77,11 +77,17 @@ test('public READMEs separate stable support from preview verification evidence'
 
 
 test('current-contract follows the current stable Host while preview remains a separate gate', async () => {
-  const [contract, preview] = await Promise.all([
+  const [contract, preview, exactSource] = await Promise.all([
     readFile(new URL('../.github/workflows/dsh-contract.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
   ])
-  assert.match(contract, /name: current-contract[\s\S]*?dsh: 0\.1\.5-rc\.1/)
+  assert.match(contract, /name: current-contract[\s\S]*?dsh: 0\.1\.5-rc\.2/)
+  assert.match(preview, /dsh: 0\.1\.5-rc\.2/)
+  assert.match(preview, /fb2c4b9e698e30edb738bca4cf0618587db7d203/)
   assert.match(preview, /dsh: 0\.1\.5-alpha\.2/)
   assert.doesNotMatch(contract, /dsh: 0\.1\.5-alpha\.2/)
+  assert.match(exactSource, /DSH_EXPECTED_VERSION: 0\.1\.5-rc\.2/)
+  assert.match(exactSource, /DSH_EXPECTED_COMMIT: fb2c4b9e698e30edb738bca4cf0618587db7d203/)
+  assert.match(exactSource, /scripts\/dsh-proxy-egress-contract\.mjs/)
 })
