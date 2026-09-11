@@ -75,6 +75,51 @@ function fakeDiscoveryContext({ baseURL = 'https://open.bigmodel.example/api/paa
   }
 }
 
+
+function memoryCacheFs(initial = {}) {
+  const files = new Map(Object.entries(initial))
+  return {
+    files,
+    ops: {
+      async readFile(file) {
+        if (!files.has(file)) {
+          const error = new Error('missing')
+          error.code = 'ENOENT'
+          throw error
+        }
+        return files.get(file)
+      },
+      async mkdir() {},
+      async writeFile(file, body) { files.set(file, body) },
+      async rename(from, to) {
+        files.set(to, files.get(from))
+        files.delete(from)
+      },
+    },
+  }
+}
+
+function mutableDiscoveryContext(initialProviders = {}) {
+  const state = { providers: initialProviders, settingsAvailable: true }
+  const settings = {
+    get(namespace) {
+      if (namespace === 'llm-pi-ai') return { providers: state.providers }
+      if (namespace === 'vision-router') return { providers: [] }
+      return undefined
+    },
+  }
+  return {
+    state,
+    ctx: {
+      llm: { registration() { return undefined } },
+      get(name) {
+        if (name === 'settings') return state.settingsAvailable ? settings : undefined
+        return undefined
+      },
+    },
+  }
+}
+
 test('OpenAI-compatible listing normalization proves existence only and de-duplicates ids', () => {
   assert.deepEqual(
     normalizeOpenAIModelListing({
@@ -422,4 +467,297 @@ test('index prelude injection is idempotent and runs after head boot scripts but
   assert.match(once, /data-vision-router-live-models/)
   assert.ok(once.indexOf('data-vision-router-live-models') > once.indexOf('/shell.js'))
   assert.ok(once.indexOf('data-vision-router-live-models') < once.indexOf('</head>'))
+})
+
+test('authoritative provider config prunes removed cached providers and rewrites the cache', async () => {
+  const cacheFile = '/virtual/live-models.json'
+  const cachedProviders = [
+    { provider: 'keep', fingerprint: 'keep-route', discoveredAt: 9_000, models: [{ id: 'keep-model' }] },
+    { provider: 'removed', fingerprint: 'removed-route', discoveredAt: 9_000, models: [{ id: 'removed-model' }] },
+  ]
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({ version: LIVE_MODEL_CACHE_VERSION, providers: cachedProviders }),
+  })
+  const { ctx } = mutableDiscoveryContext({
+    keep: { baseURL: 'https://keep.example/v1', api: 'openai-completions' },
+  })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+
+  await manager.ready()
+  const snapshot = await manager.snapshot({ schedule: false })
+  assert.deepEqual(snapshot.providers.map((entry) => entry.provider), ['keep'])
+  assert.equal(manager.hasModel('removed', 'removed-model'), false)
+  await manager.dispose()
+  const disk = JSON.parse(mem.files.get(cacheFile))
+  assert.deepEqual(disk.providers.map((entry) => entry.provider), ['keep'])
+})
+
+test('temporarily unavailable settings never turn an empty read into provider cache deletion', async () => {
+  const cacheFile = '/virtual/live-models-unavailable.json'
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({
+      version: LIVE_MODEL_CACHE_VERSION,
+      providers: [{ provider: 'cached', fingerprint: 'cached-route', discoveredAt: 9_000, models: [{ id: 'cached-model' }] }],
+    }),
+  })
+  const { ctx, state } = mutableDiscoveryContext({})
+  state.settingsAvailable = false
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+
+  await manager.ready()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers.map((entry) => entry.provider), ['cached'])
+  manager.queueConfigured()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers.map((entry) => entry.provider), ['cached'])
+  await manager.dispose()
+})
+
+test('removed provider cannot be resurrected by a late inflight discovery completion', async () => {
+  const cacheFile = '/virtual/live-models-inflight.json'
+  const mem = memoryCacheFs()
+  const { ctx, state } = mutableDiscoveryContext({
+    zai: { baseURL: 'https://zai.example/v1', api: 'openai-completions' },
+  })
+  let release
+  let started
+  const startedPromise = new Promise((resolve) => { started = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => {
+      started()
+      await new Promise((resolve) => { release = resolve })
+      return new Response(JSON.stringify({ data: [{ id: 'late-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await startedPromise
+  state.providers = {}
+  manager.queueConfigured()
+  release()
+  const settled = await waitForSettled(manager)
+  assert.equal(settled.providers.some((entry) => entry.provider === 'zai'), false)
+  assert.equal(manager.hasModel('zai', 'late-model'), false)
+  await manager.dispose()
+})
+
+test('removing a provider clears queued/backoff lifecycle state so a later re-add probes immediately', async () => {
+  const cacheFile = '/virtual/live-models-readd.json'
+  const mem = memoryCacheFs()
+  const { ctx, state } = mutableDiscoveryContext({
+    zai: { baseURL: 'https://zai.example/v1', api: 'openai-completions' },
+  })
+  let calls = 0
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => {
+      calls += 1
+      if (calls === 1) return new Response('offline', { status: 503 })
+      return new Response(JSON.stringify({ data: [{ id: 'readded-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await waitForSettled(manager)
+  assert.equal(calls, 1)
+
+  state.providers = {}
+  manager.queueConfigured()
+  state.providers = {
+    zai: { baseURL: 'https://zai.example/v1', api: 'openai-completions' },
+  }
+  manager.queueConfigured()
+  const live = await waitForProvider(manager, 'zai')
+  assert.equal(live.models.some((model) => model.id === 'readded-model'), true)
+  assert.equal(calls, 2, 're-added provider must not inherit the removed provider backoff window')
+  await manager.dispose()
+})
+
+test('same-name provider transport changes fence old inflight results even without an invalidation event', async () => {
+  const cacheFile = '/virtual/live-models-route-change.json'
+  const mem = memoryCacheFs()
+  const { ctx, state } = mutableDiscoveryContext({
+    zai: { baseURL: 'https://old.example/v1', api: 'openai-completions' },
+  })
+  const calls = []
+  let releaseOld
+  let oldStarted
+  const oldStartedPromise = new Promise((resolve) => { oldStarted = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async (url) => {
+      calls.push(String(url))
+      if (calls.length === 1) {
+        oldStarted()
+        await new Promise((resolve) => { releaseOld = resolve })
+        return new Response(JSON.stringify({ data: [{ id: 'old-route-model' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'new-route-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await oldStartedPromise
+  state.providers = {
+    zai: { baseURL: 'https://new.example/v1', api: 'openai-completions' },
+  }
+  manager.queueConfigured()
+  releaseOld()
+  const live = await waitForProvider(manager, 'zai')
+  assert.deepEqual(calls, [
+    'https://old.example/v1/models',
+    'https://new.example/v1/models',
+  ])
+  assert.deepEqual(live.models.map((model) => model.id), ['new-route-model'])
+  assert.equal(manager.hasModel('zai', 'old-route-model'), false)
+  await manager.dispose()
+})
+
+test('provider removal drops queued discovery before a concurrency slot can start it', async () => {
+  const cacheFile = '/virtual/live-models-queued-removal.json'
+  const mem = memoryCacheFs()
+  const { ctx, state } = mutableDiscoveryContext({
+    first: { baseURL: 'https://first.example/v1', api: 'openai-completions' },
+    removed: { baseURL: 'https://removed.example/v1', api: 'openai-completions' },
+  })
+  const calls = []
+  let releaseFirst
+  let firstStarted
+  const firstStartedPromise = new Promise((resolve) => { firstStarted = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    concurrency: 1,
+    now: () => 10_000,
+    fetchImpl: async (url) => {
+      calls.push(String(url))
+      firstStarted()
+      await new Promise((resolve) => { releaseFirst = resolve })
+      return new Response(JSON.stringify({ data: [{ id: 'first-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await firstStartedPromise
+  state.providers = {
+    first: { baseURL: 'https://first.example/v1', api: 'openai-completions' },
+  }
+  manager.queueConfigured()
+  releaseFirst()
+  await waitForSettled(manager)
+  assert.deepEqual(calls, ['https://first.example/v1/models'])
+  assert.equal((await manager.snapshot()).providers.some((entry) => entry.provider === 'removed'), false)
+  await manager.dispose()
+})
+
+test('remove then re-add of the same provider creates a new lifecycle generation', async () => {
+  const cacheFile = '/virtual/live-models-reincarnation.json'
+  const mem = memoryCacheFs()
+  const config = { baseURL: 'https://same.example/v1', api: 'openai-completions' }
+  const { ctx, state } = mutableDiscoveryContext({ zai: config })
+  let calls = 0
+  let releaseOld
+  let oldStarted
+  const oldStartedPromise = new Promise((resolve) => { oldStarted = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => {
+      calls += 1
+      if (calls === 1) {
+        oldStarted()
+        await new Promise((resolve) => { releaseOld = resolve })
+        return new Response(JSON.stringify({ data: [{ id: 'old-lifecycle-model' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ data: [{ id: 'new-lifecycle-model' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await oldStartedPromise
+  state.providers = {}
+  manager.queueConfigured()
+  state.providers = { zai: config }
+  manager.queueConfigured()
+  releaseOld()
+  const live = await waitForProvider(manager, 'zai')
+  assert.equal(calls, 2)
+  assert.deepEqual(live.models.map((model) => model.id), ['new-lifecycle-model'])
+  assert.equal(manager.hasModel('zai', 'old-lifecycle-model'), false)
+  await manager.dispose()
+})
+
+test('dispose fences a late fetch that ignores AbortSignal and never persists its result', async () => {
+  const cacheFile = '/virtual/live-models-dispose.json'
+  const mem = memoryCacheFs()
+  const { ctx } = mutableDiscoveryContext({
+    zai: { baseURL: 'https://zai.example/v1', api: 'openai-completions' },
+  })
+  let release
+  let started
+  const startedPromise = new Promise((resolve) => { started = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => {
+      started()
+      await new Promise((resolve) => { release = resolve })
+      return new Response(JSON.stringify({ data: [{ id: 'too-late' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+
+  await manager.ready()
+  manager.queueConfigured()
+  await startedPromise
+  const disposing = manager.dispose()
+  release()
+  await disposing
+  assert.equal((await manager.snapshot({ schedule: false })).providers.some((entry) => entry.provider === 'zai'), false)
+  assert.equal([...mem.files.values()].some((body) => String(body).includes('too-late')), false)
 })
