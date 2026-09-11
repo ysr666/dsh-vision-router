@@ -254,6 +254,35 @@ test('advanced page consolidates performance, wrapper scope, compatibility, netw
   assert.match(text, /保存后需重启 DSH 才生效/)
 })
 
+
+test('H3 keeps proxy advanced/local-only while blank developer routes restore defaults', async () => {
+  assert.match(SETTINGS_IA_CLIENT_PRELUDE, /key==='proxy'\|\|key==='wrapperRoute'\|\|key==='chainRoute'/)
+  assert.match(SETTINGS_IA_CLIENT_PRELUDE, /return text\?\{value:text\}:\{clear:true\}/)
+
+  const React = reactStub([
+    'advanced', {}, undefined, undefined, undefined,
+    { status: 'idle', error: undefined },
+    { status: 'ready', groups: [] },
+    { ollama: false, lmstudio: false, developer: true },
+  ])
+  const local = createHarness(React, { local: true })
+  const localText = textOf(local.registeredComponent({ scope: local.scope }))
+  assert.match(localText, /视觉专用代理覆盖/)
+  assert.match(localText, /视觉代理覆盖域名/)
+  assert.match(localText, /视觉链路由名/)
+
+  const remoteReact = reactStub([
+    'advanced', {}, undefined, undefined, undefined,
+    { status: 'idle', error: undefined },
+    { status: 'ready', groups: [] },
+    { ollama: false, lmstudio: false, developer: true },
+  ])
+  const remote = createHarness(remoteReact, { local: false })
+  const remoteText = textOf(remote.registeredComponent({ scope: remote.scope }))
+  assert.doesNotMatch(remoteText, /视觉专用代理覆盖/)
+  assert.doesNotMatch(remoteText, /视觉代理覆盖域名/)
+})
+
 test('remote view does not expose local backend and privileged network controls', () => {
   const React = reactStub([
     'local',

@@ -1,10 +1,10 @@
 # Host-first Proxy Convergence
 
-Status: **H0 + H1 + H2 implemented without raising the DSH support floor**
+Status: **H0 + H1 + H2 + H3 complete without raising the DSH support floor**
 
 H1 baseline: `main@9fb7f1736813f1f5c63c1f0e8214eb12a779f24e`
 
-H2 baseline: `main@b03e541dce8ec5377a54989803a49ca120c3c26e`
+H2 merged: `main@40b43d78b7c105c19188059172c2883eea9e681c`
 
 ## Decision
 
@@ -62,11 +62,15 @@ H2 regression proof includes a deliberately blocked Host-owned visual stream plu
 
 One unscoped compatibility case remains intentionally: `routing=true` with an explicitly blank `chainRoute` routes the whole image turn directly to the first Host provider after the DVR routing hook returns, so there is no DVR-owned adapter-iteration boundary to scope. H2 preserves that old configuration narrowly rather than silently breaking it in a patch release.
 
-## Next phase
+## H3 — Product contract for the override and last wrapper
 
-### H3 — Re-evaluate the plugin override and last wrapper
+H3 decides to **keep `proxy` / `proxyHosts` supported and non-deprecated** as a local-only Advanced override. No extra “legacy proxy” toggle is added: blank `proxy` is already the opt-out/default, the controls are already behind Advanced and local-only, and another authority bit would make the settings contract harder to reason about without removing the compatibility boundary.
 
-H3 should decide whether `proxy` / `proxyHosts` remain as an advanced SOCKS/selective override, move behind an explicit legacy toggle, or are deprecated in a major release. The final compatibility wrapper can disappear only when Host-owned adapter requests have a scoped transport seam that can carry the override without observing global fetch, **and** the direct whole-turn blank-`chainRoute` fallback is removed or migrated. Do not remove either behavior silently in a patch release while supported users still depend on it.
+This is a current capability decision, not inertia. The H3 audit on 2026-09-11 checked DSH `0.1.5-rc.2` plus upstream `master@c291e7961a515f6d7af9304e7fd1d257929aef26`: `@deepseek-ai/dsh-http-proxy` still accepts only `http:` / `https:` and explicitly diagnoses SOCKS-family URLs as unsupported. The Host LLM adapter surface at that revision also still has no generic per-call dispatcher/transport input that a plugin can pass through `ctx.llm.stream()`. DVR issue #455 provides current Windows + DSH 0.1.5-rc.1 user evidence that `socks5://` plus selective `proxyHosts` is a real supported deployment shape. Removing the override now would therefore remove capability, not merely delete compatibility code.
+
+The remaining unscoped `routing=true` + explicit `chainRoute=''` behavior is classified as **legacy persisted/manual-config compatibility only**. Current Settings does not create that state: leaving `chainRoute` blank clears the user-layer override, so the schema default `vision-chain` becomes effective again. Existing persisted/manual explicit-empty values continue to work in this support window; H3 neither migrates nor rewrites them. Public documentation must not teach “leave `chainRoute` blank to disable” as a current Settings workflow.
+
+The final Host-owned compatibility wrapper remains justified until both conditions are satisfied: (1) Host-owned adapter calls can receive the DVR-specific override through a scoped Host transport/dispatcher seam, or the DVR override is intentionally removed under a future announced product policy; and (2) the legacy direct whole-turn explicit-empty `chainRoute` state has been migrated or retired under the applicable support-window policy. A Host release that merely has a global HTTP(S) proxy does not satisfy those conditions.
 
 ## System proxy terminology
 

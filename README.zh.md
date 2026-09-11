@@ -354,7 +354,7 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 | `wrappedProviders` | `[{ provider: 'deepseek-official', models: [] }]` | 可选手动包装范围 `{ provider, models[] }`；用于关闭自动包装后手动指定，或限制某个 provider 只有部分模型可通过「👁 识图」进入 wrapper |
 | `routing` | `false` | 旧版整轮链路由（一次性整轮回答）。`false` = 工具优先流程（推荐） |
 | `reverseRouting` | `true` | 开启 `routing` 时，文字轮路由回 `textProvider` |
-| `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 准入包装路由名 / 降级链路由名（置空关闭） |
+| `wrapperRoute` / `chainRoute` | `deepseek-vision` / `vision-chain` | 开发者路由名。当前设置页留空会清除覆盖并恢复默认值；显式空字符串仅作为旧版/手工持久化配置兼容保留。 |
 | `stealth` | `false` | 接管官方 `deepseek-official` 路由（仅官方行；自定义路由默认由自动包装处理） |
 | `textProvider` | `deepseek-official` / `deepseek-v4-pro` | 负责思考的模型（你的日常模型） |
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
