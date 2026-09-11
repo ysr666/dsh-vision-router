@@ -7,6 +7,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 修复 / Fixes
 
+- **Router-owned ProxyAgent 生命周期根修**：`VisionProviderTransport` 现在显式拥有并释放自己创建的代理 dispatcher。代理 A→B 热切时旧 Agent 先进入 retire 状态，已有请求通过 lease 完成后再 graceful close；清空 `proxy` 会回收空闲 Agent；插件 fiber 卸载会注销 transport registry 并调用 `dispose()`；构造中的 Agent 即使在切换/卸载后才返回也不会泄漏。同步 Undici loader 异常也进入同一清理链。空代理和未命中 `proxyHosts` 仍保持 #149 的 no-Undici 路径。
+- **Router-owned ProxyAgent lifecycle hardening**: `VisionProviderTransport` now explicitly owns and releases the proxy dispatchers it creates. On A→B hot replacement the old Agent is retired, existing requests keep a lease until completion, and the Agent is then gracefully closed; clearing `proxy` retires an idle Agent; plugin fiber cleanup unregisters the transport and calls `dispose()`; late Agent construction after replacement/unload cannot leak. Synchronous Undici-loader failures now use the same cleanup path. Blank proxies and non-matching `proxyHosts` keep the #149 no-Undici path.
+
 - **Host-first H3 代理产品合同**：`proxy` / `proxyHosts` 继续作为受支持、非弃用、仅本机 Advanced 的视觉专用覆盖，不新增第二个“旧版代理”开关。当前 DSH 代理仍只支持 HTTP(S)，而 #455 已有 SOCKS5 + 选择性视觉域名的真实用户场景；Host adapter 也尚无可由插件逐调用传入的 dispatcher seam。另明确 `chainRoute=''` 仅为旧持久化/手工配置兼容：当前设置页留空会清除覆盖并恢复 `vision-chain` 默认值，不再文档化“置空关闭”为当前工作流。
 - **Host-first H3 proxy product contract**: `proxy` / `proxyHosts` remain supported, non-deprecated, local-only Advanced vision overrides; no second “legacy proxy” toggle is added. Current DSH proxy support is still HTTP(S)-only while #455 demonstrates a real SOCKS5 + selective-host deployment, and Host adapters still expose no plugin-supplied per-call dispatcher seam. Explicit `chainRoute=''` is now documented only as legacy persisted/manual compatibility: blanking the field in current Settings clears the override and restores the `vision-chain` default instead of creating a disabled route.
 
