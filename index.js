@@ -14,8 +14,8 @@
 //
 // Proxy: network egress is Host-owned by default. A blank `proxy` leaves fetch
 // entirely on DSH/Host's current network path. An explicit plugin proxy is an
-// advanced vision-only override for `proxyHosts`; the legacy process-fetch patch
-// exists only for Host-owned/raw-fetch visual providers that still need it.
+// advanced vision-only override for `proxyHosts`; Host-owned visual adapters use
+// a scoped compatibility wrapper, never configuration-wide process routing.
 
 // Compatibility shim: dsh 0.1.2-alpha.4 removed `session.events` in favor of
 // `session.snapshotEvents()`. This helper returns an array (or undefined) that
@@ -106,8 +106,7 @@ import {
 } from './lib/http-body-limit.js'
 import { writeArtifactFile } from './lib/artifact-boundary.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
-import { effectiveProxyUrlForUndici } from './lib/proxy-url-compat.js'
-import { markVisionProxyDispatcher } from './lib/proxy-routing.js'
+import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
@@ -1768,7 +1767,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     const corrected = await correctedVisionAnswer(pair, messages, options)
     if (corrected !== undefined) return corrected
     assertOpenCodeGoAffinityForPair(pair, options.sessionId)
-    return visionAnswer(ctx.llm, {
+    return visionAnswer({
+      stream(streamOptions) {
+        return streamWithLegacyGlobalProxyScope(
+          pair.provider,
+          pair.model,
+          () => ctx.llm.stream(streamOptions),
+        )
+      },
+    }, {
       provider: pair.provider,
       model: pair.model,
       messages,
@@ -2082,14 +2089,18 @@ export function apply(ctx, config = {}, runtime = {}) {
               })
               if (text === undefined) {
                 assertOpenCodeGoAffinityForPair(pair, options.sessionId)
-                yield* streamWithVisionSessionAffinity(options.sessionId, () => ctx.llm.stream({
-                  ...options,
-                  provider: pair.provider,
-                  model: pair.model,
-                  reasoningEffort: undefined,
-                  messages,
-                  signal: attemptSignal,
-                }))
+                yield* streamWithLegacyGlobalProxyScope(
+                  pair.provider,
+                  pair.model,
+                  () => streamWithVisionSessionAffinity(options.sessionId, () => ctx.llm.stream({
+                    ...options,
+                    provider: pair.provider,
+                    model: pair.model,
+                    reasoningEffort: undefined,
+                    messages,
+                    signal: attemptSignal,
+                  })),
+                )
                 return
               }
               if (text !== '') {
@@ -2230,76 +2241,8 @@ export function apply(ctx, config = {}, runtime = {}) {
   // #208: attachment refs, description memory and the event-log cursor are
   // owned by the same bounded SessionVisionStateStore above.
 
-  // ── legacy advanced proxy override for Host-owned visual providers ────────
-  //
-  // Host/DSH owns network egress when `proxy` is blank. This patch remains only
-  // for the compatibility case where a user explicitly asks Vision Router to
-  // override selected `proxyHosts` for a Host-owned/raw-fetch visual provider.
-  // Values are still resolved per request so the override can change live.
-
-  const currentProxyUrl = () => {
-    const value = current().proxy
-    return typeof value === 'string' && value !== '' ? value : undefined
-  }
-  const currentProxyHosts = () => {
-    const value = current().proxyHosts
-    return Array.isArray(value)
-      ? value.filter((host) => typeof host === 'string' && host !== '')
-      : []
-  }
-
-  {
-    const originalFetch = globalThis.fetch
-    let cachedAgentUrl
-    let cachedAgentPromise
-    const agentFor = (url) => {
-      if (cachedAgentUrl === url && cachedAgentPromise !== undefined) return cachedAgentPromise
-      cachedAgentUrl = url
-      // Do not import userland Undici at plugin/module load time. Loading a
-      // different Undici major can disturb the dispatcher used by the host's
-      // built-in fetch even when Vision Router's own proxy setting is empty.
-      // Load ProxyAgent only when this plugin's selective proxy is actually used.
-      const agentPromise = import('undici')
-        .then(({ ProxyAgent }) => {
-          if (typeof ProxyAgent !== 'function') {
-            throw new Error('dsh-vision-router: undici ProxyAgent is unavailable')
-          }
-          return markVisionProxyDispatcher(new ProxyAgent(url))
-        })
-        .catch((error) => {
-          if (cachedAgentUrl === url && cachedAgentPromise === agentPromise) {
-            cachedAgentUrl = undefined
-            cachedAgentPromise = undefined
-          }
-          throw error
-        })
-      cachedAgentPromise = agentPromise
-      return agentPromise
-    }
-    const patchedFetch = (input, init) => {
-      const proxyUrl = currentProxyUrl()
-      if (proxyUrl === undefined) return originalFetch(input, init)
-      let url
-      try {
-        url = new URL(
-          typeof input === 'string' ? input : input && input.url ? input.url : String(input),
-        )
-      } catch {
-        return originalFetch(input, init)
-      }
-      if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)
-      const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)
-      return agentFor(effectiveProxyUrl).then((dispatcher) =>
-        originalFetch(input, { ...(init ?? {}), dispatcher }),
-      )
-    }
-    ctx.effect(() => {
-      globalThis.fetch = patchedFetch
-      return () => {
-        globalThis.fetch = originalFetch
-      }
-    }, 'vision-router: proxy fetch')
-  }
+  // Host-owned proxy overrides are scoped by lib/legacy-global-proxy-boundary.js.
+  // Core no longer owns or installs a process-wide proxy fetch implementation.
 
   const lookupAttachment = (session, id) => sessionVisionIndex.lookupAttachment(session, id)
 

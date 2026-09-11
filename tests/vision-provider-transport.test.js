@@ -219,12 +219,14 @@ test('transport credential resolver prefers Host credentials and falls back to e
   }
 })
 
-test('public entry installs the provider transport before legacy core apply', async () => {
+test('public entry installs provider transport before runtime and scoped Host proxy boundary after runtime', async () => {
   const source = await readFile(new URL('../lib/public-entry.js', import.meta.url), 'utf8')
   const installAt = source.indexOf('installVisionProviderTransport(transport)')
   const applyAt = source.indexOf('base.apply(runtimeCtx, hardening.config)')
+  const legacyBoundaryAt = source.indexOf('installLegacyGlobalProxyBoundary(runtimeCtx, hardening.config)')
   assert.ok(installAt >= 0)
   assert.ok(applyAt > installAt)
+  assert.ok(legacyBoundaryAt > applyAt, 'Host-owned compatibility observer must wrap the completed runtime fetch chain')
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
 })
 

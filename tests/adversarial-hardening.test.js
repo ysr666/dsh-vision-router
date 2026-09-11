@@ -354,58 +354,27 @@ test('real screenshot permission route rejects cross-origin POSTs without proxyi
   assert.equal(status, 403)
 })
 
-test('proxy fetch cleanup becomes inert under later plugin patches, runs its disposer, and cannot resurface', () => {
-  const hostFetch = () => 'host'
-  const savedFetch = globalThis.fetch
-  let rawCalls = 0
-  let disposerCalls = 0
-  const patchA = () => {
-    rawCalls += 1
-    return 'a'
-  }
-  let cleanup
+test('adversarial hardening no longer owns legacy proxy-fetch lifecycle', async () => {
+  const source = await readFile(new URL('../lib/adversarial-hardening.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /vision-router: proxy fetch/)
+  assert.doesNotMatch(source, /installedFetch|guardedFetch/)
+
+  let effectCalls = 0
   const ctx = {
     tools: { register() {} },
-    effect(factory) {
-      cleanup = factory()
-      return () => {}
+    effect(factory, label) {
+      effectCalls += 1
+      assert.equal(label, 'ordinary-effect')
+      return factory()
     },
   }
-  try {
-    globalThis.fetch = hostFetch
-    const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
-    hardened.effect(() => {
-      globalThis.fetch = patchA
-      return () => {
-        disposerCalls += 1
-        globalThis.fetch = hostFetch
-      }
-    }, 'vision-router: proxy fetch')
-    const guardedFetch = globalThis.fetch
-    assert.notEqual(guardedFetch, patchA)
-    assert.equal(guardedFetch(), 'a')
-    assert.equal(rawCalls, 1)
-
-    const laterPatch = (...args) => guardedFetch(...args)
-    globalThis.fetch = laterPatch
-    cleanup()
-    assert.equal(disposerCalls, 1, 'the owned effect disposer must run even below a later fetch wrapper')
-    assert.equal(globalThis.fetch, laterPatch, 'later plugin ownership must survive Vision Router cleanup')
-    assert.equal(laterPatch(), 'host', 'a retained guard must bypass the unloaded Vision Router fetch')
-    assert.equal(rawCalls, 1, 'the raw Vision Router fetch must never be reached after unload')
-
-    // Simulate the later plugin unloading and restoring the fetch value it
-    // captured. Vision Router's guard must remain inert instead of resurfacing.
-    globalThis.fetch = guardedFetch
-    assert.equal(globalThis.fetch(), 'host')
-    assert.equal(rawCalls, 1)
-    cleanup()
-    assert.equal(disposerCalls, 1, 'cleanup is idempotent')
-  } finally {
-    globalThis.fetch = savedFetch
-  }
+  const { ctx: hardened } = installAdversarialHardening(ctx, {}, {})
+  let disposed = 0
+  const dispose = hardened.effect(() => () => { disposed += 1 }, 'ordinary-effect')
+  assert.equal(effectCalls, 1)
+  dispose()
+  assert.equal(disposed, 1)
 })
-
 
 test('batch3: artifact writer rejects symlink escape and never follows final symlinks', async (t) => {
   if (process.platform === 'win32') {
