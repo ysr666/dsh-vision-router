@@ -72,6 +72,10 @@ The remaining unscoped `routing=true` + explicit `chainRoute=''` behavior is cla
 
 The final Host-owned compatibility wrapper remains justified until both conditions are satisfied: (1) Host-owned adapter calls can receive the DVR-specific override through a scoped Host transport/dispatcher seam, or the DVR override is intentionally removed under a future announced product policy; and (2) the legacy direct whole-turn explicit-empty `chainRoute` state has been migrated or retired under the applicable support-window policy. A Host release that merely has a global HTTP(S) proxy does not satisfy those conditions.
 
+### Post-H3 dispatcher lifecycle hardening
+
+Router-owned `VisionProviderTransport` owns the lifecycle of every ProxyAgent it constructs. A live proxy identity change retires the previous dispatcher immediately as an authority decision, but request leases prevent graceful close until already-admitted fetch calls have released it. Clearing the plugin proxy retires the cached dispatcher without constructing a replacement, and plugin fiber cleanup unregisters the transport registry before calling `dispose()`. Pending constructors that resolve after replacement or unload are still retired and closed; synchronous loader failures cannot poison the cache or disposal state. This lifecycle work is the prerequisite for any later per-redirect dispatcher selector, because a selector may create/retain more than one routing dispatcher over one Fetch redirect chain.
+
 ## System proxy terminology
 
 Vision Router must not implement OS-specific proxy discovery. DSH's 0.1.5 network guide distinguishes OS “system proxy” settings, standard proxy environment variables, and TUN mode; DSH itself follows the environment policy and does not automatically read macOS/Windows system-proxy switches. Host-first therefore means “follow DSH/Host”, not “reimplement operating-system proxy detection in this plugin”.

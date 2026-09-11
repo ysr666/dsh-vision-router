@@ -228,6 +228,8 @@ test('public entry installs provider transport before runtime and scoped Host pr
   assert.ok(applyAt > installAt)
   assert.ok(legacyBoundaryAt > applyAt, 'Host-owned compatibility observer must wrap the completed runtime fetch chain')
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
+  assert.match(source, /releaseTransportRegistry\(\)/)
+  assert.match(source, /void transport\.dispose\(\)/)
 })
 
 
@@ -335,6 +337,7 @@ test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy ra
   const requestB = transport.fetch('https://api.example.com/b')
   config = { ...config, proxy: 'http://proxy-a.test:8080' }
   const secondA = transport.fetch('https://api.example.com/a2')
+  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(imports.length, 3)
 
   imports[0].reject(new Error('stale A failed'))
@@ -351,6 +354,141 @@ test('dispatcher cache cleanup is promise-identity safe across an A-B-A proxy ra
   imports[1].resolve({ ProxyAgent: FakeProxyAgent })
   const b = await requestB
   assert.equal(b.url, 'http://proxy-b.test:8080')
+})
+
+test('hot proxy replacement retires the old dispatcher only after its in-flight request releases the lease', async () => {
+  const agents = []
+  let releaseA
+  let enteredA
+  const enteredAPromise = new Promise((resolve) => { enteredA = resolve })
+  const aBarrier = new Promise((resolve) => { releaseA = resolve })
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      this.closed = 0
+      agents.push(this)
+    }
+    async close() { this.closed += 1 }
+  }
+  let config = { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] }
+  const transport = createVisionProviderTransport({
+    config: () => config,
+    fetchImpl: async (input, init) => {
+      if (String(input).endsWith('/a')) {
+        enteredA()
+        await aBarrier
+      }
+      return init.dispatcher ?? 'direct'
+    },
+    importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+  })
+
+  const requestA = transport.fetch('https://api.example.com/a')
+  await enteredAPromise
+  assert.equal(agents.length, 1)
+  assert.equal(agents[0].closed, 0)
+
+  config = { ...config, proxy: 'http://proxy-b.test:8080' }
+  const dispatcherB = await transport.fetch('https://api.example.com/b')
+  assert.equal(agents.length, 2)
+  assert.equal(dispatcherB, agents[1])
+  assert.equal(agents[0].closed, 0, 'replacement must not close a dispatcher that still owns an in-flight request')
+
+  releaseA()
+  assert.equal(await requestA, agents[0])
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(agents[0].closed, 1)
+  assert.equal(agents[1].closed, 0)
+
+  await transport.dispose()
+  assert.equal(agents[1].closed, 1)
+})
+
+test('clearing the live proxy retires an idle cached dispatcher without importing a replacement', async () => {
+  const agents = []
+  let imports = 0
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      this.closed = 0
+      agents.push(this)
+    }
+    async close() { this.closed += 1 }
+  }
+  let config = { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] }
+  const calls = []
+  const transport = createVisionProviderTransport({
+    config: () => config,
+    fetchImpl: async (_input, init) => { calls.push(init.dispatcher); return okOpenAI() },
+    importUndici: async () => { imports += 1; return { ProxyAgent: FakeProxyAgent } },
+  })
+
+  await transport.fetch('https://api.example.com/first')
+  assert.equal(imports, 1)
+  config = { ...config, proxy: '' }
+  await transport.fetch('https://api.example.com/direct')
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(imports, 1, 'clearing proxy must preserve the no-new-Undici path')
+  assert.equal(calls[1], undefined)
+  assert.equal(agents[0].closed, 1)
+  await transport.dispose()
+})
+
+test('dispose during pending ProxyAgent construction lets the admitted request finish and closes the late dispatcher', async () => {
+  let resolveImport
+  const importGate = new Promise((resolve) => { resolveImport = resolve })
+  const calls = []
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      this.closed = 0
+    }
+    async close() { this.closed += 1 }
+  }
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] },
+    fetchImpl: async (_input, init) => { calls.push(init.dispatcher); return okOpenAI() },
+    importUndici: () => importGate,
+  })
+  const release = installVisionProviderTransport(transport)
+  const request = transport.fetch('https://api.example.com/pending')
+  release()
+  const disposal = transport.dispose()
+
+  resolveImport({ ProxyAgent: FakeProxyAgent })
+  await request
+  await disposal
+  assert.equal(calls.length, 1)
+  assert.ok(calls[0] instanceof FakeProxyAgent)
+  assert.equal(calls[0].closed, 1)
+
+  await transport.fetch('https://api.example.com/after-dispose')
+  assert.equal(calls[1], undefined, 'a stale released transport must not keep injecting the plugin proxy')
+})
+
+test('synchronous Undici loader failure does not poison lifecycle disposal or a later retry', async () => {
+  let attempts = 0
+  class FakeProxyAgent {
+    constructor(url) { this.url = url; this.closed = 0 }
+    async close() { this.closed += 1 }
+  }
+  const transport = createVisionProviderTransport({
+    config: { proxy: 'http://proxy-a.test:8080', proxyHosts: ['api.example.com'] },
+    fetchImpl: async (_input, init) => init.dispatcher,
+    importUndici: () => {
+      attempts += 1
+      if (attempts === 1) throw new Error('sync loader failed')
+      return { ProxyAgent: FakeProxyAgent }
+    },
+  })
+
+  await assert.rejects(transport.fetch('https://api.example.com/one'), /sync loader failed/)
+  const dispatcher = await transport.fetch('https://api.example.com/two')
+  assert.ok(dispatcher instanceof FakeProxyAgent)
+  assert.equal(attempts, 2)
+  await transport.dispose()
+  assert.equal(dispatcher.closed, 1)
 })
 
 test('settings copy recommends native socks5 while documenting legacy socks5h compatibility', async () => {
