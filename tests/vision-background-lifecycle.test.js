@@ -117,6 +117,68 @@ test('background stop cache v3 drops secret-derived auth stops and expires bound
   }
 })
 
+
+
+test('oversized background stop cache is bounded in memory and persists the same survivor set', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-background-stop-bounds-'))
+  const cacheFile = path.join(root, 'stops.json')
+  const clock = 10_000
+  try {
+    const stops = Array.from({ length: 270 }, (_, index) => ({
+      fingerprint: `ep2_${(index + 1).toString(16).padStart(32, '0')}`,
+      key: `provider/model-${index + 1}`,
+      provider: 'provider',
+      model: `model-${index + 1}`,
+      axis: 'general',
+      errorClass: 'protocol',
+      recordedAt: index + 1,
+      expiresAt: clock + 100_000,
+      suiteRevision: CAPABILITY_BENCHMARK_SUITE_REVISION,
+    }))
+    await writeFile(cacheFile, JSON.stringify({ version: 3, stops }))
+    const store = createBackgroundBenchmarkStopStore({ cacheFile, now: () => clock })
+
+    const loaded = await store.list()
+    assert.equal(loaded.length, 256)
+    assert.equal(loaded[0].recordedAt, 270)
+    assert.equal(loaded.at(-1).recordedAt, 15)
+
+    const newestFingerprint = `ep2_${'f'.repeat(32)}`
+    assert.ok(await store.mark({
+      fingerprint: newestFingerprint,
+      key: 'provider/newest',
+      provider: 'provider',
+      model: 'newest',
+      axis: 'general',
+      errorClass: 'protocol',
+      recordedAt: 1_000,
+      expiresAt: clock + 100_000,
+    }))
+    const live = await store.list()
+    assert.equal(live.length, 256)
+    await store.flush()
+    const disk = JSON.parse(await readFile(cacheFile, 'utf8')).stops
+    assert.deepEqual(
+      disk.map((item) => `${item.fingerprint}:${item.axis}`),
+      live.map((item) => `${item.fingerprint}:${item.axis}`),
+    )
+
+    const tooOldFingerprint = `ep2_${'e'.repeat(32)}`
+    assert.equal(await store.mark({
+      fingerprint: tooOldFingerprint,
+      key: 'provider/too-old',
+      provider: 'provider',
+      model: 'too-old',
+      axis: 'general',
+      errorClass: 'protocol',
+      recordedAt: 1,
+      expiresAt: clock + 100_000,
+    }), undefined)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('AUTH background stop is in-memory, transport-wide, and credential change releases it immediately', async () => {
   const paidA = {
     name: 'paid-cloud-a',
