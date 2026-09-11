@@ -10,7 +10,6 @@ import {
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
-import { isVisionProxyDispatcher } from '../lib/proxy-routing.js'
 
 function okOpenAI(text = 'ok') {
   return new Response(JSON.stringify({ choices: [{ message: { content: text } }] }), {
@@ -484,8 +483,8 @@ test('proxy host admission canonicalizes case, whitespace, trailing dot and IDNA
   await transport.fetch('https://bücher.de/v1/chat/completions', requestInit())
   await transport.fetch('https://api.example.com.evil.test/v1/chat/completions', requestInit())
 
-  assert.equal(isVisionProxyDispatcher(selectedDispatcher(calls[0].init.dispatcher, calls[0].input)), true)
-  assert.equal(isVisionProxyDispatcher(selectedDispatcher(calls[1].init.dispatcher, calls[1].input)), true)
+  assert.ok(selectedDispatcher(calls[0].init.dispatcher, calls[0].input) instanceof FakeProxyAgent)
+  assert.ok(selectedDispatcher(calls[1].init.dispatcher, calls[1].input) instanceof FakeProxyAgent)
   assert.equal(calls[2].init.dispatcher, undefined)
   assert.equal(transport.proxyDecision('https://API.EXAMPLE.COM./x').proxied, true)
 })

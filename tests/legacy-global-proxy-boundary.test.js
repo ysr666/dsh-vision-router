@@ -11,7 +11,6 @@ import {
   legacyGlobalProxyUnscopedFallbackRequired,
   streamWithLegacyGlobalProxyScope,
 } from '../lib/legacy-global-proxy-boundary.js'
-import { isVisionProxyDispatcher } from '../lib/proxy-routing.js'
 
 const hostPair = { provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }
 
@@ -174,7 +173,7 @@ test('scoped Host-owned visual fetch gets the DVR dispatcher while concurrent sa
 
     assert.equal(calls.length, 2)
     assert.equal(calls[0].dispatcher, undefined, 'concurrent Host traffic must remain on the inherited Host path')
-    assert.equal(isVisionProxyDispatcher(calls[1].dispatcher), true)
+    assert.equal(calls[1].dispatcher, agents[0])
     assert.equal(calls[1].dispatcher.url, config.proxy)
     assert.equal(agents.length, 1)
   } finally {
@@ -251,7 +250,7 @@ test('live proxy clearing takes effect inside an already scoped stream', async (
         yield 'done'
       },
     })))
-    assert.equal(isVisionProxyDispatcher(calls[0]), true)
+    assert.ok(calls[0] instanceof FakeProxyAgent)
     assert.equal(calls[1], undefined)
   } finally {
     globalThis.fetch = saved
@@ -273,7 +272,7 @@ test('legacy direct whole-turn fallback preserves existing unscoped behavior nar
       importUndici: async () => fakeUndiciModule(FakeProxyAgent),
     })
     await globalThis.fetch('https://provider.example.test/direct-turn')
-    assert.equal(isVisionProxyDispatcher(calls[0]), true)
+    assert.ok(calls[0] instanceof FakeProxyAgent)
   } finally {
     globalThis.fetch = saved
   }
