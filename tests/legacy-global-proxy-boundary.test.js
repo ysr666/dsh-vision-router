@@ -4,222 +4,289 @@ import { readFile } from 'node:fs/promises'
 
 import {
   LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION,
+  currentLegacyGlobalProxyScope,
   installLegacyGlobalProxyBoundary,
   legacyGlobalProxyRequired,
+  legacyGlobalProxyScopeAllows,
+  legacyGlobalProxyUnscopedFallbackRequired,
+  streamWithLegacyGlobalProxyScope,
 } from '../lib/legacy-global-proxy-boundary.js'
+import { isVisionProxyDispatcher } from '../lib/proxy-routing.js'
 
-function response(source) {
-  return Promise.resolve({ ok: true, source })
+const hostPair = { provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }
+
+function baseConfig(extra = {}) {
+  return {
+    proxy: 'http://127.0.0.1:7890',
+    proxyHosts: ['provider.example.test'],
+    providers: [hostPair],
+    ...extra,
+  }
 }
 
-test('default and Router-owned visual chains do not require the legacy global proxy seam', () => {
+async function drain(stream) {
+  const out = []
+  for await (const value of stream) out.push(value)
+  return out
+}
+
+test('default and Router-owned visual chains do not require the legacy compatibility seam', () => {
   assert.equal(legacyGlobalProxyRequired({}), false)
-  assert.equal(
-    legacyGlobalProxyRequired({
-      providers: [
-        { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: ['local-ollama/qwen2.5vl'] },
-      ],
-    }),
-    false,
-  )
-  assert.equal(
-    legacyGlobalProxyRequired({
-      providers: [{ provider: 'vision-chain', model: 'vision-chain', fallbacks: [] }],
-    }),
-    false,
-  )
-  assert.equal(
-    legacyGlobalProxyRequired({
-      wrapperRoute: 'custom-wrapper',
-      providers: [{ provider: 'custom-wrapper', model: 'deepseek-v4-pro', fallbacks: [] }],
-    }),
-    false,
-  )
+  assert.equal(legacyGlobalProxyRequired({ proxy: 'http://127.0.0.1:7890' }), false)
+  assert.equal(legacyGlobalProxyRequired({
+    proxy: 'http://127.0.0.1:7890',
+    providers: [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }],
+  }), false)
+  assert.equal(legacyGlobalProxyRequired({
+    proxy: 'http://127.0.0.1:7890',
+    wrapperRoute: 'custom-wrapper',
+    providers: [{ provider: 'custom-wrapper', model: 'model', fallbacks: [] }],
+  }), false)
 })
 
-test('Host-owned providers retain the legacy seam only for an explicit plugin proxy override', () => {
-  const hostOwned = [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }]
-  assert.equal(
-    legacyGlobalProxyRequired({ providers: hostOwned }),
-    false,
-    'blank proxy must leave egress entirely to DSH/Host',
-  )
-  assert.equal(
-    legacyGlobalProxyRequired({ proxy: '  ', providers: hostOwned }),
-    false,
-    'whitespace-only proxy is not an override',
-  )
-  assert.equal(
-    legacyGlobalProxyRequired({
-      proxy: 'http://127.0.0.1:7890',
-      providers: hostOwned,
-    }),
-    true,
-  )
-  assert.equal(
-    legacyGlobalProxyRequired({
-      proxy: 'socks5://127.0.0.1:7890',
-      providers: [
-        { provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] },
-        ...hostOwned,
-      ],
-    }),
-    true,
-  )
+test('Host-owned pairs require compatibility only with an explicit plugin proxy', () => {
+  assert.equal(legacyGlobalProxyRequired({ providers: [hostPair] }), false)
+  assert.equal(legacyGlobalProxyRequired({ proxy: '  ', providers: [hostPair] }), false)
+  assert.equal(legacyGlobalProxyRequired(baseConfig()), true)
 })
 
-test('live settings keep Host authority by default and enable legacy seam only for an explicit override', async () => {
+test('unscoped compatibility is retained only for the legacy direct whole-turn route', () => {
+  assert.equal(legacyGlobalProxyUnscopedFallbackRequired(baseConfig()), false)
+  assert.equal(legacyGlobalProxyUnscopedFallbackRequired(baseConfig({ routing: false, chainRoute: '' })), false)
+  assert.equal(legacyGlobalProxyUnscopedFallbackRequired(baseConfig({ routing: true, chainRoute: 'vision-chain' })), false)
+  assert.equal(legacyGlobalProxyUnscopedFallbackRequired(baseConfig({ routing: true, chainRoute: '   ' })), false)
+  assert.equal(legacyGlobalProxyUnscopedFallbackRequired(baseConfig({ routing: true, chainRoute: '' })), true)
+})
+
+test('explicitly blank wrapper and chain routes do not impersonate the disabled DVR routes', () => {
+  assert.equal(legacyGlobalProxyRequired(baseConfig({
+    wrapperRoute: '',
+    providers: [{ provider: 'deepseek-vision', model: 'foreign-vl', fallbacks: [] }],
+  })), true)
+  assert.equal(legacyGlobalProxyRequired(baseConfig({
+    chainRoute: '',
+    providers: [{ provider: 'vision-chain', model: 'foreign-vl', fallbacks: [] }],
+  })), true)
+})
+
+test('legacy proxy scope survives lazy iterator work and retires after completion', async () => {
+  const seen = []
+  const stream = streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+    [Symbol.asyncIterator]() {
+      let done = false
+      return {
+        async next() {
+          seen.push(currentLegacyGlobalProxyScope()?.provider)
+          await Promise.resolve()
+          seen.push(currentLegacyGlobalProxyScope()?.model)
+          if (done) return { done: true }
+          done = true
+          return { done: false, value: 'ok' }
+        },
+      }
+    },
+  }))
+  assert.equal(currentLegacyGlobalProxyScope(), undefined)
+  assert.deepEqual(await drain(stream), ['ok'])
+  assert.deepEqual(seen, [hostPair.provider, hostPair.model, hostPair.provider, hostPair.model])
+  assert.equal(currentLegacyGlobalProxyScope(), undefined)
+})
+
+test('scope authorization follows the live configured pair and explicit proxy', async () => {
+  let config = baseConfig()
+  const checks = []
+  await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+    async *[Symbol.asyncIterator]() {
+      checks.push(legacyGlobalProxyScopeAllows(config))
+      config = { ...config, proxy: '' }
+      checks.push(legacyGlobalProxyScopeAllows(config))
+      config = baseConfig({ providers: [{ provider: 'different', model: 'vl-model', fallbacks: [] }] })
+      checks.push(legacyGlobalProxyScopeAllows(config))
+      yield 'done'
+    },
+  })))
+  assert.deepEqual(checks, [true, false, false])
+})
+
+test('scoped Host-owned visual fetch gets the DVR dispatcher while concurrent same-origin Host traffic does not', async () => {
   const saved = globalThis.fetch
-  let originalCalls = 0
-  let legacyCalls = 0
-  const originalFetch = async () => {
-    originalCalls += 1
-    return response('original')
-  }
-  const legacyFetch = async () => {
-    legacyCalls += 1
-    return response('legacy')
-  }
-  let config = {
-    providers: [{ provider: 'custom-host-provider', model: 'vl-model', fallbacks: [] }],
-  }
-  const effects = []
-  const ctx = {
-    get(name) {
-      if (name === 'settings') return { get: () => config }
-      return undefined
-    },
-    effect(factory) {
-      effects.push(factory())
-    },
-  }
-
-  try {
-    globalThis.fetch = legacyFetch
-    installLegacyGlobalProxyBoundary(ctx, config, { originalFetch })
-
-    await globalThis.fetch('https://provider.example.test')
-    assert.equal(originalCalls, 1)
-    assert.equal(legacyCalls, 0, 'Host-owned provider without plugin proxy must stay on Host fetch')
-
-    config = { ...config, proxy: 'http://127.0.0.1:7890' }
-    await globalThis.fetch('https://provider.example.test')
-    assert.equal(legacyCalls, 1, 'explicit plugin proxy enables the compatibility seam live')
-
-    config = { ...config, proxy: '' }
-    await globalThis.fetch('https://provider.example.test')
-    assert.equal(originalCalls, 2, 'clearing plugin proxy restores Host authority immediately')
-
-    config = {
-      proxy: 'http://127.0.0.1:7890',
-      providers: [{ provider: 'vision-http', model: 'ovh/Qwen3.5-397B-A17B', fallbacks: [] }],
+  const calls = []
+  const agents = []
+  let release
+  let ready
+  const gate = new Promise((resolve) => { release = resolve })
+  const started = new Promise((resolve) => { ready = resolve })
+  class FakeProxyAgent {
+    constructor(url) {
+      this.url = url
+      agents.push(this)
     }
-    await globalThis.fetch('https://provider.example.test')
-    assert.equal(originalCalls, 3, 'Router-owned transport never needs the legacy global seam')
+  }
+  const originalFetch = async (input, init = {}) => {
+    calls.push({ input: String(input), dispatcher: init.dispatcher })
+    return new Response('ok')
+  }
+  const config = baseConfig()
+  const ctx = { get(name) { return name === 'settings' ? { get: () => config } : undefined } }
+
+  try {
+    globalThis.fetch = originalFetch
+    installLegacyGlobalProxyBoundary(ctx, config, {
+      importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+    })
+
+    const scoped = streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        ready()
+        await gate
+        await globalThis.fetch('https://provider.example.test/vision')
+        yield 'vision'
+      },
+    }))
+    const pending = drain(scoped)
+    await started
+    await globalThis.fetch('https://provider.example.test/host')
+    release()
+    assert.deepEqual(await pending, ['vision'])
+
+    assert.equal(calls.length, 2)
+    assert.equal(calls[0].dispatcher, undefined, 'concurrent Host traffic must remain on the inherited Host path')
+    assert.equal(isVisionProxyDispatcher(calls[1].dispatcher), true)
+    assert.equal(calls[1].dispatcher.url, config.proxy)
+    assert.equal(agents.length, 1)
   } finally {
-    for (const dispose of effects.reverse()) dispose?.()
     globalThis.fetch = saved
   }
 })
 
-test('outermost cleanup restores original fetch and retained gate cannot resurface', async () => {
+test('live proxy clearing takes effect inside an already scoped stream', async () => {
   const saved = globalThis.fetch
-  let originalCalls = 0
-  let legacyCalls = 0
-  const originalFetch = async () => {
-    originalCalls += 1
-    return response('original')
+  const calls = []
+  class FakeProxyAgent { constructor(url) { this.url = url } }
+  let config = baseConfig()
+  const ctx = { get() { return { get: () => config } } }
+  const originalFetch = async (_input, init = {}) => {
+    calls.push(init.dispatcher)
+    return new Response('ok')
   }
-  const legacyFetch = async () => {
-    legacyCalls += 1
-    return response('legacy')
-  }
-  let cleanup
-  const ctx = {
-    get() {
-      return { get: () => ({ proxy: 'http://127.0.0.1:7890', providers: [{ provider: 'custom-host-provider', model: 'vl', fallbacks: [] }] }) }
-    },
-    effect(factory) {
-      cleanup = factory()
-    },
-  }
-
   try {
-    globalThis.fetch = legacyFetch
-    const dispose = installLegacyGlobalProxyBoundary(ctx, {}, { originalFetch })
-    const retainedGate = globalThis.fetch
-    await retainedGate('https://provider.example.test')
-    assert.equal(legacyCalls, 1)
+    globalThis.fetch = originalFetch
+    installLegacyGlobalProxyBoundary(ctx, config, { importUndici: async () => ({ ProxyAgent: FakeProxyAgent }) })
+    await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        await globalThis.fetch('https://provider.example.test/one')
+        config = { ...config, proxy: '' }
+        await globalThis.fetch('https://provider.example.test/two')
+        yield 'done'
+      },
+    })))
+    assert.equal(isVisionProxyDispatcher(calls[0]), true)
+    assert.equal(calls[1], undefined)
+  } finally {
+    globalThis.fetch = saved
+  }
+})
 
-    dispose()
+test('legacy direct whole-turn fallback preserves existing unscoped behavior narrowly', async () => {
+  const saved = globalThis.fetch
+  const calls = []
+  class FakeProxyAgent { constructor(url) { this.url = url } }
+  const config = baseConfig({ routing: true, chainRoute: '' })
+  const originalFetch = async (_input, init = {}) => {
+    calls.push(init.dispatcher)
+    return new Response('ok')
+  }
+  try {
+    globalThis.fetch = originalFetch
+    installLegacyGlobalProxyBoundary({ get() { return { get: () => config } } }, config, {
+      importUndici: async () => ({ ProxyAgent: FakeProxyAgent }),
+    })
+    await globalThis.fetch('https://provider.example.test/direct-turn')
+    assert.equal(isVisionProxyDispatcher(calls[0]), true)
+  } finally {
+    globalThis.fetch = saved
+  }
+})
+
+test('synchronous Undici loader failure does not poison the dispatcher cache', async () => {
+  const saved = globalThis.fetch
+  let imports = 0
+  const config = baseConfig()
+  const originalFetch = async () => new Response('ok')
+  const ctx = { get() { return { get: () => config } } }
+  try {
+    globalThis.fetch = originalFetch
+    installLegacyGlobalProxyBoundary(ctx, config, {
+      importUndici() {
+        imports += 1
+        throw new Error('sync import failure')
+      },
+    })
+    const once = () => drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        await globalThis.fetch('https://provider.example.test/fail')
+        yield 'unreachable'
+      },
+    })))
+    await assert.rejects(once(), /sync import failure/)
+    await assert.rejects(once(), /sync import failure/)
+    assert.equal(imports, 2, 'a rejected lazy import must not leave a poisoned cached promise')
+  } finally {
+    globalThis.fetch = saved
+  }
+})
+
+test('effect registration failure rolls back the installed compatibility wrapper', () => {
+  const saved = globalThis.fetch
+  const originalFetch = async () => new Response('host')
+  try {
+    globalThis.fetch = originalFetch
+    assert.throws(() => installLegacyGlobalProxyBoundary({
+      effect() { throw new Error('effect registration failed') },
+    }, baseConfig()), /effect registration failed/)
     assert.equal(globalThis.fetch, originalFetch)
-    await retainedGate('https://provider.example.test')
-    assert.equal(originalCalls, 1, 'retained gate must become an inert delegator after unload')
-    assert.equal(legacyCalls, 1)
-
-    cleanup?.()
-    dispose()
-    assert.equal(globalThis.fetch, originalFetch, 'cleanup must be idempotent')
   } finally {
     globalThis.fetch = saved
   }
 })
 
-test('cleanup preserves a later plugin wrapper', async () => {
+test('cleanup preserves a later wrapper and retained scoped fetch becomes inert', async () => {
   const saved = globalThis.fetch
-  const originalFetch = async () => response('original')
-  const legacyFetch = async () => response('legacy')
+  const originalFetch = async () => new Response('original')
   try {
-    globalThis.fetch = legacyFetch
-    const dispose = installLegacyGlobalProxyBoundary(
-      { get() { return undefined } },
-      {},
-      { originalFetch },
-    )
+    globalThis.fetch = originalFetch
+    const dispose = installLegacyGlobalProxyBoundary({ get() { return undefined } }, {})
     const gate = globalThis.fetch
     const later = (...args) => gate(...args)
     globalThis.fetch = later
-
     dispose()
     assert.equal(globalThis.fetch, later)
-    const result = await later('https://maintenance.example.test')
-    assert.equal((await result).source, 'original')
+    assert.equal(await (await later('https://provider.example.test')).text(), 'original')
   } finally {
     globalThis.fetch = saved
   }
 })
 
-test('removal condition names the remaining explicit-override blocker', () => {
-  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /explicit Vision Router proxy overrides/i)
-  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /Host-owned visual providers/i)
-  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /retired by product policy/i)
+test('removal condition names both remaining blockers', () => {
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /Host-owned adapter interception/i)
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /direct whole-turn fallback/i)
+  assert.match(LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION, /product policy/i)
 })
 
-
-test('legacy selective proxy projects socks5h only after host admission and before dispatcher caching', async () => {
-  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(
-    source,
-    /import \{ effectiveProxyUrlForUndici \} from '\.\/lib\/proxy-url-compat\.js'/,
-  )
-  assert.match(
-    source,
-    /import \{ markVisionProxyDispatcher \} from '\.\/lib\/proxy-routing\.js'/,
-  )
-  assert.match(source, /markVisionProxyDispatcher\(new ProxyAgent\(url\)\)/)
-  assert.match(source, /cachedAgentPromise === agentPromise/)
-  const hostAdmission = source.indexOf(
-    'if (!hostMatchesAny(url.hostname, currentProxyHosts())) return originalFetch(input, init)',
-  )
-  const projection = source.indexOf(
-    'const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)',
-    hostAdmission,
-  )
-  const dispatch = source.indexOf(
-    'return agentFor(effectiveProxyUrl).then((dispatcher) =>',
-    projection,
-  )
+test('H2 moves ProxyAgent ownership out of Core and scopes every DVR-owned Host adapter stream', async () => {
+  const [core, boundary, benchmark] = await Promise.all([
+    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/legacy-global-proxy-boundary.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/vision-capability-benchmark-service.js', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(core, /new ProxyAgent\(/)
+  assert.doesNotMatch(core, /effectiveProxyUrlForUndici/)
+  assert.doesNotMatch(core, /globalThis\.fetch = patchedFetch/)
+  assert.ok((core.match(/streamWithLegacyGlobalProxyScope\(/g) ?? []).length >= 2)
+  assert.match(benchmark, /streamWithLegacyGlobalProxyScope\(/)
+  assert.match(boundary, /new ProxyAgent\(url\)/)
+  const hostAdmission = boundary.indexOf('if (!proxyHostMatchesAny(url.hostname, proxyHostsOf(current)))')
+  const projection = boundary.indexOf('const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)', hostAdmission)
   assert.ok(hostAdmission >= 0)
-  assert.ok(projection > hostAdmission, 'compat projection must not run before proxyHosts admission')
-  assert.ok(dispatch > projection, 'effective URL must become the dispatcher cache identity')
+  assert.ok(projection > hostAdmission, 'proxy URL compatibility projection must stay after host admission')
 })

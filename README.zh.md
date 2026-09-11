@@ -374,7 +374,7 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 
 ### 网络代理：默认跟随 DSH/Host
 
-Vision Router 默认**不接管网络出口**。`proxy` 留空时，Router-owned 视觉 HTTP 不注入自有 dispatcher，Host-owned 视觉请求也绕过旧的全局代理兼容层，因此请求继续沿用 DSH/Host 当前网络路径。
+Vision Router 默认**不接管网络出口**。`proxy` 留空时，Router-owned 视觉 HTTP 不注入自有 dispatcher，Host-owned 兼容层也保持透明，因此请求继续沿用 DSH/Host 当前网络路径。显式填写覆盖时，Host-owned adapter 也只会在 Vision Router 正在执行该已配置视觉模型的调用作用域内被代理；并发的其他 Host 请求仍沿用 Host 路径。
 
 在 DSH 0.1.5 系列（rc.1+）中，Host 已提供统一出网代理：`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` 在启动时解析并应用；TUN 模式也会在更底层透明生效。DSH 本身不会自动读取 macOS/Windows 的“系统代理”开关，所以仅打开代理软件的 System Proxy 并不等价于 CLI 已经走代理。
 

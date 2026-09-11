@@ -132,13 +132,22 @@ test('schemastery remains a runtime dependency', async () => {
   assert.equal(pkg.devDependencies?.['@deepseek-ai/schemastery'], undefined)
 })
 
-test('undici stays below v8 and is lazy-loaded for plugin proxy use', async () => {
+test('undici stays below v8 and is lazy-loaded only by scoped proxy transports', async () => {
   const pkg = await manifest()
   assert.match(pkg.dependencies?.undici ?? '', /^\^7\./)
 
-  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(source, /import\(['"]undici['"]\)/)
-  assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
+  const [core, providerTransport, legacyBoundary] = await Promise.all([
+    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/vision-provider-transport.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/legacy-global-proxy-boundary.js', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(core, /import\(['"]undici['"]\)/)
+  assert.doesNotMatch(core, /new ProxyAgent\(/)
+  assert.match(providerTransport, /import\(['"]undici['"]\)/)
+  assert.match(legacyBoundary, /import\(['"]undici['"]\)/)
+  for (const source of [core, providerTransport, legacyBoundary]) {
+    assert.doesNotMatch(source, /^\s*import\s+.*from\s+['"]undici['"]/m)
+  }
 })
 
 test('default test manifest is closed-world: every test is run or explicitly owned elsewhere', async () => {

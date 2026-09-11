@@ -376,7 +376,7 @@ Everything is optional; defaults work out of the box. Prefer **Settings → Visi
 
 ### Network proxy: DSH/Host first
 
-Vision Router does **not own network egress by default**. When `proxy` is empty, Router-owned vision HTTP injects no private dispatcher and Host-owned vision traffic bypasses the legacy global-proxy compatibility seam, so requests continue on the current DSH/Host network path.
+Vision Router does **not own network egress by default**. When `proxy` is empty, Router-owned vision HTTP injects no private dispatcher and the Host-owned compatibility wrapper stays transparent, so requests continue on the current DSH/Host network path. With an explicit override, Host-owned adapter traffic is intercepted only while Vision Router is actively executing that configured visual provider; unrelated concurrent Host traffic keeps the Host route.
 
 On the DSH 0.1.5 line (rc.1+), the Host provides process-wide outbound proxy policy from `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`; TUN mode also works transparently below the process. DSH does not automatically read the macOS/Windows “system proxy” switch, so enabling only an app's System Proxy is not the same as proxying the CLI.
 

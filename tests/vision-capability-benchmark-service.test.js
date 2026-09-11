@@ -9,6 +9,7 @@ import {
 import { capabilityBenchmarkFingerprint } from '../lib/vision-capability-benchmark.js'
 import { grantManualMeasurementFromUserAction } from '../lib/vision-routing-authority.js'
 import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
+import { currentLegacyGlobalProxyScope } from '../lib/legacy-global-proxy-boundary.js'
 
 function createCapabilityBenchmarkManager(...args) {
   const manager = createCapabilityBenchmarkManagerRaw(...args)
@@ -199,6 +200,7 @@ test('exact invoker sends one selected vision-http provider directly and never e
 test('endpoint-scoped DSH provider uses its exact registered adapter before considering HTTP bridge', async () => {
   const adapterCalls = []
   let adapterAffinity
+  let adapterProxyScope
   let directCalls = 0
   const invoke = createExactCapabilityInvoker(fakeCtx(), fakeCore(), {
     key: 'zhipu-glm/glm-4.6v',
@@ -213,7 +215,11 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
     streamExact: (call) => {
       adapterCalls.push(call)
       adapterAffinity = currentVisionSessionAffinityId()
-      return asyncTextStream('[672,672,901,813]')
+      return (async function* () {
+        adapterProxyScope = currentLegacyGlobalProxyScope()
+        yield { text: '[672,672,901,813]' }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
     },
     callDirect: async () => {
       directCalls += 1
@@ -239,6 +245,8 @@ test('endpoint-scoped DSH provider uses its exact registered adapter before cons
   assert.equal(adapterCalls[0].model, 'glm-4.6v')
   assert.equal(adapterCalls[0].sessionId, undefined)
   assert.equal(adapterAffinity, 'vision-benchmark-11111111-1111-4111-8111-111111111410')
+  assert.equal(adapterProxyScope?.provider, 'zhipu-glm')
+  assert.equal(adapterProxyScope?.model, 'glm-4.6v')
   assert.equal(adapterCalls[0].messages[0].content[0].type, 'image')
   assert.equal(directCalls, 0)
   assert.equal(result.output, '[672,672,901,813]')

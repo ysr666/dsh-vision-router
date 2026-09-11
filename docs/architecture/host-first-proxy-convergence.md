@@ -1,14 +1,16 @@
 # Host-first Proxy Convergence
 
-Status: **H0 + H1 implemented without raising the DSH support floor**
+Status: **H0 + H1 + H2 implemented without raising the DSH support floor**
 
 H1 baseline: `main@9fb7f1736813f1f5c63c1f0e8214eb12a779f24e`
+
+H2 baseline: `main@b03e541dce8ec5377a54989803a49ca120c3c26e`
 
 ## Decision
 
 Network egress is a Host concern, not a vision-routing concern. Vision Router therefore treats DSH/Host as the default network authority and keeps its own proxy only as an explicit, vision-only compatibility/advanced override.
 
-`proxy: ''` means **do not override transport**. Router-owned HTTP calls pass no private dispatcher; Host-owned visual providers bypass the legacy global-fetch proxy seam. Whatever path DSH/Host currently owns — direct, environment proxy, or a lower-level TUN — remains authoritative.
+`proxy: ''` means **do not override transport**. Router-owned HTTP calls pass no private dispatcher, and the Host-owned compatibility wrapper stays transparent. Whatever path DSH/Host currently owns — direct, environment proxy, or a lower-level TUN — remains authoritative.
 
 An explicit non-empty `proxy` keeps the existing Vision Router behavior for users who need a different route for selected `proxyHosts`, including legacy SOCKS5 configurations. Persisted settings are not migrated or rewritten.
 
@@ -22,20 +24,21 @@ The production plugin does not import or require that Host package. The current 
 
 | Host / user state | Authority after H0 | Vision Router behavior |
 |---|---|---|
-| Any supported Host, `proxy=''` | DSH/Host | inject no dispatcher; legacy global seam bypassed |
-| Older Host, explicit `proxy` | Vision Router for matching vision hosts | preserve current ProxyAgent compatibility path |
-| DSH 0.1.5-line Host, explicit `proxy` | Vision Router override for matching vision hosts | explicit dispatcher wins for that request |
+| Any supported Host, `proxy=''` | DSH/Host | inject no dispatcher; compatibility wrapper is transparent |
+| Explicit `proxy` + Router-owned HTTP | Vision Router for matching vision hosts | provider-scoped dispatcher; no global interception |
+| Explicit `proxy` + Host-owned visual adapter | Vision Router only inside that visual adapter call | AsyncLocalStorage-scoped dispatcher interception |
+| `routing=true` + explicit blank `chainRoute` + Host-owned provider | Vision Router legacy compatibility | narrow unscoped direct whole-turn fallback retained until H3 |
 | SOCKS5 / legacy `socks5h` override | Vision Router | preserved; `socks5h` is projected at the Undici boundary |
 | Non-matching `proxyHosts` | DSH/Host | no plugin dispatcher and no Undici import |
 
 ## H0 invariants
 
-1. Blank/whitespace `proxy` never enables the legacy global proxy seam.
+1. Blank/whitespace `proxy` never authorizes the legacy proxy compatibility wrapper.
 2. Blank `proxy` never imports Vision Router's userland Undici ProxyAgent.
 3. Router-owned HTTP with blank `proxy` calls the captured Host fetch without an explicit dispatcher, so ambient Host dispatcher changes remain visible at request time.
 4. Explicit `proxy` remains live-editable and preserves `proxyHosts` narrowing.
 5. No schema migration, no setting rewrite, no DSH peer-range increase, and no new dependency on `@deepseek-ai/dsh-http-proxy`.
-6. The legacy seam remains available only for the intersection: explicit plugin proxy **and** Host-owned/raw-fetch visual provider.
+6. The legacy compatibility seam is relevant only for the intersection: explicit plugin proxy **and** Host-owned/raw-fetch visual provider.
 
 ## H1 — Host capability adoption
 
@@ -49,15 +52,21 @@ H1 is complete as an egress contract, not as a new production dependency. Exact 
 
 The current stable evidence advances to DSH `0.1.5-rc.2`; `0.1.5-rc.1` remains explicitly peer-admitted, and the public minimum remains `0.1.0-rc.8`.
 
-## Next phases
+## H2 — Scope Host-owned override authority
 
-### H2 — Retire the process-global compatibility patch
+H2 retires the **configuration-wide proxy authority** without removing the compatibility feature. Core no longer constructs ProxyAgent instances or installs its own process proxy patch. One compatibility wrapper remains outside runtime composition, but its default behavior is an exact pass-through to the DSH/Host fetch chain that existed when it was installed.
 
-Delete the legacy `globalThis.fetch` proxy patch only after every supported Host-owned visual provider has a scoped/shared Host transport path. The deletion test must prove the old closure cannot rescue production traffic.
+For DVR-owned calls into a Host adapter, `streamWithLegacyGlobalProxyScope(provider, model, ...)` keeps an AsyncLocalStorage authorization alive across lazy AsyncIterable creation and every `next()` / `return()` / `throw()` operation. The wrapper injects a private dispatcher only when the live settings still contain an explicit proxy and the active scope exactly matches a configured Host-owned vision pair. Vision-chain adapter calls, `vision_describe`, capability Benchmark and Exact Check use this same boundary. Router-owned direct HTTP continues through `VisionProviderTransport` instead.
 
-### H3 — Re-evaluate the plugin override
+H2 regression proof includes a deliberately blocked Host-owned visual stream plus a concurrent same-origin ordinary Host fetch. The ordinary request receives no DVR dispatcher; only the visual request receives the marked ProxyAgent dispatcher after its stream resumes. Clearing the proxy while the visual stream is active immediately returns later requests to Host authority.
 
-Once the support floor and Host capabilities cover normal proxy needs, decide whether `proxy` / `proxyHosts` remain as an advanced SOCKS/selective override, move behind an explicit legacy toggle, or are deprecated in a major release. Do not remove them in a patch/minor release while supported users still depend on them.
+One unscoped compatibility case remains intentionally: `routing=true` with an explicitly blank `chainRoute` routes the whole image turn directly to the first Host provider after the DVR routing hook returns, so there is no DVR-owned adapter-iteration boundary to scope. H2 preserves that old configuration narrowly rather than silently breaking it in a patch release.
+
+## Next phase
+
+### H3 — Re-evaluate the plugin override and last wrapper
+
+H3 should decide whether `proxy` / `proxyHosts` remain as an advanced SOCKS/selective override, move behind an explicit legacy toggle, or are deprecated in a major release. The final compatibility wrapper can disappear only when Host-owned adapter requests have a scoped transport seam that can carry the override without observing global fetch, **and** the direct whole-turn blank-`chainRoute` fallback is removed or migrated. Do not remove either behavior silently in a patch release while supported users still depend on it.
 
 ## System proxy terminology
 

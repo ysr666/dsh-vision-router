@@ -76,12 +76,12 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/legacy-global-proxy-boundary.js`
 
-- **Reason:** preserve the explicit Vision Router proxy override for Host-owned/raw-fetch visual providers. Router-owned `vision-http` and direct protocol-correction traffic already use `VisionProviderTransport`; with blank `proxy`, every Host-owned path bypasses this seam and follows Host egress directly.
-- **Host gap:** DSH 0.1.5 already owns ordinary process egress, so generic Host proxy support is no longer the blocker. The remaining compatibility requirement is narrower: a user may explicitly request a Vision Router-only proxy (including SOCKS/selective `proxyHosts`) for a Host-owned provider whose request does not pass through Router-owned transport.
+- **Reason:** preserve the explicit Vision Router proxy override for Host-owned/raw-fetch visual providers without granting that configuration process-wide routing authority. Router-owned HTTP already uses `VisionProviderTransport`; blank `proxy` leaves the compatibility wrapper fully transparent.
+- **Host gap:** DSH 0.1.5 owns ordinary process egress, but a Host adapter invoked through `ctx.llm.stream()` still exposes no DVR-owned request/dispatcher parameter for a vision-only SOCKS/selective override. A separate legacy direct whole-turn mode (`routing=true` plus blank `chainRoute`) also hands control to the Host after the DVR hook returns, leaving no adapter-iteration scope to authorize.
 - **First needed for:** legacy/custom Host-owned visual provider compatibility when users configure a Vision Router-specific proxy override.
-- **Feature detection:** live visual-chain ownership **and** an explicit non-empty plugin proxy. Router-owned routes and blank-proxy configurations bypass the legacy patch. This is capability/ownership detection, not a Host-version persona.
-- **Removal condition:** explicit Vision Router proxy overrides no longer require process-global mutation for supported Host-owned visual providers, or that override is retired/re-scoped by product policy.
-- **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, exact Host proxy egress contract, `adversarial-hardening`, P2 Data Boundary Node 22/24.
+- **Feature detection:** live explicit proxy + exact configured Host-owned provider/model + AsyncLocalStorage visual-call scope. Router-owned routes, blank proxy, different pairs and concurrent ordinary Host traffic are pass-through. Only the explicit direct whole-turn blank-`chainRoute` configuration retains unscoped compatibility.
+- **Removal condition:** Host-owned adapter requests can receive the explicit DVR override through a scoped Host transport (or the override is retired), and the direct whole-turn blank-`chainRoute` fallback is removed/migrated by product policy.
+- **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, exact Host proxy egress contract, Benchmark/Exact Check coverage, P2 Data Boundary Node 22/24.
 
 ## `lib/legacy-core-vision-policy-bridge.js`
 
