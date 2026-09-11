@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.5"><img src="https://img.shields.io/badge/release-v2.1.5-5B4CF0?style=flat-square" alt="Release v2.1.5" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.6"><img src="https://img.shields.io/badge/release-v2.1.6-5B4CF0?style=flat-square" alt="Release v2.1.6" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -39,9 +39,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v2.1.5）**
+> 📌 **公告（v2.1.6）**
 >
-> **v2.1.5：新增 DSH `0.1.5-rc.1` 支持，修复 live provider 变化时 Vision twin 对账与识图模式下 wrapper 模型切换，并加固 Web 激活与发版/安全链路。** [查看完整更新 →](docs/releases/v2.1.5.md)
+> **v2.1.6：正式验证 DSH `0.1.5-rc.2`，修复远程设置 `webServer` 启动报错，并完成 Host-first 代理隔离、生命周期、redirect 边界、HTTP CONNECT 与 SOCKS5 加固；公开最低 Host 仍为 rc.8。** [查看完整更新 →](docs/releases/v2.1.6.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
