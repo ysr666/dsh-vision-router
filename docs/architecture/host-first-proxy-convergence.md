@@ -84,6 +84,8 @@ When the original URL is listed, DVR supplies Fetch with a tiny request-scoped d
 
 This also preserves the DSH 0.1.5 Host policy across the repository's Undici-major split: Undici 8 publishes its Dispatcher v2 globally and a `Dispatcher1Wrapper` under the legacy global symbol; DVR's Undici 7 reads that legacy symbol, so a non-listed redirect hop can safely delegate back to the Host-owned dispatcher instead of manufacturing a direct connection.
 
+After the shared pool became authoritative for both explicit-proxy paths, the older runtime-level `ProxyDispatcherTracker` and its `globalThis.fetch` observer were removed. Those components could no longer see the real ProxyAgent after per-hop selectors were introduced, and retaining them would create a third, ineffective dispatcher-lifecycle authority. The shared pool is now the only owner that closes DVR-created ProxyAgents; borrowed Host/caller dispatchers remain outside DVR ownership.
+
 ## System proxy terminology
 
 Vision Router must not implement OS-specific proxy discovery. DSH's 0.1.5 network guide distinguishes OS “system proxy” settings, standard proxy environment variables, and TUN mode; DSH itself follows the environment policy and does not automatically read macOS/Windows system-proxy switches. Host-first therefore means “follow DSH/Host”, not “reimplement operating-system proxy detection in this plugin”.
