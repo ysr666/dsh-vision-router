@@ -240,6 +240,28 @@ test('all GitHub Actions dependencies are pinned to immutable commit SHAs', asyn
   }
 })
 
+test('workflow action sources stay within the repository execution allow-list', async () => {
+  const workflowDir = new URL('../.github/workflows/', import.meta.url)
+  const names = await readdir(workflowDir)
+  const allowedThirdParty = new Set([
+    'ossf/scorecard-action',
+    'pnpm/action-setup',
+  ])
+
+  for (const name of names.filter((entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'))) {
+    const source = await readFile(new URL(name, workflowDir), 'utf8')
+    const uses = [...source.matchAll(/^\s*-?\s*uses:\s*([^\s#]+)(?:\s*#.*)?$/gm)].map((match) => match[1])
+    for (const spec of uses) {
+      if (spec.startsWith('./') || spec.startsWith('docker://')) continue
+      const actionPath = spec.slice(0, spec.lastIndexOf('@'))
+      const [owner, repo] = actionPath.split('/')
+      const repository = `${owner}/${repo}`
+      const allowed = owner === 'actions' || owner === 'github' || allowedThirdParty.has(repository)
+      assert.equal(allowed, true, `${name}: action source ${repository} is not allowed by the repository Actions policy`)
+    }
+  }
+})
+
 test('large-image stress policy cannot regress to a one-off development branch gate', async () => {
   const workflow = await readFile(new URL('../.github/workflows/resource-stress.yml', import.meta.url), 'utf8')
   assert.match(workflow, /pull_request:/)
