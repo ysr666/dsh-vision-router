@@ -143,10 +143,10 @@ test('authenticated alpha.1 requests continue into the existing local-machine po
   }
 })
 
-test('pre-alpha Hosts without requestRejection preserve the existing DVR route behavior', () => {
+test('pre-alpha Hosts preserve declared remote reads while undeclared DVR routes fail closed', () => {
   const mounted = registerThroughBoundary({
     connection: {},
-    path: '/_dsh/vision-router/product-state',
+    path: '/_dsh/vision-router/host-capabilities',
   })
   try {
     const { response, state } = responseRecorder()
@@ -156,6 +156,16 @@ test('pre-alpha Hosts without requestRejection preserve the existing DVR route b
     assert.equal(state.body, 'ok')
   } finally {
     mounted.dispose()
+  }
+
+  const undeclared = registerThroughBoundary({ connection: {}, path: '/_dsh/vision-router/product-state' })
+  try {
+    const { response, state } = responseRecorder()
+    undeclared.route().handler(realRequest(), response)
+    assert.equal(undeclared.calls(), 0)
+    assert.equal(state.status, 403)
+  } finally {
+    undeclared.dispose()
   }
 })
 

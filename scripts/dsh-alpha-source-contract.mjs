@@ -128,6 +128,11 @@ assert.equal(Buffer.compare(Buffer.from(migratedPrepared.data), Buffer.from(sour
 const llmSource = await readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8')
 assert.match(
   llmSource,
+  /listProviders\(\): LlmProviderInfo\[\]/,
+  'supported 0.1.5 Hosts must expose the live provider registry used by Vision twin reconciliation',
+)
+assert.match(
+  llmSource,
   /imageRequestPricing\(_provider: string, _model: string\): LlmImageRequestPricing \| undefined \{\s*return undefined/,
 )
 assert.match(

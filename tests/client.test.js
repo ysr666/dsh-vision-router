@@ -1073,6 +1073,9 @@ test('presented image resource cache keeps hard bounds even when the loaded hist
   assert.deepEqual(cache.stats(), {
     entries: 1,
     settledEntries: 1,
+    pendingEntries: 0,
+    activeLoads: 0,
+    queuedLoads: 0,
     residentBytes: 4,
     ownedEntries: 1,
     disposed: false,
@@ -1088,10 +1091,94 @@ test('presented image resource cache keeps hard bounds even when the loaded hist
   assert.deepEqual(cache.stats(), {
     entries: 2,
     settledEntries: 2,
+    pendingEntries: 0,
+    activeLoads: 0,
+    queuedLoads: 0,
     residentBytes: 3,
     ownedEntries: 2,
     disposed: false,
   })
+})
+
+
+test('presented image resource cache bounds active reads and pending admission before bytes settle', async () => {
+  const bundle = loadClientBundle()
+  let releaseGate
+  const gate = new Promise((resolve) => { releaseGate = resolve })
+  let calls = 0
+  let active = 0
+  let maxActive = 0
+  const cache = bundle.createPresentedImageResourceCache({
+    maxActiveLoads: 2,
+    maxPendingEntries: 4,
+    maxEntries: 8,
+    maxBytes: 1024,
+    createObjectURL: (_data, mediaType) => `blob:${mediaType}:${calls}`,
+    revokeObjectURL: () => {},
+  })
+  const loader = async () => {
+    calls += 1
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    await gate
+    active -= 1
+    return { data: new Uint8Array(8), mediaType: 'image/png' }
+  }
+
+  const accepted = [0, 1, 2, 3].map((index) => cache.load(`pending-${index}`, loader, {}))
+  await assert.rejects(
+    cache.load('overflow', loader, {}),
+    (error) => error && error.code === 'VISION_PRESENT_CACHE_BUSY',
+  )
+  await Promise.resolve()
+  assert.equal(calls, 2, 'only the configured number of attachment reads may start')
+  assert.deepEqual(cache.stats(), {
+    entries: 4,
+    settledEntries: 0,
+    pendingEntries: 4,
+    activeLoads: 2,
+    queuedLoads: 2,
+    residentBytes: 0,
+    ownedEntries: 0,
+    disposed: false,
+  })
+
+  releaseGate()
+  await Promise.all(accepted)
+  assert.equal(calls, 4)
+  assert.equal(maxActive, 2)
+  assert.equal(cache.stats().pendingEntries, 0)
+  assert.equal(cache.stats().activeLoads, 0)
+})
+
+test('purging a queued presentation rejects it without consuming a read slot', async () => {
+  const bundle = loadClientBundle()
+  let releaseGate
+  const gate = new Promise((resolve) => { releaseGate = resolve })
+  let calls = 0
+  const cache = bundle.createPresentedImageResourceCache({
+    maxActiveLoads: 1,
+    maxPendingEntries: 2,
+    createObjectURL: () => 'blob:queued',
+    revokeObjectURL: () => {},
+  })
+  const ownerA = {}
+  const ownerB = {}
+  const first = cache.load('active', async () => {
+    calls += 1
+    await gate
+    return { data: new Uint8Array(1), mediaType: 'image/png' }
+  }, ownerA)
+  const queued = cache.load('queued', async () => {
+    calls += 1
+    return { data: new Uint8Array(1), mediaType: 'image/png' }
+  }, ownerB)
+  assert.equal(cache.release('queued', ownerB, { purge: true }), true)
+  await assert.rejects(queued, /load released/)
+  assert.equal(calls, 1)
+  releaseGate()
+  await first
+  assert.equal(calls, 1)
 })
 
 test('presented image resource cache deduplicates owners and purges only after the final card releases', async () => {
@@ -1173,6 +1260,9 @@ test('presented image resource cache disposal rejects late loads without creatin
   assert.deepEqual(cache.stats(), {
     entries: 0,
     settledEntries: 0,
+    pendingEntries: 0,
+    activeLoads: 0,
+    queuedLoads: 0,
     residentBytes: 0,
     ownedEntries: 0,
     disposed: true,

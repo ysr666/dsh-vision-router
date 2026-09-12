@@ -138,6 +138,7 @@ function liveWrapperHarness({ initialProvider = 'deepseek-official', native = fa
     adapter: {
       async listModels(provider) {
         return [
+          { provider, id: 'deepseek-flash', name: 'DeepSeek-V41-Flash', inputModalities: ['text', 'image'] },
           { provider, id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text'] },
           { provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text'] },
         ]
@@ -261,11 +262,11 @@ test('main DeepSeek auto-vision wrapper never follows an arbitrary live textProv
   ])
 })
 
-test('main wrapper metadata stays DeepSeek even when textProvider is a Kimi/relay route', async () => {
+test('issue #469: main wrapper mirrors the live official DeepSeek catalog even when textProvider is a relay', async () => {
   const harness = liveWrapperHarness({ initialProvider: 'relay-openai' })
   const adapter = harness.adapter()
   const listed = await adapter.listModels('deepseek-vision')
-  assert.deepEqual(listed.map((model) => model.id), ['deepseek-v4-pro', 'deepseek-v4-flash'])
+  assert.deepEqual(listed.map((model) => model.id), ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash'])
   assert.ok(listed.every((model) => model.provider === 'deepseek-vision'))
   assert.ok(listed.every((model) => model.inputModalities.includes('image')))
 
@@ -273,6 +274,10 @@ test('main wrapper metadata stays DeepSeek even when textProvider is a Kimi/rela
   assert.equal(resolved.provider, 'deepseek-vision')
   assert.equal(resolved.id, 'deepseek-v4-pro')
   assert.deepEqual(resolved.inputModalities, ['text', 'image'])
+  const stableDefault = await adapter.resolveModel('deepseek-vision', 'deepseek-flash')
+  assert.equal(stableDefault.provider, 'deepseek-vision')
+  assert.equal(stableDefault.id, 'deepseek-flash')
+  assert.deepEqual(stableDefault.inputModalities, ['text', 'image'])
   assert.equal(adapter.providerRetryPolicy('deepseek-vision'), 'deepseek-retry')
 })
 
@@ -287,6 +292,7 @@ test('main wrapper listModels restores only config-driven composite rows while p
     adapter: {
       async listModels(provider) {
         return [
+          { provider, id: 'deepseek-flash', name: 'DeepSeek-V41-Flash', inputModalities: ['text', 'image'] },
           { provider, id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text'] },
           { provider, id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text'] },
         ]
@@ -392,7 +398,7 @@ test('main wrapper listModels restores only config-driven composite rows while p
 
   // routing=false: pinned official DeepSeek only, no composite noise.
   const listedOff = await registeredAdapter.listModels('deepseek-vision')
-  assert.deepEqual(listedOff.map((model) => model.id), ['deepseek-v4-pro', 'deepseek-v4-flash'])
+  assert.deepEqual(listedOff.map((model) => model.id), ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4-flash'])
   assert.ok(listedOff.every((model) => model.provider === 'deepseek-vision'))
   assert.ok(listedOff.every((model) => model.inputModalities.includes('image')))
 
@@ -401,7 +407,7 @@ test('main wrapper listModels restores only config-driven composite rows while p
   routingEnabled = true
   const listedOn = await registeredAdapter.listModels('deepseek-vision')
   const idsOn = listedOn.map((model) => model.id)
-  assert.ok(idsOn.includes('deepseek-v4-pro') && idsOn.includes('deepseek-v4-flash'))
+  assert.ok(idsOn.includes('deepseek-flash') && idsOn.includes('deepseek-v4-pro') && idsOn.includes('deepseek-v4-flash'))
   assert.ok(idsOn.includes('zhipu/glm-4.6v-flash'), 'authorized composite row kept')
   assert.ok(!idsOn.includes('k3'), 'stray non-composite row dropped')
   assert.ok(!idsOn.some((id) => id.includes('kimi') || id.includes('xiaomi')), 'DSH-only providers never listed')

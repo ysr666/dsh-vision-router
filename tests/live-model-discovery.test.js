@@ -222,6 +222,85 @@ test('Host discovery uses configured transport/credential and disk cache is disp
   }
 })
 
+
+test('remote live-model snapshot cannot schedule Host provider I/O while local refresh still can', async () => {
+  const cacheFile = '/virtual/live-models-remote-boundary.json'
+  const mem = memoryCacheFs()
+  const calls = []
+  let route
+  let lifecycleCleanup
+  const settings = {
+    get(namespace) {
+      if (namespace === 'llm-pi-ai') {
+        return { providers: { zai: { baseURL: 'https://zai.example/v1', api: 'openai-completions' } } }
+      }
+      if (namespace === 'vision-router') return { providers: [] }
+      return undefined
+    },
+  }
+  const webServer = {
+    register(candidate) {
+      route = candidate
+      return () => { route = undefined }
+    },
+  }
+  const ctx = {
+    llm: { registration() { return undefined } },
+    get(name) {
+      if (name === 'settings') return settings
+      return undefined
+    },
+    on() { return () => {} },
+    inject(deps, callback) {
+      assert.deepEqual(deps, ['webServer'])
+      callback({ webServer, effect(factory) { return factory() } })
+    },
+    effect(factory) {
+      lifecycleCleanup = factory()
+      return lifecycleCleanup
+    },
+  }
+  const manager = installLiveModelDiscovery(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    fetchImpl: async (url) => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ data: [{ id: 'glm-live' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const invoke = async ({ remoteAddress, host }) => {
+    const state = { status: 0, body: '' }
+    await route.handler({
+      method: 'GET',
+      url: '/_dsh/vision-router/live-models?refresh=1',
+      headers: { host },
+      socket: { remoteAddress },
+    }, {
+      writeHead(status) { state.status = status },
+      setHeader() {},
+      end(body = '') { state.body += String(body ?? '') },
+    })
+    return state
+  }
+  try {
+    await manager.ready()
+    const remote = await invoke({ remoteAddress: '192.168.1.20', host: 'router.example.com' })
+    assert.equal(remote.status, 200)
+    assert.equal(calls.length, 0, 'remote refresh=1 must remain a passive snapshot read')
+
+    const local = await invoke({ remoteAddress: '127.0.0.1', host: 'localhost:3000' })
+    assert.equal(local.status, 200)
+    await waitForSettled(manager)
+    assert.deepEqual(calls, ['https://zai.example/v1/models'])
+  } finally {
+    lifecycleCleanup?.()
+    await manager.dispose()
+  }
+})
+
 test('credential rotation invalidates live evidence through current and legacy Host events without hashing the key', async () => {
   const dshHome = await mkdtemp(path.join(os.tmpdir(), 'vision-router-credential-events-'))
   let apiKey = 'rotation-alpha'
