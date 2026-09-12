@@ -30,6 +30,11 @@ Pull requests replay a fixed seed for regression stability; scheduled and manual
 runs add a rotating seed for broader exploration. A failing run reports the seed
 and replay command so the exact corpus can be reproduced locally.
 
+Future GitHub Releases are repository-immutable after publication. The release
+workflow also attaches Sigstore-signed SLSA provenance for the exact npm tarball
+as an `.intoto.jsonl` asset, in addition to npm trusted-publishing provenance.
+Release notes include the artifact digest and an offline verification command.
+
 ## Reporting a vulnerability
 
 Please use [GitHub **Private Vulnerability Reporting**](https://github.com/ysr666/dsh-vision-router/security)

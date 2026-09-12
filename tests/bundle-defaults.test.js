@@ -164,11 +164,33 @@ test('release workflow confines write tokens to non-executing tag/release phases
   assert.match(tag, /needs: verify[\s\S]*permissions:[\s\S]*contents: write/)
   assert.doesNotMatch(tag, /pnpm install|pnpm test|npm pack|npm publish/)
   assert.match(publish, /needs: tag[\s\S]*contents: read[\s\S]*id-token: write/)
+  assert.match(publish, /attestations: write/)
+  assert.match(publish, /artifact-metadata: write/)
   assert.doesNotMatch(publish, /contents: write/)
   assert.match(release, /needs: publish[\s\S]*permissions:[\s\S]*contents: write/)
+  assert.doesNotMatch(release, /id-token: write|attestations: write|artifact-metadata: write/)
   assert.doesNotMatch(workflow, /npm install --global/)
   assert.match(workflow, /NPM_CLI_SHA256: '[0-9a-f]{64}'/)
   assert.match(workflow, /sha256sum --check --strict/)
+})
+
+test('release provenance binds the exact npm tarball before the write-token phase', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+  const publishStart = workflow.indexOf('  publish:')
+  const releaseStart = workflow.indexOf('  github-release:', publishStart + 1)
+  assert.ok(publishStart > 0 && releaseStart > publishStart)
+
+  const publish = workflow.slice(publishStart, releaseStart)
+  const release = workflow.slice(releaseStart)
+  assert.match(publish, /uses: actions\/attest@[0-9a-f]{40} # v4\.2\.2/)
+  assert.match(publish, /subject-path: \$\{\{ steps\.package\.outputs\.tarball \}\}/)
+  assert.match(publish, /PROVENANCE_NAME=\"\$\{PACKAGE_TARBALL\}\.intoto\.jsonl\"/)
+  assert.match(publish, /gh attestation verify \"\$PACKAGE_TARBALL\"[\s\S]*--signer-workflow[\s\S]*--source-digest \"\$RELEASE_SHA\"[\s\S]*--deny-self-hosted-runners/)
+  assert.match(publish, /PROVENANCE_BYTES[\s\S]*131072/)
+  assert.match(release, /PROVENANCE_BUNDLE_B64: \$\{\{ needs\.publish\.outputs\.provenance_bundle_b64 \}\}/)
+  assert.match(release, /base64 --decode > \"\$PROVENANCE_NAME\"/)
+  assert.match(release, /release provenance handoff failed SHA-256 verification/)
+  assert.match(release, /gh release create[\s\S]*\"\$PROVENANCE_NAME\"/)
 })
 
 test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm setup', async () => {
