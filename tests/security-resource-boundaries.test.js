@@ -10,6 +10,7 @@ import {
 import {
   MAX_RUNTIME_COMPLEX_FIELD_BYTES,
   MAX_RUNTIME_EXTRA_VISION_MODELS,
+  MAX_RUNTIME_GUIDANCE_CHARS,
   MAX_RUNTIME_WRAPPED_MODELS_PER_PROVIDER,
   MAX_RUNTIME_WRAPPED_PROVIDER_ROWS,
   normalizeRuntimeVisionConfig,
@@ -115,8 +116,21 @@ test('web route capability policy classifies side-effecting GET without changing
     WEB_ROUTE_REMOTE_CAPABILITY.REDACT_REMOTE,
   )
   assert.equal(
-    webRouteRemoteCapability('/_dsh/vision-router/product-state', 'GET'),
+    webRouteRemoteCapability('/_dsh/vision-router/live-models', 'GET'),
     WEB_ROUTE_REMOTE_CAPABILITY.ALLOW_REMOTE,
+  )
+  assert.equal(
+    webRouteRemoteCapability('/_dsh/vision-router/capability-runtime', 'GET'),
+    WEB_ROUTE_REMOTE_CAPABILITY.ALLOW_REMOTE,
+  )
+  assert.equal(
+    webRouteRemoteCapability('/_dsh/vision-router/capability-runtime', 'POST'),
+    WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY,
+  )
+  assert.equal(
+    webRouteRemoteCapability('/_dsh/vision-router/product-state', 'GET'),
+    WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY,
+    'undeclared DVR routes must fail closed',
   )
 })
 
@@ -148,12 +162,17 @@ test('runtime normalization bounds complex model lists without broadening malfor
   }
   raw.wrappedProviders.unshift({ provider: 'malformed', models: { not: 'an array' } })
 
+  raw.wrappedProviders[1].padding = 'legacy-ignored-field'
+  raw.providers = [{ provider: 'p', model: 'm', fallbacks: [], padding: 'legacy-ignored-field' }]
+
   const normalized = normalizeRuntimeVisionConfig(raw)
   assert.equal(normalized.extraVisionModels.length, MAX_RUNTIME_EXTRA_VISION_MODELS)
   assert.equal(normalized.extraVisionModels[0], 'vision-0')
   assert.ok(normalized.wrappedProviders.length <= MAX_RUNTIME_WRAPPED_PROVIDER_ROWS)
   assert.equal(normalized.wrappedProviders.some((entry) => entry.provider === 'malformed'), false)
   assert.ok(normalized.wrappedProviders.every((entry) => entry.models.length <= MAX_RUNTIME_WRAPPED_MODELS_PER_PROVIDER))
+  assert.equal(Object.hasOwn(normalized.wrappedProviders[0], 'padding'), false)
+  assert.deepEqual(normalized.providers, [{ provider: 'p', model: 'm', fallbacks: [] }])
 
   const explicitAll = normalizeRuntimeVisionConfig({
     wrappedProviders: [{ provider: 'intentional-all', models: [] }],
@@ -188,6 +207,9 @@ function remoteSettingsFixture() {
     [REMOTE_SETTINGS_PERMISSION]: true,
     extraVisionModels: [],
     wrappedProviders: [],
+    providers: [],
+    guidanceOverrides: [],
+    textProvider: { provider: 'deepseek-official', model: 'deepseek-v4-pro' },
     routing: false,
   }
   const calls = []
@@ -212,6 +234,25 @@ function remoteSettingsFixture() {
   }
   return { settings, calls }
 }
+
+
+test('remote admission rejects whole-value amplification and unknown nested payloads', async () => {
+  for (const [field, value, expected] of [
+    ['wrappedProviders', [{ provider: 'p', models: ['m'], padding: 'x'.repeat(5 * 1024 * 1024) }], /remote settings strings|admission budget|only provider and models/],
+    ['providers', [{ provider: 'p', model: 'm', fallbacks: [], padding: 'x'.repeat(1_000) }], /only provider, model and fallbacks/],
+    ['guidanceOverrides', [{ kind: 'document', text: 'x'.repeat(MAX_RUNTIME_GUIDANCE_CHARS + 1) }], /guidanceOverrides text/],
+    ['textProvider', { provider: 'p', model: 'm', padding: 'x' }, /textProvider may contain only/],
+  ]) {
+    const fixture = remoteSettingsFixture()
+    const result = await createVisionRouterRemoteSettingsHandler(fixture.settings)('mutate', {
+      expectedRevision: 4,
+      ops: [{ op: 'set', path: [field], value }],
+    })
+    assert.equal(result.ok, false, field)
+    assert.match(result.error.message, expected, field)
+    assert.equal(fixture.calls.length, 0, `${field} must fail before settings.mutate`)
+  }
+})
 
 test('remote bridge rejects oversized complex settings before settings.mutate while accepting bounded values', async () => {
   const oversized = remoteSettingsFixture()

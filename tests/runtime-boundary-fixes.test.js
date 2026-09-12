@@ -445,8 +445,8 @@ test('local mutation boundary preserves injected child identity and rejects remo
     { method: 'GET', socket: { remoteAddress: '10.0.0.8' }, headers: { host: 'router.example.com' } },
     res,
   )
-  assert.equal(res.status, 200)
-  assert.equal(calls, 2)
+  assert.equal(res.status, 403, 'undeclared methods on a DVR capability route fail closed')
+  assert.equal(calls, 1)
 
   for (const cleanup of cleanups.reverse()) cleanup()
 })
