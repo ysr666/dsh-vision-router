@@ -6,6 +6,7 @@ on:
       - 'index.js'
       - 'lib/**'
       - 'scripts/security-adversarial-fuzz.mjs'
+      - '.github/workflows/adversarial-fuzz.yml'
       - 'package.json'
   schedule:
     - cron: '17 4 * * *'
@@ -20,12 +21,9 @@ concurrency:
 
 jobs:
   fuzz:
-    name: deterministic hostile-input fuzz
+    name: hostile-input fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      DVR_FUZZ_CASES: ${{ github.event_name == 'schedule' && '1500' || '500' }}
-      DVR_FUZZ_SEED: '1592639710'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,5 +31,22 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '24'
-      - name: Fuzz runtime authority, config, redaction, and session boundaries
+      - name: Fuzz deterministic regression corpus
+        env:
+          DVR_FUZZ_CASES: '500'
+          DVR_FUZZ_SEED: '1592639710'
+        run: node scripts/security-adversarial-fuzz.mjs
+      - name: Derive rotating exploration seed
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        id: exploration_seed
+        shell: bash
+        run: |
+          seed="$(node --input-type=module -e 'const id = BigInt(process.env.GITHUB_RUN_ID); console.log(Number(id & 0xffffffffn))')"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          printf 'Rotating fuzz seed: `%s`\n' "$seed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fuzz rotating exploration corpus
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          DVR_FUZZ_CASES: '1500'
+          DVR_FUZZ_SEED: ${{ steps.exploration_seed.outputs.seed }}
         run: node scripts/security-adversarial-fuzz.mjs
