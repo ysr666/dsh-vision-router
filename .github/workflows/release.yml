@@ -174,12 +174,17 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      attestations: write
+      artifact-metadata: write
     outputs:
       release_version: ${{ steps.identity.outputs.version }}
       package_tarball: ${{ steps.package.outputs.tarball }}
       package_file_count: ${{ steps.package.outputs.file_count }}
       package_sha1: ${{ steps.package.outputs.sha1 }}
       package_sha256: ${{ steps.package.outputs.sha256 }}
+      provenance_name: ${{ steps.provenance.outputs.name }}
+      provenance_sha256: ${{ steps.provenance.outputs.sha256 }}
+      attestation_url: ${{ steps.attest.outputs.attestation-url }}
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -321,6 +326,57 @@ jobs:
           }
 
 
+      - name: Generate signed SLSA provenance for the exact tarball
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.package.outputs.tarball }}
+
+      - name: Verify and export the release provenance bundle
+        id: provenance
+        shell: bash
+        env:
+          ATTEST_BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PROVENANCE_NAME="${PACKAGE_TARBALL}.intoto.jsonl"
+          [ -s "$ATTEST_BUNDLE_PATH" ] || {
+            echo "::error::attestation action did not produce a provenance bundle"
+            exit 1
+          }
+          [ -n "$ATTESTATION_URL" ] || {
+            echo "::error::attestation action did not publish a provenance record"
+            exit 1
+          }
+          cp "$ATTEST_BUNDLE_PATH" "$PROVENANCE_NAME"
+
+          gh attestation verify "$PACKAGE_TARBALL" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$PROVENANCE_NAME" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-digest "$RELEASE_SHA" \
+            --deny-self-hosted-runners >/dev/null
+
+          PROVENANCE_BYTES="$(wc -c < "$PROVENANCE_NAME" | tr -d '[:space:]')"
+          [ "$PROVENANCE_BYTES" -gt 0 ] && [ "$PROVENANCE_BYTES" -le 131072 ] || {
+            echo "::error::provenance bundle size is outside the release handoff budget"
+            exit 1
+          }
+          PROVENANCE_SHA256="$(sha256sum "$PROVENANCE_NAME" | awk '{print $1}')"
+          echo "name=$PROVENANCE_NAME" >> "$GITHUB_OUTPUT"
+          echo "sha256=$PROVENANCE_SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Persist verified provenance for the release phase
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-provenance
+          path: ${{ steps.provenance.outputs.name }}
+          if-no-files-found: error
+          retention-days: 1
+
+
   github-release:
     name: Publish immutable GitHub Release
     needs: publish
@@ -328,6 +384,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
@@ -336,6 +393,9 @@ jobs:
       PACKAGE_FILE_COUNT: ${{ needs.publish.outputs.package_file_count }}
       PACKAGE_SHA1: ${{ needs.publish.outputs.package_sha1 }}
       PACKAGE_SHA256: ${{ needs.publish.outputs.package_sha256 }}
+      PROVENANCE_NAME: ${{ needs.publish.outputs.provenance_name }}
+      PROVENANCE_SHA256: ${{ needs.publish.outputs.provenance_sha256 }}
+      ATTESTATION_URL: ${{ needs.publish.outputs.attestation_url }}
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -360,6 +420,37 @@ jobs:
             exit 1
           }
           printf '%s  %s\n' "$PACKAGE_SHA256" "$PACKAGE_TARBALL" > SHA256SUMS.txt
+
+      - name: Rehydrate verified provenance from this workflow run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ "$PROVENANCE_NAME" = "${PACKAGE_TARBALL}.intoto.jsonl" ] || {
+            echo "::error::unexpected provenance asset name"
+            exit 1
+          }
+          HANDOFF_DIR="$RUNNER_TEMP/release-provenance-handoff"
+          rm -rf "$HANDOFF_DIR"
+          mkdir -p "$HANDOFF_DIR"
+          gh run download "$GITHUB_RUN_ID" \
+            --name release-provenance \
+            --dir "$HANDOFF_DIR"
+          [ -f "$HANDOFF_DIR/$PROVENANCE_NAME" ] || {
+            echo "::error::release provenance artifact is missing the expected bundle"
+            exit 1
+          }
+          mv "$HANDOFF_DIR/$PROVENANCE_NAME" "$PROVENANCE_NAME"
+          [ -s "$PROVENANCE_NAME" ] || {
+            echo "::error::release provenance bundle is empty"
+            exit 1
+          }
+          [ "$(sha256sum "$PROVENANCE_NAME" | awk '{print $1}')" = "$PROVENANCE_SHA256" ] || {
+            echo "::error::release provenance handoff failed SHA-256 verification"
+            exit 1
+          }
+          printf '%s  %s\n' "$PROVENANCE_SHA256" "$PROVENANCE_NAME" >> SHA256SUMS.txt
 
       - name: Compose immutable release notes
         shell: bash
@@ -403,6 +494,9 @@ jobs:
             echo "- tarball SHA-256: \`$PACKAGE_SHA256\`"
             echo "- packed files: \`$PACKAGE_FILE_COUNT\`"
             echo "- npm provenance: enabled via trusted publishing (OIDC)"
+            echo "- GitHub SLSA provenance: $ATTESTATION_URL"
+            echo "- offline provenance bundle: \`$PROVENANCE_NAME\`"
+            echo "- verify: \`gh attestation verify $PACKAGE_TARBALL -R $GITHUB_REPOSITORY --bundle $PROVENANCE_NAME --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
           } >> release-notes.md
 
       - name: Create GitHub Release once
@@ -418,6 +512,7 @@ jobs:
             --title "$RELEASE_TAG" \
             --notes-file release-notes.md \
             "$PACKAGE_TARBALL" \
-            "SHA256SUMS.txt"
+            "SHA256SUMS.txt" \
+            "$PROVENANCE_NAME"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
