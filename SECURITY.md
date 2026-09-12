@@ -25,6 +25,12 @@ unmergeable when no second maintainer is available. Automated/AI review is usefu
 additional evidence, but is not represented as human approval. This policy should
 be revisited when a second active maintainer can reliably review changes.
 
+GitHub Actions is also restricted at the repository policy layer: external actions
+must use full-length commit SHAs, and executable action sources are limited to
+GitHub-owned actions plus the explicitly approved `ossf/scorecard-action` and
+`pnpm/action-setup` repositories. The workflow contract tests mirror this allow-list
+so source changes cannot silently drift away from the platform policy.
+
 Security-sensitive input boundaries also have deterministic adversarial fuzzing.
 Pull requests replay a fixed seed for regression stability; scheduled and manual
 runs add a rotating seed for broader exploration. A failing run reports the seed
