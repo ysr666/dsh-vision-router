@@ -200,6 +200,30 @@ async function selectedWorkspaceName(page) {
   return { selector, name: (await selector.innerText()).trim() }
 }
 
+async function assertVisionToggleSettledWithPair(toggle, phase) {
+  const deadline = Date.now() + 10_000
+  let state
+  while (Date.now() < deadline) {
+    state = await toggle.evaluate((element) => ({
+      disabled: Boolean(element.disabled),
+      title: element.getAttribute('title') || '',
+      ariaLabel: element.getAttribute('aria-label') || '',
+    }))
+    const detail = `${state.title}
+${state.ariaLabel}`
+    if (/No matching.*Auto Vision|没有对应.*自动识图/i.test(detail)) {
+      const error = new Error(`${phase} Vision toggle has no matching Vision Router twin: ${detail.trim()}`)
+      error.code = 'VISION_TWIN_UNAVAILABLE'
+      throw error
+    }
+    if (!/Loading model information|正在读取模型信息/i.test(detail)) return state
+    await toggle.page().waitForTimeout(250)
+  }
+  const error = new Error(`${phase} Vision toggle did not settle its model directory in 10s`)
+  error.code = 'VISION_TWIN_DIRECTORY_TIMEOUT'
+  throw error
+}
+
 async function ensureExistingWorkspaceSelected(page, expectedName) {
   let current = await selectedWorkspaceName(page)
   if (current.name === expectedName) return
@@ -309,6 +333,7 @@ try {
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
   await page.waitForTimeout(750)
+  const firstToggleState = await assertVisionToggleSettledWithPair(toggle, 'first session')
 
   let injectionErrors = diagnostics.filter((line) =>
     /cannot get property ["']remote\.session["'] without inject/i.test(line),
@@ -344,11 +369,13 @@ try {
   // Do not open the stock model picker. The Vision slot must be the first
   // consumer that can cold-resolve this session-scoped model directory.
   stage = 'cold-toggle'
-  await page.locator('[data-vision-router-mode-toggle="true"]').waitFor({
+  const coldToggle = page.locator('[data-vision-router-mode-toggle="true"]')
+  await coldToggle.waitFor({
     state: 'visible',
     timeout: 30_000,
   })
   await page.waitForTimeout(750)
+  const coldToggleState = await assertVisionToggleSettledWithPair(coldToggle, 'refreshed session')
 
   stage = 'diagnostics'
   injectionErrors = diagnostics.filter((line) =>
@@ -372,13 +399,17 @@ try {
     workspaceAdoptedThroughRealUi: true,
     firstSessionIntentVisionToggleVisible: true,
     refreshedSessionIntentVisionToggleVisible: true,
+    firstSessionVisionToggleState: firstToggleState,
+    refreshedSessionVisionToggleState: coldToggleState,
     nativeModelPickerOpened: false,
     modelRequestSent: false,
   }))
 } catch (error) {
   failed = true
   const message = error instanceof Error ? error.message : String(error)
-  if (/cannot get property ["']remote\.session["'] without inject/i.test(message)) {
+  if (error && (error.code === 'VISION_TWIN_UNAVAILABLE' || error.code === 'VISION_TWIN_DIRECTORY_TIMEOUT')) {
+    failureKind = 'vision-twin-unavailable'
+  } else if (/cannot get property ["']remote\.session["'] without inject/i.test(message)) {
     failureKind = 'product-injection-regression'
   } else if (/pageerror:/i.test(message)) {
     failureKind = 'browser-pageerror'
