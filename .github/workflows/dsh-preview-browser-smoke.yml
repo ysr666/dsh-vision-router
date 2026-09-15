@@ -27,6 +27,7 @@ on:
       - 'lib/pi-ai-bridge-wire-compat.js'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - '.github/workflows/dsh-preview-browser-smoke.yml'
   push:
     branches: [main]
@@ -55,6 +56,7 @@ on:
       - 'lib/pi-ai-bridge-wire-compat.js'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - '.github/workflows/dsh-preview-browser-smoke.yml'
   workflow_dispatch:
 
@@ -76,12 +78,16 @@ jobs:
         include:
           - dsh: 0.1.5-rc.1
             mixedGenericFiles: false
+            settingsLifecycle: false
           - dsh: 0.1.5-rc.2
             mixedGenericFiles: true
+            settingsLifecycle: true
           - dsh: 0.1.5-alpha.2
             mixedGenericFiles: true
+            settingsLifecycle: false
           - dsh: 0.1.6-alpha.1
             mixedGenericFiles: true
+            settingsLifecycle: true
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -212,6 +218,17 @@ jobs:
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-diagnostic.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/preview-browser-smoke-mixed-page.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
+
+      - name: Run real Settings mount, save, reload, and readback lifecycle
+        if: matrix.settingsLifecycle
+        working-directory: dsh-preview
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-preview
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/preview-browser-smoke-settings-diagnostic.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/preview-browser-smoke-settings-page.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
 
       - name: Upload classified browser diagnostics
         if: failure()
