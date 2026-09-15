@@ -144,6 +144,25 @@ test('tesseract promisify compatibility materializes asynchronously and cleans u
   assert.equal(delegatedOptions.windowsHide, true)
 })
 
+test('tesseract promisify compatibility canonicalizes the temp root before staging', async () => {
+  const prefixes = []
+  const wrapped = createTesseractPromisifyCompat(
+    () => {},
+    async (_file, args) => ({ stdout: args[0], stderr: '' }),
+    {
+      tempDir: '/tmp',
+      async realpath(value) { assert.equal(value, '/tmp'); return '/private/tmp' },
+      async mkdtemp(prefix) { prefixes.push(prefix); return '/private/tmp/ocr-realpath' },
+      async writeFile() {},
+      async rm() {},
+    },
+  )
+
+  const result = await wrapped('tesseract', ['stdin', 'stdout'], { input: pngBytes })
+  assert.deepEqual(prefixes, ['/private/tmp/dsh-vision-router-ocr-'])
+  assert.equal(result.stdout, '/private/tmp/ocr-realpath/input.png')
+})
+
 test('tesseract promisify compatibility cleans up after delegated failure', async () => {
   const events = []
   const wrapped = createTesseractPromisifyCompat(
