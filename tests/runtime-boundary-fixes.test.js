@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { promisify } from 'node:util'
+import path from 'node:path'
 
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
 import {
@@ -159,8 +160,8 @@ test('tesseract promisify compatibility canonicalizes the temp root before stagi
   )
 
   const result = await wrapped('tesseract', ['stdin', 'stdout'], { input: pngBytes })
-  assert.deepEqual(prefixes, ['/private/tmp/dsh-vision-router-ocr-'])
-  assert.equal(result.stdout, '/private/tmp/ocr-realpath/input.png')
+  assert.deepEqual(prefixes, [path.join('/private/tmp', 'dsh-vision-router-ocr-')])
+  assert.equal(result.stdout, path.join('/private/tmp', 'ocr-realpath', 'input.png'))
 })
 
 test('tesseract promisify compatibility cleans up after delegated failure', async () => {
