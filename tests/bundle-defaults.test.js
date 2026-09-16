@@ -224,6 +224,11 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
   assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).full, false)
   assert.equal(classifyCiImpact(['lib/client.js']).browser, true)
+  const imageOffloadCompat = classifyCiImpact(['lib/image-offload-compat.js'])
+  assert.equal(imageOffloadCompat.host, true)
+  assert.equal(imageOffloadCompat.browser, false)
+  assert.equal(imageOffloadCompat.full, false)
+  assert.deepEqual(imageOffloadCompat.reasons, [])
   const issue431 = classifyCiImpact([
     'lib/client-presentation-boundary-main.js',
     'lib/vision-model-visibility-boundary-main.js',

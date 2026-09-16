@@ -46,6 +46,7 @@ function makeHarness(initial = {}) {
   const toolDefs = new Map()
   const adapters = new Map()
   const webRoutes = new Map()
+  let attachmentReads = 0
   const scope = {
     get: () => settings,
     watch(fn) { watcher = fn; return () => { if (watcher === fn) watcher = undefined } },
@@ -75,7 +76,12 @@ function makeHarness(initial = {}) {
       },
     },
     get(name) {
-      if (name === 'attachments') return { readImage: async () => ({ data: Buffer.from('png') }) }
+      if (name === 'attachments') return {
+        readImage: async () => {
+          attachmentReads += 1
+          return { data: Buffer.from('png') }
+        },
+      }
       if (name === 'credentials') return { resolve: async () => ({ value: '' }) }
       return undefined
     },
@@ -88,6 +94,7 @@ function makeHarness(initial = {}) {
   }
   return {
     ctx, scope, handlers, toolDefs, adapters, webRoutes, webCtx,
+    attachmentReads: () => attachmentReads,
     setSettings(next) { settings = { ...next }; if (watcher) watcher(settings) },
   }
 }
@@ -154,6 +161,40 @@ test('vision-http dispatches OpenAI local providers through callLocalBackend so 
   assert.equal(core.calls[0].provider.temperature, 0.3)
   assert.equal(core.calls[0].provider.top_p, 0.7)
   assert.ok(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === 'local answer'))
+})
+
+test('local vision serializer projects offloaded history images to text without reading bytes', async () => {
+  const harness = makeHarness({
+    localOllama: { enabled: true, baseURL: 'http://ollama/v1', model: 'vl' },
+  })
+  const core = makeCore()
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  installSettingsLikeCore(stabilized)
+  stabilized.llm.registerAdapter(['vision-http'], {
+    async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+  })
+  for await (const _chunk of harness.adapters.get('vision-http').stream({
+    model: 'local-ollama/vl',
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          offloaded: true,
+          attachment: { attachmentId: 'sha256:local-old', mediaType: 'image/png' },
+        },
+        { type: 'text', text: 'continue' },
+      ],
+    }],
+  })) {
+    // drain
+  }
+  assert.equal(harness.attachmentReads(), 0)
+  assert.equal(core.calls.length, 1)
+  const content = core.calls[0].messages[0].content
+  assert.equal(content.some((block) => block.type === 'image_url'), false)
+  assert.match(content[0].text, /image omitted to fit request image limits/)
+  assert.deepEqual(content[1], { type: 'text', text: 'continue' })
 })
 
 test('vision-http leaves non-local models on the original adapter unchanged', async () => {

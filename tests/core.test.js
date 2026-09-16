@@ -4,6 +4,7 @@ import sharp from 'sharp'
 import { parseVersionComparator } from '../lib/version-range.js'
 import { directSessionAffinityHeaders, sessionIdentityOf, wireSessionAffinityId } from '../lib/session-affinity.js'
 import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
+import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import {
   mediaTypeOf,
   sniffMediaType,
@@ -310,6 +311,25 @@ test('toOpenAIContent converts harness blocks to OpenAI wire content', () => {
   assert.deepEqual(content[1], { type: 'text', text: 'describe' })
 })
 
+test('toOpenAIContent preserves DSH image-offload decisions without resolving bytes', () => {
+  let reads = 0
+  const content = toOpenAIContent([
+    {
+      type: 'image',
+      offloaded: true,
+      attachment: { attachmentId: 'sha256:abcdef0123456789', mediaType: 'image/png' },
+    },
+  ], () => {
+    reads += 1
+    return Buffer.from('must-not-be-read')
+  })
+  assert.equal(reads, 0)
+  assert.equal(content.length, 1)
+  assert.equal(content[0].type, 'text')
+  assert.match(content[0].text, /image omitted to fit request image limits/)
+  assert.match(content[0].text, /sha256:abcdef0123456789/)
+})
+
 test('callOpenAICompatible posts keyless when apiKeyEnv is empty', async () => {
   const original = globalThis.fetch
   let captured
@@ -473,6 +493,63 @@ test('vision-http adapter preserves DSH sessionId into the direct OpenCode Go re
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('vision-http whole-turn serializer never rehydrates DSH-offloaded history images', async () => {
+  const config = {
+    freeFallback: false,
+    httpProviders: [
+      {
+        name: 'offload-test',
+        baseURL: 'https://example.test/v1',
+        model: 'vision-model',
+        apiKeyEnv: '',
+      },
+    ],
+  }
+  // Deliberately omit the attachment service. An offloaded occurrence is a
+  // text projection now; trying to read its bytes would either drop it or fail.
+  const { ctx, adapters } = mockHarnessCtx({ config0: config, attachments: false })
+  apply(ctx, Config(config))
+  const adapter = adapters.get('vision-http')
+  assert.ok(adapter)
+
+  const original = globalThis.fetch
+  let body
+  globalThis.fetch = async (_url, init) => {
+    body = JSON.parse(init.body)
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    for await (const _chunk of adapter.stream({
+      provider: 'vision-http',
+      model: 'offload-test/vision-model',
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            offloaded: true,
+            attachment: { attachmentId: 'sha256:fedcba9876543210', mediaType: 'image/png' },
+          },
+          { type: 'text', text: 'continue' },
+        ],
+      }],
+    })) {
+      // drain
+    }
+  } finally {
+    globalThis.fetch = original
+  }
+
+  const content = body.messages[0].content
+  assert.equal(content.some((block) => block.type === 'image_url'), false)
+  assert.match(content[0].text, /image omitted to fit request image limits/)
+  assert.match(content[0].text, /sha256:fedcba9876543210/)
+  assert.deepEqual(content[1], { type: 'text', text: 'continue' })
 })
 
 test('callOpenAICompatible surfaces non-ok responses as errors', async () => {
@@ -696,6 +773,23 @@ test('estimateTokens and trimMessagesToBudget fit long conversations', () => {
 test('estimateTokens counts image blocks at a fixed cost', () => {
   const withImage = estimateTokens({ content: [{ type: 'image', attachment: {} }] })
   assert.ok(withImage >= 1445)
+})
+
+test('estimateTokens prices DSH-offloaded images as text placeholders instead of image payloads', () => {
+  const retained = estimateTokens({
+    role: 'user',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:retained' } }],
+  })
+  const offloaded = estimateTokens({
+    role: 'user',
+    content: [{
+      type: 'image',
+      offloaded: true,
+      attachment: { attachmentId: 'sha256:offloaded' },
+    }],
+  })
+  assert.ok(offloaded > 0)
+  assert.ok(offloaded < retained / 10)
 })
 
 test('estimateMessages sums the array (the call-site bug guard)', () => {
@@ -1640,6 +1734,62 @@ test('catalog correction answers opencode-go/qwen3.6-plus on the Anthropic endpo
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('vision chain never attributes a successful answer to an offloaded history image', async () => {
+  const store = createSessionVisionStateStore()
+  const owner = { id: 'session-offload-memory-owner' }
+  const offloadedId = 'sha256:1111111111111111'
+  const retainedId = 'sha256:2222222222222222'
+  store.recordAttachments(owner, [
+    { attachmentId: offloadedId, mediaType: 'image/png' },
+    { attachmentId: retainedId, mediaType: 'image/png' },
+  ])
+
+  const { ctx, adapters } = mockHarnessCtx({
+    opencodeGo: true,
+    attachments: true,
+    config0: opencodeGoChainConfig,
+  })
+  apply(ctx, Config(opencodeGoChainConfig), { sessionVision: { stateStore: store } })
+  const chain = adapters.get('vision-chain')
+  assert.ok(chain)
+
+  const original = globalThis.fetch
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ content: [{ type: 'text', text: 'retained image answer' }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  try {
+    for await (const _chunk of chain.stream({
+      provider: 'vision-chain',
+      model: 'opencode-go/qwen3.6-plus',
+      sessionId: 'session-offload-memory-wire',
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            offloaded: true,
+            attachment: { attachmentId: offloadedId, mediaType: 'image/png' },
+          },
+          {
+            type: 'image',
+            attachment: { attachmentId: retainedId, mediaType: 'image/png' },
+          },
+          { type: 'text', text: 'continue' },
+        ],
+      }],
+    })) {
+      // drain
+    }
+  } finally {
+    globalThis.fetch = original
+  }
+
+  assert.equal(store.hasDescription(owner, offloadedId), false)
+  assert.equal(store.getDescription(owner, retainedId), 'retained image answer')
 })
 
 test('vision_describe threads the live DSH session id into its child Harness call', async () => {

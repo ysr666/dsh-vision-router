@@ -110,6 +110,7 @@ import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boun
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
+import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 
 import {
   sharpPromise,
@@ -1020,6 +1021,10 @@ export function apply(ctx, config = {}, runtime = {}) {
           const content = []
           for (const block of message.content) {
             if (block && block.type === 'image' && block.attachment) {
+              if (isOffloadedImageBlock(block)) {
+                content.push({ type: 'text', text: offloadedImagePlaceholder(block) })
+                continue
+              }
               if (attachments === undefined) continue
               try {
                 const stored = await attachments.readImage(block.attachment)
@@ -1047,12 +1052,16 @@ export function apply(ctx, config = {}, runtime = {}) {
                 if (nested && nested.type === 'text' && typeof nested.text === 'string') {
                   parts.push(nested.text)
                 } else if (nested && nested.type === 'image') {
-                  const attachment = nested.attachment || {}
-                  const id = attachment.attachmentId || attachment.id || 'unknown'
-                  parts.push(
-                    `[attached image: ${id}] this tool result contained an image; ` +
-                      'inspect it with vision_describe (or re-read it with read_image)',
-                  )
+                  if (isOffloadedImageBlock(nested)) {
+                    parts.push(offloadedImagePlaceholder(nested))
+                  } else {
+                    const attachment = nested.attachment || {}
+                    const id = attachment.attachmentId || attachment.id || 'unknown'
+                    parts.push(
+                      `[attached image: ${id}] this tool result contained an image; ` +
+                        'inspect it with vision_describe (or re-read it with read_image)',
+                    )
+                  }
                 }
               }
               if (parts.length > 0) {
@@ -1984,7 +1993,9 @@ export function apply(ctx, config = {}, runtime = {}) {
           if (!message || message.role !== 'user' || !Array.isArray(message.content)) continue
           // Deep collection: images nested inside tool-result blocks also
           // identify this turn's subject and deserve memory recording.
-          for (const found of collectImageBlocks([message])) imageIds.push(found.id)
+          for (const found of collectImageBlocks([message])) {
+            if (!isOffloadedImageBlock(found.block)) imageIds.push(found.id)
+          }
           if (imageIds.length > 0) break
         }
         let finalText = ''
@@ -2291,7 +2302,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     // settings 无该 key）一眼可见 "instant=off"。
     if (ctx.logger) {
       const hasImage = rawMessages.some(
-        (message) => message && Array.isArray(message.content) && blocksHaveImage(message.content),
+        (message) => message && Array.isArray(message.content) && blocksHaveRetainedImage(message.content),
       )
       if (hasImage) {
         ctx.logger.info(
@@ -2308,7 +2319,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     // repair; Core retains only the current inbox sanitizer.
     const sanitizedToolResults = sanitizeToolResultImages(rawMessages)
     const messages = sanitizedToolResults.messages
-    const hasImage = messages.some((message) => blocksHaveImage(message && message.content))
+    const hasImage = messages.some((message) => blocksHaveRetainedImage(message && message.content))
 
     // Register the turn state BEFORE the image-turn branches below: those
     // branches return early (auto-mount reminder, history rewrite), and the

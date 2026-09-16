@@ -158,6 +158,35 @@ test('toAnthropicMessages maps tool calls and tool results, skips reasoning', as
   ])
 })
 
+test('toAnthropicMessages preserves DSH image-offload decisions without reading image bytes', async () => {
+  let reads = 0
+  const result = await toAnthropicMessages(
+    [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            offloaded: true,
+            attachment: { attachmentId: 'sha256:0123456789abcdef', mediaType: 'image/png' },
+          },
+          { type: 'text', text: 'continue from the retained context' },
+        ],
+      },
+    ],
+    async () => {
+      reads += 1
+      return Buffer.from([1, 2, 3])
+    },
+  )
+  assert.equal(reads, 0, 'an offloaded occurrence must never resolve or resend attachment bytes')
+  assert.equal(result.messages.length, 1)
+  assert.equal(result.messages[0].content[0].type, 'text')
+  assert.match(result.messages[0].content[0].text, /image omitted to fit request image limits/)
+  assert.match(result.messages[0].content[0].text, /sha256:0123456789abcdef/)
+  assert.deepEqual(result.messages[0].content[1], { type: 'text', text: 'continue from the retained context' })
+})
+
 test('toAnthropicMessages drops unreadable images instead of failing', async () => {
   const result = await toAnthropicMessages(
     [

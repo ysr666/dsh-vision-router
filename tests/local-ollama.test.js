@@ -156,6 +156,34 @@ test('buildInstantLocalMap degrades to an empty map instead of rejecting', async
   assert.equal(map.size, 0)
 })
 
+test('buildInstantLocalMap never re-reads DSH-offloaded history images', async () => {
+  let reads = 0
+  const ctx = {
+    get(name) {
+      if (name !== 'attachments') return undefined
+      return {
+        async readImage() {
+          reads += 1
+          return { data: Buffer.from('must-not-be-read') }
+        },
+      }
+    },
+    logger: { warn() {} },
+  }
+  const messages = [{
+    role: 'user',
+    content: [{
+      type: 'image',
+      offloaded: true,
+      attachment: { attachmentId: 'sha256:offloaded-local', mediaType: 'image/png' },
+    }],
+  }]
+  const provider = { name: 'local-ollama', baseURL: 'http://ollama/v1', model: 'qwen2.5vl' }
+  const map = await buildInstantLocalMap(ctx, messages, provider)
+  assert.deepEqual(map, new Map())
+  assert.equal(reads, 0)
+})
+
 test('buildInstantLocalMap isolates per-image failures across a multi-image batch', async () => {
   // 三张图：a1 读取抛错、a2/a3 正常读取但本地端点不可达 → 整批不 reject，
   // 失败按图隔离记录（map 仍为空），不会因一张坏图中断后续识别。

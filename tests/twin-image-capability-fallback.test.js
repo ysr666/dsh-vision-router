@@ -123,6 +123,20 @@ test('recursive request image detection includes nested tool-result images', () 
     twinRequestHasImage([{ role: 'user', content: [{ type: 'text', text: 'x' }] }]),
     false,
   )
+  assert.equal(
+    twinRequestHasImage([{
+      role: 'user',
+      content: [{ type: 'image', offloaded: true, attachment: { attachmentId: 'sha256:old' } }],
+    }]),
+    false,
+  )
+  assert.equal(
+    twinRequestHasImage([{
+      role: 'user',
+      content: [{ type: 'tool-result', content: [{ type: 'image', offloaded: true, attachment: { attachmentId: 'sha256:nested-old' } }] }],
+    }]),
+    false,
+  )
 })
 
 test('Core-facing authority boundary retries false-positive image metadata through canonical bridge', async () => {

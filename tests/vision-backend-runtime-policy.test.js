@@ -22,10 +22,12 @@ async function collect(iterable) {
   return chunks
 }
 
-function fixture({ inputModalities, bridgeSupported = true } = {}) {
+function fixture({ inputModalities, bridgeSupported = true, messages } = {}) {
   let adapterCalls = 0
   let directCalls = 0
   let directSessionId
+  let imageReads = 0
+  let directMessages
   let registered
   const profile = {
     piProvider: {
@@ -89,6 +91,7 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
       if (name === 'attachments') {
         return {
           async readImage() {
+            imageReads += 1
             return { data: Buffer.from('png'), mediaType: 'image/png' }
           },
         }
@@ -114,10 +117,11 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
     isOpenAIHttpBridgeTransport(transport) {
       return transport?.api === 'openai-completions' && /^https?:/.test(String(transport.baseURL))
     },
-    async callOpenAICompatible(_provider, messages, callOptions) {
+    async callOpenAICompatible(_provider, wireMessages, callOptions) {
       directCalls += 1
       directSessionId = callOptions?.sessionId
-      assert.equal(messages[0].content.some((block) => block.type === 'image_url'), true)
+      directMessages = wireMessages
+      assert.equal(wireMessages[0].content.some((block) => block.type === 'image_url'), true)
       return '731'
     },
   }
@@ -128,7 +132,7 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
       return collect(wrapped.llm.stream({
         provider: 'bg',
         model: 'glm-4.6v',
-        messages: [{
+        messages: messages ?? [{
           role: 'user',
           content: [
             { type: 'image', attachment: { attachmentId: 'sha256:test', mediaType: 'image/png' } },
@@ -145,6 +149,8 @@ function fixture({ inputModalities, bridgeSupported = true } = {}) {
     adapterCalls: () => adapterCalls,
     directCalls: () => directCalls,
     directSessionId: () => directSessionId,
+    imageReads: () => imageReads,
+    directMessages: () => directMessages,
   }
 }
 
@@ -162,6 +168,55 @@ test('text-projected explicit visual backend uses direct bridge before adapter d
   assert.equal(f.directCalls(), 1)
   assert.equal(f.directSessionId(), 'session-410-preflight')
   assert.equal(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === '731'), true)
+})
+
+test('offloaded-only history is text-visible and never activates the preflight image bridge', async () => {
+  const f = fixture({
+    inputModalities: ['text'],
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          offloaded: true,
+          attachment: { attachmentId: 'sha256:old-only', mediaType: 'image/png' },
+        },
+        { type: 'text', text: 'continue' },
+      ],
+    }],
+  })
+  await f.run()
+  assert.equal(f.adapterCalls(), 1)
+  assert.equal(f.directCalls(), 0)
+  assert.equal(f.imageReads(), 0)
+})
+
+test('preflight bridge sends retained images but only text placeholders for offloaded history', async () => {
+  const f = fixture({
+    inputModalities: ['text'],
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          offloaded: true,
+          attachment: { attachmentId: 'sha256:old-mixed', mediaType: 'image/png' },
+        },
+        {
+          type: 'image',
+          attachment: { attachmentId: 'sha256:retained-mixed', mediaType: 'image/png' },
+        },
+      ],
+    }],
+  })
+  await f.run()
+  assert.equal(f.adapterCalls(), 0)
+  assert.equal(f.directCalls(), 1)
+  assert.equal(f.imageReads(), 1)
+  const content = f.directMessages()[0].content
+  assert.equal(content.filter((block) => block.type === 'image_url').length, 1)
+  assert.equal(content.filter((block) => block.type === 'text').length, 1)
+  assert.match(content.find((block) => block.type === 'text').text, /image omitted to fit request image limits/)
 })
 
 test('native image metadata stays adapter-first', async () => {

@@ -415,6 +415,23 @@ test('runtime boundary auto-mounts from image turns even when activation prose c
   })
   wrapped.on('agent/pre-step', async (_payload, next) => next())
 
+  const offloadedPayload = {
+    messages: [{
+      role: 'user',
+      content: [{
+        type: 'image',
+        offloaded: true,
+        attachment: { attachmentId: 'sha256:auto-old' },
+      }],
+    }],
+  }
+  const offloadedDecision = await preStep(
+    offloadedPayload,
+    async () => ({ messages: offloadedPayload.messages }),
+  )
+  assert.equal(offloadedDecision.messages.length, 1)
+  assert.equal(registeredTools.has('vision_ground'), false)
+
   const payload = {
     messages: [{ role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'sha256:auto' } }] }],
   }

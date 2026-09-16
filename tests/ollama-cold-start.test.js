@@ -234,7 +234,7 @@ test('a native visual provider stays latency-primary while Ollama warms only in 
   assert.ok(calls.some((call) => call[1] === 'image-pre-step-fallback'))
 })
 
-test('text-only turns never trigger Ollama warmup', async () => {
+test('text-only and offloaded-only turns never trigger Ollama warmup', async () => {
   const settings = {
     localOllama: { enabled: true, model: 'qwen2.5vl' },
     providers: [{ provider: 'vision-http', model: 'ovh/qwen' }],
@@ -251,6 +251,17 @@ test('text-only turns never trigger Ollama warmup', async () => {
   calls.length = 0 // ignore plugin-start background preload
   await harness.handlers.get('agent/pre-step')({
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+  })
+  assert.deepEqual(calls, [])
+  await harness.handlers.get('agent/pre-step')({
+    messages: [{
+      role: 'user',
+      content: [{
+        type: 'image',
+        offloaded: true,
+        attachment: { attachmentId: 'sha256:old-local' },
+      }],
+    }],
   })
   assert.deepEqual(calls, [])
 })
