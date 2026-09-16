@@ -111,6 +111,7 @@ import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
+import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 
 import {
   sharpPromise,
@@ -697,10 +698,16 @@ export function apply(ctx, config = {}, runtime = {}) {
   const visionBreaker = createVisionCircuitBreaker()
   const visionTurnMemory = createVisionTurnMemory()
 
-  // Same turn derivation the harness loop uses (dsh-agent-loop reads the last
-  // turn/start event), so tool-side memory and pre-step bindings agree.
+  const sessionTurnResolver = runtime?.sessionTurnResolver ?? createSessionTurnResolver(ctx)
+
+  // Current stable/preview Hosts expose the Agent loop's `turnBoundary`
+  // Session projection. Runtime composition shares one resolver with shadow
+  // health so breaker scopes cannot diverge; rc.8 retains the resolver's
+  // explicit legacy event fallback.
   const turnNumberOf = (session) => {
     try {
+      const projected = sessionTurnResolver.turnOf(session)
+      if (Number.isInteger(projected) && projected >= 0) return projected
       const events = getSessionEvents(session)
       if (!Array.isArray(events)) return 0
       const last = events.findLast((event) => event && event.type === 'turn/start')

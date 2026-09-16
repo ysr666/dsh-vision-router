@@ -24,7 +24,7 @@ const HOST = [
   'entry.js', 'index.js', 'package.json', 'pnpm-lock.yaml', 'cordis.patch.yml',
   /^lib\/dsh-/, /^lib\/runtime-composition\.js$/, /^lib\/public-entry\.js$/,
   /^lib\/vision-provider-transport\.js$/, /^lib\/http-compat\.js$/, /^lib\/pi-ai-/,
-  /^lib\/session-vision-/, /^lib\/image-offload-compat\.js$/, /^lib\/web-capability-boundary\.js$/,
+  /^lib\/session-vision-/, /^lib\/session-turn-resolver\.js$/, /^lib\/image-offload-compat\.js$/, /^lib\/web-capability-boundary\.js$/,
 ]
 const WINDOWS = [
   'lib/windows-desktop-capture.js', 'lib/tesseract-exec-compat.js',
