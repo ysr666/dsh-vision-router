@@ -14,6 +14,7 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeArtifactFile as compatibilityWriteArtifactFile } from '../lib/artifact-boundary.js'
 import {
+  ARTIFACT_HANDOFF_RUN_ID,
   ARTIFACT_RUNS_DIR,
   writeArtifactFile as primitiveWriteArtifactFile,
 } from '../lib/artifact-io.js'
@@ -117,6 +118,66 @@ test('VisionArtifactStore reads live workspace/artifactsDir values instead of ca
 
     assert.equal(relativeToWorkspace(first, a), 'artifacts-a/a.txt')
     assert.equal(relativeToWorkspace(second, b), 'artifacts-b/b.txt')
+  })
+})
+
+test('persistent publication uses one stable retained handoff run instead of the ambient run', async () => {
+  await withTempDir('dvr-artifact-persistent-', async (root) => {
+    const runId = '.vision-run-persistent-handoff'
+    const store = createVisionArtifactStore({ workspace: root, artifactsDir: 'artifacts' })
+    const target = await runWithVisionTurnBudget(
+      { artifactRunId: runId },
+      () => store.publishPersistent('materialized/stable.png', Buffer.from('stable')),
+    )
+
+    assert.equal(
+      relativeToWorkspace(root, target),
+      `artifacts/${ARTIFACT_RUNS_DIR}/${ARTIFACT_HANDOFF_RUN_ID}/materialized/stable.png`,
+    )
+    assert.deepEqual(await readFile(target), Buffer.from('stable'))
+    await assert.rejects(
+      () => lstat(path.join(root, 'artifacts', ARTIFACT_RUNS_DIR, runId)),
+      { code: 'ENOENT' },
+    )
+  })
+})
+
+test('persistent handoff refreshes reserved run mtime so TTL cannot reap fresh materialization', async () => {
+  await withTempDir('dvr-artifact-persistent-ttl-', async (root) => {
+    const store = createVisionArtifactStore({ workspace: root, artifactsDir: 'artifacts' })
+    const first = await store.publishPersistent('materialized/first.png', Buffer.from('first'))
+    const runRoot = path.dirname(path.dirname(first))
+    const old = new Date(Date.now() - 60_000)
+    await utimes(runRoot, old, old)
+
+    await store.publishPersistent('materialized/second.png', Buffer.from('second'))
+    const refreshed = await lstat(runRoot)
+    assert.ok(refreshed.mtimeMs > old.getTime() + 30_000)
+    const cleanup = await cleanupArtifactRuns(path.dirname(runRoot), { ttlMs: 10_000, now: Date.now() })
+    assert.equal(cleanup.removed, 0)
+    assert.deepEqual(await readFile(path.join(runRoot, 'materialized', 'second.png')), Buffer.from('second'))
+  })
+})
+
+test('persistent publication keeps the hardened symlink containment boundary', async () => {
+  await withTempDir('dvr-artifact-persistent-link-', async (root) => {
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    const artifacts = path.join(workspace, 'artifacts')
+    const handoffRun = path.join(artifacts, ARTIFACT_RUNS_DIR, ARTIFACT_HANDOFF_RUN_ID)
+    await mkdir(handoffRun, { recursive: true })
+    await mkdir(outside)
+    await symlink(outside, path.join(handoffRun, 'materialized'))
+    const store = createVisionArtifactStore({ workspace, artifactsDir: 'artifacts' })
+
+    await assert.rejects(
+      () => runWithVisionTurnBudget(
+        { artifactRunId: '.vision-run-persistent-link' },
+        () => store.publishPersistent('materialized/escape.png', Buffer.from('nope')),
+      ),
+      /escapes the session workspace through a symlink/,
+    )
+    await assert.rejects(() => lstat(path.join(outside, 'escape.png')), { code: 'ENOENT' })
   })
 })
 

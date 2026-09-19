@@ -375,25 +375,31 @@ test('main wrapper listModels restores only config-driven composite rows while p
   }
   const wrapped = contextWithDelegatedReplay(ctx)
 
-  // Core-like wrapper. Like the real core it mirrors only the two DeepSeek
-  // ids from the (stale) relay catalog, and appends config-driven composite
-  // rows only when whole-turn routing is on. It deliberately leaks a stray
-  // non-composite Kimi row to prove the boundary drops it.
+  // Core-like wrapper. It deliberately leaks the config-derived composite row
+  // even while routing is off, then leaks additional relay noise when routing
+  // is on. The outer boundary must enforce both routing visibility and exact
+  // composite authority instead of trusting stale Core output.
   const coreWrapper = {
     async listModels() {
       const rows = [
         { provider: 'deepseek-vision', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text', 'image'] },
         { provider: 'deepseek-vision', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', inputModalities: ['text', 'image'] },
       ]
+      rows.push({
+        provider: 'deepseek-vision',
+        id: 'zhipu/glm-4.6v-flash',
+        name: 'zhipu/glm-4.6v-flash（视觉）',
+        inputModalities: ['text', 'image'],
+      })
       if (routingEnabled) {
         rows.push(
+          { provider: 'deepseek-vision', id: 'k3', name: 'Kimi K3', inputModalities: ['text', 'image'] },
           {
             provider: 'deepseek-vision',
-            id: 'zhipu/glm-4.6v-flash',
-            name: 'zhipu/glm-4.6v-flash（视觉）',
+            id: 'relay/vendor-model',
+            name: 'Relay Vendor Model',
             inputModalities: ['text', 'image'],
           },
-          { provider: 'deepseek-vision', id: 'k3', name: 'Kimi K3', inputModalities: ['text', 'image'] },
         )
       }
       return rows
@@ -424,6 +430,7 @@ test('main wrapper listModels restores only config-driven composite rows while p
   assert.ok(idsOn.includes('deepseek-flash') && idsOn.includes('deepseek-v4-pro') && idsOn.includes('deepseek-v4-flash'))
   assert.ok(idsOn.includes('zhipu/glm-4.6v-flash'), 'authorized composite row kept')
   assert.ok(!idsOn.includes('k3'), 'stray non-composite row dropped')
+  assert.ok(!idsOn.includes('relay/vendor-model'), 'slash-shaped relay row dropped')
   assert.ok(!idsOn.some((id) => id.includes('kimi') || id.includes('xiaomi')), 'DSH-only providers never listed')
 
   // P0 surface stays intact during a vision tool call: host-wide discovery is
@@ -704,4 +711,241 @@ test('only the configured main wrapper route gets fixed DeepSeek delegate rewrit
     // drain
   }
   assert.equal(seen.provider, 'original-provider')
+})
+
+
+test('issue #504: official catalog outage stays fail-closed before any trusted snapshot exists', async () => {
+  let registeredAdapter
+  let coreResolveCalls = 0
+  const official = {
+    async listModels() {
+      throw new Error('503 catalog unavailable')
+    },
+    async resolveModel(_provider, model) {
+      coreResolveCalls += 1
+      return { provider: 'deepseek-official', id: model, name: model, inputModalities: ['text'] }
+    },
+  }
+  const ctx = {
+    llm: {
+      registration(provider) {
+        return provider === 'deepseek-official'
+          ? { retryPolicy: 'deepseek-retry', adapter: official }
+          : undefined
+      },
+      registerAdapter(_providers, adapter) {
+        registeredAdapter = adapter
+        return () => {}
+      },
+      async *stream() {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    get() {
+      return undefined
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx)
+  wrapped.llm.registerAdapter(['deepseek-vision'], {
+    async listModels() { return [] },
+    async resolveModel(_provider, model) {
+      coreResolveCalls += 1
+      return { provider: 'deepseek-vision', id: model, name: model, inputModalities: ['text', 'image'] }
+    },
+    async *stream(options) {
+      yield* wrapped.llm.stream(options)
+    },
+  })
+
+  await assert.rejects(
+    registeredAdapter.resolveModel('deepseek-vision', 'arbitrary-id'),
+    (error) => error?.code === 'OFFICIAL_CATALOG_UNAVAILABLE',
+  )
+  assert.equal(coreResolveCalls, 0)
+})
+
+test('issue #504: wrapper list/resolve share one fresh official catalog read', async () => {
+  let registeredAdapter
+  let listCalls = 0
+  const official = {
+    async listModels(provider) {
+      listCalls += 1
+      return [{ provider, id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text'] }]
+    },
+    async resolveModel(provider, model) {
+      return { provider, id: model, name: model, inputModalities: ['text'] }
+    },
+  }
+  const ctx = {
+    llm: {
+      registration(provider) {
+        return provider === 'deepseek-official'
+          ? { retryPolicy: 'deepseek-retry', adapter: official }
+          : undefined
+      },
+      registerAdapter(_providers, adapter) {
+        registeredAdapter = adapter
+        return () => {}
+      },
+      async *stream() {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    get() {
+      return undefined
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx)
+  wrapped.llm.registerAdapter(['deepseek-vision'], {
+    async listModels() {
+      return [{ provider: 'deepseek-vision', id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', inputModalities: ['text', 'image'] }]
+    },
+    async resolveModel(_provider, model) {
+      return { provider: 'deepseek-vision', id: model, name: model, inputModalities: ['text', 'image'] }
+    },
+    async *stream(options) {
+      yield* wrapped.llm.stream(options)
+    },
+  })
+
+  const listed = await registeredAdapter.listModels('deepseek-vision')
+  assert.deepEqual(listed.map((entry) => entry.id), ['deepseek-v4-pro'])
+  const resolved = await registeredAdapter.resolveModel('deepseek-vision', 'deepseek-v4-pro')
+  assert.equal(resolved.id, 'deepseek-v4-pro')
+  assert.equal(listCalls, 1)
+})
+
+
+test('issue #504 follow-up: official catalog outage does not block Core-owned composite wrapper models', async () => {
+  let registeredAdapter
+  let officialListCalls = 0
+  let coreResolveCalls = 0
+  const official = {
+    async listModels() {
+      officialListCalls += 1
+      throw new Error('503 catalog unavailable')
+    },
+    async resolveModel(_provider, model) {
+      return { provider: 'deepseek-official', id: model, name: model, inputModalities: ['text'] }
+    },
+  }
+  const fallbackVisionConfig = {
+    wrapperRoute: 'deepseek-vision',
+    routing: true,
+    providers: [
+      { provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] },
+    ],
+    localOllama: {
+      enabled: true,
+      baseURL: 'http://127.0.0.1:11434/v1',
+      model: 'qwen2.5-vl',
+    },
+  }
+  const settings = {
+    get() {
+      // Simulate cold/plugin-start ordering before the live Settings namespace
+      // is readable. Wrapper authority must fall back to the composition config.
+      return undefined
+    },
+  }
+  const ctx = {
+    llm: {
+      registration(provider) {
+        return provider === 'deepseek-official'
+          ? { retryPolicy: 'deepseek-retry', adapter: official }
+          : undefined
+      },
+      registerAdapter(_providers, adapter) {
+        registeredAdapter = adapter
+        return () => {}
+      },
+      async *stream() {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+    get(name) {
+      return name === 'settings' ? settings : undefined
+    },
+  }
+  const wrapped = contextWithDelegatedReplay(ctx, {
+    wrapperRoute: 'deepseek-vision',
+    visionConfig: fallbackVisionConfig,
+  })
+  wrapped.llm.registerAdapter(['deepseek-vision'], {
+    async listModels() { return [] },
+    async resolveModel(_provider, model) {
+      coreResolveCalls += 1
+      if (
+        model !== 'zhipu/glm-4.6v-flash'
+        && model !== 'vision-http/local-ollama/qwen2.5-vl'
+      ) {
+        return undefined
+      }
+      return {
+        provider: 'deepseek-vision',
+        id: model,
+        name: model,
+        inputModalities: ['text', 'image'],
+      }
+    },
+    async *stream(options) {
+      yield* wrapped.llm.stream(options)
+    },
+  })
+
+  const resolved = await registeredAdapter.resolveModel(
+    'deepseek-vision',
+    'zhipu/glm-4.6v-flash',
+  )
+  assert.equal(resolved.id, 'zhipu/glm-4.6v-flash')
+  assert.equal(coreResolveCalls, 1)
+
+  const localResolved = await registeredAdapter.resolveModel(
+    'deepseek-vision',
+    'vision-http/local-ollama/qwen2.5-vl',
+  )
+  assert.equal(localResolved.id, 'vision-http/local-ollama/qwen2.5-vl')
+  assert.equal(coreResolveCalls, 2)
+  assert.equal(
+    officialListCalls,
+    0,
+    'Core-owned composite routing must not depend on the official DeepSeek directory',
+  )
+
+  fallbackVisionConfig.routing = false
+  await assert.rejects(
+    registeredAdapter.resolveModel('deepseek-vision', 'zhipu/glm-4.6v-flash'),
+    (error) => error?.code === 'OFFICIAL_CATALOG_UNAVAILABLE',
+  )
+  assert.equal(
+    coreResolveCalls,
+    2,
+    'routing-off must not use the composite bypass',
+  )
+  assert.equal(officialListCalls, 1)
+
+  await assert.rejects(
+    registeredAdapter.resolveModel('deepseek-vision', 'relay/vendor-model'),
+    (error) => error?.code === 'OFFICIAL_CATALOG_UNAVAILABLE',
+  )
+  assert.equal(
+    coreResolveCalls,
+    2,
+    'a slash-containing relay id that is not a config-derived Core pair must not bypass identity checks',
+  )
+  assert.equal(
+    officialListCalls,
+    1,
+    'the short outage backoff should coalesce rejected identity lookups',
+  )
+
+  await assert.rejects(
+    registeredAdapter.resolveModel('deepseek-vision', 'arbitrary-id'),
+    (error) => error?.code === 'OFFICIAL_CATALOG_UNAVAILABLE',
+  )
+  assert.equal(
+    officialListCalls,
+    1,
+    'the short outage backoff should also coalesce the second rejected identity lookup',
+  )
 })

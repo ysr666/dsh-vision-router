@@ -60,6 +60,7 @@ import {
   anthropicMediaType,
 } from './lib/catalog-corrections.js'
 import { createCachedUpdateChecker } from './lib/update-check.js'
+import { getOfficialDeepSeekCatalog } from './lib/official-deepseek-catalog.js'
 import { probeLocalBackends } from './lib/local-connection-probe.js'
 import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './lib/self-update.js'
 import {
@@ -105,7 +106,14 @@ import {
   readResponseJsonBounded,
   readResponseTextBounded,
 } from './lib/http-body-limit.js'
-import { writeArtifactFile } from './lib/artifact-boundary.js'
+import {
+  ARTIFACT_HANDOFF_RUN_ID,
+  ARTIFACT_RUNS_DIR,
+  normalizeArtifactsDir,
+  writeArtifactFile,
+  writePersistentArtifactFile,
+} from './lib/artifact-boundary.js'
+import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { stripTrailingSlashes } from './lib/string-normalization.js'
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 import { parseVersionComparator } from './lib/version-range.js'
@@ -113,6 +121,7 @@ import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
+import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
 
 import {
   sharpPromise,
@@ -389,6 +398,7 @@ import {
   posterizeSvgColor,
   resolveVisionOcrEngine,
   ocrWithTesseract,
+  ocrWithTesseractAdaptive,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -485,6 +495,7 @@ export {
   posterizeSvgColor,
   resolveVisionOcrEngine,
   ocrWithTesseract,
+  ocrWithTesseractAdaptive,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -724,6 +735,41 @@ export function apply(ctx, config = {}, runtime = {}) {
   }
   const sessionIdOf = (session) => sessionIdentityOf(session) ?? 'anon'
   const visionScopeOf = (session) => `${sessionIdOf(session)}:${turnNumberOf(session)}`
+  const DEGRADED_LOCAL_REFINEMENT_LIMIT = 2
+  const visionEvidenceSourceKey = (value) => String(value ?? '').trim()
+  const degradedLocalFailure = (code, reason) => JSON.stringify({
+    ok: false,
+    code,
+    retryable: false,
+    reason,
+  })
+  const degradedLocalState = (session, source) => {
+    if (!session) return { active: false, scope: undefined, sourceKey: visionEvidenceSourceKey(source), used: 0 }
+    const scope = visionScopeOf(session)
+    const sourceKey = visionEvidenceSourceKey(source)
+    const active = visionTurnMemory.allFailed(scope) && visionTurnMemory.hasLocalOcr(scope, sourceKey)
+    return {
+      active,
+      scope,
+      sourceKey,
+      used: active ? visionTurnMemory.degradedRefinementCount(scope, sourceKey) : 0,
+    }
+  }
+
+  // DSH rc.8+ exposes a monotonic tool guard. Keep ordinary Host tools fully
+  // available, but do not let the same Agent rebuild an OCR/pixel-analysis
+  // pipeline from the current image bytes or Vision Router artifacts after every
+  // visual backend already failed and local OCR evidence exists for this turn.
+  if (typeof ctx.tools?.guard === 'function') {
+    ctx.tools.guard((exec) => {
+      const session = exec?.agent?.session
+      if (!session) return undefined
+      const scope = visionScopeOf(session)
+      const evidenceTokens = visionTurnMemory.degradedEvidenceTokens(scope)
+      if (!shouldBlockDegradedHostTool(exec.name, exec.arguments, evidenceTokens)) return undefined
+      return 'vision degraded-local evidence guard: do not reconstruct or re-parse this degraded image with Host tools after the visual backends failed; answer from the existing OCR evidence and state any remaining uncertainty'
+    })
+  }
 
   /** Stable, never-logged fingerprint of the credential a backend will use. */
   const credentialFingerprintOf = (value) => {
@@ -1203,7 +1249,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         const real = delegateAdapter()
         if (real !== undefined && typeof real.listModels === 'function') {
           try {
-            const listed = await real.listModels('deepseek-official')
+            const listed = await getOfficialDeepSeekCatalog(real)
             entries.push(
               ...(Array.isArray(listed) ? listed : [])
                 .filter((model) => model && typeof model.id === 'string' && model.id !== '')
@@ -1269,7 +1315,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           if (typeof real.listModels !== 'function') {
             throw new Error('vision-router: the official DeepSeek catalog is not available')
           }
-          const listed = await real.listModels('deepseek-official')
+          const listed = await getOfficialDeepSeekCatalog(real)
           const admitted = Array.isArray(listed) && listed.some(
             (entry) => entry && entry.id === model,
           )
@@ -2373,6 +2419,17 @@ export function apply(ctx, config = {}, runtime = {}) {
     state.legacyStartIndex = events.length
   }
 
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    const downstream = await next()
+    if (downstream?.kind !== 'accept') return downstream
+    const context = visionDescribeSuccessContext(exec, result)
+    if (!context) return downstream
+    return {
+      ...downstream,
+      additionalContexts: [context, ...(downstream.additionalContexts ?? [])],
+    }
+  })
+
   ctx.on('agent/pre-step', async (payload, next) => {
     let decision = await next()
     if (sessionVisionRuntime?.index === undefined) {
@@ -3181,7 +3238,7 @@ ctx.logger?.info(
             tool: 'vision_materialize',
             attachmentIds: materializableAttachmentIds,
             advice:
-              'If another local/OCR tool requires a filesystem path, call vision_materialize for the uploaded attachment id. Do not guess a filename or the attachment store path.',
+              'For text transcription, call vision_ocr with {"image":"<attachment id>","engine":"tesseract"}; vision_ocr accepts uploaded attachment ids directly. Use vision_materialize only when a separate non-Vision-Router local parser genuinely requires a filesystem path. Do not guess a filename or the attachment store path.',
           }
         }
         return JSON.stringify(baseFailure)
@@ -3292,6 +3349,30 @@ ctx.logger?.info(
         ? config.artifactsDir
         : '.dsh-vision-router/artifacts'
 
+    const resolveOcrImageInput = (args = {}) => {
+      const hasImageField = Object.prototype.hasOwnProperty.call(args, 'image')
+      const image = typeof args.image === 'string' ? args.image : undefined
+      const hasAttachmentIdsField = Object.prototype.hasOwnProperty.call(args, 'attachmentIds')
+      const attachmentIds = Array.isArray(args.attachmentIds) ? args.attachmentIds : []
+
+      if (hasImageField && (image === undefined || image.trim() === '')) {
+        throw new Error('vision_ocr: image must be a non-empty path or attachment id')
+      }
+      if (hasAttachmentIdsField && !Array.isArray(args.attachmentIds)) {
+        throw new Error('vision_ocr: attachmentIds must be an array containing exactly one uploaded attachment id')
+      }
+      if (hasImageField && hasAttachmentIdsField) {
+        throw new Error('vision_ocr: provide exactly one image using image or attachmentIds, not both')
+      }
+      if (hasImageField) return image
+      if (attachmentIds.length !== 1 || !isAttachmentIdInput(attachmentIds[0])) {
+        throw new Error(
+          'vision_ocr: provide one image via image or exactly one uploaded attachment id via attachmentIds',
+        )
+      }
+      return String(attachmentIds[0]).trim()
+    }
+
     const readImageBytes = async (exec, imagePath, resolvedAttachmentRefs) => {
       const input = String(imagePath ?? '')
       let bytes
@@ -3356,6 +3437,8 @@ ctx.logger?.info(
 
     const saveArtifact = async (exec, relPath, data) =>
       writeArtifactFile(workspaceOf(exec), artifactsRel, relPath, data)
+    const savePersistentArtifact = async (exec, relPath, data) =>
+      writePersistentArtifactFile(workspaceOf(exec), artifactsRel, relPath, data)
 
     const artifactStem = (imagePath, suffix) => artifactStemOf(imagePath, suffix)
 
@@ -3369,7 +3452,8 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_materialize',
       description:
-        'Copy an uploaded image attachment (sha256:...) or readable local image into the session workspace and return a real filesystem path. ' +
+        'Copy an uploaded image attachment (sha256:...) or readable local image into a stable content-addressed file in the session workspace. ' +
+        'Returns both an absolute path and a shorter workspaceRelativePath; prefer workspaceRelativePath in later tool or shell calls to avoid copying long internal paths. ' +
         'This tool performs NO vision model/network call. Use it after vision_describe/vision_bootstrap returns ok:false when a local OCR/parser accepts only file_path. ' +
         'Never guess the attachment store path or search for a same-named file.',
       parameters: {
@@ -3383,6 +3467,14 @@ ctx.logger?.info(
       output: stringOutput,
       async execute(args, exec) {
         const source = String(args.image ?? '')
+        const session = exec?.agent?.session
+        const degraded = degradedLocalState(session, source)
+        if (degraded.active) {
+          return degradedLocalFailure(
+            'VISION_LOCAL_EVIDENCE_AVAILABLE',
+            'local OCR evidence already exists for this image and every configured vision backend has failed this turn; do not materialize the image to rebuild another parser/OCR pipeline',
+          )
+        }
         const { bytes, mediaType } = await readImageBytes(exec, source)
         const extension = mediaType === 'image/jpeg'
           ? 'jpg'
@@ -3391,9 +3483,26 @@ ctx.logger?.info(
             : mediaType === 'image/gif'
               ? 'gif'
               : 'png'
-        const target = await saveArtifact(exec, `${artifactStem(source, 'materialized')}.${extension}`, bytes)
+        const fingerprint = createHash('sha256').update(bytes).digest('hex').slice(0, 20)
+        const relativeArtifactPath = path.join('materialized', `${fingerprint}.${extension}`)
+        const artifactName = path.basename(relativeArtifactPath)
+        const target = await savePersistentArtifact(exec, relativeArtifactPath, bytes)
+        const workspaceRelativePath = path.join(
+          normalizeArtifactsDir(artifactsRel),
+          ARTIFACT_RUNS_DIR,
+          ARTIFACT_HANDOFF_RUN_ID,
+          relativeArtifactPath,
+        ).split(path.sep).join('/')
+        if (session) {
+          visionTurnMemory.recordDerivedArtifact(
+            visionScopeOf(session),
+            visionEvidenceSourceKey(source),
+            artifactName,
+          )
+        }
         return JSON.stringify({
           path: target,
+          workspaceRelativePath,
           mediaType,
           bytes: bytes.length,
           ...(isAttachmentIdInput(source) ? { source } : {}),
@@ -3784,6 +3893,14 @@ ctx.logger?.info(
       },
       output: stringOutput,
       async execute(args, exec) {
+        const session = exec?.agent?.session
+        const degraded = degradedLocalState(session, args.image)
+        if (degraded.active && degraded.used >= DEGRADED_LOCAL_REFINEMENT_LIMIT) {
+          return degradedLocalFailure(
+            'VISION_DEGRADED_LOCAL_LIMIT',
+            `the degraded local evidence budget for this image is exhausted after ${DEGRADED_LOCAL_REFINEMENT_LIMIT} refinement call(s); answer from existing evidence and state any remaining uncertainty`,
+          )
+        }
         const { bytes } = await readImageBytes(exec, args.image)
         const { width, height } = await imageDims(bytes)
         const box = parseBox(args.region)
@@ -3815,11 +3932,17 @@ ctx.logger?.info(
         } finally {
           releaseCrop()
         }
-        const target = await saveArtifact(
-          exec,
-          `${artifactStem(args.image, `crop-${box.x1}-${box.y1}-${box.x2}-${box.y2}`)}.png`,
-          cropped,
-        )
+        const artifactName = `${artifactStem(args.image, `crop-${box.x1}-${box.y1}-${box.x2}-${box.y2}`)}.png`
+        const target = await saveArtifact(exec, artifactName, cropped)
+        if (session) {
+          const scope = visionScopeOf(session)
+          visionTurnMemory.recordDerivedArtifact(
+            scope,
+            visionEvidenceSourceKey(args.image),
+            artifactName,
+          )
+          if (degraded.active) visionTurnMemory.recordDegradedRefinement(scope, degraded.sourceKey)
+        }
         const meta = await sharp(cropped).metadata()
         return JSON.stringify({
           path: target,
@@ -4084,34 +4207,83 @@ ctx.logger?.info(
         'ACCURACY: OCR transcribes characters verbatim and is systematically unreliable for confusable ' +
         'glyphs (1/l, 0/O), spacing and line breaks; prefer vision_describe / vision_detect for semantic ' +
         'understanding and use OCR only when exact verbatim text is required (executable code, exact ' +
-        'quotation, forms/contracts, table digits, CAPTCHAs). Treat OCR output as evidence to verify, ' +
-        'never as ground truth.',
+        'quotation, forms/contracts, table digits, CAPTCHAs). Local OCR uses a bounded layout review when ' +
+        'the first pass looks weak. If the result has uncertain:true, cross-check the ambiguous text when ' +
+        'another visual backend is available; otherwise state the remaining uncertainty. If uncertain:false ' +
+        'and the text directly answers the user, do not call more tools merely to re-prove the same text. ' +
+        'INPUT: `image` is the canonical single-image argument. For compatibility with other Vision Router ' +
+        'tools, one uploaded image may instead be passed as `attachmentIds: [id]`; do not pass both forms ' +
+        'or more than one attachment id.',
       parameters: {
         type: 'object',
         properties: {
-          image: { type: 'string', description: 'Local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
+          image: { type: 'string', description: 'Canonical single-image input: local image path (png/jpeg/webp/gif), workspace-relative or absolute; or the attachment id (e.g. "sha256:...") of an image uploaded in this conversation' },
+          attachmentIds: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 1,
+            maxItems: 1,
+            description: 'Compatibility alias for one uploaded image attachment id. Use exactly one sha256:... id. Do not combine with image.',
+          },
           engine: {
             type: 'string',
             description: '"auto" (default): always try local Tesseract first, then fall back to the vision model if local OCR fails or returns no text. Structured 1+x does not change this order; use explicit "tesseract"/"vision" to force an engine.',
           },
         },
-        required: ['image'],
         additionalProperties: false,
       },
       output: stringOutput,
       async execute(args, exec) {
-        const { bytes, mediaType } = await readImageBytes(exec, args.image)
+        const imageInput = resolveOcrImageInput(args)
+        const session = exec?.agent?.session
         const engine = resolveVisionOcrEngine(args.engine)
+        const degraded = degradedLocalState(session, imageInput)
+        if (
+          engine !== 'vision' &&
+          degraded.active &&
+          degraded.used >= DEGRADED_LOCAL_REFINEMENT_LIMIT
+        ) {
+          return degradedLocalFailure(
+            'VISION_DEGRADED_LOCAL_LIMIT',
+            `the degraded local evidence budget for this image is exhausted after ${DEGRADED_LOCAL_REFINEMENT_LIMIT} refinement call(s); answer from existing evidence and state any remaining uncertainty`,
+          )
+        }
+        const { bytes, mediaType } = await readImageBytes(exec, imageInput)
         // ONE OCR budget shared by tesseract AND the vision fallback: tesseract
         // gets a capped slice (never more than 12s), the vision model only the
         // remainder. The two timeouts can never stack into a multi-minute wait.
         const deadline = createDeadline(ocrBudgetMs())
         const tesseractSlice = Math.min(12000, deadline.remaining())
         if (engine !== 'vision') {
+          let localAttempted = false
           try {
-            const text = await ocrWithTesseract(bytes, tesseractSlice)
-            if (text.trim() !== '') return JSON.stringify({ engine: 'tesseract', text: text.trim() })
-            if (engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text: '' })
+            localAttempted = true
+            const local = await ocrWithTesseractAdaptive(bytes, tesseractSlice)
+            if (local.text.trim() !== '') {
+              if (session) {
+                visionTurnMemory.recordLocalOcr(
+                  visionScopeOf(session),
+                  visionEvidenceSourceKey(imageInput),
+                  { uncertain: local.uncertain === true },
+                )
+              }
+              return JSON.stringify({
+                engine: 'tesseract',
+                text: local.text.trim(),
+                uncertain: local.uncertain === true,
+                ...(local.uncertain === true
+                  ? {
+                    review: {
+                      psm: local.psm,
+                      attemptedPsms: local.attemptedPsms,
+                      quality: Number(local.quality.toFixed(2)),
+                      riskyTokens: local.riskyTokens,
+                    },
+                  }
+                  : {}),
+              })
+            }
+            if (engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text: '', uncertain: true })
           } catch (error) {
             if (engine === 'tesseract') {
               throw new Error(
@@ -4119,6 +4291,13 @@ ctx.logger?.info(
               )
             }
             ctx.logger?.warn('vision-router: tesseract OCR unavailable, falling back to vision model')
+          } finally {
+            if (degraded.active && localAttempted && session) {
+              visionTurnMemory.recordDegradedRefinement(
+                visionScopeOf(session),
+                degraded.sourceKey,
+              )
+            }
           }
         }
         if (deadline.expired()) {

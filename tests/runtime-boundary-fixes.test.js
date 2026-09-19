@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { promisify } from 'node:util'
+import path from 'node:path'
 
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
 import {
@@ -142,6 +143,25 @@ test('tesseract promisify compatibility materializes asynchronously and cleans u
   assert.equal(Object.prototype.hasOwnProperty.call(delegatedOptions, 'input'), false)
   assert.equal(delegatedOptions.timeout, 1500)
   assert.equal(delegatedOptions.windowsHide, true)
+})
+
+test('tesseract promisify compatibility canonicalizes the temp root before staging', async () => {
+  const prefixes = []
+  const wrapped = createTesseractPromisifyCompat(
+    () => {},
+    async (_file, args) => ({ stdout: args[0], stderr: '' }),
+    {
+      tempDir: '/tmp',
+      async realpath(value) { assert.equal(value, '/tmp'); return '/private/tmp' },
+      async mkdtemp(prefix) { prefixes.push(prefix); return '/private/tmp/ocr-realpath' },
+      async writeFile() {},
+      async rm() {},
+    },
+  )
+
+  const result = await wrapped('tesseract', ['stdin', 'stdout'], { input: pngBytes })
+  assert.deepEqual(prefixes, [path.join('/private/tmp', 'dsh-vision-router-ocr-')])
+  assert.equal(result.stdout, path.join('/private/tmp', 'ocr-realpath', 'input.png'))
 })
 
 test('tesseract promisify compatibility cleans up after delegated failure', async () => {

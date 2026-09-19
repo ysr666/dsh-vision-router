@@ -647,6 +647,68 @@ test('Test 6: OCR shares one budget between tesseract and the vision fallback', 
   assert.ok(elapsed < 4000, `OCR tool took ${elapsed}ms, expected < 4000ms`)
 })
 
+test('Test 6a: OCR accepts one attachmentIds alias without widening path access', async () => {
+  const mock = await applyAndMount(visionConfig(), {
+    behaviors: { 'qwen-a/qwen3.6-flash': 'text:alias-ok' },
+  })
+  const ocr = findTool(mock, 'vision_ocr')
+  assert.ok(ocr)
+  assert.equal(ocr.parameters.required, undefined)
+  assert.equal(ocr.parameters.properties.attachmentIds.minItems, 1)
+  assert.equal(ocr.parameters.properties.attachmentIds.maxItems, 1)
+
+  const session = {
+    id: 'ocr-alias-session',
+    events: [
+      {
+        type: 'user/message',
+        data: {
+          role: 'user',
+          content: [{
+            type: 'image',
+            attachment: {
+              attachmentId: IMG_ID,
+              mediaType: 'image/png',
+              bytes: PNG.length,
+              width: 1,
+              height: 1,
+              name: 'upload.png',
+            },
+          }],
+        },
+      },
+      { type: 'turn/start', data: { turn: 1 } },
+    ],
+  }
+  const exec = { agent: { session } }
+  const canonical = JSON.parse(await ocr.execute({ image: IMG_ID, engine: 'vision' }, exec))
+  const alias = JSON.parse(await ocr.execute({ attachmentIds: [IMG_ID], engine: 'vision' }, exec))
+  assert.deepEqual(alias, canonical)
+  assert.equal(alias.engine, 'vision')
+  assert.equal(alias.text, 'alias-ok')
+
+  await assert.rejects(
+    () => ocr.execute({ engine: 'vision' }, exec),
+    /provide one image via image or exactly one uploaded attachment id via attachmentIds/,
+  )
+  await assert.rejects(
+    () => ocr.execute({ image: IMG_ID, attachmentIds: [IMG_ID], engine: 'vision' }, exec),
+    /provide exactly one image using image or attachmentIds, not both/,
+  )
+  await assert.rejects(
+    () => ocr.execute({ image: IMG_ID, attachmentIds: [], engine: 'vision' }, exec),
+    /provide exactly one image using image or attachmentIds, not both/,
+  )
+  await assert.rejects(
+    () => ocr.execute({ attachmentIds: [IMG_ID, IMG_ID], engine: 'vision' }, exec),
+    /provide one image via image or exactly one uploaded attachment id via attachmentIds/,
+  )
+  await assert.rejects(
+    () => ocr.execute({ attachmentIds: ['./local.png'], engine: 'vision' }, exec),
+    /provide one image via image or exactly one uploaded attachment id via attachmentIds/,
+  )
+})
+
 test('Test 6b: tesseract gets a capped slice and the vision fallback the remainder', () => {
   // Direct view of the budget slicing contract used by the OCR tools:
   // tesseract never exceeds 12s and both stages share ONE deadline, so the
@@ -696,6 +758,8 @@ test('Test 7: injected descriptions forbid OCR-as-retry and demand stop-on-backe
   assert.ok(ocr.description.includes('engine / engine=auto always tries local'), ocr.description)
   assert.ok(ocr.description.includes('Structured 1+x follow-up does not change this order'), ocr.description)
   assert.ok(ocr.description.includes('Explicit engine=tesseract or engine=vision is always honored'), ocr.description)
+  assert.ok(ocr.description.includes('uncertain:true'), ocr.description)
+  assert.ok(ocr.description.includes('do not call more tools merely to re-prove the same text'), ocr.description)
   assert.ok(ocr.parameters.properties.engine.description.includes('always try local Tesseract first'))
   assert.ok(ocr.parameters.properties.engine.description.includes('Structured 1+x does not change this order'))
 

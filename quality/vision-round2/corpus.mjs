@@ -1,7 +1,7 @@
 const WIDTH = 1024
 const HEIGHT = 768
 
-export const ROUND2_SUITE_REVISION = 1
+export const ROUND2_SUITE_REVISION = 2
 export const ROUND2_BASELINE_VERSION = '2.1.7'
 
 const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({
@@ -50,7 +50,7 @@ const textCases = [
 ]
 
 const multiImageCases = [
-  caseDef('multi-id-01', 'multi_image_identity', '按图片顺序只输出A=<编号>; B=<编号>。', 'A=A17; B=B42', dualImages('A', text(100, 130, 'CARD A', 40, 'font-weight="700"') + text(100, 360, 'ID A17', 48), 'B', text(100, 130, 'CARD B', 40, 'font-weight="700"') + text(100, 360, 'ID B42', 48)), { maxUsefulCalls: 3 }),
+  caseDef('multi-id-01', 'multi_image_identity', '按图片顺序只输出A=<完整ID>; B=<完整ID>，保留ID中的字母前缀。', 'A=A17; B=B42', dualImages('A', text(100, 130, 'CARD A', 40, 'font-weight="700"') + text(100, 360, 'ID A17', 48), 'B', text(100, 130, 'CARD B', 40, 'font-weight="700"') + text(100, 360, 'ID B42', 48)), { maxUsefulCalls: 3 }),
   caseDef('multi-id-02', 'multi_image_identity', '按图片顺序只输出A=<状态>; B=<状态>。', 'A=READY; B=PAUSED', dualImages('A', text(100, 140, 'Worker A', 36) + text(100, 350, 'READY', 52, 'font-weight="700"'), 'B', text(100, 140, 'Worker B', 36) + text(100, 350, 'PAUSED', 52, 'font-weight="700"')), { maxUsefulCalls: 3 }),
   caseDef('multi-id-03', 'multi_image_identity', '按图片顺序只输出A=<金额>; B=<金额>。', 'A=$18; B=$81', dualImages('A', text(100, 160, 'Receipt A', 36) + text(100, 360, 'Total $18', 44), 'B', text(100, 160, 'Receipt B', 36) + text(100, 360, 'Total $81', 44)), { maxUsefulCalls: 3 }),
   caseDef('multi-id-04', 'multi_image_identity', '按图片顺序只输出A=<错误码>; B=<错误码>。', 'A=E104; B=E401', dualImages('A', text(100, 160, 'Service A', 36) + text(100, 360, 'Error E104', 44), 'B', text(100, 160, 'Service B', 36) + text(100, 360, 'Error E401', 44)), { maxUsefulCalls: 3 }),

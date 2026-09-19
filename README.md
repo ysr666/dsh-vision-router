@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.7"><img src="https://img.shields.io/badge/release-v2.1.7-5B4CF0?style=flat-square" alt="Release v2.1.7" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.0"><img src="https://img.shields.io/badge/release-v2.2.0-5B4CF0?style=flat-square" alt="Release v2.2.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -39,9 +39,9 @@
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **Announcement (v2.1.7)**
+> 📌 **Announcement (v2.2.0)**
 >
-> **v2.1.7:** Hardens remote/local capability boundaries, long-lived browser and persistent-cache resource ownership, DSH 0.1.5 connection/catalog compatibility, property-based fuzzing, and release provenance without raising the rc.8 Host floor. [What’s new →](docs/releases/v2.1.7.md)
+> **v2.2.0:** Lands Vision Quality Round 2 with adaptive local OCR, bounded degraded-evidence work, stable artifact handoff, successful-evidence convergence, and stronger DSH/session compatibility — without raising the rc.8 Host floor. [What’s new →](docs/releases/v2.2.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -246,7 +246,7 @@ The diagram covers the eleven image-processing tools. `vision_present` (durable 
 |---|---|---|
 | `vision_bootstrap` | Optional 1+x structured first visual pass; establishes task-independent evidence before at least one follow-up vision call | — |
 | `vision_describe` | Image Q&A / multi-image compare / structured-evidence JSON mode (summary + layout regions + entity inventory + verbatim transcription) | — |
-| `vision_materialize` | Copy an authorized attachment into the session workspace and return a filesystem path for local OCR/parser fallbacks; no vision/network call | image copy |
+| `vision_materialize` | Copy an authorized attachment into a stable content-addressed workspace handoff file and return absolute + short workspace-relative paths for local OCR/parser fallbacks; no vision/network call | image copy |
 | `vision_ground` | Locate a target → **original-pixel box x1/y1/x2/y2** | annotated PNG (optional) |
 | `vision_detect` | Numbered inventory of every element of a kind (buttons/inputs/links…) with original-pixel boxes | annotated PNG with numbered boxes |
 | `vision_crop` | Crop and zoom into a pixel box | PNG |

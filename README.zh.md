@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.1.7"><img src="https://img.shields.io/badge/release-v2.1.7-5B4CF0?style=flat-square" alt="Release v2.1.7" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.0"><img src="https://img.shields.io/badge/release-v2.2.0-5B4CF0?style=flat-square" alt="Release v2.2.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -39,9 +39,9 @@
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!WARNING]
-> 📌 **公告（v2.1.7）**
+> 📌 **公告（v2.2.0）**
 >
-> **v2.1.7：加固远程/本机能力边界、浏览器与持久缓存的长生命周期资源所有权、DSH 0.1.5 connection/catalog 兼容、property-based fuzzing 与发布溯源；公开最低 Host 仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.1.7.md)
+> **v2.2.0：Vision Quality Round 2 正式落地——自适应本地OCR、失败证据有界收敛、稳定artifact handoff、成功证据停止重复调用，并进一步收敛DSH/Session兼容；公开最低Host仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.2.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -244,7 +244,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 |---|---|---|
 | `vision_bootstrap` | 可选 1+x 结构化首遍视觉识别；先建立任务无关证据底图，再至少进行 1 次后续视觉调用 | — |
 | `vision_describe` | 看图问答 / 多图对比 / 结构化证据 JSON 模式（摘要 + 布局区域 + 实体清单 + 原文转写） | — |
-| `vision_materialize` | 把已授权附件复制到会话工作区并返回真实文件路径，供本地 OCR/解析器降级使用；不调用视觉模型或网络 | image copy |
+| `vision_materialize` | 把已授权附件复制到稳定的内容寻址工作区交接文件，并返回绝对路径和较短的工作区相对路径，供本地 OCR/解析器降级使用；不调用视觉模型或网络 | image copy |
 | `vision_ground` | 定位目标 → **原图像素框 x1/y1/x2/y2** | 标注 PNG（可选） |
 | `vision_detect` | 盘点某类元素（按钮/输入框/链接…）→ 编号清单 + 原图像素框 | 编号标注 PNG |
 | `vision_crop` | 按像素框裁剪放大 | PNG |

@@ -205,6 +205,8 @@ test('legacy host-injected notes are localized without translating arbitrary use
   const corrected = translateLegacyRuntimeText(staleStructuredOcr, i18n)
   assert.match(corrected, /engine=auto always tries local Tesseract first/)
   assert.match(corrected, /structured mode does not change this order/)
+  assert.match(corrected, /uncertain:true/)
+  assert.match(corrected, /without redundant verification calls/)
   assert.doesNotMatch(corrected, /uses vision-model OCR .* directly/)
 
   const staleEnglishStructuredOcr =

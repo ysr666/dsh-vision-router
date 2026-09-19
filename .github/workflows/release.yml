@@ -313,17 +313,29 @@ jobs:
         run: |
           set -euo pipefail
           REMOTE_SHA1=""
-          for attempt in 1 2 3 4 5 6; do
-            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum 2>/dev/null || true)"
-            [ -n "$REMOTE_SHA1" ] && break
+          for attempt in $(seq 1 36); do
+            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum --prefer-online 2>/dev/null || true)"
+            if [ -n "$REMOTE_SHA1" ]; then
+              [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
+                echo "::error::registry tarball identity verification failed"
+                echo "local:  $PACKAGE_SHA1"
+                echo "remote: $REMOTE_SHA1"
+                exit 1
+              }
+              echo "npm registry exposes the exact tarball for $RELEASE_VERSION"
+              break
+            fi
+            if [ "$attempt" -eq 36 ]; then
+              echo "::error::npm registry did not expose $RELEASE_VERSION within the propagation window"
+              echo "local:  $PACKAGE_SHA1"
+              echo "remote: <missing>"
+              exit 1
+            fi
+            if [ $((attempt % 6)) -eq 0 ]; then
+              echo "::notice::waiting for npm registry propagation ($attempt/36)"
+            fi
             sleep 5
           done
-          [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
-            echo "::error::registry tarball identity verification failed"
-            echo "local:  $PACKAGE_SHA1"
-            echo "remote: ${REMOTE_SHA1:-<missing>}"
-            exit 1
-          }
 
 
       - name: Generate signed SLSA provenance for the exact tarball

@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import sharp from 'sharp'
 import { parseVersionComparator } from '../lib/version-range.js'
+import { VISION_SUCCESS_GUIDANCE, visionDescribeSuccessContext } from '../lib/vision-evidence-guidance.js'
 import { directSessionAffinityHeaders, sessionIdentityOf, wireSessionAffinityId } from '../lib/session-affinity.js'
 import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
 import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
@@ -1304,7 +1306,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
   const adapters = new Map() // provider -> adapter
   const registrations = new Map() // provider -> { adapter, retryPolicy }
   const directories = [] // configurable-provider registrations (directory seam)
-  const captured = { skills: [], tools: [], streamCalls: [], settingsReads: [], on: new Map() }
+  const captured = { skills: [], tools: [], guards: [], streamCalls: [], settingsReads: [], on: new Map() }
   // The mutable user document and the watch seam: tests flip config0 fields
   // and fire the watchers to simulate a settings-card save.
   const userDoc = config0
@@ -1433,7 +1435,10 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
       }
       callback(sctx)
     },
-    tools: { register: (tool) => { captured.tools.push(tool); return () => {} } },
+    tools: {
+      register: (tool) => { captured.tools.push(tool); return () => {} },
+      guard: (guard) => { captured.guards.push(guard); return () => {} },
+    },
     llm: {
       registerAdapter(providers, adapter) {
         const owned = new Set()
@@ -1530,6 +1535,91 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
   }
   return { ctx, adapters, captured, directories, userDoc, settingsWatchers }
 }
+
+test('apply wires the degraded local-evidence Host tool guard when supported', () => {
+  const { ctx, captured } = mockHarnessCtx()
+  apply(ctx, Config({}))
+  assert.equal(captured.guards.length, 1)
+  assert.equal(captured.guards[0]({ name: 'bash', arguments: { command: 'npm test' } }), undefined)
+})
+
+test('vision describe success context is agent-scoped trusted metadata and preserves exact-text verification', () => {
+  const exec = { name: 'vision_describe', callId: 'call-42', agent: { session: {} } }
+  const result = { isError: false, value: '{"x":1}', content: [{ type: 'text', text: '{"x":1}' }] }
+  const context = visionDescribeSuccessContext(exec, result)
+  assert.equal(context.id, 'vision-router-evidence-success-call-42')
+  assert.equal(context.source.plugin, 'dsh-vision-router')
+  assert.match(context.content[0].text, /trusted execution metadata/)
+  assert.match(VISION_SUCCESS_GUIDANCE, /continue the remaining user task/)
+  assert.match(VISION_SUCCESS_GUIDANCE, /exactly the format the user requested/)
+  assert.match(VISION_SUCCESS_GUIDANCE, /exact-text tasks/)
+  assert.match(VISION_SUCCESS_GUIDANCE, /must not overwrite a more exact transcription/)
+  assert.equal(visionDescribeSuccessContext({ ...exec, name: 'vision_ocr' }, result), undefined)
+  assert.equal(visionDescribeSuccessContext({ ...exec, agent: undefined }, result), undefined)
+  assert.equal(visionDescribeSuccessContext(exec, { ...result, isError: true }), undefined)
+  assert.equal(visionDescribeSuccessContext(exec, { ...result, value: '' }), undefined)
+  assert.equal(visionDescribeSuccessContext(exec, { ...result, value: '   ' }), undefined)
+  assert.equal(
+    visionDescribeSuccessContext(exec, {
+      ...result,
+      value: JSON.stringify({
+        ok: false,
+        code: 'VISION_BACKEND_UNAVAILABLE',
+        retryable: false,
+        reason: 'all backends failed',
+      }),
+    }),
+    undefined,
+    'Vision Router business failures are successful DSH dispatches but must not receive success guidance',
+  )
+  assert.notEqual(
+    visionDescribeSuccessContext(exec, {
+      ...result,
+      value: JSON.stringify({ ok: false, code: 'USER_DATA', label: 'visible JSON' }),
+    }),
+    undefined,
+    'arbitrary user-requested JSON must not be mistaken for a Vision Router failure envelope',
+  )
+})
+
+test('vision describe post-execute guidance preserves canonical tool result and downstream policy', async () => {
+  const { ctx, captured } = mockHarnessCtx()
+  apply(ctx, Config({ freeFallback: false }))
+  const post = captured.on.get('tools/post-execute')
+  assert.equal(typeof post, 'function')
+  const exec = { name: 'vision_describe', callId: 'call-99', agent: { session: {} } }
+  const result = { isError: false, value: '{"x":1}', content: [{ type: 'text', text: '{"x":1}' }] }
+  const prior = { role: 'user', id: 'prior', content: [{ type: 'text', text: 'prior' }], source: { kind: 'plugin', plugin: 'other' } }
+  const accepted = await post(exec, result, async () => ({ kind: 'accept', additionalContexts: [prior] }))
+  assert.equal(accepted.kind, 'accept')
+  assert.equal(Object.hasOwn(accepted, 'value'), false)
+  assert.equal(Object.hasOwn(accepted, 'content'), false)
+  assert.equal(accepted.additionalContexts.length, 2)
+  assert.equal(accepted.additionalContexts[0].id, 'vision-router-evidence-success-call-99')
+  assert.equal(accepted.additionalContexts[1], prior)
+  assert.equal(result.value, '{"x":1}', 'canonical tool value must remain byte-exact')
+
+  const blocked = { kind: 'block', feedback: [{ type: 'text', text: 'blocked' }] }
+  assert.equal(await post(exec, result, async () => blocked), blocked)
+  const other = { kind: 'accept', additionalContexts: [prior] }
+  assert.equal(await post({ ...exec, name: 'vision_ocr' }, result, async () => other), other)
+  assert.equal(await post(exec, { ...result, isError: true }, async () => other), other)
+  const businessFailure = {
+    ...result,
+    value: JSON.stringify({
+      ok: false,
+      code: 'VISION_RATE_LIMITED',
+      retryable: false,
+      reason: 'rate limited',
+    }),
+  }
+  assert.equal(
+    await post(exec, businessFailure, async () => other),
+    other,
+    'post-execute must not label a Vision Router failure envelope as successful evidence',
+  )
+
+})
 
 test('apply registers the stealth deepseek-official route with the stock catalog', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
@@ -3959,9 +4049,22 @@ test('vision_materialize exposes an authorized attachment as a workspace file (i
   assert.equal(output.mediaType, 'image/png')
   assert.equal(output.safeWorkspaceCopy, true)
   assert.equal(output.source, attachment.attachmentId)
-  assert.match(output.path, /materialized.*\.png$/)
+  const portablePath = output.path.split(path.sep).join('/')
+  assert.match(portablePath, /\/\.runs\/\.vision-run-handoff\/materialized\/[0-9a-f]{20}\.png$/u)
+  assert.equal(
+    output.workspaceRelativePath.startsWith(`${artifactsDir}/.runs/.vision-run-handoff/materialized/`),
+    true,
+  )
+  assert.match(output.workspaceRelativePath, /[0-9a-f]{20}\.png$/u)
   const { readFile, rm } = await import('node:fs/promises')
   assert.deepEqual(await readFile(output.path), Buffer.from('not-a-real-image'))
+  assert.deepEqual(
+    await readFile(path.resolve(session.header.cwd, output.workspaceRelativePath)),
+    Buffer.from('not-a-real-image'),
+  )
+  const repeated = JSON.parse(await tool.execute({ image: attachment.attachmentId }, { agent: { session } }))
+  assert.equal(repeated.path, output.path)
+  assert.equal(repeated.workspaceRelativePath, output.workspaceRelativePath)
   await rm(new URL('../' + artifactsDir + '/', import.meta.url), { recursive: true, force: true })
 })
 
@@ -3969,6 +4072,8 @@ test('vision_describe failure contract points attachment ids at vision_materiali
   const source = (await import('node:fs')).readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert.match(source, /degradedAccess/)
   assert.match(source, /tool: 'vision_materialize'/)
+  assert.match(source, /vision_ocr with \{\"image\":\"<attachment id>\"/)
+  assert.match(source, /Use vision_materialize only when a separate non-Vision-Router local parser genuinely requires a filesystem path/)
   assert.match(source, /Do not guess a filename or the attachment store path/)
 })
 

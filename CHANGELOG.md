@@ -5,6 +5,31 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v2.2.0
+
+### Vision Quality Round 2
+
+- **Round 2视觉质量正式落地**：本地Tesseract现在使用canonical临时路径与自适应布局证据；弱证据可有界尝试额外PSM并显式标记uncertain，不再把低confidence误当成必须切换视觉backend。
+- **Vision Quality Round 2 lands**: local Tesseract now uses canonical temp staging and adaptive layout evidence; weak evidence can try bounded alternate PSMs and report uncertainty without treating low confidence as an automatic vision-backend fallback.
+- **失败链和成功链都能收敛**：当视觉backend已全部失败且已有本地OCR证据时，按source/turn限制重复materialize/crop/OCR与Host重建；当视觉事实已足够时，通过DSH原生post-execute additionalContexts引导Agent停止重复视觉调用，不污染canonical tool result。
+- **Both failure and success paths converge**: degraded evidence is bounded per source/turn after every visual backend has failed, while successful evidence uses DSH-native post-execute additional contexts to stop redundant vision work without changing canonical tool results.
+- **artifact handoff和OCR调用更稳**：materialize改为稳定、content-addressed的handoff路径；`vision_ocr`兼容单一`attachmentIds`alias，同时继续拒绝多图、双输入和本地路径，避免扩大filesystem authority。
+- **More reliable artifact handoff and OCR calls**: materialization now returns stable content-addressed handoff paths, and `vision_ocr` accepts a single durable `attachmentIds` alias while still rejecting multi-image, dual-input, and local-path expansion.
+
+### Host compatibility & authority boundaries
+
+- **Session/attachment兼容收敛**：适配DSH image-offload projection与多种Session surface，历史读取改为有界异步路径，保持attachment授权和turn边界，不再依赖旧式eager history indexing。
+- **Session/attachment compatibility convergence**: image-offload projections and multiple Session surfaces are handled through bounded asynchronous reads while preserving attachment authorization and Host turn boundaries.
+- **DSH/catalog/tool authority修复**：Connection RPC信任契约、DeepSeek官方身份在临时directory失败时的稳定性、以及仅限制当前真实注册的Vision Router工具均已收口；同时补齐DSH 0.1.6-alpha.1 preview与真实Settings生命周期验证。
+- **DSH/catalog/tool authority fixes**: Connection RPC trust semantics, official DeepSeek identity across transient directory failures, and restrictions limited to currently registered Vision Router tools are converged, with DSH 0.1.6-alpha.1 preview and real Settings lifecycle coverage added.
+
+### Quality infrastructure & validation
+
+- **Round 2基准产品化**：新增隔离的Host API runner与suite revision 2；每个case使用fresh runtime/workspace/session，并self-scrub开发面，防止benchmark答案泄漏到发布包。
+- **Round 2 benchmark productization**: adds an isolated Host API runner and suite revision 2 with fresh runtime/workspace/session per case and publish-surface self-scrubbing to prevent answer leakage.
+- **兼容窗口不抬高**：Node 22/24与Windows/macOS/Linux继续作为门禁；公开DSH最低Host保持`0.1.0-rc.8`，既有2.1.x设置无需迁移。
+- **Support floor unchanged**: Node 22/24 and Windows/macOS/Linux remain gated; the public minimum DSH Host stays at `0.1.0-rc.8`, and existing 2.1.x settings require no migration.
+
 ## v2.1.7
 
 ### 安全与稳定性 / Security & stability
