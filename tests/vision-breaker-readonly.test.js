@@ -221,3 +221,99 @@ test('shadow bridge maps the exact session scope and credential fingerprint to b
     until: 1100,
   })
 })
+
+test('shadow bridge keeps the legacy-turn scope on Hosts that only expose snapshotEvents()', async () => {
+  const ctx = {
+    get(name) {
+      if (name !== 'credentials') return undefined
+      return {
+        async resolve(ref) {
+          assert.equal(ref, 'VISION_API_KEY')
+          return { value: 'secret-value' }
+        },
+      }
+    },
+  }
+  const bridge = createVisionBreakerShadowHealth(ctx)
+  const breaker = createVisionCircuitBreaker({ now: () => 100 })
+  bridge.capture(breaker)
+  const candidate = {
+    key: 'provider/model',
+    provider: 'provider',
+    model: 'model',
+    endpointCredentialRef: 'VISION_API_KEY',
+  }
+  const fingerprint = await visionBreakerFingerprintForCandidate(ctx, candidate)
+  // INVALID_REQUEST is turn-scoped in the breaker (record stores hit.turnScope
+  // and peek only matches on an exact scope hit), unlike RATE_LIMIT which is
+  // backend-scoped and would mask a scope mismatch.
+  breaker.record(
+    candidate.key,
+    fingerprint,
+    { kind: VISION_FAILURE_KINDS.INVALID_REQUEST },
+    'session-1:7',
+    100,
+  )
+
+  // dsh 0.1.2-alpha.4 removed the bare `session.events` array; without the
+  // snapshotEvents() fallback the shadow scope collapses to "session-1:0",
+  // diverges from the runtime scope, and the recorded turn-7 trip is never
+  // observed by shadow routing.
+  const health = await bridge.healthForCandidate(candidate, {
+    session: {
+      id: 'session-1',
+      snapshotEvents() { return [{ type: 'turn/start', data: { turn: 7 } }] },
+    },
+  })
+  assert.deepEqual(health, {
+    circuitOpen: true,
+    reason: 'turn',
+  })
+})
+
+test('shadow bridge prefers snapshotEvents() over a stale bare events array on dual-surface Hosts', async () => {
+  const ctx = {
+    get(name) {
+      if (name !== 'credentials') return undefined
+      return {
+        async resolve(ref) {
+          assert.equal(ref, 'VISION_API_KEY')
+          return { value: 'secret-value' }
+        },
+      }
+    },
+  }
+  const bridge = createVisionBreakerShadowHealth(ctx)
+  const breaker = createVisionCircuitBreaker({ now: () => 100 })
+  bridge.capture(breaker)
+  const candidate = {
+    key: 'provider/model',
+    provider: 'provider',
+    model: 'model',
+    endpointCredentialRef: 'VISION_API_KEY',
+  }
+  const fingerprint = await visionBreakerFingerprintForCandidate(ctx, candidate)
+  breaker.record(
+    candidate.key,
+    fingerprint,
+    { kind: VISION_FAILURE_KINDS.INVALID_REQUEST },
+    'session-1:7',
+    100,
+  )
+
+  // Transitional/compat Hosts expose both surfaces but leave the bare array
+  // stale (turn 6) while snapshotEvents() is authoritative (turn 7). A
+  // bare-array-first read would resolve scope "session-1:6" and miss the
+  // recorded turn-7 trip, so the snapshot must win.
+  const health = await bridge.healthForCandidate(candidate, {
+    session: {
+      id: 'session-1',
+      events: [{ type: 'turn/start', data: { turn: 6 } }],
+      snapshotEvents() { return [{ type: 'turn/start', data: { turn: 7 } }] },
+    },
+  })
+  assert.deepEqual(health, {
+    circuitOpen: true,
+    reason: 'turn',
+  })
+})
