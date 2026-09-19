@@ -270,3 +270,50 @@ test('shadow bridge keeps the legacy-turn scope on Hosts that only expose snapsh
     reason: 'turn',
   })
 })
+
+test('shadow bridge prefers snapshotEvents() over a stale bare events array on dual-surface Hosts', async () => {
+  const ctx = {
+    get(name) {
+      if (name !== 'credentials') return undefined
+      return {
+        async resolve(ref) {
+          assert.equal(ref, 'VISION_API_KEY')
+          return { value: 'secret-value' }
+        },
+      }
+    },
+  }
+  const bridge = createVisionBreakerShadowHealth(ctx)
+  const breaker = createVisionCircuitBreaker({ now: () => 100 })
+  bridge.capture(breaker)
+  const candidate = {
+    key: 'provider/model',
+    provider: 'provider',
+    model: 'model',
+    endpointCredentialRef: 'VISION_API_KEY',
+  }
+  const fingerprint = await visionBreakerFingerprintForCandidate(ctx, candidate)
+  breaker.record(
+    candidate.key,
+    fingerprint,
+    { kind: VISION_FAILURE_KINDS.INVALID_REQUEST },
+    'session-1:7',
+    100,
+  )
+
+  // Transitional/compat Hosts expose both surfaces but leave the bare array
+  // stale (turn 6) while snapshotEvents() is authoritative (turn 7). A
+  // bare-array-first read would resolve scope "session-1:6" and miss the
+  // recorded turn-7 trip, so the snapshot must win.
+  const health = await bridge.healthForCandidate(candidate, {
+    session: {
+      id: 'session-1',
+      events: [{ type: 'turn/start', data: { turn: 6 } }],
+      snapshotEvents() { return [{ type: 'turn/start', data: { turn: 7 } }] },
+    },
+  })
+  assert.deepEqual(health, {
+    circuitOpen: true,
+    reason: 'turn',
+  })
+})
