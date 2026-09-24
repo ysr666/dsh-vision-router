@@ -4465,8 +4465,11 @@ ctx.logger?.info(
                     used = 'failed'
                     text = ''
                   } else {
-                    const retryText = retry.text.trim()
-                    if (retryText !== '') text = retryText
+                    // An ok retry that came back blank means the stricter prompt
+                    // found no visible text. The first answer was already judged
+                    // a hallucination (12k+ chars) — keeping it here would
+                    // publish it as engine-verified. Same contract as EMPTY below.
+                    text = retry.text.trim()
                     used = 'vision'
                   }
                 } else {
