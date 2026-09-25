@@ -70,6 +70,7 @@ function baseSettings(overrides = {}) {
     visionTaskTimeoutMs: 120000,
     visionTurnBudgetMs: 0,
     ocrTimeoutMs: 30000,
+    ocrEngine: 'auto',
     freeCloudFirst: false,
     autoWrapProviders: true,
     wrappedProviders: [{ provider: 'deepseek-official', models: [] }],
@@ -243,6 +244,8 @@ test('advanced page consolidates performance, wrapper scope, compatibility, netw
   const text = textOf(registeredComponent({ scope }))
   assert.match(text, /性能与稳定性/)
   assert.match(text, /整轮视觉工具上限/)
+  assert.match(text, /OCR 默认引擎/)
+  assert.match(text, /仅视觉模型/)
   assert.match(text, /不限制（推荐）/)
   assert.match(text, /识图模式范围/)
   assert.match(text, /自动允许已启用模型使用识图/)

@@ -65,6 +65,7 @@ function baseSettings(overrides = {}) {
     visionTaskTimeoutMs: 120000,
     visionTurnBudgetMs: 0,
     ocrTimeoutMs: 30000,
+    ocrEngine: 'auto',
     freeCloudFirst: false,
     autoWrapProviders: true,
     wrappedProviders: [{ provider: 'deepseek-official', models: [] }],

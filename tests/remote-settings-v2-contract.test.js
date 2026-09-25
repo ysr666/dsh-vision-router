@@ -8,7 +8,7 @@ import {
 } from '../lib/remote-settings-bridge.js'
 
 test('remote settings preserve v2 routing authority fields after settings IA merge', async () => {
-  for (const field of ['routingMode', 'routingPreference', 'backgroundBenchmarking']) {
+  for (const field of ['routingMode', 'routingPreference', 'backgroundBenchmarking', 'ocrEngine']) {
     assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes(field), true, field)
   }
 

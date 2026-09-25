@@ -505,6 +505,31 @@ test('Test 1: a 401 provider is tried exactly once and the next backend takes ov
   assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
 })
 
+test('invalid JSON is not cached and falls through to the next backend', async () => {
+  const mock = await applyAndMount(visionConfig(), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'text:not-json',
+      'qwen-b/qwen3.6-plus': 'text:{"summary":"fallback backend succeeded"}',
+    },
+  })
+  const result = JSON.parse(await runDescribe(mock, { json: true }))
+  assert.equal(result.summary, 'fallback backend succeeded')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 2, 'initial answer + one correction retry')
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+
+  // The malformed provider is turn-scoped by the breaker, while the successful
+  // answer itself may be cached. A distinct question proves no stale failure
+  // string can short-circuit a later request.
+  const tool = findTool(mock, 'vision_describe')
+  const second = JSON.parse(await tool.execute(
+    { attachmentIds: [IMG_ID], question: 'different structured question', json: true },
+    { agent: { session: fakeSession(1) } },
+  ))
+  assert.equal(second.summary, 'fallback backend succeeded')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 2, 'breaker skips malformed backend for the turn')
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 2)
+})
+
 // ── Test 2: repeated vision_describe must not re-hit the tripped 401 ───────
 
 test('Test 2: a second vision_describe in the same turn skips the tripped provider and fails fast', async () => {
@@ -755,13 +780,13 @@ test('Test 7: injected descriptions forbid OCR-as-retry and demand stop-on-backe
   assert.ok(ocr.description.includes('does NOT recognize people'), ocr.description)
   assert.ok(ocr.description.includes('vision_ocr reads letters'), ocr.description)
   assert.ok(ocr.description.includes('do not chain these tools as retries'), ocr.description)
-  assert.ok(ocr.description.includes('engine / engine=auto always tries local'), ocr.description)
-  assert.ok(ocr.description.includes('Structured 1+x follow-up does not change this order'), ocr.description)
-  assert.ok(ocr.description.includes('Explicit engine=tesseract or engine=vision is always honored'), ocr.description)
+  assert.ok(ocr.description.includes('configured OCR engine policy applies'), ocr.description)
+  assert.ok(ocr.description.includes('Structured 1+x follow-up does not change the selected policy'), ocr.description)
+  assert.ok(ocr.description.includes('explicit engine=tesseract or engine=vision always wins'), ocr.description)
   assert.ok(ocr.description.includes('uncertain:true'), ocr.description)
   assert.ok(ocr.description.includes('do not call more tools merely to re-prove the same text'), ocr.description)
-  assert.ok(ocr.parameters.properties.engine.description.includes('always try local Tesseract first'))
-  assert.ok(ocr.parameters.properties.engine.description.includes('Structured 1+x does not change this order'))
+  assert.ok(ocr.parameters.properties.engine.description.includes('configured OCR engine policy'))
+  assert.ok(ocr.parameters.properties.engine.description.includes('explicit "tesseract"/"vision" always overrides'))
 
   const describe = findTool(mock, 'vision_describe')
   assert.ok(describe.description.includes('FAILURE SEMANTICS'), describe.description)

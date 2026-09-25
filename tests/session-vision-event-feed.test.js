@@ -199,3 +199,98 @@ test('session event feed warms durable attachment refs without a cold log recove
   assert.equal((await index.resolveAttachment(session, 'tool-image'))?.attachmentId, 'tool-image')
   assert.equal(logReads, 0)
 })
+
+test('first pre-step after feed activation backfills pre-subscription repairs and attachment refs exactly once', async () => {
+  let logReads = 0
+  const store = createSessionVisionStateStore()
+  const events = [
+    {
+      seq: 0,
+      type: 'tool/result',
+      data: {
+        message: {
+          hasImage: true,
+          content: [{ type: 'image', attachment: ref('gap-image') }],
+        },
+      },
+    },
+    {
+      seq: 1,
+      type: 'user/message',
+      data: { id: 'vision-router-structured-guard-stop-gap', guardStop: true },
+    },
+  ]
+  const index = createSessionVisionIndex({
+    stateStore: store,
+    core: coreStub(),
+    readSessionLog: async () => {
+      logReads += 1
+      return { supported: true, events }
+    },
+  })
+  const session = sessionWithSurface([0, 1])
+  index.activateSurfaceEventFeed()
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(logReads, 1)
+  assert.deepEqual(session.appended.map((entry) => entry.type), ['tool/result', 'user/message'])
+  assert.equal(session.appended[0].data.message.sanitized, true)
+  assert.equal(session.appended[1].data.expired, true)
+  assert.equal(index.lookupAttachment(session, 'gap-image')?.attachmentId, 'gap-image')
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(logReads, 1, 'feed backfill must stay one-shot per live session')
+  assert.equal(session.appended.length, 2)
+
+  session.surface.nodes.push(2)
+  index.recordSessionEvent(session, {
+    seq: 2,
+    type: 'tool/result',
+    data: { message: { hasImage: true, text: 'post-activation' } },
+  })
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(logReads, 1, 'steady-state feed events must remain O(new events) without history reads')
+  assert.equal(session.appended.length, 3)
+  assert.equal(session.appended[2].data.message.sanitized, true)
+})
+
+test('feed activation backfill ignores stale equal-length scan cursors after a surface rebuild', async () => {
+  let events = [
+    { seq: 0, type: 'tool/result', data: { message: { hasImage: false } } },
+    { seq: 1, type: 'user/message', data: { text: 'settled' } },
+  ]
+  let logReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionLog: async () => {
+      logReads += 1
+      return { supported: true, events }
+    },
+  })
+  const session = sessionWithSurface([0, 1])
+
+  assert.equal(await index.repairToolResultSurface(session), 0)
+  assert.equal(await index.repairGuardStopSurface(session), 0)
+
+  events = [
+    undefined,
+    undefined,
+    { seq: 2, type: 'tool/result', data: { message: { hasImage: true } } },
+    {
+      seq: 3,
+      type: 'user/message',
+      data: { id: 'vision-router-structured-guard-stop-rebuilt', guardStop: true },
+    },
+  ]
+  session.surface.nodes = [2, 3]
+  index.activateSurfaceEventFeed()
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.deepEqual(session.appended.map((entry) => entry.type), ['tool/result', 'user/message'])
+  assert.equal(session.appended[0].data.message.sanitized, true)
+  assert.equal(session.appended[1].data.expired, true)
+  assert.equal(logReads, 3, 'two compatibility scans plus one cursor-independent activation snapshot')
+})

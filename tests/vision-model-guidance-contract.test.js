@@ -38,7 +38,7 @@ test('structured follow-up suggestions stay advisory and task-conditioned', () =
 test('Round 1 hard boundaries remain visible while guidance is slimmed', () => {
   const core = structuredPromptSlice()
   assert.match(core, /x >= 1/)
-  assert.match(core, /engine=auto 始终先尝试本地 Tesseract/)
+  assert.match(core, /未显式指定 engine 时遵循设置中的 OCR 默认引擎/)
   assert.match(runtime, /first vision-tool call for this image MUST be vision_bootstrap/i)
   assert.match(runtime, /at least 1 targeted evidence call \(x >= 1\)/i)
   assert.match(runtime, /do not blindly repeat the same failing path/i)

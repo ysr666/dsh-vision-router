@@ -529,7 +529,7 @@ test('pre-step boundary prepares downstream decision before mature core resumes'
 
   const session = sessionWith([
     { type: 'user/message', data: { refs: [ref('durable')] } },
-  ])
+  ], [])
   const payload = {
     agent: { session },
     messages: [{ role: 'user', content: [{ type: 'image', attachment: ref('current') }] }],

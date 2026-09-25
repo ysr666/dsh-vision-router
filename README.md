@@ -253,7 +253,7 @@ The diagram covers the eleven image-processing tools. `vision_present` (durable 
 | `vision_present` | Publish a generated or edited local image as a durable chat attachment so the user can see it | image attachment |
 | `vision_pixel_diff` | Per-pixel comparison: diff ratio + worst 8×8-grid regions | red heatmap PNG + JSON report |
 | `vision_colors` | Dominant colors (hex + share) | — |
-| `vision_ocr` | Text transcription: local tesseract (chi_sim+eng) first, vision model fallback | — |
+| `vision_ocr` | Text transcription: configurable default engine (`auto` / local Tesseract / vision model); an explicit per-call engine still wins | — |
 | `vision_trace` | SVG vectorization (potrace posterization; icons/logos) | SVG |
 | `vision_extract_foreground` | Cutout via border flood fill (uniform backgrounds) | transparent PNG |
 | `vision_html_screenshot` | Screenshot a local HTML file (headless system Chrome); `fullPage: true` captures the whole page and reports `pageHeight` | PNG |
@@ -421,7 +421,7 @@ ollama pull qwen2.5vl
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
 - Desktop capture is opt-in. Windows and macOS use OS-provided capture facilities; Linux needs ImageMagick `import` or `scrot` and a capturable desktop session (Wayland support depends on the environment).
-- Tesseract is optional: `vision_ocr` falls back to the vision model when the local engine is absent.
+- Tesseract is optional. `vision_ocr` defaults to `ocrEngine: auto` (local Tesseract first, vision fallback), and Settings → Advanced → **Default OCR engine** can force Tesseract-only or vision-model-only behavior without uninstalling Tesseract. An explicit per-call `engine=tesseract|vision` always overrides the default.
 
 ## Install and lifecycle
 

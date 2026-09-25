@@ -249,6 +249,8 @@ export const Config = z.object({
   // (its own cap) and the vision-model fallback only the rest — never two
   // full timeouts added together.
   ocrTimeoutMs: z.number().step(1).min(1000).max(120000).default(30000),
+  // Default engine for vision_ocr. Per-call engine=tesseract|vision remains authoritative.
+  ocrEngine: z.union(['auto', 'tesseract', 'vision']).default('auto'),
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
   // Remote browsers are intentionally unable to use DSH's broad settings.*
@@ -2545,7 +2547,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const ocrPolicy =
         '不要默认把 OCR 当第二步；仅在需要逐字保真时用 vision_ocr，并把结果当作需要结合上下文验证的证据。' +
         'UI/截图语义通常用 vision_describe 或 vision_detect，精确定位用 vision_ground。' +
-        'vision_ocr 的 engine=auto 始终先尝试本地 Tesseract，失败或空结果时再回退视觉模型；结构化模式不会改变这一顺序。' +
+        'vision_ocr 未显式指定 engine 时遵循设置中的 OCR 默认引擎；单次显式 engine=tesseract/vision 始终优先。' +
         '完成至少 1 次后续证据调用后，证据充分就直接作答，不要为了流程继续调用。'
       bootstrapReminder = {
         role: 'user',
@@ -3062,9 +3064,9 @@ ctx.logger?.info(
 
                 }
               }
-              const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
-              if (cacheEnabled()) cache.set(key, fallback)
-              return fallback
+              const invalidJson = new Error('vision_describe backend did not produce valid JSON after one correction retry')
+              invalidJson.code = 'INVALID_REQUEST'
+              throw invalidJson
             }
             if (text !== '') {
               if (cacheEnabled()) cache.set(key, text)
@@ -3188,9 +3190,9 @@ ctx.logger?.info(
 
                 }
               }
-              const fallback = `vision_describe: the model did not produce valid JSON. Raw output:\n${text.slice(0, 2000)}`
-              if (cacheEnabled()) cache.set(key, fallback)
-              return fallback
+              const invalidJson = new Error('vision_describe backend did not produce valid JSON after one correction retry')
+              invalidJson.code = 'INVALID_REQUEST'
+              throw invalidJson
             }
             if (text !== '') {
               if (cacheEnabled()) cache.set(key, text)
@@ -4195,10 +4197,11 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_ocr',
       description:
-        'Transcribe TEXT from an image. ENGINE POLICY: omitted engine / engine=auto always tries local ' +
-        'Tesseract (chi_sim+eng) first — fast, free, offline — then falls back to a vision model if local ' +
-        'OCR fails or returns no text. Structured 1+x follow-up does not change this order. Explicit ' +
-        'engine=tesseract or engine=vision is always honored. Returns the text and which engine produced it. ' +
+        'Transcribe TEXT from an image. ENGINE POLICY: explicit engine=tesseract or engine=vision always wins. ' +
+        'Otherwise the configured OCR engine policy applies. The default auto policy tries local Tesseract ' +
+        '(chi_sim+eng) first — fast, free, offline — then falls back to a vision model if local OCR fails or ' +
+        'returns no text. Structured 1+x follow-up does not change the selected policy. Returns the text and ' +
+        'which engine produced it. ' +
         'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
         'as a fallback when vision_describe fails to identify who/what is in a picture ("这是谁" / ' +
         '"这是什么东西" questions are answered by vision_describe, not OCR). If vision_describe returns ' +
@@ -4227,7 +4230,7 @@ ctx.logger?.info(
           },
           engine: {
             type: 'string',
-            description: '"auto" (default): always try local Tesseract first, then fall back to the vision model if local OCR fails or returns no text. Structured 1+x does not change this order; use explicit "tesseract"/"vision" to force an engine.',
+            description: '"auto": use the configured OCR engine policy (default policy is local Tesseract first, then vision fallback); explicit "tesseract"/"vision" always overrides the configured default for this call.',
           },
         },
         additionalProperties: false,
@@ -4236,7 +4239,7 @@ ctx.logger?.info(
       async execute(args, exec) {
         const imageInput = resolveOcrImageInput(args)
         const session = exec?.agent?.session
-        const engine = resolveVisionOcrEngine(args.engine)
+        const engine = resolveVisionOcrEngine(args.engine, current().ocrEngine)
         const degraded = degradedLocalState(session, imageInput)
         if (
           engine !== 'vision' &&
@@ -4465,8 +4468,11 @@ ctx.logger?.info(
                     used = 'failed'
                     text = ''
                   } else {
-                    const retryText = retry.text.trim()
-                    if (retryText !== '') text = retryText
+                    // An ok retry that came back blank means the stricter prompt
+                    // found no visible text. The first answer was already judged
+                    // a hallucination (12k+ chars) — keeping it here would
+                    // publish it as engine-verified. Same contract as EMPTY below.
+                    text = retry.text.trim()
                     used = 'vision'
                   }
                 } else {

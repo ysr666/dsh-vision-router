@@ -251,7 +251,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_present` | 把生成或编辑后的本地图片发布为持久聊天附件，供用户查看 | 图片附件 |
 | `vision_pixel_diff` | 逐像素对比：差异率 + 最差 8×8 网格区域 | 红色热力图 PNG + JSON 报告 |
 | `vision_colors` | 主色提取（十六进制 + 占比） | — |
-| `vision_ocr` | 文字转写：本地 tesseract（中英）优先，视觉模型兜底 | — |
+| `vision_ocr` | 文字转写：默认引擎可配置为 `auto` / 本地 Tesseract / 视觉模型；单次显式 engine 仍优先 | — |
 | `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome）；`fullPage: true` 截整页并返回 `pageHeight` | PNG |
@@ -419,7 +419,7 @@ ollama pull qwen2.5vl
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
 - 桌面截屏必须显式开启。Windows/macOS 使用系统截屏能力；Linux 需安装 ImageMagick `import` 或 `scrot`，且必须处于可截取的桌面会话（Wayland 支持取决于环境）。
-- tesseract 可选：本地引擎缺失时 `vision_ocr` 自动退回视觉模型。
+- tesseract 可选。`vision_ocr` 默认使用 `ocrEngine: auto`（本地 Tesseract 优先、失败或空结果再回退视觉模型）；也可在「设置 → 高级 → OCR 默认引擎」强制仅 Tesseract 或直接使用视觉模型，无需卸载 Tesseract。单次调用显式 `engine=tesseract|vision` 始终覆盖默认设置。
 
 ## 安装与生命周期
 
