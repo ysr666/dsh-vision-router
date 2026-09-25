@@ -27,8 +27,10 @@ jobs:
         include:
           - channel: stable
             dist_tag: latest
+            settings_mode: native-register
           - channel: preview
             dist_tag: alpha
+            settings_mode: config-editor
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -125,6 +127,7 @@ jobs:
           EXPECT_BATCH: 'true'
           EXPECT_DIMENSION: 'true'
           EXPECT_CURRENT: 'true'
+          EXPECT_SETTINGS_MODE: ${{ matrix.settings_mode }}
         run: node scripts/dsh-host-contract-smoke.mjs
       - name: Compatibility investigation hint
         if: failure()

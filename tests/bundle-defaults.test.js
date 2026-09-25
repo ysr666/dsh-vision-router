@@ -18,6 +18,14 @@ test('installed bundle keeps the full vision tool schema stable by default', asy
   )
 })
 
+test('bundle re-enables its inserted row after HMR/shared-object mutation', async () => {
+  const text = await readFile(bundlePatch, 'utf8')
+  assert.match(
+    text,
+    /- insert:[\s\S]*?- id: vision-router[\s\S]*?name: dsh-vision-router[\s\S]*?progressiveTools: false[\s\S]*?\n- id: vision-router\s+name: dsh-vision-router\s+disabled: false/,
+  )
+})
+
 test('bundle declares one large-image policy for admission and alpha canonical storage', async () => {
   const text = await readFile(bundlePatch, 'utf8')
   assert.match(

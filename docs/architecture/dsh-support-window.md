@@ -8,12 +8,12 @@ The public support policy contains only released Host semantics. Preview/canary 
 
 | Role | DSH train | Meaning |
 |---|---|---|
-| Minimum Supported Host | `0.1.0-rc.8` | Oldest Host generation that DVR 2.1.x publicly supports. |
-| Current Stable Host | `0.1.5-rc.2` | Current npm stable-channel release covered by required exact Host and browser evidence. |
+| Minimum Supported Host | `0.1.0-rc.8` | Oldest Host generation that DVR 2.2.x publicly supports. |
+| Current Stable Host | `0.1.5-rc.3` | Current npm stable-channel release covered by required exact Host and browser evidence. |
 
-DVR `2.1.x` therefore keeps `0.1.0-rc.8` as its public floor and supports released Host trains through the current stable channel. Runtime branching remains capability-based rather than version-string-driven.
+DVR `2.2.x` therefore keeps `0.1.0-rc.8` as its public floor and supports released Host trains through the current stable channel. Runtime branching remains capability-based rather than version-string-driven.
 
-DSH `0.1.5-rc.1` remains explicitly admitted for existing installations; current exact stable evidence has advanced to `0.1.5-rc.2`. Advancing this evidence does not raise the public minimum.
+DSH `0.1.5-rc.1` / `0.1.5-rc.2` remain admitted for existing installations; current exact stable evidence has advanced to `0.1.5-rc.3`. Advancing this evidence does not raise the public minimum.
 
 No later support-floor increase is currently announced.
 
@@ -23,8 +23,8 @@ Compatibility evidence answers a different question: what exact upstream release
 
 | Evidence role | DSH source | Meaning |
 |---|---|---|
-| Exact stable evidence | `0.1.5-rc.2` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
-| Exact preview evidence | `0.1.6-alpha.1` | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
+| Exact stable evidence | `0.1.5-rc.3` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
+| Exact preview evidence | `0.1.7-rc.2` (`next`) | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
 | Preview drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance with preview-specific lifecycle coverage. A failure does not rewrite support policy. |
 
@@ -43,7 +43,7 @@ DVR 2.0.x minimum: DSH 0.1.0-rc.6
 DVR 2.1.x minimum: DSH 0.1.0-rc.8
 ```
 
-Users still on rc.6/rc.7 should upgrade DSH before upgrading to DVR 2.1.x.
+Users still on rc.6/rc.7 should upgrade DSH before upgrading to DVR 2.1.x or any later 2.x train. DVR 2.2.x inherits the same rc.8 floor; this maintenance update does not raise it.
 
 This support-floor transition does **not** require deleting every rc.6-era compatibility seam in the same release. Compatibility code is retired only after a separate proof shows it is unreachable or unnecessary on every supported Host and durable-history path.
 

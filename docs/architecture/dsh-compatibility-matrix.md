@@ -8,11 +8,11 @@ The matrix is capability-based. Runtime code must feature-detect the seam it nee
 
 | CI fixture | DSH package line | Role |
 | --- | --- | --- |
-| `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x public support starts at rc.8. |
+| `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x and later 2.x public support starts at rc.8. |
 | `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
-| `current-contract` | `0.1.5-rc.2` | Current stable Host contract baseline. Must remain green. |
-| `preview-contract` / exact preview gates | `0.1.6-alpha.1` | Required verification evidence only; not a public preview-support claim. |
-| retained preview regression | `0.1.5-alpha.2` | Older preview regression fixture retained while the 0.1.6 preview line is qualified. |
+| `current-contract` | `0.1.5-rc.3` | Current stable Host contract baseline. Must remain green. |
+| `preview-contract` / exact preview gates | `0.1.7-rc.2` (`next`) | Required verification evidence only; not a public preview-support claim. |
+| retained preview regression | `0.1.5-alpha.2` | Older preview regression fixture retained as an older preview regression while the 0.1.7 next line is qualified. |
 | `latest-dsh` / alpha canaries | resolved dynamically from npm dist-tags | Scheduled drift surveillance only. Never changes support policy by itself. |
 
 Node 22 and Node 24 remain the general required runtime matrix. The Host contract jobs are additive; they do not replace the normal test matrix.
@@ -21,7 +21,7 @@ Node 22 and Node 24 remain the general required runtime matrix. The Host contrac
 
 `yes` means the fixture has a direct positive test or feature probe. `no` means a direct negative probe exists. `compat` means the fixture proves Vision Router can safely carry the newer input/config through that Host, but does **not** claim the Host owns that capability. `probe` means the capability is intentionally not inferred from the version label and is verified at runtime/contract-test time.
 
-| Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.2 (0.1.5) | Evidence / detection |
+| Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.3 (0.1.5) | Evidence / detection |
 | --- | --- | --- | --- | --- |
 | Batch attachment save | no | yes | yes | `hasBatchAttachmentContract()` checks the released `attachments.saveImages` prototype; `tests/rc6-rc7-compat.test.js`; contract CI. |
 | Max image dimension policy | compat | yes | yes | All fixtures parse the complete attachment-local row; rc.8/current positively retain the field and the established admission tests exercise the 10000/10001 boundary. Older Schemastery passthrough is not treated as ownership evidence. |
@@ -38,7 +38,7 @@ Node 22 and Node 24 remain the general required runtime matrix. The Host contrac
 | Public entry boot | yes | yes | yes | packed plugin public entry import in each Host contract fixture. |
 | Packaged tarball install | yes | yes | yes | each Host contract fixture packs the plugin then installs the tarball into an isolated Host package. |
 
-Preview-only evidence: the `0.1.6-alpha.1` contract fixture additionally mounts the Host-owned `@deepseek-ai/dsh-compaction-image-offload` projection and proves that one offloaded image occurrence stays offloaded across live requests, `SessionStore.fork()`, JSONL process restart, and cold resume, while a new occurrence of the same durable attachment remains a retained image. This is verification evidence for the preview contract only; it does not expand the public support window.
+Preview-only evidence: the `0.1.7-rc.2` (`next`) contract fixture additionally mounts the Host-owned `@deepseek-ai/dsh-compaction-image-offload` projection and proves that one offloaded image occurrence stays offloaded across live requests, `SessionStore.fork()`, JSONL process restart, and cold resume, while a new occurrence of the same durable attachment remains a retained image. This is verification evidence for the preview contract only; it does not expand the public support window.
 
 ## Compatibility inventory and exit criteria
 

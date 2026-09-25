@@ -79,13 +79,13 @@ jobs:
           - dsh: 0.1.5-rc.1
             mixedGenericFiles: false
             settingsLifecycle: false
-          - dsh: 0.1.5-rc.2
+          - dsh: 0.1.5-rc.3
             mixedGenericFiles: true
             settingsLifecycle: true
           - dsh: 0.1.5-alpha.2
             mixedGenericFiles: true
             settingsLifecycle: false
-          - dsh: 0.1.6-alpha.1
+          - dsh: 0.1.7-rc.2
             mixedGenericFiles: true
             settingsLifecycle: true
     steps:
@@ -104,12 +104,12 @@ jobs:
           persist-credentials: false
           path: dsh-preview
 
-      - name: Checkout immutable DSH 0.1.5-rc.2 source
-        if: matrix.dsh == '0.1.5-rc.2'
+      - name: Checkout immutable DSH 0.1.5-rc.3 source
+        if: matrix.dsh == '0.1.5-rc.3'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: fb2c4b9e698e30edb738bca4cf0618587db7d203
+          ref: a4c74a91e06b00fe0b0937bde982170c526cc842
           persist-credentials: false
           path: dsh-preview
 
@@ -122,12 +122,12 @@ jobs:
           persist-credentials: false
           path: dsh-preview
 
-      - name: Checkout immutable DSH 0.1.6-alpha.1 source
-        if: matrix.dsh == '0.1.6-alpha.1'
+      - name: Checkout immutable DSH 0.1.7-rc.2 source
+        if: matrix.dsh == '0.1.7-rc.2'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
           persist-credentials: false
           path: dsh-preview
 

@@ -34,6 +34,7 @@ test('localOllamaProvidersOf returns a keyless local-ollama provider when enable
   assert.equal(list[0].model, 'qwen2.5vl')
   assert.equal(list[0].apiKeyEnv, '')
   assert.equal(list[0].reasoningEffort, 'none')
+  assert.equal(list[0].maxTokens, 4096)
   const custom = localOllamaProvidersOf({
     localOllama: { enabled: true, baseURL: 'http://localhost:8080/v1', model: 'my-vl' },
   })[0]
@@ -68,6 +69,7 @@ test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => 
   assert.equal(list[0].model, 'lm-model')
   assert.equal(list[0].apiKeyEnv, '')
   assert.equal('reasoningEffort' in list[0], false)
+  assert.equal(list[0].maxTokens, 4096)
   const custom = localLmStudioProvidersOf({
     localLmStudio: { enabled: true, baseURL: 'http://localhost:9999/v1', model: 'qwen2.5-vl' },
   })[0]
@@ -78,6 +80,20 @@ test('localLmStudioProvidersOf mirrors localOllamaProvidersOf semantics', () => 
   })[0]
   assert.equal(tuned.temperature, 0.2)
   assert.equal(tuned.top_p, 0.9)
+})
+
+test('local providers expose bounded output budget and configurable reasoning policy', () => {
+  const ollama = localOllamaProvidersOf({ localOllama: {
+    enabled: true, maxTokens: 8192, reasoningEffort: 'provider_default',
+  } })[0]
+  assert.equal(ollama.maxTokens, 8192)
+  assert.equal('reasoningEffort' in ollama, false, 'provider_default omits the OpenAI reasoning field')
+
+  const lm = localLmStudioProvidersOf({ localLmStudio: {
+    enabled: true, model: 'lm-model', format: 'lmstudio', maxTokens: 6144, reasoningEffort: 'none',
+  } })[0]
+  assert.equal(lm.maxTokens, 6144)
+  assert.equal(lm.reasoningEffort, 'none')
 })
 
 test('localProvidersOf orders local-ollama before local-lmstudio', () => {
@@ -504,7 +520,7 @@ test('callOpenAICompatible honors the generated Ollama provider reasoning contra
   }
 })
 
-test('callLocalBackend does not invent Ollama reasoning fields for LM Studio Chat Completions', async () => {
+test('callLocalBackend keeps LM Studio provider-default reasoning omitted', async () => {
   const original = globalThis.fetch
   let captured
   globalThis.fetch = async (_url, init) => {
@@ -527,6 +543,58 @@ test('callLocalBackend does not invent Ollama reasoning fields for LM Studio Cha
   } finally {
     globalThis.fetch = original
   }
+})
+
+test('callLocalBackend can disable LM Studio reasoning through its documented native API', async () => {
+  const original = globalThis.fetch
+  let captured
+  globalThis.fetch = async (url, init) => {
+    captured = { url: String(url), body: JSON.parse(init.body) }
+    return new Response(JSON.stringify({
+      output: [{ type: 'reasoning', content: 'hidden' }, { type: 'message', content: 'ok' }],
+      stats: { total_output_tokens: 12, reasoning_output_tokens: 0 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const provider = localLmStudioProvidersOf({ localLmStudio: {
+      enabled: true,
+      model: 'lm-model',
+      format: 'lmstudio',
+      reasoningEffort: 'none',
+      maxTokens: 8192,
+    } })[0]
+    assert.equal(provider.format, 'lmstudio')
+    assert.equal(await callLocalBackend(provider, [{
+      role: 'system', content: [{ type: 'text', text: 'extract text' }],
+    }, {
+      role: 'user', content: [
+        { type: 'text', text: 'read this' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } },
+      ],
+    }], {}), 'ok')
+    assert.equal(captured.url, 'http://localhost:1234/api/v1/chat')
+    assert.equal(captured.body.reasoning, 'off')
+    assert.equal(captured.body.max_output_tokens, 8192)
+    assert.equal(captured.body.store, false)
+    assert.equal(captured.body.system_prompt, 'extract text')
+    assert.deepEqual(captured.body.input, [
+      { type: 'text', content: 'read this' },
+      { type: 'image', data_url: 'data:image/png;base64,AA==' },
+    ])
+  } finally { globalThis.fetch = original }
+})
+
+test('OpenAI-compatible empty length response fails loud instead of silently returning blank', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    choices: [{ message: { content: '' }, finish_reason: 'length' }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  try {
+    await assert.rejects(
+      () => callOpenAICompatible({ name: 'local-ollama', baseURL: 'http://local/v1', model: 'm' }, [{ role: 'user', content: [] }]),
+      (error) => error?.code === 'VISION_EMPTY_RESPONSE' && /completion budget/.test(error.message),
+    )
+  } finally { globalThis.fetch = original }
 })
 
 test('callLocalBackend anthropic with a key sends x-api-key without duplicate Bearer', async () => {

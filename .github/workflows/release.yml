@@ -286,22 +286,10 @@ jobs:
 
       - name: Check existing npm version
         id: registry
-        shell: bash
-        run: |
-          set -euo pipefail
-          if npm view "dsh-vision-router@$RELEASE_VERSION" version >/dev/null 2>&1; then
-            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum)"
-            [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
-              echo "::error::npm already contains $RELEASE_VERSION but its tarball SHA-1 differs from this tag"
-              echo "local:  $PACKAGE_SHA1"
-              echo "remote: $REMOTE_SHA1"
-              exit 1
-            }
-            echo "already_published=true" >> "$GITHUB_OUTPUT"
-            echo "npm already contains the exact tarball for $RELEASE_VERSION"
-          else
-            echo "already_published=false" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          RELEASE_REGISTRY_PROBE_ATTEMPTS: '3'
+          RELEASE_REGISTRY_DELAY_MS: '2000'
+        run: node scripts/release-registry-identity.mjs probe "$RELEASE_VERSION" "$PACKAGE_SHA1"
 
       - name: Publish exact tarball to npm with trusted OIDC
         if: steps.registry.outputs.already_published == 'false'
@@ -309,34 +297,13 @@ jobs:
         run: npm publish "$PACKAGE_TARBALL" --provenance --access public
 
       - name: Verify npm registry tarball identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          REMOTE_SHA1=""
-          for attempt in $(seq 1 36); do
-            REMOTE_SHA1="$(npm view "dsh-vision-router@$RELEASE_VERSION" dist.shasum --prefer-online 2>/dev/null || true)"
-            if [ -n "$REMOTE_SHA1" ]; then
-              [ "$REMOTE_SHA1" = "$PACKAGE_SHA1" ] || {
-                echo "::error::registry tarball identity verification failed"
-                echo "local:  $PACKAGE_SHA1"
-                echo "remote: $REMOTE_SHA1"
-                exit 1
-              }
-              echo "npm registry exposes the exact tarball for $RELEASE_VERSION"
-              break
-            fi
-            if [ "$attempt" -eq 36 ]; then
-              echo "::error::npm registry did not expose $RELEASE_VERSION within the propagation window"
-              echo "local:  $PACKAGE_SHA1"
-              echo "remote: <missing>"
-              exit 1
-            fi
-            if [ $((attempt % 6)) -eq 0 ]; then
-              echo "::notice::waiting for npm registry propagation ($attempt/36)"
-            fi
-            sleep 5
-          done
-
+        env:
+          # npm trusted publishing can return success before the public registry
+          # exposes the immutable version. Treat that as eventual consistency,
+          # not as a failed publish, while preserving fail-closed SHA identity.
+          RELEASE_REGISTRY_WAIT_ATTEMPTS: '120'
+          RELEASE_REGISTRY_DELAY_MS: '5000'
+        run: node scripts/release-registry-identity.mjs wait "$RELEASE_VERSION" "$PACKAGE_SHA1"
 
       - name: Generate signed SLSA provenance for the exact tarball
         id: attest

@@ -43,6 +43,17 @@
       config:
         progressiveTools: false
 
+# DSH 的 live patch/HMR 旧实现会把 loader dispose 的 disabled=true 就地写回
+# bundle insert 对象，随后 recompose 又复用同一个对象（upstream #2854）。
+# 0.1.7-rc.2 仍保留该共享对象边界；Desktop supervisor + 多 bundle 场景可因此
+# 反复卸载/重挂 DVR（issue #547）。在 insert 之后再按 id 显式恢复 enabled，
+# 让每次 recompose 都覆盖被污染的 disabled 值。新 Include 会立即命中上面的
+# insert；旧 Include 若尚不能在同一 patch list 中索引新 insert，则只会跳过这条
+# overlay，保持旧 Host 原有启动行为。上游 clone insert 后可审计删除。
+- id: vision-router
+  name: dsh-vision-router
+  disabled: false
+
 # Vision Router 的附件产品契约：Host attachment store 是 durable 图片的唯一
 # owner，视觉工具只读取 Host 已持久化、校验后的 canonical pixels。DSH rc.8
 # 以前 Host 会把已准入的源编码直接持久化；0.1.2-alpha.1 开始又增加独立的

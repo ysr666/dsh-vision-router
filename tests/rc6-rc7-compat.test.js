@@ -445,9 +445,9 @@ test('settings compatibility keeps the first-class section without requiring a l
   assert.doesNotMatch(source, /VisionRouterLegacyEntry/)
 })
 
-test('manifest publishes the DVR 2.1 rc8 host floor while admitting verified stable and alpha host trains', async () => {
+test('manifest publishes the DVR 2.2 rc8 host floor while admitting verified stable and preview host trains', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1 || 0.1.5-alpha.2 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.6-alpha.1'
+  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1 || 0.1.5-alpha.2 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.6-alpha.1 || 0.1.7-rc.2'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
@@ -524,29 +524,29 @@ test('release evidence gates keep stable and preview contracts capability-scoped
     readFile(new URL('../.github/workflows/dsh-upstream-web-modules-watch.yml', import.meta.url), 'utf8'),
   ])
 
-  assert.match(hostGate, /dsh: \['0\.1\.5-rc\.2', '0\.1\.5-alpha\.2'\]/)
+  assert.match(hostGate, /dsh: \['0\.1\.5-rc\.3', '0\.1\.7-rc\.2'\]/)
   assert.match(hostGate, /Verify release-family Session native image process-restart lifecycle[\s\S]*?run: node scripts\/dsh-preview-native-lifecycle-contract\.mjs/)
   assert.doesNotMatch(hostGate, /if: matrix\.dsh ==/)
   assert.match(browserGate, /dsh: 0\.1\.5-rc\.1[\s\S]*?mixedGenericFiles: false/)
-  assert.match(browserGate, /dsh: 0\.1\.5-rc\.2[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /dsh: 0\.1\.5-rc\.3[\s\S]*?mixedGenericFiles: true/)
   assert.match(browserGate, /dsh: 0\.1\.5-alpha\.2[\s\S]*?mixedGenericFiles: true/)
-  assert.match(browserGate, /dsh: 0\.1\.6-alpha\.1[\s\S]*?mixedGenericFiles: true/)
+  assert.match(browserGate, /dsh: 0\.1\.7-rc\.2[\s\S]*?mixedGenericFiles: true/)
   assert.match(browserGate, /if: matrix\.mixedGenericFiles/)
   assert.match(browserGate, /ref: 183f08e9c6dde7e36cd2318eaee70b0da08fb35e/)
-  assert.match(browserGate, /ref: fb2c4b9e698e30edb738bca4cf0618587db7d203/)
+  assert.match(browserGate, /ref: a4c74a91e06b00fe0b0937bde982170c526cc842/)
   assert.match(browserGate, /ref: dsh-v0\.1\.5-alpha\.2/)
-  assert.match(browserGate, /ref: 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d/)
+  assert.match(browserGate, /ref: 477b4f420553e8a52c2fbccc464d7561b239c443/)
   assert.doesNotMatch(browserGate, /ref:\s*\$\{\{\s*matrix\./)
 
   assert.match(sourceGate, /name: DSH exact source contract/)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.1/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.2/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.3/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-alpha\.2/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.6-alpha\.1/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/dsh: 0\.1\.7-rc\.2/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/183f08e9c6dde7e36cd2318eaee70b0da08fb35e/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/fb2c4b9e698e30edb738bca4cf0618587db7d203/g) ?? []).length, 2)
+  assert.equal((sourceGate.match(/a4c74a91e06b00fe0b0937bde982170c526cc842/g) ?? []).length, 2)
   assert.equal((sourceGate.match(/b2e3b2a0125854567a4a5fcba75782e42fe84901/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/0a15e36e7f82b6ed45af6fa9759f29b40dcd965d/g) ?? []).length, 2)
+  assert.equal((sourceGate.match(/477b4f420553e8a52c2fbccc464d7561b239c443/g) ?? []).length, 2)
   assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
   assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
   assert.doesNotMatch(sourceGate, /cache-dependency-path:/)

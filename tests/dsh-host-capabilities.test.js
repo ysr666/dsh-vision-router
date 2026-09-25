@@ -43,6 +43,25 @@ test('Host capability snapshot reads seams without invoking registrations', () =
   assert.equal(registrations, 0, 'Doctor probe must not mutate Host topology')
 })
 
+test('SettingsForms plus ConfigEditor satisfy the live namespace capability without writes', () => {
+  let calls = 0
+  const settings = {
+    describe() { calls += 1 },
+    configure() { calls += 1 },
+  }
+  const configEditor = {
+    configuration() { calls += 1 },
+    edit() { calls += 1 },
+  }
+  const result = inspectDshHostCapabilities({
+    get(name) {
+      return { settings, configEditor }[name]
+    },
+  })
+  assert.equal(result.settingsLiveNamespace, true)
+  assert.equal(calls, 0, 'Doctor probe must not read forms or mutate profile configuration')
+})
+
 test('registration replace stays unknown when only registerAdapter is observable', () => {
   const result = inspectDshHostCapabilities({
     get(name) {

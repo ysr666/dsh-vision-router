@@ -9,6 +9,7 @@ const requireFromHost = createRequire(path.join(hostDir, 'package.json'))
 const expectBatch = process.env.EXPECT_BATCH === 'true'
 const expectDimension = process.env.EXPECT_DIMENSION === 'true'
 const expectCurrent = process.env.EXPECT_CURRENT === 'true'
+const expectSettingsMode = process.env.EXPECT_SETTINGS_MODE ?? 'native-register'
 const expectSessionEventRead = process.env.EXPECT_SESSION_EVENT_READ === 'true'
 const expectSessionLogRead = process.env.EXPECT_SESSION_LOG_READ === 'true'
 
@@ -145,30 +146,58 @@ if (expectCurrent) {
 
   const settingsEntry = requireFromHost.resolve('@deepseek-ai/dsh-settings')
   const settings = await import(pathToFileURL(settingsEntry).href)
-  assert.equal(typeof settings.default, 'function', 'DSH SettingsProvider must be exported')
-  // The base SettingsProvider is a service definition: a production Host mounts
-  // a storage-backed subclass. Mount the smallest real subclass here instead of
-  // invoking the abstract provider with no load()/persist() implementation.
-  class MemorySettings extends settings.default {
-    get writable() { return true }
-    load() { return Promise.resolve({}) }
-    persist() { return Promise.resolve() }
+  assert.equal(typeof settings.default, 'function', 'DSH settings service must be exported')
+  if (expectSettingsMode === 'native-register') {
+    // The legacy/current stable SettingsProvider is a service definition: a
+    // production Host mounts a storage-backed subclass. Mount the smallest real
+    // subclass instead of invoking the abstract provider without persistence.
+    class MemorySettings extends settings.default {
+      get writable() { return true }
+      load() { return Promise.resolve({}) }
+      persist() { return Promise.resolve() }
+    }
+    const settingsCtx = new Context()
+    await settingsCtx.plugin(MemorySettings)
+    const settingsCapabilities = inspectDshHostCapabilities(settingsCtx)
+    assert.equal(
+      settingsCapabilities.settingsLiveNamespace,
+      true,
+      'Doctor must recognize the native SettingsProvider register() live-namespace seam',
+    )
+    const scope = settingsCtx.settings.register('vision-router-p0-probe', plugin.Config, { base: {} })
+    assert.equal(typeof scope.get, 'function', 'settings registration must expose live get()')
+    assert.equal(typeof scope.watch, 'function', 'settings registration must expose watch()')
+    assert.equal(typeof scope.get(), 'object')
+    const disposeWatch = scope.watch(() => {})
+    assert.equal(typeof disposeWatch, 'function')
+    disposeWatch()
+  } else if (expectSettingsMode === 'config-editor') {
+    // DSH 0.1.7 removes SettingsProvider.register(). Its reviewed replacement
+    // is SettingsForms.describe() backed by ConfigEditor configuration()/edit();
+    // DVR turns those side-effect-free observable seams into the mature namespace.
+    const settingsPrototype = settings.default.prototype
+    assert.equal(typeof settingsPrototype.describe, 'function', 'SettingsForms must expose describe()')
+    const settingsRequire = createRequire(settingsEntry)
+    const configEditorEntry = settingsRequire.resolve('@deepseek-ai/dsh-config-editor')
+    const configEditor = await import(pathToFileURL(configEditorEntry).href)
+    assert.equal(typeof configEditor.default, 'function', 'DSH ConfigEditor must be exported')
+    assert.equal(typeof configEditor.default.prototype.configuration, 'function', 'ConfigEditor must expose configuration()')
+    assert.equal(typeof configEditor.default.prototype.edit, 'function', 'ConfigEditor must expose edit()')
+    const settingsCapabilities = inspectDshHostCapabilities({
+      get(name) {
+        if (name === 'settings') return settingsPrototype
+        if (name === 'configEditor') return configEditor.default.prototype
+        return undefined
+      },
+    })
+    assert.equal(
+      settingsCapabilities.settingsLiveNamespace,
+      true,
+      'Doctor must recognize the reviewed SettingsForms + ConfigEditor live-namespace replacement',
+    )
+  } else {
+    throw new Error(`unknown EXPECT_SETTINGS_MODE ${JSON.stringify(expectSettingsMode)}`)
   }
-  const settingsCtx = new Context()
-  await settingsCtx.plugin(MemorySettings)
-  const settingsCapabilities = inspectDshHostCapabilities(settingsCtx)
-  assert.equal(
-    settingsCapabilities.settingsLiveNamespace,
-    true,
-    'Doctor must recognize the real current DSH SettingsProvider register() live-namespace seam',
-  )
-  const scope = settingsCtx.settings.register('vision-router-p0-probe', plugin.Config, { base: {} })
-  assert.equal(typeof scope.get, 'function', 'settings registration must expose live get()')
-  assert.equal(typeof scope.watch, 'function', 'settings registration must expose watch()')
-  assert.equal(typeof scope.get(), 'object')
-  const disposeWatch = scope.watch(() => {})
-  assert.equal(typeof disposeWatch, 'function')
-  disposeWatch()
 
   const toolsEntry = requireFromHost.resolve('@deepseek-ai/dsh-tools')
   const systemPromptEntry = requireFromHost.resolve('@deepseek-ai/dsh-system-prompt')

@@ -28,6 +28,7 @@ jobs:
             session_event_read: 'false'
             session_log_read: 'false'
             image_offload: 'false'
+            settings_mode: native-register
           - name: legacy-contract
             dsh: 0.1.0-rc.8
             batch: 'true'
@@ -36,22 +37,25 @@ jobs:
             session_event_read: 'true'
             session_log_read: 'true'
             image_offload: 'false'
+            settings_mode: native-register
           - name: current-contract
-            dsh: 0.1.5-rc.2
+            dsh: 0.1.5-rc.3
             batch: 'true'
             dimension: 'true'
             current: 'true'
             session_event_read: 'true'
             session_log_read: 'true'
             image_offload: 'false'
+            settings_mode: native-register
           - name: preview-contract
-            dsh: 0.1.6-alpha.1
+            dsh: 0.1.7-rc.2
             batch: 'true'
             dimension: 'true'
             current: 'true'
             session_event_read: 'true'
             session_log_read: 'true'
             image_offload: 'true'
+            settings_mode: config-editor
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -73,6 +77,7 @@ jobs:
         env:
           DSH_VERSION: ${{ matrix.dsh }}
           EXPECT_CURRENT: ${{ matrix.current }}
+          EXPECT_SETTINGS_MODE: ${{ matrix.settings_mode }}
           EXPECT_SESSION_EVENT_READ: ${{ matrix.session_event_read }}
           EXPECT_SESSION_LOG_READ: ${{ matrix.session_log_read }}
           EXPECT_IMAGE_OFFLOAD: ${{ matrix.image_offload }}
@@ -144,6 +149,7 @@ jobs:
           EXPECT_BATCH: ${{ matrix.batch }}
           EXPECT_DIMENSION: ${{ matrix.dimension }}
           EXPECT_CURRENT: ${{ matrix.current }}
+          EXPECT_SETTINGS_MODE: ${{ matrix.settings_mode }}
           EXPECT_SESSION_EVENT_READ: ${{ matrix.session_event_read }}
           EXPECT_SESSION_LOG_READ: ${{ matrix.session_log_read }}
         run: node scripts/dsh-host-contract-smoke.mjs

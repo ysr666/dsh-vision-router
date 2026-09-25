@@ -314,6 +314,8 @@ export const Config = z.object({
       // 设置卡用 placeholder 提示识别任务常用的建议值。
       temperature: z.number().min(0).max(2),
       top_p: z.number().min(0).max(1),
+      maxTokens: z.number().step(1).min(256).max(32768).default(4096),
+      reasoningEffort: z.union(['provider_default', 'none', 'low', 'medium', 'high', 'max']).default('none'),
     })
     .default({}),
   // ── dsh-vision 并入：本地 LM Studio 视觉后端（与 Ollama 同层级）───────────
@@ -328,10 +330,14 @@ export const Config = z.object({
       model: z.string().default(''),
       // 请求格式：'openai'（/chat/completions，默认）| 'anthropic'
       // （/messages，LM Studio 的 OpenAI 兼容服务同样提供）。
-      format: z.union(['openai', 'anthropic']).default('openai'),
+      // LM Studio 0.4+ 的 native /api/v1/chat 明确支持 reasoning=off；
+      // OpenAI Chat Completions 仍保留给旧版/兼容服务。
+      format: z.union(['openai', 'anthropic', 'lmstudio']).default('openai'),
       // 与 localOllama 相同：显式设置才透传，留空尊重服务端默认。
       temperature: z.number().min(0).max(2),
       top_p: z.number().min(0).max(1),
+      maxTokens: z.number().step(1).min(256).max(32768).default(4096),
+      reasoningEffort: z.union(['provider_default', 'none', 'low', 'medium', 'high', 'max']).default('none'),
     })
     .default({}),
   // Legacy compatibility only: older profiles may still contain these two

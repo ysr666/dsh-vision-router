@@ -357,8 +357,8 @@ Everything is optional; defaults work out of the box. Prefer **Settings → Visi
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
 | `desktopScreenshot` | `false` | privacy opt-in for the model-callable `vision_screenshot` desktop-capture tool; checked live before every capture |
 | `freeFallback` | `true` | append the anonymous OVH models after explicit local/custom HTTP backends; turning this off never disables an explicitly configured local backend |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | local vision backend; when enabled, `local-ollama` leads the HTTP vision chain, is skipped automatically when down, and supports OpenAI or Anthropic wire format |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | local LM Studio backend after Ollama; enter the exact model identifier from LM Studio Developer or `/v1/models` |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | local vision backend; OpenAI mode disables supported model reasoning by default so the output budget is spent on answer text |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | local LM Studio backend after Ollama; LM Studio 0.4+ can use `format: 'lmstudio'` for documented native reasoning control |
 | `visionTurnBudgetMs` | `0` | whole-turn vision wall-clock budget; `0` means unlimited. Concrete provider calls/tools still keep their own hard deadlines |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | pre-call downscale and its pixel budget (latency guard) |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | vision answer cache |
@@ -409,14 +409,14 @@ ollama pull qwen2.5vl
 - When enabled, `local-ollama` heads the HTTP vision chain. For a strict local-only setup, remove cloud vision rows/custom HTTP endpoints and turn off `freeFallback`.
 - The selected loopback Ollama model is prewarmed through Ollama's native API and kept resident for 30 minutes. If it is cold when Ollama is the primary image backend, loading completes before the normal vision-task budget starts; a short `/api/ps` probe keeps a dead service on the fast fallback path. Remote Ollama URLs are never auto-warmed.
 - **LM Studio works the same way** — enable `localLmStudio` with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`) and enter the exact model identifier shown in Developer or `/v1/models`. It sits after `local-ollama` and before custom/cloud HTTP backends.
-- Each local backend can speak **OpenAI or Anthropic format** via `format` (default `openai`). Anthropic mode routes to `/v1/messages` with `anthropic-version` and base64 image sources; `x-api-key` is sent only when a key is configured. LM Studio needs version 0.4.1 or newer for this endpoint.
+- Local backends keep **OpenAI** as the compatibility default and can also use **Anthropic**. LM Studio additionally offers **LM Studio native** mode (`format: 'lmstudio'`, LM Studio 0.4+) at `/api/v1/chat`; use it when you need documented reasoning control (`reasoningEffort: 'none'` maps to `reasoning: off`). `maxTokens` is configurable and defaults to 4096.
 - If a local backend is down or the call times out, its entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
 - `vision_screenshot` is disabled by default. After the separate Desktop screenshot opt-in, `identify=true` uses the same Ollama → LM Studio fallback.
 
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 2.1.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.5-rc.2`. Exact `0.1.6-alpha.1` coverage is **verification evidence only**, not a preview support promise; scheduled `latest`/`alpha` canaries monitor drift without changing the support policy. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
+- **DSH Host support policy:** DVR 2.2.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.5-rc.3`. Exact `0.1.7-rc.2` (`next`) coverage is **verification evidence only**, not a preview support promise; scheduled `latest`/`alpha` canaries monitor drift without changing the support policy. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.

@@ -101,7 +101,11 @@ test('surface replacement intent follows Session format rather than DSH package 
     surfaceOp: { op: 'replace', startSeq: 7, endSeq: 7 },
     sourceEventSeqs: [7],
   })
-  assert.equal(sessionSurfaceReplacementIntent({ header: { version: 4 } }, 7), undefined)
+  assert.deepEqual(sessionSurfaceReplacementIntent({ header: { version: 4 } }, 7), {
+    surfaceOp: { op: 'replace', startSeq: 7, endSeq: 7 },
+    sourceEventSeqs: [7],
+  })
+  assert.equal(sessionSurfaceReplacementIntent({ header: { version: 5 } }, 7), undefined)
   assert.equal(sessionSurfaceReplacementIntent({}, 7), undefined)
   assert.throws(() => sessionSurfaceReplacementIntent({ header: { version: 3 } }, -1), /non-negative safe integer/)
 })
@@ -445,11 +449,11 @@ test('tool-result surface repair is incremental and persists legacy Host replace
   assert.equal(session.appended.length, 1, 'already-scanned surface nodes must not be rewritten twice')
 })
 
-test('tool-result surface repair emits the v3 replacement contract on current Sessions', async () => {
+test('tool-result surface repair emits the reviewed v4 replacement contract on current Sessions', async () => {
   const store = createSessionVisionStateStore()
   const session = sessionWith([
     { type: 'tool/result', data: { message: { hasImage: true, text: 'tool result' } } },
-  ], [0], 3)
+  ], [0], 4)
   const index = createSessionVisionIndex({ stateStore: store, core: coreStub() })
 
   assert.equal(await index.repairToolResultSurface(session), 1)
@@ -463,7 +467,7 @@ test('unknown future Session surface formats skip durable repair without breakin
   const warnings = []
   const session = sessionWith([
     { type: 'tool/result', data: { message: { hasImage: true, text: 'tool result' } } },
-  ], [0], 4)
+  ], [0], 5)
   const index = createSessionVisionIndex({
     stateStore: createSessionVisionStateStore(),
     core: coreStub(),

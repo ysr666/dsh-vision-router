@@ -112,11 +112,11 @@ jobs:
           - os: windows-latest
             dsh: 0.1.5-rc.1
           - os: ubuntu-latest
-            dsh: 0.1.5-rc.2
+            dsh: 0.1.5-rc.3
           - os: macos-latest
-            dsh: 0.1.5-rc.2
+            dsh: 0.1.5-rc.3
           - os: windows-latest
-            dsh: 0.1.5-rc.2
+            dsh: 0.1.5-rc.3
           - os: ubuntu-latest
             dsh: 0.1.5-alpha.2
           - os: macos-latest
@@ -124,11 +124,11 @@ jobs:
           - os: windows-latest
             dsh: 0.1.5-alpha.2
           - os: ubuntu-latest
-            dsh: 0.1.6-alpha.1
+            dsh: 0.1.7-rc.2
           - os: macos-latest
-            dsh: 0.1.6-alpha.1
+            dsh: 0.1.7-rc.2
           - os: windows-latest
-            dsh: 0.1.6-alpha.1
+            dsh: 0.1.7-rc.2
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -145,12 +145,12 @@ jobs:
           persist-credentials: false
           path: dsh-exact
 
-      - name: Checkout exact DSH 0.1.5-rc.2 source
-        if: matrix.dsh == '0.1.5-rc.2'
+      - name: Checkout exact DSH 0.1.5-rc.3 source
+        if: matrix.dsh == '0.1.5-rc.3'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: fb2c4b9e698e30edb738bca4cf0618587db7d203
+          ref: a4c74a91e06b00fe0b0937bde982170c526cc842
           persist-credentials: false
           path: dsh-exact
 
@@ -163,12 +163,12 @@ jobs:
           persist-credentials: false
           path: dsh-exact
 
-      - name: Checkout exact DSH 0.1.6-alpha.1 source
-        if: matrix.dsh == '0.1.6-alpha.1'
+      - name: Checkout exact DSH 0.1.7-rc.2 source
+        if: matrix.dsh == '0.1.7-rc.2'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
           persist-credentials: false
           path: dsh-exact
 
@@ -198,13 +198,13 @@ jobs:
           DSH_EXPECTED_COMMIT: 183f08e9c6dde7e36cd2318eaee70b0da08fb35e
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
-      - name: Run Vision Router against exact 0.1.5-rc.2 source contracts
-        if: matrix.dsh == '0.1.5-rc.2'
+      - name: Run Vision Router against exact 0.1.5-rc.3 source contracts
+        if: matrix.dsh == '0.1.5-rc.3'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.5-rc.2
-          DSH_EXPECTED_COMMIT: fb2c4b9e698e30edb738bca4cf0618587db7d203
+          DSH_EXPECTED_VERSION: 0.1.5-rc.3
+          DSH_EXPECTED_COMMIT: a4c74a91e06b00fe0b0937bde982170c526cc842
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Run Vision Router against exact 0.1.5-alpha.2 source contracts
@@ -216,13 +216,13 @@ jobs:
           DSH_EXPECTED_COMMIT: b2e3b2a0125854567a4a5fcba75782e42fe84901
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
-      - name: Run Vision Router against exact 0.1.6-alpha.1 source contracts
-        if: matrix.dsh == '0.1.6-alpha.1'
+      - name: Run Vision Router against exact 0.1.7-rc.2 source contracts
+        if: matrix.dsh == '0.1.7-rc.2'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.6-alpha.1
-          DSH_EXPECTED_COMMIT: 0a15e36e7f82b6ed45af6fa9759f29b40dcd965d
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Verify Host proxy egress authority for Vision Router

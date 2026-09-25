@@ -355,8 +355,8 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
 | `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；关闭它不会停用用户明确配置的本地后端 |
-| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai' }` | 本地视觉后端；开启后排在 HTTP 视觉链前部，服务未运行会自动跳过，支持 OpenAI / Anthropic 协议 |
-| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai' }` | Ollama 之后的本地 LM Studio 后端；填写 Developer 页或 `/v1/models` 返回的真实模型 ID |
+| `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | 本地视觉后端；OpenAI 模式默认关闭受支持模型的推理，把输出预算留给正文 |
+| `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | Ollama 之后的本地 LM Studio 后端；LM Studio 0.4+ 可选 `format: 'lmstudio'` 使用官方原生推理控制 |
 | `visionTurnBudgetMs` | `0` | 整轮视觉总墙钟预算；`0` = 不设整轮上限。具体 provider调用/工具仍有自己的硬超时 |
 | `downscale` / `downscaleMaxPixels` | `true` / `4000000` | 调用前压缩及其像素预算（延迟保护） |
 | `cache` / `cacheTtlSeconds` / `cacheMaxEntries` | `true` / `3600` / `200` | 视觉答案缓存 |
@@ -407,14 +407,14 @@ ollama pull qwen2.5vl
 - 开启后 `local-ollama` 排在 HTTP 视觉链前部。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
 - 选中的本机 loopback Ollama 模型会通过原生 API 预热并保持 30 分钟驻留。如果模型在 Ollama 作为首个图片后端时已经冷却，加载会在正常视觉任务预算开始之前完成；短 `/api/ps` 探测保证服务未运行/挂死时仍快速进入 fallback。远程 Ollama URL 不会自动预热。
 - **LM Studio 同理**——开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
-- 每个本地后端可通过 `format` 选择 **OpenAI 或 Anthropic 格式**（默认 `openai`）。Anthropic 模式走 `/v1/messages`，带 `anthropic-version` 并把图片转为 base64 source；只有配置了 Key 才发送 `x-api-key`。LM Studio 需 0.4.1 或更高版本才提供该端点。
+- 本地后端继续以 **OpenAI** 为兼容默认，也可选 **Anthropic**。LM Studio 额外提供 **LM Studio 原生**模式（`format: 'lmstudio'`，需 LM Studio 0.4+），走 `/api/v1/chat`；需要稳定关闭推理时推荐该模式，因为官方 API 明确支持 `reasoning: off`。`maxTokens` 可配置，默认 4096。
 - 任一本地后端未运行或调用超时时自动跳过，继续降级到云链。
 - `vision_screenshot` 默认关闭。单独开启「桌面截屏」隐私开关后，`identify=true` 使用同样的 Ollama → LM Studio 降级顺序。
 
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略：** DVR 2.1.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前正式发布通道已验证并支持到 `0.1.5-rc.2`。对 `0.1.6-alpha.1` 的精确覆盖**只属于验证证据**，不代表对 preview 的公开支持承诺；定时 `latest`/`alpha` canary 只负责发现上游漂移，也不会自动改变支持策略。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持策略：** DVR 2.2.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前正式发布通道已验证并支持到 `0.1.5-rc.3`。对 `0.1.7-rc.2`（`next`）的精确覆盖**只属于验证证据**，不代表对 preview 的公开支持承诺；定时 `latest`/`alpha` canary 只负责发现上游漂移，也不会自动改变支持策略。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

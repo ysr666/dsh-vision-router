@@ -5,9 +5,11 @@ on:
     paths:
       - '.github/workflows/dsh-017-real-host-smoke.yml'
       - 'index.js'
+      - 'cordis.patch.yml'
       - 'package.json'
       - 'lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
   workflow_dispatch:
@@ -65,6 +67,14 @@ jobs:
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-017
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+
+      - name: Run bundle HMR recompose stability against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
 
       - name: Run cold Vision toggle against DSH 0.1.7
         working-directory: dsh-017
