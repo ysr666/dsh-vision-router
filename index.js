@@ -1154,8 +1154,9 @@ export function apply(ctx, config = {}, runtime = {}) {
           // Local backends (format=anthropic etc.) go through their own
           // dispatcher; regular HTTP providers keep the plain OpenAI call.
           // Both consume the same pre-built OpenAI content blocks (image_url
-          // data URIs); callLocalBackend converts them for the Anthropic wire.
-          text = await (entry.provider.format === 'anthropic'
+          // data URIs); callLocalBackend converts them for the Anthropic and
+          // LM Studio native wires.
+          text = await ((entry.provider.format === 'anthropic' || entry.provider.format === 'lmstudio')
             ? callLocalBackend(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
