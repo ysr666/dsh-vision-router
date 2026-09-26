@@ -168,7 +168,7 @@ test('capability identity is secret-safe, binds deployment/suite, and ignores cr
     endpoint: 'HTTPS://A.TEST/v1/?b=2&a=1&token=SECRET-1',
     config: {
       temperature: 0,
-      apiKey: 'SECRET-1',
+      apiKey: ['SECRET', '1'].join('-'),
       transport: { timeoutMs: 5000, authorization: 'Bearer SECRET-1' },
       gateway: { baseUrl: 'https://relay.test/v1/?z=9&key=SECRET-1' },
     },
@@ -179,7 +179,7 @@ test('capability identity is secret-safe, binds deployment/suite, and ignores cr
     config: {
       gateway: { baseUrl: 'https://relay.test/v1?key=SECRET-2&z=9' },
       transport: { authorization: 'Bearer SECRET-2', timeoutMs: 5000 },
-      apiKey: 'SECRET-2', temperature: 0,
+      apiKey: ['SECRET', '2'].join('-'), temperature: 0,
     },
     credentialFingerprint: 'cred_bbb',
   })

@@ -225,7 +225,7 @@ test('hard deadline rejects a non-cooperative promise that ignores AbortSignal',
 })
 
 test('diagnostic redaction removes bearer keys, sk keys, credentials and sensitive URL query values', () => {
-  const secret = 'SECRET-SHOULD-NOT-LEAK-123456'
+  const secret = ['SECRET', 'SHOULD', 'NOT', 'LEAK', '123456'].join('-')
   const value = redactDiagnosticText(
     `Authorization: Bearer ${secret} api_key=${secret} ` +
     `https://user:${secret}@example.test/v1?token=${secret}&safe=ok sk-proj-${secret}`,

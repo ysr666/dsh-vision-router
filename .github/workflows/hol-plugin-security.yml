@@ -1,0 +1,29 @@
+name: HOL plugin security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  scan:
+    name: HOL scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan plugin source
+        uses: hashgraph-online/ai-plugin-scanner-action@ff72bdc87402c9751fe9be6977de41c0cfcc514b # v1.2.706 / plugin-scanner 3.6.0
+        with:
+          plugin_dir: "."
+          min_score: 90
+          fail_on_severity: high
+          pr_comment: off

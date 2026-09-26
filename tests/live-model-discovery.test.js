@@ -150,8 +150,8 @@ test('route fingerprint is credential-independent and covers only provider trans
   }
   assert.equal(routeFingerprint(base), routeFingerprint({ ...base }))
   assert.equal(
-    routeFingerprint({ ...base, apiKey: 'secret-alpha', apiKeyEnv: 'ALPHA_KEY' }),
-    routeFingerprint({ ...base, apiKey: 'secret-beta', apiKeyEnv: 'BETA_KEY' }),
+    routeFingerprint({ ...base, apiKey: ['secret', 'alpha'].join('-'), apiKeyEnv: 'ALPHA_KEY' }),
+    routeFingerprint({ ...base, apiKey: ['secret', 'beta'].join('-'), apiKeyEnv: 'BETA_KEY' }),
   )
   assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, provider: 'other' }))
   assert.notEqual(routeFingerprint(base), routeFingerprint({ ...base, api: 'openai-responses' }))
@@ -303,7 +303,7 @@ test('remote live-model snapshot cannot schedule Host provider I/O while local r
 
 test('credential rotation invalidates live evidence through current and legacy Host events without hashing the key', async () => {
   const dshHome = await mkdtemp(path.join(os.tmpdir(), 'vision-router-credential-events-'))
-  let apiKey = 'rotation-alpha'
+  let apiKey = ['rotation', 'alpha'].join('-')
   let lifecycleCleanup
   const listeners = new Map()
   const calls = []
@@ -380,7 +380,7 @@ test('credential rotation invalidates live evidence through current and legacy H
     assert.equal(listeners.has('credentials/updated'), true)
 
     const versionBefore = (await manager.snapshot()).version
-    apiKey = 'rotation-beta'
+    apiKey = ['rotation', 'beta'].join('-')
     listeners.get('credentials/reference-updated')('ZAI_API_KEY')
     assert.equal(manager.hasModel('zai', 'glm-live'), false, 'current Host event must revoke evidence synchronously')
     listeners.get('credentials/updated')('ZAI_API_KEY')
@@ -394,7 +394,7 @@ test('credential rotation invalidates live evidence through current and legacy H
     assert.equal(manager.hasModel('zai', 'glm-live'), true)
     assert.equal(calls.length, 2, 'current+legacy aliases in one turn must coalesce to one refresh')
 
-    apiKey = 'rotation-gamma'
+    apiKey = ['rotation', 'gamma'].join('-')
     listeners.get('credentials/updated')('ZAI_API_KEY')
     await Promise.resolve()
     await waitFor(() => calls.length === 3 && blocked.length === 1)

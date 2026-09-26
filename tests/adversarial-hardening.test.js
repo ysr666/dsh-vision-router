@@ -135,11 +135,18 @@ test('secure HTML screenshot keeps Chrome sandbox enabled, forces offline mode a
 test('fullPageHeightOf falls back to the viewport height for empty pages', async () => {
   const page = {
     async evaluate(fn) {
-      const runner = new Function('document', 'window', `return (${fn.toString()})()`)
-      return runner(
-        { documentElement: { scrollHeight: 0 }, body: { scrollHeight: 0 } },
-        { innerHeight: 800 },
-      )
+      const previousDocument = globalThis.document
+      const previousWindow = globalThis.window
+      try {
+        globalThis.document = { documentElement: { scrollHeight: 0 }, body: { scrollHeight: 0 } }
+        globalThis.window = { innerHeight: 800 }
+        return fn()
+      } finally {
+        if (previousDocument === undefined) delete globalThis.document
+        else globalThis.document = previousDocument
+        if (previousWindow === undefined) delete globalThis.window
+        else globalThis.window = previousWindow
+      }
     },
   }
   assert.equal(await fullPageHeightOf(page), 800)

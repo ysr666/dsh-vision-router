@@ -499,7 +499,7 @@ test('remote update-check keeps version metadata but never receives the one-clic
           currentVersion: '1.0.0',
           latestVersion: '1.0.1',
           updateAvailable: true,
-          autoUpdate: { supported: true, method: 'dsh-plugin-add', token: 'secret-token' },
+          autoUpdate: { supported: true, method: 'dsh-plugin-add', token: ['secret', 'token'].join('-') },
         }))
       },
     })

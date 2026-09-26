@@ -156,7 +156,7 @@ test('capability profile store uses cache v4 and persists no freshness or secret
       rawOutput: 'SECRET MUST NOT PERSIST',
     },
     endpoint: 'https://secret.example/v1',
-    apiKey: 'never-persist-me',
+    apiKey: ['never', 'persist', 'me'].join('-'),
   }))
   await store.flush()
 

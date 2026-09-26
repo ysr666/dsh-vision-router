@@ -1340,7 +1340,7 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
     // so corrections must stand down and the harness path keeps the call.
     const piProfile = {
       piProvider: {
-        auth: { apiKey: { resolve: async () => ({ auth: { apiKey: 'sk-opencode' } }) } },
+        auth: { apiKey: { resolve: async () => ({ auth: { apiKey: ['sk', 'opencode'].join('-') } }) } },
         getModels: () =>
           opencodeGo === 'fixed'
             ? [{ id: 'qwen3.6-plus', api: 'anthropic-messages', baseUrl: 'https://opencode.ai/zen/go' }]

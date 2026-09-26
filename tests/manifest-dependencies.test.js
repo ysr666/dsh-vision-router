@@ -245,6 +245,7 @@ test('workflow action sources stay within the repository execution allow-list', 
   const workflowDir = new URL('../.github/workflows/', import.meta.url)
   const names = await readdir(workflowDir)
   const allowedThirdParty = new Set([
+    'hashgraph-online/ai-plugin-scanner-action',
     'ossf/scorecard-action',
     'pnpm/action-setup',
   ])

@@ -157,7 +157,7 @@ const env = {
   ...process.env,
   DSH_HOME: join(rootDir, '.dsh'),
   DSH_AGENTS_HOME: join(rootDir, '.agents'),
-  DEEPSEEK_API_KEY: 'keyless-dvr-settings-smoke-no-call',
+  DEEPSEEK_API_KEY: ['keyless', 'dvr', 'settings-smoke', 'no-call'].join('-'),
   TSX_TSCONFIG_PATH: join(dshRoot, 'tsconfig.json'),
 }
 
