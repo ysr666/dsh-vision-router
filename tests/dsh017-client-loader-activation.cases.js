@@ -4,17 +4,67 @@ import { runInNewContext } from 'node:vm'
 
 import {
   SETTINGS_017_CLIENT_PRELUDE,
+  injectSettings017ClientPrelude,
   installSettings017ClientCompatibility,
 } from '../lib/settings-client-017-compat.js'
 import { SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE } from '../lib/web/remote-settings-client.js'
 import { SETTINGS_RC8_CLIENT_PRELUDE } from '../lib/settings-client-rc8-lifecycle.js'
 
-test('0.1.7 server-side client shim is fenced by ConfigEditor availability', () => {
+test('0.1.7 server-side client shim uses the structured injection table for Desktop and HTTP', () => {
   let dependencies
+  let event
+  let listener
   let taps = 0
   const ctx = {
     inject(received, callback) {
       dependencies = received
+      callback({
+        on(receivedEvent, receivedListener) {
+          event = receivedEvent
+          listener = receivedListener
+          return () => {}
+        },
+        effect(factory) { factory() },
+        webServer: {
+          tapIndex() {
+            taps += 1
+            return () => {}
+          },
+        },
+      })
+      return () => {}
+    },
+  }
+
+  installSettings017ClientCompatibility(ctx)
+  assert.deepEqual(dependencies, ['configEditor', 'webServer'])
+  assert.equal(event, 'webserver/index-inject')
+  assert.equal(typeof listener, 'function')
+  assert.equal(taps, 1, 'served HTML keeps tapIndex as a compatibility carrier')
+
+  const table = []
+  listener(table)
+  assert.equal(table.length, 1)
+  assert.deepEqual(
+    { kind: table[0].kind, placement: table[0].placement },
+    { kind: 'script', placement: 'head' },
+  )
+  assert.match(table[0].text, /data-vision-router-settings-017-compat/)
+  assert.match(table[0].text, /__visionRouterSettings017Compat/)
+  assert.doesNotMatch(table[0].text, /<\/script/i, 'inline structured scripts must not contain a literal closing script tag')
+
+  const rendered = `<html><head><script>${table[0].text}</script></head><body></body></html>`
+  assert.equal(
+    injectSettings017ClientPrelude(rendered),
+    rendered,
+    'served HTML must not execute a duplicate prelude after structured rows render',
+  )
+})
+
+test('0.1.7 server-side client shim keeps tapIndex as a transitional fallback', () => {
+  let taps = 0
+  const ctx = {
+    inject(_received, callback) {
       callback({
         effect(factory) { factory() },
         webServer: {
@@ -30,7 +80,6 @@ test('0.1.7 server-side client shim is fenced by ConfigEditor availability', () 
   }
 
   installSettings017ClientCompatibility(ctx)
-  assert.deepEqual(dependencies, ['configEditor', 'webServer'])
   assert.equal(taps, 1)
 })
 

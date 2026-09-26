@@ -10,6 +10,7 @@ on:
       - 'lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
   workflow_dispatch:
@@ -76,6 +77,14 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
 
+      - name: Run Desktop Host structured bootstrap against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
       - name: Run cold Vision toggle against DSH 0.1.7
         working-directory: dsh-017
         env:
@@ -114,3 +123,53 @@ jobs:
           path: ${{ runner.temp }}/dsh-017-*
           if-no-files-found: ignore
           retention-days: 2
+
+  dsh-017-windows-desktop-host:
+    name: DSH 0.1.7-rc.2 Windows Desktop Host bootstrap
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+
+      - name: Checkout immutable DSH 0.1.7-rc.2 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          persist-credentials: false
+          path: dsh-017
+
+      - name: Install upstream package manager
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+
+      - name: Install Node 22 Desktop runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          cache-dependency-path: dsh-017/pnpm-lock.yaml
+
+      - name: Install DSH workspace dependencies
+        working-directory: dsh-017
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DSH 0.1.7 Desktop runtime
+        working-directory: dsh-017
+        run: pnpm run build
+
+      - name: Run official Windows Desktop Host bootstrap contract
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
