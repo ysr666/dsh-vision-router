@@ -32,7 +32,30 @@ const home = join(root, 'home')
 const project = join(root, 'project')
 const previousEnv = new Map(['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DEEPSEEK_API_KEY']
   .map((name) => [name, process.env[name]]))
+const REQUEST_DEADLINE_MS = 6000
 let host
+
+function hostUrl(base, pathname) {
+  const url = new URL(base)
+  url.pathname = pathname
+  url.search = ''
+  url.hash = ''
+  return url
+}
+
+async function statusProbe(base, pathname, cookie, expectedStatus) {
+  const response = await fetch(hostUrl(base, pathname), {
+    headers: { cookie },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(REQUEST_DEADLINE_MS),
+  })
+  const status = response.status
+  await response.body?.cancel()
+  if (status !== expectedStatus) {
+    throw new Error(`Desktop Host ${pathname} expected HTTP ${expectedStatus}, found ${status}`)
+  }
+  return status
+}
 
 try {
   mkdirSync(home)
@@ -89,26 +112,44 @@ try {
 
   // Mirror Desktop main's authenticateWebHost() boundary: exchange the owned
   // Host launch token for a cookie, then prove that cookie can immediately
-  // authorize a clean index request. A regression here strands Electron before
-  // it can consume the structured boot table and looks like "Loading plugins…".
-  const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(6000) })
+  // authorize both the index and the authenticated /api waterfall. The latter
+  // catches the field failure where unauthenticated /api requests return 401
+  // immediately but authenticated requests never settle.
+  const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) })
   const setCookie = login.headers.get('set-cookie')
   await login.body?.cancel()
   if (login.status !== 303 || setCookie === null) {
     throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
   }
   const cookie = setCookie.split(';', 1)[0]
-  const clean = new URL(ready.url)
-  clean.search = ''
-  const authenticated = await fetch(clean, {
-    headers: { cookie },
+  const authenticatedStatus = await statusProbe(ready.url, '/', cookie, 200)
+  const authenticatedApiMissing = await statusProbe(ready.url, '/api/__dvr_missing__', cookie, 404)
+  const authenticatedApiHealth = await statusProbe(ready.url, '/api/health', cookie, 404)
+
+  // Exercise DVR's dedicated Connection RPC channel separately from /api. This
+  // distinguishes a shared connection/request-waterfall stall from a DVR RPC
+  // registration/handler stall.
+  const rpcId = `dvr-desktop-probe-${Date.now()}`
+  const rpcResponse = await fetch(hostUrl(ready.url, '/vision-router-settings/describe'), {
+    method: 'POST',
+    headers: {
+      cookie,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId,
+      method: 'describe',
+      payload: {},
+    }),
     redirect: 'manual',
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(REQUEST_DEADLINE_MS),
   })
-  const authenticatedStatus = authenticated.status
-  await authenticated.body?.cancel()
-  if (authenticatedStatus !== 200) {
-    throw new Error(`Desktop Host cookie-authenticated index failed: ${String(authenticatedStatus)}`)
+  const rpcStatus = rpcResponse.status
+  let rpcBody
+  try { rpcBody = await rpcResponse.json() } catch { rpcBody = undefined }
+  if (rpcStatus !== 200 || rpcBody?.type !== 'server-response' || rpcBody?.rpcId !== rpcId) {
+    throw new Error(`Desktop Host DVR RPC probe failed: status=${rpcStatus} body=${JSON.stringify(rpcBody)}`)
   }
 
   const rows = ready.injections.filter((row) => row?.kind === 'script'
@@ -129,12 +170,16 @@ try {
   console.log(JSON.stringify({
     ok: true,
     dsh: dshVersion,
+    node: process.version,
     profile: 'desktop',
     hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
     structuredInjections: ready.injections.length,
     dvrSettingsPreludeRows: rows.length,
     authTokenExchange: login.status,
     authenticatedIndex: authenticatedStatus,
+    authenticatedApiMissing,
+    authenticatedApiHealth,
+    dvrRpcDescribe: rpcStatus,
   }))
 } finally {
   try { await host?.stop() } catch (error) { console.error('Desktop Host stop failed:', error) }
