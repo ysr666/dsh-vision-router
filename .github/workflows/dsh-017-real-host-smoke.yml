@@ -125,9 +125,13 @@ jobs:
           retention-days: 2
 
   dsh-017-windows-desktop-host:
-    name: DSH 0.1.7-rc.2 Windows Desktop Host bootstrap
+    name: DSH 0.1.7-rc.2 Windows Desktop Host (Node ${{ matrix.node }})
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.21.0]
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -148,10 +152,10 @@ jobs:
         with:
           version: 11.7.0
 
-      - name: Install Node 22 Desktop runtime
+      - name: Install Node ${{ matrix.node }} Desktop runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22.19.0
+          node-version: ${{ matrix.node }}
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
@@ -166,7 +170,7 @@ jobs:
         working-directory: dsh-017
         run: pnpm run build
 
-      - name: Run official Windows Desktop Host bootstrap contract
+      - name: Run official Windows Desktop Host authenticated-request contract
         working-directory: dsh-017
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
