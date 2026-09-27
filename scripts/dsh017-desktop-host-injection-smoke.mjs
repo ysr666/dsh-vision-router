@@ -86,6 +86,31 @@ try {
 
   host = new DesktopHostProcess(process.execPath, project, paths.profile)
   const ready = await host.start()
+
+  // Mirror Desktop main's authenticateWebHost() boundary: exchange the owned
+  // Host launch token for a cookie, then prove that cookie can immediately
+  // authorize a clean index request. A regression here strands Electron before
+  // it can consume the structured boot table and looks like "Loading plugins…".
+  const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(6000) })
+  const setCookie = login.headers.get('set-cookie')
+  await login.body?.cancel()
+  if (login.status !== 303 || setCookie === null) {
+    throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
+  }
+  const cookie = setCookie.split(';', 1)[0]
+  const clean = new URL(ready.url)
+  clean.search = ''
+  const authenticated = await fetch(clean, {
+    headers: { cookie },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(6000),
+  })
+  const authenticatedStatus = authenticated.status
+  await authenticated.body?.cancel()
+  if (authenticatedStatus !== 200) {
+    throw new Error(`Desktop Host cookie-authenticated index failed: ${String(authenticatedStatus)}`)
+  }
+
   const rows = ready.injections.filter((row) => row?.kind === 'script'
     && typeof row.text === 'string'
     && row.text.includes('data-vision-router-settings-017-compat'))
@@ -108,6 +133,8 @@ try {
     hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
     structuredInjections: ready.injections.length,
     dvrSettingsPreludeRows: rows.length,
+    authTokenExchange: login.status,
+    authenticatedIndex: authenticatedStatus,
   }))
 } finally {
   try { await host?.stop() } catch (error) { console.error('Desktop Host stop failed:', error) }
