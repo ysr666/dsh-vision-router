@@ -11,6 +11,7 @@ on:
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
   workflow_dispatch:
@@ -127,7 +128,7 @@ jobs:
   dsh-017-windows-desktop-host:
     name: DSH 0.1.7-rc.2 Windows Desktop Host (Node ${{ matrix.node }})
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -177,3 +178,12 @@ jobs:
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
+      - name: Run Node 24 multi-plugin Connection ordering adversary
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
