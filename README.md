@@ -42,9 +42,9 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v2.2.1)**
+> 📌 **Announcement (v2.2.5)**
 >
-> **v2.2.1:** Stability hotfix for large-session repair, accessor-based fetch composition, non-divisible pixel-diff bounds, and local Ollama answer-budget preservation — without raising the rc.8 Host floor. [What’s new →](docs/releases/v2.2.1.md)
+> **v2.2.5:** Adds fail-closed **Local-only vision** and fixes the remaining DSH `0.1.7-rc.2` Windows Desktop multi-plugin `Loading plugins…` hang by isolating Vision Router’s WebServer registrar from other plugins. The public Host floor remains `0.1.0-rc.8`. [What’s new →](docs/releases/v2.2.5.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
