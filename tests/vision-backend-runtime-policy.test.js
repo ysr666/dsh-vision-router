@@ -22,7 +22,7 @@ async function collect(iterable) {
   return chunks
 }
 
-function fixture({ inputModalities, bridgeSupported = true, messages } = {}) {
+function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyVision = false } = {}) {
   let adapterCalls = 0
   let directCalls = 0
   let directSessionId
@@ -46,6 +46,7 @@ function fixture({ inputModalities, bridgeSupported = true, messages } = {}) {
         return {
           timeoutMs: 120000,
           visionTaskTimeoutMs: 120000,
+          localOnlyVision,
           freeFallback: true,
           providers: [{ provider: 'bg', model: 'glm-4.6v', fallbacks: [] }],
         }
@@ -168,6 +169,17 @@ test('text-projected explicit visual backend uses direct bridge before adapter d
   assert.equal(f.directCalls(), 1)
   assert.equal(f.directSessionId(), 'session-410-preflight')
   assert.equal(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === '731'), true)
+})
+
+test('local-only policy blocks adapter and preflight bridge before any remote image delivery', async () => {
+  const f = fixture({ inputModalities: ['text'], localOnlyVision: true })
+  const chunks = await f.run()
+  assert.equal(f.adapterCalls(), 0)
+  assert.equal(f.directCalls(), 0)
+  assert.equal(f.imageReads(), 0)
+  const finish = chunks.find((chunk) => chunk.type === 'finish')
+  assert.equal(finish?.reason?.kind, 'error')
+  assert.equal(finish?.reason?.failure?.code, 'VISION_LOCAL_ONLY_POLICY')
 })
 
 test('offloaded-only history is text-visible and never activates the preflight image bridge', async () => {

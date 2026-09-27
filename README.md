@@ -79,7 +79,7 @@ Vision Router does not operate fully offline in its default configuration. The e
 | User-configured cloud model / HTTP provider | Sent to that provider's configured endpoint under its own retention and privacy terms. |
 | Local Ollama / LM Studio | Image pixels are sent to the configured local endpoint. The resulting text still returns to the current chat model, which may itself be remote. |
 
-For a **strict local-only workflow**, use both a local vision backend and a local chat model, remove cloud vision rows/custom remote HTTP endpoints, turn off `freeFallback`, and set OCR to Tesseract-only when OCR must never fall back to a model. Test the final network boundary in your own environment. Vision Router cannot make a remote chat model, proxy or Host integration local.
+To stop **Vision Router itself** from sending image data to remote vision endpoints, enable **Settings → Vision Router → General → Local-only vision**. This is a runtime policy, not a destructive rewrite: saved cloud rows and `freeFallback` stay configured but cannot execute while the switch is on. Only loopback visual endpoints (`localhost`, `127.0.0.0/8`, `::1`) are eligible, including Ollama, LM Studio, and custom local HTTP backends. For a **strict local-only workflow**, also use a local chat model because vision result text still returns to the current chat model. Test the final network boundary in your own environment; Vision Router cannot make a remote chat model, proxy or Host integration local.
 
 ## Why this exists
 
@@ -375,7 +375,8 @@ Everything is optional; defaults work out of the box. Prefer **Settings → Visi
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | vision tools on / progressive mounting (off by default for a stable tool schema) / image-turn auto-mount when progressive mode is enabled; `progressiveTools` is boot-time config |
 | `rewriteImages` | `true` | rewrite image blocks in the model input (cached description or tool-hint marker); the UI log keeps images |
 | `desktopScreenshot` | `false` | privacy opt-in for the model-callable `vision_screenshot` desktop-capture tool; checked live before every capture |
-| `freeFallback` | `true` | append the anonymous OVH models after explicit local/custom HTTP backends; turning this off never disables an explicitly configured local backend |
+| `localOnlyVision` | `false` | runtime privacy policy: when enabled, only loopback vision endpoints may execute; cloud/DSH providers and the built-in OVH fallback stay saved but are fail-closed |
+| `freeFallback` | `true` | append the anonymous OVH models after explicit local/custom HTTP backends; ignored while `localOnlyVision` is enabled |
 | `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | local vision backend; OpenAI mode disables supported model reasoning by default so the output budget is spent on answer text |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | local LM Studio backend after Ollama; LM Studio 0.4+ can use `format: 'lmstudio'` for documented native reasoning control |
 | `visionTurnBudgetMs` | `0` | whole-turn vision wall-clock budget; `0` means unlimited. Concrete provider calls/tools still keep their own hard deadlines |
@@ -425,11 +426,11 @@ ollama pull qwen2.5vl
 
 **3. What happens**
 
-- When enabled, `local-ollama` heads the HTTP vision chain. For a strict local-only setup, remove cloud vision rows/custom HTTP endpoints and turn off `freeFallback`.
+- When enabled, `local-ollama` heads the HTTP vision chain. To hard-block remote visual egress without deleting saved cloud settings, enable **General → Local-only vision**; only loopback visual endpoints remain executable while the policy is on.
 - The selected loopback Ollama model is prewarmed through Ollama's native API and kept resident for 30 minutes. If it is cold when Ollama is the primary image backend, loading completes before the normal vision-task budget starts; a short `/api/ps` probe keeps a dead service on the fast fallback path. Remote Ollama URLs are never auto-warmed.
 - **LM Studio works the same way** — enable `localLmStudio` with its OpenAI-compatible endpoint (default `http://localhost:1234/v1`) and enter the exact model identifier shown in Developer or `/v1/models`. It sits after `local-ollama` and before custom/cloud HTTP backends.
 - Local backends keep **OpenAI** as the compatibility default and can also use **Anthropic**. LM Studio additionally offers **LM Studio native** mode (`format: 'lmstudio'`, LM Studio 0.4+) at `/api/v1/chat`; use it when you need documented reasoning control (`reasoningEffort: 'none'` maps to `reasoning: off`). `maxTokens` is configurable and defaults to 4096.
-- If a local backend is down or the call times out, its entry is skipped automatically and the chain falls through to the cloud backends — no call breaks.
+- If a local backend is down or the call times out, its entry is skipped automatically. Normally the chain can continue to cloud backends; with **Local-only vision** enabled, remote fallbacks remain blocked and the visual call fails closed instead.
 - `vision_screenshot` is disabled by default. After the separate Desktop screenshot opt-in, `identify=true` uses the same Ollama → LM Studio fallback.
 
 ## Requirements
