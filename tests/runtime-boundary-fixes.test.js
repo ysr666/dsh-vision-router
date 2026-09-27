@@ -471,6 +471,102 @@ test('local mutation boundary preserves injected child identity and rejects remo
   for (const cleanup of cleanups.reverse()) cleanup()
 })
 
+test('local mutation boundary never leaves webServer.register patched for foreign plugins', () => {
+  const routes = new Map()
+  const webServer = {
+    register(route) {
+      routes.set(route.path, route)
+      return () => routes.delete(route.path)
+    },
+  }
+  const originalRegister = webServer.register
+  const child = {
+    webServer,
+    effect(factory) { return factory() },
+  }
+  const ctx = {
+    inject(_dependencies, callback) { return callback(child) },
+    effect(factory) { return factory() },
+  }
+
+  const wrapped = installLocalMutationRouteBoundary(ctx)
+  wrapped.inject(['webServer'], (scope) => {
+    assert.notEqual(scope.webServer.register, originalRegister, 'DVR registrations are guarded inside the callback')
+    scope.webServer.register({
+      kind: 'exact',
+      path: '/_dsh/vision-router/host-capabilities',
+      handler(_req, res) { res.end('ok') },
+    })
+  })
+
+  assert.equal(webServer.register, originalRegister, 'foreign plugins must observe the original shared registrar')
+  webServer.register({ kind: 'exact', path: '/foreign-health', handler(_req, res) { res.end('ok') } })
+  assert.ok(routes.has('/foreign-health'))
+})
+
+test('local mutation boundary keeps async DVR registration private without exposing it to foreign plugins', async () => {
+  const routes = new Map()
+  const webServer = {
+    register(route) {
+      routes.set(route.path, route)
+      return () => routes.delete(route.path)
+    },
+  }
+  const originalRegister = webServer.register
+  const child = { webServer, effect(factory) { return factory() } }
+  const ctx = { inject(_dependencies, callback) { return callback(child) } }
+
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const pending = installLocalMutationRouteBoundary(ctx).inject(['webServer'], async (scope) => {
+    assert.notEqual(scope.webServer.register, originalRegister)
+    await gate
+    scope.webServer.register({
+      kind: 'exact',
+      path: '/_dsh/vision-router/async-owned',
+      handler(_req, res) { res.end('ok') },
+    })
+  })
+
+  assert.equal(webServer.register, originalRegister, 'shared registrar stays untouched while DVR awaits')
+  webServer.register({ kind: 'exact', path: '/foreign-during-await', handler(_req, res) { res.end('ok') } })
+  release()
+  await pending
+
+  assert.equal(webServer.register, originalRegister)
+  assert.ok(routes.has('/foreign-during-await'))
+  assert.ok(routes.has('/_dsh/vision-router/async-owned'))
+})
+
+test('local mutation boundary does not mutate a traceable WebServer raw descriptor', () => {
+  const raw = {
+    register(route) { return () => route },
+  }
+  const originalOwn = Object.hasOwn(raw, 'register')
+  const original = raw.register
+  const traceable = new Proxy(raw, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') return value
+      // Cordis traceable services return a fresh callable proxy on each method read.
+      return new Proxy(value, { apply(fn, thisArg, args) { return Reflect.apply(fn, thisArg, args) } })
+    },
+  })
+  const child = { webServer: traceable, effect(factory) { return factory() } }
+  const ctx = { inject(_dependencies, callback) { return callback(child) } }
+
+  installLocalMutationRouteBoundary(ctx).inject(['webServer'], (scope) => {
+    scope.webServer.register({
+      kind: 'exact',
+      path: '/_dsh/vision-router/host-capabilities',
+      handler() {},
+    })
+  })
+
+  assert.equal(Object.hasOwn(raw, 'register'), originalOwn)
+  assert.equal(raw.register, original)
+})
+
 test('remote update-check keeps version metadata but never receives the one-click mutation token', async () => {
   let route
   const child = {
