@@ -22,7 +22,7 @@ const { DesktopHostProcess } = await importDsh('apps/desktop/src/host-process.ts
 const { DESKTOP_HOST_PROTOCOL_VERSION } = await importDsh('apps/desktop/src/host-protocol.ts')
 
 const REQUEST_DEADLINE_MS = 6000
-const fixtureNames = ['dvr-fixture-rpc', 'dvr-fixture-waterfall']
+const fixtureNames = ['dvr-fixture-rpc', 'dvr-fixture-waterfall', 'dvr-fixture-webserver-observer']
 const orders = [
   ['dsh-vision-router', 'dvr-fixture-rpc', 'dvr-fixture-waterfall'],
   ['dsh-vision-router', 'dvr-fixture-waterfall', 'dvr-fixture-rpc'],
@@ -68,6 +68,26 @@ const waterfallFixtureSource = `export function apply(ctx) {
 }
 `
 
+const webServerObserverFixtureSource = `export function apply(ctx) {
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/fixture-webserver-state',
+      handler(_req, res) {
+        const descriptor = scope.webServer
+          ? Object.getOwnPropertyDescriptor(scope.webServer, 'register')
+          : undefined
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          ownRegister: descriptor !== undefined,
+          registerName: descriptor?.value?.name ?? null,
+        }))
+      },
+    }), 'fixture: foreign WebServer registrar observer')
+  })
+}
+`
+
 function hostUrl(base, pathname) {
   const url = new URL(base)
   url.pathname = pathname
@@ -100,6 +120,20 @@ async function requireStatus(base, pathname, cookie, expected) {
   await response.body?.cancel()
   if (status !== expected) throw new Error(`${pathname} expected ${expected}, found ${status}`)
   return status
+}
+
+async function webServerStateProbe(base, cookie) {
+  const response = await fetch(hostUrl(base, '/fixture-webserver-state'), {
+    headers: { cookie },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(REQUEST_DEADLINE_MS),
+  })
+  const status = response.status
+  const body = await response.json()
+  if (status !== 200 || body?.ownRegister !== false) {
+    throw new Error(`foreign plugin observed leaked WebServer registrar: status=${status} body=${JSON.stringify(body)}`)
+  }
+  return body
 }
 
 async function rpcProbe(base, cookie, channel, method) {
@@ -163,13 +197,14 @@ async function runScenario(order, sequence) {
     const fixtureDirs = new Map([
       ['dvr-fixture-rpc', writeFixture(fixturesRoot, 'dvr-fixture-rpc', rpcFixtureSource)],
       ['dvr-fixture-waterfall', writeFixture(fixturesRoot, 'dvr-fixture-waterfall', waterfallFixtureSource)],
+      ['dvr-fixture-webserver-observer', writeFixture(fixturesRoot, 'dvr-fixture-webserver-observer', webServerObserverFixtureSource)],
     ])
 
     const manifestPath = join(paths.profile, 'package.json')
     const manifest = readJson(manifestPath)
     manifest.dependencies['dsh-vision-router'] = `file:${dvrRoot}`
     for (const name of fixtureNames) manifest.dependencies[name] = `file:${fixtureDirs.get(name)}`
-    manifest.dsh.profile.bundles.push(...order)
+    manifest.dsh.profile.bundles.push(...order, 'dvr-fixture-webserver-observer')
     writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
 
     const pnpmEntry = join(dshRoot, 'apps/desktop/node_modules/pnpm/bin/pnpm.mjs')
@@ -190,6 +225,7 @@ async function runScenario(order, sequence) {
     const apiHealth = await requireStatus(ready.url, '/api/health', cookie, 404)
     const dvrRpc = await rpcProbe(ready.url, cookie, '/vision-router-settings', 'describe')
     const fixtureRpc = await rpcProbe(ready.url, cookie, '/fixture-rpc', 'ping')
+    const webServerState = await webServerStateProbe(ready.url, cookie)
     const rows = ready.injections.filter((row) => row?.kind === 'script'
       && typeof row.text === 'string'
       && row.text.includes('data-vision-router-settings-017-compat'))
@@ -203,6 +239,7 @@ async function runScenario(order, sequence) {
       apiHealth,
       dvrRpc,
       fixtureRpc,
+      webServerState,
       structuredPreludeRows: rows.length,
     }
   } finally {
