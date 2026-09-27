@@ -38,6 +38,9 @@
 
 <p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
+> [!CAUTION]
+> **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
+
 > [!WARNING]
 > 📌 **Announcement (v2.2.1)**
 >
@@ -49,6 +52,7 @@
 
 ## Contents
 
+- [Data flow and strict local-only use](#data-flow-and-strict-local-only-use)
 - [Why this exists](#why-this-exists)
 - [How it compares](#how-it-compares)
 - [Design lineage](#design-lineage)
@@ -61,6 +65,21 @@
 - [Configuration](#configuration)
 - [Install and lifecycle](#install-and-lifecycle)
 - [Troubleshooting](#troubleshooting)
+
+## Data flow and strict local-only use
+
+Vision Router does not operate fully offline in its default configuration. The exact boundary depends on the operation and the selected models:
+
+| Operation | Where data goes |
+|---|---|
+| Local pixel tools such as crop, pixel diff, palette, SVG trace, cutout, materialize and HTML screenshot | Processed on the DSH machine; these operations do not call a vision model. |
+| `vision_ocr` with Tesseract | Processed on the DSH machine. With the default `auto` engine, an unavailable or empty local OCR result may fall back to a vision model. |
+| Image-turn routing and vision-model tools such as describe, detect, ground or vision OCR | The image or derived crop, prompt and relevant context are sent to the selected vision provider. |
+| Built-in free fallback | Sent anonymously (no API key) to OVHcloud AI Endpoints at `oai.endpoints.kepler.ai.cloud.ovh.net`; the service still receives the request payload and network metadata such as the source IP. |
+| User-configured cloud model / HTTP provider | Sent to that provider's configured endpoint under its own retention and privacy terms. |
+| Local Ollama / LM Studio | Image pixels are sent to the configured local endpoint. The resulting text still returns to the current chat model, which may itself be remote. |
+
+For a **strict local-only workflow**, use both a local vision backend and a local chat model, remove cloud vision rows/custom remote HTTP endpoints, turn off `freeFallback`, and set OCR to Tesseract-only when OCR must never fall back to a model. Test the final network boundary in your own environment. Vision Router cannot make a remote chat model, proxy or Host integration local.
 
 ## Why this exists
 

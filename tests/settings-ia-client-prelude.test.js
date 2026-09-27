@@ -184,6 +184,9 @@ test('general page keeps the happy path focused on model chain and free fallback
   assert.match(text, /识图已就绪/)
   assert.match(text, /识图模型/)
   assert.match(text, /内置免费兜底/)
+  assert.match(text, /数据流向/)
+  assert.match(text, /免费或免 Key 不等于离线/)
+  assert.match(text, /远程 OVHcloud 服务/)
   assert.doesNotMatch(text, /整轮视觉路由（旧工作流）/)
   assert.doesNotMatch(text, /渐进式工具暴露/)
 })
@@ -226,6 +229,8 @@ test('local page keeps Ollama, LM Studio, and desktop capture out of the general
   const text = textOf(registeredComponent({ scope }))
   assert.match(text, /Ollama/)
   assert.match(text, /LM Studio/)
+  assert.match(text, /云端识图行或免费兜底仍开启/)
+  assert.match(text, /识图结果也会交给当前聊天模型/)
   assert.match(text, /允许 Agent 读取桌面截图/)
 })
 
