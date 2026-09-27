@@ -38,6 +38,9 @@
 
 <p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
+> [!CAUTION]
+> **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
+
 > [!WARNING]
 > 📌 **公告（v2.2.1）**
 >
@@ -49,6 +52,7 @@
 
 ## 目录
 
+- [数据流向与严格纯本地配置](#数据流向与严格纯本地配置)
 - [为什么做这个](#为什么做这个)
 - [对比同类插件](#对比同类插件)
 - [设计来源](#设计来源)
@@ -61,6 +65,21 @@
 - [配置项](#配置项)
 - [安装与生命周期](#安装与生命周期)
 - [故障排查](#故障排查)
+
+## 数据流向与严格纯本地配置
+
+Vision Router 在默认配置下不是完全离线工具。具体边界取决于操作和当前选择的模型：
+
+| 操作 | 数据去向 |
+|---|---|
+| 裁剪、像素对比、取色、SVG 矢量化、抠图、文件实体化、HTML 截图等本地像素工具 | 在 DSH 所在机器处理，这些操作不调用视觉模型。 |
+| 使用 Tesseract 的 `vision_ocr` | 在 DSH 所在机器处理。默认 `auto` 引擎在本地 OCR 不可用或结果为空时，可能回退到视觉模型。 |
+| 图片轮路由及 describe、detect、ground、视觉 OCR 等模型工具 | 图片或局部裁剪、提示词和相关上下文会发送给当前视觉供应商。 |
+| 内置免费兜底 | 以匿名方式（无 API Key）发往 OVHcloud AI Endpoints `oai.endpoints.kepler.ai.cloud.ovh.net`；服务仍会收到请求内容和源 IP 等网络元数据。 |
+| 用户配置的云模型 / HTTP 供应商 | 发送到对应配置端点，并受该供应商的保留与隐私条款约束。 |
+| 本地 Ollama / LM Studio | 图像像素发送到配置的本地端点；识图结果文本仍会回到当前聊天模型，而聊天模型自身可能仍在云端。 |
+
+若要阻止 **Vision Router 本身**把图片发送给远程视觉端点，请开启 **设置 → Vision Router → 常规 → 仅本地视觉**。这是运行时策略，不会破坏性修改配置：已保存的云端识图行和 `freeFallback` 会保留，但开关开启期间无法执行；只有回环地址（`localhost`、`127.0.0.0/8`、`::1`）上的视觉端点可以运行，包括 Ollama、LM Studio 和自定义本机 HTTP 后端。若要求**整个工作流严格纯本地**，还必须同时使用本地聊天模型，因为识图结果文本仍会交给当前聊天模型。请在自己的环境中验证最终网络边界；Vision Router 无法把远程聊天模型、代理或 Host 集成变成本地服务。
 
 ## 为什么做这个
 
@@ -354,7 +373,8 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
-| `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；关闭它不会停用用户明确配置的本地后端 |
+| `localOnlyVision` | `false` | 运行时隐私策略：开启后只有回环地址上的视觉端点可执行；云端/DSH Provider 与内置 OVH 兜底保留配置但 fail closed |
+| `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；`localOnlyVision` 开启期间不会执行 |
 | `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | 本地视觉后端；OpenAI 模式默认关闭受支持模型的推理，把输出预算留给正文 |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | Ollama 之后的本地 LM Studio 后端；LM Studio 0.4+ 可选 `format: 'lmstudio'` 使用官方原生推理控制 |
 | `visionTurnBudgetMs` | `0` | 整轮视觉总墙钟预算；`0` = 不设整轮上限。具体 provider调用/工具仍有自己的硬超时 |
@@ -404,11 +424,11 @@ ollama pull qwen2.5vl
 
 **3. 行为说明**
 
-- 开启后 `local-ollama` 排在 HTTP 视觉链前部。若要严格纯本地，请移除云视觉行/自定义 HTTP 端点，并关闭 `freeFallback`。
+- 开启后 `local-ollama` 排在 HTTP 视觉链前部。若要在不删除已保存云端配置的情况下硬阻止远程视觉出网，请开启 **常规 → 仅本地视觉**；策略开启期间只有回环地址上的视觉端点可执行。
 - 选中的本机 loopback Ollama 模型会通过原生 API 预热并保持 30 分钟驻留。如果模型在 Ollama 作为首个图片后端时已经冷却，加载会在正常视觉任务预算开始之前完成；短 `/api/ps` 探测保证服务未运行/挂死时仍快速进入 fallback。远程 Ollama URL 不会自动预热。
 - **LM Studio 同理**——开启 `localLmStudio`，填 OpenAI 兼容端点（默认 `http://localhost:1234/v1`），并使用 Developer 页或 `/v1/models` 返回的真实模型标识。它排在 `local-ollama` 之后、自定义/云 HTTP 后端之前。
 - 本地后端继续以 **OpenAI** 为兼容默认，也可选 **Anthropic**。LM Studio 额外提供 **LM Studio 原生**模式（`format: 'lmstudio'`，需 LM Studio 0.4+），走 `/api/v1/chat`；需要稳定关闭推理时推荐该模式，因为官方 API 明确支持 `reasoning: off`。`maxTokens` 可配置，默认 4096。
-- 任一本地后端未运行或调用超时时自动跳过，继续降级到云链。
+- 任一本地后端未运行或调用超时时自动跳过。正常模式下可继续降级到云链；开启 **仅本地视觉** 后，所有远程兜底继续保持阻断，视觉调用会 fail closed。
 - `vision_screenshot` 默认关闭。单独开启「桌面截屏」隐私开关后，`identify=true` 使用同样的 Ollama → LM Studio 降级顺序。
 
 ## 环境要求

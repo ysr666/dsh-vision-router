@@ -258,6 +258,12 @@ export const Config = z.object({
   // trusted-host transport fence. Only a loopback/local settings page may
   // change this permission; the remote bridge rejects writes to the field.
   allowRemoteSettings: z.boolean().default(false),
+  // Privacy policy switch: when enabled, Vision Router executes image-model
+  // requests only against loopback visual endpoints (Ollama, LM Studio, or
+  // custom local HTTP). Saved cloud
+  // rows remain intact but inactive, so disabling the policy restores the
+  // previous routing chain without destructive settings rewrites.
+  localOnlyVision: z.boolean().default(false),
   freeFallback: z.boolean().default(true),
   // 云端免费优先：开启后，云端后端先尝试内置 OVH 免费模型（免注册、免
   // API Key），付费 httpProviders 仅在免费模型全部失败后作为兜底，尽量把
@@ -421,6 +427,8 @@ import {
   DEFAULT_HTTP_PROVIDERS,
   httpProviderFallbackWeight,
   weightedFallbackBudget,
+  localOnlyVisionEnabled,
+  isLoopbackVisionBaseURL,
   localOllamaProvidersOf,
   localLmStudioProvidersOf,
   localProvidersOf,
@@ -518,6 +526,8 @@ export {
   DEFAULT_HTTP_PROVIDERS,
   httpProviderFallbackWeight,
   weightedFallbackBudget,
+  localOnlyVisionEnabled,
+  isLoopbackVisionBaseURL,
   localOllamaProvidersOf,
   localLmStudioProvidersOf,
   localProvidersOf,
@@ -2003,6 +2013,13 @@ export function apply(ctx, config = {}, runtime = {}) {
       add(HTTP_ROUTE, `${provider.name}/${provider.model}`)
     }
 
+    // Local-only vision is an execution policy, not a destructive settings
+    // rewrite. Saved native/cloud rows stay visible for later restoration, but
+    // they cannot participate in tool auto-discovery while the policy is on.
+    if (localOnlyVisionEnabled(current())) {
+      return applyVisionExecutionOrder(out, currentVisionExecutionOrder())
+    }
+
     const capabilities = await collectVisionBackendCapabilities()
     for (const [provider, models] of Object.entries(capabilities)) {
       if (provider === HTTP_ROUTE || ownRoutes().has(provider)) continue
@@ -2975,6 +2992,10 @@ export function apply(ctx, config = {}, runtime = {}) {
           )
 
         for (const pair of usablePairs) {
+          if (localOnlyVisionEnabled(current()) && !isLocalBackendPair(pair)) {
+            errors.push(`${pair.provider}/${pair.model}: skipped (local-only vision policy)`)
+            continue
+          }
           const candidateWeight = primaryWeight
           const weightAtStart = Math.max(candidateWeight, remainingWeight)
           remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -3106,6 +3127,10 @@ ctx.logger?.info(
         // final fallbacks: they bypass the harness llm service entirely, so the
         // anonymous free endpoint works without any credential.
         for (const provider of httpFallbacks) {
+          if (localOnlyVisionEnabled(current()) && !isLoopbackVisionBaseURL(provider?.baseURL)) {
+            errors.push(`http:${provider?.name}/${provider?.model}: skipped (local-only vision policy)`)
+            continue
+          }
           const candidateWeight = httpProviderFallbackWeight(provider)
           const weightAtStart = Math.max(candidateWeight, remainingWeight)
           remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -3611,6 +3636,10 @@ ctx.logger?.info(
         errors.push(`${backendKey}: ${message}`)
       }
       for (const pair of usablePairs) {
+        if (localOnlyVisionEnabled(current()) && !isLocalBackendPair(pair)) {
+          errors.push(`${pair.provider}/${pair.model}: skipped (local-only vision policy)`)
+          continue
+        }
         const candidateWeight = primaryWeight
         const weightAtStart = Math.max(candidateWeight, remainingWeight)
         remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -3671,6 +3700,10 @@ ctx.logger?.info(
       }
       const httpContent = toOpenAIContent([block], () => imageBytes)
       for (const provider of httpFallbacks) {
+        if (localOnlyVisionEnabled(current()) && !isLoopbackVisionBaseURL(provider?.baseURL)) {
+          errors.push(`http:${provider?.name}/${provider?.model}: skipped (local-only vision policy)`)
+          continue
+        }
         const candidateWeight = httpProviderFallbackWeight(provider)
         const weightAtStart = Math.max(candidateWeight, remainingWeight)
         remainingWeight = Math.max(0, remainingWeight - candidateWeight)

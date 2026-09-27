@@ -133,6 +133,24 @@ test('schemastery remains a runtime dependency', async () => {
   assert.equal(pkg.devDependencies?.['@deepseek-ai/schemastery'], undefined)
 })
 
+test('public surfaces disclose remote image egress and strict local-only requirements', async () => {
+  const pkg = await manifest()
+  const [readme, readmeZh, settings] = await Promise.all([
+    readFile(new URL('../README.md', import.meta.url), 'utf8'),
+    readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/settings-ia-client-prelude.js', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(pkg.description, /Remote vision providers/)
+  assert.match(pkg.description, /default free fallback/)
+  assert.match(readme, /Data leaves your machine by default/)
+  assert.match(readme, /strict local-only workflow/)
+  assert.match(readmeZh, /默认配置会让数据出网/)
+  assert.match(readmeZh, /严格纯本地/)
+  assert.match(settings, /数据流向/)
+  assert.match(settings, /remote OVHcloud service/)
+})
+
 test('undici stays below v8 and is lazy-loaded only by scoped proxy transports', async () => {
   const pkg = await manifest()
   assert.match(pkg.dependencies?.undici ?? '', /^\^7\./)
