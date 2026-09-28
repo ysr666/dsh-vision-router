@@ -4130,3 +4130,84 @@ test('batch3: direct OpenAI success bodies are rejected before oversized JSON al
     globalThis.fetch = original
   }
 })
+
+// ── vision-http chain dispatch: format=lmstudio rides callLocalBackend ──────
+//
+// Regression for the #550 follow-up: the settings surfaces expose the LM
+// Studio native transport (`format: 'lmstudio'`), and callLocalBackend maps
+// it to POST {apiRoot}/api/v1/chat — but the vision-http chain's dispatch
+// only special-cased format='anthropic', so the main vision chain silently
+// hit the OpenAI-compatible /chat/completions endpoint instead (no
+// `reasoning: off`, different wire) while every other path (instant local
+// describe, vision_screenshot identify) used the native transport.
+
+test('vision-http chain routes format=lmstudio through the native local backend', async () => {
+  const { ctx } = mockHarnessCtx()
+  apply(ctx, Config({
+    localLmStudio: { enabled: true, model: 'qwen2.5-vl', format: 'lmstudio' },
+  }))
+  const adapter = ctx.llm.registration('vision-http').adapter
+  const original = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: JSON.parse(init.body) })
+    return new Response(JSON.stringify({
+      output: [{ type: 'message', content: 'native-ok' }],
+      stats: { total_output_tokens: 2 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const chunks = []
+    for await (const chunk of adapter.stream({
+      model: 'local-lmstudio/qwen2.5-vl',
+      messages: [{ role: 'user', content: [{ type: 'text', text: '看这张图' }] }],
+    })) {
+      chunks.push(chunk)
+    }
+    assert.equal(calls.length, 1)
+    assert.ok(calls[0].url.endsWith('/api/v1/chat'), `native endpoint expected, got ${calls[0].url}`)
+    assert.equal(calls[0].body.reasoning, 'off')
+    assert.equal(calls[0].body.max_output_tokens, 4096)
+    const text = chunks
+      .filter((chunk) => chunk.type === 'text-delta')
+      .map((chunk) => chunk.text)
+      .join('')
+    assert.equal(text, 'native-ok')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('vision-http chain keeps format=openai local backends on the compatible endpoint', async () => {
+  const { ctx } = mockHarnessCtx()
+  apply(ctx, Config({
+    localLmStudio: { enabled: true, model: 'qwen2.5-vl' },
+  }))
+  const adapter = ctx.llm.registration('vision-http').adapter
+  const original = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url) })
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'compat-ok' } }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const chunks = []
+    for await (const chunk of adapter.stream({
+      model: 'local-lmstudio/qwen2.5-vl',
+      messages: [{ role: 'user', content: [{ type: 'text', text: '看这张图' }] }],
+    })) {
+      chunks.push(chunk)
+    }
+    assert.equal(calls.length, 1)
+    assert.ok(calls[0].url.endsWith('/chat/completions'), `compatible endpoint expected, got ${calls[0].url}`)
+    const text = chunks
+      .filter((chunk) => chunk.type === 'text-delta')
+      .map((chunk) => chunk.text)
+      .join('')
+    assert.equal(text, 'compat-ok')
+  } finally {
+    globalThis.fetch = original
+  }
+})
