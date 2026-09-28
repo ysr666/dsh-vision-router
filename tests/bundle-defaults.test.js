@@ -447,7 +447,7 @@ test('real DSH browser workflows use exact main-written build caches without ski
     assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v6.1.0`)
     assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
     assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
-    assert.match(source, /KEY="dsh-web-v2-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
+    assert.match(source, /KEY="dsh-web-v1-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
     assert.match(source, /DSH_SHA="\$\(git rev-parse HEAD\)"/)
     assert.match(source, /LOCK_SHA="\$\(sha256sum pnpm-lock\.yaml/)
     assert.match(source, /TREE_SHA="\$\(git ls-tree -r --full-tree HEAD/)
