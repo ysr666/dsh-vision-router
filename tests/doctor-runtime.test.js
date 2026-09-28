@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { probeRuntime, supportReport } from '../lib/doctor-runtime.js'
+import { DOCTOR_RESPONSE_MAX_BYTES } from '../lib/http-body-limit.js'
 
 const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
@@ -81,6 +82,37 @@ test('requested profile requires verified runtime ownership before route health 
   assert.equal(report.ownership.verified, true)
   assert.equal(report.ownership.profile, 'web')
   assert.equal(report.ok, true)
+})
+
+
+test('runtime ownership probe cancels oversized chunked log metadata without weakening route health', async () => {
+  const home = '/tmp/dsh-home'
+  let pulls = 0
+  let cancelled = false
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (pulls >= 3) return controller.close()
+      controller.enqueue(new Uint8Array(10 * 1024))
+      pulls += 1
+    },
+    cancel() { cancelled = true },
+  }, { highWaterMark: 0 })
+
+  const report = await probeRuntime({
+    requestedProfile: 'web',
+    dshHome: home,
+    applicableProfiles: ['web'],
+    fetchImpl: async (url, init) => init.method === 'GET'
+      ? new Response(stream, { status: 200, headers: { 'content-type': 'application/json' } })
+      : routeResponse(url),
+  })
+  assert.equal(DOCTOR_RESPONSE_MAX_BYTES, 16 * 1024)
+  assert.equal(report.routeOk, true)
+  assert.equal(report.ownership.verified, false)
+  assert.equal(report.ownership.reason, 'profile-unknown')
+  assert.equal(report.ok, false)
+  assert.equal(cancelled, true)
+  assert.ok(pulls <= 2, `bounded reader should stop after the first overflowing chunk; pulls=${pulls}`)
 })
 
 test('unreachable DSH is advisory so offline doctor can still succeed', async () => {
