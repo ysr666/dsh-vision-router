@@ -44,6 +44,7 @@ function make017SettingsHarness() {
   let editor
   let editorListener
   let watchCalls = 0
+  let configurationCalls = 0
   const ctx = {
     get(name) {
       if (name === 'settings') return nativeSettings
@@ -66,6 +67,7 @@ function make017SettingsHarness() {
     editor = {
       documentPath: `/tmp/dvr-settings-017-${++profileFixtureId}.yml`,
       configuration() {
+        configurationCalls += 1
         return [{ entry, inherited: structuredClone(inherited), override: {} }]
       },
       async edit(received, change) {
@@ -95,8 +97,45 @@ function make017SettingsHarness() {
     mountEditor,
     reloadCompatibility,
     watchCalls: () => watchCalls,
+    configurationCalls: () => configurationCalls,
   }
 }
+
+test('DSH 0.1.7 settings compatibility snapshots repeated reads and refreshes at write boundaries', async () => {
+  const harness = make017SettingsHarness()
+  const { settings, scope } = harness.mountEditor()
+
+  const first = scope.get()
+  first.routing = true
+  for (let index = 0; index < 1_000; index += 1) {
+    assert.equal(scope.get().routing, false, 'callers cannot mutate the cached settings snapshot')
+  }
+  assert.equal(settings.writable, true)
+  assert.equal(settings.describe()[0].value.routing, false)
+  assert.equal(harness.configurationCalls(), 1, 'read amplification must not recompose the Host profile')
+
+  const revision = settings.describe()[0].revision
+  await settings.mutate(
+    'vision-router',
+    [{ op: 'set', path: ['routing'], value: true }],
+    revision,
+  )
+  assert.equal(scope.get().routing, true)
+  assert.equal(harness.configurationCalls(), 3, 'a write refreshes before and after ConfigEditor.edit()')
+})
+
+test('DSH 0.1.7 compatibility serializes concurrent writes against one revision', async () => {
+  const harness = make017SettingsHarness()
+  const { settings } = harness.mountEditor()
+  const revision = settings.describe()[0].revision
+  const results = await Promise.allSettled([
+    settings.mutate('vision-router', [{ op: 'set', path: ['routing'], value: true }], revision),
+    settings.mutate('vision-router', [{ op: 'set', path: ['tool'], value: false }], revision),
+  ])
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+  const rejected = results.find((result) => result.status === 'rejected')
+  assert.equal(rejected?.reason?.code, 'SETTINGS_CONFLICT')
+})
 
 test('DSH 0.1.7 settings compatibility activates only after ConfigEditor mounts and persists through edit()', async () => {
   const harness = make017SettingsHarness()
