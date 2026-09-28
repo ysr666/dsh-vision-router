@@ -28,6 +28,9 @@ jobs:
           - channel: stable
             dist_tag: latest
             settings_mode: native-register
+          - channel: next
+            dist_tag: next
+            settings_mode: config-editor
           - channel: preview
             dist_tag: alpha
             settings_mode: config-editor
