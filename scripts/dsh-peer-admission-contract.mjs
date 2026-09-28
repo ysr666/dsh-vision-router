@@ -17,12 +17,18 @@ const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
 const admitted = [
   '0.1.7-rc.2',
+  // DSH evaluates peer ranges with includePrerelease=true. The 0.2 train is
+  // therefore expressed as one policy range: every 0.2.x prerelease/stable
+  // from the first validated rc.1 baseline is admitted, while 0.3.0 and every
+  // 0.3 prerelease remain outside the range until separately reviewed.
+  '0.2.0-rc.1',
+  '0.2.0-rc.2',
   '0.2.0',
-  '0.2.1',
-  '0.2.99',
-  // DSH deliberately evaluates peer ranges with includePrerelease=true.
-  // Declaring the whole 0.2.x family therefore also admits its prereleases.
+  '0.2.1-alpha.1',
   '0.2.1-rc.1',
+  '0.2.1',
+  '0.2.99-rc.1',
+  '0.2.99',
 ]
 for (const runtimeVersion of admitted) {
   assert.equal(
@@ -32,7 +38,16 @@ for (const runtimeVersion of admitted) {
   )
 }
 
-for (const runtimeVersion of ['0.3.0-rc.1', '0.3.0', '1.0.0']) {
+const rejected = [
+  '0.2.0-beta.1',
+  '0.2.0-rc.0',
+  '0.3.0-alpha.1',
+  '0.3.0-beta.1',
+  '0.3.0-rc.1',
+  '0.3.0',
+  '1.0.0',
+]
+for (const runtimeVersion of rejected) {
   const issue = evaluatePluginCompatibility(manifest, {}, runtimeVersion)
   assert.ok(issue, `DVR manifest must not pre-admit DSH ${runtimeVersion}`)
   assert.deepEqual(
@@ -45,5 +60,5 @@ for (const runtimeVersion of ['0.3.0-rc.1', '0.3.0', '1.0.0']) {
 console.log(JSON.stringify({
   ok: true,
   admitted,
-  rejected: ['0.3.0-rc.1', '0.3.0', '1.0.0'],
+  rejected,
 }))
