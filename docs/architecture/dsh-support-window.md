@@ -19,9 +19,9 @@ No later support-floor increase is currently announced.
 
 ### DSH 0.2.x forward admission
 
-DVR 2.2.x peer-admits the DSH `0.2.x` train (`^0.2.0`) without raising the `0.1.0-rc.8` minimum Host floor. This forward admission is backed by the public pre-0.2.0 master at `21638c56315ae6a2b552d6091945d3144c9af32e`: three-OS source contracts, real Host + Chromium, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and an unsigned Windows Desktop built through the upstream release packager all passed. The packaged audit also exercised DVR from `resources/app.asar/dsh`, including authenticated index/API requests, DVR RPC, structured bootstrap injection, and foreign WebServer registrar isolation.
+DVR 2.2.x peer-admits the DSH `0.2.x` train from the verified rc.1 boundary (`>=0.2.0-rc.1 <0.3.0-0`) without raising the `0.1.0-rc.8` minimum Host floor. Initial forward admission was backed by public pre-0.2.0 master `21638c56315ae6a2b552d6091945d3144c9af32e`. Exact release evidence has now advanced to immutable `dsh-v0.2.0-rc.1` commit `4878cdabd87d4041bdaff61d04c966883b9fd07a`, published on 2026-09-28. Required gates cover three-OS source contracts, real Host + Chromium, Settings mount/save/reload/readback, mixed attachments, bundle recomposition, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and Host-owned Sharp resolution.
 
-The immutable upstream `0.2.0` tag and signed official Desktop installer did not yet exist when this admission was added. They remain release-time revalidation targets; this forward admission prevents DSH's Host peer gate from rejecting otherwise-compatible DVR installs during that release transition.
+The final immutable upstream `0.2.0` stable tag and signed official Desktop installer remain release-time revalidation targets. The rc.1 evidence is next-channel verification, not a preview support promise and not a support-floor increase.
 
 ## Verification evidence — not support policy
 
@@ -30,9 +30,10 @@ Compatibility evidence answers a different question: what exact upstream release
 | Evidence role | DSH source | Meaning |
 |---|---|---|
 | Exact stable evidence | `0.1.5-rc.3` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
-| Exact preview evidence | `0.1.7-rc.2` (`next`) | Required preview Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
+| Exact next/rc evidence | `0.2.0-rc.1` (`next`) | Required Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
-| Preview drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance with preview-specific lifecycle coverage. A failure does not rewrite support policy. |
+| Next/rc drift canary | npm dist-tag `next` | Scheduled, dynamically resolved surveillance for the rc channel. A failure does not rewrite support policy. |
+| Alpha/pre-release drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance for the alpha channel. A failure does not rewrite support policy. |
 
 The exact evidence values may move in a patch-level maintenance PR when CI proof advances. The public minimum may move only under the support-floor protocol below.
 
