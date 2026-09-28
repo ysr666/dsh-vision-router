@@ -19,6 +19,7 @@ on:
       - 'lib/legacy-global-proxy-boundary.js'
       - 'lib/proxy-routing.js'
       - 'scripts/dsh-proxy-egress-contract.mjs'
+      - 'scripts/dsh-peer-admission-contract.mjs'
       - 'docs/architecture/host-first-proxy-convergence.md'
       - 'lib/settings-limit-client-prelude.js'
       - 'lib/remote-settings-bridge.js'
@@ -63,6 +64,7 @@ on:
       - 'lib/legacy-global-proxy-boundary.js'
       - 'lib/proxy-routing.js'
       - 'scripts/dsh-proxy-egress-contract.mjs'
+      - 'scripts/dsh-peer-admission-contract.mjs'
       - 'docs/architecture/host-first-proxy-convergence.md'
       - 'lib/settings-limit-client-prelude.js'
       - 'lib/remote-settings-bridge.js'
@@ -224,6 +226,14 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
           DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+
+      - name: Verify DVR 0.2.x peer admission with DSH Host evaluator
+        if: matrix.dsh == '0.1.7-rc.2'
+        working-directory: dsh-exact
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
 
       - name: Verify Host proxy egress authority for Vision Router
         working-directory: dsh-exact

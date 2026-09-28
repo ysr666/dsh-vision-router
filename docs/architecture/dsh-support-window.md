@@ -17,6 +17,12 @@ DSH `0.1.5-rc.1` / `0.1.5-rc.2` remain admitted for existing installations; curr
 
 No later support-floor increase is currently announced.
 
+### DSH 0.2.x forward admission
+
+DVR 2.2.x peer-admits the DSH `0.2.x` train (`^0.2.0`) without raising the `0.1.0-rc.8` minimum Host floor. This forward admission is backed by the public pre-0.2.0 master at `21638c56315ae6a2b552d6091945d3144c9af32e`: three-OS source contracts, real Host + Chromium, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and an unsigned Windows Desktop built through the upstream release packager all passed. The packaged audit also exercised DVR from `resources/app.asar/dsh`, including authenticated index/API requests, DVR RPC, structured bootstrap injection, and foreign WebServer registrar isolation.
+
+The immutable upstream `0.2.0` tag and signed official Desktop installer did not yet exist when this admission was added. They remain release-time revalidation targets; this forward admission prevents DSH's Host peer gate from rejecting otherwise-compatible DVR installs during that release transition.
+
 ## Verification evidence — not support policy
 
 Compatibility evidence answers a different question: what exact upstream releases and moving channels have current CI proof? It must never be interpreted as a public support-floor change.
