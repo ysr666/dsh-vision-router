@@ -37,8 +37,17 @@ test('Doctor consumes the live Host capability endpoint without version inferenc
 })
 
 
-test('Doctor capability probe rejects an oversized declared response before reading its body', async () => {
-  let bodyTouched = false
+test('Doctor capability probe rejects and cancels an oversized declared response without reading its body', async () => {
+  let pulls = 0
+  let cancelled = false
+  const stream = new ReadableStream({
+    pull(controller) {
+      pulls += 1
+      controller.enqueue(new Uint8Array(1))
+    },
+    cancel() { cancelled = true },
+  }, { highWaterMark: 0 })
+
   const probe = await probeDoctorHostCapabilities({
     baseUrl: 'http://127.0.0.1:3080',
     fetchImpl: async () => ({
@@ -51,13 +60,11 @@ test('Doctor capability probe rejects an oversized declared response before read
             : null
         },
       },
-      get body() {
-        bodyTouched = true
-        throw new Error('body must not be touched after Content-Length rejection')
-      },
+      body: stream,
     }),
   })
-  assert.equal(bodyTouched, false)
+  assert.equal(pulls, 0, 'declared oversize must be rejected before reading a body chunk')
+  assert.equal(cancelled, true, 'declared oversize must cancel the unread body immediately')
   assert.equal(probe.ok, false)
   assert.equal(probe.source, 'runtime-unavailable')
   assert.match(probe.error, /16384-byte response limit/)
