@@ -51,6 +51,47 @@ test('locked promisify.custom uses a callback-safe module wrapper instead of thr
   assert.equal(fakeModule.execFile, lockedExecFile)
 })
 
+test('custom-property install and restore synchronize builtin ESM exports', () => {
+  const execFile = function execFile() { return { pid: 1 } }
+  const fakeBuiltin = { execFile }
+  const synchronizedHooks = []
+
+  const dispose = installTesseractExecFileCompat(undefined, {
+    childProcessModule: fakeBuiltin,
+    builtinChildProcessModule: fakeBuiltin,
+    syncBuiltinESMExports() {
+      synchronizedHooks.push(execFile[promisify.custom])
+    },
+  })
+
+  assert.equal(typeof execFile[promisify.custom], 'function')
+  assert.equal(synchronizedHooks.length, 1)
+  assert.equal(synchronizedHooks[0], execFile[promisify.custom])
+
+  dispose()
+  assert.equal(execFile[promisify.custom], undefined)
+  assert.deepEqual(synchronizedHooks, [synchronizedHooks[0], undefined])
+})
+
+test('custom-property sync failure rolls installation back instead of leaving a half patch', () => {
+  const execFile = function execFile() { return { pid: 1 } }
+  const fakeBuiltin = { execFile }
+  const warnings = []
+
+  const dispose = installTesseractExecFileCompat({
+    logger: { warn(...args) { warnings.push(args) } },
+  }, {
+    childProcessModule: fakeBuiltin,
+    builtinChildProcessModule: fakeBuiltin,
+    syncBuiltinESMExports() { throw new Error('synthetic sync failure') },
+  })
+
+  assert.equal(execFile[promisify.custom], undefined)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0].join(' '), /synthetic sync failure/)
+  assert.doesNotThrow(dispose)
+})
+
 test('real Node child_process locked descriptor installs without crashing and synchronizes ESM binding', async () => {
   const originalExecFile = childProcess.execFile
   const descriptor = Object.getOwnPropertyDescriptor(originalExecFile, promisify.custom)
