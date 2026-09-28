@@ -149,7 +149,7 @@ test('0.1.7 prelude keeps configForms activation but binds DVR through the local
   assert.ok(fetched >= 1)
 })
 
-test('0.1.7 prelude normalizes loopback page authority for lazy Connection reads', () => {
+test('0.1.7 prelude normalizes official Desktop page authority for lazy Connection reads', () => {
   let loadedSpec
   const connection = { isLoopback: false, rpc: { call() {} } }
   const form = {
@@ -171,7 +171,7 @@ test('0.1.7 prelude normalizes loopback page authority for lazy Connection reads
   }
   const window = {
     __ModuleLoader__: loader,
-    location: { hostname: '127.0.0.1' },
+    location: { protocol: 'dsh-app:', hostname: 'app' },
   }
   runInNewContext(SETTINGS_017_CLIENT_PRELUDE, {
     window,
@@ -203,7 +203,7 @@ test('0.1.7 prelude normalizes loopback page authority for lazy Connection reads
   assert.equal(typeof observed.scope.reload, 'function')
 })
 
-test('0.1.7 full settings wrapper stack preserves loopback authority and DVR local persistence', async () => {
+test('0.1.7 full settings wrapper stack preserves Desktop authority and DVR local persistence', async () => {
   let loadedSpec
   let fetched = 0
   let formSets = 0
@@ -228,7 +228,7 @@ test('0.1.7 full settings wrapper stack preserves loopback authority and DVR loc
   }
   const window = {
     __ModuleLoader__: loader,
-    location: { hostname: '127.0.0.1' },
+    location: { protocol: 'dsh-app:', hostname: 'app' },
     confirm() { return false },
     alert() {},
   }

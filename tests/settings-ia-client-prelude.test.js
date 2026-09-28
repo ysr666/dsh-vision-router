@@ -90,13 +90,13 @@ function baseSettings(overrides = {}) {
   }
 }
 
-function createHarness(React, { value = baseSettings(), local = true } = {}) {
+function createHarness(React, { value = baseSettings(), local = true, location } = {}) {
   let captured
   const loader = { load(spec) { captured = spec } }
   const sandbox = {
     window: {
       __ModuleLoader__: loader,
-      location: { hostname: local ? '127.0.0.1' : '10.0.0.20' },
+      location: location ?? { protocol: 'http:', hostname: local ? '127.0.0.1' : '10.0.0.20' },
     },
     document: { documentElement: { lang: 'zh-CN' } },
     Object,
@@ -306,4 +306,31 @@ test('remote view does not expose local backend and privileged network controls'
   const text = textOf(registeredComponent({ scope }))
   assert.match(text, /只能在运行 DSH 的机器上配置/)
   assert.doesNotMatch(text, /允许 Agent 读取桌面截图/)
+})
+
+test('official Desktop origin is local without trusting lookalike app origins', () => {
+  function renderAt(location) {
+    const React = reactStub([
+      'local', {}, undefined, undefined, undefined,
+      { status: 'idle', error: undefined },
+      { status: 'ready', groups: [] },
+      { ollama: false, lmstudio: false, developer: false },
+    ])
+    const harness = createHarness(React, { location })
+    return textOf(harness.registeredComponent({ scope: harness.scope }))
+  }
+
+  const desktop = renderAt({ protocol: 'dsh-app:', hostname: 'app' })
+  assert.match(desktop, /允许 Agent 读取桌面截图/)
+  assert.doesNotMatch(desktop, /只能在运行 DSH 的机器上配置/)
+
+  for (const location of [
+    { protocol: 'https:', hostname: 'app' },
+    { protocol: 'dsh-app:', hostname: 'evil' },
+    { protocol: 'other-app:', hostname: 'app' },
+  ]) {
+    const text = renderAt(location)
+    assert.match(text, /只能在运行 DSH 的机器上配置/)
+    assert.doesNotMatch(text, /允许 Agent 读取桌面截图/)
+  }
 })
