@@ -78,11 +78,30 @@
     "test:compat": "node --test tests/adapter-prepare-call-compat.test.js tests/attachment-admission-policy.test.js tests/rc6-rc7-compat.test.js tests/rc6-real-settings-persistence.test.js tests/android-attachment-compat.test.js tests/http-compat.test.js tests/pi-ai-bridge-wire-compat.test.js tests/fetch-wrapper-lifecycle.test.js tests/fetch-wrapper-composition.test.js tests/native-image-coexistence.test.js tests/tesseract-node24-boot.test.js tests/dsh-host-capabilities.test.js",
     "test:web": "node --test tests/alpha1-browser-lifecycle-integration.test.js tests/issue-367-remote-session-inject.test.js tests/vision-mode-toggle-injection.test.js tests/client.test.js tests/client-presentation-boundary.test.js tests/clipboard-image-paste-compat.test.js tests/settings-ia-client-prelude.test.js tests/settings-ia-acceptance-regression.test.js tests/remote-settings-bridge.test.js tests/remote-settings-v2-contract.test.js tests/local-remote-settings-permission.test.js tests/v2-settings-ia-integration.test.js tests/logging-ui.test.js",
     "test:contract": "node --test tests/manifest-dependencies.test.js tests/bundle-defaults.test.js tests/zero-regression-gate.test.js tests/issue-289-native-nonintervention.test.js tests/issue-374-delegated-call-config.test.js tests/runtime-boundary-fixes.test.js tests/security-adversarial-fuzz-contract.test.js tests/runtime-i18n.test.js tests/adapter-prepare-call-compat.test.js tests/rc6-rc7-compat.test.js tests/attachment-admission-policy.test.js tests/dsh-host-capabilities.test.js tests/doctor-host-capabilities.test.js tests/structured-bootstrap.test.js tests/structured-bootstrap-gate.test.js",
-    "test:settings": "node --test tests/settings-ia-client-prelude.test.js tests/settings-ia-fj.test.js tests/settings-ia-acceptance-regression.test.js tests/settings-migration.test.js tests/settings-section-order.test.js tests/remote-settings-bridge.test.js tests/remote-settings-v2-contract.test.js tests/remote-settings-risk-confirmation.test.js tests/local-remote-settings-permission.test.js tests/rc6-real-settings-persistence.test.js tests/vision-routing-settings-prelude.test.js tests/v2-settings-ia-integration.test.js tests/settings-native-card-semantics.test.js tests/settings-native-card-lazy-data.test.js tests/settings-invalid-staged-dirty.test.js",
-    "test:doctor": "node --test tests/doctor.test.js tests/doctor-cli.test.js tests/profile-pnpm-diagnostics.test.js tests/doctor-v2.test.js tests/doctor-cli-v2.test.js tests/doctor-runtime.test.js tests/doctor-host-capabilities.test.js tests/session-repair-v2.test.js",
-    "test:ci": "node --test tests/ci-contract.test.js",
-    "test:full": "npm test",
-    "test:quick": "node --test tests/core.test.js tests/client.test.js tests/doctor-v2.test.js tests/vision-capability-router.test.js tests/vision-capability-benchmark.test.js tests/runtime-boundary-fixes.test.js",
-    "test:smoke": "node --test tests/runtime-e2e.test.js tests/zero-regression-gate.test.js tests/alpha1-browser-lifecycle-integration.test.js"
+    "test:grounding": "node --test tests/grounding-coordinate-frame.test.js tests/grounding-coordinate-runtime.test.js tests/vision-capability-grounding-proof-contract.test.js",
+    "test:stress": "node scripts/image-resource-stress.mjs && node --test tests/large-image-resource-integration.test.js tests/resource-retention-lifecycle.test.js",
+    "test:adversarial-fuzz": "node scripts/security-adversarial-fuzz.mjs",
+    "test:property-fuzz": "node --test tests/security-property-fuzz.test.js",
+    "test:quality": "node --test tests/vision-quality-round2-baseline.test.js",
+    "quality:round2:render": "node quality/vision-round2/render-fixtures.mjs",
+    "quality:round2:template": "node quality/vision-round2/make-run-template.mjs",
+    "quality:round2:run": "node quality/vision-round2/run-host-api.mjs",
+    "quality:round2:report": "node quality/vision-round2/report-results.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["sharp"]
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-primitives",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    },
+    "bundle": { "patch": "./cordis.patch.yml" }
   }
 }
