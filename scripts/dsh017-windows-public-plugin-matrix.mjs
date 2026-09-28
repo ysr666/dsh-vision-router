@@ -9,7 +9,7 @@ const profile = 'dvr551-matrix'
 const profileDir = join(dshHome, 'profiles', profile)
 const manifestPath = join(profileDir, 'package.json')
 const reportPath = resolve(process.env.DVR551_REPORT_PATH || join(dshHome, 'matrix-report.json'))
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const pnpm = 'pnpm'
 
 const PUBLIC = [
   '@michengai/dsh-archive-manager',
@@ -44,6 +44,9 @@ function command(args, options = {}) {
     env: { ...process.env, DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1' },
     encoding: 'utf8',
     stdio: options.capture ? 'pipe' : 'inherit',
+    // Node 24 on Windows rejects direct spawnSync() of .cmd shims with EINVAL.
+    // Let cmd.exe resolve the pnpm shim; Unix keeps direct exec semantics.
+    shell: process.platform === 'win32',
     timeout: options.timeout ?? 120_000,
   })
   if (child.error || child.status !== 0) {
