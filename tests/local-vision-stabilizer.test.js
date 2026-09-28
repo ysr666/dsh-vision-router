@@ -42,13 +42,14 @@ function makeCore() {
 function makeHarness(initial = {}) {
   let settings = { ...initial }
   let watcher
+  let scopeReads = 0
   const handlers = new Map()
   const toolDefs = new Map()
   const adapters = new Map()
   const webRoutes = new Map()
   let attachmentReads = 0
   const scope = {
-    get: () => settings,
+    get() { scopeReads += 1; return settings },
     watch(fn) { watcher = fn; return () => { if (watcher === fn) watcher = undefined } },
   }
   const settingsCtx = { settings: { register: () => scope }, effect() {} }
@@ -95,7 +96,9 @@ function makeHarness(initial = {}) {
   return {
     ctx, scope, handlers, toolDefs, adapters, webRoutes, webCtx,
     attachmentReads: () => attachmentReads,
+    scopeReads: () => scopeReads,
     setSettings(next) { settings = { ...next }; if (watcher) watcher(settings) },
+    signalSettings() { if (watcher) watcher() },
   }
 }
 
@@ -122,6 +125,23 @@ test('legacy instantDescribe and localDescribeStyle stay loadable but cannot cre
   assert.equal(scopeOf().get().instantDescribe, false)
   assert.equal(scopeOf().get().localDescribeStyle, 'structured')
   assert.equal(scopeOf().get().timeoutMs, 120000)
+})
+
+test('local vision consumes one settings snapshot and advances it from watch events', () => {
+  const harness = makeHarness({ timeoutMs: 120000 })
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, makeCore())
+  const scopeOf = installSettingsLikeCore(stabilized)
+
+  assert.equal(scopeOf().get().timeoutMs, 120000)
+  assert.equal(scopeOf().get().timeoutMs, 120000)
+  assert.equal(harness.scopeReads(), 1, 'runtime reads must not repeatedly pull the Host settings scope')
+
+  harness.setSettings({ timeoutMs: 45000 })
+  assert.equal(scopeOf().get().timeoutMs, 45000)
+  assert.equal(harness.scopeReads(), 1, 'watch payloads advance the snapshot without another pull')
+
+  harness.signalSettings()
+  assert.equal(harness.scopeReads(), 2, 'payload-free watch events perform one defensive refresh')
 })
 
 test('macOS screenshot permission probe runs screencapture once and removes its temporary file', async () => {

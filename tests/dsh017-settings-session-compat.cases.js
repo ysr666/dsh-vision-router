@@ -22,7 +22,7 @@ import {
 
 let profileFixtureId = 0
 
-function make017SettingsHarness() {
+function make017SettingsHarness({ traceableEditorViews = false } = {}) {
   const inherited = {
     routing: false,
     allowRemoteSettings: false,
@@ -44,16 +44,27 @@ function make017SettingsHarness() {
   let editor
   let editorListener
   let watchCalls = 0
+  let configurationCalls = 0
+  const editorView = () => {
+    if (!editor || !traceableEditorViews) return editor
+    return new Proxy(editor, {
+      get(target, property, receiver) {
+        if (property === Symbol.for('cordis.original')) return target
+        const value = Reflect.get(target, property, receiver)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
   const ctx = {
     get(name) {
       if (name === 'settings') return nativeSettings
-      if (name === 'configEditor') return editor
+      if (name === 'configEditor') return editorView()
       return undefined
     },
     inject(dependencies, callback) {
       if (dependencies.length === 1 && dependencies[0] === 'configEditor') {
         editorListener = callback
-        if (editor) callback({ configEditor: editor })
+        if (editor) callback({ configEditor: editorView() })
         return () => {}
       }
       callback(this)
@@ -66,6 +77,7 @@ function make017SettingsHarness() {
     editor = {
       documentPath: `/tmp/dvr-settings-017-${++profileFixtureId}.yml`,
       configuration() {
+        configurationCalls += 1
         return [{ entry, inherited: structuredClone(inherited), override: {} }]
       },
       async edit(received, change) {
@@ -76,7 +88,7 @@ function make017SettingsHarness() {
         )
       },
     }
-    editorListener({ configEditor: editor })
+    editorListener({ configEditor: editorView() })
     const settings = wrapped.get('settings')
     const scope = settings.register('vision-router')
     scope.watch(() => { watchCalls += 1 })
@@ -95,8 +107,69 @@ function make017SettingsHarness() {
     mountEditor,
     reloadCompatibility,
     watchCalls: () => watchCalls,
+    configurationCalls: () => configurationCalls,
   }
 }
+
+test('DSH 0.1.7 settings compatibility snapshots repeated reads and refreshes at write boundaries', async () => {
+  const harness = make017SettingsHarness()
+  const { settings, scope } = harness.mountEditor()
+
+  const first = scope.get()
+  first.routing = true
+  for (let index = 0; index < 1_000; index += 1) {
+    assert.equal(scope.get().routing, false, 'callers cannot mutate the cached settings snapshot')
+  }
+  assert.equal(settings.writable, true)
+  assert.equal(settings.describe()[0].value.routing, false)
+  assert.equal(harness.configurationCalls(), 1, 'read amplification must not recompose the Host profile')
+
+  const revision = settings.describe()[0].revision
+  await settings.mutate(
+    'vision-router',
+    [{ op: 'set', path: ['routing'], value: true }],
+    revision,
+  )
+  assert.equal(scope.get().routing, true)
+  assert.equal(harness.configurationCalls(), 3, 'a write refreshes before and after ConfigEditor.edit()')
+})
+
+test('DSH 0.1.7 settings compatibility shares one snapshot and write queue across Cordis service proxy views', async () => {
+  const harness = make017SettingsHarness({ traceableEditorViews: true })
+  const { settings: first, scope } = harness.mountEditor()
+
+  assert.equal(scope.get().routing, false)
+  const second = harness.wrapped.get('settings')
+  assert.notEqual(second, first, 'distinct Cordis traceable views may still produce distinct facades')
+  for (let index = 0; index < 100; index += 1) {
+    assert.equal(harness.wrapped.get('settings').get('vision-router').routing, false)
+  }
+  assert.equal(harness.configurationCalls(), 1, 'proxy churn must not rebuild the complete Host profile')
+
+  const revision = first.describe()[0].revision
+  const results = await Promise.allSettled([
+    first.mutate('vision-router', [{ op: 'set', path: ['routing'], value: true }], revision),
+    second.mutate('vision-router', [{ op: 'set', path: ['tool'], value: false }], revision),
+  ])
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+  assert.equal(results.filter((result) => result.status === 'rejected').length, 1)
+  const rejected = results.find((result) => result.status === 'rejected')
+  assert.equal(rejected?.reason?.code, 'SETTINGS_CONFLICT')
+  assert.equal(harness.configurationCalls(), 4, 'shared write queue refreshes once before/after the winner and once for the loser conflict')
+})
+
+test('DSH 0.1.7 compatibility serializes concurrent writes against one revision', async () => {
+  const harness = make017SettingsHarness()
+  const { settings } = harness.mountEditor()
+  const revision = settings.describe()[0].revision
+  const results = await Promise.allSettled([
+    settings.mutate('vision-router', [{ op: 'set', path: ['routing'], value: true }], revision),
+    settings.mutate('vision-router', [{ op: 'set', path: ['tool'], value: false }], revision),
+  ])
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1)
+  const rejected = results.find((result) => result.status === 'rejected')
+  assert.equal(rejected?.reason?.code, 'SETTINGS_CONFLICT')
+})
 
 test('DSH 0.1.7 settings compatibility activates only after ConfigEditor mounts and persists through edit()', async () => {
   const harness = make017SettingsHarness()
