@@ -1,6 +1,6 @@
 {
   "name": "dsh-vision-router",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "Eyes for text-only DeepSeek Harness agents: built-in free vision chain + pixel-level tools. Remote vision providers, including the default free fallback, receive image content unless strict local-only use is configured.",
   "license": "MIT",
   "repository": {
