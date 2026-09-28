@@ -149,6 +149,7 @@ jobs:
           DSH_EXPECTED_VERSION: 0.2.0-rc.1
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
       - name: Run cold Vision toggle
+        id: cold-smoke
         working-directory: dsh-020
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
@@ -157,6 +158,15 @@ jobs:
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+      - name: Fail classified cold Vision smoke
+        if: steps.cold-smoke.outputs.status == 'fail'
+        env:
+          SMOKE_STAGE: ${{ steps.cold-smoke.outputs.stage }}
+          SMOKE_KIND: ${{ steps.cold-smoke.outputs.kind }}
+          SMOKE_DETAIL: ${{ steps.cold-smoke.outputs.detail }}
+        run: |
+          printf 'stage=%s\nkind=%s\n%s\n' "$SMOKE_STAGE" "$SMOKE_KIND" "$SMOKE_DETAIL"
+          exit 1
       - name: Run mixed attachment lifecycle
         working-directory: dsh-020
         env:

@@ -67,7 +67,7 @@ async function dismissFirstRunOverlays(page) {
     await vrOnboarding.waitFor({ state: 'hidden', timeout: 15_000 })
   }
 
-  const notice = page.getByRole('dialog', { name: 'Internal Testing Notice', exact: true })
+  const notice = page.getByRole('dialog', { name: /^(?:Internal Testing Notice|Preview Notice)$/ }).first()
   try { await notice.waitFor({ state: 'visible', timeout: 5_000 }) } catch (_) {}
   if (await notice.isVisible()) {
     await notice.getByRole('button', { name: 'Continue', exact: true }).click()
