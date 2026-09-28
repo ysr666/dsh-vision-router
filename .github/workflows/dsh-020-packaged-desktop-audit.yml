@@ -69,7 +69,7 @@ jobs:
         env:
           CI: 'true'
           LEFTHOOK: '0'
-        run: pnpm --filter @deepseek-ai/dsh-desktop exec tsx scripts/package-target.ts win-x64 --dir --unsigned
+        run: pnpm --filter @deepseek-ai/dsh-desktop run package:win:x64:dir -- --unsigned
 
       - name: Run upstream packaged-runtime external-plugin smoke
         working-directory: dsh
