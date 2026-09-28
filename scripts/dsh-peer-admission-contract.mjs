@@ -17,10 +17,10 @@ const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
 const admitted = [
   '0.1.7-rc.2',
-  // The 0.2 train starts at the first published release candidate. DSH evaluates
-  // peer ranges with includePrerelease=true, so the explicit semver interval
-  // >=0.2.0-rc.1 <0.3.0-0 admits later 0.2 prereleases and stable patches while
-  // still excluding every 0.3.0 prerelease.
+  // DSH evaluates peer ranges with includePrerelease=true. The lower-bound
+  // bridge >=0.2.0-rc.1 <0.2.0 admits the published 0.2.0 release candidates
+  // before the final release; the retained ^0.2.0 range owns the stable 0.2
+  // train and DSH's existing later-0.2 prerelease semantics. 0.3 stays excluded.
   '0.2.0-rc.1',
   '0.2.0-rc.2',
   '0.2.0',
