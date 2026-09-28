@@ -42,9 +42,9 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v2.2.1）**
+> 📌 **公告（v2.2.5）**
 >
-> **v2.2.1：稳定性热修——修复大型 Session repair 卡死、accessor fetch 组合、非整除 pixel diff 边界与本地 Ollama 推理占满答案预算；公开最低 Host 仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.2.1.md)
+> **v2.2.5：新增 fail-closed 的「仅本地视觉」，并根修 DSH `0.1.7-rc.2` Windows Desktop 多插件环境下残留的 `Loading plugins…` 卡死——Vision Router 的 WebServer registrar 不再污染其他插件。公开最低 Host 仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.2.5.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
