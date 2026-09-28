@@ -49,6 +49,21 @@ jobs:
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
 
+      - name: Materialize non-secret local Desktop packaging environment
+        working-directory: dsh
+        shell: pwsh
+        run: |
+          @"
+          DSH_DESKTOP_APP_ID=com.deepseek.harness.audit
+          DSH_DESKTOP_AUTO_UPDATE_ENV=test
+          DOWNLOAD_TEST_ORIGIN=https://downloads.example.invalid
+          DOWNLOAD_TEST_RELEASE_ID=0123456789abcdef0123456789abcdef
+          DSH_DESKTOP_MANDATORY_UPDATE_TEST_ORIGIN=https://updates.example.invalid
+          DSH_DESKTOP_MANDATORY_UPDATE_PROD_ORIGIN=https://updates.example.invalid
+          DSH_DESKTOP_MANDATORY_UPDATE_CONFIG='{"allowedAuthOrigins":["https://login.example.com"]}'
+          DSH_DESKTOP_WINDOWS_SIGNATURE_CACHE_CONCURRENCY=4
+          "@ | Set-Content -Encoding utf8 apps/desktop/.env.windows
+
       - name: Build unsigned unpacked Windows Desktop through release packager
         working-directory: dsh
         env:
