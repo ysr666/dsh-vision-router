@@ -1,6 +1,6 @@
 {
   "name": "dsh-vision-router",
-  "version": "2.2.6",
+  "version": "2.2.6-ci-probe.0",
   "description": "Eyes for text-only DeepSeek Harness agents: built-in free vision chain + pixel-level tools. Remote vision providers, including the default free fallback, receive image content unless strict local-only use is configured.",
   "license": "MIT",
   "repository": {
@@ -59,9 +59,15 @@
     "sharp": ">=0.35.3 <1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-anonymous-user-id": { "optional": true },
-    "@deepseek-ai/dsh-llm-deepseek": { "optional": true },
-    "sharp": { "optional": true }
+    "@deepseek-ai/dsh-anonymous-user-id": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm-deepseek": {
+      "optional": true
+    },
+    "sharp": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6",
@@ -89,7 +95,9 @@
     "quality:round2:report": "node quality/vision-round2/report-results.mjs"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["sharp"]
+    "onlyBuiltDependencies": [
+      "sharp"
+    ]
   },
   "dsh": {
     "client": {
@@ -102,6 +110,8 @@
         "@deepseek-ai/dsh-api-remotes"
       ]
     },
-    "bundle": { "patch": "./cordis.patch.yml" }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }
