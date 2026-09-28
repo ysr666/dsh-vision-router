@@ -1,0 +1,239 @@
+name: DSH 0.2.0-rc.1 validation
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'cordis.patch.yml'
+      - 'lib/**'
+      - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-peer-admission-contract.mjs'
+      - 'scripts/dsh-proxy-egress-contract.mjs'
+      - 'scripts/dsh-web-modules-overlay-contract.mjs'
+      - 'scripts/dsh-web-connection-overlay-contract.mjs'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
+      - '.github/workflows/dsh-020-rc1-validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+      - 'cordis.patch.yml'
+      - 'lib/**'
+      - 'scripts/**'
+      - '.github/workflows/dsh-020-rc1-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DSH_VERSION: 0.2.0-rc.1
+  DSH_SHA: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+
+jobs:
+  exact-source:
+    name: exact source / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.0-rc.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          persist-credentials: false
+          path: dsh-020
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+      - name: Install exact Host workspace dependencies
+        working-directory: dsh-020
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Run exact source contract
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_COMMIT: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify 0.2 train peer admission with official Host evaluator
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
+      - name: Verify Host proxy egress authority
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
+      - name: Verify modules compatibility overlay is still required
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DSH_MODULES_WEBSERVER_EXPECTED: shim-required
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
+      - name: Verify connection compatibility overlay is still required
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
+
+  real-host-browser:
+    name: real Host + Chromium
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.0-rc.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          persist-credentials: false
+          path: dsh-020
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+          cache-dependency-path: dsh-020/pnpm-lock.yaml
+      - name: Install DSH workspace dependencies
+        working-directory: dsh-020
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build exact Host runtime
+        working-directory: dsh-020
+        run: pnpm run build
+      - name: Install Chromium
+        working-directory: dsh-020
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      - name: Run bundle recompose stability
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Run cold Vision toggle
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+      - name: Run mixed attachment lifecycle
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-mixed.png
+        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
+      - name: Run Settings mount/save/reload/readback lifecycle
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-020-rc1-browser-diagnostics
+          path: ${{ runner.temp }}/dsh-020-*
+          if-no-files-found: ignore
+          retention-days: 2
+
+  windows-desktop-host:
+    name: Windows Desktop Host / Node ${{ matrix.node }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.21.0]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.0-rc.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          persist-credentials: false
+          path: dsh-020
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+          cache-dependency-path: dsh-020/pnpm-lock.yaml
+      - name: Install DSH workspace dependencies
+        working-directory: dsh-020
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build exact Desktop runtime
+        working-directory: dsh-020
+        run: pnpm run build
+      - name: Run authenticated Desktop Host contract
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Run Node 24 multi-plugin ordering adversary
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
