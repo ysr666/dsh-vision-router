@@ -11,7 +11,8 @@ The matrix is capability-based. Runtime code must feature-detect the seam it nee
 | `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x and later 2.x public support starts at rc.8. |
 | `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
 | `current-contract` | `0.1.5-rc.3` | Current stable Host contract baseline. Must remain green. |
-| `preview-contract` / exact preview gates | `0.1.7-rc.2` (`next`) | Required verification evidence only; not a public preview-support claim. |
+| `preview-contract` | `0.1.7-rc.2` | Retained predecessor-preview regression fixture. |
+| `next-020-contract` / exact preview gates | `0.2.0-rc.1` (`next`) | Required verification evidence only; not a public preview-support claim. |
 | retained preview regression | `0.1.5-alpha.2` | Older preview regression fixture retained as an older preview regression while the 0.1.7 next line is qualified. |
 | `latest-dsh` / alpha canaries | resolved dynamically from npm dist-tags | Scheduled drift surveillance only. Never changes support policy by itself. |
 
@@ -38,7 +39,7 @@ Node 22 and Node 24 remain the general required runtime matrix. The Host contrac
 | Public entry boot | yes | yes | yes | packed plugin public entry import in each Host contract fixture. |
 | Packaged tarball install | yes | yes | yes | each Host contract fixture packs the plugin then installs the tarball into an isolated Host package. |
 
-Preview-only evidence: the `0.1.7-rc.2` (`next`) contract fixture additionally mounts the Host-owned `@deepseek-ai/dsh-compaction-image-offload` projection and proves that one offloaded image occurrence stays offloaded across live requests, `SessionStore.fork()`, JSONL process restart, and cold resume, while a new occurrence of the same durable attachment remains a retained image. This is verification evidence for the preview contract only; it does not expand the public support window.
+Preview-only evidence: the retained `0.1.7-rc.2` fixture and current `0.2.0-rc.1` (`next`) fixture mount the Host-owned `@deepseek-ai/dsh-compaction-image-offload` projection and prove that one offloaded image occurrence stays offloaded across live requests, `SessionStore.fork()`, JSONL process restart, and cold resume, while a new occurrence of the same durable attachment remains a retained image. This is verification evidence only; it does not expand the public support window.
 
 ## Compatibility inventory and exit criteria
 

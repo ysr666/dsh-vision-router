@@ -24,7 +24,7 @@ test('P3 support policy contains only public stable support semantics', () => {
 test('preview and dynamic canaries are verification evidence, not support-window fields', () => {
   assert.deepEqual(DSH_VERIFICATION_EVIDENCE, {
     exactStable: '0.1.5-rc.3',
-    exactPreview: '0.1.7-rc.2',
+    exactPreview: '0.2.0-rc.1',
     stableCanaryDistTag: 'latest',
     previewCanaryDistTag: 'alpha',
   })
@@ -52,7 +52,7 @@ test('Doctor text separates public support policy from verification evidence', (
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.0-rc.8')))
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.3')))
   assert.equal(lines.slice(0, evidenceAt).some((line) => /alpha|canary/i.test(line)), false)
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact preview (not a support claim): 0.1.7-rc.2')))
+  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact preview (not a support claim): 0.2.0-rc.1')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag latest')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag alpha')))
   assert.ok(lines.some((line) => line.includes('HOST_BELOW_CURRENT_FLOOR_CAPABILITIES')))
@@ -73,7 +73,7 @@ test('public READMEs state stable support policy and delegate moving preview evi
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
     assert.doesNotMatch(source, /0\.1\.2-alpha\.4/)
   }
-  assert.match(supportDoc, /Exact preview evidence \| `0\.1\.7-rc\.2`/)
+  assert.match(supportDoc, /Exact preview evidence \| `0\.2\.0-rc\.1`/)
 })
 
 
@@ -85,6 +85,7 @@ test('current-contract follows the current stable Host while preview remains a s
   ])
   assert.match(contract, /name: current-contract[\s\S]*?dsh: 0\.1\.5-rc\.3/)
   assert.match(contract, /name: preview-contract[\s\S]*?dsh: 0\.1\.7-rc\.2/)
+  assert.match(contract, /name: next-020-contract[\s\S]*?dsh: 0\.2\.0-rc\.1/)
   assert.match(preview, /dsh: 0\.1\.5-rc\.3/)
   assert.match(preview, /a4c74a91e06b00fe0b0937bde982170c526cc842/)
   assert.match(preview, /dsh: 0\.1\.5-alpha\.2/)
@@ -94,5 +95,7 @@ test('current-contract follows the current stable Host while preview remains a s
   assert.match(exactSource, /DSH_EXPECTED_COMMIT: a4c74a91e06b00fe0b0937bde982170c526cc842/)
   assert.match(exactSource, /DSH_EXPECTED_VERSION: 0\.1\.7-rc\.2/)
   assert.match(exactSource, /DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443/)
+  assert.match(exactSource, /DSH_EXPECTED_VERSION: 0\.2\.0-rc\.1/)
+  assert.match(exactSource, /DSH_EXPECTED_COMMIT: 4878cdabd87d4041bdaff61d04c966883b9fd07a/)
   assert.match(exactSource, /scripts\/dsh-proxy-egress-contract\.mjs/)
 })

@@ -131,6 +131,12 @@ jobs:
             dsh: 0.1.7-rc.2
           - os: windows-latest
             dsh: 0.1.7-rc.2
+          - os: ubuntu-latest
+            dsh: 0.2.0-rc.1
+          - os: macos-latest
+            dsh: 0.2.0-rc.1
+          - os: windows-latest
+            dsh: 0.2.0-rc.1
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -171,6 +177,15 @@ jobs:
         with:
           repository: deepseek-ai/deepseek-harness
           ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          persist-credentials: false
+          path: dsh-exact
+
+      - name: Checkout exact DSH 0.2.0-rc.1 source
+        if: matrix.dsh == '0.2.0-rc.1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
           persist-credentials: false
           path: dsh-exact
 
@@ -227,8 +242,19 @@ jobs:
           DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
+      - name: Run Vision Router against exact 0.2.0-rc.1 source contracts
+        if: matrix.dsh == '0.2.0-rc.1'
+        working-directory: dsh-exact
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_COMMIT: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+        run: |
+          pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+          pnpm exec tsx ../dvr/scripts/dsh017-source-contract.mjs
+
       - name: Verify DVR 0.2.x peer admission with DSH Host evaluator
-        if: matrix.dsh == '0.1.7-rc.2'
+        if: matrix.dsh == '0.2.0-rc.1'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact

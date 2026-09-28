@@ -56,6 +56,15 @@ jobs:
             session_log_read: 'true'
             image_offload: 'true'
             settings_mode: config-editor
+          - name: next-020-contract
+            dsh: 0.2.0-rc.1
+            batch: 'true'
+            dimension: 'true'
+            current: 'true'
+            session_event_read: 'true'
+            session_log_read: 'true'
+            image_offload: 'true'
+            settings_mode: config-editor
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

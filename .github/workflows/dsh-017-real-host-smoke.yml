@@ -1,4 +1,4 @@
-name: DSH 0.1.7 real Host smoke
+name: DSH preview real Host smoke
 
 on:
   pull_request:
@@ -24,10 +24,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  dsh-017-real-host:
-    name: DSH 0.1.7-rc.2 real Host + Chromium
+  dsh-preview-real-host:
+    name: DSH ${{ matrix.dsh }} real Host + Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dsh: 0.1.7-rc.2
+            ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          - dsh: 0.2.0-rc.1
+            ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -35,11 +43,11 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout immutable DSH 0.1.7-rc.2 source
+      - name: Checkout immutable DSH ${{ matrix.dsh }} source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          ref: ${{ matrix.ref }}
           persist-credentials: false
           path: dsh-017
 
@@ -75,7 +83,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
 
       - name: Run Desktop Host structured bootstrap against DSH 0.1.7
@@ -83,7 +91,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
 
       - name: Run cold Vision toggle against DSH 0.1.7
@@ -91,7 +99,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
@@ -101,7 +109,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-mixed.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-mixed.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
@@ -111,7 +119,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-settings.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-settings.png
         run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
@@ -120,19 +128,31 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dsh-017-real-host-diagnostics
+          name: dsh-preview-real-host-diagnostics-${{ matrix.dsh }}
           path: ${{ runner.temp }}/dsh-017-*
           if-no-files-found: ignore
           retention-days: 2
 
-  dsh-017-windows-desktop-host:
-    name: DSH 0.1.7-rc.2 Windows Desktop Host (Node ${{ matrix.node }})
+  dsh-preview-windows-desktop-host:
+    name: DSH ${{ matrix.dsh }} Windows Desktop Host (Node ${{ matrix.node }})
     runs-on: windows-latest
     timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
-        node: [22.19.0, 24.21.0]
+        include:
+          - dsh: 0.1.7-rc.2
+            ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+            node: 22.19.0
+          - dsh: 0.1.7-rc.2
+            ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+            node: 24.21.0
+          - dsh: 0.2.0-rc.1
+            ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+            node: 22.19.0
+          - dsh: 0.2.0-rc.1
+            ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+            node: 24.21.0
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -140,11 +160,11 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout immutable DSH 0.1.7-rc.2 source
+      - name: Checkout immutable DSH ${{ matrix.dsh }} source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          ref: ${{ matrix.ref }}
           persist-credentials: false
           path: dsh-017
 
@@ -176,7 +196,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
 
       - name: Run Node 24 multi-plugin Connection ordering adversary
@@ -185,5 +205,5 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
         run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
