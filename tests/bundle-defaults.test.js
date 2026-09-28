@@ -465,3 +465,44 @@ test('real DSH browser workflows use exact main-written build caches without ski
       `${name}: cache may skip only DSH build; dependency install, Chromium, and real Host smoke stay live`)
   }
 })
+
+test('heavy Host classifier skips only version-only curated release metadata', async () => {
+  const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
+  const base = { name: 'dsh-vision-router', version: '2.2.5', peerDependencies: { dsh: '^0.2.0' } }
+  const release = { ...base, version: '2.2.6' }
+
+  assert.deepEqual(
+    classifyHeavyHostImpact({ changedPaths: ['package.json', 'docs/releases/v2.2.6.md'], basePackage: base, headPackage: release }),
+    { heavy: false, reason: 'release metadata only: package version + curated notes' },
+  )
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: release }).heavy, false)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['docs/releases/v2.2.6.md'], basePackage: base, headPackage: release }).heavy, false)
+
+  const peerChanged = { ...release, peerDependencies: { dsh: '>=0.2.0-rc.1 <0.3.0-0' } }
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: peerChanged }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-020-rc1-validation.yml'], basePackage: base, headPackage: release }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
+})
+
+test('heavy Host workflows fail closed on PR impact and reuse only main-written exact build caches', async () => {
+  const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
+  for (const name of ['dsh-017-real-host-smoke.yml', 'dsh-020-rc1-validation.yml']) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    assert.match(source, /name: classify heavy Host impact/)
+    assert.match(source, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
+    assert.match(source, /trusted base classifier unavailable: fail closed/)
+    assert.match(source, /if: needs\.impact\.outputs\.heavy == 'true'/)
+    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`))
+    assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`))
+    assert.doesNotMatch(source, /restore-keys:/)
+    assert.match(source, /github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/)
+    assert.match(source, /if: steps\.dsh-build-cache\.outputs\.cache-hit != 'true'/)
+  }
+
+  const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
+  assert.match(rc17, /push:\n\s+branches: \[main\]/)
+  const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc1-validation.yml', import.meta.url), 'utf8')
+  assert.match(rc20, /KEY="dsh-web-v1-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
+  assert.match(rc20, /KEY="dsh-host-v1-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
+})

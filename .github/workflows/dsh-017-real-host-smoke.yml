@@ -9,6 +9,22 @@ on:
       - 'package.json'
       - 'lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'scripts/ci-heavy-host-impact.mjs'
+      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
+      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dsh-017-real-host-smoke.yml'
+      - 'index.js'
+      - 'cordis.patch.yml'
+      - 'package.json'
+      - 'lib/**'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'scripts/ci-heavy-host-impact.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
@@ -21,10 +37,54 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  impact:
+    name: classify heavy Host impact
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify release-only vs Host-impacting change
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            printf 'heavy=true\nreason=trusted main/manual run seeds and validates Host caches\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            printf 'heavy=true\nreason=invalid PR identity: fail closed\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          if ! git cat-file -e "$BASE_SHA:scripts/ci-heavy-host-impact.mjs" 2>/dev/null; then
+            printf 'heavy=true\nreason=trusted base classifier unavailable: fail closed\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git show "$BASE_SHA:scripts/ci-heavy-host-impact.mjs" > "$RUNNER_TEMP/ci-heavy-host-impact.mjs"
+          git show "$BASE_SHA:package.json" > "$RUNNER_TEMP/base-package.json"
+          git show "$HEAD_SHA:package.json" > "$RUNNER_TEMP/head-package.json"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+          node "$RUNNER_TEMP/ci-heavy-host-impact.mjs" \
+            --base-package "$RUNNER_TEMP/base-package.json" \
+            --head-package "$RUNNER_TEMP/head-package.json" \
+            < "$RUNNER_TEMP/changed-paths.txt"
+
   dsh-017-real-host:
+    needs: impact
+    if: needs.impact.outputs.heavy == 'true'
     name: DSH 0.1.7-rc.2 real Host + Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -55,6 +115,18 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Compute exact DSH web build cache key
+        id: dsh-build-key
+        working-directory: dsh-017
+        shell: bash
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-web-v1-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+
       - name: Install DSH workspace dependencies
         working-directory: dsh-017
         env:
@@ -62,9 +134,32 @@ jobs:
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
 
+      - name: Restore trusted DSH build cache
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-017/lib
+            dsh-017/packages/*/*/lib
+            dsh-017/apps/web/dist
+            dsh-017/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
+
       - name: Build DSH 0.1.7 web runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-017
         run: pnpm run build
+
+      - name: Save trusted DSH build cache from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.dsh-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-017/lib
+            dsh-017/packages/*/*/lib
+            dsh-017/apps/web/dist
+            dsh-017/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
 
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-017
@@ -126,6 +221,8 @@ jobs:
           retention-days: 2
 
   dsh-017-windows-desktop-host:
+    needs: impact
+    if: needs.impact.outputs.heavy == 'true'
     name: DSH 0.1.7-rc.2 Windows Desktop Host (Node ${{ matrix.node }})
     runs-on: windows-latest
     timeout-minutes: 35
@@ -160,6 +257,20 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Compute exact DSH build cache key
+        id: dsh-build-key
+        working-directory: dsh-017
+        shell: bash
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-host-v1-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+
       - name: Install DSH workspace dependencies
         working-directory: dsh-017
         env:
@@ -167,9 +278,32 @@ jobs:
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
 
+      - name: Restore trusted DSH build cache
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-017/lib
+            dsh-017/packages/*/*/lib
+            dsh-017/apps/web/dist
+            dsh-017/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
+
       - name: Build DSH 0.1.7 Desktop runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-017
         run: pnpm run build
+
+      - name: Save trusted DSH build cache from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.dsh-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-017/lib
+            dsh-017/packages/*/*/lib
+            dsh-017/apps/web/dist
+            dsh-017/.dsh-build
+          key: ${{ steps.dsh-build-key.outputs.key }}
 
       - name: Run official Windows Desktop Host authenticated-request contract
         working-directory: dsh-017
