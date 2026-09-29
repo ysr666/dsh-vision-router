@@ -47,7 +47,7 @@ function settingsFixture() {
   return { settings, value, user, calls }
 }
 
-test('remote authorization requires explicit risk acceptance and only enables the permission field', async () => {
+test('remote enablement requires explicit risk acknowledgement and only enables the permission field', async () => {
   const fixture = settingsFixture()
   const handler = createVisionRouterRemoteSettingsHandler(fixture.settings)
 
@@ -147,7 +147,7 @@ function runRiskPrelude(confirmResult, { localPrelude = false } = {}) {
   return { appliedCtx, calls, rawScope, get confirms() { return confirms } }
 }
 
-test('remote client confirmation authorizes once and refreshes the disabled describe', async () => {
+test('remote client confirmation enables once and refreshes the disabled describe', async () => {
   const harness = runRiskPrelude(true)
   const connection = harness.appliedCtx.get('connection')
   const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
@@ -158,7 +158,7 @@ test('remote client confirmation authorizes once and refreshes the disabled desc
   assert.deepEqual(harness.calls.map((entry) => entry[1]), ['describe', 'authorize', 'describe'])
 })
 
-test('canceling the risk prompt leaves remote settings disabled and performs no authorization', async () => {
+test('canceling the risk prompt leaves remote settings disabled and performs no enablement', async () => {
   const harness = runRiskPrelude(false)
   const connection = harness.appliedCtx.get('connection')
   const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
