@@ -12,7 +12,7 @@ The matrix is capability-based. Runtime code must feature-detect the seam it nee
 | `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
 | `current-contract` | `0.1.5-rc.3` | Current stable Host contract baseline. Must remain green. |
 | `preview-contract` | `0.1.7-rc.2` | Retained predecessor-preview regression fixture. |
-| `DSH 0.2.0-rc.1 validation` | `0.2.0-rc.1` (`next`) | Current exact next/rc evidence; not a public preview-support claim. |
+| `DSH 0.2.0-rc.2 validation` | `0.2.0-rc.2` (`next/rc`) | Current exact next/rc evidence; not a public preview-support claim. |
 | retained preview regression | `0.1.5-alpha.2` | Older preview regression fixture retained as an older preview regression while the 0.1.7 next line is qualified. |
 | release-channel canary | npm `latest` / `next` / `alpha` | Separately labelled stable, next/rc, and alpha/pre-release drift surveillance. Never changes support policy by itself. |
 

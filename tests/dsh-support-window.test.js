@@ -24,7 +24,7 @@ test('P3 support policy contains only public stable support semantics', () => {
 test('preview and dynamic canaries are verification evidence, not support-window fields', () => {
   assert.deepEqual(DSH_VERIFICATION_EVIDENCE, {
     exactStable: '0.1.5-rc.3',
-    exactPreview: '0.2.0-rc.1',
+    exactPreview: '0.2.0-rc.2',
     stableCanaryDistTag: 'latest',
     nextCanaryDistTag: 'next',
     previewCanaryDistTag: 'alpha',
@@ -53,7 +53,7 @@ test('Doctor text separates public support policy from verification evidence', (
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.0-rc.8')))
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.3')))
   assert.equal(lines.slice(0, evidenceAt).some((line) => /alpha|canary/i.test(line)), false)
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact next/rc (not a support claim): 0.2.0-rc.1')))
+  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact next/rc (not a support claim): 0.2.0-rc.2')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag latest')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag next')))
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag alpha')))

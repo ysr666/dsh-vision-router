@@ -528,13 +528,13 @@ test('heavy Host classifier skips only version-only curated release metadata', a
   const peerChanged = { ...release, peerDependencies: { dsh: '>=0.2.0-rc.1 <0.3.0-0' } }
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: peerChanged }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
-  assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-020-rc1-validation.yml'], basePackage: base, headPackage: release }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-020-rc2-validation.yml'], basePackage: base, headPackage: release }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
 })
 
 test('heavy Host workflows fail closed on PR impact and reuse only main-written exact build caches', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-  for (const name of ['dsh-017-real-host-smoke.yml', 'dsh-020-rc1-validation.yml']) {
+  for (const name of ['dsh-017-real-host-smoke.yml', 'dsh-020-rc2-validation.yml']) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     assert.match(source, /name: classify heavy Host impact/)
     assert.match(source, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
@@ -553,7 +553,7 @@ test('heavy Host workflows fail closed on PR impact and reuse only main-written 
 
   const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
   assert.match(rc17, /push:\n\s+branches: \[main\]/)
-  const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc1-validation.yml', import.meta.url), 'utf8')
+  const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc2-validation.yml', import.meta.url), 'utf8')
   assert.match(rc20, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
   assert.match(rc20, /KEY="dsh-host-v4-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
 })
