@@ -2,6 +2,8 @@
 
 Audit baseline: `main@1c11c1c3c7046268ae1c7b8f2287b023aeb1eb26` (after C3-B / PR #339).
 
+> Historical 2.x closure baseline. The 2.3 architecture phase supersedes its compatibility-status observations; in particular, the former `VisionProviderTransport` process/profile registry has been removed. See `2.3.0-final-audit.md` for the current branch state.
+
 This document records the final adversarial architecture review. It is not a feature roadmap and does not claim that PDF, video, CAD or GUI-agent support exists. The final `CLOSED` declaration is allowed only after the accompanying final Closure gate is merged and the resulting `main` gates are green.
 
 ## Severity result
