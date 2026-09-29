@@ -1,6 +1,7 @@
 name: DSH Contract
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -21,19 +22,10 @@ jobs:
       matrix:
         include:
           - name: minimum-contract
-            dsh: 0.1.0-rc.6
-            batch: 'false'
-            dimension: 'false'
-            current: 'false'
-            session_event_read: 'false'
-            session_log_read: 'false'
-            image_offload: 'false'
-            settings_mode: native-register
-          - name: legacy-contract
-            dsh: 0.1.0-rc.8
+            dsh: 0.1.5-rc.1
             batch: 'true'
             dimension: 'true'
-            current: 'false'
+            current: 'true'
             session_event_read: 'true'
             session_log_read: 'true'
             image_offload: 'false'
@@ -47,15 +39,6 @@ jobs:
             session_log_read: 'true'
             image_offload: 'false'
             settings_mode: native-register
-          - name: preview-contract
-            dsh: 0.1.7-rc.2
-            batch: 'true'
-            dimension: 'true'
-            current: 'true'
-            session_event_read: 'true'
-            session_log_read: 'true'
-            image_offload: 'true'
-            settings_mode: config-editor
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

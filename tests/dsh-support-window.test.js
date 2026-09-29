@@ -11,8 +11,8 @@ import {
 
 test('P3 support policy contains only public stable support semantics', () => {
   assert.deepEqual(DSH_SUPPORT_WINDOW, {
-    dvrTrain: '2.2.x',
-    minimum: '0.1.0-rc.8',
+    dvrTrain: '2.3.x',
+    minimum: '0.1.5',
     currentStable: '0.1.5-rc.3',
   })
   assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'previous'), false)
@@ -50,7 +50,7 @@ test('Doctor text separates public support policy from verification evidence', (
   const lines = formatDshSupportWindowLines({ batchAttachments: false, maxImageDimension: false })
   const evidenceAt = lines.indexOf('DSH compatibility verification evidence:')
   assert.ok(evidenceAt > 0)
-  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.0-rc.8')))
+  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.5')))
   assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.3')))
   assert.equal(lines.slice(0, evidenceAt).some((line) => /alpha|canary/i.test(line)), false)
   assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact next/rc (not a support claim): 0.2.0-rc.2')))
@@ -69,11 +69,12 @@ test('public READMEs state stable support policy and delegate moving preview evi
   ])
 
   for (const source of [english, chinese]) {
-    assert.match(source, /2\.2\.x/)
-    assert.match(source, /0\.1\.0-rc\.8/)
+    assert.match(source, /2\.3\.x/)
+    assert.match(source, /0\.1\.5/)
+    assert.match(source, /0\.1\.5-rc\.1/)
     assert.match(source, /0\.1\.5-rc\.3/)
+    assert.match(source, /0\.2\.0-rc\.2/)
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
-    assert.doesNotMatch(source, /0\.1\.2-alpha\.4/)
   }
   assert.match(supportDoc, /Exact next\/rc evidence \| `0\.2\.0-rc\.2`/)
 })
@@ -85,8 +86,10 @@ test('current-contract follows the current stable Host while preview remains a s
     readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
   ])
+  assert.match(contract, /name: minimum-contract[\s\S]*?dsh: 0\.1\.5-rc\.1/)
   assert.match(contract, /name: current-contract[\s\S]*?dsh: 0\.1\.5-rc\.3/)
-  assert.match(contract, /name: preview-contract[\s\S]*?dsh: 0\.1\.7-rc\.2/)
+  assert.doesNotMatch(contract, /dsh: 0\.1\.0-/)
+  assert.doesNotMatch(contract, /dsh: 0\.1\.7-/)
   assert.match(preview, /dsh: 0\.1\.5-rc\.3/)
   assert.match(preview, /a4c74a91e06b00fe0b0937bde982170c526cc842/)
   assert.match(preview, /dsh: 0\.1\.5-alpha\.2/)

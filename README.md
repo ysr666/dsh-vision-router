@@ -436,7 +436,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 2.2.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.5-rc.3`. The DSH `0.2.x` train is peer-admitted from the verified `0.2.0-rc.1` boundary (`>=0.2.0-rc.1 <0.3.0-0`); exact `0.2.0-rc.2` (`next/rc`) source, real Host, Windows Desktop, multi-plugin, Settings, mixed-attachment, bundle-recompose, and Host-Sharp gates are preview verification evidence, not a support-floor increase. The final stable `0.2.0` tag and signed Desktop artifact will still be revalidated when published. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
+- **DSH Host support policy:** DVR 2.3.x supports the DSH `0.1.5` train (earliest admitted release `0.1.5-rc.1`; current stable evidence `0.1.5-rc.3`) and no longer publishes the older jagged 0.1.x exception list. Exact `0.2.0-rc.2` is the ordinary 2.3 development Host and the verified next/Desktop evidence. Runtime behavior remains capability-based. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
