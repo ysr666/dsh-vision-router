@@ -299,12 +299,46 @@ async function waitForAppPage(browser, deadlineMs = 30_000) {
   throw new Error('Desktop never opened dsh-app://app/')
 }
 
-async function dismissVisionOnboarding(page) {
+async function exerciseVisionOnboardingSettingsPath(page) {
   const onboarding = page.locator('.vr-onboarding-backdrop')
-  try { await onboarding.waitFor({ state: 'visible', timeout: 5_000 }) } catch {}
-  if (!await onboarding.isVisible()) return
-  await onboarding.locator('.vr-onboarding-secondary').click()
+  await onboarding.waitFor({ state: 'visible', timeout: 15_000 })
+  await onboarding.locator('.vr-onboarding-primary').click()
   await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
+
+  const prompt = page.locator('.vr-guide-prompt')
+  await prompt.waitFor({ state: 'visible', timeout: 10_000 })
+  await page.waitForFunction(() => document.querySelector('.vr-guide-prompt')?.dataset.vrStep === 'step1')
+  await prompt.locator('.vr-btn-save').click()
+  await page.waitForFunction(() => {
+    const guide = document.querySelector('.vr-guide-prompt')
+    return guide?.dataset.vrStep === 'step2' && guide?.dataset.vrPhase === 'launcher'
+  })
+
+  // Desktop replaces the direct Settings gear with the account-owned launcher
+  // (avatar/More menu). Drive the guide itself so this E2E fails if its “Next”
+  // action cannot traverse launcher -> Settings menu -> Settings panel.
+  await prompt.locator('.vr-btn-save').click()
+  await page.waitForFunction(() => {
+    const phase = document.querySelector('.vr-guide-prompt')?.dataset.vrPhase
+    return phase === 'menu' || phase === 'nav'
+  })
+  let phase = await prompt.getAttribute('data-vr-phase')
+  if (phase === 'menu') {
+    await page.getByRole('menuitem', { name: /设置|Settings/i }).first().waitFor({ state: 'visible', timeout: 10_000 })
+    await prompt.locator('.vr-btn-save').click()
+    await page.waitForFunction(() => document.querySelector('.vr-guide-prompt')?.dataset.vrPhase === 'nav')
+    phase = 'nav'
+  }
+  if (phase !== 'nav') throw new Error(`Vision onboarding did not reach Settings navigation (phase=${phase})`)
+
+  await page.getByText('Vision Router', { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 })
+  await prompt.locator('.vr-btn-save').click()
+  await page.locator('[data-vr-guide-target="vision-backend"]').waitFor({ state: 'visible', timeout: 10_000 })
+  const done = page.locator('.vr-guide-callout .vr-btn-save')
+  await done.waitFor({ state: 'visible', timeout: 10_000 })
+  await done.click()
+  await page.locator('.vr-guide-callout').waitFor({ state: 'hidden', timeout: 10_000 })
+  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
 }
 
 async function exchangeHostCookie(authenticatedUrl) {
@@ -385,7 +419,6 @@ async function waitForVisionToggle(page, authenticatedUrl) {
     await callHostRemote(authenticatedUrl, 'workspace/initializeDefault')
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.evaluate(async () => await window.dshDesktopBoot.ready())
-    await dismissVisionOnboarding(page)
     await toggle.waitFor({ state: 'visible', timeout: 30_000 })
     return toggle
   }
@@ -654,10 +687,9 @@ try {
   // so driving a DOM dialog here would test the wrong surface on fresh profiles.
   // The workspace-controller owns first-use creation; wait for the Session slot
   // below to prove that initialization completed before exercising Vision mode.
-  await dismissVisionOnboarding(page)
-
   const toggle = await waitForVisionToggle(page, authenticatedHostUrl)
   if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
+  await exerciseVisionOnboardingSettingsPath(page)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
   await toggle.click()
@@ -761,6 +793,7 @@ try {
     electronNode,
     structuredMarkers: markers.length,
     toggle: { initial: initialPressed, exercised: true, restored: true },
+    onboarding: { settingsPath: true },
     settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
     functionalVisionTurn: { textEvidence, visionEvidence, rendered: 'DESKTOP_VISION_E2E_OK' },
   }
