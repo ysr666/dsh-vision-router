@@ -31,6 +31,30 @@ const desktopRequire = createRequire(join(dshRoot, 'apps/desktop/package.json'))
 const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
 const electron = desktopRequire('electron')
 const { chromium } = webRequire('playwright')
+
+function inspectRuntimePackage(projectRoot, packageName) {
+  const runtimeRequire = createRequire(join(projectRoot, 'package.json'))
+  const packageJsonPath = join(projectRoot, 'node_modules', ...packageName.split('/'), 'package.json')
+  let manifest
+  let resolved
+  let resolveError
+  try { manifest = readJson(packageJsonPath) } catch (error) { resolveError = String(error?.stack || error) }
+  try { resolved = runtimeRequire.resolve(packageName) } catch (error) { resolveError = String(error?.stack || error) }
+  const main = typeof manifest?.main === 'string' ? manifest.main : 'index.js'
+  const mainPath = join(projectRoot, 'node_modules', ...packageName.split('/'), main)
+  return {
+    packageName,
+    packageJsonPath,
+    packageJsonExists: existsSync(packageJsonPath),
+    version: manifest?.version ?? null,
+    main,
+    mainPath,
+    mainExists: existsSync(mainPath),
+    resolved: resolved ?? null,
+    resolveError: resolveError ?? null,
+  }
+}
+
 const target = process.platform === 'win32'
   ? 'win-x64'
   : process.platform === 'darwin' && process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
@@ -125,7 +149,7 @@ export function apply(ctx) {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: '/dvr-e2e-core-status',
-      handler(_request, response) {
+      async handler(_request, response) {
         const services = Object.fromEntries(SERVICE_NAMES.map((name) => [name, serviceState(scope, name)]))
         const fibers = []
         for (const runtime of scope.registry.values()) {
@@ -143,8 +167,35 @@ export function apply(ctx) {
             })
           }
         }
+        const loaderEntries = []
+        try {
+          for (const entry of scope.loader.entries()) {
+            if (!/session-persistence|workspace-controller|session-controller|(?:^|:)workspace$/i.test(entry.id)
+              && !/session-persistence|workspace-controller|session-controller|dsh-workspace$/i.test(entry.options?.name ?? '')) continue
+            loaderEntries.push({
+              id: entry.id,
+              name: entry.options?.name ?? null,
+              disabled: entry.disabled,
+              hasFiber: Boolean(entry.fiber),
+              fiberState: entry.fiber ? (STATES[entry.fiber.state] ?? String(entry.fiber.state)) : null,
+              initializing: Boolean(entry._initTask),
+            })
+          }
+        } catch (error) {
+          loaderEntries.push({ inspectError: String(error?.stack || error).slice(0, 12000) })
+        }
+        let persistenceImport
+        try {
+          const imported = await scope.loader.import('@deepseek-ai/dsh-session-persistence-jsonl')
+          persistenceImport = {
+            ok: true,
+            keys: Object.keys(imported ?? {}).slice(0, 40),
+          }
+        } catch (error) {
+          persistenceImport = { ok: false, error: String(error?.stack || error).slice(0, 12000) }
+        }
         response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-        response.end(JSON.stringify({ services, fibers }))
+        response.end(JSON.stringify({ services, fibers, loaderEntries, persistenceImport }))
       },
     }), 'desktop-e2e: core service diagnostics')
   })
@@ -299,6 +350,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 })
 let desktopOutputBuffer = ''
 let lastCoreProbe
+let runtimePackageEvidence
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -374,6 +426,17 @@ try {
     },
     target,
   })
+
+  const persistencePackage = '@deepseek-ai/dsh-session-persistence-jsonl'
+  runtimePackageEvidence = {
+    source: inspectRuntimePackage(dshRoot, persistencePackage),
+    developmentProject: inspectRuntimePackage(project, persistencePackage),
+  }
+  if (!runtimePackageEvidence.developmentProject.packageJsonExists
+    || !runtimePackageEvidence.developmentProject.mainExists
+    || !runtimePackageEvidence.developmentProject.resolved) {
+    throw new Error(`Desktop development runtime is missing ${persistencePackage}: ${JSON.stringify(runtimePackageEvidence)}`)
+  }
 
   cpSync(join(dshRoot, 'packages/skill/skill-office/assets'), join(runtimeRoot, 'office-skills'), { recursive: true })
   const nodeDir = join(primaryRuntime, 'dependencies/node/bin')
@@ -647,6 +710,7 @@ try {
     textEvidence,
     visionEvidence,
     coreProbe: lastCoreProbe,
+    runtimePackageEvidence,
     failureState,
   }
   console.error(JSON.stringify(failure, undefined, 2))
