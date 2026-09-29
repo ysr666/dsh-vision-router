@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import {
   SETTINGS_IA_CLIENT_PRELUDE,
   injectSettingsIaClientPrelude,
+  installSettingsIaClientPrelude,
 } from '../lib/settings-ia-client-prelude.js'
 
 function reactStub(stateValues = []) {
@@ -150,6 +151,27 @@ function createHarness(React, { value = baseSettings(), local = true, location }
   }
   return { registeredComponent, OriginalSection, scope }
 }
+
+test('settings IA publishes both script and stylesheet on the Desktop structured carrier', () => {
+  const listeners = []
+  const ctx = {
+    inject(_deps, callback) {
+      callback({
+        on(name, listener) { listeners.push([name, listener]) },
+        effect(factory) { factory() },
+        webServer: { tapIndex() { return () => {} } },
+      })
+    },
+  }
+  installSettingsIaClientPrelude(ctx)
+  const rows = []
+  for (const [name, listener] of listeners) {
+    assert.equal(name, 'webserver/index-inject')
+    listener(rows)
+  }
+  assert.equal(rows.filter((row) => row.kind === 'script' && row.text.includes('data-vision-router-settings-ia')).length, 1)
+  assert.equal(rows.filter((row) => row.kind === 'style' && row.text.includes('data-vision-router-settings-ia:style')).length, 1)
+})
 
 test('settings IA prelude injects once', () => {
   const html = '<html><head></head><body></body></html>'

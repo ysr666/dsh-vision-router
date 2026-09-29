@@ -269,7 +269,6 @@ try {
     DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
     DSH_DESKTOP_OPEN_DEVTOOLS: '0',
     DSH_TELEMETRY_MODE: 'DISABLED',
-    DEEPSEEK_API_KEY: 'keyless-dvr-desktop-renderer-no-call',
     ELECTRON_ENABLE_LOGGING: '1',
   }
 
