@@ -124,7 +124,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-web-v2-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v3-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -140,14 +140,38 @@ jobs:
         with:
           path: |
             dsh-017/lib
+            dsh-017/vendor/*/lib
             dsh-017/packages/*/*/lib
+            dsh-017/apps/*/lib
             dsh-017/apps/web/dist
             dsh-017/native/system/packages/*/bin
             dsh-017/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
+      - name: Validate trusted DSH build cache closure
+        id: dsh-build-cache-validation-1
+        working-directory: dsh-017
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.dsh-build-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          usable=true
+          if [[ "$CACHE_HIT" != 'true' ]]; then
+            usable=false
+          fi
+          for required in \
+            vendor/include/lib/index.js \
+            apps/desktop-host/lib/index.js; do
+            if [[ ! -f "$required" ]]; then
+              echo "trusted DSH build cache missing: $required"
+              usable=false
+            fi
+          done
+          printf 'usable=%s\n' "$usable" >> "$GITHUB_OUTPUT"
+
       - name: Build DSH 0.1.7 web runtime
-        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
+        if: steps.dsh-build-cache-validation-1.outputs.usable != 'true'
         working-directory: dsh-017
         run: pnpm run build
 
@@ -157,7 +181,9 @@ jobs:
         with:
           path: |
             dsh-017/lib
+            dsh-017/vendor/*/lib
             dsh-017/packages/*/*/lib
+            dsh-017/apps/*/lib
             dsh-017/apps/web/dist
             dsh-017/native/system/packages/*/bin
             dsh-017/.dsh-build
@@ -270,7 +296,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-host-v2-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-host-v3-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -286,14 +312,38 @@ jobs:
         with:
           path: |
             dsh-017/lib
+            dsh-017/vendor/*/lib
             dsh-017/packages/*/*/lib
+            dsh-017/apps/*/lib
             dsh-017/apps/web/dist
             dsh-017/native/system/packages/*/bin
             dsh-017/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
+      - name: Validate trusted DSH build cache closure
+        id: dsh-build-cache-validation-2
+        working-directory: dsh-017
+        shell: bash
+        env:
+          CACHE_HIT: ${{ steps.dsh-build-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          usable=true
+          if [[ "$CACHE_HIT" != 'true' ]]; then
+            usable=false
+          fi
+          for required in \
+            vendor/include/lib/index.js \
+            apps/desktop-host/lib/index.js; do
+            if [[ ! -f "$required" ]]; then
+              echo "trusted DSH build cache missing: $required"
+              usable=false
+            fi
+          done
+          printf 'usable=%s\n' "$usable" >> "$GITHUB_OUTPUT"
+
       - name: Build DSH 0.1.7 Desktop runtime
-        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
+        if: steps.dsh-build-cache-validation-2.outputs.usable != 'true'
         working-directory: dsh-017
         run: pnpm run build
 
@@ -303,7 +353,9 @@ jobs:
         with:
           path: |
             dsh-017/lib
+            dsh-017/vendor/*/lib
             dsh-017/packages/*/*/lib
+            dsh-017/apps/*/lib
             dsh-017/apps/web/dist
             dsh-017/native/system/packages/*/bin
             dsh-017/.dsh-build
