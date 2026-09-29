@@ -565,6 +565,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // section once the settings service mounts (installSettingsSection below).
   let current = () => config
   const coreVisionSurfaceRuntime = runtime?.coreVisionSurface
+  const providerTransport = runtime?.providerTransport
   const coreVisionFlag = (name, fallback) => {
     if (
       coreVisionSurfaceRuntime &&
@@ -1172,12 +1173,14 @@ export function apply(ctx, config = {}, runtime = {}) {
                 signal: options.signal,
                 sessionId: options.sessionId,
                 resolveCredential,
+                transport: providerTransport,
               })
             : callOpenAICompatible(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
                 sessionId: options.sessionId,
                 resolveCredential,
+                transport: providerTransport,
               }))
         } catch (error) {
           // Classify the failure (AUTH / RATE_LIMIT / …) so downstream error
@@ -1791,6 +1794,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         signal: options.signal,
         sessionId: options.sessionId,
         resolveCredential: () => apiKey,
+        transport: providerTransport,
       },
     )
   }
@@ -1872,6 +1876,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         signal: options.signal,
         sessionId: options.sessionId,
         apiKey,
+        transport: providerTransport,
       },
     )
   }
@@ -3186,6 +3191,7 @@ ctx.logger?.info(
                   signal: attemptSignal,
                   sessionId,
                   resolveCredential,
+                  transport: providerTransport,
                 },
               )
               return answer
@@ -3731,6 +3737,7 @@ ctx.logger?.info(
               ),
               sessionId: options.sessionId,
               resolveCredential,
+              transport: providerTransport,
             },
           )
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
@@ -4889,7 +4896,7 @@ ctx.logger?.info(
                   const identified = await callLocalBackend(
                     local,
                     [{ role: 'user', content }],
-                    { maxTokens: local.maxTokens ?? 2048, signal: controller.signal },
+                    { maxTokens: local.maxTokens ?? 2048, signal: controller.signal, transport: providerTransport },
                   )
                   if (typeof identified === 'string' && identified.trim() !== '') {
                     result.identified = identified.trim()

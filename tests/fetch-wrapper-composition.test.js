@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { installPiAiBridgeWireCompat } from '../lib/pi-ai-bridge-wire-compat.js'
 import { installLegacyGlobalProxyBoundary, streamWithLegacyGlobalProxyScope } from '../lib/legacy-global-proxy-boundary.js'
 import { runWithVisionSessionAffinity } from '../lib/session-affinity-runtime.js'
+import { installRuntimeI18nBoundary } from '../lib/runtime-i18n-boundary.js'
 
 const endpoint = 'https://opencode.ai/zen/go/v1/chat/completions'
 const pair = { provider: 'host-vision', model: 'vision-model' }
@@ -220,3 +221,66 @@ for (const order of ['pipeline-first', 'dvr-first']) {
     assert.equal(p.assignments(), 0)
   })
 }
+
+
+test('runtime i18n prompt boundary composes with accessor fetch without setter recursion', async (t) => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'fetch')
+  const calls = []
+  const cleanups = []
+  const hostFetch = async (input, init) => {
+    calls.push({ input, init, headers: new Headers(init?.headers) })
+    return new Response('host-result')
+  }
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: hostFetch,
+  })
+  const p = pipeline()
+  const settings = {
+    get(namespace) {
+      if (namespace === 'locale') return { preference: 'en' }
+      if (namespace === 'vision-router') return { tool: true, autoActivateOnImage: true }
+      return undefined
+    },
+  }
+  const ctx = {
+    tools: { register() { return () => {} } },
+    llm: {},
+    get(name) { return name === 'settings' ? settings : undefined },
+    effect(setup) {
+      const cleanup = setup()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  t.after(() => {
+    try { for (const cleanup of cleanups.toReversed()) cleanup() }
+    finally { Object.defineProperty(globalThis, 'fetch', saved) }
+  })
+
+  installRuntimeI18nBoundary(ctx, {})
+  assert.equal(p.assignments(), 0, 'i18n install must not write through a foreign fetch setter')
+
+  const ordinary = await globalThis.fetch(endpoint, { method: 'GET' })
+  assert.equal(await ordinary.text(), 'host-result')
+  assert.equal(calls.at(-1).headers.get('x-host-pipeline'), 'preserved')
+
+  const body = JSON.stringify({
+    prompt: '请详细描述这张图片的内容：主要元素、文字（照抄原文）、布局与细节。',
+  })
+  const localized = await globalThis.fetch(endpoint, { method: 'POST', body })
+  assert.equal(await localized.text(), 'host-result')
+  assert.equal(calls.at(-1).headers.get('x-host-pipeline'), 'preserved')
+  assert.notEqual(calls.at(-1).init.body, body, 'model-facing legacy prompt should still be localized')
+  assert.doesNotMatch(calls.at(-1).init.body, /请详细描述这张图片/)
+
+  p.setEnabled(false)
+  await globalThis.fetch(endpoint, { method: 'GET' })
+  assert.equal(calls.at(-1).headers.get('x-host-pipeline'), null, 'live Host middleware removal must remain visible')
+
+  for (const cleanup of cleanups.splice(0).toReversed()) cleanup()
+  assert.equal(p.assignments(), 0, 'i18n cleanup must not write through a foreign fetch setter')
+  assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, 'fetch'), p.descriptor)
+})

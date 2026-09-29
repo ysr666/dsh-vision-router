@@ -84,7 +84,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const source = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
 
   assert.match(entry, /import \{ applyVisionRuntimeComposition \} from '.\/lib\/runtime-composition\.js'/)
-  assert.match(entry, /return applyVisionRuntimeComposition\(ctx, config, core\)/)
+  assert.match(entry, /return applyVisionRuntimeComposition\(ctx, config, core, runtime\)/)
   assert.doesNotMatch(entry, /installVisionRouterFileLogging|installVisionRoutingRuntime|installVisionWebIntegration/)
 
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
@@ -132,7 +132,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const requestAuthorityAt = source.indexOf(
     'const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx)',
   )
-  const coreApplyAt = source.indexOf('() => core.apply(')
+  const coreApplyAt = source.indexOf('() => runtimeCore.apply(')
   const finishAt = source.indexOf('coreVisionSurfaceRuntime.finishSchemaBootstrap()', coreApplyAt)
 
   assert.ok(mutationAt >= 0)
@@ -182,7 +182,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(coreApplyAt > requestAuthorityAt, 'core must receive the fully composed request-authority context')
   assert.match(
     source.slice(coreApplyAt),
-    /^\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
+    /^\(\) => runtimeCore\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
     'core must receive the explicit request-authority decorator plus the Session mode config and same runtime owners',
   )
   assert.ok(finishAt > coreApplyAt, 'CoreVisionSurface alone owns the temporary schema-bootstrap lifecycle')

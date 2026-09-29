@@ -65,15 +65,6 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** upstream endpoint behavior becomes generic-compatible for a rule and regression evidence confirms the preset is no longer needed.
 - **Tests:** `http-compat`, provider HTTP regression tests.
 
-## `lib/vision-provider-transport.js` process/profile registry
-
-- **Reason:** carry the Router-owned provider transport into compatibility callers whose mature function signatures still accept only a raw `fetch` or use an internal direct HTTP call, while keeping Router traffic off the process-global fetch patch.
-- **Host gap:** this is an internal composition gap rather than a DSH version persona: `fetchWithOpenAICompatibility(...)` and the Anthropic catalog-correction path do not yet receive a `VisionProviderTransport` parameter explicitly.
-- **First needed for:** provider-scoped transport ownership and proxy narrowing without rewriting the mature compatibility call signatures in the same migration.
-- **Feature detection:** explicit transport-aware callers bypass the registry; only compatibility paths that call `currentVisionProviderTransport()` consume the currently installed process/profile transport. The registry never patches `globalThis.fetch`. Router-owned and scoped Host-owned explicit proxies share one lease/retire dispatcher pool. First-hop `proxyHosts` admission preserves the no-Undici Host path for non-matches; admitted requests use a request-scoped selector that re-checks every redirect origin and delegates non-matches to the request-start Host/caller dispatcher.
-- **Removal condition:** every Router-owned compatibility caller receives `VisionProviderTransport` explicitly, production has zero reads of `currentVisionProviderTransport()`, and the install/release registry can be removed without changing proxy, redirect-hop authority, credential, bounded-body, cancellation, or dispatcher-lifecycle behavior.
-- **Tests:** `vision-provider-transport` (A→B lifecycle, proxy clear, pending-construction unload, synchronous loader failure, real Fetch listed→unlisted redirect, initial-unlisted no-import and explicit-caller fallback), `legacy-global-proxy-boundary` (scoped Host-owned redirect and pool cleanup), `http-compat`, `catalog-corrections`, P2 Data Boundary provider-transport Node 22/24, Host pack/install smoke.
-
 ## `lib/legacy-global-proxy-boundary.js`
 
 - **Reason:** preserve the explicit Vision Router proxy override for Host-owned/raw-fetch visual providers without granting that configuration process-wide routing authority. Router-owned HTTP already uses `VisionProviderTransport`; blank `proxy` leaves the compatibility wrapper fully transparent.

@@ -16,7 +16,7 @@ test('runtime composition creates one explicit SessionVisionRuntime and gives th
   )
   assert.match(
     runtime,
-    /core\.apply\([\s\S]*?sessionVision:\s*sessionVisionRuntime[\s\S]*?\)/,
+    /runtimeCore\.apply\([\s\S]*?sessionVision:\s*sessionVisionRuntime[\s\S]*?\)/,
   )
   assert.equal(
     (runtime.match(/createSessionVisionRuntime\(/g) ?? []).length,

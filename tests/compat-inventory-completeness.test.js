@@ -10,7 +10,6 @@ const REQUIRED_SEAMS = [
   'lib/pi-ai-bridge-wire-compat.js',
   'lib/settings-client-rc8-lifecycle.js',
   'lib/http-compat.js',
-  'lib/vision-provider-transport.js',
   'lib/legacy-global-proxy-boundary.js',
   'lib/legacy-core-vision-policy-bridge.js',
   'lib/tesseract-exec-compat.js',
@@ -78,11 +77,11 @@ test('completed architecture phase labels do not survive as production migration
   }
 })
 
-test('provider transport registry documents its concrete removal trigger', async () => {
-  const source = await readFile(
-    new URL('../lib/vision-provider-transport.js', import.meta.url),
-    'utf8',
-  )
-  assert.match(source, /Remove it only after every production compatibility caller/)
-  assert.match(source, /no production code reads\s+\*?\/?\s*currentVisionProviderTransport\(\)/s)
+test('provider transport registry is retired in favor of explicit Core runtime ownership', async () => {
+  const transport = await readFile(new URL('../lib/vision-provider-transport.js', import.meta.url), 'utf8')
+  const facade = await readFile(new URL('../lib/core-runtime-facade.js', import.meta.url), 'utf8')
+  const publicEntry = await readFile(new URL('../lib/public-entry.js', import.meta.url), 'utf8')
+  assert.doesNotMatch(transport, /currentVisionProviderTransport|installVisionProviderTransport|const installed\s*=\s*\[\]/)
+  assert.match(facade, /providerTransport/)
+  assert.match(publicEntry, /base\.apply\(runtimeCtx, hardening\.config, \{ providerTransport: transport \}\)/)
 })

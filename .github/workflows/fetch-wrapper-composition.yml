@@ -47,4 +47,4 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: pnpm install --frozen-lockfile
       - name: Verify accessor composition and existing wire/proxy contracts
-        run: node --test tests/fetch-wrapper-lifecycle.test.js tests/fetch-wrapper-composition.test.js tests/pi-ai-bridge-wire-compat.test.js tests/legacy-global-proxy-boundary.test.js
+        run: node --test tests/fetch-wrapper-lifecycle.test.js tests/fetch-wrapper-composition.test.js tests/pi-ai-bridge-wire-compat.test.js tests/legacy-global-proxy-boundary.test.js tests/runtime-i18n.test.js

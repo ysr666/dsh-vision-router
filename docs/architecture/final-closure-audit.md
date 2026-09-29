@@ -66,14 +66,13 @@ The normative compatibility inventory now requires every retained seam to docume
 - removal condition;
 - tests.
 
-The inventory-completeness gate covers 11 retained seams.
+The inventory-completeness gate covers 10 retained seams.
 
-Two notable retained items are intentionally **not blockers**:
+One notable retained item is intentionally **not a blocker**:
 
 1. `legacy-core-vision-policy-bridge.js` remains for the two supported pre-step behaviors described above.
-2. `vision-provider-transport.js` retains one scoped process/profile registry because mature OpenAI-compat and Anthropic catalog-correction callers still read `currentVisionProviderTransport()`. Its install/release lifecycle and deletion trigger are explicit.
 
-A repository-wide audit of the exact `const installed = []` pattern found only the inventoried VisionProviderTransport registry. The retired Session current-owner locator is absent from production.
+The former VisionProviderTransport process/profile registry has been retired: runtime composition now binds the concrete transport through `core-runtime-facade.js`, and mature provider helpers receive it explicitly. A repository-wide audit now requires zero `const installed = []` runtime registries and keeps the retired Session current-owner locator absent from production.
 
 Result: **PASS / justified compatibility only**.
 
