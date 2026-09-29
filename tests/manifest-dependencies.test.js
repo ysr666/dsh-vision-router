@@ -137,10 +137,11 @@ test('schemastery remains a runtime dependency', async () => {
 
 test('public surfaces disclose remote image egress and strict local-only requirements', async () => {
   const pkg = await manifest()
-  const [readme, readmeZh, settings] = await Promise.all([
+  const [readme, readmeZh, settings, legacySettings] = await Promise.all([
     readFile(new URL('../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
     readFile(new URL('../lib/settings-ia-client-prelude.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/client.js', import.meta.url), 'utf8'),
   ])
 
   assert.match(pkg.description, /Remote vision providers/)
@@ -151,6 +152,11 @@ test('public surfaces disclose remote image egress and strict local-only require
   assert.match(readmeZh, /严格纯本地/)
   assert.match(settings, /数据流向/)
   assert.match(settings, /remote OVHcloud service/)
+  assert.match(settings, /Derived result text/)
+  assert.match(settings, /image semantics may still leave this machine/)
+  assert.match(settings, /Vision result destination/)
+  assert.match(legacySettings, /Derived result text/)
+  assert.match(legacySettings, /严格纯本地还需同时选择本地聊天模型/)
 })
 
 test('undici stays below v8 and is lazy-loaded only by scoped proxy transports', async () => {

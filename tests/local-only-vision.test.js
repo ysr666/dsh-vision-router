@@ -83,6 +83,9 @@ test('Settings UI exposes the productized local-only control and disables OVH wh
   assert.match(source, /Local-only vision/)
   assert.match(source, /runtime-blocked while Local-only vision is enabled/)
   assert.match(source, /This privacy control can only be changed from the local DSH settings page/)
+  assert.match(source, /Derived result text/)
+  assert.match(source, /image semantics may still leave this machine/)
+  assert.match(source, /Vision result destination/)
 })
 
 test('direct HTTP fallback loops re-check local-only policy immediately before execution', async () => {
