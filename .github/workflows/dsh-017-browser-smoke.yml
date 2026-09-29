@@ -78,7 +78,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-web-v3-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install exact Host workspace dependencies
@@ -98,6 +98,8 @@ jobs:
             dsh-preview/vendor/*/lib
             dsh-preview/apps/*/lib
             dsh-preview/apps/web/dist
+            dsh-preview/native/system/packages/*/lib
+            dsh-preview/native/system/packages/*/bin
             dsh-preview/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
