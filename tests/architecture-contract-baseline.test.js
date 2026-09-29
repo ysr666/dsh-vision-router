@@ -87,9 +87,10 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /2\.0\.x/)
   assert.match(support, /0\.1\.0-rc\.6/)
   assert.match(support, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
-  assert.match(support, /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\*/)
-  assert.match(support, /Ordinary development Host[^\n]*0\.2\.0-rc\.2/)
-  assert.match(support, /Current Stable Host[^\n]*0\.1\.5-rc\.3/)
+  assert.match(
+    support,
+    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
+  )
   assert.match(support, /Exact next\/rc evidence[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
   assert.match(support, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
