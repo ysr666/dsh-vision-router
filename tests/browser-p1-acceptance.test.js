@@ -121,6 +121,7 @@ test('real Chromium: guide completion persists onboardingSeen and clears active 
     const result = await page.evaluate(async () => {
       const ReactStub = {
         useState(initial) { return [initial, () => {}] },
+        useRef(initial) { return { current: initial } },
         useMemo(factory) { return factory() },
         useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
         createElement() { return null },
