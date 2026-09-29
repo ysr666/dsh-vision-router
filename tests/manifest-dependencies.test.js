@@ -28,6 +28,7 @@ async function discoverTests(directory = new URL('./', import.meta.url), prefix 
 // back into ordinary automatic discovery without changing the contract below.
 const DEFAULT_TEST_IMPORTS = Object.freeze([
   'tests/auto-wrap-model-removal.test.js',
+  'tests/client-script-carrier.test.js',
   'tests/guard-stop-surface-shadow.test.js',
   'tests/settings-card-race-safety.test.js',
   'tests/settings-guide-replay-safety.test.js',
