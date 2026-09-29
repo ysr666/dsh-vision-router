@@ -55,6 +55,80 @@ function inspectRuntimePackage(projectRoot, packageName) {
   }
 }
 
+const CORE_PROBE_SERVICE_NAMES = [
+  'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
+  'workspaceController', 'sessionController', 'sessions', 'sessionQuery',
+  'agents', 'llm', 'typert', 'webServer',
+]
+
+function fixedServiceState(value) {
+  if (value?.active === true) return 'active'
+  if (value?.present === true) return 'present-inactive'
+  return 'missing'
+}
+
+function fixedFiberState(value) {
+  for (const state of ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']) {
+    if (value === state) return state
+  }
+  return 'UNKNOWN'
+}
+
+function fileSafeCoreProbe(probe) {
+  const services = Object.fromEntries(CORE_PROBE_SERVICE_NAMES.map((name) => [
+    name, fixedServiceState(probe?.services?.[name]),
+  ]))
+  const fiberStates = Object.fromEntries(
+    ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING', 'UNKNOWN'].map((state) => [state, 0]),
+  )
+  if (Array.isArray(probe?.fibers)) {
+    for (const fiber of probe.fibers) fiberStates[fixedFiberState(fiber?.state)] += 1
+  }
+  return {
+    available: probe !== undefined && probe !== null && probe?.probeError === undefined,
+    services,
+    fiberStates,
+  }
+}
+
+function fileSafeRuntimePackageEvidence(evidence) {
+  const summarize = (value) => ({
+    packageJsonExists: value?.packageJsonExists === true,
+    mainExists: value?.mainExists === true,
+    resolved: typeof value?.resolved === 'string',
+    resolveFailed: typeof value?.resolveError === 'string',
+  })
+  return { source: summarize(evidence?.source), developmentProject: summarize(evidence?.developmentProject) }
+}
+
+function fileSafeFailureState(state) {
+  if (!state) return { captured: false }
+  const body = typeof state.bodyText === 'string' ? state.bodyText : ''
+  const buttons = Array.isArray(state.composerButtons) ? state.composerButtons : []
+  return {
+    captured: true,
+    desktopOrigin: typeof state.url === 'string' && state.url.startsWith('dsh-app://app/'),
+    workspacePrompt: /Choose (?:a )?workspace|选择(?:一个)?工作区/i.test(body),
+    composerButtonCount: buttons.length,
+    enabledComposerAction: buttons.some((button) => button?.disabled === false && button?.hidden !== true),
+  }
+}
+
+function fileSafeTurnEvidence(textEvidence, visionEvidence) {
+  return {
+    text: {
+      requests: Number.isSafeInteger(textEvidence?.requests) ? textEvidence.requests : 0,
+      toolCalls: Number.isSafeInteger(textEvidence?.toolCalls) ? textEvidence.toolCalls : 0,
+      attachmentResolved: typeof textEvidence?.attachmentId === 'string',
+      sawVisionResult: textEvidence?.sawVisionResult === true,
+    },
+    vision: {
+      requests: Number.isSafeInteger(visionEvidence?.requests) ? visionEvidence.requests : 0,
+      sawImage: visionEvidence?.sawImage === true,
+    },
+  }
+}
+
 const target = process.platform === 'win32'
   ? 'win-x64'
   : process.platform === 'darwin' && process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
@@ -300,7 +374,8 @@ async function waitForVisionToggle(page, authenticatedUrl) {
     }))
     if (lastCoreProbe?.services?.workspaceController?.active !== true
       || lastCoreProbe?.services?.sessionController?.active !== true) {
-      throw new Error(`Desktop Host core control plane is unavailable: ${JSON.stringify(lastCoreProbe)}`)
+      console.error(`[desktop-e2e] Host core probe: ${JSON.stringify(lastCoreProbe)}`)
+      throw new Error('Desktop Host core control plane is unavailable')
     }
 
     // DSH deliberately does not retry a failed first-use initializeDefault() in
@@ -690,7 +765,19 @@ try {
     functionalVisionTurn: { textEvidence, visionEvidence, rendered: 'DESKTOP_VISION_E2E_OK' },
   }
   console.log(JSON.stringify(result))
-  if (diagnosticPath) writeFileSync(diagnosticPath, `${JSON.stringify(result, undefined, 2)}\n`)
+  if (diagnosticPath) {
+    const fileResult = {
+      ok: true,
+      dsh: dshVersion,
+      platform: process.platform,
+      arch: process.arch,
+      structuredMarkers: markers.length,
+      toggle: result.toggle,
+      settings: result.settings,
+      functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
+    }
+    writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
+  }
 } catch (error) {
   if (page && screenshotPath) {
     try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
@@ -715,7 +802,20 @@ try {
   }
   console.error(JSON.stringify(failure, undefined, 2))
   if (diagnosticPath) {
-    try { writeFileSync(diagnosticPath, `${JSON.stringify(failure, undefined, 2)}\n`) } catch {}
+    const fileFailure = {
+      ok: false,
+      failureKind: lastCoreProbe !== undefined
+        && (lastCoreProbe?.services?.workspaceController?.active !== true
+          || lastCoreProbe?.services?.sessionController?.active !== true)
+        ? 'host-control-plane-unavailable'
+        : 'desktop-e2e-failed',
+      rendererErrorCount: rendererErrors.length,
+      functionalVisionTurn: fileSafeTurnEvidence(textEvidence, visionEvidence),
+      coreProbe: fileSafeCoreProbe(lastCoreProbe),
+      runtimePackageEvidence: fileSafeRuntimePackageEvidence(runtimePackageEvidence),
+      failureState: fileSafeFailureState(failureState),
+    }
+    try { writeFileSync(diagnosticPath, `${JSON.stringify(fileFailure, undefined, 2)}\n`) } catch {}
   }
   throw error
 } finally {

@@ -492,6 +492,27 @@ test('DSH build caches retain native JS entrypoints and binaries as one complete
     'renderer cache schema must invalidate the old cache that omitted native JS entrypoints')
 })
 
+test('Desktop E2E diagnostic files persist only fixed summaries of Host network evidence', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /function fileSafeCoreProbe\(probe\)/)
+  assert.match(source, /coreProbe: fileSafeCoreProbe\(lastCoreProbe\)/)
+  assert.match(source, /runtimePackageEvidence: fileSafeRuntimePackageEvidence\(runtimePackageEvidence\)/)
+  assert.match(source, /failureState: fileSafeFailureState\(failureState\)/)
+  assert.match(source, /functionalVisionTurn: fileSafeTurnEvidence\(textEvidence, visionEvidence\)/)
+  assert.doesNotMatch(source, /writeFileSync\(diagnosticPath,[^\n]*JSON\.stringify\(failure/,
+    'raw failure objects may contain Host response bodies and must never be persisted')
+  assert.doesNotMatch(source, /writeFileSync\(diagnosticPath,[^\n]*JSON\.stringify\(lastCoreProbe/,
+    'raw Host probe responses must remain console-only')
+  const fileFailureStart = source.indexOf('const fileFailure = {')
+  const fileFailureEnd = source.indexOf('try { writeFileSync(diagnosticPath', fileFailureStart)
+  assert.ok(fileFailureStart >= 0 && fileFailureEnd > fileFailureStart)
+  const persistedFailureShape = source.slice(fileFailureStart, fileFailureEnd)
+  assert.doesNotMatch(persistedFailureShape, /\berror\s*:/,
+    'persisted failure diagnostics must not carry arbitrary thrown/network error text')
+  assert.doesNotMatch(persistedFailureShape, /\bcoreProbe\s*:\s*lastCoreProbe\b/,
+    'persisted failure diagnostics must project rather than copy Host probe data')
+})
+
 test('heavy Host classifier skips only version-only curated release metadata', async () => {
   const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
   const base = { name: 'dsh-vision-router', version: '2.2.5', peerDependencies: { dsh: '^0.2.0' } }
