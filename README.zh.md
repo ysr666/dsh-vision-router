@@ -373,7 +373,7 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
-| `localOnlyVision` | `false` | 运行时隐私策略：开启后只有回环地址上的视觉端点可执行；云端/DSH Provider 与内置 OVH 兜底保留配置但 fail closed |
+| `localOnlyVision` | `false` | 视觉端点隐私策略：只有回环地址上的视觉端点可执行，Vision Router 不会把图片/裁剪发给云端视觉服务；描述、OCR、坐标等识图结果文本仍会交给当前聊天模型，因此严格端到端纯本地还需同时使用本地聊天模型 |
 | `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；`localOnlyVision` 开启期间不会执行 |
 | `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | 本地视觉后端；OpenAI 模式默认关闭受支持模型的推理，把输出预算留给正文 |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | Ollama 之后的本地 LM Studio 后端；LM Studio 0.4+ 可选 `format: 'lmstudio'` 使用官方原生推理控制 |
