@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { runCoreApplyLifecycle } from '../lib/core-apply-lifecycle.js'
 
 test('P3-F keeps entry as a thin schema/export boundary', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
@@ -81,4 +82,126 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
+})
+
+test('Core apply lifecycle keeps synchronous success synchronous and completes once', () => {
+  const events = []
+  const result = runCoreApplyLifecycle(
+    () => { events.push('apply'); return 'sync-result' },
+    {
+      onSuccess() { events.push('success') },
+      onFailure() { events.push('failure') },
+    },
+  )
+
+  assert.equal(result, 'sync-result')
+  assert.deepEqual(events, ['apply', 'success'])
+})
+
+test('Core apply lifecycle closes a synchronous failure without changing the thrown error', () => {
+  const error = new Error('sync apply failed')
+  const events = []
+  assert.throws(
+    () => runCoreApplyLifecycle(
+      () => { events.push('apply'); throw error },
+      {
+        onSuccess() { events.push('success') },
+        onFailure(seen) { events.push('failure'); assert.equal(seen, error) },
+      },
+    ),
+    (seen) => seen === error,
+  )
+  assert.deepEqual(events, ['apply', 'failure'])
+})
+
+test('Core apply lifecycle keeps schema bootstrap open until an async apply resolves', async () => {
+  let resolveApply
+  let schemaBootstrapping = true
+  let finishCount = 0
+  const events = []
+  const pending = new Promise((resolve) => { resolveApply = resolve })
+
+  const result = runCoreApplyLifecycle(
+    () => {
+      events.push(`apply:${schemaBootstrapping}`)
+      return pending
+    },
+    {
+      onSuccess() {
+        events.push(`success:${schemaBootstrapping}`)
+        if (schemaBootstrapping) {
+          finishCount += 1
+          schemaBootstrapping = false
+        }
+        events.push(`finished:${schemaBootstrapping}`)
+      },
+      onFailure() { events.push('failure') },
+    },
+  )
+
+  assert.equal(schemaBootstrapping, true, 'async Core registration still owns the bootstrap window while pending')
+  assert.equal(finishCount, 0)
+  resolveApply('async-result')
+  assert.equal(await result, 'async-result')
+  assert.equal(schemaBootstrapping, false)
+  assert.equal(finishCount, 1)
+  assert.deepEqual(events, ['apply:true', 'success:true', 'finished:false'])
+})
+
+test('Core apply lifecycle rejects with the original async error and runs failure cleanup once', async () => {
+  const error = new Error('async apply failed')
+  let failureCount = 0
+  let successCount = 0
+  const result = runCoreApplyLifecycle(
+    () => Promise.reject(error),
+    {
+      onSuccess() { successCount += 1 },
+      onFailure(seen) { failureCount += 1; assert.equal(seen, error) },
+    },
+  )
+
+  await assert.rejects(result, (seen) => seen === error)
+  assert.equal(successCount, 0)
+  assert.equal(failureCount, 1)
+})
+
+test('Core apply lifecycle routes post-Core installer failure through the same failure path', async () => {
+  const error = new Error('post-Core install failed')
+  let failureCount = 0
+  const result = runCoreApplyLifecycle(
+    () => Promise.resolve('registered'),
+    {
+      onSuccess() { throw error },
+      onFailure(seen) { failureCount += 1; assert.equal(seen, error) },
+    },
+  )
+
+  await assert.rejects(result, (seen) => seen === error)
+  assert.equal(failureCount, 1)
+})
+test('Core apply lifecycle can close schema bootstrap exactly once when a later post-Core installer fails', async () => {
+  const error = new Error('wrapper alias install failed')
+  let closed = false
+  let finishCount = 0
+  const finishOnce = () => {
+    if (closed) return
+    closed = true
+    finishCount += 1
+  }
+  const result = runCoreApplyLifecycle(
+    () => Promise.resolve('registered'),
+    {
+      onSuccess() {
+        finishOnce()
+        throw error
+      },
+      onFailure(seen) {
+        assert.equal(seen, error)
+        finishOnce()
+      },
+    },
+  )
+
+  await assert.rejects(result, (seen) => seen === error)
+  assert.equal(finishCount, 1)
 })

@@ -488,9 +488,17 @@ test('maintenance Web ownership is extracted from Core and composed after Core a
   assert.match(maintenance, /path: '\/_dsh\/vision-router\/update-check'/)
   assert.match(maintenance, /path: '\/_dsh\/vision-router\/self-update'/)
   const applyAt = composition.indexOf('() => core.apply(')
-  const maintenanceAt = composition.indexOf('installVisionMaintenanceRoutes(coreRequestAuthorityCtx')
+  const postCoreAt = composition.indexOf('const installPostCoreRuntime = () => {')
+  const settleSuccessAt = composition.indexOf('onSuccess: installPostCoreRuntime', applyAt)
+  const postCoreEnd = composition.indexOf('const failCoreApply = (error) => {', postCoreAt)
   assert.ok(applyAt >= 0)
-  assert.ok(maintenanceAt > applyAt, 'maintenance routes mount only after Core apply returns')
+  assert.ok(postCoreAt >= 0)
+  assert.ok(settleSuccessAt > applyAt, 'maintenance ownership must be attached only to Core apply success settlement')
+  assert.match(
+    composition.slice(postCoreAt, postCoreEnd),
+    /installVisionMaintenanceRoutes\([\s\S]*?finishSchemaBootstrapOnce\(\)[\s\S]*?installWrapperDirectoryAlias\(/,
+    'post-Core settlement mounts maintenance before closing bootstrap and publishing the wrapper alias',
+  )
 })
 
 test('local mutation boundary preserves injected child identity and rejects remote side effects', async () => {
