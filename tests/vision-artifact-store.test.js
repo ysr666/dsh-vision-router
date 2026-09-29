@@ -121,6 +121,21 @@ test('VisionArtifactStore reads live workspace/artifactsDir values instead of ca
   })
 })
 
+test('artifact publication returns the caller-visible path when the workspace itself is a symlink', async () => {
+  await withTempDir('dvr-artifact-workspace-link-', async (root) => {
+    const realWorkspace = path.join(root, 'real-workspace')
+    const linkedWorkspace = path.join(root, 'linked-workspace')
+    await mkdir(realWorkspace)
+    await symlink(realWorkspace, linkedWorkspace, 'dir')
+    const store = createVisionArtifactStore({ workspace: linkedWorkspace, artifactsDir: 'artifacts' })
+
+    const target = await store.publish('nested/visible.txt', Buffer.from('visible'))
+
+    assert.equal(target, path.join(linkedWorkspace, 'artifacts', 'nested', 'visible.txt'))
+    assert.deepEqual(await readFile(target), Buffer.from('visible'))
+  })
+})
+
 test('persistent publication uses one stable retained handoff run instead of the ambient run', async () => {
   await withTempDir('dvr-artifact-persistent-', async (root) => {
     const runId = '.vision-run-persistent-handoff'
