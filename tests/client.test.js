@@ -397,6 +397,8 @@ test('the walkthrough is an explicit state machine with visual fallbacks for all
   assert.equal(source.includes('[role="dialog"][aria-modal="true"]'), true)
   assert.equal(source.includes('guideHostUi.advanceSettingsLauncher()'), true)
   assert.equal(source.includes('guideHostUi.openSettingsFromMenu()'), true)
+  assert.equal(source.includes("next.addEventListener('pointerdown', keepSettingsMenuOpen)"), true)
+  assert.equal(source.includes("prompt.dataset.vrPhase === 'menu') event.stopPropagation()"), true)
   assert.equal(source.includes('guideHostUi.openVisionRouter()'), true)
   assert.equal(source.includes("phase === 'menu'"), true)
   assert.equal(source.includes('guidePromptGearBody'), false)
