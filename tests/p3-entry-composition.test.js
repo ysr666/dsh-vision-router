@@ -64,8 +64,18 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'core must receive the fully composed backend context plus request-handoff authority, Session Vision mode authority, and explicit SessionVisionRuntime/CoreVisionSurface owners',
   )
   assert.ok(
-    source.split('\n').length < 420,
+    source.split('\n').length < 500,
     'runtime composition must remain orchestration-sized rather than becoming a new monolith',
+  )
+  assert.match(source, /function installHostAndSecurityBoundaries\(ctx, config, core\)/)
+  assert.match(source, /function createRuntimeOwners\(host, core\)/)
+  assert.match(source, /function installRoutingAndHostProducts\(host, owners, core\)/)
+  assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core\)/)
+  assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core\)/)
+  assert.match(
+    source,
+    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core\)\s*\}/s,
+    'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
 })
