@@ -39,7 +39,7 @@ jobs:
       - name: Verify generated dependency policy
         shell: node {0}
         run: |
-          const pkg = require('./package.json')
+          const pkg = require(process.cwd() + '/package.json')
           for (const name of [
             '@deepseek-ai/dsh-anonymous-user-id',
             '@deepseek-ai/dsh-llm-deepseek',
