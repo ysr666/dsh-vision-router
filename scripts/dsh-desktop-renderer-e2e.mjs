@@ -99,6 +99,34 @@ async function waitForAppPage(browser, deadlineMs = 30_000) {
   throw new Error('Desktop never opened dsh-app://app/')
 }
 
+async function dismissVisionOnboarding(page) {
+  const onboarding = page.locator('.vr-onboarding-backdrop')
+  try { await onboarding.waitFor({ state: 'visible', timeout: 5_000 }) } catch {}
+  if (!await onboarding.isVisible()) return
+  await onboarding.locator('.vr-onboarding-secondary').click()
+  await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
+}
+
+async function adoptWorkspaceIfNeeded(page, workspacePath) {
+  const choose = page.getByRole('button', { name: /^(?:Choose workspace|选择工作区)$/i }).first()
+  try { await choose.waitFor({ state: 'visible', timeout: 2_000 }) } catch { return false }
+  const bodyText = await page.locator('body').innerText()
+  if (!/Choose a workspace to start|选择工作区.*开始/i.test(bodyText)) return false
+
+  await choose.click()
+  const picker = page.getByRole('dialog', { name: /^(?:Select Workspace Directory|选择工作区目录)$/i })
+  await picker.waitFor({ state: 'visible', timeout: 30_000 })
+  await picker.getByRole('button', { name: /^(?:Edit path|编辑路径)$/i }).click()
+  const pathInput = picker.getByRole('textbox', { name: /^(?:Edit path|编辑路径)$/i })
+  await pathInput.waitFor({ state: 'visible', timeout: 10_000 })
+  await pathInput.fill(workspacePath)
+  await pathInput.press('Enter')
+  await pathInput.waitFor({ state: 'hidden', timeout: 30_000 })
+  await picker.getByRole('button', { name: /^(?:Open|打开)$/i }).click({ timeout: 30_000 })
+  await picker.waitFor({ state: 'hidden', timeout: 30_000 })
+  return true
+}
+
 async function stopProcess(child) {
   if (!child || child.exitCode !== null) return
   if (process.platform === 'win32') {
@@ -311,14 +339,14 @@ try {
     if (!markers.includes(required)) throw new Error(`Desktop boot is missing ${required}`)
   }
 
+  // A fresh Desktop profile may have no current workspace, in which case the
+  // Session-scoped right slot is correctly absent. Exercise the real picker
+  // before asserting the Vision control instead of assuming developer state.
+  await dismissVisionOnboarding(page)
+  await adoptWorkspaceIfNeeded(page, workspace)
+
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
-  const onboarding = page.locator('.vr-onboarding-backdrop')
-  try {
-    await onboarding.waitFor({ state: 'visible', timeout: 5000 })
-    await onboarding.locator('.vr-onboarding-secondary').click()
-    await onboarding.waitFor({ state: 'detached', timeout: 5000 })
-  } catch {}
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
   await toggle.click()
@@ -398,9 +426,13 @@ try {
   await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
   if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
   await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
-  const send = page.getByRole('button', { name: /^(?:Send|发送消息|发送)$/i }).last()
+  // The primary action changes its accessible name when a running turn can be
+  // queued or steered. Waiting for actionability also waits out attachment upload.
+  const send = page.getByRole('button', {
+    name: /^(?:Send message|Queue message|Steer message|发送消息|排队发送|插话发送)$/i,
+  }).last()
   await send.waitFor({ state: 'visible', timeout: 30_000 })
-  await send.click()
+  await send.click({ timeout: 30_000 })
   await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
   if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
     throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
@@ -427,7 +459,14 @@ try {
   if (page && screenshotPath) {
     try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
   }
-  const failureState = page ? await page.evaluate(() => ({ bodyText: (document.body?.innerText || '').slice(-12000), composer: document.querySelector('[data-composer-card]')?.textContent || '', url: location.href })).catch(() => undefined) : undefined
+  const failureState = page ? await page.evaluate(() => ({
+    bodyText: (document.body?.innerText || '').slice(-12000),
+    composer: document.querySelector('[data-composer-card]')?.textContent || '',
+    composerButtons: [...document.querySelectorAll('[data-composer-card] button')].map((button) => ({
+      label: button.getAttribute('aria-label') || '', disabled: Boolean(button.disabled), hidden: Boolean(button.hidden),
+    })),
+    url: location.href,
+  })).catch(() => undefined) : undefined
   const failure = { ok: false, error: String(error?.stack || error), rendererErrors, textEvidence, visionEvidence, failureState }
   console.error(JSON.stringify(failure, undefined, 2))
   if (diagnosticPath) {
