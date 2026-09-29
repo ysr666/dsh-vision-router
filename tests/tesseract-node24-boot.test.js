@@ -51,6 +51,85 @@ test('locked promisify.custom uses a callback-safe module wrapper instead of thr
   assert.equal(fakeModule.execFile, lockedExecFile)
 })
 
+test('custom-property install and restore synchronize builtin ESM exports', () => {
+  const execFile = function execFile() { return { pid: 1 } }
+  const fakeBuiltin = { execFile }
+  const synchronizedHooks = []
+
+  const dispose = installTesseractExecFileCompat(undefined, {
+    childProcessModule: fakeBuiltin,
+    builtinChildProcessModule: fakeBuiltin,
+    syncBuiltinESMExports() {
+      synchronizedHooks.push(execFile[promisify.custom])
+    },
+  })
+
+  assert.equal(typeof execFile[promisify.custom], 'function')
+  assert.equal(synchronizedHooks.length, 1)
+  assert.equal(synchronizedHooks[0], execFile[promisify.custom])
+
+  dispose()
+  assert.equal(execFile[promisify.custom], undefined)
+  assert.deepEqual(synchronizedHooks, [synchronizedHooks[0], undefined])
+})
+
+test('Electron-style detached ESM execFile receives the working Tesseract hook after sync', async () => {
+  const originalCustom = async (_file, args, options) => {
+    assert.match(args[0], /ocr-electron[\\/]input\.png$/)
+    assert.equal(Object.prototype.hasOwnProperty.call(options, 'input'), false)
+    return { stdout: 'ELECTRON_SYNC_OK', stderr: '' }
+  }
+  const cjsExecFile = function cjsExecFile() { return { pid: 1 } }
+  Object.defineProperty(cjsExecFile, promisify.custom, {
+    configurable: true, enumerable: false, writable: true, value: originalCustom,
+  })
+  const fakeBuiltin = { execFile: cjsExecFile }
+  const esmNamespace = { execFile: function detachedEsmExecFile() { return { pid: 2 } } }
+  let syncCount = 0
+
+  assert.notEqual(esmNamespace.execFile, fakeBuiltin.execFile)
+  const dispose = installTesseractExecFileCompat(undefined, {
+    childProcessModule: fakeBuiltin,
+    builtinChildProcessModule: fakeBuiltin,
+    syncBuiltinESMExports() {
+      syncCount += 1
+      esmNamespace.execFile = fakeBuiltin.execFile
+    },
+    tempDir: '/virtual-tmp',
+    async mkdtemp() { return '/virtual-tmp/ocr-electron' },
+    async writeFile(_file, bytes) { assert.equal(bytes, pngBytes) },
+    async rm() {},
+  })
+
+  assert.equal(esmNamespace.execFile, cjsExecFile)
+  assert.deepEqual(
+    await promisify(esmNamespace.execFile)('tesseract', ['stdin', 'stdout'], { input: pngBytes }),
+    { stdout: 'ELECTRON_SYNC_OK', stderr: '' },
+  )
+  dispose()
+  assert.equal(syncCount, 2, 'install and restore both synchronize the ESM namespace')
+  assert.equal(cjsExecFile[promisify.custom], originalCustom)
+})
+
+test('custom-property sync failure rolls installation back instead of leaving a half patch', () => {
+  const execFile = function execFile() { return { pid: 1 } }
+  const fakeBuiltin = { execFile }
+  const warnings = []
+
+  const dispose = installTesseractExecFileCompat({
+    logger: { warn(...args) { warnings.push(args) } },
+  }, {
+    childProcessModule: fakeBuiltin,
+    builtinChildProcessModule: fakeBuiltin,
+    syncBuiltinESMExports() { throw new Error('synthetic sync failure') },
+  })
+
+  assert.equal(execFile[promisify.custom], undefined)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0].join(' '), /synthetic sync failure/)
+  assert.doesNotThrow(dispose)
+})
+
 test('real Node child_process locked descriptor installs without crashing and synchronizes ESM binding', async () => {
   const originalExecFile = childProcess.execFile
   const descriptor = Object.getOwnPropertyDescriptor(originalExecFile, promisify.custom)
