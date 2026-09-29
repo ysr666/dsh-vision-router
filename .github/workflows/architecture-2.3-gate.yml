@@ -45,6 +45,8 @@ jobs:
           tests/qa-runtime-identity.test.js
           tests/fetch-wrapper-lifecycle.test.js
           tests/fetch-wrapper-composition.test.js
+          tests/session-vision-event-feed.test.js
+          tests/client-script-carrier.test.js
           tests/security-property-fuzz.test.js
       - name: Package public entry
         run: |
@@ -126,16 +128,22 @@ jobs:
           EXPECT_SESSION_LOG_READ: 'true'
         run: node scripts/dsh-host-contract-smoke.mjs
 
+  rc2-desktop-contract:
+    name: DSH 0.2.0-rc.2 / Desktop contract
+    uses: ./.github/workflows/dsh-020-rc2-validation.yml
+
   critical-gate:
     name: critical-gate
     if: always()
-    needs: [contracts, current-host-contract]
+    needs: [contracts, current-host-contract, rc2-desktop-contract]
     runs-on: ubuntu-latest
     steps:
       - name: Require every constituent gate
         env:
           CONTRACTS_RESULT: ${{ needs.contracts.result }}
           HOST_RESULT: ${{ needs.current-host-contract.result }}
+          RC2_RESULT: ${{ needs.rc2-desktop-contract.result }}
         run: |
           test "$CONTRACTS_RESULT" = success
           test "$HOST_RESULT" = success
+          test "$RC2_RESULT" = success

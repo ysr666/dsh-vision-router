@@ -1,6 +1,7 @@
 name: DSH 0.2.0-rc.2 validation
 
 on:
+  workflow_call:
   workflow_dispatch:
   pull_request:
     paths:
