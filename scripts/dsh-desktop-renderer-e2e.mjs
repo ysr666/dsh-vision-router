@@ -108,28 +108,68 @@ async function dismissVisionOnboarding(page) {
   await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
 }
 
-async function waitForVisionToggle(page) {
-  const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await toggle.waitFor({ state: 'visible', timeout: attempt === 0 ? 15_000 : 30_000 })
-      return toggle
-    } catch (error) {
-      const bodyText = await page.locator('body').innerText().catch(() => '')
-      const defaultWorkspaceFailed = /Choose a workspace to start|选择工作区.*开始/i.test(bodyText)
-      if (attempt > 0 || !defaultWorkspaceFailed) throw error
-
-      // DSH's first-use navigation intentionally turns one initializeDefault()
-      // failure into the empty-workspace chooser and does not retry that same
-      // navigation. Desktop Host services can still be settling immediately
-      // after dsh-app://app connects (notably on Windows Node 24), so reload the
-      // renderer once and let the public workspace-controller path retry.
-      await page.reload({ waitUntil: 'domcontentloaded' })
-      await page.evaluate(async () => await window.dshDesktopBoot.ready())
-      await dismissVisionOnboarding(page)
-    }
+async function exchangeHostCookie(authenticatedUrl) {
+  const response = await fetch(authenticatedUrl, { redirect: 'manual' })
+  const setCookie = response.headers.get('set-cookie')
+  await response.body?.cancel()
+  if (response.status !== 303 || !setCookie) {
+    throw new Error(`Desktop Host authentication exchange failed (${response.status})`)
   }
-  return toggle
+  return setCookie.split(';', 1)[0]
+}
+
+async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = `/api/${method}`
+  target.search = ''
+  const deadline = Date.now() + deadlineMs
+  let lastFailure
+  while (Date.now() < deadline) {
+    const rpcId = `desktop-e2e-${randomUUID()}`
+    try {
+      const response = await fetch(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } }),
+      })
+      const body = await response.json()
+      if (response.ok && body?.type === 'server-response' && body?.rpcId === rpcId && body?.result?.ok === true) {
+        return body.result.value
+      }
+      lastFailure = new Error(`Host Remote ${method} rejected: HTTP ${response.status} ${JSON.stringify(body)}`)
+    } catch (error) {
+      lastFailure = error
+    }
+    await new Promise((accept) => setTimeout(accept, 250))
+  }
+  throw lastFailure ?? new Error(`Host Remote ${method} did not become available`)
+}
+
+async function waitForVisionToggle(page, authenticatedUrl) {
+  const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
+  try {
+    await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+    return toggle
+  } catch (error) {
+    const bodyText = await page.locator('body').innerText().catch(() => '')
+    const workspaceTriggerVisible = await page.getByRole('button', { name: /Choose workspace|选择工作区/i })
+      .first().isVisible().catch(() => false)
+    const defaultWorkspaceFailed = workspaceTriggerVisible
+      || /Choose a workspace to start|选择(?:一个)?工作区.*开始/i.test(bodyText)
+    if (!defaultWorkspaceFailed) throw error
+
+    // DSH deliberately does not retry a failed first-use initializeDefault() in
+    // the same navigation. For this DVR renderer gate, recover through DSH's
+    // authenticated public Workspace Remote instead of automating the OS-native
+    // directory picker (which is an upstream Desktop surface, not a DVR one).
+    await callHostRemote(authenticatedUrl, 'workspace/initializeDefault')
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.evaluate(async () => await window.dshDesktopBoot.ready())
+    await dismissVisionOnboarding(page)
+    await toggle.waitFor({ state: 'visible', timeout: 30_000 })
+    return toggle
+  }
 }
 
 async function stopProcess(child) {
@@ -158,6 +198,13 @@ let browser
 let page
 let textServer
 let visionServer
+let resolveAuthenticatedHostUrl
+let rejectAuthenticatedHostUrl
+const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
+  resolveAuthenticatedHostUrl = resolve
+  rejectAuthenticatedHostUrl = reject
+})
+let desktopOutputBuffer = ''
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -335,13 +382,27 @@ try {
   child = spawn(executable, args, {
     cwd: join(dshRoot, 'apps/desktop'), env: environment, stdio: ['ignore', 'pipe', 'pipe'],
   })
-  child.stdout?.on('data', (chunk) => process.stdout.write(`[desktop] ${chunk}`))
-  child.stderr?.on('data', (chunk) => process.stderr.write(`[desktop] ${chunk}`))
+  const observeDesktopOutput = (chunk, target) => {
+    const text = String(chunk)
+    target.write(`[desktop] ${text}`)
+    desktopOutputBuffer = (desktopOutputBuffer + text).slice(-16_384)
+    const match = /dsh web:\s*(https?:\/\/[^\s]+)/i.exec(desktopOutputBuffer)
+    if (match) resolveAuthenticatedHostUrl(match[1])
+  }
+  child.stdout?.on('data', (chunk) => observeDesktopOutput(chunk, process.stdout))
+  child.stderr?.on('data', (chunk) => observeDesktopOutput(chunk, process.stderr))
+  child.once('exit', (code, signal) => {
+    rejectAuthenticatedHostUrl(new Error(`Desktop exited before Host URL became available (${String(code ?? signal)})`))
+  })
 
   browser = await waitForCdp(rendererPort)
   page = await waitForAppPage(browser)
   page.on('pageerror', (error) => rendererErrors.push(String(error?.stack || error)))
   const boot = await page.evaluate(async () => await window.dshDesktopBoot.ready())
+  const authenticatedHostUrl = await Promise.race([
+    authenticatedHostUrlPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Desktop Host URL was not reported')), 30_000)),
+  ])
   const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
     .map((row) => (row.text.match(/data-vision-router-[a-z0-9-]+(?::structured)?/i) || [])[0])
     .filter(Boolean)
@@ -360,7 +421,7 @@ try {
   // below to prove that initialization completed before exercising Vision mode.
   await dismissVisionOnboarding(page)
 
-  const toggle = await waitForVisionToggle(page)
+  const toggle = await waitForVisionToggle(page, authenticatedHostUrl)
   if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
