@@ -447,7 +447,7 @@ test('real DSH browser workflows use exact main-written build caches without ski
     assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v6.1.0`)
     assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
     assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
-    assert.match(source, /KEY="dsh-web-v3-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
+    assert.match(source, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
     assert.match(source, /DSH_SHA="\$\(git rev-parse HEAD\)"/)
     assert.match(source, /LOCK_SHA="\$\(sha256sum pnpm-lock\.yaml/)
     assert.match(source, /TREE_SHA="\$\(git ls-tree -r --full-tree HEAD/)
@@ -464,6 +464,53 @@ test('real DSH browser workflows use exact main-written build caches without ski
     assert.ok(install >= 0 && restore > install && build > restore && save > build && chromium > save && smoke > chromium,
       `${name}: cache may skip only DSH build; dependency install, Chromium, and real Host smoke stay live`)
   }
+})
+
+test('DSH build caches retain native JS entrypoints and binaries as one complete build surface', async () => {
+  const workflows = [
+    'dsh-preview-browser-smoke.yml',
+    'alpha-browser-cold-toggle-smoke.yml',
+    'dsh-017-browser-smoke.yml',
+    'dsh-017-real-host-smoke.yml',
+    'dsh-020-rc1-validation.yml',
+  ]
+
+  for (const name of workflows) {
+    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
+    const cacheBlocks = [...source.matchAll(/path: \|\n((?:\s{12}[^\n]+\n)+)\s{10}key:/g)]
+      .map(([, block]) => block)
+      .filter(block => block.includes('/.dsh-build'))
+    assert.ok(cacheBlocks.length > 0, `${name}: expected at least one DSH build cache block`)
+    for (const block of cacheBlocks) {
+      assert.match(block, /native\/system\/packages\/\*\/lib/, `${name}: cache must retain @deepseek-ai/node-addon-system JS entrypoints`)
+      assert.match(block, /native\/system\/packages\/\*\/bin/, `${name}: cache must retain platform native binaries`)
+    }
+  }
+
+  const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
+  assert.match(rc17, /dsh-desktop-renderer-v2-/,
+    'renderer cache schema must invalidate the old cache that omitted native JS entrypoints')
+})
+
+test('Desktop E2E diagnostic files persist only fixed summaries of Host network evidence', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /function fileSafeCoreProbe\(probe\)/)
+  assert.match(source, /coreProbe: fileSafeCoreProbe\(lastCoreProbe\)/)
+  assert.match(source, /runtimePackageEvidence: fileSafeRuntimePackageEvidence\(runtimePackageEvidence\)/)
+  assert.match(source, /failureState: fileSafeFailureState\(failureState\)/)
+  assert.match(source, /functionalVisionTurn: fileSafeTurnEvidence\(textEvidence, visionEvidence\)/)
+  assert.doesNotMatch(source, /writeFileSync\(diagnosticPath,[^\n]*JSON\.stringify\(failure/,
+    'raw failure objects may contain Host response bodies and must never be persisted')
+  assert.doesNotMatch(source, /writeFileSync\(diagnosticPath,[^\n]*JSON\.stringify\(lastCoreProbe/,
+    'raw Host probe responses must remain console-only')
+  const fileFailureStart = source.indexOf('const fileFailure = {')
+  const fileFailureEnd = source.indexOf('try { writeFileSync(diagnosticPath', fileFailureStart)
+  assert.ok(fileFailureStart >= 0 && fileFailureEnd > fileFailureStart)
+  const persistedFailureShape = source.slice(fileFailureStart, fileFailureEnd)
+  assert.doesNotMatch(persistedFailureShape, /\berror\s*:/,
+    'persisted failure diagnostics must not carry arbitrary thrown/network error text')
+  assert.doesNotMatch(persistedFailureShape, /\bcoreProbe\s*:\s*lastCoreProbe\b/,
+    'persisted failure diagnostics must project rather than copy Host probe data')
 })
 
 test('heavy Host classifier skips only version-only curated release metadata', async () => {
@@ -498,6 +545,7 @@ test('heavy Host workflows fail closed on PR impact and reuse only main-written 
     assert.doesNotMatch(source, /restore-keys:/)
     assert.match(source, /github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/)
     assert.match(source, /if: steps\.dsh-build-cache\.outputs\.cache-hit != 'true'/)
+    assert.match(source, /native\/system\/packages\/\*\/lib/)
     assert.match(source, /native\/system\/packages\/\*\/bin/)
     assert.match(source, /vendor\/\*\/lib/)
     assert.match(source, /apps\/\*\/lib/)
@@ -506,6 +554,6 @@ test('heavy Host workflows fail closed on PR impact and reuse only main-written 
   const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
   assert.match(rc17, /push:\n\s+branches: \[main\]/)
   const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc1-validation.yml', import.meta.url), 'utf8')
-  assert.match(rc20, /KEY="dsh-web-v3-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
-  assert.match(rc20, /KEY="dsh-host-v3-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
+  assert.match(rc20, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
+  assert.match(rc20, /KEY="dsh-host-v4-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
 })

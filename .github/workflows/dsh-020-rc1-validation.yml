@@ -17,6 +17,7 @@ on:
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - '.github/workflows/dsh-020-rc1-validation.yml'
   push:
@@ -149,6 +150,29 @@ jobs:
           DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
 
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-020
+        run: pnpm run build
+      - name: Run real macOS Desktop renderer lifecycle
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload macOS Desktop renderer diagnostics on failure
+        if: matrix.os == 'macos-latest' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-020-macos-desktop-renderer-diagnostics
+          path: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.*
+          if-no-files-found: ignore
+          retention-days: 2
+
   real-host-browser:
     needs: impact
     if: needs.impact.outputs.heavy == 'true'
@@ -185,7 +209,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-web-v3-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -204,6 +228,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -223,6 +248,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -324,7 +350,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-host-v3-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-host-v4-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -343,6 +369,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -362,6 +389,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -380,3 +408,22 @@ jobs:
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.2.0-rc.1
         run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+
+      - name: Run real Windows Desktop renderer lifecycle
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload Windows Desktop renderer diagnostics on failure
+        if: matrix.node == '24.21.0' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-020-windows-desktop-renderer-diagnostics
+          path: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.*
+          if-no-files-found: ignore
+          retention-days: 2
