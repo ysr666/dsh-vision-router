@@ -17,6 +17,7 @@ const REQUIRED_SEAMS = [
 ]
 
 const REQUIRED_FIELDS = [
+  '2.3 state',
   'Reason',
   'Host gap',
   'Feature detection',
@@ -47,6 +48,11 @@ test('every retained compatibility seam has a complete removal contract', async 
         `${seam} must document ${field}`,
       )
     }
+    assert.match(
+      section,
+      /- \*\*2\.3 state:\*\* `(?:retain-host-gap|retire-ready|product-compat|historical-only)`\./,
+      `${seam} must use one recognized 2.3 compatibility state`,
+    )
   }
 })
 

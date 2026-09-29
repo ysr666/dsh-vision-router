@@ -4,6 +4,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/dsh-contract-compat.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** preserve released attachment/settings/provider-ownership behavior across the supported DSH window.
 - **Host gap:** rc.6 has the single-attachment contract; later Hosts add batch save, max-dimension policy and newer settings/provider lifecycle behavior.
 - **First needed for:** minimum rc.6 support and the subsequent rc.7/rc.8 attachment migration.
@@ -13,6 +14,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/adapter-update-coalescer.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** keep Vision Router-owned duck-typed adapters compatible with Host `prepareCall` dispatch and prevent synchronous adapter-topology events from recursively reconciling forever.
 - **Host gap:** older plugin adapters do not inherit the Host adapter base class; supported Host generations can emit adapter updates synchronously during registration.
 - **First needed for:** DSH 0.1.1 `prepareCall` and atomic registration behavior.
@@ -22,6 +24,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/android-attachment-compat.js`
 
+- **2.3 state:** `product-compat`.
 - **Reason:** allow the minimum Host path to survive Termux/Android attachment persistence permission boundaries without taking ownership on batch-capable Hosts.
 - **Host gap:** file-backed attachment storage can fail with `EACCES`/`EPERM` in Android/Termux environments on the legacy path.
 - **First needed for:** Android/Termux support while rc.6 remains minimum.
@@ -31,6 +34,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/replay-envelope-v2-compat.js`
 
+- **2.3 state:** `product-compat`.
 - **Reason:** preserve delegated replay identity when producer provider/model moved into durable pi-ai replay envelope v2.
 - **Host gap:** older Vision Router replay code expected producer identity at the top level.
 - **First needed for:** rc.7 replay-envelope v2 histories.
@@ -40,6 +44,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/pi-ai-bridge-wire-compat.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** keep the legacy direct image bridge transport-equivalent to pi-ai declared wire compatibility and, while upstream lacks the OpenCode-specific carrier, project Vision Router-owned session affinity onto the final Go wire without taking ownership of ordinary Host traffic. `lib/session-affinity-runtime.js` is the scoped AsyncLocalStorage companion; it carries affinity only while a Router-owned lazy stream is executing.
 - **Host gap:** the direct bridge predates route/model wire metadata such as max-token fields and route-owned headers; current DSH/pi-ai accepts `GenerateOptions.sessionId` but emits generic affinity carriers rather than OpenCode Go's required `x-opencode-session`.
 - **First needed for:** DSH 0.1.1 pi-ai declared provider/wire compatibility; OpenCode Go's September 2026 required session header.
@@ -49,6 +54,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/settings-client-rc8-lifecycle.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** keep browser settings lifecycle coherent across legacy and current Host client generations.
 - **Host gap:** settings client attachment/replacement lifecycle is not identical across the support window.
 - **First needed for:** rc.8-era settings UI coexistence.
@@ -58,6 +64,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/http-compat.js`
 
+- **2.3 state:** `product-compat`.
 - **Reason:** isolate evidenced provider/model wire quirks from generic visual HTTP execution.
 - **Host gap:** this is provider compatibility rather than a DSH Host gap; some OpenAI-compatible endpoints reject otherwise valid generic payload shapes.
 - **First needed for:** model-family quirks such as GLM-4V-Flash output limits and image-only message handling.
@@ -67,6 +74,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/legacy-global-proxy-boundary.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** preserve the explicit Vision Router proxy override for Host-owned/raw-fetch visual providers without granting that configuration process-wide routing authority. Router-owned HTTP already uses `VisionProviderTransport`; blank `proxy` leaves the compatibility wrapper fully transparent.
 - **Host gap:** DSH 0.1.5 owns ordinary process egress, but a Host adapter invoked through `ctx.llm.stream()` still exposes no DVR-owned request/dispatcher parameter for a vision-only SOCKS/selective override. A separate legacy direct whole-turn mode (`routing=true` plus blank `chainRoute`) also hands control to the Host after the DVR hook returns, leaving no adapter-iteration scope to authorize.
 - **First needed for:** legacy/custom Host-owned visual provider compatibility when users configure a Vision Router-specific proxy override.
@@ -77,6 +85,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/legacy-core-vision-policy-bridge.js`
 
+- **2.3 state:** `retain-host-gap`.
 - **Reason:** preserve the two remaining pre-step compatibility behaviors after Core policy ownership moved to explicit session/Core surfaces: reuse the exact `SessionMemoryView` for text-only image-history rewrite, and expose exact current-turn durable attachment IDs as read-only model context for Vision Router-owned wrappers.
 - **Host gap:** the supported Host pre-step path does not natively provide both an exact session-scoped visual-memory rewrite seam for text-only fallback and a model-readable durable attachment-reference seam for Router-owned image turns.
 - **First needed for:** the Core/session ownership migration that removed Settings/config impersonation while retaining these two real pre-step behaviors.
@@ -86,6 +95,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/tesseract-exec-compat.js`
 
+- **2.3 state:** `product-compat`.
 - **Reason:** own the single process-wide `promisify(execFile)` compatibility boundary for the two narrow child-process cases Vision Router still needs: materializing Tesseract stdin image bytes, and replacing only Core's exact legacy Windows `VirtualScreen`/`CopyFromScreen` desktop-capture command with a per-monitor-DPI-safe equivalent. One owner prevents cleanup-order bugs from independently stacked `execFile` wrappers.
 - **Host gap:** these are runtime/platform gaps rather than DSH semantic ownership: Node's async `execFile` path does not consume the historical OCR `options.input`, while non-DPI-aware Windows PowerShell virtualizes desktop metrics and can disagree with physical screen-copy coordinates on scaled/mixed-DPI displays.
 - **First needed for:** Node 24/local Tesseract process execution reliability; Windows scaled/mixed-DPI `vision_screenshot` correctness (#340).
@@ -95,6 +105,7 @@ P0 records why each major compatibility seam exists and the condition that permi
 
 ## `lib/abort-signal-compat.js`
 
+- **2.3 state:** `product-compat`.
 - **Reason:** keep Vision Router cancellation/deadline composition working when a supported DSH Host or bridge exposes `AbortSignal`/`AbortController` but omits the standard static `AbortSignal.any()` or `AbortSignal.timeout()` helpers used by the Router's runtime boundaries.
 - **Host gap:** some real Host/bridge environments can surface a partial AbortSignal runtime even though the declared Node support window normally provides both helpers, producing `AbortSignal.any is not a function` inside visual work.
 - **First needed for:** partial Host/bridge AbortSignal runtimes observed during Vision Router image execution and exact capability checks.
