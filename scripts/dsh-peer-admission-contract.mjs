@@ -16,12 +16,15 @@ const compatibilityModule = pathToFileURL(join(
 const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
 const admitted = [
+  // DVR 2.3 supports the 0.1.x line continuously from the first 0.1.5
+  // release candidate; later 0.1.x releases are not enumerated exceptions.
+  '0.1.5-rc.1',
+  '0.1.5-rc.3',
+  '0.1.6-alpha.1',
   '0.1.7-rc.2',
-  // DSH evaluates peer ranges with includePrerelease=true. The 0.2 train is
-  // therefore expressed as one policy range: every 0.2.x prerelease/stable
-  // from the first validated rc.1 baseline is admitted, while 0.3.0 and every
-  // 0.3 prerelease remain outside the range until separately reviewed.
-  '0.2.0-rc.1',
+  '0.1.99',
+  // The 0.2.x train is admitted from the exact rc.2 boundary that DVR
+  // validates across source, browser, and Desktop contracts.
   '0.2.0-rc.2',
   '0.2.0',
   '0.2.1-alpha.1',
@@ -39,8 +42,11 @@ for (const runtimeVersion of admitted) {
 }
 
 const rejected = [
+  '0.1.4',
+  '0.1.5-beta.1',
   '0.2.0-beta.1',
   '0.2.0-rc.0',
+  '0.2.0-rc.1',
   '0.3.0-alpha.1',
   '0.3.0-beta.1',
   '0.3.0-rc.1',

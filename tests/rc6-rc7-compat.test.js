@@ -447,7 +447,7 @@ test('settings compatibility keeps the first-class section without requiring a l
 
 test('manifest publishes the DVR 2.3 0.1.5 Host train without restoring jagged legacy admission', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '>=0.1.5-rc.1 <0.1.6-0 || >=0.2.0-rc.2 <0.2.1-0'
+  const expectedHostPeerRange = '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)

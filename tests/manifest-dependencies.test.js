@@ -94,7 +94,7 @@ test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission r
   for (const name of hostPeers) {
     assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
     const peer = pkg.peerDependencies?.[name]
-    assert.equal(peer, '>=0.1.5-rc.1 <0.1.6-0 || >=0.2.0-rc.2 <0.2.1-0')
+    assert.equal(peer, '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0')
     assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
     assert.equal(pkg.devDependencies?.[name], '0.2.0-rc.2', `${name} development fixture must pin exact rc.2`)
   }
