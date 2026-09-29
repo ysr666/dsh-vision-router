@@ -10,6 +10,7 @@ function makeHarness({ failRestriction = false } = {}) {
   const definitions = new Map()
   const restrictCalls = []
   const warnings = []
+  const effects = []
   const scopedByAgent = new WeakMap()
   let screenshotCandidate
 
@@ -69,6 +70,11 @@ function makeHarness({ failRestriction = false } = {}) {
       handlers.set(event, handler)
       return () => handlers.delete(event)
     },
+    effect(setup) {
+      const cleanup = setup()
+      if (typeof cleanup === 'function') effects.push(cleanup)
+      return cleanup
+    },
   }
   const mode = installSessionVisionModeBoundary(ctx, config)
 
@@ -125,11 +131,16 @@ function makeHarness({ failRestriction = false } = {}) {
 
   return {
     mode,
+    ctx,
+    config,
     handlers,
     definitions,
     restrictCalls,
     warnings,
     makeAgent,
+    disposeBoundaryEffects() {
+      for (const cleanup of effects.splice(0).reverse()) cleanup()
+    },
     shadowForAgent(agent, name, definition) {
       const scoped = scopedByAgent.get(agent)
       assert.ok(scoped)
@@ -186,6 +197,40 @@ test('issue #512: repeated OFF sync cannot unmask a restriction through scoped g
   harness.handlers.get('agent/status')?.({ agent, status: 'running' })
   assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
   assert.deepEqual(harness.restrictCalls, [['vision_describe']])
+})
+
+
+test('issue #512: boundary teardown releases Agent-scoped masks before HMR re-registration', async () => {
+  const harness = makeHarness()
+  const disposeFirstTool = harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = harness.makeAgent()
+
+  harness.handlers.get('agent/created')?.({ agent })
+  assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
+  assert.deepEqual(harness.restrictCalls, [['vision_describe']])
+
+  // Settings/HMR disposes the plugin fiber, but the Agent scope survives. The
+  // tool registration disappears with the old fiber; its Agent-scoped deny
+  // must disappear too or the next generation cannot make the same tool visible.
+  disposeFirstTool()
+  harness.disposeBoundaryEffects()
+
+  agent.session.selectionState = {
+    lastUsed: { provider: 'deepseek-vision', model: 'model' },
+    pending: null,
+  }
+  const nextMode = installSessionVisionModeBoundary(harness.ctx, harness.config)
+  nextMode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  harness.handlers.get('agent/status')?.({ agent, status: 'running' })
+
+  assert.ok(agent.ctx.tools.get('vision_describe'))
+  const assembly = { tools: agent.ctx.tools.get('vision_describe') ? [{ name: 'vision_describe' }] : [] }
+  const projected = await harness.handlers.get('system-prompt/assemble')?.(
+    assembly,
+    { agent },
+    async () => assembly,
+  )
+  assert.deepEqual(projected.tools.map((tool) => tool.name), ['vision_describe'])
 })
 
 test('issue #512: genuine restriction failures keep bounded diagnostics', () => {

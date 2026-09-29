@@ -108,26 +108,6 @@ async function dismissVisionOnboarding(page) {
   await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
 }
 
-async function adoptWorkspaceIfNeeded(page, workspacePath) {
-  const choose = page.getByRole('button', { name: /^(?:Choose workspace|选择工作区)$/i }).first()
-  try { await choose.waitFor({ state: 'visible', timeout: 2_000 }) } catch { return false }
-  const bodyText = await page.locator('body').innerText()
-  if (!/Choose a workspace to start|选择工作区.*开始/i.test(bodyText)) return false
-
-  await choose.click()
-  const picker = page.getByRole('dialog', { name: /^(?:Select Workspace Directory|选择工作区目录)$/i })
-  await picker.waitFor({ state: 'visible', timeout: 30_000 })
-  await picker.getByRole('button', { name: /^(?:Edit path|编辑路径)$/i }).click()
-  const pathInput = picker.getByRole('textbox', { name: /^(?:Edit path|编辑路径)$/i })
-  await pathInput.waitFor({ state: 'visible', timeout: 10_000 })
-  await pathInput.fill(workspacePath)
-  await pathInput.press('Enter')
-  await pathInput.waitFor({ state: 'hidden', timeout: 30_000 })
-  await picker.getByRole('button', { name: /^(?:Open|打开)$/i }).click({ timeout: 30_000 })
-  await picker.waitFor({ state: 'hidden', timeout: 30_000 })
-  return true
-}
-
 async function stopProcess(child) {
   if (!child || child.exitCode !== null) return
   if (process.platform === 'win32') {
@@ -142,7 +122,8 @@ async function stopProcess(child) {
 const root = mkdtempSync(join(tmpdir(), 'dvr-017-desktop-renderer-'))
 const home = join(root, 'home')
 const project = join(root, 'project')
-const workspace = join(root, 'workspace')
+const documentsDirectory = join(root, 'documents')
+const workspace = join(documentsDirectory, 'deepseek-harness', 'default-workspace')
 const userData = join(root, 'user-data')
 const runtimeRoot = join(root, 'runtime')
 const primaryRuntime = join(runtimeRoot, 'primary-runtime')
@@ -160,7 +141,6 @@ const rendererErrors = []
 try {
   mkdirSync(home)
   mkdirSync(userData)
-  mkdirSync(workspace)
 
   textServer = await listenHttp(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
@@ -177,7 +157,9 @@ try {
       ])
       return
     }
-    const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(serialized)?.[1]
+    const attachment =
+      /\[attached image:\s*([^\]]+)\]/i.exec(serialized)?.[1]
+      ?? /\bsha256:[a-f0-9]{64}\b/i.exec(serialized)?.[0]
     const toolNames = Array.isArray(body.tools) ? body.tools.map((tool) => tool?.function?.name).filter(Boolean) : []
     if (!attachment || !toolNames.includes('vision_describe')) {
       sendSse(res, [
@@ -250,6 +232,9 @@ try {
     '  config:',
     '    host: 127.0.0.1',
     '    port: 0',
+    '- id: workspace-controller',
+    '  config:',
+    `    documentsDirectory: ${JSON.stringify(documentsDirectory)}`,
     '- id: llm-pi-ai',
     '  config:',
     '    providers:',
@@ -344,14 +329,16 @@ try {
     if (!markers.includes(required)) throw new Error(`Desktop boot is missing ${required}`)
   }
 
-  // A fresh Desktop profile may have no current workspace, in which case the
-  // Session-scoped right slot is correctly absent. Exercise the real picker
-  // before asserting the Vision control instead of assuming developer state.
+  // Pin the Host-owned default workspace inside this test's temporary world.
+  // Desktop prefers the native OS directory picker over the browser fallback,
+  // so driving a DOM dialog here would test the wrong surface on fresh profiles.
+  // The workspace-controller owns first-use creation; wait for the Session slot
+  // below to prove that initialization completed before exercising Vision mode.
   await dismissVisionOnboarding(page)
-  await adoptWorkspaceIfNeeded(page, workspace)
 
   const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
   await toggle.waitFor({ state: 'visible', timeout: 30_000 })
+  if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
   await toggle.click()
