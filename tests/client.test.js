@@ -1,6 +1,82 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { createClientMaintenanceActions } from '../lib/client-maintenance-actions.js'
+import { renderedClientMaintenanceActions } from '../scripts/sync-client-embedded-modules.mjs'
+
+test('generated client maintenance actions stay synchronized with their source module', () => {
+  const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(client.includes(renderedClientMaintenanceActions()), true)
+})
+
+test('client maintenance action module owns product HTTP actions without React or Settings authority', async () => {
+  let testState = { status: 'idle' }
+  let updateState = { status: 'idle', result: undefined }
+  let selfUpdateState = { status: 'idle', result: undefined }
+  const calls = []
+  const alerts = []
+  const confirms = []
+  const response = (body, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    async json() { return body },
+  })
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init })
+    if (url === '/_dsh/vision-router/test-connection') return response({ ok: true, provider: 'test' })
+    if (url === '/_dsh/vision-router/request-screenshot-permission') return response({ ok: true })
+    if (url === '/_dsh/vision-router/update-check?force=1') {
+      return response({
+        ok: true,
+        currentVersion: '2.3.0',
+        latestVersion: '2.4.0',
+        updateAvailable: true,
+        autoUpdate: { supported: true, token: 'update-token' },
+      })
+    }
+    if (url === '/_dsh/vision-router/self-update') return response({ ok: true, updated: true })
+    if (url === '/_dsh/vision-router/logs') return response({ ok: true })
+    throw new Error(`unexpected request ${url}`)
+  }
+  const actions = createClientMaintenanceActions({
+    fetchImpl,
+    t: (key) => key,
+    getTestState: () => testState,
+    setTestState: (value) => { testState = value },
+    getUpdateState: () => updateState,
+    setUpdateState: (value) => { updateState = value },
+    getSelfUpdateState: () => selfUpdateState,
+    setSelfUpdateState: (value) => { selfUpdateState = value },
+    confirmImpl(message) { confirms.push(message); return true },
+    alertImpl(message) { alerts.push(message) },
+  })
+
+  await actions.runTestConnection()
+  assert.deepEqual(testState, { status: 'done', result: { ok: true, provider: 'test' } })
+
+  actions.requestDesktopScreenshotPermission()
+  await Promise.resolve()
+
+  await actions.runUpdateCheck(true)
+  assert.equal(updateState.status, 'done')
+  assert.equal(updateState.result.autoUpdate.token, 'update-token')
+
+  await actions.runSelfUpdate()
+  assert.deepEqual(confirms, ['updateConfirm'])
+  assert.deepEqual(selfUpdateState, { status: 'done', result: { ok: true, updated: true } })
+  const selfUpdateCall = calls.find((call) => call.url === '/_dsh/vision-router/self-update')
+  assert.equal(selfUpdateCall.init.headers['x-dsh-vision-router-update-token'], 'update-token')
+
+  assert.deepEqual(await actions.openLogFolder(), { ok: true })
+  assert.deepEqual(alerts, [])
+  assert.deepEqual(calls.map((call) => call.url), [
+    '/_dsh/vision-router/test-connection',
+    '/_dsh/vision-router/request-screenshot-permission',
+    '/_dsh/vision-router/update-check?force=1',
+    '/_dsh/vision-router/self-update',
+    '/_dsh/vision-router/logs',
+  ])
+})
 
 function loadClientBundle() {
   let spec = null
