@@ -70,8 +70,8 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-anonymous-user-id": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm-deepseek": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-anonymous-user-id": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm-deepseek": "0.2.0-rc.2",
     "fast-check": "4.10.0",
     "sharp": "^0.35.4"
   },
