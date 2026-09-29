@@ -556,4 +556,5 @@ test('heavy Host workflows fail closed on PR impact and reuse only main-written 
   const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc2-validation.yml', import.meta.url), 'utf8')
   assert.match(rc20, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
   assert.match(rc20, /KEY="dsh-host-v4-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
+  assert.doesNotMatch(rc20, /DSH_EXPECTED_VERSION: 0\.2\.0-rc\.1/, 'rc.2 Desktop renderer gates must not retain the rc.1 runtime identity')
 })

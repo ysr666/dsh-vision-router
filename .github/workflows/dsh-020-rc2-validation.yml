@@ -160,7 +160,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
@@ -415,7 +415,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
