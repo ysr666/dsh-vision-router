@@ -33,17 +33,14 @@ function legacySessionEvents(session) {
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
-import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { tmpdir } from 'node:os'
 import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import { existsSync } from 'node:fs'
-import { execFile } from 'node:child_process'
 import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
 import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
 import {
   directSessionAffinityHeaders,
@@ -116,7 +113,7 @@ import { stripTrailingSlashes } from './lib/string-normalization.js'
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
-import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
+import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
@@ -4735,170 +4732,18 @@ ctx.logger?.info(
       },
     })
 
-    // ── dsh-vision 并入：屏幕截图（vision_screenshot）───────────────────────
-    // 截取用户桌面。平台命令：Windows PMv2-aware PowerShell helper（虚拟屏幕）、
-    // macOS screencapture（主显示器）、Linux ImageMagick import（回退 scrot，
-    // 两者均为系统外部依赖）。产物写入工作区 artifacts 目录。
-    // Boot-time opt-in: the tool is registered ONLY when desktopScreenshot is
-    // enabled, so a disabled default never changes the model-visible tool set
-    // (token / prefix-cache stability). Changing the toggle requires a restart.
+    // Desktop capture implementation lives behind the existing Core/tool
+    // exposure boundary. Core still decides whether the candidate enters the
+    // deep-tool set; LocalVisionStabilizer owns live schema mounting.
     if (current().desktopScreenshot === true) {
-      deepToolDefs.push({
-        name: 'vision_screenshot',
-      description:
-        'Capture the user\'s desktop screen as a PNG artifact (the virtual screen on Windows; the main display on macOS; the root display on Linux). ' +
-        'Windows: per-monitor-DPI-aware PowerShell capture; macOS: screencapture; Linux: ImageMagick import (falls back to scrot; either command must be installed). ' +
-        'This privacy-sensitive tool is disabled by default and works only after the user explicitly enables Desktop screenshot in Vision Router settings. ' +
-        'Use it when you need to see what is on the user\'s screen right now — e.g. their current GUI, an app, or a page outside this browser. ' +
-        'Optional identify=true also runs local recognition on the capture using the enabled local backends (Ollama, then LM Studio) and returns the description alongside the path.',
-      parameters: {
-        type: 'object',
-        properties: {
-          identify: {
-            type: 'boolean',
-            description:
-              'Also recognize the captured screen with enabled local vision backends (Ollama, then LM Studio) and return the description text with the path. Default false.',
-          },
-        },
-        additionalProperties: false,
-      },
-      output: stringOutput,
-      async execute(args, exec) {
-        if (current().desktopScreenshot !== true) {
-          throw new Error(
-            'vision_screenshot is disabled; enable Desktop screenshot explicitly in Vision Router settings before use',
-          )
-        }
-        const tmp = path.join(
-          tmpdir(),
-          `vision-screenshot-${Date.now()}-${Math.floor(Math.random() * 1e9)}.png`,
-        )
-        const platform = process.platform
-        try {
-          if (platform === 'win32') {
-            // #409: own the DPI-aware capture here instead of emitting the
-            // known-broken logical-coordinate script and hoping a global
-            // promisify(execFile) shim rewrites it later. The helper also
-            // isolates CodeDom TEMP/TMP to a writable ASCII path.
-            await captureWindowsDesktop(tmp, {
-              timeoutMs: timeoutMs(),
-              signal: exec?.signal,
-            })
-          } else if (platform === 'darwin') {
-            // Without -m, screencapture writes one file per display. The code
-            // consumes one artifact path, so request the main display explicitly
-            // instead of leaving untracked sibling files in the temp directory.
-            await promisify(execFile)('screencapture', ['-x', '-m', tmp], {
-              timeout: timeoutMs(),
-              windowsHide: true,
-            })
-          } else {
-            try {
-              await promisify(execFile)('import', ['-window', 'root', tmp], { timeout: timeoutMs() })
-            } catch {
-              await promisify(execFile)('scrot', [tmp], { timeout: timeoutMs() })
-            }
-          }
-          if (!existsSync(tmp)) {
-            throw new Error(
-              `vision_screenshot: no output produced on ${platform} (is a screen available?)`,
-            )
-          }
-          const data = await readFile(tmp)
-          const target = await saveArtifact(exec, `screenshot-${Date.now()}.png`, data)
-          const result = { path: target, bytes: data.length }
-          // dsh-vision 并入：identify —— 截屏后立即本地识别（take_screenshot
-          // identify 的能力）。任一本地后端启用时可用（Ollama 优先、LM Studio
-          // 次之）；失败不阻断截图。
-          if (args.identify === true) {
-            const locals = localProvidersOf(current())
-            if (locals.length > 0) {
-              const startedAt = Date.now()
-              // 识别前降采样：全屏 PNG 可达数 MB（4K 屏 / 多显示器虚拟屏），
-              // 原样 base64 直送会拖慢识别甚至超出视觉模型分辨率上限。
-              // 限制最长边（等比缩放、不放大）后再送，识别又快又稳；
-              // sharp 不可用时（罕见）回退原图，不阻断识别。
-              let identifyBytes = data
-              try {
-                const sharp = await loadSharp()
-                if (sharp) {
-                  const downscaled = await sharp(data, { failOn: 'none' })
-                    .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
-                    .png()
-                    .toBuffer()
-                  if (downscaled.length > 0 && downscaled.length < data.length) {
-                    identifyBytes = downscaled
-                  }
-                }
-              } catch {
-                /* keep the original capture */
-              }
-              if (identifyBytes !== data) {
-                result.identifyDownscaled = {
-                  originalBytes: data.length,
-                  sentBytes: identifyBytes.length,
-                }
-              }
-              const content = toOpenAIContent(
-                [{ type: 'image', attachment: { mediaType: 'image/png', data: identifyBytes } }],
-                () => identifyBytes,
-              )
-              content.push({ type: 'text', text: localDescribePrompt(instantLocalStyle()) })
-              const deadlineAt = Date.now() + timeoutMs()
-              const errors = []
-              for (let index = 0; index < locals.length; index++) {
-                const local = locals[index]
-                const remainingMs = deadlineAt - Date.now()
-                if (remainingMs <= 0) break
-                // Reserve a fair share for later local backends. A connected
-                // but hung Ollama must not consume LM Studio's entire budget.
-                const roundBudgetMs = Math.max(
-                  1,
-                  Math.floor(remainingMs / (locals.length - index)),
-                )
-                const controller = new AbortController()
-                const timer = setTimeout(() => controller.abort(), roundBudgetMs)
-                try {
-                  const identified = await callLocalWithProviderTransport(
-                    local,
-                    [{ role: 'user', content }],
-                    { maxTokens: local.maxTokens ?? 2048, signal: controller.signal },
-                  )
-                  if (typeof identified === 'string' && identified.trim() !== '') {
-                    result.identified = identified.trim()
-                    result.identifiedBy = local.name
-                    result.elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-                    break
-                  }
-                  errors.push(`${local.name}: empty response`)
-                } catch (error) {
-                  errors.push(
-                    `${local.name}: ${error && error.message ? error.message : String(error)}`,
-                  )
-                } finally {
-                  clearTimeout(timer)
-                }
-              }
-              if (result.identified === undefined) {
-                result.identifyError =
-                  errors.length > 0
-                    ? errors.join('; ').slice(0, 1000)
-                    : 'local vision identification timed out before a backend could respond'
-              }
-            } else {
-              result.identifyError = 'no local vision backend enabled (localOllama / localLmStudio); enable one to use identify'
-            }
-          }
-          return JSON.stringify(result)
-        } finally {
-          try {
-            await unlink(tmp)
-          } catch {
-            /* best effort cleanup */
-          }
-        }
-      },
-    })
+      deepToolDefs.push(createDesktopScreenshotTool({
+        current,
+        timeoutMs,
+        saveArtifact,
+        stringOutput,
+        instantLocalStyle,
+        providerTransport,
+      }))
     }
 
     // ── progressive exposure: one bootstrap tool + the vision-tools skill ──
