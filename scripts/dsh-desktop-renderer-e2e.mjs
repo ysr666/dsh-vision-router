@@ -79,6 +79,80 @@ async function closeServer(server) {
   await new Promise((resolveClose) => server.close(() => resolveClose()))
 }
 
+function writeHostCoreProbeFixture(directory) {
+  const name = 'dvr-desktop-core-probe'
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, 'package.json'), `${JSON.stringify({
+    name,
+    version: '1.0.0',
+    type: 'module',
+    main: './index.js',
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  }, undefined, 2)}\n`)
+  writeFileSync(join(directory, 'cordis.patch.yml'), [
+    '- insert:',
+    `    - id: ${name}`,
+    `      name: ${name}`,
+    '',
+  ].join('\n'))
+  writeFileSync(join(directory, 'index.js'), String.raw`const STATES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
+const SERVICE_NAMES = [
+  'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
+  'workspaceController', 'sessionController', 'sessions', 'sessionQuery',
+  'agents', 'llm', 'typert', 'webServer',
+]
+
+function serviceState(ctx, name) {
+  let active
+  let present
+  try { active = ctx.get(name) } catch {}
+  try { present = ctx.get(name, false) } catch {}
+  return {
+    active: active !== undefined,
+    present: present !== undefined,
+    constructor: (active ?? present)?.constructor?.name ?? null,
+  }
+}
+
+function fiberError(fiber) {
+  const error = fiber?._error
+  if (error === undefined || error === null) return null
+  return String(error?.stack || error).slice(0, 12000)
+}
+
+export function apply(ctx) {
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-core-status',
+      handler(_request, response) {
+        const services = Object.fromEntries(SERVICE_NAMES.map((name) => [name, serviceState(scope, name)]))
+        const fibers = []
+        for (const runtime of scope.registry.values()) {
+          for (const fiber of runtime.fibers) {
+            const state = STATES[fiber.state] ?? String(fiber.state)
+            const name = runtime.name ?? fiber.runtime?.name ?? fiber.runtime?.callback?.name ?? '<anonymous>'
+            if (state === 'ACTIVE' && !/storage|session|workspace/i.test(name)) continue
+            fibers.push({
+              name,
+              uid: fiber.uid,
+              state,
+              inject: Object.keys(fiber.inject ?? {}),
+              store: Object.keys(fiber.store ?? {}),
+              error: fiberError(fiber),
+            })
+          }
+        }
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ services, fibers }))
+      },
+    }), 'desktop-e2e: core service diagnostics')
+  })
+}
+`)
+  return { name, directory }
+}
+
 async function waitForCdp(port, deadlineMs = 30_000) {
   const deadline = Date.now() + deadlineMs
   let lastError
@@ -116,6 +190,17 @@ async function exchangeHostCookie(authenticatedUrl) {
     throw new Error(`Desktop Host authentication exchange failed (${response.status})`)
   }
   return setCookie.split(';', 1)[0]
+}
+
+async function readHostCoreProbe(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-core-status'
+  target.search = ''
+  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  const body = await response.json()
+  if (!response.ok) throw new Error(`Desktop Host core probe failed (${response.status}): ${JSON.stringify(body)}`)
+  return body
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
@@ -159,10 +244,18 @@ async function waitForVisionToggle(page, authenticatedUrl) {
       || /Choose a workspace to start|选择(?:一个)?工作区.*开始/i.test(bodyText)
     if (!defaultWorkspaceFailed) throw error
 
+    lastCoreProbe = await readHostCoreProbe(authenticatedUrl).catch((probeError) => ({
+      probeError: String(probeError?.stack || probeError),
+    }))
+    if (lastCoreProbe?.services?.workspaceController?.active !== true
+      || lastCoreProbe?.services?.sessionController?.active !== true) {
+      throw new Error(`Desktop Host core control plane is unavailable: ${JSON.stringify(lastCoreProbe)}`)
+    }
+
     // DSH deliberately does not retry a failed first-use initializeDefault() in
-    // the same navigation. For this DVR renderer gate, recover through DSH's
-    // authenticated public Workspace Remote instead of automating the OS-native
-    // directory picker (which is an upstream Desktop surface, not a DVR one).
+    // the same navigation. Once the Host control plane is healthy, recover through
+    // DSH's authenticated public Workspace Remote instead of automating the
+    // OS-native directory picker (which is an upstream Desktop surface, not a DVR one).
     await callHostRemote(authenticatedUrl, 'workspace/initializeDefault')
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.evaluate(async () => await window.dshDesktopBoot.ready())
@@ -205,6 +298,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
   rejectAuthenticatedHostUrl = reject
 })
 let desktopOutputBuffer = ''
+let lastCoreProbe
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -290,10 +384,13 @@ try {
   const manager = new DesktopProjectManager(paths, { dsh: project })
   await manager.applyRelease()
 
+  const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
   manifest.dependencies['dsh-vision-router'] = `file:${dvrRoot}`
+  manifest.dependencies[coreProbeFixture.name] = `file:${coreProbeFixture.directory}`
   if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
+  manifest.dsh.profile.bundles.push(coreProbeFixture.name)
   writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
   // Exercise the exact public configuration surfaces: a local OpenAI-compatible
   // text route drives the real Agent loop, while DVR's vision-http route drives
@@ -543,7 +640,15 @@ try {
     })),
     url: location.href,
   })).catch(() => undefined) : undefined
-  const failure = { ok: false, error: String(error?.stack || error), rendererErrors, textEvidence, visionEvidence, failureState }
+  const failure = {
+    ok: false,
+    error: String(error?.stack || error),
+    rendererErrors,
+    textEvidence,
+    visionEvidence,
+    coreProbe: lastCoreProbe,
+    failureState,
+  }
   console.error(JSON.stringify(failure, undefined, 2))
   if (diagnosticPath) {
     try { writeFileSync(diagnosticPath, `${JSON.stringify(failure, undefined, 2)}\n`) } catch {}
