@@ -1,4 +1,4 @@
-name: DSH 0.2.0-rc.1 validation
+name: DSH 0.2.0-rc.2 validation
 
 on:
   pull_request:
@@ -17,8 +17,9 @@ on:
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - '.github/workflows/dsh-020-rc1-validation.yml'
+      - '.github/workflows/dsh-020-rc2-validation.yml'
   push:
     branches: [main]
     paths:
@@ -26,7 +27,7 @@ on:
       - 'cordis.patch.yml'
       - 'lib/**'
       - 'scripts/**'
-      - '.github/workflows/dsh-020-rc1-validation.yml'
+      - '.github/workflows/dsh-020-rc2-validation.yml'
 
 permissions:
   contents: read
@@ -36,8 +37,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  DSH_VERSION: 0.2.0-rc.1
-  DSH_SHA: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+  DSH_VERSION: 0.2.0-rc.2
+  DSH_SHA: 639ed015397290b3745d163aafe02ffee4aa3f84
 
 jobs:
   impact:
@@ -98,11 +99,11 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout immutable DSH 0.2.0-rc.1 source
+      - name: Checkout immutable DSH 0.2.0-rc.2 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          ref: 639ed015397290b3745d163aafe02ffee4aa3f84
           persist-credentials: false
           path: dsh-020
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -121,8 +122,8 @@ jobs:
         working-directory: dsh-020
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
-          DSH_EXPECTED_COMMIT: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
+          DSH_EXPECTED_COMMIT: 639ed015397290b3745d163aafe02ffee4aa3f84
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
       - name: Verify 0.2 train peer admission with official Host evaluator
         working-directory: dsh-020
@@ -149,6 +150,29 @@ jobs:
           DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
 
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-020
+        run: pnpm run build
+      - name: Run real macOS Desktop renderer lifecycle
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload macOS Desktop renderer diagnostics on failure
+        if: matrix.os == 'macos-latest' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-020-macos-desktop-renderer-diagnostics
+          path: ${{ runner.temp }}/dsh-020-macos-desktop-renderer.*
+          if-no-files-found: ignore
+          retention-days: 2
+
   real-host-browser:
     needs: impact
     if: needs.impact.outputs.heavy == 'true'
@@ -161,11 +185,11 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout immutable DSH 0.2.0-rc.1 source
+      - name: Checkout immutable DSH 0.2.0-rc.2 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          ref: 639ed015397290b3745d163aafe02ffee4aa3f84
           persist-credentials: false
           path: dsh-020
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -185,7 +209,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-web-v3-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -204,6 +228,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -223,6 +248,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -234,7 +260,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
       - name: Run cold Vision toggle
         id: cold-smoke
@@ -242,7 +268,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-cold-toggle.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
@@ -260,7 +286,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-mixed.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-mixed.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
@@ -269,7 +295,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-settings.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-settings.png
         run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
@@ -277,7 +303,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dsh-020-rc1-browser-diagnostics
+          name: dsh-020-rc2-browser-diagnostics
           path: ${{ runner.temp }}/dsh-020-*
           if-no-files-found: ignore
           retention-days: 2
@@ -298,11 +324,11 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout immutable DSH 0.2.0-rc.1 source
+      - name: Checkout immutable DSH 0.2.0-rc.2 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 4878cdabd87d4041bdaff61d04c966883b9fd07a
+          ref: 639ed015397290b3745d163aafe02ffee4aa3f84
           persist-credentials: false
           path: dsh-020
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -324,7 +350,7 @@ jobs:
           DSH_SHA="$(git rev-parse HEAD)"
           LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
           TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
-          KEY="dsh-host-v3-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-host-v4-${RUNNER_OS}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
 
       - name: Install DSH workspace dependencies
@@ -343,6 +369,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -362,6 +389,7 @@ jobs:
             dsh-020/vendor/*/lib
             dsh-020/apps/*/lib
             dsh-020/apps/web/dist
+            dsh-020/native/system/packages/*/lib
             dsh-020/native/system/packages/*/bin
             dsh-020/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
@@ -370,7 +398,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
       - name: Run Node 24 multi-plugin ordering adversary
         if: matrix.node == '24.21.0'
@@ -378,5 +406,24 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.0-rc.1
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
         run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+
+      - name: Run real Windows Desktop renderer lifecycle
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-020
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.0-rc.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload Windows Desktop renderer diagnostics on failure
+        if: matrix.node == '24.21.0' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-020-windows-desktop-renderer-diagnostics
+          path: ${{ runner.temp }}/dsh-020-windows-desktop-renderer.*
+          if-no-files-found: ignore
+          retention-days: 2

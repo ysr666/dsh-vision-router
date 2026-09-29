@@ -155,7 +155,7 @@ jobs:
           [[ "$DSH_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid DSH source SHA"; exit 1; }
           [[ "$LOCK_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH lock hash"; exit 1; }
           [[ "$TREE_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH build-input hash"; exit 1; }
-          KEY="dsh-web-v3-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
           printf 'Exact DSH build cache key: %s\n' "$KEY"
 
@@ -176,6 +176,8 @@ jobs:
             dsh-preview/vendor/*/lib
             dsh-preview/apps/*/lib
             dsh-preview/apps/web/dist
+            dsh-preview/native/system/packages/*/lib
+            dsh-preview/native/system/packages/*/bin
             dsh-preview/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
@@ -194,6 +196,8 @@ jobs:
             dsh-preview/vendor/*/lib
             dsh-preview/apps/*/lib
             dsh-preview/apps/web/dist
+            dsh-preview/native/system/packages/*/lib
+            dsh-preview/native/system/packages/*/bin
             dsh-preview/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 

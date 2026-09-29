@@ -5,6 +5,7 @@ import vm from 'node:vm'
 import {
   SETTINGS_IA_CLIENT_PRELUDE,
   injectSettingsIaClientPrelude,
+  installSettingsIaClientPrelude,
 } from '../lib/settings-ia-client-prelude.js'
 
 function reactStub(stateValues = []) {
@@ -151,6 +152,27 @@ function createHarness(React, { value = baseSettings(), local = true, location }
   return { registeredComponent, OriginalSection, scope }
 }
 
+test('settings IA publishes both script and stylesheet on the Desktop structured carrier', () => {
+  const listeners = []
+  const ctx = {
+    inject(_deps, callback) {
+      callback({
+        on(name, listener) { listeners.push([name, listener]) },
+        effect(factory) { factory() },
+        webServer: { tapIndex() { return () => {} } },
+      })
+    },
+  }
+  installSettingsIaClientPrelude(ctx)
+  const rows = []
+  for (const [name, listener] of listeners) {
+    assert.equal(name, 'webserver/index-inject')
+    listener(rows)
+  }
+  assert.equal(rows.filter((row) => row.kind === 'script' && row.text.includes('data-vision-router-settings-ia')).length, 1)
+  assert.equal(rows.filter((row) => row.kind === 'style' && row.text.includes('data-vision-router-settings-ia:style')).length, 1)
+})
+
 test('settings IA prelude injects once', () => {
   const html = '<html><head></head><body></body></html>'
   const once = injectSettingsIaClientPrelude(html)
@@ -189,6 +211,27 @@ test('general page keeps the happy path focused on model chain and free fallback
   assert.match(text, /远程 OVHcloud 服务/)
   assert.doesNotMatch(text, /整轮视觉路由（旧工作流）/)
   assert.doesNotMatch(text, /渐进式工具暴露/)
+})
+
+test('active local-only vision discloses the derived-text boundary in context', () => {
+  const React = reactStub()
+  const { registeredComponent, scope } = createHarness(React, {
+    value: baseSettings({ localOnlyVision: true }),
+  })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /Vision Router 不会把图片和裁剪发送到云端视觉服务/)
+  assert.match(text, /描述、OCR、坐标等识图结果文本仍会交给当前聊天模型/)
+  assert.match(text, /若聊天模型在云端，图片语义仍可能离开本机/)
+  assert.match(text, /严格纯本地还需同时选择本地聊天模型/)
+
+  const remoteReact = reactStub()
+  const remote = createHarness(remoteReact, {
+    local: false,
+    value: baseSettings({ localOnlyVision: true }),
+  })
+  const remoteText = textOf(remote.registeredComponent({ scope: remote.scope }))
+  assert.match(remoteText, /识图结果文本仍会交给当前聊天模型/)
+  assert.match(remoteText, /图片语义仍可能离开本机/)
 })
 
 test('strategy page groups tool usage, 1+x depth, independent call cap, and custom guidance together', () => {
@@ -260,6 +303,25 @@ test('advanced page consolidates performance, wrapper scope, compatibility, netw
   assert.match(text, /开发者设置/)
   assert.match(text, /渐进式工具暴露/)
   assert.match(text, /保存后需重启 DSH 才生效/)
+})
+
+test('diagnostics reports the vision-result destination without claiming end-to-end locality', () => {
+  const React = reactStub([
+    'diagnostics',
+    {},
+    undefined,
+    undefined,
+    undefined,
+    { status: 'idle', error: undefined },
+    { status: 'ready', groups: [] },
+    { ollama: false, lmstudio: false, developer: false },
+  ])
+  const { registeredComponent, scope } = createHarness(React, {
+    value: baseSettings({ localOnlyVision: true }),
+  })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /识图结果去向/)
+  assert.match(text, /当前聊天模型（可能为云端）/)
 })
 
 

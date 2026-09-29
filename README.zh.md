@@ -373,7 +373,7 @@ Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页�
 | `tool` / `progressiveTools` / `autoActivateOnImage` | `true` / `false` / `true` | 视觉工具总开关 / 渐进式挂载（默认关闭以稳定工具 schema）/ 渐进模式下图片轮自动挂载；`progressiveTools` 为启动期配置 |
 | `rewriteImages` | `true` | 模型输入层改写图片块（缓存描述或工具提示标记）；界面日志保留图片 |
 | `desktopScreenshot` | `false` | 模型可调用的 `vision_screenshot` 桌面截屏隐私开关；每次截屏前实时检查 |
-| `localOnlyVision` | `false` | 运行时隐私策略：开启后只有回环地址上的视觉端点可执行；云端/DSH Provider 与内置 OVH 兜底保留配置但 fail closed |
+| `localOnlyVision` | `false` | 视觉端点隐私策略：只有回环地址上的视觉端点可执行，Vision Router 不会把图片/裁剪发给云端视觉服务；描述、OCR、坐标等识图结果文本仍会交给当前聊天模型，因此严格端到端纯本地还需同时使用本地聊天模型 |
 | `freeFallback` | `true` | 在显式本地/自定义 HTTP 后端之后追加匿名 OVH 模型；`localOnlyVision` 开启期间不会执行 |
 | `localOllama` | `{ enabled: false, baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5vl', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | 本地视觉后端；OpenAI 模式默认关闭受支持模型的推理，把输出预算留给正文 |
 | `localLmStudio` | `{ enabled: false, baseURL: 'http://localhost:1234/v1', model: '', format: 'openai', maxTokens: 4096, reasoningEffort: 'none' }` | Ollama 之后的本地 LM Studio 后端；LM Studio 0.4+ 可选 `format: 'lmstudio'` 使用官方原生推理控制 |
@@ -434,7 +434,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略：** DVR 2.2.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前稳定通道已验证并支持到 `0.1.5-rc.3`。DSH `0.2.x` 从已验证的 `0.2.0-rc.1` 边界开始准入（`>=0.2.0-rc.1 <0.3.0-0`）；精确 `0.2.0-rc.1`（`next`）源码、真实 Host、Windows Desktop、多插件、Settings、混合附件、bundle 重组及 Host-Sharp 门禁仅作为预览验证证据，不抬高公开支持下限。上游正式发布稳定版 `0.2.0` tag 和签名 Desktop 安装包后仍会立即复验。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持策略：** DVR 2.2.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前稳定通道已验证并支持到 `0.1.5-rc.3`。DSH `0.2.x` 从已验证的 `0.2.0-rc.1` 边界开始准入（`>=0.2.0-rc.1 <0.3.0-0`）；精确 `0.2.0-rc.2`（`next/rc`）源码、真实 Host、Windows Desktop、多插件、Settings、混合附件、bundle 重组及 Host-Sharp 门禁仅作为预览验证证据，不抬高公开支持下限。上游正式发布稳定版 `0.2.0` tag 和签名 Desktop 安装包后仍会立即复验。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

@@ -50,7 +50,7 @@ H1 is complete as an egress contract, not as a new production dependency. Exact 
 4. The same contract runs against the exact current stable Host and exact preview evidence on Linux, macOS, and Windows through the existing source-contract matrix.
 5. Production code contains no `@deepseek-ai/dsh-http-proxy` dependency or import. `proxyRouteFor()` is used only by the exact-source test as an oracle for the Host decision.
 
-The current stable evidence remains DSH `0.1.5-rc.3`; `0.1.5-rc.1` / `0.1.5-rc.2` remain explicitly peer-admitted, exact next/rc evidence is `0.2.0-rc.1`, and the public minimum remains `0.1.0-rc.8`.
+The current stable evidence remains DSH `0.1.5-rc.3`; `0.1.5-rc.1` / `0.1.5-rc.2` remain explicitly peer-admitted, exact next/rc evidence is `0.2.0-rc.2`, and the public minimum remains `0.1.0-rc.8`.
 
 ## H2 — Scope Host-owned override authority
 
