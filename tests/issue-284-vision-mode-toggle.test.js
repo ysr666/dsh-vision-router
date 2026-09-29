@@ -503,6 +503,19 @@ test('issue #284 keeps the composer row stable while DSH reloads the model direc
   const onButton = buttonOf(harness.render())
   assert.equal(onButton.props['aria-pressed'], true)
 
+  // A non-empty but incomplete generation is not safe to cache or render:
+  // the current route exists, but its source/twin pair has not arrived yet.
+  harness.setSnapshot({
+    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    groups: [groups[1]],
+    status: 'loading',
+    error: null,
+  })
+  const partial = buttonOf(harness.render())
+  assert.equal(partial.props['aria-pressed'], true)
+  assert.equal(partial.props.disabled, false)
+  assert.equal(partial.props.style.opacity, 1)
+
   // A route switch makes DSH re-resolve the model directory: the store reports
   // idle/loading and may drop the snapshot for a frame. The chip must keep its
   // settled presentation instead of dimming to 45% / disabling itself, and its
