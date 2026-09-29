@@ -1689,6 +1689,18 @@ test('stealth off + alive stock route performs no takeover at all', async (t) =>
   assert.equal(adapters.has('deepseek-official-native'), false)
 })
 
+// ── catalog routing corrections (issue: opencode-go qwen3.6-plus) ──────────
+//
+// The pi-ai catalog routes opencode-go/qwen3.6-plus to openai-completions
+// while the gateway only serves it on /v1/messages; the correction dispatches
+// the pair directly over the Anthropic protocol and stands down the moment
+// the resolved catalog agrees.
+
+const opencodeGoChainConfig = {
+  providers: [{ provider: 'opencode-go', model: 'qwen3.6-plus' }],
+  routing: true,
+}
+
 test('catalog correction answers opencode-go/qwen3.6-plus on the Anthropic endpoint', async () => {
   const { ctx, adapters } = mockHarnessCtx({
     opencodeGo: true,
