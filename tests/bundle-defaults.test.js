@@ -472,7 +472,7 @@ test('DSH build caches retain native JS entrypoints and binaries as one complete
     'alpha-browser-cold-toggle-smoke.yml',
     'dsh-017-browser-smoke.yml',
     'dsh-017-real-host-smoke.yml',
-    'dsh-020-rc1-validation.yml',
+    'dsh-020-rc2-validation.yml',
   ]
 
   for (const name of workflows) {
