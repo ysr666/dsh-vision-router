@@ -78,6 +78,7 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/vision-artifact-store.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'artifact/data-boundary Node 22/24 matrix' },
   { path: 'tests/vision-provider-transport.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
 
+  { path: 'tests/minimum-host-settings-persistence.test.js', owner: '.github/workflows/dsh-contract.yml', reason: 'minimum supported Host SettingsProvider persistence contract' },
   { path: 'tests/dsh-support-window.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },

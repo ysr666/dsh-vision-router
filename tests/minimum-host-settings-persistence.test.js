@@ -1,23 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { Config } from '../entry.js'
 import { mutateLocalRemoteSettingsPermission } from '../lib/local-remote-settings-permission.js'
 
-function realRc6SettingsRoot() {
-  const store = path.resolve('node_modules/.pnpm')
-  const candidates = readdirSync(store)
-    .filter((name) => name.startsWith('@deepseek-ai+dsh-settings@0.1.0-rc.6'))
-    .sort()
-  assert.ok(candidates.length > 0, 'the locked real @deepseek-ai/dsh-settings@0.1.0-rc.6 package must be installed')
-  return path.join(store, candidates[0], 'node_modules', '@deepseek-ai', 'dsh-settings')
+function minimumHostSettingsRoot() {
+  const root = process.env.DSH_MINIMUM_SETTINGS_ROOT
+  assert.equal(
+    typeof root,
+    'string',
+    'DSH_MINIMUM_SETTINGS_ROOT must point at the isolated minimum-supported Host @deepseek-ai/dsh-settings package',
+  )
+  assert.notEqual(root.trim(), '', 'DSH_MINIMUM_SETTINGS_ROOT must not be blank')
+  return path.resolve(root)
 }
 
-test('real rc6 SettingsProvider persists allowRemoteSettings in the raw user section', async () => {
-  const settingsRoot = realRc6SettingsRoot()
+test('minimum supported Host SettingsProvider persists allowRemoteSettings in the raw user section', async () => {
+  const settingsRoot = minimumHostSettingsRoot()
   const settingsModule = await import(pathToFileURL(path.join(settingsRoot, 'lib/index.js')).href)
   const peerRequire = createRequire(path.join(settingsRoot, 'package.json'))
   const cordisEntry = peerRequire.resolve('@deepseek-ai/cordis')
@@ -64,8 +65,8 @@ test('real rc6 SettingsProvider persists allowRemoteSettings in the raw user sec
   await fiber.dispose()
 })
 
-test('real rc6 SettingsProvider preserves prototype routing fields without product authority', async () => {
-  const settingsRoot = realRc6SettingsRoot()
+test('minimum supported Host SettingsProvider preserves prototype routing fields without product authority', async () => {
+  const settingsRoot = minimumHostSettingsRoot()
   const settingsModule = await import(pathToFileURL(path.join(settingsRoot, 'lib/index.js')).href)
   const peerRequire = createRequire(path.join(settingsRoot, 'package.json'))
   const cordisEntry = peerRequire.resolve('@deepseek-ai/cordis')

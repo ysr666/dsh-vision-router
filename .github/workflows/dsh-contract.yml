@@ -136,6 +136,11 @@ jobs:
           EXPECT_SESSION_EVENT_READ: ${{ matrix.session_event_read }}
           EXPECT_SESSION_LOG_READ: ${{ matrix.session_log_read }}
         run: node scripts/dsh-host-contract-smoke.mjs
+      - name: Verify minimum Host Settings persistence
+        if: matrix.name == 'minimum-contract'
+        env:
+          DSH_MINIMUM_SETTINGS_ROOT: ${{ env.HOST_DIR }}/node_modules/@deepseek-ai/dsh-settings
+        run: node --test tests/minimum-host-settings-persistence.test.js
       - name: Verify current Vision Router contract surfaces
         if: matrix.current == 'true'
         run: |
