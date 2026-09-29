@@ -1,4 +1,5 @@
 import './dsh017-settings-session-compat.cases.js'
+import './dsh017-client-loader-activation.cases.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {

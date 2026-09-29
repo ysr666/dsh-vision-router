@@ -1066,6 +1066,9 @@ test('browser page authority wins over contradictory Connection loopback hints',
   assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: false }), { hostname: 'localhost' }), false)
   assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: true }), { hostname: '192.168.1.44' }), true)
   assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: true }), { hostname: 'example.internal' }), true)
+  assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: false }), { protocol: 'dsh-app:', hostname: 'app' }), false)
+  assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: true }), { protocol: 'https:', hostname: 'app' }), true)
+  assert.equal(bundle.shouldUseRemoteSettings(() => ({ isLoopback: true }), { protocol: 'dsh-app:', hostname: 'evil' }), true)
 })
 
 test('removed legacy plugin entry cannot reappear and remote host-only surfaces stay hidden', () => {
