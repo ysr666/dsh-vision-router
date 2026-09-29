@@ -35,7 +35,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Reusable workflows inherit the caller's github.workflow name. Keep this
+  # group independent from callers so an aggregate gate cannot contend with
+  # or cancel itself when it invokes the rc.2 evidence workflow.
+  group: dsh-020-rc2-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

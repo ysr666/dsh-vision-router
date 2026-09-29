@@ -29,6 +29,8 @@ test('2.3 critical architecture gate aggregates runtime, Host and package contra
   assert.match(gate, /test "\$HOST_RESULT" = success/)
   assert.match(gate, /test "\$RC2_RESULT" = success/)
   assert.match(rc2, /workflow_call:/)
+  assert.match(rc2, /group: dsh-020-rc2-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/)
+  assert.doesNotMatch(rc2, /group: \$\{\{ github\.workflow \}\}/)
   assert.match(rc2, /DSH_VERSION: 0\.2\.0-rc\.2/)
   assert.match(rc2, /name: Windows Desktop Host \/ Node \$\{\{ matrix\.node \}\}/)
 
