@@ -108,6 +108,30 @@ async function dismissVisionOnboarding(page) {
   await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
 }
 
+async function waitForVisionToggle(page) {
+  const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await toggle.waitFor({ state: 'visible', timeout: attempt === 0 ? 15_000 : 30_000 })
+      return toggle
+    } catch (error) {
+      const bodyText = await page.locator('body').innerText().catch(() => '')
+      const defaultWorkspaceFailed = /Choose a workspace to start|选择工作区.*开始/i.test(bodyText)
+      if (attempt > 0 || !defaultWorkspaceFailed) throw error
+
+      // DSH's first-use navigation intentionally turns one initializeDefault()
+      // failure into the empty-workspace chooser and does not retry that same
+      // navigation. Desktop Host services can still be settling immediately
+      // after dsh-app://app connects (notably on Windows Node 24), so reload the
+      // renderer once and let the public workspace-controller path retry.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.evaluate(async () => await window.dshDesktopBoot.ready())
+      await dismissVisionOnboarding(page)
+    }
+  }
+  return toggle
+}
+
 async function stopProcess(child) {
   if (!child || child.exitCode !== null) return
   if (process.platform === 'win32') {
@@ -336,8 +360,7 @@ try {
   // below to prove that initialization completed before exercising Vision mode.
   await dismissVisionOnboarding(page)
 
-  const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
-  await toggle.waitFor({ state: 'visible', timeout: 30_000 })
+  const toggle = await waitForVisionToggle(page)
   if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
