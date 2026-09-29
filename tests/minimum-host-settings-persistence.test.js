@@ -41,7 +41,7 @@ test('minimum supported Host SettingsProvider persists allowRemoteSettings in th
   const fiber = ctx.plugin(MemorySettings)
   await fiber
   const provider = ctx.get('settings')
-  provider.register(settingsModule.settingsNamespace('vision-router'), Config)
+  provider.register('vision-router', Config)
 
   const before = provider.describe({ redactSecrets: true }).find((entry) => entry.ns === 'vision-router')
   assert.ok(before)
@@ -94,7 +94,7 @@ test('minimum supported Host SettingsProvider preserves prototype routing fields
   const fiber = ctx.plugin(MemorySettings)
   await fiber
   const provider = ctx.get('settings')
-  provider.register(settingsModule.settingsNamespace('vision-router'), Config)
+  provider.register('vision-router', Config)
 
   const before = provider.describe({ redactSecrets: true }).find((entry) => entry.ns === 'vision-router')
   assert.ok(before)
