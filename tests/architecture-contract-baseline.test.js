@@ -28,10 +28,10 @@ test('public entry remains schema/export only and delegates runtime composition 
   assert.match(source, /export const Config = core\.Config/)
   assert.match(
     source,
-    /export function apply\(ctx, config = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core\)\s*\}/,
+    /export function apply\(ctx, config = \{\}, runtime = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core, runtime\)\s*\}/,
   )
   assert.equal(
-    (source.match(/applyVisionRuntimeComposition\(ctx, config, core\)/g) ?? []).length,
+    (source.match(/applyVisionRuntimeComposition\(ctx, config, core, runtime\)/g) ?? []).length,
     1,
     'public entry must have exactly one production composition call',
   )

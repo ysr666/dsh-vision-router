@@ -5,11 +5,7 @@ import { once } from 'node:events'
 import { createServer as createHttpServer } from 'node:http'
 import { createConnection, createServer as createNetServer } from 'node:net'
 
-import {
-  createVisionProviderTransport,
-  currentVisionProviderTransport,
-  installVisionProviderTransport,
-} from '../lib/vision-provider-transport.js'
+import { createVisionProviderTransport } from '../lib/vision-provider-transport.js'
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
@@ -163,7 +159,7 @@ function createLoopbackSocks5Server(observed, targetPort) {
   })
 }
 
-test('Router-owned OpenAI compatibility bypasses the caller/global fetch once transport is installed', async () => {
+test('Router-owned OpenAI compatibility bypasses the caller/global fetch when transport is explicit', async () => {
   const calls = []
   const original = async (input, init) => {
     calls.push({ source: 'original', input, init })
@@ -173,21 +169,61 @@ test('Router-owned OpenAI compatibility bypasses the caller/global fetch once tr
     throw new Error('legacy global fetch patch must not own Router provider HTTP')
   }
   const transport = createVisionProviderTransport({ fetchImpl: original })
-  const release = installVisionProviderTransport(transport)
   try {
     const response = await fetchWithOpenAICompatibility(
       patched,
       'https://vision.example/v1/chat/completions',
       requestInit(),
-      { active: true, providerName: 'example' },
+      { active: true, providerName: 'example', providerTransport: transport },
     )
     assert.equal(response.ok, true)
     assert.equal(calls.length, 1)
     assert.equal(calls[0].source, 'original')
   } finally {
-    release()
+    await transport.dispose()
   }
-  assert.equal(currentVisionProviderTransport(), undefined)
+})
+
+test('explicit provider transports remain isolated across concurrent runtime calls', async () => {
+  const calls = []
+  const transportA = createVisionProviderTransport({
+    fetchImpl: async (input) => {
+      calls.push(['a', String(input)])
+      await Promise.resolve()
+      return okOpenAI('A')
+    },
+  })
+  const transportB = createVisionProviderTransport({
+    fetchImpl: async (input) => {
+      calls.push(['b', String(input)])
+      await Promise.resolve()
+      return okOpenAI('B')
+    },
+  })
+  try {
+    const [a, b] = await Promise.all([
+      fetchWithOpenAICompatibility(
+        async () => { throw new Error('A caller fetch must stay bypassed') },
+        'https://a.example/v1/chat/completions',
+        requestInit(),
+        { active: true, providerName: 'a', providerTransport: transportA },
+      ),
+      fetchWithOpenAICompatibility(
+        async () => { throw new Error('B caller fetch must stay bypassed') },
+        'https://b.example/v1/chat/completions',
+        requestInit(),
+        { active: true, providerName: 'b', providerTransport: transportB },
+      ),
+    ])
+    assert.equal((await a.json()).choices[0].message.content, 'A')
+    assert.equal((await b.json()).choices[0].message.content, 'B')
+    assert.deepEqual(calls, [
+      ['a', 'https://a.example/v1/chat/completions'],
+      ['b', 'https://b.example/v1/chat/completions'],
+    ])
+  } finally {
+    await Promise.all([transportA.dispose(), transportB.dispose()])
+  }
 })
 
 test('blank plugin proxy inherits the ambient Host dispatcher without importing ProxyAgent', async () => {
@@ -498,7 +534,6 @@ test('active=false compatibility traffic is not claimed by the Router provider t
       return okOpenAI()
     },
   })
-  const release = installVisionProviderTransport(transport)
   try {
     await fetchWithOpenAICompatibility(
       async () => {
@@ -507,10 +542,10 @@ test('active=false compatibility traffic is not claimed by the Router provider t
       },
       'https://registry.example/chat/completions',
       requestInit(),
-      { active: false },
+      { active: false, providerTransport: transport },
     )
   } finally {
-    release()
+    await transport.dispose()
   }
   assert.equal(transportCalls, 0)
   assert.equal(callerCalls, 1)
@@ -524,18 +559,17 @@ test('Anthropic correction/local transport also bypasses ambient global fetch', 
       return okAnthropic('anthropic-transport')
     },
   })
-  const release = installVisionProviderTransport(transport)
   try {
     const output = await callAnthropicCompatible(
       { name: 'corrected', baseURL: 'https://api.example', model: 'vision', apiKeyEnv: '' },
       [{ role: 'user', content: [{ type: 'text', text: 'look' }] }],
-      { allowKeyless: true },
+      { allowKeyless: true, providerTransport: transport },
     )
     assert.equal(output, 'anthropic-transport')
     assert.equal(calls.length, 1)
     assert.equal(calls[0].input, 'https://api.example/v1/messages')
   } finally {
-    release()
+    await transport.dispose()
   }
 })
 
@@ -564,16 +598,16 @@ test('transport credential resolver prefers Host credentials and falls back to e
   }
 })
 
-test('public entry installs provider transport before runtime and scoped Host proxy boundary after runtime', async () => {
+test('public entry passes provider transport explicitly before scoped Host proxy installation', async () => {
   const source = await readFile(new URL('../lib/public-entry.js', import.meta.url), 'utf8')
-  const installAt = source.indexOf('installVisionProviderTransport(transport)')
-  const applyAt = source.indexOf('base.apply(runtimeCtx, hardening.config)')
+  const createAt = source.indexOf('createVisionProviderTransport({')
+  const applyAt = source.indexOf('base.apply(runtimeCtx, hardening.config, { providerTransport: transport })')
   const legacyBoundaryAt = source.indexOf('installLegacyGlobalProxyBoundary(runtimeCtx, hardening.config)')
-  assert.ok(installAt >= 0)
-  assert.ok(applyAt > installAt)
+  assert.ok(createAt >= 0)
+  assert.ok(applyAt > createAt)
   assert.ok(legacyBoundaryAt > applyAt, 'Host-owned compatibility observer must wrap the completed runtime fetch chain')
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
-  assert.match(source, /releaseTransportRegistry\(\)/)
+  assert.doesNotMatch(source, /installVisionProviderTransport|currentVisionProviderTransport/)
   assert.match(source, /void transport\.dispose\(\)/)
 })
 
@@ -796,9 +830,7 @@ test('dispose during pending ProxyAgent construction lets the admitted request f
     fetchImpl: async (input, init) => { calls.push(selectedDispatcher(init.dispatcher, input)); return okOpenAI() },
     importUndici: () => importGate,
   })
-  const release = installVisionProviderTransport(transport)
   const request = transport.fetch('https://api.example.com/pending')
-  release()
   const disposal = transport.dispose()
 
   resolveImport(fakeUndiciModule(FakeProxyAgent))

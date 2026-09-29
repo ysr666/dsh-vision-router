@@ -581,6 +581,13 @@ export function apply(ctx, config = {}, runtime = {}) {
   // adapter boundaries that do not expose a Session; ambiguous attachment ids
   // deliberately miss instead of crossing conversations.
   const sessionVisionRuntime = runtime?.sessionVision
+  const providerTransport = runtime?.providerTransport
+  const callOpenAIWithProviderTransport = (provider, messages, options = {}) =>
+    callOpenAICompatible(provider, messages, { ...options, providerTransport })
+  const callLocalWithProviderTransport = (provider, messages, options = {}) =>
+    callLocalBackend(provider, messages, { ...options, providerTransport })
+  const callAnthropicWithProviderTransport = (provider, messages, options = {}) =>
+    callAnthropicCompatible(provider, messages, { ...options, providerTransport })
   const hostOwnsOfficialDeepSeek = runtime?.hostOwnsOfficialDeepSeek
     ?? hostOwnsOfficialDeepSeekProvider(ctx)
   const visionState = sessionVisionRuntime?.stateStore ?? createSessionVisionStateStore({
@@ -931,6 +938,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           instantLocalStyle,
           instantLocalTimeoutMs: timeoutMs,
           instantLocalMaxPixels,
+          providerTransport,
         }),
       )
       stealthActive = true
@@ -1167,13 +1175,13 @@ export function apply(ctx, config = {}, runtime = {}) {
           // data URIs); callLocalBackend converts them for the Anthropic and
           // LM Studio native wires.
           text = await ((entry.provider.format === 'anthropic' || entry.provider.format === 'lmstudio')
-            ? callLocalBackend(entry.provider, openAIMessages, {
+            ? callLocalWithProviderTransport(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
                 sessionId: options.sessionId,
                 resolveCredential,
               })
-            : callOpenAICompatible(entry.provider, openAIMessages, {
+            : callOpenAIWithProviderTransport(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
                 sessionId: options.sessionId,
@@ -1357,6 +1365,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         instantLocalStyle,
         instantLocalTimeoutMs: timeoutMs,
         instantLocalMaxPixels,
+        providerTransport,
       }),
     }
   }
@@ -1487,6 +1496,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         instantLocalStyle,
         instantLocalTimeoutMs: timeoutMs,
         instantLocalMaxPixels,
+        providerTransport,
       }),
     }
   }
@@ -1778,7 +1788,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const stored = await attachments.readImage(block.attachment)
       content.push(...toOpenAIContent([block], () => stored.data))
     }
-    return callOpenAICompatible(
+    return callOpenAIWithProviderTransport(
       {
         name: provider,
         baseURL: plan.transport.baseURL,
@@ -1863,7 +1873,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (anthropic.messages.length === 0) {
       throw new Error(`corrected route "${pair.provider}/${pair.model}": no representable content to send`)
     }
-    return callAnthropicCompatible(
+    return callAnthropicWithProviderTransport(
       { name: pair.provider, baseURL: correction.baseURL, model: pair.model, apiKeyEnv: '' },
       anthropic.messages,
       {
@@ -3173,7 +3183,7 @@ ctx.logger?.info(
               AbortSignal.timeout(timeoutMs()),
             )
             const askHttp = async (correction) => {
-              const answer = await callOpenAICompatible(
+              const answer = await callOpenAIWithProviderTransport(
                 provider,
                 correction === undefined
                   ? openAIBaseMessages
@@ -3720,7 +3730,7 @@ ctx.logger?.info(
           continue
         }
         try {
-          const text = await callOpenAICompatible(
+          const text = await callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
             {
@@ -4886,7 +4896,7 @@ ctx.logger?.info(
                 const controller = new AbortController()
                 const timer = setTimeout(() => controller.abort(), roundBudgetMs)
                 try {
-                  const identified = await callLocalBackend(
+                  const identified = await callLocalWithProviderTransport(
                     local,
                     [{ role: 'user', content }],
                     { maxTokens: local.maxTokens ?? 2048, signal: controller.signal },

@@ -10,7 +10,7 @@ test('P3-F keeps entry as a thin schema/export boundary', async () => {
   assert.match(entry, /import z from '@deepseek-ai\/schemastery'/)
   assert.match(entry, /import \* as core from '.\/index\.js'/)
   assert.match(entry, /import \{ applyVisionRuntimeComposition \} from '.\/lib\/runtime-composition\.js'/)
-  assert.match(entry, /export function apply\(ctx, config = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core\)\s*\}/s)
+  assert.match(entry, /export function apply\(ctx, config = \{\}, runtime = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core, runtime\)\s*\}/s)
   assert.doesNotMatch(
     entry,
     /installVisionRouterFileLogging|installVisionRoutingRuntime|installVisionWebIntegration|contextWithVisionRuntimePerformance|core\.apply\(/,
@@ -60,8 +60,8 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
 
   assert.match(
     source,
-    /\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?\},?\s*\)/,
-    'core must receive the fully composed backend context plus request-handoff authority, Session Vision mode authority, and explicit SessionVisionRuntime/CoreVisionSurface owners',
+    /\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?providerTransport:\s*runtime\?\.providerTransport,[\s\S]*?\},?\s*\)/,
+    'core must receive the fully composed backend context plus request-handoff authority, Session Vision mode authority, and explicit SessionVisionRuntime/CoreVisionSurface/ProviderTransport owners',
   )
   assert.ok(
     source.split('\n').length < 500,
@@ -71,10 +71,10 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
   assert.match(source, /function createRuntimeOwners\(host, core\)/)
   assert.match(source, /function installRoutingAndHostProducts\(host, owners, core\)/)
   assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core\)/)
-  assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core\)/)
+  assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)/)
   assert.match(
     source,
-    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core\)\s*\}/s,
+    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
     'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)

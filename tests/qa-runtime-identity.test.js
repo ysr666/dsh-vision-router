@@ -84,7 +84,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const source = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
 
   assert.match(entry, /import \{ applyVisionRuntimeComposition \} from '.\/lib\/runtime-composition\.js'/)
-  assert.match(entry, /return applyVisionRuntimeComposition\(ctx, config, core\)/)
+  assert.match(entry, /return applyVisionRuntimeComposition\(ctx, config, core, runtime\)/)
   assert.doesNotMatch(entry, /installVisionRouterFileLogging|installVisionRoutingRuntime|installVisionWebIntegration/)
 
   const mutationAt = source.indexOf('const localMutationCtx = installLocalMutationRouteBoundary(ctx)')
