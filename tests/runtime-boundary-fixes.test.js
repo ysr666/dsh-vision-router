@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { promisify } from 'node:util'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
@@ -20,6 +21,7 @@ import {
 } from '../lib/runtime-config-normalizer.js'
 import { createSessionVisionStateStore } from '../lib/session-vision-state.js'
 import { installLocalVisionStabilizer } from '../lib/local-vision-stabilizer.js'
+import { installVisionMaintenanceRoutes } from '../lib/maintenance-routes.js'
 import {
   installLocalMutationRouteBoundary,
   isLocalUiRequest,
@@ -393,6 +395,103 @@ function responseRecorder() {
     end(body) { this.body = String(body ?? '') },
   }
 }
+
+test('maintenance route owner preserves update token lifecycle and explicit target update', async () => {
+  const routes = new Map()
+  const cleanups = []
+  const checks = []
+  const updates = []
+  const tokens = ['token-1', 'token-2', 'token-3']
+  const child = {
+    webServer: {
+      register(route) {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
+    },
+    effect(factory) {
+      const cleanup = factory()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  const ctx = {
+    logger: { info() {} },
+    inject(_dependencies, callback) { return callback(child) },
+  }
+  const updateChecker = {
+    async check(force) {
+      checks.push(force)
+      return force
+        ? { ok: true, currentVersion: '2.3.0', latestVersion: '2.4.0', updateAvailable: true }
+        : { ok: true, currentVersion: '2.3.0', latestVersion: '2.3.0', updateAvailable: false }
+    },
+  }
+  installVisionMaintenanceRoutes(ctx, {
+    updateChecker,
+    selfUpdatePlan: { available: true, method: 'dsh-plugin-add', profile: 'web' },
+    tokenFactory: () => tokens.shift(),
+    async runUpdate(plan, options) {
+      updates.push({ plan, options })
+      return { ok: true, updated: true, targetVersion: options.targetVersion }
+    },
+  })
+  await Promise.resolve()
+  assert.deepEqual(checks, [false], 'startup check remains passive')
+
+  const updateRoute = routes.get('/_dsh/vision-router/update-check')
+  const selfUpdateRoute = routes.get('/_dsh/vision-router/self-update')
+  assert.ok(updateRoute)
+  assert.ok(selfUpdateRoute)
+
+  let res = responseRecorder()
+  await updateRoute.handler({ method: 'GET', url: '/_dsh/vision-router/update-check?force=1' }, res)
+  assert.equal(res.status, 200)
+  let body = JSON.parse(res.body)
+  assert.equal(body.updateAvailable, true)
+  assert.equal(body.autoUpdate.token, 'token-1')
+  assert.equal(res.headers['cache-control'], 'no-store')
+
+  res = responseRecorder()
+  await selfUpdateRoute.handler({
+    method: 'POST',
+    headers: {
+      'sec-fetch-site': 'same-origin',
+      'x-dsh-vision-router-update-token': 'token-1',
+    },
+  }, res)
+  assert.equal(res.status, 200)
+  body = JSON.parse(res.body)
+  assert.equal(body.updated, true)
+  assert.deepEqual(updates, [{
+    plan: { available: true, method: 'dsh-plugin-add', profile: 'web' },
+    options: { targetVersion: '2.4.0' },
+  }])
+
+  res = responseRecorder()
+  await updateRoute.handler({ method: 'GET', url: '/_dsh/vision-router/update-check?force=1' }, res)
+  body = JSON.parse(res.body)
+  assert.equal(body.autoUpdate.token, 'token-2', 'successful mutation rotates the replay token')
+  assert.deepEqual(checks, [false, true, true, true])
+
+  for (const cleanup of cleanups.toReversed()) cleanup()
+})
+
+test('maintenance Web ownership is extracted from Core and composed after Core apply', async () => {
+  const [core, composition, maintenance] = await Promise.all([
+    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/maintenance-routes.js', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(core, /createCachedUpdateChecker|runDshPluginUpdate|selfUpdateToken/)
+  assert.doesNotMatch(core, /\/_dsh\/vision-router\/(?:update-check|self-update)/)
+  assert.match(maintenance, /path: '\/_dsh\/vision-router\/update-check'/)
+  assert.match(maintenance, /path: '\/_dsh\/vision-router\/self-update'/)
+  const applyAt = composition.indexOf('() => core.apply(')
+  const maintenanceAt = composition.indexOf('installVisionMaintenanceRoutes(coreRequestAuthorityCtx')
+  assert.ok(applyAt >= 0)
+  assert.ok(maintenanceAt > applyAt, 'maintenance routes mount only after Core apply returns')
+})
 
 test('local mutation boundary preserves injected child identity and rejects remote side effects', async () => {
   const routes = new Map()
