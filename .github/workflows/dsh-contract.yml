@@ -3,7 +3,7 @@ name: DSH Contract
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, 2.3.0]
   pull_request:
 
 permissions:
