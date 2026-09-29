@@ -75,7 +75,7 @@ test('public READMEs state stable support policy and delegate moving preview evi
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
     assert.doesNotMatch(source, /0\.1\.2-alpha\.4/)
   }
-  assert.match(supportDoc, /Exact next\/rc evidence \| `0\.2\.0-rc\.1`/)
+  assert.match(supportDoc, /Exact next\/rc evidence \| `0\.2\.0-rc\.2`/)
 })
 
 
