@@ -1,4 +1,5 @@
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer as createHttpServer } from 'node:http'
@@ -255,6 +256,7 @@ try {
     '      desktop-e2e:',
     '        displayName: Desktop E2E',
     '        api: openai-completions',
+    '        apiKeyEnv: DVR_DESKTOP_E2E_API_KEY',
     `        baseURL: ${textServer.url}/v1`,
     '        models:',
     '          - id: desktop-text',
@@ -297,6 +299,9 @@ try {
     DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
     DSH_DESKTOP_OPEN_DEVTOOLS: '0',
     DSH_TELEMETRY_MODE: 'DISABLED',
+    // The public pi-ai custom-provider contract requires a credential. Generate
+    // an ephemeral per-run value instead of storing any test secret in source.
+    DVR_DESKTOP_E2E_API_KEY: randomUUID(),
     ELECTRON_ENABLE_LOGGING: '1',
   }
 
