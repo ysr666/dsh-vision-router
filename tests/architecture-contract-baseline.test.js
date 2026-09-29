@@ -23,9 +23,13 @@ test('package root and runtime support contract stay stable during architecture 
 
 test('public entry remains schema/export only and delegates runtime composition once', async () => {
   const source = await text('entry.js')
+  const publicConfig = await text('lib/public-config.js')
   assert.match(source, /import \{ applyVisionRuntimeComposition \} from '\.\/lib\/runtime-composition\.js'/)
-  assert.match(source, /export const SETTINGS_CONTRACT_REVISION = 7/)
-  assert.match(source, /export const Config = core\.Config/)
+  assert.match(source, /composePublicVisionConfig/)
+  assert.match(source, /export \{ SETTINGS_CONTRACT_REVISION \}/)
+  assert.match(publicConfig, /export const SETTINGS_CONTRACT_REVISION = 7/)
+  assert.match(source, /export const Config = composePublicVisionConfig\(core\.Config\)/)
+  assert.doesNotMatch(source, /Config\.set\(/)
   assert.match(
     source,
     /export function apply\(ctx, config = \{\}, runtime = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core, runtime\)\s*\}/,
@@ -38,17 +42,17 @@ test('public entry remains schema/export only and delegates runtime composition 
 })
 
 test('2.0.x routing and background-authority defaults stay unchanged', async () => {
-  const entry = await text('entry.js')
-  assert.match(entry, /core\.Config\.set\('routingMode', z\.union\(\['ordered', 'auto'\]\)\.default\('ordered'\)\)/)
+  const publicConfig = await text('lib/public-config.js')
+  assert.match(publicConfig, /coreConfig\.set\('routingMode', z\.union\(\['ordered', 'auto'\]\)\.default\('ordered'\)\)/)
   assert.match(
-    entry,
+    publicConfig,
     /z\.union\(\['balanced', 'quality', 'speed', 'local'\]\)\.default\('balanced'\)/,
   )
   assert.match(
-    entry,
+    publicConfig,
     /z\.union\(\['local-free', 'all', 'off'\]\)\.default\('off'\)/,
   )
-  assert.match(entry, /core\.Config\.set\('allowRemoteSettings', z\.boolean\(\)\.default\(false\)\)/)
+  assert.match(publicConfig, /coreConfig\.set\('allowRemoteSettings', z\.boolean\(\)\.default\(false\)\)/)
 })
 
 test('legacy route identity and default provider chain remain compatible', async () => {

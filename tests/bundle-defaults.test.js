@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Config, SETTINGS_CONTRACT_REVISION } from '../entry.js'
+import { Config as CoreConfig } from '../index.js'
 import {
   GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE,
   injectGuideVisionToggleHighlight,
@@ -53,6 +54,10 @@ test('public docs promise Host-canonical raster rather than uploader source-byte
   assert.doesNotMatch(zh, /原图像素留在视觉模型侧/)
   assert.doesNotMatch(zh, /路由桥，像素保真/)
   assert.doesNotMatch(zh, /提供"原图直看"路由/)
+})
+
+test('public Config composition preserves the mature Core schema identity', () => {
+  assert.equal(Config, CoreConfig)
 })
 
 test('public plugin config defaults progressive tools off', () => {

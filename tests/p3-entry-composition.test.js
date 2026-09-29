@@ -7,9 +7,12 @@ test('P3-F keeps entry as a thin schema/export boundary', async () => {
   const imports = entry.match(/^import\s.+$/gm) ?? []
 
   assert.equal(imports.length, 3)
-  assert.match(entry, /import z from '@deepseek-ai\/schemastery'/)
+  assert.match(entry, /composePublicVisionConfig/)
+  assert.match(entry, /from '.\/lib\/public-config\.js'/)
   assert.match(entry, /import \* as core from '.\/index\.js'/)
   assert.match(entry, /import \{ applyVisionRuntimeComposition \} from '.\/lib\/runtime-composition\.js'/)
+  assert.match(entry, /export const Config = composePublicVisionConfig\(core\.Config\)/)
+  assert.doesNotMatch(entry, /Config\.set\(/)
   assert.match(entry, /export function apply\(ctx, config = \{\}, runtime = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core, runtime\)\s*\}/s)
   assert.doesNotMatch(
     entry,
