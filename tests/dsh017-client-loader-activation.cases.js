@@ -8,7 +8,7 @@ import {
   installSettings017ClientCompatibility,
 } from '../lib/settings-client-017-compat.js'
 import { SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE } from '../lib/web/remote-settings-client.js'
-import { SETTINGS_RC8_CLIENT_PRELUDE } from '../lib/settings-client-rc8-lifecycle.js'
+import { SETTINGS_CLIENT_LOADER_LIFECYCLE_PRELUDE } from '../lib/settings-client-loader-lifecycle.js'
 
 test('0.1.7 server-side client shim uses the structured injection table for Desktop and HTTP', () => {
   let dependencies
@@ -260,7 +260,7 @@ test('0.1.7 full settings wrapper stack preserves Desktop authority and DVR loca
 
   runInNewContext(SETTINGS_017_CLIENT_PRELUDE, sandbox)
   runInNewContext(SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE, sandbox)
-  runInNewContext(SETTINGS_RC8_CLIENT_PRELUDE, sandbox)
+  runInNewContext(SETTINGS_CLIENT_LOADER_LIFECYCLE_PRELUDE, sandbox)
   loader.create()
 
   const observed = {}

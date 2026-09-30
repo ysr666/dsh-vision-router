@@ -42,10 +42,10 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** remove legacy bridge recovery when every supported Host executes that image path through native pi-ai wire facts; remove the scoped OpenCode projection independently once every supported DSH/pi-ai path emits `x-opencode-session` from `GenerateOptions.sessionId`. The native header must win before deletion so the compatibility rule self-retires.
 - **Tests:** `pi-ai-bridge-wire-compat`, real `opencode-session-wire-contract`, native process-restart/cold-resume contract.
 
-## `lib/settings-client-rc8-lifecycle.js`
+## `lib/settings-client-loader-lifecycle.js`
 
 - **2.3 state:** `retain-host-gap`.
-- **Reason:** keep current Settings permission/risk wrappers attached when the Host module system switches registrations from queue to live loading.
+- **Reason:** keep current Settings permission/risk capability owners attached when the Host module system switches registrations from queue to live loading. The legacy in-page `settings-rc8-lifecycle` marker/sentinel is intentionally retained only for mixed-generation/HMR idempotency; source/API ownership is capability-named.
 - **Host gap:** immutable supported sources from 0.1.5-rc.1 through 0.2.0-rc.2 still replace the live module `load` function during `create()`, so one boot-time wrapper is not stable across the complete client lifecycle.
 - **First needed for:** the older Settings UI coexistence work; retained now because the same loader replacement remains present on supported Hosts, not because rc.8 itself is supported.
 - **Feature detection:** actual `__ModuleLoader__.create/load` lifecycle and current Settings surfaces; never the Host version label.

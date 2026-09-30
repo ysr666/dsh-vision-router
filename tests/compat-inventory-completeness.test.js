@@ -7,7 +7,7 @@ const REQUIRED_SEAMS = [
   'lib/adapter-update-coalescer.js',
   'lib/replay-envelope-v2-compat.js',
   'lib/pi-ai-bridge-wire-compat.js',
-  'lib/settings-client-rc8-lifecycle.js',
+  'lib/settings-client-loader-lifecycle.js',
   'lib/http-compat.js',
   'lib/legacy-global-proxy-boundary.js',
   'lib/legacy-core-vision-policy-bridge.js',
