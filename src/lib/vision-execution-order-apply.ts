@@ -1,6 +1,11 @@
-function pairIdentity(pair) {
-  const provider = typeof pair?.provider === 'string' ? pair.provider.trim() : ''
-  const model = typeof pair?.model === 'string' ? pair.model.trim() : ''
+import type { VisionRouteIdentity } from './vision-execution-order.js'
+
+function pairIdentity(pair: unknown): string | undefined {
+  const value = pair !== null && typeof pair === 'object'
+    ? pair as { provider?: unknown; model?: unknown }
+    : {}
+  const provider = typeof value.provider === 'string' ? value.provider.trim() : ''
+  const model = typeof value.model === 'string' ? value.model.trim() : ''
   return provider !== '' && model !== '' ? `${provider}\u0000${model}` : undefined
 }
 
@@ -19,23 +24,34 @@ function pairIdentity(pair) {
  * The caller remains responsible for constructing `basePairs` with its normal
  * adapter/HTTP/local availability rules. This helper owns ordering only.
  */
-export function applyVisionExecutionOrder(basePairs, scopedOrder) {
+export function applyVisionExecutionOrder<T>(
+  basePairs: readonly T[],
+  scopedOrder: readonly VisionRouteIdentity[] | undefined,
+): T[]
+export function applyVisionExecutionOrder(
+  basePairs: unknown,
+  scopedOrder: unknown,
+): unknown[]
+export function applyVisionExecutionOrder(
+  basePairs: unknown,
+  scopedOrder: unknown,
+): unknown[] {
   const base = Array.isArray(basePairs)
     ? basePairs.filter((pair) => pairIdentity(pair) !== undefined)
     : []
-  const baseById = new Map()
+  const baseById = new Map<string, unknown>()
   for (const pair of base) {
     const id = pairIdentity(pair)
-    if (!baseById.has(id)) baseById.set(id, pair)
+    if (id !== undefined && !baseById.has(id)) baseById.set(id, pair)
   }
 
   if (!Array.isArray(scopedOrder) || scopedOrder.length === 0) {
     return [...baseById.values()]
   }
 
-  const out = []
-  const seen = new Set()
-  const addBasePair = (pair) => {
+  const out: unknown[] = []
+  const seen = new Set<string>()
+  const addBasePair = (pair: unknown): void => {
     const id = pairIdentity(pair)
     if (id === undefined || seen.has(id)) return
     seen.add(id)
@@ -52,7 +68,7 @@ export function applyVisionExecutionOrder(basePairs, scopedOrder) {
   return out
 }
 
-export function sameVisionPairOrder(left, right) {
+export function sameVisionPairOrder(left: unknown, right: unknown): boolean {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
   for (let index = 0; index < left.length; index += 1) {
     if (pairIdentity(left[index]) !== pairIdentity(right[index])) return false

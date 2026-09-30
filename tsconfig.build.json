@@ -23,6 +23,8 @@
     "src/lib/proxy-routing.ts",
     "src/lib/proxy-dispatcher-pool.ts",
     "src/lib/http-body-limit.ts",
-    "src/lib/vision-provider-transport.ts"
+    "src/lib/vision-provider-transport.ts",
+    "src/lib/vision-execution-order.ts",
+    "src/lib/vision-execution-order-apply.ts"
   ]
 }
