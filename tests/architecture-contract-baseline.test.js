@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 
 async function text(path) {
   return readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -97,4 +97,51 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /peer-admitted supported 0\.2\.x train/i)
   assert.match(support, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)
+})
+
+
+async function productionRuntimeFiles() {
+  const files = ['entry.js', 'index.js']
+
+  async function walk(directory, prefix) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = `${prefix}/${entry.name}`
+      if (entry.isDirectory()) {
+        await walk(new URL(`${entry.name}/`, directory), relative)
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        files.push(relative)
+      }
+    }
+  }
+
+  await walk(new URL('../lib/', import.meta.url), 'lib')
+  return files
+}
+
+test('3.0 R0 records the current transitive package-root export topology', async () => {
+  const [publicEntry, entry, core] = await Promise.all([
+    text('lib/public-entry.js'),
+    text('entry.js'),
+    text('index.js'),
+  ])
+  assert.match(publicEntry, /export \* from '\.\.\/entry\.js'/)
+  assert.match(entry, /export \* from '\.\/index\.js'/)
+  assert.match(core, /export \* from '\.\/lib\/vision-resilience\.js'/)
+})
+
+test('production runtime never depends on DSH private source entry points', async () => {
+  const forbidden = [
+    /@deepseek-ai\/[^'"\s]+\/src\//,
+    /deepseek-harness\/packages\/[^'"\s]+\/src\//,
+  ]
+  for (const path of await productionRuntimeFiles()) {
+    const source = await text(path)
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(
+        source,
+        pattern,
+        `${path} must depend on package-exported DSH contracts, not private source paths`,
+      )
+    }
+  }
 })
