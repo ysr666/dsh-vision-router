@@ -38,6 +38,15 @@ function artifactPath(sourcePath, outputRoot) {
   return path.join(outputRoot, relative.endsWith('.ts') ? relative.slice(0, -3) + '.js' : relative)
 }
 
+async function copyCompiledTree(compiledRoot, outputRoot) {
+  for (const compiled of await filesUnder(compiledRoot)) {
+    const relative = path.relative(compiledRoot, compiled)
+    const artifact = path.join(outputRoot, relative)
+    await mkdir(path.dirname(artifact), { recursive: true })
+    await copyFile(compiled, artifact)
+  }
+}
+
 async function buildInto(outputRoot) {
   const sources = await filesUnder(SOURCE)
 
@@ -48,17 +57,23 @@ async function buildInto(outputRoot) {
     await copyFile(source, artifact)
   }
 
-  const compiled = spawnSync(process.execPath, [
-    TSC,
-    '-p',
-    'tsconfig.build.json',
-    '--outDir',
-    outputRoot,
-  ], {
-    cwd: ROOT,
-    stdio: 'inherit',
-  })
-  if (compiled.status !== 0) process.exit(compiled.status ?? 1)
+  const compiledRoot = await mkdtemp(path.join(os.tmpdir(), 'dvr-tsc-'))
+  try {
+    const compiled = spawnSync(process.execPath, [
+      TSC,
+      '-p',
+      'tsconfig.build.json',
+      '--outDir',
+      compiledRoot,
+    ], {
+      cwd: ROOT,
+      stdio: 'inherit',
+    })
+    if (compiled.status !== 0) process.exit(compiled.status ?? 1)
+    await copyCompiledTree(compiledRoot, outputRoot)
+  } finally {
+    await rm(compiledRoot, { recursive: true, force: true })
+  }
 
   return sources.map((source) => artifactPath(source, outputRoot))
 }
