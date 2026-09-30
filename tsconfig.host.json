@@ -22,6 +22,7 @@
     "src/lib/proxy-routing.ts",
     "src/lib/proxy-dispatcher-pool.ts",
     "src/lib/http-body-limit.ts",
+    "src/lib/vision-provider-transport.ts",
     "tests/types/host/**/*.ts"
   ]
 }
