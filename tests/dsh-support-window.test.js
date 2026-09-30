@@ -61,7 +61,7 @@ test('Doctor text separates public support policy from verification evidence', (
   assert.equal(Object.isFrozen(lines), true)
 })
 
-test('public READMEs state stable support policy and delegate moving preview evidence to the canonical support document', async () => {
+test('public READMEs state stable support policy and delegate forward-boundary evidence to the canonical support document', async () => {
   const [english, chinese, supportDoc] = await Promise.all([
     readFile(new URL('../README.md', import.meta.url), 'utf8'),
     readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
@@ -76,7 +76,7 @@ test('public READMEs state stable support policy and delegate moving preview evi
     assert.match(source, /0\.2\.0-rc\.2/)
     assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
   }
-  assert.match(supportDoc, /Exact next\/rc evidence \| `0\.2\.0-rc\.2`/)
+  assert.match(supportDoc, /Exact supported 0\.2\.x boundary \| `0\.2\.0-rc\.2`/)
 })
 
 
