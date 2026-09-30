@@ -3,6 +3,7 @@ name: Architecture Closure
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'entry.js'
       - 'index.js'
       - 'lib/public-entry.js'

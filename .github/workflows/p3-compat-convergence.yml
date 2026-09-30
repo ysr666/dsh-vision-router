@@ -3,6 +3,7 @@ name: P3 Compatibility Convergence
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'entry.js'
       - 'README.md'
       - 'README.zh.md'

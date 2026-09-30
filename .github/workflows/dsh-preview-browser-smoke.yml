@@ -3,6 +3,7 @@ name: DSH preview browser smoke
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'index.js'
       - 'package.json'
       - 'lib/dsh-support-window.js'
