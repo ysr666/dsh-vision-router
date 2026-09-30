@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.1"><img src="https://img.shields.io/badge/release-v2.2.1-5B4CF0?style=flat-square" alt="Release v2.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-5B4CF0?style=flat-square" alt="Release v2.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -42,9 +42,9 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v2.2.5)**
+> 📌 **Announcement (v2.3.0)**
 >
-> **v2.2.5:** Adds fail-closed **Local-only vision** and fixes the remaining DSH `0.1.7-rc.2` Windows Desktop multi-plugin `Loading plugins…` hang by isolating Vision Router’s WebServer registrar from other plugins. The public Host floor remains `0.1.0-rc.8`. [What’s new →](docs/releases/v2.2.5.md)
+> **v2.3.0:** Architecture hardening and compatibility convergence. The supported DSH 0.1.x window now starts at `0.1.5-rc.1`, while the 0.2.x train starts at verified `0.2.0-rc.2`; composition, Session repair, Settings/browser ownership and Desktop lifecycle contracts are hardened, and only proven-unreachable pre-floor shims are retired. [What’s new →](docs/releases/v2.3.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />

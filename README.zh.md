@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.1"><img src="https://img.shields.io/badge/release-v2.2.1-5B4CF0?style=flat-square" alt="Release v2.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-5B4CF0?style=flat-square" alt="Release v2.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -42,9 +42,9 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v2.2.5）**
+> 📌 **公告（v2.3.0）**
 >
-> **v2.2.5：新增 fail-closed 的「仅本地视觉」，并根修 DSH `0.1.7-rc.2` Windows Desktop 多插件环境下残留的 `Loading plugins…` 卡死——Vision Router 的 WebServer registrar 不再污染其他插件。公开最低 Host 仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.2.5.md)
+> **v2.3.0：架构加固与兼容收敛。DSH 0.1.x 正式支持线提高到 `0.1.5-rc.1` 起，0.2.x 从已验证的 `0.2.0-rc.2` 起；composition、Session repair、Settings/浏览器 ownership 与 Desktop lifecycle 均完成加固，只退休已证明在新支持窗口不可达的旧 shim。** [查看完整更新 →](docs/releases/v2.3.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
