@@ -1,0 +1,192 @@
+name: 2.3 R5 Final Audit
+
+on:
+  push:
+    branches: [2.3.0]
+    paths:
+      - '.github/workflows/2.3-r5-final-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: 2.3-r5-final-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-adversarial-quality:
+    name: static + adversarial + quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Deterministic client source check
+        run: pnpm client:check
+      - name: Final ownership, compatibility and Session adversaries
+        run: >-
+          node --test
+          tests/final-architecture-closure.test.js
+          tests/compat-inventory-completeness.test.js
+          tests/session-vision-event-feed.test.js
+          tests/session-vision-state-integration.test.js
+          tests/resource-retention-lifecycle.test.js
+      - name: Static ESM cycle scan
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, readdir } from 'node:fs/promises'
+          import path from 'node:path'
+
+          async function walk(dir) {
+            const out = []
+            for (const entry of await readdir(dir, { withFileTypes: true })) {
+              const child = path.posix.join(dir, entry.name)
+              if (entry.isDirectory()) out.push(...await walk(child))
+              else if (/\.(?:c?js|mjs)$/.test(entry.name)) out.push(child)
+            }
+            return out
+          }
+
+          const files = ['entry.js', 'index.js', ...await walk('lib')]
+          const nodes = new Set(files)
+          const graph = new Map(files.map((file) => [file, new Set()]))
+
+          function resolveRelative(from, specifier) {
+            if (!specifier.startsWith('.')) return undefined
+            const base = path.posix.normalize(path.posix.join(path.posix.dirname(from), specifier))
+            for (const candidate of [base, `${base}.js`, `${base}.mjs`, path.posix.join(base, 'index.js')]) {
+              if (nodes.has(candidate)) return candidate
+            }
+            return undefined
+          }
+
+          const importRe = /(?:^|\n)\s*import\s+(?:[\s\S]*?\s+from\s+)?['"](\.[^'"]+)['"]/g
+          const exportRe = /(?:^|\n)\s*export\s+(?:[\s\S]*?\s+from\s+)['"](\.[^'"]+)['"]/g
+
+          for (const file of files) {
+            const source = await readFile(file, 'utf8')
+            for (const re of [importRe, exportRe]) {
+              re.lastIndex = 0
+              let match
+              while ((match = re.exec(source)) !== null) {
+                const target = resolveRelative(file, match[1])
+                if (target) graph.get(file).add(target)
+              }
+            }
+          }
+
+          const state = new Map()
+          const stack = []
+          const cycles = []
+          function visit(node) {
+            state.set(node, 1)
+            stack.push(node)
+            for (const dep of graph.get(node) || []) {
+              const seen = state.get(dep) || 0
+              if (seen === 0) visit(dep)
+              else if (seen === 1) {
+                const at = stack.lastIndexOf(dep)
+                cycles.push([...stack.slice(at), dep])
+              }
+            }
+            stack.pop()
+            state.set(node, 2)
+          }
+          for (const file of files) if (!state.get(file)) visit(file)
+
+          if (cycles.length) {
+            console.error('Static ESM cycles detected:')
+            for (const cycle of cycles) console.error(' - ' + cycle.join(' -> '))
+            process.exit(1)
+          }
+          console.log(`Static ESM cycle scan passed: ${files.length} source modules, 0 cycles`)
+          NODE
+      - name: Deterministic property fuzz
+        env:
+          DVR_PROPERTY_FUZZ_CASES: '1000'
+          DVR_PROPERTY_FUZZ_SEED: '1592639710'
+        run: pnpm test:property-fuzz
+      - name: Deterministic adversarial corpus
+        env:
+          DVR_FUZZ_CASES: '500'
+          DVR_FUZZ_SEED: '1592639710'
+        run: pnpm test:adversarial-fuzz
+      - name: Derive rotating audit seed
+        id: rotating
+        shell: bash
+        run: |
+          seed="$(node --input-type=module -e 'console.log(Number(BigInt(process.env.GITHUB_RUN_ID) & 0xffffffffn))')"
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          printf 'R5 rotating fuzz seed: `%s`\n' "$seed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Rotating property fuzz
+        env:
+          DVR_PROPERTY_FUZZ_CASES: '3000'
+          DVR_PROPERTY_FUZZ_SEED: ${{ steps.rotating.outputs.seed }}
+        run: pnpm test:property-fuzz
+      - name: Rotating adversarial corpus
+        env:
+          DVR_FUZZ_CASES: '1500'
+          DVR_FUZZ_SEED: ${{ steps.rotating.outputs.seed }}
+        run: pnpm test:adversarial-fuzz
+      - name: Quality baseline
+        run: pnpm test:quality
+      - name: Package public entry smoke
+        shell: bash
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+          test -n "$(find tmp-pack -maxdepth 1 -name 'dsh-vision-router-*.tgz' -print -quit)"
+
+  resource-stress:
+    name: 100MP resource stress / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: High-resolution functional regression
+        run: node --test tests/large-image-resource-integration.test.js
+      - name: 100MP compressed-image RSS stress
+        env:
+          STRESS_IMAGE_WIDTH: '10000'
+          STRESS_IMAGE_HEIGHT: '10000'
+          STRESS_MAX_DELTA_MIB: '256'
+        run: node --expose-gc scripts/image-resource-stress.mjs
+
+  r5-audit-gate:
+    name: r5-audit-gate
+    if: always()
+    needs: [static-adversarial-quality, resource-stress]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require final audit evidence
+        env:
+          STATIC_RESULT: ${{ needs.static-adversarial-quality.result }}
+          RESOURCE_RESULT: ${{ needs.resource-stress.result }}
+        run: |
+          test "$STATIC_RESULT" = success
+          test "$RESOURCE_RESULT" = success
