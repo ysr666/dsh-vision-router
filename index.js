@@ -66,6 +66,7 @@ import {
 } from './lib/vision-resilience.js'
 import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
 import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
+import { currentVisionTurnBudgetSignal } from './lib/turn-budget-context.js'
 import { createHash } from 'node:crypto'
 import {
   normalizeStructuredBootstrapResult,
@@ -2847,6 +2848,7 @@ export function apply(ctx, config = {}, runtime = {}) {
                 )
               : timeoutMs()
             const signal = combineSignals(
+              currentVisionTurnBudgetSignal(),
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
@@ -2986,6 +2988,7 @@ ctx.logger?.info(
               promptText,
             ).messages
             const attemptSignal = combineSignals(
+              currentVisionTurnBudgetSignal(),
               deadline.signal(),
               AbortSignal.timeout(timeoutMs()),
             )
@@ -3493,6 +3496,7 @@ ctx.logger?.info(
             )
           : timeoutMs()
         const attemptSignal = combineSignals(
+          currentVisionTurnBudgetSignal(),
           deadline.signal(),
           AbortSignal.timeout(attemptBudgetMs),
         )
@@ -3543,6 +3547,7 @@ ctx.logger?.info(
             {
               maxTokens: provider.maxTokens ?? 4096,
               signal: combineSignals(
+                currentVisionTurnBudgetSignal(),
                 deadline.signal(),
                 AbortSignal.timeout(timeoutMs()),
               ),
