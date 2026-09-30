@@ -106,7 +106,8 @@
     "typecheck:host": "tsc -p tsconfig.host.json",
     "typecheck:client": "tsc -p tsconfig.client.json",
     "typecheck": "pnpm typecheck:host && pnpm typecheck:client",
-    "prepare": "pnpm build"
+    "prepare": "pnpm build",
+    "prepack": "pnpm build"
   },
   "dsh": {
     "client": {

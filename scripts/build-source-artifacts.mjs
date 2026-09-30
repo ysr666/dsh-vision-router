@@ -47,7 +47,17 @@ async function copyCompiledTree(compiledRoot, outputRoot) {
   }
 }
 
+async function cleanPackageArtifacts(outputRoot) {
+  if (outputRoot !== ROOT) return
+  await Promise.all([
+    rm(path.join(ROOT, 'entry.js'), { force: true }),
+    rm(path.join(ROOT, 'index.js'), { force: true }),
+    rm(path.join(ROOT, 'lib'), { recursive: true, force: true }),
+  ])
+}
+
 async function buildInto(outputRoot) {
+  await cleanPackageArtifacts(outputRoot)
   const sources = await filesUnder(SOURCE)
 
   for (const source of sources) {
