@@ -3,14 +3,72 @@ import { currentVisionTurnBudgetSignal } from './turn-budget-context.js'
 const MIB = 1024 * 1024
 export const DEFAULT_IMAGE_RESOURCE_MAX_BYPASSES = 2
 
-function abortError() {
-  const error = new Error('image resource wait aborted')
+export type ImageResourceRelease = () => void
+
+export interface ImageResourceGovernorOptions {
+  readonly maxBytes?: number
+  readonly maxConcurrent?: number
+  readonly maxBypasses?: number
+}
+
+export interface ImageResourceAcquireOptions {
+  readonly signal?: AbortSignal
+  readonly exclusive?: boolean
+}
+
+export interface ImageResourceStats {
+  readonly maxBytes: number
+  readonly maxConcurrent: number
+  readonly activeBytes: number
+  readonly activeCount: number
+  readonly queued: number
+  readonly exclusive: boolean
+}
+
+export interface ImageDimensions {
+  readonly width: number
+  readonly height: number
+  readonly scale: number
+}
+
+export interface ImageBox {
+  readonly x1: number
+  readonly y1: number
+  readonly x2: number
+  readonly y2: number
+}
+
+export interface OcrTile {
+  readonly left: number
+  readonly right: number
+  readonly top: number
+  readonly bottom: number
+}
+
+interface ResourceRequest {
+  readonly requested: number
+  readonly charged: number
+  readonly exclusive: boolean
+}
+
+interface QueueItem {
+  readonly request: ResourceRequest
+  readonly signal: AbortSignal | undefined
+  readonly resolve: (release: ImageResourceRelease) => void
+  readonly reject: (reason?: unknown) => void
+  settled: boolean
+  abortHandler: (() => void) | undefined
+  bypassCount: number
+}
+
+function abortError(): Error & { code: string } {
+  const error = new Error('image resource wait aborted') as Error & { code: string }
   error.name = 'AbortError'
   error.code = 'ABORT_ERR'
   return error
 }
 
-function effectiveSignal(explicit) {
+function effectiveSignal(explicit: AbortSignal | undefined): AbortSignal | undefined {
   const ambient = currentVisionTurnBudgetSignal()
   if (!explicit) return ambient
   if (!ambient || ambient === explicit) return explicit
@@ -18,10 +76,18 @@ function effectiveSignal(explicit) {
 }
 
 export function estimateDecodedBytes(
-  width,
-  height,
-  { channels = 4, copies = 1, safetyFactor = 1.25 } = {},
-) {
+  width: unknown,
+  height: unknown,
+  {
+    channels = 4,
+    copies = 1,
+    safetyFactor = 1.25,
+  }: {
+    readonly channels?: number
+    readonly copies?: number
+    readonly safetyFactor?: number
+  } = {},
+): number {
   const w = Math.max(0, Math.floor(Number(width) || 0))
   const h = Math.max(0, Math.floor(Number(height) || 0))
   const c = Math.max(1, Number(channels) || 4)
@@ -30,7 +96,11 @@ export function estimateDecodedBytes(
   return Math.ceil(w * h * c * n * factor)
 }
 
-export function estimateImageOperationBytes(operation, width, height) {
+export function estimateImageOperationBytes(
+  operation: unknown,
+  width: unknown,
+  height: unknown,
+): number {
   switch (operation) {
     case 'metadata':
       return 1 * MIB
@@ -49,7 +119,11 @@ export function estimateImageOperationBytes(operation, width, height) {
   }
 }
 
-export function scaledDimensions(width, height, maxPixels) {
+export function scaledDimensions(
+  width: unknown,
+  height: unknown,
+  maxPixels: unknown,
+): ImageDimensions {
   const w = Math.max(0, Math.floor(Number(width) || 0))
   const h = Math.max(0, Math.floor(Number(height) || 0))
   const limit = Math.max(1, Math.floor(Number(maxPixels) || 1))
@@ -64,7 +138,13 @@ export function scaledDimensions(width, height, maxPixels) {
   }
 }
 
-export function scaleBox(box, fromWidth, fromHeight, toWidth, toHeight) {
+export function scaleBox(
+  box: ImageBox,
+  fromWidth: number,
+  fromHeight: number,
+  toWidth: number,
+  toHeight: number,
+): ImageBox {
   const sx = fromWidth > 0 ? toWidth / fromWidth : 1
   const sy = fromHeight > 0 ? toHeight / fromHeight : 1
   return {
@@ -81,10 +161,18 @@ export function scaleBox(box, fromWidth, fromHeight, toWidth, toHeight) {
  * as well so width * height never exceeds maxTilePixels.
  */
 export function boundedOcrTiles(
-  width,
-  height,
-  { chunkHeight = 1200, overlap = 120, maxTilePixels = 4_000_000 } = {},
-) {
+  width: unknown,
+  height: unknown,
+  {
+    chunkHeight = 1200,
+    overlap = 120,
+    maxTilePixels = 4_000_000,
+  }: {
+    readonly chunkHeight?: number
+    readonly overlap?: number
+    readonly maxTilePixels?: number
+  } = {},
+): OcrTile[] {
   const w = Math.max(1, Math.floor(Number(width) || 1))
   const h = Math.max(1, Math.floor(Number(height) || 1))
   const requestedHeight = Math.max(1, Math.min(h, Math.floor(Number(chunkHeight) || 1200)))
@@ -96,7 +184,7 @@ export function boundedOcrTiles(
     Math.max(0, Math.floor(tileHeight / 2)),
   )
   const verticalStep = Math.max(1, tileHeight - verticalOverlap)
-  const tiles = []
+  const tiles: OcrTile[] = []
   for (let top = 0; top < h; top += verticalStep) {
     const bottom = Math.min(h, top + tileHeight)
     for (let left = 0; left < w; left += tileWidth) {
@@ -109,21 +197,25 @@ export function boundedOcrTiles(
 }
 
 export class ImageResourceGovernor {
+  readonly maxBytes: number
+  readonly maxConcurrent: number
+  readonly maxBypasses: number
+  activeBytes = 0
+  activeCount = 0
+  activeExclusive = false
+  queue: QueueItem[] = []
+
   constructor({
     maxBytes = 256 * MIB,
     maxConcurrent = 2,
     maxBypasses = DEFAULT_IMAGE_RESOURCE_MAX_BYPASSES,
-  } = {}) {
+  }: ImageResourceGovernorOptions = {}) {
     this.maxBytes = Math.max(1, Math.floor(Number(maxBytes) || 256 * MIB))
     this.maxConcurrent = Math.max(1, Math.floor(Number(maxConcurrent) || 2))
     this.maxBypasses = Math.max(0, Math.floor(Number(maxBypasses) || 0))
-    this.activeBytes = 0
-    this.activeCount = 0
-    this.activeExclusive = false
-    this.queue = []
   }
 
-  _normalize(bytes, exclusive) {
+  _normalize(bytes: unknown, exclusive: unknown): ResourceRequest {
     const requested = Math.max(1, Math.ceil(Number(bytes) || 1))
     const wantsExclusive = exclusive === true || requested >= this.maxBytes
     return {
@@ -133,7 +225,7 @@ export class ImageResourceGovernor {
     }
   }
 
-  _canRun(request) {
+  _canRun(request: ResourceRequest): boolean {
     if (this.activeExclusive) return false
     if (request.exclusive) return this.activeCount === 0
     return (
@@ -142,7 +234,7 @@ export class ImageResourceGovernor {
     )
   }
 
-  _grant(item) {
+  _grant(item: QueueItem): void {
     if (item.settled) return
     item.settled = true
     if (item.signal && item.abortHandler) {
@@ -162,15 +254,8 @@ export class ImageResourceGovernor {
     })
   }
 
-  /**
-   * Find work that fits the current byte/concurrency window without letting a
-   * large request permanently pin every smaller request behind it. Each blocked
-   * non-exclusive request may be bypassed only a small, fixed number of times;
-   * after that it becomes a fairness barrier until capacity is released.
-   * Exclusive work is always a barrier immediately.
-   */
-  _nextRunnable() {
-    const bypassed = []
+  _nextRunnable(): { index: number; item: QueueItem; bypassed: QueueItem[] } | undefined {
+    const bypassed: QueueItem[] = []
     for (let index = 0; index < this.queue.length; index++) {
       const item = this.queue[index]
       if (!item || item.settled) continue
@@ -181,7 +266,7 @@ export class ImageResourceGovernor {
     return undefined
   }
 
-  _drain() {
+  _drain(): void {
     while (this.queue.length > 0) {
       while (this.queue[0]?.settled) this.queue.shift()
       if (this.queue.length === 0) return
@@ -194,16 +279,15 @@ export class ImageResourceGovernor {
     }
   }
 
-  acquire(bytes, { signal, exclusive = false } = {}) {
-    // Structured 1+x installs its remaining turn deadline in AsyncLocalStorage.
-    // Even image helpers that historically passed `{}` now inherit that signal
-    // while they wait in the resource queue, so an exhausted turn cannot leave
-    // dead work queued behind another large image operation.
+  acquire(
+    bytes: unknown,
+    { signal, exclusive = false }: ImageResourceAcquireOptions = {},
+  ): Promise<ImageResourceRelease> {
     const combinedSignal = effectiveSignal(signal)
     if (combinedSignal?.aborted) return Promise.reject(abortError())
     const request = this._normalize(bytes, exclusive)
-    return new Promise((resolve, reject) => {
-      const item = {
+    return new Promise<ImageResourceRelease>((resolve, reject) => {
+      const item: QueueItem = {
         request,
         signal: combinedSignal,
         resolve,
@@ -230,7 +314,11 @@ export class ImageResourceGovernor {
     })
   }
 
-  async withBudget(bytes, options, fn) {
+  async withBudget<T>(
+    bytes: unknown,
+    options: ImageResourceAcquireOptions,
+    fn: () => T | PromiseLike<T>,
+  ): Promise<Awaited<T>> {
     const release = await this.acquire(bytes, options)
     try {
       return await fn()
@@ -239,7 +327,7 @@ export class ImageResourceGovernor {
     }
   }
 
-  stats() {
+  stats(): ImageResourceStats {
     return {
       maxBytes: this.maxBytes,
       maxConcurrent: this.maxConcurrent,

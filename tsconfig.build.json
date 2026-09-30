@@ -26,6 +26,7 @@
     "src/lib/vision-provider-transport.ts",
     "src/lib/vision-execution-order.ts",
     "src/lib/vision-execution-order-apply.ts",
-    "src/lib/turn-budget-context.ts"
+    "src/lib/turn-budget-context.ts",
+    "src/lib/image-resource-governor.ts"
   ]
 }
