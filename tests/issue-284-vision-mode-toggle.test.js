@@ -97,6 +97,7 @@ function createBrowserHarness({
   current = { provider: 'opencode-go', model: 'qwen3.6-plus', reasoningEffort: 'high' },
   wrapperRoute = 'deepseek-vision',
   rejectSelection = false,
+  returnSelectionFailure = false,
 } = {}) {
   let registered
   const loader = {
@@ -139,14 +140,24 @@ function createBrowserHarness({
     store,
     async select(selection) {
       selections.push(selection)
-      if (rejectSelection) {
-        const message = typeof rejectSelection === 'string'
-          ? rejectSelection
+      if (rejectSelection || returnSelectionFailure) {
+        const failure = rejectSelection || returnSelectionFailure
+        const message = typeof failure === 'string'
+          ? failure
           : 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
         snapshot = { ...snapshot, status: 'error', error: message }
-        throw new Error(`session.selectModel failed: ${message}`)
+        if (rejectSelection) throw new Error(`session.selectModel failed: ${message}`)
+        const separator = message.indexOf(': ')
+        return {
+          ok: false,
+          error: {
+            code: separator === -1 ? 'model-unavailable' : message.slice(0, separator),
+            message: separator === -1 ? message : message.slice(separator + 2),
+          },
+        }
       }
       snapshot = { ...snapshot, current: selection, status: 'ready', error: null }
+      return { ok: true, value: undefined }
     },
   }
 
@@ -431,6 +442,27 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   button.props.onClick()
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(harness.selections.length, 2)
+})
+
+test('issue #284 treats resolved Host RemoteResult failures as rejected selections', async () => {
+  const error = 'session/writer-held: Another writer temporarily owns this session.'
+  const harness = createBrowserHarness({
+    current: { provider: 'opencode-go', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    returnSelectionFailure: error,
+  })
+
+  const before = buttonOf(harness.render())
+  assert.equal(before.props['aria-pressed'], false)
+  before.props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go')
+  assert.equal(harness.getSnapshot().status, 'error')
+
+  const rendered = harness.render()
+  const toast = firstChildOfType(rendered, harness.primitives.Toast)
+  assert.ok(toast)
+  assert.equal(toast.props.text, `模型操作失败：${error}`)
 })
 
 test('issue #284 distinguishes initial model loading from a genuinely unavailable pair', () => {
