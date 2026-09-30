@@ -49,6 +49,22 @@ jobs:
       - name: Exercise the real PowerShell/DPI helper on the issue-409 runtime combination
         run: node --test tests/qa-screenshot-runtime.test.js tests/tesseract-node24-boot.test.js
 
+  linux-desktop-screenshot:
+    name: Linux X11 desktop screenshot runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24'
+      - name: Install X11 screenshot runtime
+        run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick scrot
+      - name: Exercise the real Linux root-display capture
+        run: xvfb-run -a node --test tests/linux-desktop-screenshot-runtime.test.js
+
   preview-host-contract:
     name: DSH ${{ matrix.dsh }} / Node ${{ matrix.node }}
     runs-on: ubuntu-latest

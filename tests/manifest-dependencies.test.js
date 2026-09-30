@@ -52,6 +52,7 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/alpha1-settings-factory-lifecycle.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
   { path: 'tests/alpha1-web-auth-boundary.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
   { path: 'tests/browser-p1-acceptance.test.js', owner: '.github/workflows/browser-p1-acceptance.yml', reason: 'real Chromium acceptance requires a browser executable' },
+  { path: 'tests/linux-desktop-screenshot-runtime.test.js', owner: '.github/workflows/adversarial-compat-hardening.yml', reason: 'real Linux X11 desktop capture requires Xvfb plus import/scrot' },
 
   { path: 'tests/architecture-contract-baseline.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
   { path: 'tests/capability-shadow-retirement.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
