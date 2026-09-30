@@ -6,7 +6,6 @@ import { eventHasImage } from '../index.js'
 import { classifyWebModulesRows } from '../scripts/dsh-web-modules-overlay-contract.mjs'
 import { classifyWebConnectionRows } from '../scripts/dsh-web-connection-overlay-contract.mjs'
 import {
-  attachmentContextForContract,
   createSessionEventReader,
   createSessionEventTailReader,
   createSessionLogReader,
@@ -385,21 +384,6 @@ test('host settings bridge registers the final entry settings contract including
   assert.equal(registeredConfig({ backgroundBenchmarking: 'local-free' }).backgroundBenchmarking, 'local-free')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'all' }).backgroundBenchmarking, 'all')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
-})
-
-test('attachment compatibility follows the batch-attachment seam', () => {
-  const single = runtimeWithAttachments({ saveImage() {}, readImage() {}, validateImage() {} })
-  const batch = runtimeWithAttachments({ saveImage() {}, saveImages() {}, readImage() {}, validateImage() {} })
-  let installs = 0
-  const installAndroidAttachmentCompat = (ctx) => {
-    installs += 1
-    return { ...ctx, compat: true }
-  }
-  const wrappedSingle = attachmentContextForContract(single, undefined, { installAndroidAttachmentCompat })
-  const wrappedBatch = attachmentContextForContract(batch, undefined, { installAndroidAttachmentCompat })
-  assert.equal(wrappedSingle.compat, true)
-  assert.equal(wrappedBatch, batch)
-  assert.equal(installs, 1)
 })
 
 test('DSH image/offload bookkeeping is not itself classified as new visual input', () => {

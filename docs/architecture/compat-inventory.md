@@ -22,16 +22,6 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** every supported Vision Router adapter directly satisfies the Host adapter contract and supported Host event semantics no longer require the bounded coalescer.
 - **Tests:** `adapter-prepare-call-compat`, `runtime-boundary-fixes`, current-contract Host smoke.
 
-## `lib/android-attachment-compat.js`
-
-- **2.3 state:** `product-compat`.
-- **Reason:** allow the minimum Host path to survive Termux/Android attachment persistence permission boundaries without taking ownership on batch-capable Hosts.
-- **Host gap:** file-backed attachment storage can fail with `EACCES`/`EPERM` in Android/Termux environments on the legacy path.
-- **First needed for:** Android/Termux support while rc.6 remains minimum.
-- **Feature detection:** Android/Termux environment, permission-boundary error and absence of the batch attachment contract.
-- **Removal condition:** minimum supported DSH owns a working Android attachment implementation for the same path and the fallback is no longer reachable.
-- **Tests:** `android-attachment-compat`, image-resource/resource-retention tests.
-
 ## `lib/replay-envelope-v2-compat.js`
 
 - **2.3 state:** `product-compat`.

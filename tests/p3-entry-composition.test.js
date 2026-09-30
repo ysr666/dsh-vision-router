@@ -32,6 +32,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'installLocalVisionStabilizer(',
     'installVisionSettingsWebBoundary(stabilizedCtx, logging.logger)',
     'installHostSettingsCompatibility(',
+    'installDshHostCapabilityDiagnostics(settingsCtx)',
     'installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
     'contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
     'createCoreVisionSurfaceRuntime({',

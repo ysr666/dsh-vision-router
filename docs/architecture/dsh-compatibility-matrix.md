@@ -2,6 +2,8 @@
 
 This document is the P0 compatibility baseline for dsh-vision-router 2.x.
 
+> **R2.3 re-audit note:** the fixture labels below preserve the original P0 snapshot. The normative DVR 2.3 support window is now `docs/architecture/dsh-support-window.md`. The pre-floor Android/no-batch seam has been retired; the remaining fixture table is re-audited separately before 2.3 closure.
+
 The matrix is capability-based. Runtime code must feature-detect the seam it needs; it must not branch on a DSH version string merely to select a behavior. Version labels below name the CI fixtures that prove each capability.
 
 ## Gating fixtures
@@ -49,7 +51,6 @@ Every compatibility seam must answer the same six questions: **Reason**, **Host 
 | --- | --- | --- | --- | --- |
 | `lib/dsh-contract-compat.js` | Keep rc.6 single-attachment behavior, rc.8 attachment overlay repair, and settings/provider ownership semantics across the support window. | attachment/settings/LLM methods, never a version string. | Supported Host window provides the needed public seams natively and minimum supported DSH advances beyond the gap. | `rc6-rc7-compat`, `rc6-real-settings-persistence`, `attachment-admission-policy`, contract CI. |
 | `lib/adapter-update-coalescer.js` | Older Vision Router adapters are duck-typed while DSH 0.1.1 dispatches through `prepareCall`; synchronous topology events can re-enter reconciliation. | adapter has `prepareCall`; event behavior is bounded by the coalescer. | All supported adapters implement the Host contract directly and no supported Host needs the reconciliation guard. | `adapter-prepare-call-compat`, adapter/runtime regression tests. |
-| `lib/android-attachment-compat.js` | Termux/Android file persistence can fail at the permission boundary on the minimum Host contract. | actual Android/Termux environment plus permission-boundary failure and absence of batch attachment ownership. | Minimum supported Host owns a working Android attachment store for this path. | `android-attachment-compat`, resource tests. |
 | `lib/replay-envelope-v2-compat.js` | Durable replay producer identity moved into the v2 replay envelope. | exact `response.kind === 'pi-ai' && response.version === 2` producer proof. | Support window no longer contains histories/runtime needing the old source normalization. | `replay-delegation`, replay/session tests. |
 | `lib/pi-ai-bridge-wire-compat.js` | The legacy direct image bridge predates pi-ai declared wire compatibility. | exact non-streaming image bridge fingerprint and resolved pi-ai route/model facts. | Direct bridge is removed or every supported Host executes the request through the native pi-ai wire contract. | `pi-ai-bridge-wire-compat`, native process-restart contract. |
 | `lib/settings-client-rc8-lifecycle.js` | Browser-side settings lifecycle differs across supported Host generations. | browser/runtime surface behavior, not DSH version parsing. | Support window exposes one stable settings client lifecycle. | settings IA/lifecycle regression tests. |

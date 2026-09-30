@@ -17,7 +17,6 @@ export const Config = composePublicVisionConfig(core.Config)
 export * from './index.js'
 export { sessionSurfaceReplacementIntent } from './lib/session-surface-compat.js'
 export {
-  attachmentContextForContract,
   ensureVisionAttachmentAdmissionPolicy,
   hasBatchAttachmentContract,
   hostOwnsOfficialDeepSeekProvider,

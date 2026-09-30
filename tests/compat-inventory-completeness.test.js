@@ -5,7 +5,6 @@ import { readFile } from 'node:fs/promises'
 const REQUIRED_SEAMS = [
   'lib/dsh-contract-compat.js',
   'lib/adapter-update-coalescer.js',
-  'lib/android-attachment-compat.js',
   'lib/replay-envelope-v2-compat.js',
   'lib/pi-ai-bridge-wire-compat.js',
   'lib/settings-client-rc8-lifecycle.js',
