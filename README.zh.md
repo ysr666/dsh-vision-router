@@ -318,11 +318,11 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 隐身模式默认**关闭**（issue #34 起显式 opt-in）：官方 `deepseek-official` 路由原样保留；需要看图时通过输入框旁的「👁 识图」切换到内部 DeepSeek wrapper。该 wrapper 默认从原生模型选择器和 `/model` 展示层隐藏。
 
-在新版 DSH Host 中，官方 DeepSeek provider 自己负责请求期的附件、Files API 与图片访问能力。因此 Vision Router **不会再重建或复活 `deepseek-official`**。请保持 `llm-deepseek` 启用，通过内部「DeepSeek + 自动识图」wrapper /「👁 识图」处理图片；如果官方行被禁用或不可用，设置页会明确提示重新启用，而不是偷偷注册一个能力不完整的替代 provider。
+在 DVR 2.3 支持的所有 DSH Host 中，官方 DeepSeek provider 都由 Host 自己负责请求期的附件、Files API 与图片访问能力。因此 Vision Router **不会重建或复活 `deepseek-official`**。请保持 `llm-deepseek` 启用，通过内部「DeepSeek + 自动识图」wrapper /「👁 识图」处理图片；如果官方行被禁用或不可用，设置页会明确提示重新启用，而不是偷偷注册一个能力不完整的替代 provider。
 
-缺少这项 provider ownership 能力的 legacy Host contract 仍保留历史接管 / keep-alive 行为，以兼容旧 profile 和旧会话：只有这条兼容路径在官方行缺失时才可能由 Vision Router 重建旧 provider。这不是新版 Host 的配置方式；当前安装不要为了隐身模式去禁用 `llm-deepseek`。
+历史 `stealth` 字段仅为兼容已有 profile 而继续读取；在 DVR 2.3 支持窗口内，它不再具有接管 provider 的权限。
 
-> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
+> opencode 等自定义/第三方文本路由默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
 
 ## 自动识图包装与手动范围
 

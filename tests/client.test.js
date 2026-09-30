@@ -141,13 +141,14 @@ test('filterVisionBackendGroups keeps callable generative models and hides only 
   assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
-test('DeepSeek ownership notice distinguishes modern Host ownership from legacy keep-alive takeover', () => {
+test('DeepSeek ownership notice exposes only supported Host-owned provider behavior', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.match(source, /state\.reason === 'host-owned-official-unavailable'/)
+  assert.match(source, /state\.reason !== 'host-owned-official-unavailable'/)
   assert.match(source, /stealthOfficialHostOwnedHint/)
   assert.match(source, /will not recreate it/)
   assert.match(source, /不会自行重建它/)
-  assert.match(source, /state\.active !== true \|\| state\.reason !== 'official-unavailable'/)
+  assert.doesNotMatch(source, /stealthOfficialDeadHint/)
+  assert.doesNotMatch(source, /compatibility keep-alive route/)
 })
 
 test('the client bundle does not hard-inject the optional connection service', () => {

@@ -320,11 +320,11 @@ Failures are classified (region / tos / quota / rate-limit / context / network) 
 
 Stealth mode is **off by default** (explicit opt-in since issue #34): the official `deepseek-official` route stays untouched. When you need images, the composer’s “👁 Vision” control switches to the internal DeepSeek wrapper, which is hidden from the stock picker and `/model` presentation by default.
 
-On newer DSH Host generations, the official DeepSeek provider owns request-local attachment, file and image-access behavior. Vision Router therefore **never reconstructs or resurrects `deepseek-official` on those Hosts**. Keep `llm-deepseek` enabled and use the internal “DeepSeek + Auto Vision” wrapper / “👁 Vision” control for image tasks. If the official row is disabled or unavailable, the settings card reports that configuration problem instead of silently recreating a partial provider.
+On every DSH Host supported by DVR 2.3, the official DeepSeek provider owns request-local attachment, file and image-access behavior. Vision Router therefore **never reconstructs or resurrects `deepseek-official`**. Keep `llm-deepseek` enabled and use the internal “DeepSeek + Auto Vision” wrapper / “👁 Vision” control for image tasks. If the official row is disabled or unavailable, the settings card reports that configuration problem instead of silently recreating a partial provider.
 
-Legacy Host contracts that do not expose this provider-ownership capability retain the historical takeover/keep-alive behavior for compatibility: when their stock DeepSeek row is absent, Vision Router can still rebuild the legacy provider path so existing profiles and sessions keep working. This fallback is not a setup requirement for current Hosts and should not be enabled by disabling `llm-deepseek` on a modern installation.
+The historical `stealth` field is retained only so existing profiles continue to parse cleanly; it no longer grants provider-takeover authority on the DVR 2.3 support window.
 
-> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes such as opencode also receive internal vision wrappers by default, used through the composer toggle rather than a second user-facing model group.
+> Custom/third-party routes such as opencode also receive internal vision wrappers by default, used through the composer toggle rather than a second user-facing model group.
 
 ## Auto-vision wrappers and manual scope
 

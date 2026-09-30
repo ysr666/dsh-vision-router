@@ -35,8 +35,6 @@ export * from './lib/vision-resilience.js'
 import z from '@deepseek-ai/schemastery'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
-import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import { existsSync } from 'node:fs'
 import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
@@ -174,8 +172,8 @@ export const Config = z.object({
   reverseRouting: z.boolean().default(true),
   wrapperRoute: z.string().default('deepseek-vision'),
   chainRoute: z.string().default('vision-chain'),
-  // 默认关闭（issue #34 明确 opt-in）：关闭时官方 deepseek-official 路由
-  // 原样保留；仅 legacy Host 保留 keep-alive 接管兼容（官方行被禁用时）。
+  // 历史配置字段保留用于 profile 兼容。DVR 2.3 支持的 Host 始终拥有
+  // deepseek-official；这个值不再授权 Vision Router 重建或接管官方 provider。
   stealth: z.boolean().default(false),
   textProvider: z
     .object({
@@ -436,13 +434,10 @@ import {
   callOpenAICompatible,
   createChunkAssembler,
   visionAnswer,
-  launchEnvironmentLike,
-  createNativeDeepSeekAdapter,
   localDescribePrompt,
   imageMemorySet,
   buildInstantLocalMap,
   createWrapperStreamBody,
-  createStealthAdapter,
   modelInfoAcceptsImages,
   NON_GENERATIVE_VISION_MODEL_HINTS,
   looksLikeNonGenerativeVisionModel,
@@ -534,8 +529,6 @@ export {
   toAnthropicContent,
   callOpenAICompatible,
   createChunkAssembler,
-  launchEnvironmentLike,
-  createNativeDeepSeekAdapter,
   localDescribePrompt,
   imageMemorySet,
   buildInstantLocalMap,
@@ -833,128 +826,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     })
   }
 
-  // ── stealth takeover: serve `deepseek-official` ourselves ────────────────
+  // ── official DeepSeek ownership ─────────────────────────────────────────
   //
-  // With the stock llm-deepseek row disabled in the profile composition, the
-  // native adapter is rebuilt from this plugin under a hidden internal route
-  // and the public `deepseek-official` route serves the stock catalog with
-  // image input declared: the picker looks exactly like the stock one, but
-  // image turns work. If the stock row is still active, taking over the route
-  // throws DUPLICATE_ADAPTER and we fall back to the visible wrapper below.
+  // DVR 2.3 supports DSH from the 0.1.5 train, where the official DeepSeek
+  // provider owns request-local attachment/file/image-access behavior. Keep
+  // the historical `stealth` setting readable for persisted-profile
+  // compatibility, but never reconstruct or register `deepseek-official`
+  // (or a hidden native surrogate) from Vision Router.
   const stealthEnabled = current().stealth !== false
-  // Legacy keep-alive fallback: older Hosts let DVR rebuild a missing stock
-  // `deepseek-official` route for compatibility. Newer Host generations own
-  // the provider's attachment/file lifecycle, so a missing official row is a
-  // Host configuration problem: DVR reports it and never reconstructs it.
-  //
-  // The takeover decision runs AFTER a short settle window, never inside
-  // apply(): entry activation is service-driven, so this row can apply
-  // BEFORE the stock llm-deepseek row (reproduced on DSH 0.1.0-rc.5 hosts,
-  // e.g. Oh-DSH Desktop). Deciding synchronously misreads the not-yet-applied
-  // stock route as dead, and our directory registration then makes the stock
-  // row's own registration throw DUPLICATE_DIRECTORY, killing the whole
-  // runtime before readiness. Once the window elapses, a registered stock
-  // route means hands off; a still-dead route means the row is genuinely
-  // absent/disabled and the takeover is safe.
-  const KEEPALIVE_SETTLE_MS = 2000
-  const nativeRoute = 'deepseek-official-native'
-  let stealthActive = false
-  let takeoverReason
-  let nativeAdapter
-  let takeoverAttempted = false
-  const attemptTakeover = (reason) => {
-    if (takeoverAttempted) return
-    takeoverAttempted = true
-    takeoverReason = reason
-    try {
-      nativeAdapter = createNativeDeepSeekAdapter(ctx)
-      const nativeHandle = ctx.llm.registerAdapter([nativeRoute], {
-        providerInfo(provider) {
-          return { id: provider, name: 'DeepSeek (native)' }
-        },
-        providerRetryPolicy(provider) {
-          return nativeAdapter.providerRetryPolicy(provider)
-        },
-        async listModels() {
-          return [] // hidden from the picker
-        },
-        async resolveModel(provider, model, signal) {
-          return nativeAdapter.resolveModel(provider, model, signal)
-        },
-        async *stream(options) {
-          yield* nativeAdapter.stream(options)
-        },
-      })
-      ctx.effect(() => nativeHandle, 'vision-router: hidden native deepseek route')
-      const publicHandle = ctx.llm.registerAdapter(
-        ['deepseek-official'],
-        createStealthAdapter(ctx, {
-          native: nativeAdapter,
-          imageMemory,
-          pairs,
-          chainRoute,
-          delegateProvider: nativeRoute,
-          instantLocal: instantLocalProvider,
-          instantLocalStyle,
-          instantLocalTimeoutMs: timeoutMs,
-          instantLocalMaxPixels,
-          providerTransport,
-        }),
-      )
-      stealthActive = true
-      ctx.effect(() => publicHandle, 'vision-router: stealth deepseek-official route')
-      // Keep the Models page's DeepSeek editor wired to the same settings
-      // section the stock row used.
-      try {
-        ctx.llm.registerConfigurableProviders([
-          {
-            provider: 'deepseek-official',
-            displayName: 'DeepSeek',
-            settingsNs: 'llm-deepseek',
-            settingsPath: [],
-          },
-        ])
-      } catch {
-        /* the stock row may still own the directory entry */
-      }
-    } catch (error) {
-      nativeAdapter = undefined
-      stealthActive = false
-      ctx.logger?.warn(
-        'vision-router: deepseek-official takeover skipped (%s: %s); keeping the visible wrapper',
-        reason,
-        error && error.message ? error.message : String(error),
-      )
-    }
-  }
-  const maybeTakeover = () => {
-    if (!takeoverSettled || stealthActive || takeoverAttempted) return
-    if (adapterAvailable(ctx.llm, 'deepseek-official')) {
-      if (stealthEnabled) {
-        ctx.logger?.warn(
-          hostOwnsOfficialDeepSeek
-            ? 'vision-router: stealth takeover is unavailable because this DSH Host owns deepseek-official; using the auto-vision wrapper instead'
-            : 'vision-router: legacy stealth takeover is enabled but the stock deepseek-official route is alive; disable llm-deepseek only on this legacy Host contract to take it over',
-        )
-      }
-      return
-    }
-    if (hostOwnsOfficialDeepSeek) {
-      takeoverAttempted = true
-      takeoverReason = 'host-owned-official-unavailable'
-      ctx.logger?.warn(
-        'vision-router: deepseek-official is unavailable on a Host-owned provider contract; re-enable the llm-deepseek row because Vision Router will not recreate it',
-      )
-      return
-    }
-    attemptTakeover(stealthEnabled ? 'stealth' : 'official-unavailable')
-  }
-  let takeoverSettled = false
-  const settleTimer = setTimeout(() => {
-    takeoverSettled = true
-    maybeTakeover()
-  }, KEEPALIVE_SETTLE_MS)
-  ctx.effect(() => () => clearTimeout(settleTimer), 'vision-router: takeover settle timer')
+
   // ── vision-http route: first-class llm route over the OpenAI-compatible
   // http providers. The built-in OVHcloud anonymous endpoint (no account, no
   // key, 2 req/min/IP) is the DEFAULT vision model, so a fresh install works
@@ -1195,7 +1075,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // hardcodes text-only. This wrapper route (`deepseek-vision` by default)
   // declares image input so the admission passes, shows up in the model
   // picker as "DeepSeek + 自动识图", and delegates only to the official
-  // DeepSeek adapter (or the hidden native route during stealth takeover).
+  // DeepSeek adapter. DVR 2.3 never substitutes a hidden native provider.
   //
   // The adapter is built unconditionally; whether (and under which name) it
   // mounts is reconciled reactively against the resolved settings document by
@@ -1207,9 +1087,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     // The row is explicitly branded as DeepSeek, so its metadata and network
     // authority must come from DeepSeek as well. `textProvider` is legacy
     // configuration and must never let an arbitrary relay masquerade behind
-    // the special wrapper. During stealth takeover old wrapper sessions keep
-    // delegating to the hidden native DeepSeek route.
-    const wrapperDelegateRoute = () => (stealthActive ? nativeRoute : 'deepseek-official')
+    // the special wrapper.
+    const wrapperDelegateRoute = () => 'deepseek-official'
     const delegateAdapter = () => {
       try {
         return ctx.llm.registration(wrapperDelegateRoute()).adapter
@@ -1229,9 +1108,6 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
       },
       async listModels() {
-        // In stealth mode this route is only a hidden alias for old sessions:
-        // the public deepseek-official route already shows the stock catalog.
-        if (stealthActive) return []
         const entries = []
         const real = delegateAdapter()
         if (real !== undefined && typeof real.listModels === 'function') {
@@ -1295,20 +1171,18 @@ export function apply(ctx, config = {}, runtime = {}) {
         if (real === undefined || typeof real.resolveModel !== 'function') {
           throw new Error('vision-router: the official DeepSeek adapter is not available')
         }
-        // Outside stealth mode, accept only models the live official catalog
-        // actually publishes. Some adapters can resolve arbitrary ids; that is
-        // not permission to expose them under the DeepSeek product identity.
-        if (!stealthActive) {
-          if (typeof real.listModels !== 'function') {
-            throw new Error('vision-router: the official DeepSeek catalog is not available')
-          }
-          const listed = await getOfficialDeepSeekCatalog(real)
-          const admitted = Array.isArray(listed) && listed.some(
-            (entry) => entry && entry.id === model,
-          )
-          if (!admitted) {
-            throw new Error(`vision-router: DeepSeek model "${model}" is not in the live official catalog`)
-          }
+        // Accept only models the live official catalog actually publishes.
+        // Some adapters can resolve arbitrary ids; that is not permission to
+        // expose them under the DeepSeek product identity.
+        if (typeof real.listModels !== 'function') {
+          throw new Error('vision-router: the official DeepSeek catalog is not available')
+        }
+        const listed = await getOfficialDeepSeekCatalog(real)
+        const admitted = Array.isArray(listed) && listed.some(
+          (entry) => entry && entry.id === model,
+        )
+        if (!admitted) {
+          throw new Error(`vision-router: DeepSeek model "${model}" is not in the live official catalog`)
         }
         const base = await real.resolveModel(wrapperDelegateRoute(), model)
         return {
@@ -1349,7 +1223,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const ownRoutes = () =>
     new Set(
-      [wrapperRoute(), chainRoute(), HTTP_ROUTE, nativeRoute, 'deepseek-official'].filter(
+      [wrapperRoute(), chainRoute(), HTTP_ROUTE, 'deepseek-official'].filter(
         (route) => route !== undefined && route !== null && route !== '',
       ),
     )
@@ -2638,7 +2512,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           // 原样留在会话日志里（界面正常显示图片），由适配器在模型输入层
           // 做不可见的改写；否则在 pre-step 改写为附件标记（界面会显示标记，
           // 这是没有适配器时的兜底）。legacy routing 开启时保留原块走视觉链。
-          const adapterHandlesImages = stealthActive || wrapperRegistered
+          const adapterHandlesImages = wrapperRegistered
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
               ? rewriteHistoryImages(messages, sessionImageMemory).messages
@@ -2652,7 +2526,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       // With routing disabled and no image-capable adapter on the session
       // route, rewrite uploaded image blocks into attachment markers so the
       // text-only model can still query them via vision_describe.
-      if (rewriteEnabled() && !routingEnabled() && !stealthActive && !wrapperRegistered) {
+      if (rewriteEnabled() && !routingEnabled() && !wrapperRegistered) {
         const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
         return {
           ...decision,
@@ -4996,18 +4870,16 @@ ctx.logger?.info(
           }
           try {
             const result = await probe()
-            // Runtime takeover state: lets the settings card explain the
-            // keep-alive fallback when stealth is off but the stock route is
-            // disabled at the composition layer.
+            // Report only the supported Host-owned provider state. The
+            // historical stealth field remains readable, but DVR 2.3 never
+            // turns it into provider takeover authority.
             const officialRouteAvailable = adapterAvailable(ctx.llm, 'deepseek-official')
             result.stealth = {
               configured: stealthEnabled,
-              active: stealthActive,
-              reason: stealthActive
-                ? takeoverReason
-                : hostOwnsOfficialDeepSeek && !officialRouteAvailable
-                  ? 'host-owned-official-unavailable'
-                  : undefined,
+              active: false,
+              reason: hostOwnsOfficialDeepSeek && !officialRouteAvailable
+                ? 'host-owned-official-unavailable'
+                : undefined,
               hostOwned: hostOwnsOfficialDeepSeek,
             }
             res.writeHead(result.ok ? 200 : 502, { 'content-type': 'application/json' })

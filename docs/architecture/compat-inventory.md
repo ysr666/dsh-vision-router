@@ -5,12 +5,12 @@ P0 records why each major compatibility seam exists and the condition that permi
 ## `lib/dsh-contract-compat.js`
 
 - **2.3 state:** `retain-host-gap`.
-- **Reason:** preserve released attachment/settings/provider-ownership behavior across the supported DSH window.
-- **Host gap:** rc.6 has the single-attachment contract; later Hosts add batch save, max-dimension policy and newer settings/provider lifecycle behavior.
-- **First needed for:** minimum rc.6 support and the subsequent rc.7/rc.8 attachment migration.
-- **Feature detection:** `attachments.saveImages`, attachment `imageLimits`, settings registration/scope functions, and LLM registration methods. The batch-attachment generation is also the semantic boundary where `deepseek-official` remains Host-owned instead of being reconstructed by DVR. No version-string branch.
-- **Removal condition:** minimum supported DSH natively exposes the required attachment/settings/provider seams and legacy profile overlays are outside support.
-- **Tests:** `rc6-rc7-compat`, `rc6-real-settings-persistence`, `attachment-admission-policy`, `dsh-host-capabilities`, minimum/legacy/current contract CI.
+- **Reason:** keep supported settings/provider-ownership contracts and durable attachment-policy migrations centralized without reviving pre-floor Host ownership.
+- **Host gap:** the DVR 2.3 window spans multiple Settings/Config generations, while persisted historical `attachment-local` profile overlays can still shadow current image-limit/normalization defaults after the Host is upgraded.
+- **First needed for:** supported Settings lifecycle convergence plus durable profile migration. The pre-`0.1.5` single-attachment / DeepSeek-provider reconstruction path is retired in R2.3.
+- **Feature detection:** attachment `imageLimits` / normalization shape, settings registration/scope functions, and LLM registration ownership. `attachments.saveImages` remains a diagnostic/ownership fact; it no longer authorizes DVR to synthesize an official DeepSeek provider.
+- **Removal condition:** the supported Settings lifecycle has one native contract and durable profiles containing the historical attachment policy overlay are migrated or explicitly outside the data-compatibility window.
+- **Tests:** `rc6-rc7-compat` (retained durable/current cases), `minimum-host-settings-persistence`, `attachment-admission-policy`, `dsh-host-capabilities`, minimum/current/rc2 contract CI.
 
 ## `lib/adapter-update-coalescer.js`
 
