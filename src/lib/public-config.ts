@@ -3,7 +3,7 @@ import z from '@deepseek-ai/schemastery'
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. The resolved schema also publishes this as
 // a read-only-by-convention handshake for browser/Host compatibility checks.
-export const SETTINGS_CONTRACT_REVISION = 7
+export const SETTINGS_CONTRACT_REVISION = 7 as const
 
 /**
  * Compose DVR's public product settings onto the mature Core schema.
@@ -13,7 +13,7 @@ export const SETTINGS_CONTRACT_REVISION = 7
  * Config identity with Settings, so a cloned/public-only schema would let the
  * exported contract and runtime validation drift apart.
  */
-export function composePublicVisionConfig(coreConfig) {
+export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T): T {
   if (!coreConfig || typeof coreConfig.set !== 'function') {
     throw new TypeError('Vision Router public config requires a Schemastery object schema')
   }
