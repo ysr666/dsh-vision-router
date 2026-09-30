@@ -93,7 +93,7 @@ test('future PDF/video/CAD/GUI/1+X tabletop stays inside capability-evidence-ope
   }
 })
 
-test('production has no hidden current-owner locator and only the inventoried transport registry', async () => {
+test('production has no hidden current-owner locator or installed runtime registry', async () => {
   const files = await sourceFiles(new URL('../lib/', import.meta.url))
   const currentOwners = []
   const installedRegistries = []
@@ -113,17 +113,10 @@ test('production has no hidden current-owner locator and only the inventoried tr
   assert.deepEqual(retiredSessionOwners, [], 'retired Session current-owner locator must stay absent')
   assert.deepEqual(
     installedRegistries,
-    ['lib/vision-provider-transport.js'],
-    'only the explicitly inventoried VisionProviderTransport compatibility registry is allowed',
+    [],
+    'module-global installed[] runtime registries must not return',
   )
 
-  const inventory = await text('docs/architecture/compat-inventory.md')
-  const sectionStart = inventory.indexOf('## `lib/vision-provider-transport.js` process/profile registry')
-  assert.ok(sectionStart >= 0, 'the one allowed runtime registry must be inventoried')
-  const sectionEnd = inventory.indexOf('\n## ', sectionStart + 4)
-  const section = inventory.slice(sectionStart, sectionEnd < 0 ? inventory.length : sectionEnd)
-  assert.match(section, /\*\*Removal condition:\*\*/)
-  assert.match(section, /currentVisionProviderTransport\(\)/)
 })
 
 test('Architecture Closure permanently carries every final ownership gate', async () => {

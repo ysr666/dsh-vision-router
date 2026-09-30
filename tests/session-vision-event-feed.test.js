@@ -336,3 +336,237 @@ test('feed activation backfill ignores stale equal-length scan cursors after a s
   assert.equal(session.appended[1].data.expired, true)
   assert.equal(logReads, 3, 'two compatibility scans plus one cursor-independent activation snapshot')
 })
+
+test('event-feed overflow recovers the dropped guard repair through one exact SessionQuery event read', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-overflow-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(eventReads, 1, 'only the one evicted guard event needs an exact recovery read')
+  assert.equal(session.appended.length, 257)
+  assert.equal(session.appended.some((entry) => entry.data.id === events[0].data.id), true)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(eventReads, 1, 'completed overflow recovery must not replay the recovered event')
+  assert.equal(session.appended.length, 257)
+})
+
+test('event-feed overflow recovers the dropped tool-result repair through exact event ownership', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'tool/result',
+    data: { message: { hasImage: true, text: `tool-${seq}` } },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(eventReads, 1)
+  assert.equal(session.appended.length, 257)
+  assert.equal(session.appended[0].data.message.sanitized, true)
+})
+
+test('overflow recovery never resurrects an evicted repair that left the current surface', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-removed-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+  session.surface.nodes = session.surface.nodes.slice(1)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(eventReads, 0, 'a dropped seq absent from the live surface does not need historical I/O')
+  assert.equal(session.appended.length, 256)
+  assert.equal(session.appended.some((entry) => entry.data.id === events[0].data.id), false)
+})
+
+test('large overflow recovery stays bounded per pre-step and eventually repairs every current event', async () => {
+  const events = Array.from({ length: 400 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-bounded-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  let previousReads = 0
+  for (let pass = 0; pass < 10 && session.appended.length < events.length; pass += 1) {
+    await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+    assert.ok(eventReads - previousReads <= 32, 'one pre-step must cap exact overflow reads')
+    previousReads = eventReads
+  }
+
+  assert.equal(eventReads, 144, 'only the 144 evicted events require exact reads')
+  assert.equal(session.appended.length, 400)
+  assert.equal(new Set(session.appended.map((entry) => entry.data.id)).size, 400)
+})
+
+test('overflow recovery retries a transient exact-event failure without losing the dirty repair', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-retry-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      if (eventReads === 1) throw new Error('transient exact-event failure')
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(eventReads, 1)
+  assert.equal(session.appended.length, 256)
+  assert.equal(session.appended.some((entry) => entry.data.id === events[0].data.id), false)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(eventReads, 2)
+  assert.equal(session.appended.length, 257)
+  assert.equal(session.appended.some((entry) => entry.data.id === events[0].data.id), true)
+})
+
+test('unsupported exact-event recovery remains dirty and retries instead of silently settling overflow', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-unsupported-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const warnings = []
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    logger: { warn(...args) { warnings.push(args.join(' ')) } },
+    readSessionEvent: async () => {
+      eventReads += 1
+      return { supported: false }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(session.appended.length, 256)
+  assert.equal(eventReads, 1)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  assert.equal(session.appended.length, 256)
+  assert.equal(eventReads, 2, 'unsupported recovery remains dirty and is retried on a later pre-step')
+  assert.equal(warnings.some((line) => line.includes('unsupported during feed overflow recovery')), true)
+})
+
+test('the normal 256-event feed path performs no exact recovery reads', async () => {
+  const events = Array.from({ length: 256 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-normal-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async () => {
+      eventReads += 1
+      throw new Error('normal feed must not perform exact recovery reads')
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(eventReads, 0)
+  assert.equal(session.appended.length, 256)
+})
+
+test('overflow recovery settles a replacement event without enqueueing another repair', async () => {
+  const events = Array.from({ length: 257 }, (_, seq) => ({
+    seq,
+    type: 'user/message',
+    data: { id: `vision-router-structured-guard-stop-replacement-${seq}`, guardStop: true },
+  }))
+  let eventReads = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionEvent: async (_session, seq) => {
+      eventReads += 1
+      if (seq === 0) {
+        return {
+          supported: true,
+          event: { ...events[0], surfaceOp: { op: 'replace', target: 0 } },
+        }
+      }
+      return { supported: true, event: events[seq] }
+    },
+  })
+  const session = sessionWithSurface(events.map((event) => event.seq))
+  index.activateSurfaceEventFeed()
+  for (const event of events) index.recordSessionEvent(session, event)
+
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+  await index.prepareDecision({ agent: { session }, messages: [] }, { messages: [] })
+
+  assert.equal(eventReads, 1)
+  assert.equal(session.appended.length, 256)
+  assert.equal(session.appended.some((entry) => entry.data.id === events[0].data.id), false)
+})

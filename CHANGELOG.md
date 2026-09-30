@@ -5,6 +5,38 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v2.3.0
+
+### Architecture & correctness / 架构与正确性
+
+- **2.3 架构收敛完成**：运行时 composition 明确分成五个阶段；VisionProviderTransport 改为显式依赖，删除 process-global current registry；maintenance/diagnostics/Desktop screenshot 等稳定 ownership seam 从 mature Core 中抽出，浏览器维护动作和 Settings permission/risk 逻辑获得真实 source owner。
+- **2.3 architecture convergence is complete**: runtime composition is grouped into five explicit phases; VisionProviderTransport is passed explicitly instead of through a process-global current registry; stable maintenance/diagnostics/Desktop-screenshot ownership seams moved out of the mature Core, and browser maintenance plus Settings permission/risk behavior now have real source owners.
+- **Session 与模型选择正确性补强**：有界 event-feed overflow 会恢复 still-current repair surface，不再静默丢第 257+ 个待修事件；Core async bootstrap 等 Promise settle 后再结束；Vision toggle 正确识别 DSH `ModelDirectory.select()` resolve 的 `{ ok: false }`，失败不会再被误判成成功。
+- **Session and model-selection correctness is stronger**: bounded event-feed overflow now recovers still-current repair surfaces instead of silently losing the 257th+ pending event; async Core bootstrap finishes only after Promise settlement; the Vision toggle now honors DSH `ModelDirectory.select()` resolved `{ ok: false }` failures instead of treating every resolved Promise as success.
+
+### Host support & compatibility / Host 支持与兼容
+
+- **公开 Host 支持线调整**：DVR 2.3.x 对 DSH 0.1.x 从 `0.1.5-rc.1` 起连续支持，对 0.2.x 从已验证的 `0.2.0-rc.2` 起支持；默认开发 Host 精确锁定 `0.2.0-rc.2`。低于 0.1.5 的 Host 不再属于正式支持矩阵。
+- **The public Host support window moves forward**: DVR 2.3.x continuously supports DSH 0.1.x from `0.1.5-rc.1`, and the 0.2.x train from verified `0.2.0-rc.2`; the ordinary development Host is pinned exactly to `0.2.0-rc.2`. Hosts below 0.1.5 are no longer in the supported matrix.
+- **只退休已证明不可达的旧 Host 路径**：删除 pre-floor Android/no-batch attachment fallback、legacy DeepSeek provider reconstruction 与 rc.7 public aliases；durable replay/profile compatibility、provider/platform quirks、显式 `proxy` / `proxyHosts` Advanced override 继续保留。
+- **Only proven-unreachable old-Host paths were retired**: the pre-floor Android/no-batch attachment fallback, legacy DeepSeek provider reconstruction, and rc.7 public aliases are gone; durable replay/profile compatibility, provider/platform quirks, and the explicit `proxy` / `proxyHosts` Advanced override remain supported.
+- **Remote Settings 产品语义不变**：远程风险确认仍只是 reminder / acknowledgement；`acceptedRisk: true` 不是身份认证、授权凭据、本机存在证明或 challenge response，真正能力边界仍由 remote mutable-field allow-list 与 local-only 字段决定。
+- **Remote Settings semantics are unchanged**: the remote risk confirmation remains reminder/acknowledgement only; `acceptedRisk: true` is not authentication, an authorization credential, proof of local presence, or a challenge response. Capability remains bounded by the remote mutable-field allow-list and local-only fields.
+
+### Validation / 验证
+
+- R5 Architecture Closure 在 Node 22 / 24 均为 **132/132**；生产 ESM 图为 **166 modules / 347 relative edges / 0 cycles**。
+- R5 Architecture Closure is **132/132** on both Node 22 and Node 24; the production ESM graph is **166 modules / 347 relative edges / 0 cycles**.
+- 最终 full regression 在 Node 22 / 24 均为 **1556 tests / 1550 pass / 6 skip / 0 fail**；minimum/current Host、0.1.x exact-source 九宫格、rc.2 Linux/macOS/Windows、Chromium、Windows/macOS Desktop 均通过。
+- Final full regression is **1556 tests / 1550 pass / 6 skip / 0 fail** on both Node 22 and Node 24; minimum/current Host, the nine-job 0.1.x exact-source matrix, rc.2 Linux/macOS/Windows, Chromium, and Windows/macOS Desktop all pass.
+- 固定 seed 与 rotating seed 的 property/adversarial fuzz 全通过；100MP 压缩图 stress 在三平台最高 RSS delta 为 **92.5 MiB**，低于 256 MiB gate，governor 最终无 active/queued 泄漏。
+- Deterministic and rotating property/adversarial fuzz both pass; 100MP compressed-image stress peaks at **92.5 MiB** RSS delta across the three OSes, below the 256 MiB gate, with no active/queued governor leak at completion.
+
+### Upgrade / 升级
+
+- 已在 DSH `0.1.5+` 支持列车上的 2.2.8 用户无需迁移配置或历史 Session 数据；若仍运行低于 0.1.5 的 Host，请先升级 Host 再安装 2.3.0。
+- 2.2.8 users already on the supported DSH `0.1.5+` train do not need a config or historical-Session migration. If the Host is below 0.1.5, upgrade DSH before installing 2.3.0.
+
 ## v2.2.1
 
 ### Stability & compatibility hotfixes / 稳定性与兼容性热修

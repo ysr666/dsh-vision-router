@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.1"><img src="https://img.shields.io/badge/release-v2.2.1-5B4CF0?style=flat-square" alt="Release v2.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-5B4CF0?style=flat-square" alt="Release v2.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -42,9 +42,9 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v2.2.5)**
+> 📌 **Announcement (v2.3.0)**
 >
-> **v2.2.5:** Adds fail-closed **Local-only vision** and fixes the remaining DSH `0.1.7-rc.2` Windows Desktop multi-plugin `Loading plugins…` hang by isolating Vision Router’s WebServer registrar from other plugins. The public Host floor remains `0.1.0-rc.8`. [What’s new →](docs/releases/v2.2.5.md)
+> **v2.3.0:** Architecture hardening and compatibility convergence. The supported DSH 0.1.x window now starts at `0.1.5-rc.1`, while the 0.2.x train starts at verified `0.2.0-rc.2`; composition, Session repair, Settings/browser ownership and Desktop lifecycle contracts are hardened, and only proven-unreachable pre-floor shims are retired. [What’s new →](docs/releases/v2.3.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -320,11 +320,11 @@ Failures are classified (region / tos / quota / rate-limit / context / network) 
 
 Stealth mode is **off by default** (explicit opt-in since issue #34): the official `deepseek-official` route stays untouched. When you need images, the composer’s “👁 Vision” control switches to the internal DeepSeek wrapper, which is hidden from the stock picker and `/model` presentation by default.
 
-On newer DSH Host generations, the official DeepSeek provider owns request-local attachment, file and image-access behavior. Vision Router therefore **never reconstructs or resurrects `deepseek-official` on those Hosts**. Keep `llm-deepseek` enabled and use the internal “DeepSeek + Auto Vision” wrapper / “👁 Vision” control for image tasks. If the official row is disabled or unavailable, the settings card reports that configuration problem instead of silently recreating a partial provider.
+On every DSH Host supported by DVR 2.3, the official DeepSeek provider owns request-local attachment, file and image-access behavior. Vision Router therefore **never reconstructs or resurrects `deepseek-official`**. Keep `llm-deepseek` enabled and use the internal “DeepSeek + Auto Vision” wrapper / “👁 Vision” control for image tasks. If the official row is disabled or unavailable, the settings card reports that configuration problem instead of silently recreating a partial provider.
 
-Legacy Host contracts that do not expose this provider-ownership capability retain the historical takeover/keep-alive behavior for compatibility: when their stock DeepSeek row is absent, Vision Router can still rebuild the legacy provider path so existing profiles and sessions keep working. This fallback is not a setup requirement for current Hosts and should not be enabled by disabling `llm-deepseek` on a modern installation.
+The historical `stealth` field is retained only so existing profiles continue to parse cleanly; it no longer grants provider-takeover authority on the DVR 2.3 support window.
 
-> Stealth mode **only affects the official DeepSeek route**. Custom/third-party routes such as opencode also receive internal vision wrappers by default, used through the composer toggle rather than a second user-facing model group.
+> Custom/third-party routes such as opencode also receive internal vision wrappers by default, used through the composer toggle rather than a second user-facing model group.
 
 ## Auto-vision wrappers and manual scope
 
@@ -436,7 +436,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 2.2.x keeps DSH `0.1.0-rc.8` as the public minimum and currently supports the released stable channel through `0.1.5-rc.3`. The DSH `0.2.x` train is peer-admitted from the verified `0.2.0-rc.1` boundary (`>=0.2.0-rc.1 <0.3.0-0`); exact `0.2.0-rc.2` (`next/rc`) source, real Host, Windows Desktop, multi-plugin, Settings, mixed-attachment, bundle-recompose, and Host-Sharp gates are preview verification evidence, not a support-floor increase. The final stable `0.2.0` tag and signed Desktop artifact will still be revalidated when published. DVR 2.0.x was the final train with public support for rc.6/rc.7. See [DSH Host support window](docs/architecture/dsh-support-window.md).
+- **DSH Host support policy:** DVR 2.3.x supports DSH 0.1.x continuously from `0.1.5-rc.1` (current stable evidence: `0.1.5-rc.3`) and supports the 0.2.x train from verified `0.2.0-rc.2`. Exact `0.2.0-rc.2` is also the ordinary 2.3 development Host. Pre-0.1.5 Hosts are unsupported, and DVR no longer publishes the older jagged 0.1.x exception list. Runtime behavior remains capability-based. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.

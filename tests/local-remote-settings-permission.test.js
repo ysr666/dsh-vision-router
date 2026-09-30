@@ -5,6 +5,8 @@ import { Readable } from 'node:stream'
 import { REMOTE_SETTINGS_PERMISSION } from '../lib/remote-settings-bridge.js'
 import {
   LOCAL_PERMISSION_CLIENT_PRELUDE,
+  LOCAL_REMOTE_SETTINGS_PERMISSION_FIELD,
+  createLocalRemoteSettingsPermissionClientBoundary,
   LOCAL_REMOTE_SETTINGS_PERMISSION_PATH,
   createVisionRouterLocalPermissionHttpHandler,
   injectLocalPermissionClientPrelude,
@@ -100,6 +102,59 @@ test('local permission prelude is ordered after existing live-model prelude', ()
   assert.ok(next.indexOf('data-vision-router-live-models') < next.indexOf('data-vision-router-local-settings-permission'))
   assert.equal(injectLocalPermissionClientPrelude(next), next)
   assert.ok(next.includes(LOCAL_REMOTE_SETTINGS_PERMISSION_PATH))
+})
+
+test('shared local permission owner preserves stable snapshots and Host boolean writes', async () => {
+  let revision = 7
+  const writes = []
+  const snapshot = {
+    status: 'ready',
+    writable: true,
+    mode: 'host',
+    revision,
+    value: { allowRemoteSettings: false, routing: false },
+    user: {},
+  }
+  const rawScope = {
+    getSnapshot() { return snapshot },
+    async load() {},
+    async set(field, value) { writes.push(['fallback-set', field, value]) },
+    async unset(field) { writes.push(['fallback-unset', field]) },
+  }
+  const boundary = createLocalRemoteSettingsPermissionClientBoundary({
+    endpoint: LOCAL_REMOTE_SETTINGS_PERMISSION_PATH,
+    field: LOCAL_REMOTE_SETTINGS_PERMISSION_FIELD,
+    async fetchImpl(url, options) {
+      const payload = JSON.parse(options.body)
+      writes.push([url, payload])
+      revision += 1
+      snapshot.revision = revision
+      snapshot.user.allowRemoteSettings = payload.value
+      snapshot.value.allowRemoteSettings = payload.value
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { ok: true, value: { revision, present: true, value: payload.value } }
+        },
+      }
+    },
+  })
+  const rawCtx = { settingsScope: { bind() { return rawScope } } }
+  const wrappedCtx = boundary.wrapContext(rawCtx)
+  assert.equal(boundary.wrapContext(rawCtx), wrappedCtx)
+  const scope = wrappedCtx.settingsScope.bind({ namespace: 'vision-router' })
+  const before = scope.getSnapshot()
+  assert.equal(scope.getSnapshot(), before)
+  assert.equal(before.value.allowRemoteSettings, '')
+
+  await scope.set('allowRemoteSettings', 'true')
+  assert.equal(writes[0][0], LOCAL_REMOTE_SETTINGS_PERMISSION_PATH)
+  assert.equal(writes[0][1].value, true)
+  const after = scope.getSnapshot()
+  assert.equal(scope.getSnapshot(), after)
+  assert.equal(after.value.allowRemoteSettings, 'true')
+  assert.equal(after.user.allowRemoteSettings, 'true')
 })
 
 test('client shim normalizes the v1.6.4 stringified toggle and keeps snapshots React-stable', async () => {

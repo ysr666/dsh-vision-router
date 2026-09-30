@@ -276,6 +276,59 @@ test('core facade localizes stale guard-stop shadow with the current host locale
   )
 })
 
+test('runtime prompt fetch boundary composes with accessor-owned Host fetch without setter recursion', async (t) => {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'fetch')
+  const locale = { value: 'en' }
+  const settings = createSettings(locale, { tool: true })
+  const cleanups = []
+  const calls = []
+  let assignments = 0
+  let depth = 0
+  let underlying = async (_input, init) => {
+    calls.push(init)
+    return new Response('ok')
+  }
+  const compose = () => async (input, init) => {
+    if (++depth > 8) { --depth; throw new Error('accessor fetch cycle') }
+    try { return await underlying(input, init) }
+    finally { --depth }
+  }
+  let hostFetch = compose()
+  const descriptor = {
+    configurable: true,
+    enumerable: saved?.enumerable ?? true,
+    get() { return hostFetch },
+    set(next) { assignments += 1; underlying = next; hostFetch = compose() },
+  }
+  Object.defineProperty(globalThis, 'fetch', descriptor)
+  t.after(() => Object.defineProperty(globalThis, 'fetch', saved))
+
+  const ctx = {
+    tools: { register() { return () => {} } },
+    llm: {},
+    get(name) { return name === 'settings' ? settings : undefined },
+    effect(setup) {
+      const cleanup = setup()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+      return cleanup
+    },
+  }
+  installRuntimeI18nBoundary(ctx, { tool: true })
+
+  const response = await globalThis.fetch('https://vision.example/v1/chat', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: '请详细描述这张图片的内容：主要元素、文字（照抄原文）、布局与细节。' }),
+  })
+  assert.equal(await response.text(), 'ok')
+  assert.equal(assignments, 0, 'DVR must not publish the wrapper through the Host accessor setter')
+  assert.equal(calls.length, 1)
+  assert.match(JSON.parse(calls[0].body).prompt, /^Describe this image in detail:/)
+
+  for (const cleanup of cleanups.toReversed()) cleanup()
+  assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, 'fetch'), descriptor)
+})
+
 test('runtime boundary replaces prose-based activation control flow with machine state', async (t) => {
   const locale = { value: 'en' }
   const vision = {

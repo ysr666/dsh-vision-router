@@ -5,10 +5,13 @@ import { readFileSync } from 'node:fs'
 const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
 const runtime = readFileSync(new URL('../lib/runtime-i18n.js', import.meta.url), 'utf8')
 const bootstrap = readFileSync(new URL('../lib/structured-bootstrap.js', import.meta.url), 'utf8')
+const desktopScreenshot = readFileSync(new URL('../lib/desktop-screenshot-tool.js', import.meta.url), 'utf8')
 
 const toolRefs = (source) => [...source.matchAll(/\bvision_[a-z0-9_]+\b/g)].map((match) => match[0])
 const registeredTools = new Set(
-  [...index.matchAll(/name:\s*['"](vision_[a-z0-9_]+)['"]/g)].map((match) => match[1]),
+  [index, desktopScreenshot]
+    .flatMap((source) => [...source.matchAll(/name:\s*['"](vision_[a-z0-9_]+)['"]/g)])
+    .map((match) => match[1]),
 )
 
 function structuredPromptSlice() {

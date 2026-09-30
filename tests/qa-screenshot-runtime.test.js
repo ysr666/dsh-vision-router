@@ -129,14 +129,20 @@ test('Windows desktop capture enters per-monitor v2 on the exact capture thread 
   assert.match(script, /C:\\shot''s\\screen\.png/)
 })
 
-test('production Windows screenshot directly owns PMv2 capture and no longer depends on execFile rewriting', async () => {
-  const core = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  const execCompat = await readFile(new URL('../lib/tesseract-exec-compat.js', import.meta.url), 'utf8')
+test('production Windows screenshot implementation owns PMv2 capture outside mature Core', async () => {
+  const [core, screenshot, execCompat] = await Promise.all([
+    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/desktop-screenshot-tool.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/tesseract-exec-compat.js', import.meta.url), 'utf8'),
+  ])
 
-  assert.match(core, /import \{ captureWindowsDesktop \} from '\.\/lib\/windows-desktop-capture\.js'/)
-  assert.match(core, /await captureWindowsDesktop\(tmp, \{/)
-  assert.doesNotMatch(core, /\$b=\[System\.Windows\.Forms\.SystemInformation\]::VirtualScreen/)
-  assert.doesNotMatch(core, /\$g\.CopyFromScreen\(\$b\.X,\$b\.Y,0,0,\$bmp\.Size\)/)
+  assert.match(core, /import \{ createDesktopScreenshotTool \} from '\.\/lib\/desktop-screenshot-tool\.js'/)
+  assert.match(core, /deepToolDefs\.push\(createDesktopScreenshotTool\(\{/ )
+  assert.doesNotMatch(core, /captureWindowsDesktop|screencapture|ImageMagick import/)
+  assert.match(screenshot, /import \{ captureWindowsDesktop \} from '\.\/windows-desktop-capture\.js'/)
+  assert.match(screenshot, /await captureWindowsDesktop\(target, \{ timeoutMs, signal \}\)/)
+  assert.doesNotMatch(screenshot, /\$b=\[System\.Windows\.Forms\.SystemInformation\]::VirtualScreen/)
+  assert.doesNotMatch(screenshot, /\$g\.CopyFromScreen\(\$b\.X,\$b\.Y,0,0,\$bmp\.Size\)/)
   assert.doesNotMatch(execCompat, /rewriteWindowsScreenshotExecArgs/)
   assert.doesNotMatch(execCompat, /Windows DPI capture shims/)
 })

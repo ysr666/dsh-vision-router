@@ -6,53 +6,59 @@ Status: normative for the current DVR 2.x compatibility program.
 
 The public support policy contains only released Host semantics. Preview/canary versions are intentionally excluded from this table.
 
-| Role | DSH train | Meaning |
-|---|---|---|
-| Minimum Supported Host | `0.1.0-rc.8` | Oldest Host generation that DVR 2.2.x publicly supports. |
-| Current Stable Host | `0.1.5-rc.3` | Current npm stable-channel release covered by required exact Host and browser evidence. |
+| DVR train | Minimum Supported Host | Current Stable Host | Ordinary development Host |
+|---|---|---|---|
+| `2.2.x` | `0.1.0-rc.8` | `0.1.5-rc.3` | historical 2.2 development baseline |
+| `2.3.x` | **DSH `0.1.5` train** | `0.1.5-rc.3` | **exact `0.2.0-rc.2`** |
 
-DVR `2.2.x` therefore keeps `0.1.0-rc.8` as its public floor and supports released Host trains through the current stable channel. Runtime branching remains capability-based rather than version-string-driven.
+DVR `2.2.x` keeps `0.1.0-rc.8` as its historical public floor.
 
-DSH `0.1.5-rc.1` / `0.1.5-rc.2` remain admitted for existing installations; current exact stable evidence has advanced to `0.1.5-rc.3`. Advancing this evidence does not raise the public minimum.
+DVR `2.3.0` deliberately resets the public minimum to the **DSH `0.1.5` train**. The earliest admitted release in that train is `0.1.5-rc.1`; current stable evidence is `0.1.5-rc.3`. DVR 2.3 no longer publishes a jagged list of `0.1.0` / `0.1.1` / `0.1.3` / `0.1.7` exceptions.
 
-No later support-floor increase is currently announced.
+Ordinary DVR 2.3 development is pinned to **exact DSH `0.2.0-rc.2`** so `pnpm install && pnpm test` exercises the latest fully verified Host/Desktop generation rather than an obsolete compatibility floor. This exact development pin is evidence policy, not a reason to turn runtime behavior into version-string checks.
+
+Runtime branching remains capability-based rather than version-string-driven.
 
 ### DSH 0.2.x forward admission
 
-DVR 2.2.x peer-admits the DSH `0.2.x` train from the verified rc.1 boundary (`>=0.2.0-rc.1 <0.3.0-0`) without raising the `0.1.0-rc.8` minimum Host floor. Initial forward admission was backed by public pre-0.2.0 master `21638c56315ae6a2b552d6091945d3144c9af32e`. Exact release evidence has now advanced to immutable `dsh-v0.2.0-rc.2` commit `639ed015397290b3745d163aafe02ffee4aa3f84`, published on 2026-09-29. Required gates cover three-OS source contracts, real Host + Chromium, Settings mount/save/reload/readback, mixed attachments, bundle recomposition, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and Host-owned Sharp resolution.
+DVR 2.2.x peer-admits the DSH `0.2.x` train from the verified rc.1 boundary (`>=0.2.0-rc.1 <0.3.0-0`) without raising its historical `0.1.0-rc.8` minimum Host floor.
 
-The final immutable upstream `0.2.0` stable tag and signed official Desktop installer remain release-time revalidation targets. The rc.1 evidence is next-channel verification, not a preview support promise and not a support-floor increase.
+DVR 2.3 uses exact `0.2.0-rc.2` as its ordinary development Host while keeping the public minimum at the `0.1.5` train. Peer admission is intentionally train-shaped: `>=0.1.5-rc.1 <0.2.0-0` for the continuous supported 0.1.x line from 0.1.5, plus `>=0.2.0-rc.2 <0.3.0-0` for the 0.2.x train from the verified rc.2 boundary. Initial forward admission was backed by public pre-0.2.0 master `21638c56315ae6a2b552d6091945d3144c9af32e`. Exact release evidence has now advanced to immutable `dsh-v0.2.0-rc.2` commit `639ed015397290b3745d163aafe02ffee4aa3f84`, published on 2026-09-29. Required gates cover three-OS source contracts, real Host + Chromium, Settings mount/save/reload/readback, mixed attachments, bundle recomposition, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and Host-owned Sharp resolution.
 
-## Verification evidence — not support policy
+The final immutable upstream `0.2.0` stable tag and signed official Desktop installer remain release-time revalidation targets. The verified `0.2.0-rc.2` boundary is already part of DVR 2.3's peer-admitted supported 0.2.x train; it does not raise the public minimum above the DSH 0.1.5 train.
 
-Compatibility evidence answers a different question: what exact upstream releases and moving channels have current CI proof? It must never be interpreted as a public support-floor change.
+## Verification evidence and drift canaries
+
+Exact evidence answers which admitted Host points have current CI proof; moving canaries answer whether upstream has drifted beyond those points. Evidence inside an already declared train does not by itself change the minimum support floor, while peer-admission boundaries remain explicit support policy.
 
 | Evidence role | DSH source | Meaning |
 |---|---|---|
 | Exact stable evidence | `0.1.5-rc.3` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
-| Exact next/rc evidence | `0.2.0-rc.2` (`next/rc`) | Required Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
+| Exact supported 0.2.x boundary | `0.2.0-rc.2` (`next/rc`) | Required Host/wire/lifecycle/browser/Desktop evidence for the peer-admitted 0.2.x train; it does not raise the 0.1.5 minimum floor. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
 | Next/rc drift canary | npm dist-tag `next` | Scheduled, dynamically resolved surveillance for the rc channel. A failure does not rewrite support policy. |
 | Alpha/pre-release drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance for the alpha channel. A failure does not rewrite support policy. |
 
-The exact evidence values may move in a patch-level maintenance PR when CI proof advances. The public minimum may move only under the support-floor protocol below.
+Exact evidence points may advance inside an already admitted train when CI proof advances. The public minimum and any peer-admission boundary change remain explicit support-policy changes.
 
 Historical release notes under `docs/releases/` are release-time snapshots and are not rewritten when later evidence advances.
 
-The optional peer-dependency range may admit an exact preview version so CI/users can install a verified preview Host without peer-resolution noise. That install admission is compatibility evidence, not a public preview support promise.
+Peer-dependency admission is itself part of the compatibility contract. DVR 2.3 deliberately admits the 0.2.x train from verified `0.2.0-rc.2`; moving npm `next`/`alpha` canaries outside that declared boundary remain surveillance only.
 
-## Floor transition from DVR 2.0.x
+## Floor transitions across DVR 2.x
 
-DVR 2.0.x was released with DSH `0.1.0-rc.6` as its minimum Host. The 2.1.0 boundary was announced in advance and raised the public minimum to DSH `0.1.0-rc.8`.
+DVR 2.0.x was released with DSH `0.1.0-rc.6` as its minimum Host. DVR 2.1.0 raised the public minimum to DSH `0.1.0-rc.8`; DVR 2.2.x inherited that rc.8 floor. DVR 2.3.0 raises the floor again to the DSH `0.1.5` train.
 
 ```text
 DVR 2.0.x minimum: DSH 0.1.0-rc.6
 DVR 2.1.x minimum: DSH 0.1.0-rc.8
+DVR 2.2.x minimum: DSH 0.1.0-rc.8
+DVR 2.3.x minimum: DSH 0.1.5 train (earliest admitted release: 0.1.5-rc.1)
 ```
 
-Users still on rc.6/rc.7 should upgrade DSH before upgrading to DVR 2.1.x or any later 2.x train. DVR 2.2.x inherits the same rc.8 floor; this maintenance update does not raise it.
+Users on DSH trains older than `0.1.5` must upgrade DSH before upgrading to DVR 2.3.x.
 
-This support-floor transition does **not** require deleting every rc.6-era compatibility seam in the same release. Compatibility code is retired only after a separate proof shows it is unreachable or unnecessary on every supported Host and durable-history path.
+The 2.3 floor increase authorizes a fresh deletion audit for Host-version compatibility whose only purpose was keeping pre-`0.1.5` Hosts running. It does **not** authorize deleting compatibility for durable data merely because the Host that originally produced that data is no longer supported. Session logs, replay envelopes, persisted settings and other long-lived inputs require separate reachability evidence on supported Hosts.
 
 ## Support-policy change protocol
 
@@ -61,11 +67,11 @@ A public Host support-floor change is valid only when all of the following are t
 1. the floor change is announced in a DVR minor or major release, never only in a patch release;
 2. README / support documentation and release notes state the old and new floors;
 3. Doctor reports the effective public support policy and gives a capability-based upgrade result for Hosts below the active floor;
-4. required CI proves the public floor and current stable Host, while preview and dynamic canaries remain separately labelled verification evidence;
+4. required CI proves the public floor, current stable Host, and every declared forward-admission boundary, while moving canaries remain separately labelled surveillance;
 5. compatibility seams are removed only after the new minimum Host proves the replacement capability;
 6. removal PRs keep restart, settings, native-image coexistence, tool execution, Node 22/24 and supported-platform regressions green.
 
-Advancing an exact stable/preview evidence version or a moving canary target does **not** by itself change the public support floor.
+Advancing exact evidence inside an already declared train or moving a canary target does **not** by itself change the minimum support floor. Changing the peer-admitted train boundary is a support-policy change and must be explicit.
 
 ## Capability-first rule
 
@@ -75,6 +81,6 @@ DVR must not turn these tables into widespread version-string conditionals. Runt
 
 ## Compatibility-retirement rule
 
-The 2.1.x floor makes rc.6-only compatibility candidates eligible for a fresh deletion audit, but does not automatically authorize deletion. Durable session formats, replay envelopes, adapter wire shapes, and other historical inputs may outlive the Host version that originally produced them.
+The 2.3.x `0.1.5` train floor makes any compatibility path used only by pre-`0.1.5` Hosts eligible for a fresh deletion audit, but does not automatically authorize deletion. Durable session formats, replay envelopes, adapter wire shapes, and other historical inputs may outlive the Host version that originally produced them.
 
 See [DSH 0.2.0-rc.2 compatibility audit](dsh-020-rc2-adaptation.md) for the upstream seam review and validation plan.

@@ -63,8 +63,6 @@ import {
   switchRoute,
   hostMatchesAny,
   DEFAULT_PROXY_HOSTS,
-  launchEnvironmentLike,
-  createNativeDeepSeekAdapter,
   createStealthAdapter,
   estimateTokens,
   estimateMessages,
@@ -1144,33 +1142,6 @@ test('boxToSvg draws a rect with pixel coordinates', () => {
   assert.ok(svg.includes('width="10" height="20"'))
 })
 
-test('launchEnvironmentLike exposes get(name) -> { value }', () => {
-  const env = launchEnvironmentLike({ DEEPSEEK_API_KEY: 'sk-x', EMPTY: '' })
-  assert.equal(env.get('DEEPSEEK_API_KEY').value, 'sk-x')
-  assert.deepEqual(env.get('EMPTY'), { value: '' })
-  assert.equal(env.get('MISSING'), undefined)
-})
-
-test('createNativeDeepSeekAdapter builds the stock adapter from settings + credentials', async () => {
-  const ctx = {
-    get(name) {
-      if (name === 'settings') return { get: () => ({}) }
-      if (name === 'credentials') return { resolve: async () => ({ value: 'sk-test' }) }
-      return undefined
-    },
-  }
-  const adapter = createNativeDeepSeekAdapter(ctx)
-  assert.equal(adapter.providerInfo('deepseek-official-native').name, 'DeepSeek')
-  const models = await adapter.listModels('deepseek-official-native')
-  assert.ok(models.some((m) => m.id === 'deepseek-v4-pro'))
-  assert.deepEqual(models[0].inputModalities, ['text'])
-  const info = await adapter.resolveModel('deepseek-official-native', 'deepseek-v4-pro')
-  assert.deepEqual(info.inputModalities, ['text'])
-  assert.ok(info.context.contextWindow > 0)
-  const key = await ctx._keyTest?.()
-  assert.equal(key, undefined)
-})
-
 test('createStealthAdapter mirrors the stock catalog but declares image input', async () => {
   const native = {
     providerInfo: (p) => ({ id: p, name: 'DeepSeek' }),
@@ -1621,55 +1592,16 @@ test('vision describe post-execute guidance preserves canonical tool result and 
 
 })
 
-test('apply registers the stealth deepseek-official route with the stock catalog', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { ctx, adapters } = mockHarnessCtx()
-  // the harness loader normalizes the entry config through the Config schema;
-  // routing: true keeps the legacy chain route mounted (the default is off —
-  // image turns go through the vision tools instead)
-  apply(ctx, Config({
-    provider: 'openrouter',
-    providers: [{ provider: 'openrouter', model: 'qwen/qwen3-vl-235b-a22b-instruct' }],
-    routing: true,
-    stealth: true,
-  }))
-  // the takeover decision waits out the boot settle window (a not-yet-applied
-  // stock llm-deepseek row must never be mistaken for a disabled one)
-  t.mock.timers.tick(2000)
-
-  // all four routes came up: hidden native, public deepseek-official, the
-  // hidden wrapper alias, and the vision chain
-  for (const provider of ['deepseek-official-native', 'deepseek-official', 'deepseek-vision', 'vision-chain']) {
-    assert.ok(adapters.has(provider), `expected route "${provider}" to be registered`)
-  }
-
-  // the public route serves the stock catalog (same ids/names) but declares
-  // image input, so the picker looks exactly like the stock one
-  const official = adapters.get('deepseek-official')
-  const listed = await official.listModels('deepseek-official')
-  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
-  assert.deepEqual(listed.map((m) => m.name), ['DeepSeek-V4-Flash', 'DeepSeek-V4-Pro'])
-  for (const model of listed) assert.deepEqual(model.inputModalities, ['text', 'image'])
-
-  // the hidden routes advertise no models
-  assert.deepEqual(await adapters.get('deepseek-official-native').listModels('deepseek-official-native'), [])
-  assert.deepEqual(await adapters.get('deepseek-vision').listModels('deepseek-vision'), [])
-})
-
-test('apply skips the chain route by default: image turns go through the vision tools', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { ctx, adapters } = mockHarnessCtx()
+test('apply skips the chain route by default on the supported Host contract', () => {
+  const { ctx, adapters } = mockHarnessCtx({ attachments: 'batch' })
   apply(ctx, Config({}))
-  // tools-first philosophy: no whole-turn chain routing by default, but the
-  // vision-http backend for vision_describe stays mounted
+  // Tools-first philosophy: no whole-turn chain routing by default, while the
+  // vision-http backend and visible wrapper stay mounted. Supported Hosts own
+  // deepseek-official, so DVR must not reconstruct the legacy native route.
   assert.equal(adapters.has('vision-chain'), false)
   assert.ok(adapters.has('vision-http'))
-  // keep-alive: the stock route is dead in this mock (no stockRoute), so the
-  // plugin still takes over deepseek-official via the hidden native route —
-  // otherwise the DeepSeek models would vanish entirely
-  t.mock.timers.tick(2000)
-  assert.ok(adapters.has('deepseek-official-native'))
   assert.ok(adapters.has('deepseek-vision'))
+  assert.equal(adapters.has('deepseek-official-native'), false)
 })
 
 test('stealth defaults to false (issue #34: explicit opt-in, no stealth takeover by default)', () => {
@@ -1694,18 +1626,16 @@ test('the vision chain ships with the built-in free model as its first row', () 
   ])
 })
 
-test('modern Host ownership never rebuilds or resurrects a missing official DeepSeek route', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+test('supported Host ownership never rebuilds or resurrects a missing official DeepSeek route', async () => {
   const { ctx, adapters, directories, captured } = mockHarnessCtx({ attachments: 'batch' })
   apply(ctx, Config({ stealth: true }))
-  t.mock.timers.tick(2000)
 
   assert.equal(adapters.has('deepseek-official-native'), false)
   assert.equal(adapters.has('deepseek-official'), false)
   assert.equal(
     captured.settingsReads.includes('llm-deepseek'),
     false,
-    'modern ownership must stop before createNativeDeepSeekAdapter reads stock settings',
+    'supported ownership must never read stock settings to reconstruct a provider',
   )
   assert.ok(adapters.has('deepseek-vision'), 'the visible auto-vision wrapper remains mounted')
   assert.deepEqual(
@@ -1714,8 +1644,8 @@ test('modern Host ownership never rebuilds or resurrects a missing official Deep
     'modern DVR must never claim the official provider directory when Host ownership is active',
   )
 
-  // If the Host-owned row appears after the settle window, the wrapper follows
-  // it live instead of requiring a synthetic takeover or plugin restart.
+  // If the Host-owned row appears later, the wrapper follows it live instead
+  // of requiring a synthetic takeover or plugin restart.
   const lateStock = {
     providerInfo: (provider) => ({ id: provider, name: 'DeepSeek' }),
     providerRetryPolicy: () => 'retry',
@@ -1731,23 +1661,7 @@ test('modern Host ownership never rebuilds or resurrects a missing official Deep
   assert.equal(adapters.has('deepseek-official-native'), false)
 })
 
-test('keep-alive fallback: stealth off + dead stock route still serves deepseek-official', async (t) => {
-  // No stockRoute in the mock = the official llm-deepseek row is disabled at
-  // the composition layer (adapterAvailable throws). With stealth off the
-  // plugin must STILL take over, or the DeepSeek models vanish entirely.
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { ctx, adapters } = mockHarnessCtx()
-  apply(ctx, Config({ stealth: false }))
-  t.mock.timers.tick(2000)
-  assert.ok(adapters.has('deepseek-official'), 'expected the keep-alive deepseek-official route')
-  assert.ok(adapters.has('deepseek-official-native'), 'expected the hidden native route')
-  const official = adapters.get('deepseek-official')
-  const listed = await official.listModels('deepseek-official')
-  assert.deepEqual(listed.map((m) => m.id), ['deepseek-v4-flash', 'deepseek-v4-pro'])
-})
-
-test('stealth off + alive stock route performs no takeover at all', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+test('stealth off + alive stock route performs no takeover at all', async () => {
   const { ctx, adapters } = mockHarnessCtx({ stockRoute: true })
   apply(ctx, Config({ stealth: false }))
   // the stock adapter keeps owning deepseek-official; the plugin registers no
@@ -1757,43 +1671,7 @@ test('stealth off + alive stock route performs no takeover at all', async (t) =>
   const listed = await stock.listModels('deepseek-official')
   assert.deepEqual(listed[0].inputModalities, ['text'])
   assert.ok(adapters.has('deepseek-vision'), 'expected the visible wrapper route')
-  // even after the settle window the stock row's live route is left alone
-  t.mock.timers.tick(2000)
   assert.equal(adapters.has('deepseek-official-native'), false)
-})
-
-test('rc.5 activation order: a late stock row is never mistaken for a disabled one', (t) => {
-  // Reproduces the Oh-DSH Desktop (DSH 0.1.0-rc.5) boot crash: entry
-  // activation is service-driven there, so vision-router's apply can run
-  // BEFORE the stock llm-deepseek row. The old synchronous keep-alive check
-  // read the not-yet-registered route as dead, registered the
-  // deepseek-official directory entry first, and the stock row then threw
-  // DUPLICATE_DIRECTORY, killing the runtime before readiness.
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  const { ctx, adapters, directories } = mockHarnessCtx()
-  apply(ctx, Config({ stealth: false }))
-  // the stock row applies after us (late registration + its directory entry)
-  const stock = {
-    providerInfo: (p) => ({ id: p, name: 'DeepSeek' }),
-    providerRetryPolicy: () => 'retry',
-    listModels: async (p) => [
-      { provider: p, id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', inputModalities: ['text'] },
-    ],
-    resolveModel: async (p, m) => ({ provider: p, id: m, name: m, inputModalities: ['text'] }),
-    stream: async function* () {
-      yield { type: 'finish', reason: { kind: 'stop' } }
-    },
-  }
-  ctx.llm.registerAdapter(['deepseek-official'], stock)
-  // settle window elapses: the official route is alive, so hands off entirely
-  t.mock.timers.tick(2000)
-  assert.equal(adapters.has('deepseek-official-native'), false)
-  assert.equal(adapters.get('deepseek-official'), stock, 'stock adapter must stay in charge')
-  assert.deepEqual(
-    directories.filter((entry) => entry.entries.some((row) => row && row.provider === 'deepseek-official')),
-    [],
-    'the plugin must never claim the deepseek-official directory entry while the stock row is alive',
-  )
 })
 
 // ── catalog routing corrections (issue: opencode-go qwen3.6-plus) ──────────

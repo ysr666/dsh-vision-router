@@ -52,6 +52,7 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/alpha1-settings-factory-lifecycle.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
   { path: 'tests/alpha1-web-auth-boundary.test.js', owner: '.github/workflows/dsh-alpha-source-contract.yml', reason: 'exact DSH alpha source compatibility matrix' },
   { path: 'tests/browser-p1-acceptance.test.js', owner: '.github/workflows/browser-p1-acceptance.yml', reason: 'real Chromium acceptance requires a browser executable' },
+  { path: 'tests/linux-desktop-screenshot-runtime.test.js', owner: '.github/workflows/adversarial-compat-hardening.yml', reason: 'real Linux X11 desktop capture requires Xvfb plus import/scrot' },
 
   { path: 'tests/architecture-contract-baseline.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
   { path: 'tests/capability-shadow-retirement.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
@@ -78,12 +79,13 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/vision-artifact-store.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'artifact/data-boundary Node 22/24 matrix' },
   { path: 'tests/vision-provider-transport.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
 
+  { path: 'tests/minimum-host-settings-persistence.test.js', owner: '.github/workflows/dsh-contract.yml', reason: 'minimum supported Host SettingsProvider persistence contract' },
   { path: 'tests/dsh-support-window.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
 ])
 
-test('host-provided DSH packages publish the active Host floor while retaining an installable legacy dev fixture', async () => {
+test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission range', async () => {
   const pkg = await manifest()
   const hostPeers = [
     '@deepseek-ai/dsh-anonymous-user-id',
@@ -93,13 +95,9 @@ test('host-provided DSH packages publish the active Host floor while retaining a
   for (const name of hostPeers) {
     assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
     const peer = pkg.peerDependencies?.[name]
-    assert.equal(typeof peer, 'string', `${name} must be a peerDependency`)
-    assert.match(peer, /\^0\.1\.0-rc\.8/, `${name} must publish the DVR 2.1 rc8 Host floor`)
-    assert.match(peer, /\^0\.1\.1-rc\.1/, `${name} must admit the released DSH 0.1.1 train`)
-    assert.match(peer, /\^0\.1\.3-alpha\.2/, `${name} must admit the verified DSH 0.1.3 alpha train`)
-    assert.match(peer, />=0\.2\.0-rc\.1 <0\.3\.0-0/, `${name} must admit the declared DSH 0.2.x train including prereleases`)
-    assert.equal(typeof pkg.devDependencies?.[name], 'string', `${name} must remain available for tests`)
-    assert.match(pkg.devDependencies[name], /\^0\.1\.0-rc\.6/)
+    assert.equal(peer, '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0')
+    assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
+    assert.equal(pkg.devDependencies?.[name], '0.2.0-rc.2', `${name} development fixture must pin exact rc.2`)
   }
 })
 

@@ -23,32 +23,36 @@ test('package root and runtime support contract stay stable during architecture 
 
 test('public entry remains schema/export only and delegates runtime composition once', async () => {
   const source = await text('entry.js')
+  const publicConfig = await text('lib/public-config.js')
   assert.match(source, /import \{ applyVisionRuntimeComposition \} from '\.\/lib\/runtime-composition\.js'/)
-  assert.match(source, /export const SETTINGS_CONTRACT_REVISION = 7/)
-  assert.match(source, /export const Config = core\.Config/)
+  assert.match(source, /composePublicVisionConfig/)
+  assert.match(source, /export \{ SETTINGS_CONTRACT_REVISION \}/)
+  assert.match(publicConfig, /export const SETTINGS_CONTRACT_REVISION = 7/)
+  assert.match(source, /export const Config = composePublicVisionConfig\(core\.Config\)/)
+  assert.doesNotMatch(source, /Config\.set\(/)
   assert.match(
     source,
-    /export function apply\(ctx, config = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core\)\s*\}/,
+    /export function apply\(ctx, config = \{\}, runtime = \{\}\) \{\s*return applyVisionRuntimeComposition\(ctx, config, core, runtime\)\s*\}/,
   )
   assert.equal(
-    (source.match(/applyVisionRuntimeComposition\(ctx, config, core\)/g) ?? []).length,
+    (source.match(/applyVisionRuntimeComposition\(ctx, config, core, runtime\)/g) ?? []).length,
     1,
     'public entry must have exactly one production composition call',
   )
 })
 
 test('2.0.x routing and background-authority defaults stay unchanged', async () => {
-  const entry = await text('entry.js')
-  assert.match(entry, /core\.Config\.set\('routingMode', z\.union\(\['ordered', 'auto'\]\)\.default\('ordered'\)\)/)
+  const publicConfig = await text('lib/public-config.js')
+  assert.match(publicConfig, /coreConfig\.set\('routingMode', z\.union\(\['ordered', 'auto'\]\)\.default\('ordered'\)\)/)
   assert.match(
-    entry,
+    publicConfig,
     /z\.union\(\['balanced', 'quality', 'speed', 'local'\]\)\.default\('balanced'\)/,
   )
   assert.match(
-    entry,
+    publicConfig,
     /z\.union\(\['local-free', 'all', 'off'\]\)\.default\('off'\)/,
   )
-  assert.match(entry, /core\.Config\.set\('allowRemoteSettings', z\.boolean\(\)\.default\(false\)\)/)
+  assert.match(publicConfig, /coreConfig\.set\('allowRemoteSettings', z\.boolean\(\)\.default\(false\)\)/)
 })
 
 test('legacy route identity and default provider chain remain compatible', async () => {
@@ -82,12 +86,15 @@ test('published support-window docs remain the authority for compatibility retir
   ])
   assert.match(support, /2\.0\.x/)
   assert.match(support, /0\.1\.0-rc\.6/)
-  assert.match(support, /Minimum Supported Host[^\n]*0\.1\.0-rc\.8/)
-  assert.match(support, /Current Stable Host[^\n]*0\.1\.5-rc\.3/)
-  assert.match(support, /Exact next\/rc evidence[^\n]*0\.2\.0-rc\.2/)
+  assert.match(support, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
+  assert.match(
+    support,
+    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
+  )
+  assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
   assert.match(support, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
-  assert.match(support, /not a preview support promise/i)
+  assert.match(support, /peer-admitted supported 0\.2\.x train/i)
   assert.match(support, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)
 })

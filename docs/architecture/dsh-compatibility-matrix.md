@@ -1,62 +1,73 @@
-# DSH compatibility matrix
+# DSH compatibility matrix — DVR 2.3
 
-This document is the P0 compatibility baseline for dsh-vision-router 2.x.
+This document is the normative Host-evidence matrix for dsh-vision-router 2.3.
 
-The matrix is capability-based. Runtime code must feature-detect the seam it needs; it must not branch on a DSH version string merely to select a behavior. Version labels below name the CI fixtures that prove each capability.
+Runtime code remains capability-based: version labels below identify immutable CI evidence only. They must not become runtime version branches.
 
-## Gating fixtures
+## Support and admission policy
 
-| CI fixture | DSH package line | Role |
+DVR 2.3 supports the DSH 0.1.x line continuously from the first admitted 0.1.5 release candidate and the 0.2.x line from the exact rc.2 boundary that is exercised by the current Desktop/Host gates:
+
+```text
+>=0.1.5-rc.1 <0.2.0-0
+||
+>=0.2.0-rc.2 <0.3.0-0
+```
+
+Ordinary DVR development is pinned to exact `0.2.0-rc.2`. Hosts below the 0.1.5 train are not part of the DVR 2.3 support contract.
+
+The `0.1.5-alpha.2` browser fixture may remain as historical drift surveillance. It is deliberately outside peer admission, outside the normative exact-source matrix, and must never be described as DVR 2.3 support evidence.
+
+## Gating evidence
+
+| Evidence | DSH version | Role |
 | --- | --- | --- |
-| `minimum-contract` | `0.1.0-rc.6` | Historical compatibility-retention fixture. The name is legacy; DVR 2.1.x and later 2.x public support starts at rc.8. |
-| `legacy-contract` | `0.1.0-rc.8` | Public support-floor fixture carrying batch attachments and dimension policy. |
-| `current-contract` | `0.1.5-rc.3` | Current stable Host contract baseline. Must remain green. |
-| `preview-contract` | `0.1.7-rc.2` | Retained predecessor-preview regression fixture. |
-| `DSH 0.2.0-rc.2 validation` | `0.2.0-rc.2` (`next/rc`) | Current exact next/rc evidence; not a public preview-support claim. |
-| retained preview regression | `0.1.5-alpha.2` | Older preview regression fixture retained as an older preview regression while the 0.1.7 next line is qualified. |
-| release-channel canary | npm `latest` / `next` / `alpha` | Separately labelled stable, next/rc, and alpha/pre-release drift surveillance. Never changes support policy by itself. |
+| `minimum-contract` | `0.1.5-rc.1` | Public 2.3 minimum. Packed-plugin install, public entry, Settings persistence, batch attachment, SessionQuery and core Host contracts. |
+| `current-contract` | `0.1.5-rc.3` | Current stable 0.1.5 Host evidence. |
+| exact-source matrix | `0.1.5-rc.1`, `0.1.5-rc.3`, `0.1.7-rc.2` on Ubuntu/macOS/Windows | Proves the continuous supported 0.1.x line at the floor, current stable point and a later mid-train point. |
+| `2.3 Critical Architecture Gate` / rc.2 reusable workflow | `0.2.0-rc.2` | Default development/next boundary: exact source on three OSes, real Host + Chromium, Windows Desktop Node 22/24 and macOS Desktop lifecycle. |
+| preview browser historical canary | `0.1.5-alpha.2` | Non-support surveillance only; catches browser drift in an older immutable Host. |
+| upstream Web overlay watch | moving DSH `master` | Retirement/drift sentinel only. It never changes the public support window by itself. |
 
-Node 22 and Node 24 remain the general required runtime matrix. The Host contract jobs are additive; they do not replace the normal test matrix.
+Node 22 and Node 24 remain the general runtime matrix. Minimum/current Host jobs and exact-source/Desktop evidence are additive.
 
-## Capability matrix
+## Current capability evidence
 
-`yes` means the fixture has a direct positive test or feature probe. `no` means a direct negative probe exists. `compat` means the fixture proves Vision Router can safely carry the newer input/config through that Host, but does **not** claim the Host owns that capability. `probe` means the capability is intentionally not inferred from the version label and is verified at runtime/contract-test time.
+| Capability / boundary | 2.3 verdict | Evidence / detection |
+| --- | --- | --- |
+| Batch attachment ownership | native on every supported Host | `attachments.saveImages`; minimum/current Host contracts; immutable 0.1.5/0.1.7/0.2 source evidence. The pre-floor Android single-attachment fallback was retired in R2.3. |
+| Official DeepSeek provider ownership | Host-owned throughout the supported window | DVR no longer reconstructs `deepseek-official`; `protectHostProviderOwnership()` prevents synthetic takeover. |
+| Settings persistence | native, but lifecycle shape changes across the supported window | minimum Host real Settings persistence plus current/rc.2 browser contracts. `installHostSettingsCompatibility()` remains the narrow runtime bridge. |
+| Session event/log reads | native minimum/current contract | `SessionQuery.readEvent/readSession/observeSession` capability probes; bounded Session recovery remains capability-based. |
+| DVR duck-typed adapter contract | DVR normalization still required | `ensureAdapterContracts()` supplies missing Host base-class defaults such as `prepareCall` / `imageRequestPricing` to DVR-owned plain adapters only. |
+| Client module loader lifecycle | supported Hosts still replace live `load` during `create()` | immutable 0.1.5-rc.1 through 0.2.0-rc.2 source review. The current Settings client lifecycle bridge therefore remains reachable. |
+| modules -> webServer overlay | `shim-required` | exact supported/rc source contracts plus moving upstream watch. |
+| connection -> webServer overlay | `shim-required` | exact supported/rc source contracts plus moving upstream watch. |
+| Router-specific proxy override | product compatibility | explicit `proxy` / `proxyHosts` remain supported; Host-first default egress stays authoritative. |
+| OpenCode Go session wire projection | Host gap remains | current pi-ai transports generic `sessionId`, but upstream does not yet emit the required `x-opencode-session` carrier. |
 
-| Capability | minimum-contract rc.6 | legacy-contract rc.8 | current-contract rc.3 (0.1.5) | Evidence / detection |
-| --- | --- | --- | --- | --- |
-| Batch attachment save | no | yes | yes | `hasBatchAttachmentContract()` checks the released `attachments.saveImages` prototype; `tests/rc6-rc7-compat.test.js`; contract CI. |
-| Max image dimension policy | compat | yes | yes | All fixtures parse the complete attachment-local row; rc.8/current positively retain the field and the established admission tests exercise the 10000/10001 boundary. Older Schemastery passthrough is not treated as ownership evidence. |
-| Adapter registration | yes | yes | yes | released `ctx.llm.registerAdapter` surface plus adapter contract tests. |
-| Atomic registration replace | probe | probe | yes | current-contract exercises the real registration handle's `replace()` and disposer; Doctor reports `unknown` if a live Host cannot prove replacement without mutating topology. |
-| Settings live namespace | yes | yes | yes | `settings.register()` + live `scope.get()/watch()` compatibility tests; current-contract mounts the real SettingsProvider contract through a minimal storage subclass. |
-| Tool registration / execution | probe | probe | yes | current-contract mounts the released `@deepseek-ai/dsh-tools` runtime, registers a typed tool, executes it, and disposes it; Vision Router tool-runtime boundary tests remain additive. |
-| `prepareCall` | no | no | yes | `tests/adapter-prepare-call-compat.test.js`; current-contract exercises the installed LLM runtime's `prepareCall()`. |
-| Native image coexistence | yes | yes | yes | `tests/native-image-coexistence.test.js`, `tests/issue-289-native-nonintervention.test.js`, cold-resume workflow. |
-| Jobs service | probe | probe | probe | read-only Doctor capability probe only; P2 must run a separate feasibility spike before any scheduler migration. |
-| Client surface replacement | probe | probe | probe | no version inference; keep `unknown` until a safe readable Host seam is available. |
-| Settings web exposure | probe | probe | probe | presentation capability; never inferred from the settings persistence service. |
-| Effect/dispose cleanup | yes | yes | yes | compatibility lifecycle tests plus current-contract adapter/tool/watch disposer checks; plugin registrations remain Cordis-effect owned. |
-| Public entry boot | yes | yes | yes | packed plugin public entry import in each Host contract fixture. |
-| Packaged tarball install | yes | yes | yes | each Host contract fixture packs the plugin then installs the tarball into an isolated Host package. |
+## R2.3 retirement result
 
-Preview-only evidence: the retained `0.1.7-rc.2` contract fixture additionally mounts the Host-owned `@deepseek-ai/dsh-compaction-image-offload` projection and proves that one offloaded image occurrence stays offloaded across live requests, `SessionStore.fork()`, JSONL process restart, and cold resume. The exact `0.2.0-rc.1` gate separately proves immutable source contracts, official peer evaluation, Host proxy authority, WebServer overlay ownership, real Host + Chromium Vision/mixed-attachment/Settings/bundle lifecycles, and Windows Node 22/24 Desktop plus the Node 24 multi-plugin adversary. Both are verification evidence only; neither expands the public support window.
+The support-floor reset produced real removals rather than a cosmetic reclassification:
 
-## Compatibility inventory and exit criteria
+- retired the pre-floor no-batch Android attachment fallback;
+- retired legacy DeepSeek provider reconstruction/keep-alive takeover;
+- retired rc.7-labelled public compatibility aliases in favor of capability-named APIs;
+- removed pre-floor `0.1.5-alpha.2` from the normative exact-source support matrix.
 
-Every compatibility seam must answer the same six questions: **Reason**, **Host gap**, **First needed for**, **Feature detection**, **Removal condition**, and **Tests**. Source modules carry the detailed annotation; this table is the architectural index.
+The remaining compatibility seams are retained only for one of four reasons:
 
-| Seam | Reason / Host gap | Feature detection | Removal condition | Primary tests |
-| --- | --- | --- | --- | --- |
-| `lib/dsh-contract-compat.js` | Keep rc.6 single-attachment behavior, rc.8 attachment overlay repair, and settings/provider ownership semantics across the support window. | attachment/settings/LLM methods, never a version string. | Supported Host window provides the needed public seams natively and minimum supported DSH advances beyond the gap. | `rc6-rc7-compat`, `rc6-real-settings-persistence`, `attachment-admission-policy`, contract CI. |
-| `lib/adapter-update-coalescer.js` | Older Vision Router adapters are duck-typed while DSH 0.1.1 dispatches through `prepareCall`; synchronous topology events can re-enter reconciliation. | adapter has `prepareCall`; event behavior is bounded by the coalescer. | All supported adapters implement the Host contract directly and no supported Host needs the reconciliation guard. | `adapter-prepare-call-compat`, adapter/runtime regression tests. |
-| `lib/android-attachment-compat.js` | Termux/Android file persistence can fail at the permission boundary on the minimum Host contract. | actual Android/Termux environment plus permission-boundary failure and absence of batch attachment ownership. | Minimum supported Host owns a working Android attachment store for this path. | `android-attachment-compat`, resource tests. |
-| `lib/replay-envelope-v2-compat.js` | Durable replay producer identity moved into the v2 replay envelope. | exact `response.kind === 'pi-ai' && response.version === 2` producer proof. | Support window no longer contains histories/runtime needing the old source normalization. | `replay-delegation`, replay/session tests. |
-| `lib/pi-ai-bridge-wire-compat.js` | The legacy direct image bridge predates pi-ai declared wire compatibility. | exact non-streaming image bridge fingerprint and resolved pi-ai route/model facts. | Direct bridge is removed or every supported Host executes the request through the native pi-ai wire contract. | `pi-ai-bridge-wire-compat`, native process-restart contract. |
-| `lib/settings-client-rc8-lifecycle.js` | Browser-side settings lifecycle differs across supported Host generations. | browser/runtime surface behavior, not DSH version parsing. | Support window exposes one stable settings client lifecycle. | settings IA/lifecycle regression tests. |
+1. a capability/lifecycle difference still exists on a supported 0.1.5+/0.2 Host;
+2. supported Hosts can still consume durable data/profile state produced by older DVR/Host generations;
+3. the behavior is an intentional current product compatibility contract;
+4. the behavior closes a runtime/platform gap rather than a Host-version gap.
+
+Detailed owners and removal conditions live in `compat-inventory.md`.
 
 ## Rules
 
-1. A new version-specific branch requires evidence that no stable capability probe exists.
-2. A compatibility layer may narrow behavior to preserve an existing product contract; it may not expand routing authority.
-3. Exact preview and dynamic canary evidence can reveal upstream drift, but neither may silently redefine the public support policy.
-4. P1 may begin only when all three gating fixtures and the existing cold-resume/resource baselines are green.
+1. Runtime behavior branches on capabilities, not DSH version strings.
+2. A pre-floor Host may be kept as an explicitly labelled non-support drift canary, but it may not be a required support fixture or broaden peer admission.
+3. Durable historical data compatibility is independent of Host support: old Session/settings/replay state is retained when a supported Host can still load it.
+4. A compatibility seam is removed only when its current-Host/product/durable-data/platform removal condition is proven.
+5. Moving upstream/canary evidence may reveal drift but never silently redefine the public support policy.

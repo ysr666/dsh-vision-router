@@ -58,11 +58,12 @@ function textOf(React, node) {
 }
 
 test('issue 307: vision task timeout default is coherent across public, legacy, and local fallback layers', () => {
-  const entry = requireSource('../entry.js')
+  const publicConfig = requireSource('../lib/public-config.js')
   const core = requireSource('../index.js')
   const client = requireSource('../lib/client.js')
   const stabilizer = requireSource('../lib/local-vision-stabilizer.js')
-  assert.equal(entry.includes("core.Config.set('visionTaskTimeoutMs', z.number().step(1000).min(1000).max(180000).default(120000))"), true)
+  assert.equal(publicConfig.includes("'visionTaskTimeoutMs',"), true)
+  assert.equal(publicConfig.includes('z.number().step(1000).min(1000).max(180000).default(120000)'), true)
   assert.equal(core.includes("visionTaskTimeoutMs: z.number().step(1).min(1000).max(180000).default(120000)"), true)
   const getterStart = core.indexOf('const visionTaskTimeoutMs = () => {')
   const getterEnd = core.indexOf('const ocrBudgetMs = () => {', getterStart)

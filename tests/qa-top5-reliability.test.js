@@ -4,7 +4,7 @@ import vm from 'node:vm'
 
 import { installVisionAttachmentAdmissionPolicy } from '../lib/dsh-contract-compat.js'
 import { ImageResourceGovernor } from '../lib/image-resource-governor.js'
-import { SETTINGS_RC8_CLIENT_PRELUDE } from '../lib/settings-client-rc8-lifecycle.js'
+import { SETTINGS_CLIENT_LOADER_LIFECYCLE_PRELUDE } from '../lib/settings-client-loader-lifecycle.js'
 import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
 function runtimeHarness({ scopeValue = { cache: true } } = {}) {
@@ -174,7 +174,7 @@ test('attachment admission migration re-applies to replacement attachment servic
   assert.equal(second.imageLimits.maxImageDimension, 10_000)
 })
 
-function rc8ClientHarness() {
+function settingsLoaderLifecycleHarness() {
   const queued = []
   let registered
   const loader = {
@@ -221,7 +221,7 @@ function rc8ClientHarness() {
     },
     Proxy, Reflect, Object, Array, WeakMap, Promise, String, Error, TypeError, JSON, Number, console,
   }
-  vm.runInNewContext(SETTINGS_RC8_CLIENT_PRELUDE, context)
+  vm.runInNewContext(SETTINGS_CLIENT_LOADER_LIFECYCLE_PRELUDE, context)
   loader.create()
   let appliedCtx
   loader.load({ id: 'dsh-vision-router', factory() { return { apply(ctx) { appliedCtx = ctx } } } })
@@ -239,8 +239,8 @@ function rc8ClientHarness() {
   return { appliedCtx, permissionFetches, rpcCalls, get confirms() { return confirms } }
 }
 
-test('rc8 queue-to-live transition preserves local permission and remote risk wrappers', async () => {
-  const harness = rc8ClientHarness()
+test('settings queue-to-live transition preserves local permission and remote risk wrappers', async () => {
+  const harness = settingsLoaderLifecycleHarness()
   const scope = harness.appliedCtx.settingsScope.bind({ namespace: 'vision-router' })
   await scope.set('allowRemoteSettings', 'true')
   assert.equal(harness.permissionFetches.length, 1)

@@ -11,10 +11,12 @@ import {
 
 test('settings card exposes a one-click logs-folder action', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const actions = readFileSync(new URL('../lib/client-maintenance-actions.js', import.meta.url), 'utf8')
   assert.equal(source.includes("openLogFolder: '打开日志文件夹'"), true)
   assert.equal(source.includes("openLogFolder: 'Open logs folder'"), true)
-  assert.equal(source.includes("fetch('/_dsh/vision-router/logs'"), true)
-  assert.equal(source.includes("method: 'POST'"), true)
+  assert.equal(source.includes('onClick: openLogFolder'), true)
+  assert.equal(actions.includes("fetchImpl('/_dsh/vision-router/logs'"), true)
+  assert.equal(actions.includes("method: 'POST'"), true)
 })
 
 test('settings UX keeps beginner guidance while using user-facing labels', () => {

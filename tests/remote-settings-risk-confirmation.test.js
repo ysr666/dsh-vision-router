@@ -7,6 +7,7 @@ import {
   createVisionRouterRemoteSettingsHandler,
 } from '../lib/remote-settings-bridge.js'
 import { LOCAL_PERMISSION_CLIENT_PRELUDE } from '../lib/local-remote-settings-permission.js'
+import { createRemoteSettingsRiskClientBoundary } from '../lib/remote-settings-risk-client-boundary.js'
 import {
   REMOTE_SETTINGS_RISK_CLIENT_PRELUDE,
   injectRemoteSettingsRiskConfirmationPrelude,
@@ -47,7 +48,7 @@ function settingsFixture() {
   return { settings, value, user, calls }
 }
 
-test('remote authorization requires explicit risk acceptance and only enables the permission field', async () => {
+test('remote enablement requires explicit risk acknowledgement and only enables the permission field', async () => {
   const fixture = settingsFixture()
   const handler = createVisionRouterRemoteSettingsHandler(fixture.settings)
 
@@ -72,6 +73,77 @@ test('remote authorization requires explicit risk acceptance and only enables th
   assert.equal(Object.hasOwn(enabled.value.view.value, 'allowRemoteSettings'), false)
   assert.equal(Object.hasOwn(enabled.value.view.value, 'proxy'), false)
   assert.equal(enabled.value.view.value.routing, false)
+})
+
+test('shared remote-risk owner coalesces concurrent authorization and refreshes once', async () => {
+  let enabled = false
+  let confirms = 0
+  const calls = []
+  const rpc = {
+    async call(channel, endpoint, payload) {
+      calls.push([channel, endpoint, payload])
+      if (endpoint === 'describe') {
+        return {
+          ok: true,
+          value: enabled
+            ? { enabled: true, reason: 'enabled', writable: true }
+            : { enabled: false, reason: 'permission-disabled', writable: false },
+        }
+      }
+      if (endpoint === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT) {
+        enabled = true
+        return { ok: true, value: { enabled: true, reason: 'enabled', writable: true } }
+      }
+      throw new Error('unexpected endpoint ' + endpoint)
+    },
+  }
+  const boundary = createRemoteSettingsRiskClientBoundary({
+    confirmImpl(message) {
+      confirms += 1
+      assert.match(String(message), /trustedHosts/)
+      return true
+    },
+    locale: 'en-US',
+  })
+  const raw = { get(name) { return name === 'connection' ? { rpc } : undefined } }
+  const wrapped = boundary.wrapContext(raw)
+  assert.equal(boundary.wrapContext(raw), wrapped)
+
+  const results = await Promise.all([
+    wrapped.get('connection').rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {}),
+    wrapped.get('connection').rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {}),
+  ])
+  assert.equal(results[0].value.enabled, true)
+  assert.equal(results[1].value.enabled, true)
+  assert.equal(confirms, 1)
+  assert.equal(calls.filter((entry) => entry[1] === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT).length, 1)
+  assert.equal(calls.filter((entry) => entry[1] === 'describe').length, 3)
+  assert.deepEqual(
+    calls.find((entry) => entry[1] === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT)[2],
+    { acceptedRisk: true },
+  )
+})
+
+test('shared remote-risk owner normalizes official loopback only when requested', () => {
+  const connection = { isLoopback: false, rpc: { call() {} } }
+  const context = { get(name) { return name === 'connection' ? connection : undefined } }
+
+  const plain = createRemoteSettingsRiskClientBoundary({
+    location: { protocol: 'dsh-app:', hostname: 'app' },
+  })
+  assert.equal(plain.wrapContext(context).get('connection').isLoopback, false)
+
+  const desktop = createRemoteSettingsRiskClientBoundary({
+    location: { protocol: 'dsh-app:', hostname: 'app' },
+    normalizeLoopback: true,
+  })
+  assert.equal(desktop.wrapContext(context).get('connection').isLoopback, true)
+
+  const remote = createRemoteSettingsRiskClientBoundary({
+    location: { protocol: 'https:', hostname: 'example.test' },
+    normalizeLoopback: true,
+  })
+  assert.equal(remote.wrapContext(context).get('connection').isLoopback, false)
 })
 
 function runRiskPrelude(confirmResult, { localPrelude = false } = {}) {
@@ -147,7 +219,7 @@ function runRiskPrelude(confirmResult, { localPrelude = false } = {}) {
   return { appliedCtx, calls, rawScope, get confirms() { return confirms } }
 }
 
-test('remote client confirmation authorizes once and refreshes the disabled describe', async () => {
+test('remote client confirmation enables once and refreshes the disabled describe', async () => {
   const harness = runRiskPrelude(true)
   const connection = harness.appliedCtx.get('connection')
   const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
@@ -158,7 +230,7 @@ test('remote client confirmation authorizes once and refreshes the disabled desc
   assert.deepEqual(harness.calls.map((entry) => entry[1]), ['describe', 'authorize', 'describe'])
 })
 
-test('canceling the risk prompt leaves remote settings disabled and performs no authorization', async () => {
+test('canceling the risk prompt leaves remote settings disabled and performs no enablement', async () => {
   const harness = runRiskPrelude(false)
   const connection = harness.appliedCtx.get('connection')
   const result = await connection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})

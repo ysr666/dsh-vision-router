@@ -196,6 +196,49 @@ test('root hardening patches a loader returned from create and every later globa
   assert.equal(replacement.load.__visionRouterModelVisibility, true)
 })
 
+test('resolved Host RemoteResult failures remain failures and populate recovery diagnostics', async () => {
+  const window = { fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }) }
+  const html = hardenVisionToggleHtml('<html><head></head></html>')
+  const source = scriptsOfInjectedFixture(html).find((script) => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window,
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    JSON,
+    Date,
+    Number,
+    Error,
+  })
+  const api = window.__dshVisionRouterRootHardening
+  let shouldFail = true
+  const directory = {
+    select() {
+      return shouldFail
+        ? Promise.resolve({
+            ok: false,
+            error: { code: 'session/writer-held', message: 'Another writer temporarily owns this session.' },
+          })
+        : Promise.resolve({ ok: true, value: undefined })
+    },
+  }
+  const selection = { provider: 'vendor-vision', model: 'm' }
+
+  const rejected = await api.select(directory, selection)
+  assert.equal(rejected.ok, false)
+  assert.match(api.recoveryFor(directory).getSnapshot().message, /session\/writer-held: Another writer/)
+
+  shouldFail = false
+  const accepted = await api.select(directory, selection)
+  assert.equal(accepted.ok, true)
+  assert.equal(api.recoveryFor(directory).getSnapshot(), null)
+})
+
 test('selection transport rejection is recoverable without mutating the Host directory store and identical double-clicks coalesce', async () => {
   const window = { fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }) }
   const html = hardenVisionToggleHtml('<html><head></head></html>')
