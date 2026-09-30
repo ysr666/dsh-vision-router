@@ -3,6 +3,7 @@ name: Adversarial Fuzz
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'index.js'
       - 'lib/**'
       - 'scripts/security-adversarial-fuzz.mjs'
@@ -35,6 +36,8 @@ jobs:
           node-version: '24'
       - name: Install fuzz harness dependencies
         run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build canonical runtime artifacts
+        run: corepack pnpm build
       - name: Property fuzz deterministic security boundaries
         env:
           DVR_PROPERTY_FUZZ_CASES: '1000'

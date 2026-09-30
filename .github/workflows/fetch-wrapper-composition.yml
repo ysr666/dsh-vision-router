@@ -3,6 +3,7 @@ name: Fetch wrapper composition
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'lib/**'
       - 'tests/**'
       - 'package.json'
