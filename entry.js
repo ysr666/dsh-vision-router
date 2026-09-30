@@ -23,11 +23,6 @@ export {
   installHostSettingsCompatibility,
   installVisionAttachmentAdmissionPolicy,
   protectHostProviderOwnership,
-  // Transitional public aliases retained for callers/tests written during the
-  // rc.7 compatibility pass. Production runtime branches on feature seams.
-  installRc7SettingsCompatibility,
-  isRc7ContractRuntime,
-  protectRc7ProviderOwnership,
 } from './lib/dsh-contract-compat.js'
 // Defense in depth for direct/programmatic callers is implemented by the same
 // production composition used by Cordis. This public entry intentionally owns

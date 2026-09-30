@@ -12,10 +12,7 @@ import {
   hasBatchAttachmentContract,
   hostOwnsOfficialDeepSeekProvider,
   installHostSettingsCompatibility,
-  installRc7SettingsCompatibility,
-  isRc7ContractRuntime,
   protectHostProviderOwnership,
-  protectRc7ProviderOwnership,
 } from '../lib/dsh-contract-compat.js'
 
 function runtimeWithAttachments(attachments, llm = {}) {
@@ -39,7 +36,6 @@ test('contract detection follows the released attachment API, not unrelated LLM 
   assert.equal(hasBatchAttachmentContract(single), false)
   assert.equal(hasBatchAttachmentContract(batch), true)
   assert.equal(hasBatchAttachmentContract({ llm: { registerConfigurableProviders() {} } }), false)
-  assert.equal(isRc7ContractRuntime, hasBatchAttachmentContract)
 })
 
 test('official DeepSeek ownership follows the same batch-attachment Host generation fact', () => {
@@ -291,7 +287,6 @@ test('host provider ownership blocks only synthetic official routes', () => {
     () => wrapped.llm.registerAdapter(['deepseek-official'], {}),
     (error) => error?.code === 'DSH_HOST_PROVIDER_OWNERSHIP',
   )
-  assert.equal(protectRc7ProviderOwnership, protectHostProviderOwnership)
 })
 
 test('host settings bridge uses the common public SettingsProvider seam and masks legacy stealth', () => {
@@ -343,7 +338,6 @@ test('host settings bridge uses the common public SettingsProvider seam and mask
   assert.deepEqual(observed, { foo: 'changed', stealth: false })
   cleanup()
   assert.equal(serviceWatcher, undefined)
-  assert.equal(installRc7SettingsCompatibility, installHostSettingsCompatibility)
 })
 
 test('host settings bridge registers the final entry settings contract including v2 routing fields', () => {
