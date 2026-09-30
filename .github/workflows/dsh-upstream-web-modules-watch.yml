@@ -6,7 +6,7 @@ on:
       - 'cordis.patch.yml'
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'tests/rc6-rc7-compat.test.js'
+      - 'tests/dsh-host-compat.test.js'
       - '.github/workflows/dsh-upstream-web-modules-watch.yml'
   push:
     branches: [main]
@@ -14,7 +14,7 @@ on:
       - 'cordis.patch.yml'
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'tests/rc6-rc7-compat.test.js'
+      - 'tests/dsh-host-compat.test.js'
       - '.github/workflows/dsh-upstream-web-modules-watch.yml'
   schedule:
     - cron: '17 3 * * *'

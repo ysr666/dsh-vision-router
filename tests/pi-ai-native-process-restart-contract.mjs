@@ -42,6 +42,7 @@ const importResolved = async (specifier) => import(pathToFileURL(hostRequire.res
 const llmModule = await importResolved('@deepseek-ai/dsh-llm')
 const piModule = await importResolved('@deepseek-ai/dsh-llm-pi-ai')
 const sessionModule = await importResolved('@deepseek-ai/dsh-session')
+const sessionProjectionModule = await importResolved('@deepseek-ai/dsh-session-projection')
 const attachmentModule = await importResolved('@deepseek-ai/dsh-attachment-local')
 const systemPromptModule = await importResolved('@deepseek-ai/dsh-system-prompt')
 const toolsModule = await importResolved('@deepseek-ai/dsh-tools')
@@ -56,6 +57,7 @@ const LlmRuntime = llmModule.default
 const { createUserMessage } = llmModule
 const LlmPiAi = piModule.default ?? piModule
 const SessionStore = sessionModule.default
+const SessionProjectionRegistry = sessionProjectionModule.default
 const { SessionId } = sessionModule
 const LocalAttachmentStore = attachmentModule.default
 const SystemPrompt = systemPromptModule.default
@@ -166,12 +168,13 @@ async function mount(baseURL) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(LocalAttachmentStore, { dshHome })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(JsonlSessionPersistence, { root: sessionsRoot })
+  await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(LlmPiAi, {
     providers: {
       'native-pi': {
@@ -206,7 +209,7 @@ async function mount(baseURL) {
 async function turn(agent, content) {
   agent.followup(createUserMessage({ content, source: { kind: 'user' } }))
   await agent.whenIdle()
-  const end = agent.session.events.findLast((event) => event.type === 'turn/end')
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
   assert.equal(end?.data?.reason?.kind, 'completed', `turn failed: ${JSON.stringify(end?.data?.reason)}`)
 }
 

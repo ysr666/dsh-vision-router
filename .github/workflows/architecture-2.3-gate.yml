@@ -1,0 +1,150 @@
+name: 2.3 Critical Architecture Gate
+
+on:
+  push:
+    branches: [2.3.0]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: contracts / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Full runtime regression
+        run: pnpm test
+      - name: Critical composition and architecture contracts
+        run: >-
+          node --test
+          tests/architecture-contract-baseline.test.js
+          tests/compat-inventory-completeness.test.js
+          tests/final-architecture-closure.test.js
+          tests/dsh-support-window.test.js
+          tests/p3-entry-composition.test.js
+          tests/qa-runtime-identity.test.js
+          tests/fetch-wrapper-lifecycle.test.js
+          tests/fetch-wrapper-composition.test.js
+          tests/session-vision-event-feed.test.js
+          tests/client-script-carrier.test.js
+          tests/security-property-fuzz.test.js
+      - name: Package public entry
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+          test -n "$(find tmp-pack -maxdepth 1 -name 'dsh-vision-router-*.tgz' -print -quit)"
+
+  current-host-contract:
+    name: current Host 0.1.5-rc.3
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Pack plugin
+        run: |
+          mkdir -p tmp-pack
+          pnpm pack --pack-destination tmp-pack
+      - name: Install isolated current Host fixture
+        shell: node {0}
+        run: |
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { spawnSync } = require('node:child_process')
+          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
+          if (!tgz) throw new Error('packed plugin tarball not found')
+          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
+          const hostDir = path.join(process.env.RUNNER_TEMP, 'dvr-23-current-host')
+          fs.rmSync(hostDir, { recursive: true, force: true })
+          fs.mkdirSync(hostDir, { recursive: true })
+          const v = '0.1.5-rc.3'
+          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
+            private: true,
+            type: 'module',
+            packageManager: 'pnpm@11.20.0',
+            dependencies: {
+              'dsh-vision-router': `file:${tarball}`,
+              '@deepseek-ai/dsh-attachment': v,
+              '@deepseek-ai/dsh-attachment-local': v,
+              '@deepseek-ai/dsh-llm': v,
+              '@deepseek-ai/dsh-llm-deepseek': v,
+              '@deepseek-ai/dsh-anonymous-user-id': v,
+              '@deepseek-ai/dsh-settings': v,
+              '@deepseek-ai/dsh-session-query': v,
+              '@deepseek-ai/dsh-session': v,
+              '@deepseek-ai/dsh-tools': v,
+              '@deepseek-ai/dsh-system-prompt': v,
+              '@deepseek-ai/dsh-llm-pi-ai': v,
+              sharp: '0.35.3',
+            },
+          }, null, 2))
+          fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            '  - .',
+            'allowBuilds:',
+            "  '@google/genai': true",
+            '  protobufjs: true',
+            '',
+          ].join('\n'))
+          const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
+          if (installed.status !== 0) process.exit(installed.status ?? 1)
+          fs.appendFileSync(process.env.GITHUB_ENV, `HOST_DIR=${hostDir}\n`)
+      - name: Verify current Host contract
+        env:
+          EXPECT_BATCH: 'true'
+          EXPECT_DIMENSION: 'true'
+          EXPECT_CURRENT: 'true'
+          EXPECT_SETTINGS_MODE: native-register
+          EXPECT_SESSION_EVENT_READ: 'true'
+          EXPECT_SESSION_LOG_READ: 'true'
+        run: node scripts/dsh-host-contract-smoke.mjs
+
+  rc2-desktop-contract:
+    name: DSH 0.2.0-rc.2 / Desktop contract
+    uses: ./.github/workflows/dsh-020-rc2-validation.yml
+
+  critical-gate:
+    name: critical-gate
+    if: always()
+    needs: [contracts, current-host-contract, rc2-desktop-contract]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every constituent gate
+        env:
+          CONTRACTS_RESULT: ${{ needs.contracts.result }}
+          HOST_RESULT: ${{ needs.current-host-contract.result }}
+          RC2_RESULT: ${{ needs.rc2-desktop-contract.result }}
+        run: |
+          test "$CONTRACTS_RESULT" = success
+          test "$HOST_RESULT" = success
+          test "$RC2_RESULT" = success

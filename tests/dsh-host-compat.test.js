@@ -6,17 +6,13 @@ import { eventHasImage } from '../index.js'
 import { classifyWebModulesRows } from '../scripts/dsh-web-modules-overlay-contract.mjs'
 import { classifyWebConnectionRows } from '../scripts/dsh-web-connection-overlay-contract.mjs'
 import {
-  attachmentContextForContract,
   createSessionEventReader,
   createSessionEventTailReader,
   createSessionLogReader,
   hasBatchAttachmentContract,
   hostOwnsOfficialDeepSeekProvider,
   installHostSettingsCompatibility,
-  installRc7SettingsCompatibility,
-  isRc7ContractRuntime,
   protectHostProviderOwnership,
-  protectRc7ProviderOwnership,
 } from '../lib/dsh-contract-compat.js'
 
 function runtimeWithAttachments(attachments, llm = {}) {
@@ -40,7 +36,6 @@ test('contract detection follows the released attachment API, not unrelated LLM 
   assert.equal(hasBatchAttachmentContract(single), false)
   assert.equal(hasBatchAttachmentContract(batch), true)
   assert.equal(hasBatchAttachmentContract({ llm: { registerConfigurableProviders() {} } }), false)
-  assert.equal(isRc7ContractRuntime, hasBatchAttachmentContract)
 })
 
 test('official DeepSeek ownership follows the same batch-attachment Host generation fact', () => {
@@ -292,7 +287,6 @@ test('host provider ownership blocks only synthetic official routes', () => {
     () => wrapped.llm.registerAdapter(['deepseek-official'], {}),
     (error) => error?.code === 'DSH_HOST_PROVIDER_OWNERSHIP',
   )
-  assert.equal(protectRc7ProviderOwnership, protectHostProviderOwnership)
 })
 
 test('host settings bridge uses the common public SettingsProvider seam and masks legacy stealth', () => {
@@ -344,7 +338,6 @@ test('host settings bridge uses the common public SettingsProvider seam and mask
   assert.deepEqual(observed, { foo: 'changed', stealth: false })
   cleanup()
   assert.equal(serviceWatcher, undefined)
-  assert.equal(installRc7SettingsCompatibility, installHostSettingsCompatibility)
 })
 
 test('host settings bridge registers the final entry settings contract including v2 routing fields', () => {
@@ -385,21 +378,6 @@ test('host settings bridge registers the final entry settings contract including
   assert.equal(registeredConfig({ backgroundBenchmarking: 'local-free' }).backgroundBenchmarking, 'local-free')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'all' }).backgroundBenchmarking, 'all')
   assert.equal(registeredConfig({ backgroundBenchmarking: 'off' }).backgroundBenchmarking, 'off')
-})
-
-test('attachment compatibility follows the batch-attachment seam', () => {
-  const single = runtimeWithAttachments({ saveImage() {}, readImage() {}, validateImage() {} })
-  const batch = runtimeWithAttachments({ saveImage() {}, saveImages() {}, readImage() {}, validateImage() {} })
-  let installs = 0
-  const installAndroidAttachmentCompat = (ctx) => {
-    installs += 1
-    return { ...ctx, compat: true }
-  }
-  const wrappedSingle = attachmentContextForContract(single, undefined, { installAndroidAttachmentCompat })
-  const wrappedBatch = attachmentContextForContract(batch, undefined, { installAndroidAttachmentCompat })
-  assert.equal(wrappedSingle.compat, true)
-  assert.equal(wrappedBatch, batch)
-  assert.equal(installs, 1)
 })
 
 test('DSH image/offload bookkeeping is not itself classified as new visual input', () => {
@@ -445,12 +423,13 @@ test('settings compatibility keeps the first-class section without requiring a l
   assert.doesNotMatch(source, /VisionRouterLegacyEntry/)
 })
 
-test('manifest publishes the DVR 2.2 rc8 host floor while admitting verified and forward 0.2.x host trains', async () => {
+test('manifest publishes the DVR 2.3 0.1.5 Host train without restoring jagged legacy admission', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '^0.1.0-rc.8 || ^0.1.1-rc.1 || ^0.1.3-alpha.2 || 0.1.5-alpha.1 || 0.1.5-alpha.2 || 0.1.5-rc.1 || 0.1.5-rc.2 || 0.1.5-rc.3 || 0.1.6-alpha.1 || 0.1.7-rc.2 || >=0.2.0-rc.1 <0.3.0-0'
+  const expectedHostPeerRange = '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0'
   assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
+  assert.doesNotMatch(expectedHostPeerRange, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
 })
 
@@ -516,7 +495,7 @@ test('web connection provider waits for both runtime trust and the Web route car
   )
 })
 
-test('release evidence gates keep stable and preview contracts capability-scoped', async () => {
+test('release evidence separates supported exact-source coverage from historical browser surveillance', async () => {
   const [hostGate, browserGate, sourceGate, upstreamOverlayWatch] = await Promise.all([
     readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
@@ -541,11 +520,10 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   assert.match(sourceGate, /name: DSH exact source contract/)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.1/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.3/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.5-alpha\.2/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/dsh: 0\.1\.7-rc\.2/g) ?? []).length, 3)
+  assert.doesNotMatch(sourceGate, /0\.1\.5-alpha\.2/)
   assert.equal((sourceGate.match(/183f08e9c6dde7e36cd2318eaee70b0da08fb35e/g) ?? []).length, 2)
   assert.equal((sourceGate.match(/a4c74a91e06b00fe0b0937bde982170c526cc842/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/b2e3b2a0125854567a4a5fcba75782e42fe84901/g) ?? []).length, 2)
   assert.equal((sourceGate.match(/477b4f420553e8a52c2fbccc464d7561b239c443/g) ?? []).length, 2)
   assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
   assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
@@ -558,7 +536,7 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-modules-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
-    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 4)
+    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 3)
   }
 })
 

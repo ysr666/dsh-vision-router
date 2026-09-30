@@ -114,12 +114,24 @@ test('core accepts the optional internal runtime without breaking two-argument d
   )
 })
 
-test('modern DeepSeek ownership diagnostics re-check live official route availability', async () => {
-  const core = await source('index.js')
-  assert.match(core, /const officialRouteAvailable = adapterAvailable\(ctx\.llm, 'deepseek-official'\)/)
-  assert.match(
+test('modern DeepSeek ownership diagnostics stay in the diagnostics owner and re-check live route availability', async () => {
+  const [core, diagnostics] = await Promise.all([
+    source('index.js'),
+    source('lib/vision-diagnostics-routes.js'),
+  ])
+
+  assert.doesNotMatch(
     core,
-    /hostOwnsOfficialDeepSeek && !officialRouteAvailable[\s\S]*?'host-owned-official-unavailable'/,
+    /host-owned-official-unavailable/,
+    'Core must not regain diagnostics response ownership after the R3 extraction',
+  )
+  assert.match(
+    diagnostics,
+    /const officialRouteAvailable = adapterAvailable\(llm, 'deepseek-official'\)/,
+  )
+  assert.match(
+    diagnostics,
+    /ownership\.hostOwnsOfficialDeepSeek && !officialRouteAvailable[\s\S]*?'host-owned-official-unavailable'/,
   )
 })
 

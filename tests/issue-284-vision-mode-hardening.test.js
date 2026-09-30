@@ -179,6 +179,7 @@ test('issue #284 browser toggle infers a unique custom wrapper when settings sco
   }
 
   const hookState = []
+  const hookRefs = []
   let hookCursor = 0
   const React = {
     Fragment: Symbol('Fragment'),
@@ -189,6 +190,11 @@ test('issue #284 browser toggle infers a unique custom wrapper when settings sco
       return [hookState[at], (next) => {
         hookState[at] = typeof next === 'function' ? next(hookState[at]) : next
       }]
+    },
+    useRef(initial) {
+      const at = hookCursor++
+      if (!(at in hookRefs)) hookRefs[at] = { current: initial }
+      return hookRefs[at]
     },
     useEffect() {},
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
@@ -349,6 +355,7 @@ test('issue #284 settings-unavailable useSyncExternalStore fallback snapshot is 
     Fragment: Symbol('Fragment'),
     createElement(type, props, ...children) { return { type, props: props ?? {}, children } },
     useState(initial) { return [initial, () => {}] },
+    useRef(initial) { return { current: initial } },
     useEffect() {},
     useSyncExternalStore(_subscribe, getSnapshot) {
       const first = getSnapshot()

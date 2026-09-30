@@ -115,6 +115,12 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Verify generated browser source
+        run: pnpm client:check
+
+      - name: Verify release Host support policy
+        run: node --test tests/dsh-support-window.test.js
+
 
   tag:
     name: Materialize verified release tag

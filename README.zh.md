@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.2.1"><img src="https://img.shields.io/badge/release-v2.2.1-5B4CF0?style=flat-square" alt="Release v2.2.1" /></a>
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/tag/v2.3.0"><img src="https://img.shields.io/badge/release-v2.3.0-5B4CF0?style=flat-square" alt="Release v2.3.0" /></a>
   <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
@@ -42,9 +42,9 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v2.2.5）**
+> 📌 **公告（v2.3.0）**
 >
-> **v2.2.5：新增 fail-closed 的「仅本地视觉」，并根修 DSH `0.1.7-rc.2` Windows Desktop 多插件环境下残留的 `Loading plugins…` 卡死——Vision Router 的 WebServer registrar 不再污染其他插件。公开最低 Host 仍保持 `0.1.0-rc.8`。** [查看完整更新 →](docs/releases/v2.2.5.md)
+> **v2.3.0：架构加固与兼容收敛。DSH 0.1.x 正式支持线提高到 `0.1.5-rc.1` 起，0.2.x 从已验证的 `0.2.0-rc.2` 起；composition、Session repair、Settings/浏览器 ownership 与 Desktop lifecycle 均完成加固，只退休已证明在新支持窗口不可达的旧 shim。** [查看完整更新 →](docs/releases/v2.3.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -318,11 +318,11 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 隐身模式默认**关闭**（issue #34 起显式 opt-in）：官方 `deepseek-official` 路由原样保留；需要看图时通过输入框旁的「👁 识图」切换到内部 DeepSeek wrapper。该 wrapper 默认从原生模型选择器和 `/model` 展示层隐藏。
 
-在新版 DSH Host 中，官方 DeepSeek provider 自己负责请求期的附件、Files API 与图片访问能力。因此 Vision Router **不会再重建或复活 `deepseek-official`**。请保持 `llm-deepseek` 启用，通过内部「DeepSeek + 自动识图」wrapper /「👁 识图」处理图片；如果官方行被禁用或不可用，设置页会明确提示重新启用，而不是偷偷注册一个能力不完整的替代 provider。
+在 DVR 2.3 支持的所有 DSH Host 中，官方 DeepSeek provider 都由 Host 自己负责请求期的附件、Files API 与图片访问能力。因此 Vision Router **不会重建或复活 `deepseek-official`**。请保持 `llm-deepseek` 启用，通过内部「DeepSeek + 自动识图」wrapper /「👁 识图」处理图片；如果官方行被禁用或不可用，设置页会明确提示重新启用，而不是偷偷注册一个能力不完整的替代 provider。
 
-缺少这项 provider ownership 能力的 legacy Host contract 仍保留历史接管 / keep-alive 行为，以兼容旧 profile 和旧会话：只有这条兼容路径在官方行缺失时才可能由 Vision Router 重建旧 provider。这不是新版 Host 的配置方式；当前安装不要为了隐身模式去禁用 `llm-deepseek`。
+历史 `stealth` 字段仅为兼容已有 profile 而继续读取；在 DVR 2.3 支持窗口内，它不再具有接管 provider 的权限。
 
-> 隐身模式**只作用于官方 DeepSeek 路由**。opencode 等自定义/第三方文本路由与隐身模式无关——默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
+> opencode 等自定义/第三方文本路由默认也会生成内部识图 wrapper，由「👁 识图」按需使用。
 
 ## 自动识图包装与手动范围
 
@@ -434,7 +434,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略：** DVR 2.2.x 的公开最低 Host 仍为 DSH `0.1.0-rc.8`，当前稳定通道已验证并支持到 `0.1.5-rc.3`。DSH `0.2.x` 从已验证的 `0.2.0-rc.1` 边界开始准入（`>=0.2.0-rc.1 <0.3.0-0`）；精确 `0.2.0-rc.2`（`next/rc`）源码、真实 Host、Windows Desktop、多插件、Settings、混合附件、bundle 重组及 Host-Sharp 门禁仅作为预览验证证据，不抬高公开支持下限。上游正式发布稳定版 `0.2.0` tag 和签名 Desktop 安装包后仍会立即复验。DVR 2.0.x 是最后公开支持 rc.6/rc.7 的版本线。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持策略：** DVR 2.3.x 从 `0.1.5-rc.1` 起连续支持 DSH 0.1.x（当前稳定证据为 `0.1.5-rc.3`），并从已验证的 `0.2.0-rc.2` 起支持 0.2.x；精确 `0.2.0-rc.2` 同时作为 2.3 默认开发 Host。低于 0.1.5 的 Host 不再支持，也不再维护旧的 0.1.x 锯齿式例外列表。运行时仍按能力判断，而不是按版本字符串分支。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

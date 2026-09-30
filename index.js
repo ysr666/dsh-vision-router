@@ -33,36 +33,25 @@ function legacySessionEvents(session) {
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
-import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises'
+
 import path from 'node:path'
-import { tmpdir } from 'node:os'
-import { DeepSeekAdapter, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
-import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import { existsSync } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { Worker } from 'node:worker_threads'
-import { createRequire } from 'node:module'
+
 import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
-import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
+import { appendPromptToImageOnlyMessage } from './lib/http-compat.js'
 import {
-  directSessionAffinityHeaders,
   isOfficialOpenCodeGoUrl,
   openCodeSessionAffinityHeaderForUrl,
   rawSessionIdentity,
   sessionIdentityOf,
 } from './lib/session-affinity.js'
-import { runWithVisionSessionAffinity, streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
+import { streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
 import {
   routingCorrectionFor,
   toAnthropicMessages,
   callAnthropicCompatible,
-  anthropicMediaType,
 } from './lib/catalog-corrections.js'
-import { createCachedUpdateChecker } from './lib/update-check.js'
 import { getOfficialDeepSeekCatalog } from './lib/official-deepseek-catalog.js'
-import { probeLocalBackends } from './lib/local-connection-probe.js'
-import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './lib/self-update.js'
 import {
   classifyVisionFailure,
   createDeadline,
@@ -72,14 +61,12 @@ import {
   buildVisionFailure,
   ensureSentencePunctuation,
   resultCodeForKinds,
-  qwenKeyEndpointHint,
-  kindForHttpStatus,
   VISION_FAILURE_KINDS,
   VISION_RESULT_CODES,
 } from './lib/vision-resilience.js'
 import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
 import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import {
   normalizeStructuredBootstrapResult,
   structuredBootstrapMemory,
@@ -93,19 +80,12 @@ import {
   boundedOcrTiles,
   defaultImageResourceGovernor,
   estimateImageOperationBytes,
-  scaleBox,
   scaledDimensions,
 } from './lib/image-resource-governor.js'
 import { createSessionEventReader, createSessionEventTailReader, createSessionLogReader, hostOwnsOfficialDeepSeekProvider } from './lib/dsh-contract-compat.js'
 import { createSessionVisionIndex } from './lib/session-vision-index.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
-import {
-  ERROR_RESPONSE_MAX_BYTES,
-  METADATA_RESPONSE_MAX_BYTES,
-  MODEL_RESPONSE_MAX_BYTES,
-  readResponseJsonBounded,
-  readResponseTextBounded,
-} from './lib/http-body-limit.js'
+
 import {
   ARTIFACT_HANDOFF_RUN_ID,
   ARTIFACT_RUNS_DIR,
@@ -114,25 +94,19 @@ import {
   writePersistentArtifactFile,
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
-import { stripTrailingSlashes } from './lib/string-normalization.js'
+
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
-import { parseVersionComparator } from './lib/version-range.js'
+
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
-import { captureWindowsDesktop } from './lib/windows-desktop-capture.js'
+import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
+import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
-
 import {
-  sharpPromise,
-  sharpWarningHook,
   registerSharpWarningHook,
-  warnSharp,
   parseVersionParts,
-  compareVersionParts,
   versionSatisfies,
-  sharpPeerRangeCache,
-  sharpPeerRange,
   loadSharp,
 } from './lib/sharp-runtime.js'
 export {
@@ -179,8 +153,8 @@ export const Config = z.object({
   reverseRouting: z.boolean().default(true),
   wrapperRoute: z.string().default('deepseek-vision'),
   chainRoute: z.string().default('vision-chain'),
-  // 默认关闭（issue #34 明确 opt-in）：关闭时官方 deepseek-official 路由
-  // 原样保留；仅 legacy Host 保留 keep-alive 接管兼容（官方行被禁用时）。
+  // 历史配置字段保留用于 profile 兼容。DVR 2.3 支持的 Host 始终拥有
+  // deepseek-official；这个值不再授权 Vision Router 重建或接管官方 provider。
   stealth: z.boolean().default(false),
   textProvider: z
     .object({
@@ -353,7 +327,6 @@ export const Config = z.object({
   instantDescribe: z.boolean().default(false),
   localDescribeStyle: z.union(['plain', 'structured']).default('plain'),
 })
-
 import {
   IMAGE_EXTENSIONS,
   mediaTypeOf,
@@ -365,7 +338,6 @@ import {
   blocksHaveImage,
   eventHasImage,
   providersOf,
-  FAILURE_ADVICE,
   classifyFailure,
   failureAdvice,
   rewriteImagesDeep,
@@ -376,14 +348,11 @@ import {
   deepFreezeLocal,
   sanitizeToolResultMessage,
   planToolResultImageShadows,
-  PERSISTED_GUARD_STOP_SURFACE_ID,
   planGuardStopShadows,
-  imageMarker,
   rewriteImageBlocks,
   collectEventAttachmentRefs,
   MAX_EXTRACT_JSON_CHARS,
   extractJson,
-  cacheWeight,
   createCache,
   adapterAvailable,
   cacheKeyFor,
@@ -441,17 +410,12 @@ import {
   callOpenAICompatible,
   createChunkAssembler,
   visionAnswer,
-  launchEnvironmentLike,
-  createNativeDeepSeekAdapter,
   localDescribePrompt,
   imageMemorySet,
   buildInstantLocalMap,
   createWrapperStreamBody,
-  createStealthAdapter,
   modelInfoAcceptsImages,
-  NON_GENERATIVE_VISION_MODEL_HINTS,
   looksLikeNonGenerativeVisionModel,
-  VISION_MODEL_NAME_HINTS,
   looksLikeVisionModel,
   decideVisionBackendCapability,
   resolveChannelBridgeTransport,
@@ -539,8 +503,6 @@ export {
   toAnthropicContent,
   callOpenAICompatible,
   createChunkAssembler,
-  launchEnvironmentLike,
-  createNativeDeepSeekAdapter,
   localDescribePrompt,
   imageMemorySet,
   buildInstantLocalMap,
@@ -581,6 +543,13 @@ export function apply(ctx, config = {}, runtime = {}) {
   // adapter boundaries that do not expose a Session; ambiguous attachment ids
   // deliberately miss instead of crossing conversations.
   const sessionVisionRuntime = runtime?.sessionVision
+  const providerTransport = runtime?.providerTransport
+  const callOpenAIWithProviderTransport = (provider, messages, options = {}) =>
+    callOpenAICompatible(provider, messages, { ...options, providerTransport })
+  const callLocalWithProviderTransport = (provider, messages, options = {}) =>
+    callLocalBackend(provider, messages, { ...options, providerTransport })
+  const callAnthropicWithProviderTransport = (provider, messages, options = {}) =>
+    callAnthropicCompatible(provider, messages, { ...options, providerTransport })
   const hostOwnsOfficialDeepSeek = runtime?.hostOwnsOfficialDeepSeek
     ?? hostOwnsOfficialDeepSeekProvider(ctx)
   const visionState = sessionVisionRuntime?.stateStore ?? createSessionVisionStateStore({
@@ -831,162 +800,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     })
   }
 
-  // Version checks are install-method agnostic. One-click update is stricter:
-  // it is exposed only when the exact CLI entry hosting this process can be
-  // traced back to @deepseek-ai/dsh, so we never guess npm/pnpm/npx/bun.
-  const updateChecker = createCachedUpdateChecker({
-    fetchImpl: (...args) => globalThis.fetch(...args),
-  })
-  const selfUpdatePlan = detectDshSelfUpdatePlan()
-  let selfUpdateToken = randomBytes(24).toString('base64url')
-  let selfUpdateInFlight
-  const updateResultForClient = (result) => ({
-    ...result,
-    autoUpdate: {
-      supported: selfUpdatePlan.available === true,
-      method: selfUpdatePlan.available === true ? selfUpdatePlan.method : undefined,
-      profile: selfUpdatePlan.profile,
-      reason: selfUpdatePlan.available === true ? undefined : selfUpdatePlan.reason,
-      token:
-        selfUpdatePlan.available === true &&
-        result &&
-        result.ok === true &&
-        result.updateAvailable === true
-          ? selfUpdateToken
-          : undefined,
-    },
-  })
-  void updateChecker.check(false).then((result) => {
-    if (result && result.ok === true && result.updateAvailable === true) {
-      ctx.logger?.info(
-        'vision-router: update available %s -> %s',
-        result.currentVersion,
-        result.latestVersion,
-      )
-    }
-  })
-
-  // ── stealth takeover: serve `deepseek-official` ourselves ────────────────
+  // ── official DeepSeek ownership ─────────────────────────────────────────
   //
-  // With the stock llm-deepseek row disabled in the profile composition, the
-  // native adapter is rebuilt from this plugin under a hidden internal route
-  // and the public `deepseek-official` route serves the stock catalog with
-  // image input declared: the picker looks exactly like the stock one, but
-  // image turns work. If the stock row is still active, taking over the route
-  // throws DUPLICATE_ADAPTER and we fall back to the visible wrapper below.
+  // DVR 2.3 supports DSH from the 0.1.5 train, where the official DeepSeek
+  // provider owns request-local attachment/file/image-access behavior. Keep
+  // the historical `stealth` setting readable for persisted-profile
+  // compatibility, but never reconstruct or register `deepseek-official`
+  // (or a hidden native surrogate) from Vision Router.
   const stealthEnabled = current().stealth !== false
-  // Legacy keep-alive fallback: older Hosts let DVR rebuild a missing stock
-  // `deepseek-official` route for compatibility. Newer Host generations own
-  // the provider's attachment/file lifecycle, so a missing official row is a
-  // Host configuration problem: DVR reports it and never reconstructs it.
-  //
-  // The takeover decision runs AFTER a short settle window, never inside
-  // apply(): entry activation is service-driven, so this row can apply
-  // BEFORE the stock llm-deepseek row (reproduced on DSH 0.1.0-rc.5 hosts,
-  // e.g. Oh-DSH Desktop). Deciding synchronously misreads the not-yet-applied
-  // stock route as dead, and our directory registration then makes the stock
-  // row's own registration throw DUPLICATE_DIRECTORY, killing the whole
-  // runtime before readiness. Once the window elapses, a registered stock
-  // route means hands off; a still-dead route means the row is genuinely
-  // absent/disabled and the takeover is safe.
-  const KEEPALIVE_SETTLE_MS = 2000
-  const nativeRoute = 'deepseek-official-native'
-  let stealthActive = false
-  let takeoverReason
-  let nativeAdapter
-  let takeoverAttempted = false
-  const attemptTakeover = (reason) => {
-    if (takeoverAttempted) return
-    takeoverAttempted = true
-    takeoverReason = reason
-    try {
-      nativeAdapter = createNativeDeepSeekAdapter(ctx)
-      const nativeHandle = ctx.llm.registerAdapter([nativeRoute], {
-        providerInfo(provider) {
-          return { id: provider, name: 'DeepSeek (native)' }
-        },
-        providerRetryPolicy(provider) {
-          return nativeAdapter.providerRetryPolicy(provider)
-        },
-        async listModels() {
-          return [] // hidden from the picker
-        },
-        async resolveModel(provider, model, signal) {
-          return nativeAdapter.resolveModel(provider, model, signal)
-        },
-        async *stream(options) {
-          yield* nativeAdapter.stream(options)
-        },
-      })
-      ctx.effect(() => nativeHandle, 'vision-router: hidden native deepseek route')
-      const publicHandle = ctx.llm.registerAdapter(
-        ['deepseek-official'],
-        createStealthAdapter(ctx, {
-          native: nativeAdapter,
-          imageMemory,
-          pairs,
-          chainRoute,
-          delegateProvider: nativeRoute,
-          instantLocal: instantLocalProvider,
-          instantLocalStyle,
-          instantLocalTimeoutMs: timeoutMs,
-          instantLocalMaxPixels,
-        }),
-      )
-      stealthActive = true
-      ctx.effect(() => publicHandle, 'vision-router: stealth deepseek-official route')
-      // Keep the Models page's DeepSeek editor wired to the same settings
-      // section the stock row used.
-      try {
-        ctx.llm.registerConfigurableProviders([
-          {
-            provider: 'deepseek-official',
-            displayName: 'DeepSeek',
-            settingsNs: 'llm-deepseek',
-            settingsPath: [],
-          },
-        ])
-      } catch {
-        /* the stock row may still own the directory entry */
-      }
-    } catch (error) {
-      nativeAdapter = undefined
-      stealthActive = false
-      ctx.logger?.warn(
-        'vision-router: deepseek-official takeover skipped (%s: %s); keeping the visible wrapper',
-        reason,
-        error && error.message ? error.message : String(error),
-      )
-    }
-  }
-  const maybeTakeover = () => {
-    if (!takeoverSettled || stealthActive || takeoverAttempted) return
-    if (adapterAvailable(ctx.llm, 'deepseek-official')) {
-      if (stealthEnabled) {
-        ctx.logger?.warn(
-          hostOwnsOfficialDeepSeek
-            ? 'vision-router: stealth takeover is unavailable because this DSH Host owns deepseek-official; using the auto-vision wrapper instead'
-            : 'vision-router: legacy stealth takeover is enabled but the stock deepseek-official route is alive; disable llm-deepseek only on this legacy Host contract to take it over',
-        )
-      }
-      return
-    }
-    if (hostOwnsOfficialDeepSeek) {
-      takeoverAttempted = true
-      takeoverReason = 'host-owned-official-unavailable'
-      ctx.logger?.warn(
-        'vision-router: deepseek-official is unavailable on a Host-owned provider contract; re-enable the llm-deepseek row because Vision Router will not recreate it',
-      )
-      return
-    }
-    attemptTakeover(stealthEnabled ? 'stealth' : 'official-unavailable')
-  }
-  let takeoverSettled = false
-  const settleTimer = setTimeout(() => {
-    takeoverSettled = true
-    maybeTakeover()
-  }, KEEPALIVE_SETTLE_MS)
-  ctx.effect(() => () => clearTimeout(settleTimer), 'vision-router: takeover settle timer')
+
   // ── vision-http route: first-class llm route over the OpenAI-compatible
   // http providers. The built-in OVHcloud anonymous endpoint (no account, no
   // key, 2 req/min/IP) is the DEFAULT vision model, so a fresh install works
@@ -1167,13 +989,13 @@ export function apply(ctx, config = {}, runtime = {}) {
           // data URIs); callLocalBackend converts them for the Anthropic and
           // LM Studio native wires.
           text = await ((entry.provider.format === 'anthropic' || entry.provider.format === 'lmstudio')
-            ? callLocalBackend(entry.provider, openAIMessages, {
+            ? callLocalWithProviderTransport(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
                 sessionId: options.sessionId,
                 resolveCredential,
               })
-            : callOpenAICompatible(entry.provider, openAIMessages, {
+            : callOpenAIWithProviderTransport(entry.provider, openAIMessages, {
                 maxTokens: entry.provider.maxTokens ?? 4096,
                 signal: options.signal,
                 sessionId: options.sessionId,
@@ -1227,7 +1049,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // hardcodes text-only. This wrapper route (`deepseek-vision` by default)
   // declares image input so the admission passes, shows up in the model
   // picker as "DeepSeek + 自动识图", and delegates only to the official
-  // DeepSeek adapter (or the hidden native route during stealth takeover).
+  // DeepSeek adapter. DVR 2.3 never substitutes a hidden native provider.
   //
   // The adapter is built unconditionally; whether (and under which name) it
   // mounts is reconciled reactively against the resolved settings document by
@@ -1239,9 +1061,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     // The row is explicitly branded as DeepSeek, so its metadata and network
     // authority must come from DeepSeek as well. `textProvider` is legacy
     // configuration and must never let an arbitrary relay masquerade behind
-    // the special wrapper. During stealth takeover old wrapper sessions keep
-    // delegating to the hidden native DeepSeek route.
-    const wrapperDelegateRoute = () => (stealthActive ? nativeRoute : 'deepseek-official')
+    // the special wrapper.
+    const wrapperDelegateRoute = () => 'deepseek-official'
     const delegateAdapter = () => {
       try {
         return ctx.llm.registration(wrapperDelegateRoute()).adapter
@@ -1261,9 +1082,6 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
       },
       async listModels() {
-        // In stealth mode this route is only a hidden alias for old sessions:
-        // the public deepseek-official route already shows the stock catalog.
-        if (stealthActive) return []
         const entries = []
         const real = delegateAdapter()
         if (real !== undefined && typeof real.listModels === 'function') {
@@ -1327,20 +1145,18 @@ export function apply(ctx, config = {}, runtime = {}) {
         if (real === undefined || typeof real.resolveModel !== 'function') {
           throw new Error('vision-router: the official DeepSeek adapter is not available')
         }
-        // Outside stealth mode, accept only models the live official catalog
-        // actually publishes. Some adapters can resolve arbitrary ids; that is
-        // not permission to expose them under the DeepSeek product identity.
-        if (!stealthActive) {
-          if (typeof real.listModels !== 'function') {
-            throw new Error('vision-router: the official DeepSeek catalog is not available')
-          }
-          const listed = await getOfficialDeepSeekCatalog(real)
-          const admitted = Array.isArray(listed) && listed.some(
-            (entry) => entry && entry.id === model,
-          )
-          if (!admitted) {
-            throw new Error(`vision-router: DeepSeek model "${model}" is not in the live official catalog`)
-          }
+        // Accept only models the live official catalog actually publishes.
+        // Some adapters can resolve arbitrary ids; that is not permission to
+        // expose them under the DeepSeek product identity.
+        if (typeof real.listModels !== 'function') {
+          throw new Error('vision-router: the official DeepSeek catalog is not available')
+        }
+        const listed = await getOfficialDeepSeekCatalog(real)
+        const admitted = Array.isArray(listed) && listed.some(
+          (entry) => entry && entry.id === model,
+        )
+        if (!admitted) {
+          throw new Error(`vision-router: DeepSeek model "${model}" is not in the live official catalog`)
         }
         const base = await real.resolveModel(wrapperDelegateRoute(), model)
         return {
@@ -1357,10 +1173,10 @@ export function apply(ctx, config = {}, runtime = {}) {
         instantLocalStyle,
         instantLocalTimeoutMs: timeoutMs,
         instantLocalMaxPixels,
+        providerTransport,
       }),
     }
   }
-
 
   // ── opt-in image-capable twins for other text-provider routes ─────────────
   //
@@ -1380,7 +1196,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const ownRoutes = () =>
     new Set(
-      [wrapperRoute(), chainRoute(), HTTP_ROUTE, nativeRoute, 'deepseek-official'].filter(
+      [wrapperRoute(), chainRoute(), HTTP_ROUTE, 'deepseek-official'].filter(
         (route) => route !== undefined && route !== null && route !== '',
       ),
     )
@@ -1487,6 +1303,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         instantLocalStyle,
         instantLocalTimeoutMs: timeoutMs,
         instantLocalMaxPixels,
+        providerTransport,
       }),
     }
   }
@@ -1778,7 +1595,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const stored = await attachments.readImage(block.attachment)
       content.push(...toOpenAIContent([block], () => stored.data))
     }
-    return callOpenAICompatible(
+    return callOpenAIWithProviderTransport(
       {
         name: provider,
         baseURL: plan.transport.baseURL,
@@ -1863,7 +1680,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (anthropic.messages.length === 0) {
       throw new Error(`corrected route "${pair.provider}/${pair.model}": no representable content to send`)
     }
-    return callAnthropicCompatible(
+    return callAnthropicWithProviderTransport(
       { name: pair.provider, baseURL: correction.baseURL, model: pair.model, apiKeyEnv: '' },
       anthropic.messages,
       {
@@ -1981,7 +1798,6 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     return capabilities
   }
-
 
   // Build the tool-side adapter chain. Explicit rows are user intent: every
   // structurally callable generative backend gets a real adapter attempt even
@@ -2668,7 +2484,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           // 原样留在会话日志里（界面正常显示图片），由适配器在模型输入层
           // 做不可见的改写；否则在 pre-step 改写为附件标记（界面会显示标记，
           // 这是没有适配器时的兜底）。legacy routing 开启时保留原块走视觉链。
-          const adapterHandlesImages = stealthActive || wrapperRegistered
+          const adapterHandlesImages = wrapperRegistered
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
               ? rewriteHistoryImages(messages, sessionImageMemory).messages
@@ -2682,7 +2498,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       // With routing disabled and no image-capable adapter on the session
       // route, rewrite uploaded image blocks into attachment markers so the
       // text-only model can still query them via vision_describe.
-      if (rewriteEnabled() && !routingEnabled() && !stealthActive && !wrapperRegistered) {
+      if (rewriteEnabled() && !routingEnabled() && !wrapperRegistered) {
         const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
         return {
           ...decision,
@@ -3173,7 +2989,7 @@ ctx.logger?.info(
               AbortSignal.timeout(timeoutMs()),
             )
             const askHttp = async (correction) => {
-              const answer = await callOpenAICompatible(
+              const answer = await callOpenAIWithProviderTransport(
                 provider,
                 correction === undefined
                   ? openAIBaseMessages
@@ -3720,7 +3536,7 @@ ctx.logger?.info(
           continue
         }
         try {
-          const text = await callOpenAICompatible(
+          const text = await callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
             {
@@ -4762,170 +4578,18 @@ ctx.logger?.info(
       },
     })
 
-    // ── dsh-vision 并入：屏幕截图（vision_screenshot）───────────────────────
-    // 截取用户桌面。平台命令：Windows PMv2-aware PowerShell helper（虚拟屏幕）、
-    // macOS screencapture（主显示器）、Linux ImageMagick import（回退 scrot，
-    // 两者均为系统外部依赖）。产物写入工作区 artifacts 目录。
-    // Boot-time opt-in: the tool is registered ONLY when desktopScreenshot is
-    // enabled, so a disabled default never changes the model-visible tool set
-    // (token / prefix-cache stability). Changing the toggle requires a restart.
+    // Desktop capture implementation lives behind the existing Core/tool
+    // exposure boundary. Core still decides whether the candidate enters the
+    // deep-tool set; LocalVisionStabilizer owns live schema mounting.
     if (current().desktopScreenshot === true) {
-      deepToolDefs.push({
-        name: 'vision_screenshot',
-      description:
-        'Capture the user\'s desktop screen as a PNG artifact (the virtual screen on Windows; the main display on macOS; the root display on Linux). ' +
-        'Windows: per-monitor-DPI-aware PowerShell capture; macOS: screencapture; Linux: ImageMagick import (falls back to scrot; either command must be installed). ' +
-        'This privacy-sensitive tool is disabled by default and works only after the user explicitly enables Desktop screenshot in Vision Router settings. ' +
-        'Use it when you need to see what is on the user\'s screen right now — e.g. their current GUI, an app, or a page outside this browser. ' +
-        'Optional identify=true also runs local recognition on the capture using the enabled local backends (Ollama, then LM Studio) and returns the description alongside the path.',
-      parameters: {
-        type: 'object',
-        properties: {
-          identify: {
-            type: 'boolean',
-            description:
-              'Also recognize the captured screen with enabled local vision backends (Ollama, then LM Studio) and return the description text with the path. Default false.',
-          },
-        },
-        additionalProperties: false,
-      },
-      output: stringOutput,
-      async execute(args, exec) {
-        if (current().desktopScreenshot !== true) {
-          throw new Error(
-            'vision_screenshot is disabled; enable Desktop screenshot explicitly in Vision Router settings before use',
-          )
-        }
-        const tmp = path.join(
-          tmpdir(),
-          `vision-screenshot-${Date.now()}-${Math.floor(Math.random() * 1e9)}.png`,
-        )
-        const platform = process.platform
-        try {
-          if (platform === 'win32') {
-            // #409: own the DPI-aware capture here instead of emitting the
-            // known-broken logical-coordinate script and hoping a global
-            // promisify(execFile) shim rewrites it later. The helper also
-            // isolates CodeDom TEMP/TMP to a writable ASCII path.
-            await captureWindowsDesktop(tmp, {
-              timeoutMs: timeoutMs(),
-              signal: exec?.signal,
-            })
-          } else if (platform === 'darwin') {
-            // Without -m, screencapture writes one file per display. The code
-            // consumes one artifact path, so request the main display explicitly
-            // instead of leaving untracked sibling files in the temp directory.
-            await promisify(execFile)('screencapture', ['-x', '-m', tmp], {
-              timeout: timeoutMs(),
-              windowsHide: true,
-            })
-          } else {
-            try {
-              await promisify(execFile)('import', ['-window', 'root', tmp], { timeout: timeoutMs() })
-            } catch {
-              await promisify(execFile)('scrot', [tmp], { timeout: timeoutMs() })
-            }
-          }
-          if (!existsSync(tmp)) {
-            throw new Error(
-              `vision_screenshot: no output produced on ${platform} (is a screen available?)`,
-            )
-          }
-          const data = await readFile(tmp)
-          const target = await saveArtifact(exec, `screenshot-${Date.now()}.png`, data)
-          const result = { path: target, bytes: data.length }
-          // dsh-vision 并入：identify —— 截屏后立即本地识别（take_screenshot
-          // identify 的能力）。任一本地后端启用时可用（Ollama 优先、LM Studio
-          // 次之）；失败不阻断截图。
-          if (args.identify === true) {
-            const locals = localProvidersOf(current())
-            if (locals.length > 0) {
-              const startedAt = Date.now()
-              // 识别前降采样：全屏 PNG 可达数 MB（4K 屏 / 多显示器虚拟屏），
-              // 原样 base64 直送会拖慢识别甚至超出视觉模型分辨率上限。
-              // 限制最长边（等比缩放、不放大）后再送，识别又快又稳；
-              // sharp 不可用时（罕见）回退原图，不阻断识别。
-              let identifyBytes = data
-              try {
-                const sharp = await loadSharp()
-                if (sharp) {
-                  const downscaled = await sharp(data, { failOn: 'none' })
-                    .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
-                    .png()
-                    .toBuffer()
-                  if (downscaled.length > 0 && downscaled.length < data.length) {
-                    identifyBytes = downscaled
-                  }
-                }
-              } catch {
-                /* keep the original capture */
-              }
-              if (identifyBytes !== data) {
-                result.identifyDownscaled = {
-                  originalBytes: data.length,
-                  sentBytes: identifyBytes.length,
-                }
-              }
-              const content = toOpenAIContent(
-                [{ type: 'image', attachment: { mediaType: 'image/png', data: identifyBytes } }],
-                () => identifyBytes,
-              )
-              content.push({ type: 'text', text: localDescribePrompt(instantLocalStyle()) })
-              const deadlineAt = Date.now() + timeoutMs()
-              const errors = []
-              for (let index = 0; index < locals.length; index++) {
-                const local = locals[index]
-                const remainingMs = deadlineAt - Date.now()
-                if (remainingMs <= 0) break
-                // Reserve a fair share for later local backends. A connected
-                // but hung Ollama must not consume LM Studio's entire budget.
-                const roundBudgetMs = Math.max(
-                  1,
-                  Math.floor(remainingMs / (locals.length - index)),
-                )
-                const controller = new AbortController()
-                const timer = setTimeout(() => controller.abort(), roundBudgetMs)
-                try {
-                  const identified = await callLocalBackend(
-                    local,
-                    [{ role: 'user', content }],
-                    { maxTokens: local.maxTokens ?? 2048, signal: controller.signal },
-                  )
-                  if (typeof identified === 'string' && identified.trim() !== '') {
-                    result.identified = identified.trim()
-                    result.identifiedBy = local.name
-                    result.elapsedSec = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
-                    break
-                  }
-                  errors.push(`${local.name}: empty response`)
-                } catch (error) {
-                  errors.push(
-                    `${local.name}: ${error && error.message ? error.message : String(error)}`,
-                  )
-                } finally {
-                  clearTimeout(timer)
-                }
-              }
-              if (result.identified === undefined) {
-                result.identifyError =
-                  errors.length > 0
-                    ? errors.join('; ').slice(0, 1000)
-                    : 'local vision identification timed out before a backend could respond'
-              }
-            } else {
-              result.identifyError = 'no local vision backend enabled (localOllama / localLmStudio); enable one to use identify'
-            }
-          }
-          return JSON.stringify(result)
-        } finally {
-          try {
-            await unlink(tmp)
-          } catch {
-            /* best effort cleanup */
-          }
-        }
-      },
-    })
+      deepToolDefs.push(createDesktopScreenshotTool({
+        current,
+        timeoutMs,
+        saveArtifact,
+        stringOutput,
+        instantLocalStyle,
+        providerTransport,
+      }))
     }
 
     // ── progressive exposure: one bootstrap tool + the vision-tools skill ──
@@ -5075,290 +4739,28 @@ ctx.logger?.info(
     })
   })
 
-
-  // ── test-connection probe: a GET-only diagnostics route the settings card
-  // uses to verify the first active backend without sending a real image.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(() => {
-      const probe = async () => {
-        const started = Date.now()
-        let first
-        for (const pair of pairs()) {
-          if (!pair) continue
-          if (pair.provider !== HTTP_ROUTE && !adapterAvailable(ctx.llm, pair.provider)) continue
-          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (capability.attemptable !== false) {
-            first = pair
-            break
-          }
-        }
-        const probeModels = async (baseURL, expectedModel) => {
-          try {
-            const response = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
-              method: 'GET',
-              signal: AbortSignal.timeout(8000),
-            })
-            const latencyMs = Date.now() - started
-            if (!response.ok) {
-              return { ok: false, latencyMs, status: response.status, error: `HTTP ${response.status}` }
-            }
-            const data = await readResponseJsonBounded(
-              response,
-              METADATA_RESPONSE_MAX_BYTES,
-              { label: 'vision backend /models response' },
-            ).catch(() => undefined)
-            const models = data && Array.isArray(data.data) ? data.data : undefined
-            const count = models ? models.length : undefined
-            if (
-              typeof expectedModel === 'string' &&
-              expectedModel !== '' &&
-              models &&
-              !models.some((entry) => entry && String(entry.id) === expectedModel)
-            ) {
-              return {
-                ok: false,
-                latencyMs,
-                status: response.status,
-                models: count,
-                endpoint: baseURL,
-                error: `configured model "${expectedModel}" was not returned by /models`,
-              }
-            }
-            return { ok: true, latencyMs, status: response.status, models: count, endpoint: baseURL }
-          } catch (error) {
-            return {
-              ok: false,
-              latencyMs: Date.now() - started,
-              error: error && error.message ? error.message : String(error),
-            }
-          }
-        }
-        // Explicit local configuration is the most likely thing the user is
-        // testing from this card. Probe it before a healthy OVH/default pair,
-        // and verify that the configured model identifier actually exists.
-        const localProbe = await probeLocalBackends(
-          localProvidersOf(current()),
-          (provider) => probeModels(provider.baseURL, provider.model),
-          started,
-        )
-        if (localProbe !== undefined) return localProbe
-        if (first !== undefined && first.provider === HTTP_ROUTE) {
-          const entry = httpRouteProviders().find((p) => `${p.name}/${p.model}` === first.model)
-          if (entry !== undefined) return probeModels(entry.baseURL, entry.model)
-        }
-        if (first !== undefined) {
-          try {
-            await ctx.llm.resolveModelInfo(first.provider, first.model)
-            return {
-              ok: true,
-              latencyMs: Date.now() - started,
-              detail: `${first.provider}/${first.model} metadata resolved (no network call)`,
-            }
-          } catch (error) {
-            return {
-              ok: false,
-              latencyMs: Date.now() - started,
-              error: error && error.message ? error.message : String(error),
-            }
-          }
-        }
-        const httpFirst = httpRouteProviders()[0]
-        if (httpFirst !== undefined) return probeModels(httpFirst.baseURL, httpFirst.model)
-        return { ok: false, error: 'no usable vision provider configured' }
-      }
-      return webCtx.webServer.register({
-        kind: 'exact',
-        path: '/_dsh/vision-router/test-connection',
-        handler: async (req, res) => {
-          if (req.method !== 'GET') {
-            res.setHeader('Allow', 'GET')
-            res.writeHead(405)
-            res.end()
-            return
-          }
-          try {
-            const result = await probe()
-            // Runtime takeover state: lets the settings card explain the
-            // keep-alive fallback when stealth is off but the stock route is
-            // disabled at the composition layer.
-            const officialRouteAvailable = adapterAvailable(ctx.llm, 'deepseek-official')
-            result.stealth = {
-              configured: stealthEnabled,
-              active: stealthActive,
-              reason: stealthActive
-                ? takeoverReason
-                : hostOwnsOfficialDeepSeek && !officialRouteAvailable
-                  ? 'host-owned-official-unavailable'
-                  : undefined,
-              hostOwned: hostOwnsOfficialDeepSeek,
-            }
-            res.writeHead(result.ok ? 200 : 502, { 'content-type': 'application/json' })
-            res.end(JSON.stringify(result))
-          } catch (error) {
-            res.writeHead(500, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: error && error.message ? error.message : String(error) }))
-          }
-        },
-      })
-    }, 'vision-router: test-connection route')
-  })
-
-  // Install-method-agnostic update status for the settings card. Manual
-  // checks pass ?force=1; startup/card-open checks share the process cache.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(
-      () =>
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: '/_dsh/vision-router/update-check',
-          handler: async (req, res) => {
-            if (req.method !== 'GET') {
-              res.setHeader('Allow', 'GET')
-              res.writeHead(405)
-              res.end()
-              return
-            }
-            const force = /(?:[?&])force=1(?:&|$)/.test(String(req.url ?? ''))
-            const result = await updateChecker.check(force)
-            res.writeHead(200, {
-              'content-type': 'application/json',
-              'cache-control': 'no-store',
-            })
-            res.end(JSON.stringify(updateResultForClient(result)))
-          },
-        }),
-      'vision-router: update-check route',
-    )
-  })
-
-  // Safe one-click updater. The browser cannot choose a command, package or
-  // target version: POST merely asks the server to refresh the registry and
-  // run DSH's own updater for this package through the verified current CLI.
-  // A process-local token plus a non-simple custom header prevents a random
-  // cross-origin page from submitting a blind update request to localhost.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(
-      () =>
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: '/_dsh/vision-router/self-update',
-          handler: async (req, res) => {
-            if (req.method !== 'POST') {
-              res.setHeader('Allow', 'POST')
-              res.writeHead(405)
-              res.end()
-              return
-            }
-            const fetchSite = String(req.headers?.['sec-fetch-site'] ?? '')
-            if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
-              res.writeHead(403, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ ok: false, error: 'cross-origin update request rejected' }))
-              return
-            }
-            const token = String(req.headers?.['x-dsh-vision-router-update-token'] ?? '')
-            if (!token || token !== selfUpdateToken) {
-              res.writeHead(403, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ ok: false, error: 'invalid update token' }))
-              return
-            }
-            if (selfUpdatePlan.available !== true) {
-              res.writeHead(409, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ ok: false, error: 'automatic update is not safe for this DSH launch' }))
-              return
-            }
-            try {
-              const fresh = await updateChecker.check(true)
-              if (!fresh || fresh.ok !== true) {
-                res.writeHead(502, { 'content-type': 'application/json' })
-                res.end(JSON.stringify({ ok: false, error: fresh?.error || 'could not refresh update metadata' }))
-                return
-              }
-              if (fresh.updateAvailable !== true) {
-                res.writeHead(409, { 'content-type': 'application/json' })
-                res.end(JSON.stringify({ ok: false, error: 'no newer version is currently available' }))
-                return
-              }
-              if (!selfUpdateInFlight) {
-                // Pass the registry-confirmed version in: the updater installs
-                // it explicitly (`add <name>@<target>`) and verifies the
-                // installed manifest afterwards, so a pnpm release-age policy
-                // silently keeping the old version is reported as a failure
-                // instead of a false success.
-                const pending = runDshPluginUpdate(selfUpdatePlan, {
-                  targetVersion: fresh.latestVersion,
-                })
-                selfUpdateInFlight = pending
-                void pending.then(
-                  () => {
-                    if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
-                  },
-                  () => {
-                    if (selfUpdateInFlight === pending) selfUpdateInFlight = undefined
-                  },
-                )
-              }
-              const result = await selfUpdateInFlight
-              // Rotate the token after a successful mutation so a captured
-              // request cannot be replayed. The current card already moves to
-              // the restart-required state and no longer needs the old token.
-              selfUpdateToken = randomBytes(24).toString('base64url')
-              res.writeHead(200, {
-                'content-type': 'application/json',
-                'cache-control': 'no-store',
-              })
-              res.end(JSON.stringify(result))
-            } catch (error) {
-              res.writeHead(500, { 'content-type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  ok: false,
-                  error: error && error.message ? error.message : String(error),
-                }),
-              )
-            }
-          },
-        }),
-      'vision-router: self-update route',
-    )
-  })
-
-  // Exact capability metadata for the settings card. DSH's public llm.models
-  // wire intentionally omits inputModalities, so the plugin exposes a narrow
-  // read-only view backed by the same resolveModelInfo() check used at runtime.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(
-      () =>
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: '/_dsh/vision-router/model-capabilities',
-          handler: async (req, res) => {
-            if (req.method !== 'GET') {
-              res.setHeader('Allow', 'GET')
-              res.writeHead(405)
-              res.end()
-              return
-            }
-            try {
-              const capabilities = await collectVisionBackendCapabilities()
-              const builtinFallback = DEFAULT_HTTP_PROVIDERS.map((provider) => ({
-                id: `${provider.name}/${provider.model}`,
-                model: provider.model,
-              }))
-              res.writeHead(200, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ capabilities, builtinFallback, anonymousRpmPerModel: 2 }))
-            } catch (error) {
-              res.writeHead(500, { 'content-type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  capabilities: {},
-                  error: error && error.message ? error.message : String(error),
-                }),
-              )
-            }
-          },
-        }),
-      'vision-router: model capabilities route',
-    )
+  // Product diagnostics/settings support is a separate Web owner. Core supplies
+  // only the three coherent domain faces it already computes; route lifecycle,
+  // bounded /models probing and JSON response semantics live outside Core.
+  installVisionDiagnosticsRoutes(ctx, {
+    connection: {
+      candidatePairs: pairs,
+      localBackends: () => localProvidersOf(current()),
+      httpBackends: httpRouteProviders,
+      resolveCapability: resolveVisionBackendCapability,
+      httpRoute: HTTP_ROUTE,
+    },
+    capabilities: {
+      collect: collectVisionBackendCapabilities,
+      builtinFallback: DEFAULT_HTTP_PROVIDERS.map((provider) => ({
+        id: `${provider.name}/${provider.model}`,
+        model: provider.model,
+      })),
+    },
+    ownership: {
+      hostOwnsOfficialDeepSeek,
+      stealthConfigured: stealthEnabled,
+    },
   })
 
   // Expose the namespace to the web configuration boundary. The API proxy

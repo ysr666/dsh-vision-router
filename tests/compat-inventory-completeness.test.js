@@ -5,12 +5,10 @@ import { readFile } from 'node:fs/promises'
 const REQUIRED_SEAMS = [
   'lib/dsh-contract-compat.js',
   'lib/adapter-update-coalescer.js',
-  'lib/android-attachment-compat.js',
   'lib/replay-envelope-v2-compat.js',
   'lib/pi-ai-bridge-wire-compat.js',
-  'lib/settings-client-rc8-lifecycle.js',
+  'lib/settings-client-loader-lifecycle.js',
   'lib/http-compat.js',
-  'lib/vision-provider-transport.js',
   'lib/legacy-global-proxy-boundary.js',
   'lib/legacy-core-vision-policy-bridge.js',
   'lib/tesseract-exec-compat.js',
@@ -18,6 +16,7 @@ const REQUIRED_SEAMS = [
 ]
 
 const REQUIRED_FIELDS = [
+  '2.3 state',
   'Reason',
   'Host gap',
   'Feature detection',
@@ -48,6 +47,11 @@ test('every retained compatibility seam has a complete removal contract', async 
         `${seam} must document ${field}`,
       )
     }
+    assert.match(
+      section,
+      /- \*\*2\.3 state:\*\* `(?:retain-host-gap|retire-ready|product-compat|historical-only)`\./,
+      `${seam} must use one recognized 2.3 compatibility state`,
+    )
   }
 })
 
@@ -78,11 +82,20 @@ test('completed architecture phase labels do not survive as production migration
   }
 })
 
-test('provider transport registry documents its concrete removal trigger', async () => {
-  const source = await readFile(
-    new URL('../lib/vision-provider-transport.js', import.meta.url),
-    'utf8',
-  )
-  assert.match(source, /Remove it only after every production compatibility caller/)
-  assert.match(source, /no production code reads\s+\*?\/?\s*currentVisionProviderTransport\(\)/s)
+test('provider transport compatibility registry is retired in favor of explicit runtime plumbing', async () => {
+  const [transport, publicEntry, entry, composition, httpCompat, catalog] = await Promise.all([
+    readFile(new URL('../lib/vision-provider-transport.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/public-entry.js', import.meta.url), 'utf8'),
+    readFile(new URL('../entry.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/http-compat.js', import.meta.url), 'utf8'),
+    readFile(new URL('../lib/catalog-corrections.js', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(transport, /^const installed\s*=\s*\[/m)
+  assert.doesNotMatch(transport, /installVisionProviderTransport|currentVisionProviderTransport/)
+  assert.match(publicEntry, /base\.apply\(runtimeCtx, hardening\.config, \{ providerTransport: transport \}\)/)
+  assert.match(entry, /applyVisionRuntimeComposition\(ctx, config, core, runtime\)/)
+  assert.match(composition, /providerTransport: runtime\?\.providerTransport/)
+  assert.match(httpCompat, /context\.providerTransport/)
+  assert.match(catalog, /options\.providerTransport/)
 })

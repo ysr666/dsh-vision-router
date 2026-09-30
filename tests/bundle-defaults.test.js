@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { Config, SETTINGS_CONTRACT_REVISION } from '../entry.js'
+import { Config as CoreConfig } from '../index.js'
 import {
   GUIDE_VISION_TOGGLE_HIGHLIGHT_PRELUDE,
   injectGuideVisionToggleHighlight,
@@ -53,6 +54,10 @@ test('public docs promise Host-canonical raster rather than uploader source-byte
   assert.doesNotMatch(zh, /原图像素留在视觉模型侧/)
   assert.doesNotMatch(zh, /路由桥，像素保真/)
   assert.doesNotMatch(zh, /提供"原图直看"路由/)
+})
+
+test('public Config composition preserves the mature Core schema identity', () => {
+  assert.equal(Config, CoreConfig)
 })
 
 test('public plugin config defaults progressive tools off', () => {
@@ -147,6 +152,8 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
   assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
   assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
+  assert.match(workflow, /Run tests[\s\S]*Verify generated browser source[\s\S]*pnpm client:check/)
+  assert.match(workflow, /Verify release Host support policy[\s\S]*tests\/dsh-support-window\.test\.js/)
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
   assert.match(workflow, /already exists at \$REMOTE_TAG_SHA, expected \$RELEASE_SHA/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
@@ -217,7 +224,7 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
 
   const hardening = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
   const start = hardening.indexOf('  windows-node24-screenshot:')
-  const end = hardening.indexOf('\n  preview-host-contract:', start)
+  const end = hardening.indexOf('\n  linux-desktop-screenshot:', start)
   assert.ok(start >= 0 && end > start, 'Windows screenshot job anchors must remain explicit and ordered')
   const windows = hardening.slice(start, end)
   assert.match(windows, /timeout-minutes: 5/)
@@ -272,7 +279,7 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
     'lib/client-host-compat-prelude.js',
     'lib/guide-vision-toggle-highlight.js',
     'lib/remote-settings-risk-confirmation.js',
-    'lib/settings-client-rc8-lifecycle.js',
+    'lib/settings-client-loader-lifecycle.js',
     'lib/settings-factory-lifecycle.js',
     'lib/settings-native-card-layout.js',
     'lib/v2-settings-ia-integration.js',
@@ -354,7 +361,7 @@ test('audited browser integration modules always trigger every real browser and 
     'lib/client-host-compat-prelude.js',
     'lib/guide-vision-toggle-highlight.js',
     'lib/remote-settings-risk-confirmation.js',
-    'lib/settings-client-rc8-lifecycle.js',
+    'lib/settings-client-loader-lifecycle.js',
     'lib/settings-factory-lifecycle.js',
     'lib/settings-native-card-layout.js',
     'lib/v2-settings-ia-integration.js',
@@ -500,6 +507,19 @@ test('Desktop renderer E2E drives the Vision onboarding through the account-owne
   assert.match(source, /\[data-vr-guide-target="vision-backend"\]/)
   assert.doesNotMatch(source, /dismissVisionOnboarding/,
     'real Desktop coverage must exercise the onboarding path instead of skipping it')
+})
+
+test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
+    'the real Host check must exercise the opposite state regardless of its persisted initial mode')
+  assert.match(source, /node\.getAttribute\('aria-busy'\) !== 'true'/)
+  assert.match(source, /node\.disabled === false/)
+  const firstToggle = source.indexOf('await waitForSettledVisionState(toggledPressed)')
+  const secondClick = source.indexOf('await toggle.click()', firstToggle)
+  const restored = source.indexOf('await waitForSettledVisionState(initialPressed)', secondClick)
+  assert.ok(firstToggle >= 0 && secondClick > firstToggle && restored > secondClick,
+    'the second click must wait for the first Host-owned selection to become interactive')
 })
 
 test('Desktop E2E diagnostic files persist only fixed summaries of Host network evidence', async () => {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { installPiAiBridgeWireCompat } from '../lib/pi-ai-bridge-wire-compat.js'
 import { installLegacyGlobalProxyBoundary, streamWithLegacyGlobalProxyScope } from '../lib/legacy-global-proxy-boundary.js'
 import { runWithVisionSessionAffinity } from '../lib/session-affinity-runtime.js'
+import { installRuntimeI18nBoundary } from '../lib/runtime-i18n-boundary.js'
 
 const endpoint = 'https://opencode.ai/zen/go/v1/chat/completions'
 const pair = { provider: 'host-vision', model: 'vision-model' }
@@ -60,19 +61,50 @@ function fixture(t, { proxy = '' } = {}) {
       baseUrl: 'https://opencode.ai/zen/go/v1', compat: { maxTokensField: 'max_completion_tokens' },
     }] },
   }]])
+  const settings = {
+    get(namespace) {
+      if (namespace === 'vision-router') return config
+      if (namespace === 'locale') return { preference: 'en' }
+      if (namespace === 'llm-pi-ai') return {}
+      return undefined
+    },
+  }
   const ctx = {
     llm: {
       listProviders: () => [{ id: pair.provider }],
       registration: () => ({ adapter: { config: { profiles: () => profiles } } }),
     },
-    get: () => ({ get: () => config }),
+    get: (name) => name === 'settings' ? settings : undefined,
     effect: () => {},
   }
+  const installI18n = () => {
+    const i18nCtx = {
+      ...ctx,
+      effect(setup) {
+        const cleanup = setup()
+        if (typeof cleanup === 'function') disposers.push(cleanup)
+        return cleanup
+      },
+    }
+    installRuntimeI18nBoundary(i18nCtx, config)
+  }
+  const sequences = {
+    wire: ['wire'],
+    i18n: ['i18n'],
+    proxy: ['proxy'],
+    'wire+proxy': ['wire', 'proxy'],
+    'wire+i18n': ['wire', 'i18n'],
+    'i18n+proxy': ['i18n', 'proxy'],
+    all: ['wire', 'i18n', 'proxy'],
+  }
   const install = (mode) => {
-    if (mode !== 'proxy') disposers.push(installPiAiBridgeWireCompat(ctx))
-    if (mode !== 'wire') disposers.push(installLegacyGlobalProxyBoundary(ctx, config, {
-      importUndici: async () => { imports++; return { ProxyAgent, getGlobalDispatcher: () => hostDispatcher } },
-    }))
+    for (const component of sequences[mode] ?? []) {
+      if (component === 'wire') disposers.push(installPiAiBridgeWireCompat(ctx))
+      if (component === 'i18n') installI18n()
+      if (component === 'proxy') disposers.push(installLegacyGlobalProxyBoundary(ctx, config, {
+        importUndici: async () => { imports++; return { ProxyAgent, getGlobalDispatcher: () => hostDispatcher } },
+      }))
+    }
   }
   t.after(async () => {
     try { for (const dispose of disposers.toReversed()) dispose() }
@@ -90,6 +122,16 @@ const imageInit = () => ({
   }),
 })
 
+const localizedImageInit = () => {
+  const init = imageInit()
+  const body = JSON.parse(init.body)
+  body.messages[0].content.unshift({
+    type: 'text',
+    text: '请详细描述这张图片的内容：主要元素、文字（照抄原文）、布局与细节。',
+  })
+  return { ...init, body: JSON.stringify(body) }
+}
+
 async function scopedFetch(init = imageInit()) {
   const values = []
   const stream = streamWithLegacyGlobalProxyScope(pair.provider, pair.model, () => ({
@@ -101,7 +143,7 @@ async function scopedFetch(init = imageInit()) {
   return values
 }
 
-for (const mode of ['wire', 'proxy', 'both']) {
+for (const mode of ['wire', 'i18n', 'proxy', 'wire+proxy', 'wire+i18n', 'i18n+proxy', 'all']) {
   for (const order of ['pipeline-first', 'dvr-first']) {
     test(`${mode}: ${order} composes with accessor and preserves Host traffic after unload`, async (t) => {
       const f = fixture(t)
@@ -128,7 +170,7 @@ for (const order of ['pipeline-first', 'dvr-first']) {
   test(`${order}: explicit proxy and pi-ai/OpenCode wire rules remain scoped`, async (t) => {
     const f = fixture(t, { proxy: 'http://127.0.0.1:7890' })
     if (order === 'pipeline-first') pipeline()
-    f.install('both')
+    f.install('all')
     if (order === 'dvr-first') pipeline()
     await Promise.all([
       scopedFetch(),
@@ -175,7 +217,7 @@ for (const order of ['pipeline-first', 'dvr-first']) {
 test('later Host fetch replacement stays authoritative across cleanup', async (t) => {
   const f = fixture(t)
   pipeline()
-  f.install('both')
+  f.install('all')
   let calls = 0
   const replacement = async () => { calls++; return new Response('new-host') }
   globalThis.fetch = replacement
@@ -190,7 +232,7 @@ test('later Host fetch replacement stays authoritative across cleanup', async (t
 test('scoped affinity validation still rejects before network with an accessor pipeline', async (t) => {
   const f = fixture(t)
   pipeline()
-  f.install('both')
+  f.install('all')
   await assert.rejects(runWithVisionSessionAffinity('unsafe\nidentity', () => globalThis.fetch(endpoint, imageInit())),
     (error) => error.code === 'OPENCODE_SESSION_INVALID')
   assert.equal(f.calls.length, 0)
@@ -201,7 +243,7 @@ for (const order of ['pipeline-first', 'dvr-first']) {
     const f = fixture(t)
     let p
     if (order === 'pipeline-first') p = pipeline()
-    f.install('both')
+    f.install('all')
     if (order === 'dvr-first') p = pipeline()
     await scopedFetch()
     assert.equal(f.calls.at(-1).headers.get('x-host-pipeline'), 'preserved')
@@ -218,5 +260,28 @@ for (const order of ['pipeline-first', 'dvr-first']) {
     assert.equal(f.calls.at(-1).headers.get('x-host-pipeline'), null)
     assert.equal(f.calls.at(-1).headers.get('x-opencode-session'), null)
     assert.equal(p.assignments(), 0)
+  })
+}
+
+for (const order of ['pipeline-first', 'dvr-first']) {
+  test(`${order}: full production wrapper chain composes i18n, wire and proxy transformations`, async (t) => {
+    const f = fixture(t, { proxy: 'http://127.0.0.1:7890' })
+    if (order === 'pipeline-first') pipeline()
+    f.install('all')
+    if (order === 'dvr-first') pipeline()
+
+    await scopedFetch(localizedImageInit())
+    assert.equal(f.calls.length, 1)
+    const call = f.calls[0]
+    const body = JSON.parse(call.init.body)
+    assert.equal(body.max_completion_tokens, 64)
+    assert.equal(Object.hasOwn(body, 'max_tokens'), false)
+    assert.match(body.messages[0].content[0].text, /^Describe this image in detail:/)
+    assert.equal(call.headers.get('x-route'), 'tenant-a')
+    assert.equal(call.headers.get('x-opencode-session'), 'session-test')
+    assert.equal(call.headers.get('x-host-pipeline'), 'preserved')
+    assert.equal(call.init.dispatcher.dispatch({ origin: 'https://opencode.ai' }, {}), f.agents[0])
+    assert.equal(call.init.dispatcher.dispatch({ origin: 'https://other.example' }, {}), 'host-dispatcher')
+    assert.equal(f.imports(), 1)
   })
 }

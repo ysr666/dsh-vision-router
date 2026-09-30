@@ -15,6 +15,7 @@ const importResolved = async (specifier) => import(pathToFileURL(hostRequire.res
 
 const llmModule = await importResolved('@deepseek-ai/dsh-llm')
 const sessionModule = await importResolved('@deepseek-ai/dsh-session')
+const sessionProjectionModule = await importResolved('@deepseek-ai/dsh-session-projection')
 const attachmentModule = await importResolved('@deepseek-ai/dsh-attachment-local')
 const systemPromptModule = await importResolved('@deepseek-ai/dsh-system-prompt')
 const toolsModule = await importResolved('@deepseek-ai/dsh-tools')
@@ -31,6 +32,7 @@ const { Context } = await import(pathToFileURL(llmRequire.resolve('@deepseek-ai/
 const LlmRuntime = llmModule.default
 const { LlmAdapter, createUserMessage } = llmModule
 const SessionStore = sessionModule.default
+const SessionProjectionRegistry = sessionProjectionModule.default
 const { SessionId } = sessionModule
 const LocalAttachmentStore = attachmentModule.default
 const SystemPrompt = systemPromptModule.default
@@ -152,12 +154,13 @@ async function mountHarness({ dshHome, sessionsRoot, adapter }) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(LocalAttachmentStore, { dshHome })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(JsonlSessionPersistence, { root: sessionsRoot })
+  await ctx.plugin(AgentLoop, { agents: [] })
   ctx.llm.registerAdapter(['native-mm'], adapter)
 
   const config = plugin.Config({
@@ -189,7 +192,7 @@ async function imageTurn(agent, refs, text) {
     source: { kind: 'user' },
   }))
   await agent.whenIdle()
-  const end = agent.session.events.findLast((event) => event.type === 'turn/end')
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
   assert.equal(end?.data?.reason?.kind, 'completed', `image turn did not complete: ${JSON.stringify(end?.data?.reason)}`)
 }
 
@@ -199,7 +202,7 @@ async function textTurn(agent, text) {
     source: { kind: 'user' },
   }))
   await agent.whenIdle()
-  const end = agent.session.events.findLast((event) => event.type === 'turn/end')
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
   assert.equal(end?.data?.reason?.kind, 'completed', `text turn did not complete: ${JSON.stringify(end?.data?.reason)}`)
 }
 
