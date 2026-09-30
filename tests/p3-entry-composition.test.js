@@ -75,11 +75,16 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
   assert.match(source, /function installHostAndSecurityBoundaries\(ctx, config, core\)/)
   assert.match(source, /function createRuntimeOwners\(host, core\)/)
   assert.match(source, /function installRoutingAndHostProducts\(host, owners, core\)/)
-  assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core\)/)
+  assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core, providerTransport\)/)
   assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)/)
   assert.match(
     source,
-    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
+    /contextWithVisionBackendRuntimePolicy\([\s\S]*?providerTransport,[\s\S]*?installCapabilityBenchmarkService\([\s\S]*?providerTransport,/,
+    'execution boundaries must receive the explicit ProviderTransport capability without widening to the whole runtime bag',
+  )
+  assert.match(
+    source,
+    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core, runtime\?\.providerTransport\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
     'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
