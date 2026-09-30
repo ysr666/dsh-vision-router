@@ -101,3 +101,14 @@ test('current-contract follows the current stable Host while preview remains a s
   assert.match(exactSource, /DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443/)
   assert.match(exactSource, /scripts\/dsh-proxy-egress-contract\.mjs/)
 })
+
+test('required compatibility workflows do not gate DVR 2.3 on pre-0.1.5 Hosts', async () => {
+  const [ci, coldResume] = await Promise.all([
+    readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+    readFile(new URL('../.github/workflows/native-multimodal-cold-resume.yml', import.meta.url), 'utf8'),
+  ])
+
+  assert.doesNotMatch(ci, /0\.1\.0-rc\.[678]/)
+  assert.doesNotMatch(coldResume, /0\.1\.0-rc\.[678]/)
+  assert.match(coldResume, /dsh: \['0\.1\.5-rc\.1', '0\.1\.7-rc\.2'\]/)
+})
