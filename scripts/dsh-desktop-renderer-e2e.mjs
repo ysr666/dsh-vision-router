@@ -245,10 +245,15 @@ function collectDvrMessages(value, out = []) {
     return out
   }
   if (value === null || typeof value !== 'object') return out
-  if (typeof value.id === 'string' && value.id.startsWith('vision-router-')) {
+  if (
+    typeof value.id === 'string' &&
+    value.id.startsWith('vision-router-') &&
+    typeof value.role === 'string' &&
+    Array.isArray(value.content)
+  ) {
     out.push({
       id: value.id,
-      role: typeof value.role === 'string' ? value.role : null,
+      role: value.role,
       source: value.source ?? null,
     })
   }
