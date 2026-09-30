@@ -41,6 +41,7 @@ jobs:
           tests/architecture-contract-baseline.test.js
           tests/compat-inventory-completeness.test.js
           tests/final-architecture-closure.test.js
+          tests/dsh-support-window.test.js
           tests/p3-entry-composition.test.js
           tests/qa-runtime-identity.test.js
           tests/fetch-wrapper-lifecycle.test.js

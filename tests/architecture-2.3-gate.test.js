@@ -15,6 +15,7 @@ test('2.3 critical architecture gate aggregates runtime, Host and package contra
   assert.match(gate, /run: pnpm test/)
   assert.match(gate, /tests\/fetch-wrapper-composition\.test\.js/)
   assert.match(gate, /tests\/final-architecture-closure\.test\.js/)
+  assert.match(gate, /tests\/dsh-support-window\.test\.js/)
   assert.match(gate, /tests\/session-vision-event-feed\.test\.js/)
   assert.match(gate, /tests\/client-script-carrier\.test\.js/)
   assert.match(gate, /tests\/security-property-fuzz\.test\.js/)
