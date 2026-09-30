@@ -692,10 +692,19 @@ try {
   await exerciseVisionOnboardingSettingsPath(page)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
+  const toggledPressed = initialPressed === 'true' ? 'false' : 'true'
+  const waitForSettledVisionState = async (expected) => {
+    await page.waitForFunction((pressed) => {
+      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+      return node?.getAttribute('aria-pressed') === pressed
+        && node.getAttribute('aria-busy') !== 'true'
+        && node.disabled === false
+    }, expected)
+  }
   await toggle.click()
-  await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
+  await waitForSettledVisionState(toggledPressed)
   await toggle.click()
-  await page.waitForFunction((initial) => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === initial, initialPressed)
+  await waitForSettledVisionState(initialPressed)
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()
