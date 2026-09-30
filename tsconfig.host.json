@@ -16,6 +16,8 @@
     "src/lib/delegated-call-config.ts",
     "src/lib/vision-attachment-handle-runtime.ts",
     "src/lib/public-config.ts",
+    "src/lib/proxy-url-compat.ts",
+    "src/lib/proxy-routing.ts",
     "tests/types/host/**/*.ts"
   ]
 }

@@ -6,7 +6,9 @@
  * dispatcher boundary. Deliberately do not validate or reinterpret any other
  * proxy scheme here: Undici remains the execution authority.
  */
-export function effectiveProxyUrlForUndici(value) {
+export function effectiveProxyUrlForUndici(value: string): string
+export function effectiveProxyUrlForUndici<T>(value: T): T
+export function effectiveProxyUrlForUndici(value: unknown): unknown {
   if (typeof value !== 'string') return value
   return value.replace(/^(\s*)socks5h:/i, '$1socks5:')
 }

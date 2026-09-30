@@ -1,12 +1,18 @@
-import { domainToASCII } from 'node:url'
+import { URL, domainToASCII } from 'node:url'
 
-function objectLike(value) {
+export interface DispatcherLike {
+  dispatch(options: unknown, handler: unknown): unknown
+}
+
+function objectLike(value: unknown): value is object | ((...args: never[]) => unknown) {
   return value !== null && (typeof value === 'object' || typeof value === 'function')
 }
 
 /** True only when the user explicitly configured a Vision Router proxy override. */
-export function visionProxyOverrideConfigured(config = {}) {
-  const value = config && typeof config === 'object' ? config.proxy : undefined
+export function visionProxyOverrideConfigured(config: unknown = {}): boolean {
+  const value = objectLike(config)
+    ? (config as { proxy?: unknown }).proxy
+    : undefined
   return typeof value === 'string' && value.trim() !== ''
 }
 
@@ -15,7 +21,7 @@ export function visionProxyOverrideConfigured(config = {}) {
  * Persisted settings stay untouched; this removes DNS presentation differences
  * (case, one trailing dot and Unicode) without broadening the suffix policy.
  */
-export function canonicalProxyHost(value) {
+export function canonicalProxyHost(value: unknown): string {
   let host = String(value ?? '').trim()
   if (host === '') return ''
   if (host.endsWith('.')) host = host.slice(0, -1)
@@ -30,22 +36,25 @@ export function canonicalProxyHost(value) {
 }
 
 /** Exact host or subdomain match using one shared proxy-host interpretation. */
-export function proxyHostMatchesAny(hostname, hosts) {
+export function proxyHostMatchesAny(hostname: unknown, hosts: readonly unknown[] = []): boolean {
   const host = canonicalProxyHost(hostname)
   if (host === '') return false
-  return (hosts ?? []).some((raw) => {
+  return hosts.some((raw) => {
     const candidate = canonicalProxyHost(raw)
     return candidate !== '' && (host === candidate || host.endsWith(`.${candidate}`))
   })
 }
 
-export function proxyDispatcherLike(value) {
-  return objectLike(value) && typeof value.dispatch === 'function'
+export function proxyDispatcherLike(value: unknown): value is DispatcherLike {
+  return objectLike(value)
+    && typeof (value as { dispatch?: unknown }).dispatch === 'function'
 }
 
-function proxyDispatchOriginUrl(options) {
+function proxyDispatchOriginUrl(options: unknown): URL | undefined {
   try {
-    const origin = options?.origin
+    const origin = objectLike(options)
+      ? (options as { origin?: unknown }).origin
+      : undefined
     if (origin instanceof URL) return origin
     if (origin !== undefined && origin !== null) return new URL(String(origin))
   } catch {
@@ -59,13 +68,17 @@ function proxyDispatchOriginUrl(options) {
  * bound on every hop after a request has entered the DVR proxy override.
  * The fallback dispatcher is borrowed, never owned or closed by this selector.
  */
-export function createPerHopProxyDispatcher(proxyDispatcher, fallbackDispatcher, proxyHosts = []) {
+export function createPerHopProxyDispatcher(
+  proxyDispatcher: unknown,
+  fallbackDispatcher: unknown,
+  proxyHosts: readonly unknown[] = [],
+): Readonly<DispatcherLike> {
   if (!proxyDispatcherLike(proxyDispatcher) || !proxyDispatcherLike(fallbackDispatcher)) {
     throw new TypeError('vision proxy hop selector requires proxy and fallback dispatchers')
   }
   const hosts = [...proxyHosts]
   return Object.freeze({
-    dispatch(options, handler) {
+    dispatch(options: unknown, handler: unknown): unknown {
       const url = proxyDispatchOriginUrl(options)
       const target = url && proxyHostMatchesAny(url.hostname, hosts)
         ? proxyDispatcher
