@@ -7,7 +7,9 @@
     "noEmit": false,
     "declaration": false,
     "sourceMap": false,
-    "types": []
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/lib/vision-routing-product.ts",
