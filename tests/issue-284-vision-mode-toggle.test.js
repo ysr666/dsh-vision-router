@@ -103,6 +103,7 @@ function createBrowserHarness({
   current = { provider: 'opencode-go', model: 'qwen3.6-plus', reasoningEffort: 'high' },
   wrapperRoute = 'deepseek-vision',
   rejectSelection = false,
+  deferSelection = false,
 } = {}) {
   let registered
   const loader = {
@@ -127,6 +128,10 @@ function createBrowserHarness({
   })
 
   const selections = []
+  let releaseSelection
+  const selectionGate = deferSelection
+    ? new Promise((resolve) => { releaseSelection = resolve })
+    : undefined
   let snapshot = {
     current,
     groups: modelGroups,
@@ -152,7 +157,11 @@ function createBrowserHarness({
         snapshot = { ...snapshot, status: 'error', error: message }
         throw new Error(`session.selectModel failed: ${message}`)
       }
-      snapshot = { ...snapshot, current: selection, status: 'ready', error: null }
+      if (selectionGate) {
+        snapshot = { ...snapshot, status: 'selecting', pending: selection, error: null }
+        await selectionGate
+      }
+      snapshot = { ...snapshot, current: selection, status: 'ready', pending: null, error: null }
     },
   }
 
@@ -256,6 +265,7 @@ function createBrowserHarness({
     localeRegistrations,
     setSnapshot(next) { snapshot = next },
     getSnapshot() { return snapshot },
+    resolveSelection() { if (releaseSelection) releaseSelection() },
     setSettings(next) { settingsSnapshot = next },
     render(extra = {}) {
       React.begin()
@@ -493,72 +503,83 @@ test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs'
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
 })
 
-test('issue #284 keeps the composer row stable while DSH reloads the model directory', async () => {
-  const harness = createBrowserHarness()
+test('issue #284 smooths only the directory reload owned by this Vision toggle', async () => {
+  const harness = createBrowserHarness({ deferSelection: true })
   const offButton = buttonOf(harness.render())
   assert.equal(offButton.props.disabled, false)
 
   offButton.props.onClick()
-  await Promise.resolve()
-  const onButton = buttonOf(harness.render())
-  assert.equal(onButton.props['aria-pressed'], true)
+  const target = harness.selections.at(-1)
+  assert.equal(target?.provider, 'opencode-go-vision')
+  assert.equal(target?.model, 'qwen3.6-plus')
+  assert.equal(target?.reasoningEffort, 'high')
 
-  // A non-empty but incomplete generation is not safe to cache or render:
-  // the current route exists, but its source/twin pair has not arrived yet.
+  // The official directory owns the transaction. Once its pending selection
+  // matches our target, remember only the settled presentation while that same
+  // transaction moves through an incomplete generation.
   harness.setSnapshot({
-    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
+    current: target,
+    groups,
+    status: 'selecting',
+    pending: target,
+    error: null,
+  })
+  const selecting = buttonOf(harness.render())
+  assert.equal(selecting.props['aria-pressed'], true)
+  assert.equal(selecting.props.disabled, true)
+  assert.equal(selecting.props['aria-busy'], true)
+
+  harness.setSnapshot({
+    current: target,
     groups: [groups[1]],
     status: 'loading',
+    pending: target,
     error: null,
   })
   const partial = buttonOf(harness.render())
   assert.equal(partial.props['aria-pressed'], true)
-  assert.equal(partial.props.disabled, false)
+  assert.equal(partial.props.disabled, true)
+  assert.equal(partial.props['aria-busy'], true)
+  assert.equal(partial.props.title, '切换中')
   assert.equal(partial.props.style.opacity, 1)
+  assert.equal(partial.children[0]?.props.style.width, 14)
 
-  // A route switch makes DSH re-resolve the model directory: the store reports
-  // idle/loading and may drop the snapshot for a frame. The chip must keep its
-  // settled presentation instead of dimming to 45% / disabling itself, and its
-  // state icon must stay in the same fixed leading slot in both states.
-  harness.setSnapshot({ current: null, groups: [], status: 'loading', error: null })
-  const reloading = buttonOf(harness.render())
-  assert.equal(reloading.props['aria-pressed'], true)
-  assert.equal(reloading.props.disabled, false)
-  assert.equal(reloading.props.title, '关闭识图模式')
-  assert.equal(reloading.props.style.opacity, 1)
-  assert.equal(reloading.props.style.cursor, 'pointer')
-  assert.equal(reloading.children.length, 2)
-  assert.equal(reloading.children[0]?.props.style.width, 14)
+  harness.setSnapshot({ current: null, groups: [], status: 'idle', pending: target, error: null })
+  const empty = buttonOf(harness.render())
+  assert.equal(empty.props['aria-pressed'], true)
+  assert.equal(empty.props.disabled, true)
+  assert.equal(empty.props.style.opacity, 1)
 
-  harness.setSnapshot({ current: null, groups: [], status: 'idle', error: null })
-  const settledAgain = buttonOf(harness.render())
-  assert.equal(settledAgain.props['aria-pressed'], true)
-  assert.equal(settledAgain.props.disabled, false)
-  assert.equal(settledAgain.props.style.opacity, 1)
-
-  // Once the directory answers again, the live snapshot owns the state again.
-  harness.setSnapshot({
-    current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
-    groups,
-    status: 'ready',
-    error: null,
-  })
+  harness.resolveSelection()
+  await new Promise((resolve) => setImmediate(resolve))
+  harness.setSnapshot({ current: target, groups, status: 'ready', pending: null, error: null })
   const ready = buttonOf(harness.render())
   assert.equal(ready.props['aria-pressed'], true)
-  assert.equal(ready.children[0]?.props.style.width, 14)
-  assert.equal(ready.children[0]?.children[0]?.type, 'svg')
-  assert.equal(ready.children[0]?.children[0]?.props.width, 14)
+  assert.equal(ready.props.disabled, false)
+  assert.equal(ready.props['aria-busy'], false)
 
-  // A genuinely unusable pair is still reported as unavailable.
+  // The same directory object is also reloaded by connection, adapter,
+  // settings and credential updates. Without an owned toggle transaction,
+  // incomplete generations stay authoritative instead of reusing stale ON.
   harness.setSnapshot({
-    current: { provider: 'unknown-provider', model: 'no-twin', reasoningEffort: 'high' },
-    groups,
-    status: 'ready',
+    current: target,
+    groups: [groups[1]],
+    status: 'loading',
+    pending: null,
     error: null,
   })
-  const unavailable = buttonOf(harness.render())
-  assert.equal(unavailable.props.disabled, true)
-  assert.equal(unavailable.props.style.opacity, 0.45)
+  const externalPartial = buttonOf(harness.render())
+  assert.equal(externalPartial.props['aria-pressed'], false)
+  assert.equal(externalPartial.props.disabled, true)
+  assert.equal(externalPartial.props['aria-busy'], true)
+  assert.equal(externalPartial.props.title, '加载中')
+  assert.equal(externalPartial.props.style.opacity, 0.45)
+
+  harness.setSnapshot({ current: null, groups: [], status: 'loading', pending: null, error: null })
+  const resetLoading = buttonOf(harness.render())
+  assert.equal(resetLoading.props['aria-pressed'], false)
+  assert.equal(resetLoading.props.disabled, true)
+  assert.equal(resetLoading.props.style.opacity, 0.45)
 })
 
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
