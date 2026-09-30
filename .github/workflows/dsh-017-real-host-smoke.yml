@@ -3,6 +3,7 @@ name: DSH 0.1.7 real Host smoke
 on:
   pull_request:
     paths:
+      - 'src/**'
       - '.github/workflows/dsh-017-real-host-smoke.yml'
       - 'index.js'
       - 'cordis.patch.yml'

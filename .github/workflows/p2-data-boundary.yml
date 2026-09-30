@@ -3,6 +3,7 @@ name: P2 Data Boundary
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'entry.js'
       - 'index.js'
       - 'lib/artifact-*.js'

@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - 'src/**'
       - 'index.js'
       - 'entry.js'
       - 'lib/image-resource-governor.js'
