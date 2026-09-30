@@ -21,6 +21,7 @@
     "src/lib/public-config.ts",
     "src/lib/proxy-url-compat.ts",
     "src/lib/proxy-routing.ts",
-    "src/lib/proxy-dispatcher-pool.ts"
+    "src/lib/proxy-dispatcher-pool.ts",
+    "src/lib/http-body-limit.ts"
   ]
 }
