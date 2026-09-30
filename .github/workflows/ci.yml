@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feat/auto-wrap-providers]
+    branches: [main, 3.0, feat/auto-wrap-providers]
   pull_request:
 
 permissions:
