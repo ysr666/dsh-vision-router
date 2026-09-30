@@ -33,26 +33,23 @@ function legacySessionEvents(session) {
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
-import { mkdir, writeFile } from 'node:fs/promises'
+
 import path from 'node:path'
 import { existsSync } from 'node:fs'
-import { Worker } from 'node:worker_threads'
-import { createRequire } from 'node:module'
+
 import { pathToFileURL } from 'node:url'
-import { appendPromptToImageOnlyMessage, fetchWithOpenAICompatibility } from './lib/http-compat.js'
+import { appendPromptToImageOnlyMessage } from './lib/http-compat.js'
 import {
-  directSessionAffinityHeaders,
   isOfficialOpenCodeGoUrl,
   openCodeSessionAffinityHeaderForUrl,
   rawSessionIdentity,
   sessionIdentityOf,
 } from './lib/session-affinity.js'
-import { runWithVisionSessionAffinity, streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
+import { streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
 import {
   routingCorrectionFor,
   toAnthropicMessages,
   callAnthropicCompatible,
-  anthropicMediaType,
 } from './lib/catalog-corrections.js'
 import { getOfficialDeepSeekCatalog } from './lib/official-deepseek-catalog.js'
 import {
@@ -64,8 +61,6 @@ import {
   buildVisionFailure,
   ensureSentencePunctuation,
   resultCodeForKinds,
-  qwenKeyEndpointHint,
-  kindForHttpStatus,
   VISION_FAILURE_KINDS,
   VISION_RESULT_CODES,
 } from './lib/vision-resilience.js'
@@ -85,17 +80,12 @@ import {
   boundedOcrTiles,
   defaultImageResourceGovernor,
   estimateImageOperationBytes,
-  scaleBox,
   scaledDimensions,
 } from './lib/image-resource-governor.js'
 import { createSessionEventReader, createSessionEventTailReader, createSessionLogReader, hostOwnsOfficialDeepSeekProvider } from './lib/dsh-contract-compat.js'
 import { createSessionVisionIndex } from './lib/session-vision-index.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
-import {
-  ERROR_RESPONSE_MAX_BYTES,
-  MODEL_RESPONSE_MAX_BYTES,
-  readResponseTextBounded,
-} from './lib/http-body-limit.js'
+
 import {
   ARTIFACT_HANDOFF_RUN_ID,
   ARTIFACT_RUNS_DIR,
@@ -104,26 +94,19 @@ import {
   writePersistentArtifactFile,
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
-import { stripTrailingSlashes } from './lib/string-normalization.js'
+
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
-import { parseVersionComparator } from './lib/version-range.js'
+
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
-
 import {
-  sharpPromise,
-  sharpWarningHook,
   registerSharpWarningHook,
-  warnSharp,
   parseVersionParts,
-  compareVersionParts,
   versionSatisfies,
-  sharpPeerRangeCache,
-  sharpPeerRange,
   loadSharp,
 } from './lib/sharp-runtime.js'
 export {
@@ -344,7 +327,6 @@ export const Config = z.object({
   instantDescribe: z.boolean().default(false),
   localDescribeStyle: z.union(['plain', 'structured']).default('plain'),
 })
-
 import {
   IMAGE_EXTENSIONS,
   mediaTypeOf,
@@ -356,7 +338,6 @@ import {
   blocksHaveImage,
   eventHasImage,
   providersOf,
-  FAILURE_ADVICE,
   classifyFailure,
   failureAdvice,
   rewriteImagesDeep,
@@ -367,14 +348,11 @@ import {
   deepFreezeLocal,
   sanitizeToolResultMessage,
   planToolResultImageShadows,
-  PERSISTED_GUARD_STOP_SURFACE_ID,
   planGuardStopShadows,
-  imageMarker,
   rewriteImageBlocks,
   collectEventAttachmentRefs,
   MAX_EXTRACT_JSON_CHARS,
   extractJson,
-  cacheWeight,
   createCache,
   adapterAvailable,
   cacheKeyFor,
@@ -437,9 +415,7 @@ import {
   buildInstantLocalMap,
   createWrapperStreamBody,
   modelInfoAcceptsImages,
-  NON_GENERATIVE_VISION_MODEL_HINTS,
   looksLikeNonGenerativeVisionModel,
-  VISION_MODEL_NAME_HINTS,
   looksLikeVisionModel,
   decideVisionBackendCapability,
   resolveChannelBridgeTransport,
@@ -1202,7 +1178,6 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
   }
 
-
   // ── opt-in image-capable twins for other text-provider routes ─────────────
   //
   // A session model on a third-party text-only route (e.g. opencode-go) is
@@ -1823,7 +1798,6 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     return capabilities
   }
-
 
   // Build the tool-side adapter chain. Explicit rows are user intent: every
   // structurally callable generative backend gets a real adapter attempt even
@@ -4764,7 +4738,6 @@ ctx.logger?.info(
       syncRoutingMounts()
     })
   })
-
 
   // Product diagnostics/settings support is a separate Web owner. Core supplies
   // only the three coherent domain faces it already computes; route lifecycle,
