@@ -8,12 +8,21 @@ const CLIENT = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 const START = '    // <generated:client-maintenance-actions>'
 const END = '    // </generated:client-maintenance-actions>'
 
-function indentFunction(fn) {
-  return fn.toString().split('\n').map((line) => line === '' ? '' : `    ${line}`).join('\n')
+function compactGeneratedFunction(fn) {
+  const lines = fn.toString().split('\n')
+  for (const line of lines) {
+    // Leading whitespace is safe to remove only while generated owners avoid
+    // multiline template literals. Fail closed if that invariant changes.
+    const unescapedBackticks = (line.match(/(^|[^\\\\])`/g) ?? []).length
+    if (unescapedBackticks % 2 !== 0) {
+      throw new Error('generated client owner contains a multiline template literal')
+    }
+  }
+  return lines.map((line) => line.trimStart()).join('\n')
 }
 
 export function renderedClientMaintenanceActions() {
-  return `${START}\n${indentFunction(createClientMaintenanceActions)}\n${END}`
+  return `${START}\n${compactGeneratedFunction(createClientMaintenanceActions)}\n${END}`
 }
 
 export function replaceEmbeddedClientMaintenanceActions(source) {
