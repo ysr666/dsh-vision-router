@@ -75,7 +75,7 @@ function sessionWith(events = [], nodes = events.map((_, index) => index), versi
       this.events.push({ type, data })
       this.appended.push({ type, data, options })
       if (options?.surfaceOp?.op === 'replace') {
-        const start = this.header.version === 3
+        const start = this.header.version === 3 || this.header.version === 4
           ? options.surfaceOp.startSeq
           : options.surfaceOp.start
         const at = this.surface.nodes.indexOf(start)
@@ -461,6 +461,11 @@ test('tool-result surface repair emits the reviewed v4 replacement contract on c
     surfaceOp: { op: 'replace', startSeq: 0, endSeq: 0 },
     sourceEventSeqs: [0],
   })
+  assert.deepEqual(
+    session.surface.nodes,
+    [1],
+    'v4 test Session must actually apply startSeq/endSeq replacement semantics',
+  )
 })
 
 test('unknown future Session surface formats skip durable repair without breaking the turn', async () => {
