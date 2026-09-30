@@ -27,13 +27,9 @@ const DEFAULT_PROXY_HOSTS = Object.freeze([
 
 type FetchInput = string | URL | Request
 
-export interface ProviderFetchInit extends RequestInit {
-  dispatcher?: unknown
-}
-
 export type ProviderFetch = (
   input: FetchInput,
-  init?: ProviderFetchInit,
+  init?: RequestInit,
 ) => Promise<Response>
 
 export interface VisionProviderTransportContext {
@@ -65,7 +61,7 @@ export interface VisionProviderProxyDecision {
 export interface VisionProviderTransport {
   fetch(
     input: FetchInput,
-    init?: ProviderFetchInit,
+    init?: RequestInit,
     context?: VisionProviderFetchContext,
   ): Promise<Response>
   dispose(): Promise<void>
@@ -172,7 +168,7 @@ export function createVisionProviderTransport({
 
   const fetchProvider = async (
     input: FetchInput,
-    init: ProviderFetchInit = {},
+    init: RequestInit = {},
     context: VisionProviderFetchContext = {},
   ): Promise<Response> => {
     if (disposed) return fetchImpl(input, init)

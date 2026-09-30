@@ -1,5 +1,7 @@
 import { URL, domainToASCII } from 'node:url'
 
+export type FetchDispatcher = NonNullable<RequestInit['dispatcher']>
+
 export interface DispatcherLike {
   dispatch(options: unknown, handler: unknown): unknown
 }
@@ -72,18 +74,34 @@ export function createPerHopProxyDispatcher(
   proxyDispatcher: unknown,
   fallbackDispatcher: unknown,
   proxyHosts: readonly unknown[] = [],
-): Readonly<DispatcherLike> {
+): FetchDispatcher {
   if (!proxyDispatcherLike(proxyDispatcher) || !proxyDispatcherLike(fallbackDispatcher)) {
     throw new TypeError('vision proxy hop selector requires proxy and fallback dispatchers')
   }
   const hosts = [...proxyHosts]
-  return Object.freeze({
-    dispatch(options: unknown, handler: unknown): unknown {
-      const url = proxyDispatchOriginUrl(options)
-      const target = url && proxyHostMatchesAny(url.hostname, hosts)
-        ? proxyDispatcher
-        : fallbackDispatcher
-      return target.dispatch(options, handler)
+  const proxy = proxyDispatcher as FetchDispatcher
+  const fallback = fallbackDispatcher as FetchDispatcher
+
+  // Fetch types model a full Undici Dispatcher, while fetch dispatch itself
+  // consumes the dispatch() seam. Proxy the real fallback Dispatcher instead
+  // of returning a dispatch-only object so every other Dispatcher method and
+  // event surface keeps the Host-owned implementation and identity semantics.
+  return new Proxy(fallback, {
+    get(target, property, receiver) {
+      if (property === 'dispatch') {
+        return (
+          options: Parameters<FetchDispatcher['dispatch']>[0],
+          handler: Parameters<FetchDispatcher['dispatch']>[1],
+        ): ReturnType<FetchDispatcher['dispatch']> => {
+          const url = proxyDispatchOriginUrl(options)
+          const selected = url && proxyHostMatchesAny(url.hostname, hosts)
+            ? proxy
+            : fallback
+          return selected.dispatch(options, handler)
+        }
+      }
+      const value = Reflect.get(target, property, receiver)
+      return typeof value === 'function' ? value.bind(target) : value
     },
   })
 }

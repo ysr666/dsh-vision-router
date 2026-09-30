@@ -19,8 +19,8 @@ const dispatcher = {
 
 if (proxyDispatcherLike(dispatcher)) {
   const perHop = createPerHopProxyDispatcher(dispatcher, dispatcher, ['example.com'])
-  const result: unknown = perHop.dispatch({ origin: 'https://example.com' }, {})
-  void result
+  const fetchDispatcher: RequestInit['dispatcher'] = perHop
+  void fetchDispatcher
 }
 
 const canonical: string = canonicalProxyHost('EXAMPLE.com.')

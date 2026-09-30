@@ -1,19 +1,17 @@
 import {
   proxyDispatcherLike,
   type DispatcherLike,
+  type FetchDispatcher,
 } from './proxy-routing.js'
 
-interface OwnedDispatcher extends DispatcherLike {
-  close?: () => unknown
-  destroy?: () => unknown
-}
+type OwnedDispatcher = FetchDispatcher
 
 interface DispatcherEntry {
   readonly proxyUrl: string
   refs: number
   obsolete: boolean
   dispatcher: OwnedDispatcher | undefined
-  getGlobalDispatcher: (() => unknown) | undefined
+  getGlobalDispatcher: (() => FetchDispatcher) | undefined
   closing: Promise<void> | undefined
   readonly done: Promise<void>
   readonly resolveDone: () => void
@@ -21,8 +19,8 @@ interface DispatcherEntry {
 }
 
 export interface ProxyDispatcherLease {
-  readonly dispatcher: DispatcherLike
-  getGlobalDispatcher(): unknown
+  readonly dispatcher: FetchDispatcher
+  getGlobalDispatcher(): FetchDispatcher
   release(): void
 }
 
@@ -116,7 +114,13 @@ export function createProxyDispatcherPool({
           throw new Error(`${label}: undici ProxyAgent has no dispatcher contract`)
         }
 
-        entry.getGlobalDispatcher = () => getGlobalDispatcher.call(moduleValue)
+        entry.getGlobalDispatcher = () => {
+          const globalDispatcher = getGlobalDispatcher.call(moduleValue)
+          if (!proxyDispatcherLike(globalDispatcher)) {
+            throw new Error(`${label}: undici global dispatcher has no dispatcher contract`)
+          }
+          return globalDispatcher as FetchDispatcher
+        }
         entry.dispatcher = dispatcher as OwnedDispatcher
         maybeCloseEntry(entry)
         return entry.dispatcher
