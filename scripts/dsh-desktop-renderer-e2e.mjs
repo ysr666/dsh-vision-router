@@ -292,12 +292,13 @@ export function apply(ctx) {
         response.end(JSON.stringify({ services, fibers, loaderEntries, persistenceImport }))
       },
     }), 'desktop-e2e: core service diagnostics')
+  })
+  ctx.inject(['webServer', 'sessions'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
       path: '/dvr-e2e-session-sources',
       handler(_request, response) {
-        const sessions = typeof scope.sessions?.list === 'function' ? scope.sessions.list() : []
-        const payload = sessions.map((session) => ({
+        const payload = scope.sessions.list().map((session) => ({
           id: session.header?.id ?? null,
           version: session.header?.version ?? null,
           sources: collectDvrSources(
@@ -404,9 +405,18 @@ async function readHostSessionSources(authenticatedUrl) {
   target.pathname = '/dvr-e2e-session-sources'
   target.search = ''
   const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
-  const body = await response.json()
-  if (!response.ok) throw new Error(`Desktop Host Session source probe failed (${response.status}): ${JSON.stringify(body)}`)
-  return body
+  const text = await response.text()
+  if (!response.ok || text.length === 0) {
+    throw new Error(`Desktop Host Session source probe failed (${response.status}): ${text || '<empty body>'}`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new Error(
+      `Desktop Host Session source probe returned invalid JSON (${response.status}): ${text.slice(0, 4000)}`,
+      { cause: error },
+    )
+  }
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
