@@ -31,7 +31,7 @@ test('client maintenance action module owns product HTTP actions without React o
         currentVersion: '2.3.0',
         latestVersion: '2.4.0',
         updateAvailable: true,
-        autoUpdate: { supported: true, token: 'update-token' },
+        autoUpdate: { supported: true, token: 'example-update-token' },
       })
     }
     if (url === '/_dsh/vision-router/self-update') return response({ ok: true, updated: true })
@@ -59,13 +59,13 @@ test('client maintenance action module owns product HTTP actions without React o
 
   await actions.runUpdateCheck(true)
   assert.equal(updateState.status, 'done')
-  assert.equal(updateState.result.autoUpdate.token, 'update-token')
+  assert.equal(updateState.result.autoUpdate.token, 'example-update-token')
 
   await actions.runSelfUpdate()
   assert.deepEqual(confirms, ['updateConfirm'])
   assert.deepEqual(selfUpdateState, { status: 'done', result: { ok: true, updated: true } })
   const selfUpdateCall = calls.find((call) => call.url === '/_dsh/vision-router/self-update')
-  assert.equal(selfUpdateCall.init.headers['x-dsh-vision-router-update-token'], 'update-token')
+  assert.equal(selfUpdateCall.init.headers['x-dsh-vision-router-update-token'], 'example-update-token')
 
   assert.deepEqual(await actions.openLogFolder(), { ok: true })
   assert.deepEqual(alerts, [])
