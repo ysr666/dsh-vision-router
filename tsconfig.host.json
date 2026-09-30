@@ -14,6 +14,7 @@
     "src/lib/core-apply-lifecycle.ts",
     "src/lib/image-offload-compat.ts",
     "src/lib/delegated-call-config.ts",
+    "src/lib/vision-attachment-handle-runtime.ts",
     "tests/types/host/**/*.ts"
   ]
 }
