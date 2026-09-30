@@ -141,7 +141,7 @@ function authorizedRefs(agent: AgentLike | undefined): CompatibleImageAttachment
   return [...unique.values()]
 }
 
-export function isProjectedAttachmentHandle(value: unknown): value is string {
+export function isProjectedAttachmentHandle(value: unknown): boolean {
   return typeof value === 'string' && PROJECTED_SHA256_HANDLE.test(value.trim())
 }
 
@@ -149,8 +149,8 @@ function isSha256HandleLike(value: unknown): value is string {
   return typeof value === 'string' && SHA256_HANDLE_PREFIX.test(value.trim())
 }
 
-function isCanonicalSha256Id(value: unknown): value is string {
-  return typeof value === 'string' && CANONICAL_SHA256_ID.test(value.trim())
+function isCanonicalSha256Id(value: string): boolean {
+  return CANONICAL_SHA256_ID.test(value.trim())
 }
 
 /**
@@ -217,10 +217,13 @@ function canonicalizeValue(value: unknown, context: CanonicalizeContext): unknow
         '(multiple images in this conversation share that prefix; use a full attachment id or attach the image again)',
     )
   }
-  throw new Error(
-    `${context.toolName}: unknown attachment handle "${result.handle}" ` +
-      '(it is not authorized by an image in this conversation; attach the image again if needed)',
-  )
+  if (result.kind === 'unknown') {
+    throw new Error(
+      `${context.toolName}: unknown attachment handle "${result.handle}" ` +
+        '(it is not authorized by an image in this conversation; attach the image again if needed)',
+    )
+  }
+  return value
 }
 
 function canonicalizeArgs(
@@ -268,18 +271,20 @@ export function wrapVisionAttachmentHandleDefinition<T extends VisionToolDefinit
   options: WrapVisionAttachmentOptions = {},
 ): T {
   if (typeof def.execute !== 'function') return def
-  const fields = typeof def.name === 'string'
-    ? TOOL_FIELDS[def.name as keyof typeof TOOL_FIELDS] as ToolFieldSpec | undefined
+  const toolName = def.name
+  const fields = typeof toolName === 'string'
+    ? TOOL_FIELDS[toolName as keyof typeof TOOL_FIELDS] as ToolFieldSpec | undefined
     : undefined
-  if (!fields || !options.sessionVisionIndex) return def
+  const sessionVisionIndex = options.sessionVisionIndex
+  if (!fields || !sessionVisionIndex || typeof toolName !== 'string') return def
   const execute = def.execute
   return {
     ...def,
     execute(args: unknown, exec?: VisionToolExecutionLike) {
       const nextArgs = canonicalizeArgs(args, {
-        sessionVisionIndex: options.sessionVisionIndex,
-        agent: exec?.agent,
-        toolName: def.name as string,
+        sessionVisionIndex,
+        ...(exec?.agent === undefined ? {} : { agent: exec.agent }),
+        toolName,
       }, fields)
       return execute.call(def, nextArgs, exec)
     },
