@@ -28,6 +28,8 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify canonical source/artifact mirror
+        run: pnpm build:check
       - run: pnpm test
 
   native-host-sharp:
@@ -49,6 +51,8 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify canonical source/artifact mirror
+        run: pnpm build:check
       - name: Run cross-platform runtime and benchmark fixture regression tests
         run: node --test tests/file-logger.test.js tests/logging-ui.test.js tests/runtime-boundary-fixes.test.js tests/qa-screenshot-runtime.test.js tests/vision-capability-benchmark.test.js
       - name: Prepare pack directory

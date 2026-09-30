@@ -1,0 +1,234 @@
+import { injectClientCarrierHtml, installClientScriptCarriers } from './client-script-carrier.js'
+import {
+  CLIENT_PRESENTATION_PRELUDE as BASE_CLIENT_PRESENTATION_PRELUDE,
+  resolveVisionModePair,
+} from './client-presentation-boundary-main.js'
+import {
+  installClientHostCompatibility,
+} from './client-host-compat-prelude.js'
+import { installVisionModelVisibilityBoundary } from './vision-model-visibility-boundary.js'
+
+const CLIENT_PRESENTATION_MARK = 'data-vision-router-presentation-boundary'
+
+const VISION_TOGGLE_TEXT_GLYPH = String.raw`          // One fixed 14px leading slot carries the state icon: the eye when the
+          // route is ordinary, the check when Vision is on. Appending the check
+          // only while active changed the chip width by ~18px and reflowed the
+          // composer row; reserving trailing space kept the width but left the
+          // inactive chip visually off-centre.
+          React.createElement('span', {
+            'aria-hidden': 'true',
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flex: '0 0 auto',
+              width: 14,
+              height: 14,
+              fontSize: 13,
+              lineHeight: 1
+            }
+          }, active ? '✓' : '👁'),
+          React.createElement('span', null, t('label'))`
+
+const VISION_TOGGLE_FIXED_SVG = String.raw`          // One fixed 14px leading slot carries the state icon: the eye when the
+          // route is ordinary, the check when Vision is on. Appending the check
+          // only while active changed the chip width by ~18px and reflowed the
+          // composer row; reserving trailing space kept the width but left the
+          // inactive chip visually off-centre.
+          React.createElement('span', {
+            'aria-hidden': 'true',
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flex: '0 0 auto',
+              width: 14,
+              height: 14
+            }
+          }, active
+            ? React.createElement('svg', {
+                width: 14,
+                height: 14,
+                viewBox: '0 0 14 14',
+                fill: 'none',
+                'aria-hidden': 'true',
+                focusable: 'false',
+                style: { display: 'block', flex: '0 0 auto' }
+              }, React.createElement('path', {
+                d: 'M2.75 7.15 5.6 10 11.25 4.35',
+                stroke: 'currentColor',
+                strokeWidth: 1.5,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round'
+              }))
+            : React.createElement('svg', {
+                width: 14,
+                height: 14,
+                viewBox: '0 0 14 14',
+                fill: 'none',
+                'aria-hidden': 'true',
+                focusable: 'false',
+                style: { display: 'block', flex: '0 0 auto' }
+              }, React.createElement('path', {
+                fillRule: 'evenodd',
+                clipRule: 'evenodd',
+                d: 'M7 2.25c-2.84 0-5.04 1.69-6.25 4.25a1.15 1.15 0 0 0 0 1C1.96 10.06 4.16 11.75 7 11.75s5.04-1.69 6.25-4.25a1.15 1.15 0 0 0 0-1C12.04 3.94 9.84 2.25 7 2.25Zm0 1.25c2.16 0 3.96 1.21 5.05 3.5C10.96 9.29 9.16 10.5 7 10.5S3.04 9.29 1.95 7C3.04 4.71 4.84 3.5 7 3.5Zm0 1.25A2.25 2.25 0 1 0 7 9.25a2.25 2.25 0 0 0 0-4.5Zm0 1.25a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z',
+                fill: 'currentColor'
+              }))),
+          React.createElement('span', null, t('label'))`
+
+const BITMAP_LIMITS_BASE = String.raw`      var maxBitmapSourceBytes = 64 * 1024 * 1024;
+      var maxBitmapDimension = 10000;
+      var maxBitmapPixels = 100000000;`
+
+const BITMAP_LIMITS_HARDENED = String.raw`      var maxBitmapSourceBytes = 64 * 1024 * 1024;
+      var maxBitmapDimension = 10000;
+      var maxBitmapPixels = 100000000;
+      // Source bytes are not a safe proxy for browser decode cost. A low-bit-depth
+      // BMP can be only a few MiB on the clipboard and still expand to hundreds
+      // of MiB once createImageBitmap/canvas materializes RGBA pixels.
+      var maxBitmapDecodedBytes = 128 * 1024 * 1024;
+      var maxBitmapBatchDecodedBytes = 256 * 1024 * 1024;`
+
+const BITMAP_DECODE_ALLOWED_BASE = String.raw`      function bitmapDecodeAllowed(file, info) {
+        if (!file || !info) return false;
+        if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxBitmapSourceBytes) return false;
+        if (!Number.isFinite(info.width) || !Number.isFinite(info.height) || info.width <= 0 || info.height <= 0) return false;
+        if (info.width > maxBitmapDimension || info.height > maxBitmapDimension) return false;
+        return info.width * info.height <= maxBitmapPixels;
+      }`
+
+const BITMAP_DECODE_ALLOWED_HARDENED = String.raw`      function bitmapDecodeAllowed(file, info) {
+        if (!file || !info) return false;
+        if (!Number.isFinite(file.size) || file.size <= 0 || file.size > maxBitmapSourceBytes) return false;
+        if (!Number.isFinite(info.width) || !Number.isFinite(info.height) || info.width <= 0 || info.height <= 0) return false;
+        if (info.width > maxBitmapDimension || info.height > maxBitmapDimension) return false;
+        var pixels = info.width * info.height;
+        if (!Number.isFinite(pixels) || pixels > maxBitmapPixels) return false;
+        return pixels * 4 <= maxBitmapDecodedBytes;
+      }`
+
+const BITMAP_NORMALIZE_BASE = String.raw`      function normalizeFile(file) {
+        return headType(file).then(function(info) {
+          var detected = info && info.type;
+          if (detected && supported[detected]) {
+            return mediaType(file && file.type) === detected ? file : retypeFile(file, detected);
+          }
+          if (detected === 'image/bmp' && bitmapDecodeAllowed(file, info)) return bitmapToPng(file);
+          return file;
+        }, function(){ return file; });
+      }`
+
+const BITMAP_NORMALIZE_HARDENED = String.raw`      function normalizeFile(file, decodeBudget) {
+        return headType(file).then(function(info) {
+          var detected = info && info.type;
+          if (detected && supported[detected]) {
+            return mediaType(file && file.type) === detected ? file : retypeFile(file, detected);
+          }
+          if (detected === 'image/bmp' && bitmapDecodeAllowed(file, info)) {
+            var decodedBytes = info.width * info.height * 4;
+            if (decodeBudget && decodedBytes > decodeBudget.remaining) return file;
+            if (decodeBudget) decodeBudget.remaining -= decodedBytes;
+            return bitmapToPng(file);
+          }
+          return file;
+        }, function(){ return file; });
+      }`
+
+const BITMAP_BATCH_BASE = String.raw`        Promise.all(files.map(function(file){
+          return needsInspection(file)
+            ? normalizeFile(file).catch(function(){ return file; })
+            : Promise.resolve(file);
+        })).then(function(normalized) {
+          return dedupeBatch(normalized).then(function(deduped) {
+            dispatchReplay(target, replayEvent(deduped, textEntries), fallback);
+          });
+        }, function() {
+          dispatchReplay(target, fallback, null);
+        });`
+
+const BITMAP_BATCH_HARDENED = String.raw`        // Decode BMPs serially under one paste-scoped RGBA budget. This keeps peak
+        // browser memory bounded before the Host attachment governor gets a turn.
+        var decodeBudget = { remaining: maxBitmapBatchDecodedBytes };
+        var normalized = [];
+        var normalizeChain = Promise.resolve();
+        files.forEach(function(file){
+          normalizeChain = normalizeChain.then(function(){
+            if (!needsInspection(file)) {
+              normalized.push(file);
+              return undefined;
+            }
+            return normalizeFile(file, decodeBudget).then(function(value){
+              normalized.push(value);
+            }, function(){
+              normalized.push(file);
+            });
+          });
+        });
+        normalizeChain.then(function() {
+          return dedupeBatch(normalized).then(function(deduped) {
+            dispatchReplay(target, replayEvent(deduped, textEntries), fallback);
+          });
+        }, function() {
+          dispatchReplay(target, fallback, null);
+        });`
+
+function replaceAllRequired(source, anchor, replacement, label) {
+  const parts = source.split(anchor)
+  const count = parts.length - 1
+  if (count === 0) throw new Error(`${label} transform anchor missing`)
+  return parts.join(replacement)
+}
+
+export function transformVisionModeToggleIcons(source = BASE_CLIENT_PRESENTATION_PRELUDE) {
+  const input = String(source)
+  if (!input.includes(VISION_TOGGLE_TEXT_GLYPH)) {
+    throw new Error('vision toggle icon transform anchor missing')
+  }
+  return input.replace(VISION_TOGGLE_TEXT_GLYPH, VISION_TOGGLE_FIXED_SVG)
+}
+
+export function transformBitmapDecodeBudget(source = BASE_CLIENT_PRESENTATION_PRELUDE) {
+  let output = String(source)
+  // The legacy prelude intentionally contains more than one clipboard owner.
+  // Harden every exact owner, not merely the first string match, so one stale
+  // path cannot retain unbounded parallel bitmap decoding.
+  output = replaceAllRequired(output, BITMAP_LIMITS_BASE, BITMAP_LIMITS_HARDENED, 'bitmap limits')
+  output = replaceAllRequired(
+    output,
+    BITMAP_DECODE_ALLOWED_BASE,
+    BITMAP_DECODE_ALLOWED_HARDENED,
+    'bitmap decoded-byte admission',
+  )
+  output = replaceAllRequired(output, BITMAP_NORMALIZE_BASE, BITMAP_NORMALIZE_HARDENED, 'bitmap normalization')
+  output = replaceAllRequired(output, BITMAP_BATCH_BASE, BITMAP_BATCH_HARDENED, 'bitmap batch serialization')
+  return output
+}
+
+export const CLIENT_PRESENTATION_PRELUDE = transformBitmapDecodeBudget(transformVisionModeToggleIcons())
+
+export {
+  resolveVisionModePair,
+}
+
+export function injectClientPresentationBoundary(html) {
+  return injectClientCarrierHtml(html, CLIENT_PRESENTATION_MARK, CLIENT_PRESENTATION_PRELUDE)
+}
+
+export function installClientPresentationBoundary(ctx) {
+  installClientScriptCarriers(ctx, {
+    marker: CLIENT_PRESENTATION_MARK,
+    prelude: CLIENT_PRESENTATION_PRELUDE,
+    label: 'vision-router: client presentation boundary',
+    injectHtml: injectClientPresentationBoundary,
+  })
+  // Keep Host-version compatibility in its own capability-detected prelude.
+  // This lets the large legacy client factory stay byte-stable while alpha/new
+  // Hosts expose their current Remote/Connection seams to it.
+  installClientHostCompatibility(ctx)
+  // #286 keeps real wrapper routes registered while hiding only confidently
+  // owned wrappers from DSH's stock model-selection presentation. Compose that
+  // presentation boundary here so v2 can retain its hardened script-marker
+  // injector without duplicating the large composer implementation.
+  installVisionModelVisibilityBoundary(ctx)
+}

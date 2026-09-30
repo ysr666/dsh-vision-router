@@ -115,6 +115,7 @@ async function productionRuntimeFiles() {
   }
 
   await walk(new URL('../lib/', import.meta.url), 'lib')
+  await walk(new URL('../src/', import.meta.url), 'src')
   return files
 }
 

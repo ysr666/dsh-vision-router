@@ -93,8 +93,11 @@
     "quality:round2:template": "node quality/vision-round2/make-run-template.mjs",
     "quality:round2:run": "node quality/vision-round2/run-host-api.mjs",
     "quality:round2:report": "node quality/vision-round2/report-results.mjs",
-    "client:sync": "node scripts/sync-client-embedded-modules.mjs",
-    "client:check": "node scripts/sync-client-embedded-modules.mjs --check"
+    "client:sync": "node scripts/sync-client-embedded-modules.mjs && pnpm build",
+    "client:check": "node scripts/sync-client-embedded-modules.mjs --check && pnpm build:check",
+    "build": "node scripts/build-source-artifacts.mjs",
+    "build:check": "node scripts/build-source-artifacts.mjs --check",
+    "pretest": "pnpm build:check"
   },
   "dsh": {
     "client": {
