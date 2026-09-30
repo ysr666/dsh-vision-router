@@ -25,25 +25,25 @@ DVR 2.2.x peer-admits the DSH `0.2.x` train from the verified rc.1 boundary (`>=
 
 DVR 2.3 uses exact `0.2.0-rc.2` as its ordinary development Host while keeping the public minimum at the `0.1.5` train. Peer admission is intentionally train-shaped: `>=0.1.5-rc.1 <0.2.0-0` for the continuous supported 0.1.x line from 0.1.5, plus `>=0.2.0-rc.2 <0.3.0-0` for the 0.2.x train from the verified rc.2 boundary. Initial forward admission was backed by public pre-0.2.0 master `21638c56315ae6a2b552d6091945d3144c9af32e`. Exact release evidence has now advanced to immutable `dsh-v0.2.0-rc.2` commit `639ed015397290b3745d163aafe02ffee4aa3f84`, published on 2026-09-29. Required gates cover three-OS source contracts, real Host + Chromium, Settings mount/save/reload/readback, mixed attachments, bundle recomposition, Windows Node 22/24 Desktop authentication, the Node 24 multi-plugin isolation adversary, and Host-owned Sharp resolution.
 
-The final immutable upstream `0.2.0` stable tag and signed official Desktop installer remain release-time revalidation targets. The rc.1 evidence is next-channel verification, not a preview support promise and not a support-floor increase.
+The final immutable upstream `0.2.0` stable tag and signed official Desktop installer remain release-time revalidation targets. The verified `0.2.0-rc.2` boundary is already part of DVR 2.3's peer-admitted supported 0.2.x train; it does not raise the public minimum above the DSH 0.1.5 train.
 
-## Verification evidence — not support policy
+## Verification evidence and drift canaries
 
-Compatibility evidence answers a different question: what exact upstream releases and moving channels have current CI proof? It must never be interpreted as a public support-floor change.
+Exact evidence answers which admitted Host points have current CI proof; moving canaries answer whether upstream has drifted beyond those points. Evidence inside an already declared train does not by itself change the minimum support floor, while peer-admission boundaries remain explicit support policy.
 
 | Evidence role | DSH source | Meaning |
 |---|---|---|
 | Exact stable evidence | `0.1.5-rc.3` | Required Host/wire and real Host + Chromium coverage for the current stable release. |
-| Exact next/rc evidence | `0.2.0-rc.2` (`next/rc`) | Required Host/wire/lifecycle/browser evidence. This is not a preview support promise. |
+| Exact supported 0.2.x boundary | `0.2.0-rc.2` (`next/rc`) | Required Host/wire/lifecycle/browser/Desktop evidence for the peer-admitted 0.2.x train; it does not raise the 0.1.5 minimum floor. |
 | Stable drift canary | npm dist-tag `latest` | Scheduled, dynamically resolved surveillance. A failure starts compatibility investigation; it does not rewrite support policy. |
 | Next/rc drift canary | npm dist-tag `next` | Scheduled, dynamically resolved surveillance for the rc channel. A failure does not rewrite support policy. |
 | Alpha/pre-release drift canary | npm dist-tag `alpha` | Scheduled, dynamically resolved surveillance for the alpha channel. A failure does not rewrite support policy. |
 
-The exact evidence values may move in a patch-level maintenance PR when CI proof advances. The public minimum may move only under the support-floor protocol below.
+Exact evidence points may advance inside an already admitted train when CI proof advances. The public minimum and any peer-admission boundary change remain explicit support-policy changes.
 
 Historical release notes under `docs/releases/` are release-time snapshots and are not rewritten when later evidence advances.
 
-The optional peer-dependency range may admit an exact preview version so CI/users can install a verified preview Host without peer-resolution noise. That install admission is compatibility evidence, not a public preview support promise.
+Peer-dependency admission is itself part of the compatibility contract. DVR 2.3 deliberately admits the 0.2.x train from verified `0.2.0-rc.2`; moving npm `next`/`alpha` canaries outside that declared boundary remain surveillance only.
 
 ## Floor transitions across DVR 2.x
 
@@ -67,11 +67,11 @@ A public Host support-floor change is valid only when all of the following are t
 1. the floor change is announced in a DVR minor or major release, never only in a patch release;
 2. README / support documentation and release notes state the old and new floors;
 3. Doctor reports the effective public support policy and gives a capability-based upgrade result for Hosts below the active floor;
-4. required CI proves the public floor and current stable Host, while preview and dynamic canaries remain separately labelled verification evidence;
+4. required CI proves the public floor, current stable Host, and every declared forward-admission boundary, while moving canaries remain separately labelled surveillance;
 5. compatibility seams are removed only after the new minimum Host proves the replacement capability;
 6. removal PRs keep restart, settings, native-image coexistence, tool execution, Node 22/24 and supported-platform regressions green.
 
-Advancing an exact stable/preview evidence version or a moving canary target does **not** by itself change the public support floor.
+Advancing exact evidence inside an already declared train or moving a canary target does **not** by itself change the minimum support floor. Changing the peer-admitted train boundary is a support-policy change and must be explicit.
 
 ## Capability-first rule
 
