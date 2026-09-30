@@ -497,6 +497,16 @@ test('DSH build caches retain native JS entrypoints and binaries as one complete
     'renderer cache schema must invalidate the old cache that omitted native JS entrypoints')
 })
 
+test('Desktop renderer E2E drives the Vision onboarding through the account-owned Settings launcher', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /exerciseVisionOnboardingSettingsPath\(page\)/)
+  assert.match(source, /phase === 'menu' \|\| phase === 'nav'/)
+  assert.match(source, /getByRole\('menuitem', \{ name: \/设置\|Settings\/i \}\)/)
+  assert.match(source, /\[data-vr-guide-target="vision-backend"\]/)
+  assert.doesNotMatch(source, /dismissVisionOnboarding/,
+    'real Desktop coverage must exercise the onboarding path instead of skipping it')
+})
+
 test('Desktop E2E diagnostic files persist only fixed summaries of Host network evidence', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /function fileSafeCoreProbe\(probe\)/)
