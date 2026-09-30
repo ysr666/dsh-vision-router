@@ -184,7 +184,7 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
       },
     })
 
-    const session = { id: 'depth-behavior-session', events: [] }
+    const session = { id: 'depth-behavior-session', header: { version: 4 }, events: [] }
     const exec = { agent: { session } }
     const imageMessages = [
       { role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'sha256:abc', mediaType: 'image/png' } }] },
@@ -237,6 +237,10 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(hasCoreFollowup(d3), false)
     assert.equal(hasEvidenceGuard(d3), true)
     assert.equal(hasStopGuard(d3), false)
+    assert.deepEqual(
+      d3.messages.find((message) => message?.id?.includes('vision-router-structured-evidence-guard-'))?.source,
+      { kind: 'plugin:dsh-vision-router' },
+    )
 
     const ground = harness.toolDefs.get('vision_ground')
     assert.ok(ground)
@@ -249,6 +253,10 @@ test('explicit call cap: failed evidence does not consume it, successful evidenc
     assert.equal(hasCoreFollowup(d4), false)
     assert.equal(hasEvidenceGuard(d4), false)
     assert.equal(hasStopGuard(d4), true)
+    assert.deepEqual(
+      d4.messages.find((message) => message?.id?.includes('vision-router-structured-guard-stop-'))?.source,
+      { kind: 'plugin:dsh-vision-router' },
+    )
 
     const requestsBeforeBlock = server.requests.length
     const r3 = await describe.execute({ paths: [pngPath], question: 'again' }, exec)

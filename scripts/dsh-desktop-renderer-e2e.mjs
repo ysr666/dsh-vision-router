@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -218,6 +219,26 @@ function fiberError(fiber) {
   return String(error?.stack || error).slice(0, 12000)
 }
 
+function collectDvrSources(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDvrSources(item, out)
+    return out
+  }
+  if (value === null || typeof value !== 'object') return out
+  const source = value.source
+  if (
+    source !== null &&
+    typeof source === 'object' &&
+    (source.kind === 'plugin:dsh-vision-router' || source.plugin === 'dsh-vision-router')
+  ) {
+    out.push(source)
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (key !== 'source') collectDvrSources(nested, out)
+  }
+  return out
+}
+
 export function apply(ctx) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(() => scope.webServer.register({
@@ -272,6 +293,23 @@ export function apply(ctx) {
         response.end(JSON.stringify({ services, fibers, loaderEntries, persistenceImport }))
       },
     }), 'desktop-e2e: core service diagnostics')
+  })
+  ctx.inject(['webServer', 'sessions'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-session-sources',
+      handler(_request, response) {
+        const payload = scope.sessions.list().map((session) => ({
+          id: session.header?.id ?? null,
+          version: session.header?.version ?? null,
+          sources: collectDvrSources(
+            typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : [],
+          ),
+        }))
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ sessions: payload }))
+      },
+    }), 'desktop-e2e: Session source diagnostics')
   })
 }
 `)
@@ -360,6 +398,26 @@ async function readHostCoreProbe(authenticatedUrl) {
   const body = await response.json()
   if (!response.ok) throw new Error(`Desktop Host core probe failed (${response.status}): ${JSON.stringify(body)}`)
   return body
+}
+
+async function readHostSessionSources(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-session-sources'
+  target.search = ''
+  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  const text = await response.text()
+  if (!response.ok || text.length === 0) {
+    throw new Error(`Desktop Host Session source probe failed (${response.status}): ${text || '<empty body>'}`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new Error(
+      `Desktop Host Session source probe returned invalid JSON (${response.status}): ${text.slice(0, 4000)}`,
+      { cause: error },
+    )
+  }
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
@@ -792,6 +850,20 @@ try {
   if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
     throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
   }
+
+  const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
+  const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
+  assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
+  const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
+  assert.ok(
+    dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
+    `real Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
+  )
+  assert.equal(
+    dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
+    false,
+    `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
+  )
 
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {

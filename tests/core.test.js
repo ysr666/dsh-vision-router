@@ -1515,11 +1515,11 @@ test('apply wires the degraded local-evidence Host tool guard when supported', (
 })
 
 test('vision describe success context is agent-scoped trusted metadata and preserves exact-text verification', () => {
-  const exec = { name: 'vision_describe', callId: 'call-42', agent: { session: {} } }
+  const exec = { name: 'vision_describe', callId: 'call-42', agent: { session: { header: { version: 4 } } } }
   const result = { isError: false, value: '{"x":1}', content: [{ type: 'text', text: '{"x":1}' }] }
   const context = visionDescribeSuccessContext(exec, result)
   assert.equal(context.id, 'vision-router-evidence-success-call-42')
-  assert.equal(context.source.plugin, 'dsh-vision-router')
+  assert.deepEqual(context.source, { kind: 'plugin:dsh-vision-router' })
   assert.match(context.content[0].text, /trusted execution metadata/)
   assert.match(VISION_SUCCESS_GUIDANCE, /continue the remaining user task/)
   assert.match(VISION_SUCCESS_GUIDANCE, /exactly the format the user requested/)
@@ -1558,7 +1558,7 @@ test('vision describe post-execute guidance preserves canonical tool result and 
   apply(ctx, Config({ freeFallback: false }))
   const post = captured.on.get('tools/post-execute')
   assert.equal(typeof post, 'function')
-  const exec = { name: 'vision_describe', callId: 'call-99', agent: { session: {} } }
+  const exec = { name: 'vision_describe', callId: 'call-99', agent: { session: { header: { version: 4 } } } }
   const result = { isError: false, value: '{"x":1}', content: [{ type: 'text', text: '{"x":1}' }] }
   const prior = { role: 'user', id: 'prior', content: [{ type: 'text', text: 'prior' }], source: { kind: 'plugin', plugin: 'other' } }
   const accepted = await post(exec, result, async () => ({ kind: 'accept', additionalContexts: [prior] }))
@@ -1567,6 +1567,7 @@ test('vision describe post-execute guidance preserves canonical tool result and 
   assert.equal(Object.hasOwn(accepted, 'content'), false)
   assert.equal(accepted.additionalContexts.length, 2)
   assert.equal(accepted.additionalContexts[0].id, 'vision-router-evidence-success-call-99')
+  assert.deepEqual(accepted.additionalContexts[0].source, { kind: 'plugin:dsh-vision-router' })
   assert.equal(accepted.additionalContexts[1], prior)
   assert.equal(result.value, '{"x":1}', 'canonical tool value must remain byte-exact')
 
