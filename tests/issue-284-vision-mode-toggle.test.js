@@ -64,6 +64,7 @@ function translate(key, params) {
 
 function createHookReact() {
   const states = []
+  const refs = []
   let cursor = 0
   return {
     Fragment: Symbol('Fragment'),
@@ -75,6 +76,11 @@ function createHookReact() {
       return [states[at], (next) => {
         states[at] = typeof next === 'function' ? next(states[at]) : next
       }]
+    },
+    useRef(initial) {
+      const at = cursor++
+      if (!(at in refs)) refs[at] = { current: initial }
+      return refs[at]
     },
     useEffect() {},
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
@@ -98,6 +104,7 @@ function createBrowserHarness({
   wrapperRoute = 'deepseek-vision',
   rejectSelection = false,
   returnSelectionFailure = false,
+  deferSelection = false,
 } = {}) {
   let registered
   const loader = {
@@ -122,6 +129,10 @@ function createBrowserHarness({
   })
 
   const selections = []
+  let releaseSelection
+  const selectionGate = deferSelection
+    ? new Promise((resolve) => { releaseSelection = resolve })
+    : undefined
   let snapshot = {
     current,
     groups: modelGroups,
@@ -156,7 +167,11 @@ function createBrowserHarness({
           },
         }
       }
-      snapshot = { ...snapshot, current: selection, status: 'ready', error: null }
+      if (selectionGate) {
+        snapshot = { ...snapshot, status: 'selecting', pending: selection, error: null }
+        await selectionGate
+      }
+      snapshot = { ...snapshot, current: selection, status: 'ready', pending: null, error: null }
       return { ok: true, value: undefined }
     },
   }
@@ -261,6 +276,7 @@ function createBrowserHarness({
     localeRegistrations,
     setSnapshot(next) { snapshot = next },
     getSnapshot() { return snapshot },
+    resolveSelection() { if (releaseSelection) releaseSelection() },
     setSettings(next) { settingsSnapshot = next },
     render(extra = {}) {
       React.begin()
@@ -364,11 +380,17 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   assert.equal(offButton.props['aria-pressed'], false)
   assert.equal(offButton.props.disabled, false)
   assert.equal(offButton.props['data-vision-router-mode-toggle'], 'true')
-  assert.equal(offButton.children[0]?.type, 'svg')
-  assert.equal(offButton.children[0]?.props.width, 14)
-  assert.equal(offButton.children[0]?.props.height, 14)
-  assert.equal(offButton.children[0]?.children[0]?.props.fill, 'currentColor')
-  assert.equal(offButton.children[2], null)
+  // One fixed 14px leading slot carries the state icon, so both states render
+  // identical geometry: appending a check only while active used to change the
+  // chip width by ~18px and reflow the trailing composer row.
+  assert.equal(offButton.children.length, 2)
+  assert.equal(offButton.children[0]?.type, 'span')
+  assert.equal(offButton.children[0]?.props.style.width, 14)
+  assert.equal(offButton.children[0]?.props.style.height, 14)
+  assert.equal(offButton.children[0]?.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.children[0]?.props.width, 14)
+  assert.equal(offButton.children[0]?.children[0]?.props.height, 14)
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
   offButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go-vision')
@@ -376,9 +398,13 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
 
   const onButton = buttonOf(harness.render())
   assert.equal(onButton.props['aria-pressed'], true)
-  assert.equal(onButton.children[2]?.type, 'svg')
-  assert.equal(onButton.children[2]?.props.width, 12)
-  assert.equal(onButton.children[2]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(onButton.children.length, 2)
+  assert.equal(onButton.children[0]?.type, 'span')
+  assert.equal(onButton.children[0]?.props.style.width, 14)
+  assert.equal(onButton.children[0]?.props.style.height, 14)
+  assert.equal(onButton.children[0]?.children[0]?.type, 'svg')
+  assert.equal(onButton.children[0]?.children[0]?.props.width, 14)
+  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
   assert.match(onButton.props.style.boxShadow, /brand-primary/)
   onButton.props.onClick()
   await Promise.resolve()
@@ -418,8 +444,8 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
 
   const before = buttonOf(harness.render())
   assert.equal(before.props['aria-pressed'], true)
-  assert.equal(before.children[2]?.type, 'svg')
-  assert.equal(before.children[2]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(before.children[0]?.children[0]?.type, 'svg')
+  assert.equal(before.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
   before.props.onClick()
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -431,9 +457,10 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   const toast = firstChildOfType(rendered, harness.primitives.Toast)
   assert.equal(button.props['aria-pressed'], true)
   assert.equal(button.props.disabled, false)
-  assert.equal(button.children[0]?.type, 'svg')
+  assert.equal(button.children[0]?.children[0]?.type, 'svg')
+  assert.equal(button.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
   assert.equal(button.children[1].children[0], '识图')
-  assert.equal(button.children[2]?.type, 'svg')
+  assert.equal(button.children.length, 2)
   assert.equal(button.props.title, '关闭识图模式')
   assert.ok(toast)
   assert.equal(toast.props.text, `模型操作失败：${error}`)
@@ -489,9 +516,10 @@ test('issue #284 patches onboarding copy and accurately explains the guide spotl
 test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs', () => {
   const harness = createBrowserHarness()
   const offButton = buttonOf(harness.render())
-  assert.equal(offButton.children[0]?.type, 'svg')
-  assert.equal(offButton.children[0]?.props.viewBox, '0 0 14 14')
-  assert.equal(offButton.children[0]?.children[0]?.props.fill, 'currentColor')
+  assert.equal(offButton.children[0]?.type, 'span')
+  assert.equal(offButton.children[0]?.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
 
   harness.setSnapshot({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
@@ -500,11 +528,90 @@ test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs'
     error: null,
   })
   const onButton = buttonOf(harness.render())
-  assert.equal(onButton.children[2]?.type, 'svg')
-  assert.equal(onButton.children[2]?.props.viewBox, '0 0 14 14')
-  assert.equal(onButton.children[2]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(onButton.children[0]?.children[0]?.type, 'svg')
+  assert.equal(onButton.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
+  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '👁')"), false)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
+})
+
+test('issue #284 smooths only the directory reload owned by this Vision toggle', async () => {
+  const harness = createBrowserHarness({ deferSelection: true })
+  const offButton = buttonOf(harness.render())
+  assert.equal(offButton.props.disabled, false)
+
+  offButton.props.onClick()
+  const target = harness.selections.at(-1)
+  assert.equal(target?.provider, 'opencode-go-vision')
+  assert.equal(target?.model, 'qwen3.6-plus')
+  assert.equal(target?.reasoningEffort, 'high')
+
+  // The official directory owns the transaction. Once its pending selection
+  // matches our target, remember only the settled presentation while that same
+  // transaction moves through an incomplete generation.
+  harness.setSnapshot({
+    current: target,
+    groups,
+    status: 'selecting',
+    pending: target,
+    error: null,
+  })
+  const selecting = buttonOf(harness.render())
+  assert.equal(selecting.props['aria-pressed'], true)
+  assert.equal(selecting.props.disabled, true)
+  assert.equal(selecting.props['aria-busy'], true)
+
+  harness.setSnapshot({
+    current: target,
+    groups: [groups[1]],
+    status: 'loading',
+    pending: target,
+    error: null,
+  })
+  const partial = buttonOf(harness.render())
+  assert.equal(partial.props['aria-pressed'], true)
+  assert.equal(partial.props.disabled, true)
+  assert.equal(partial.props['aria-busy'], true)
+  assert.equal(partial.props.title, '切换中')
+  assert.equal(partial.props.style.opacity, 1)
+  assert.equal(partial.children[0]?.props.style.width, 14)
+
+  harness.setSnapshot({ current: null, groups: [], status: 'idle', pending: target, error: null })
+  const empty = buttonOf(harness.render())
+  assert.equal(empty.props['aria-pressed'], true)
+  assert.equal(empty.props.disabled, true)
+  assert.equal(empty.props.style.opacity, 1)
+
+  harness.resolveSelection()
+  await new Promise((resolve) => setImmediate(resolve))
+  harness.setSnapshot({ current: target, groups, status: 'ready', pending: null, error: null })
+  const ready = buttonOf(harness.render())
+  assert.equal(ready.props['aria-pressed'], true)
+  assert.equal(ready.props.disabled, false)
+  assert.equal(ready.props['aria-busy'], false)
+
+  // The same directory object is also reloaded by connection, adapter,
+  // settings and credential updates. Without an owned toggle transaction,
+  // incomplete generations stay authoritative instead of reusing stale ON.
+  harness.setSnapshot({
+    current: target,
+    groups: [groups[1]],
+    status: 'loading',
+    pending: null,
+    error: null,
+  })
+  const externalPartial = buttonOf(harness.render())
+  assert.equal(externalPartial.props['aria-pressed'], false)
+  assert.equal(externalPartial.props.disabled, true)
+  assert.equal(externalPartial.props['aria-busy'], true)
+  assert.equal(externalPartial.props.title, '加载中')
+  assert.equal(externalPartial.props.style.opacity, 0.45)
+
+  harness.setSnapshot({ current: null, groups: [], status: 'loading', pending: null, error: null })
+  const resetLoading = buttonOf(harness.render())
+  assert.equal(resetLoading.props['aria-pressed'], false)
+  assert.equal(resetLoading.props.disabled, true)
+  assert.equal(resetLoading.props.style.opacity, 0.45)
 })
 
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {

@@ -509,6 +509,19 @@ test('Desktop renderer E2E drives the Vision onboarding through the account-owne
     'real Desktop coverage must exercise the onboarding path instead of skipping it')
 })
 
+test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
+    'the real Host check must exercise the opposite state regardless of its persisted initial mode')
+  assert.match(source, /node\.getAttribute\('aria-busy'\) !== 'true'/)
+  assert.match(source, /node\.disabled === false/)
+  const firstToggle = source.indexOf('await waitForSettledVisionState(toggledPressed)')
+  const secondClick = source.indexOf('await toggle.click()', firstToggle)
+  const restored = source.indexOf('await waitForSettledVisionState(initialPressed)', secondClick)
+  assert.ok(firstToggle >= 0 && secondClick > firstToggle && restored > secondClick,
+    'the second click must wait for the first Host-owned selection to become interactive')
+})
+
 test('Desktop E2E diagnostic files persist only fixed summaries of Host network evidence', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /function fileSafeCoreProbe\(probe\)/)
