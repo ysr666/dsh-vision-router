@@ -28,6 +28,7 @@
     "src/lib/turn-budget-context.ts",
     "src/lib/image-resource-governor.ts",
     "src/lib/session-vision-mode-authority.ts",
+    "src/lib/session-vision-state.ts",
     "tests/types/host/**/*.ts"
   ]
 }
