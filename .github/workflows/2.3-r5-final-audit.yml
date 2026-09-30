@@ -15,6 +15,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  architecture-closure:
+    name: architecture closure / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Full frozen architecture closure matrix
+        run: >-
+          node --test
+          tests/architecture-contract-baseline.test.js
+          tests/compat-inventory-completeness.test.js
+          tests/final-architecture-closure.test.js
+          tests/core-vision-surface-parity.test.js
+          tests/settings-impersonation-closure.test.js
+          tests/presentation-convergence-parity.test.js
+          tests/presentation-switch.test.js
+          tests/capability-shadow-retirement.test.js
+          tests/session-runtime-core-wiring.test.js
+          tests/session-vision-runtime-parity.test.js
+          tests/vision-execution-order-core-wiring.test.js
+          tests/session-vision-state-integration.test.js
+          tests/session-surface-policy.test.js
+          tests/session-vision-index.test.js
+          tests/vision-artifact-store.test.js
+          tests/vision-provider-transport.test.js
+          tests/issue-289-native-nonintervention.test.js
+          tests/esm-cycle-audit.test.js
+
   static-adversarial-quality:
     name: static + adversarial + quality
     runs-on: ubuntu-latest
@@ -111,13 +153,15 @@ jobs:
   r5-audit-gate:
     name: r5-audit-gate
     if: always()
-    needs: [static-adversarial-quality, resource-stress]
+    needs: [architecture-closure, static-adversarial-quality, resource-stress]
     runs-on: ubuntu-latest
     steps:
       - name: Require final audit evidence
         env:
+          CLOSURE_RESULT: ${{ needs.architecture-closure.result }}
           STATIC_RESULT: ${{ needs.static-adversarial-quality.result }}
           RESOURCE_RESULT: ${{ needs.resource-stress.result }}
         run: |
+          test "$CLOSURE_RESULT" = success
           test "$STATIC_RESULT" = success
           test "$RESOURCE_RESULT" = success
