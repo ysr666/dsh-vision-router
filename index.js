@@ -55,7 +55,6 @@ import {
   anthropicMediaType,
 } from './lib/catalog-corrections.js'
 import { getOfficialDeepSeekCatalog } from './lib/official-deepseek-catalog.js'
-import { probeLocalBackends } from './lib/local-connection-probe.js'
 import {
   classifyVisionFailure,
   createDeadline,
@@ -94,9 +93,7 @@ import { createSessionVisionIndex } from './lib/session-vision-index.js'
 import { createSessionVisionStateStore } from './lib/session-vision-state.js'
 import {
   ERROR_RESPONSE_MAX_BYTES,
-  METADATA_RESPONSE_MAX_BYTES,
   MODEL_RESPONSE_MAX_BYTES,
-  readResponseJsonBounded,
   readResponseTextBounded,
 } from './lib/http-body-limit.js'
 import {
@@ -112,6 +109,7 @@ import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boun
 import { parseVersionComparator } from './lib/version-range.js'
 import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
+import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
@@ -4768,168 +4766,28 @@ ctx.logger?.info(
   })
 
 
-  // ── test-connection probe: a GET-only diagnostics route the settings card
-  // uses to verify the first active backend without sending a real image.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(() => {
-      const probe = async () => {
-        const started = Date.now()
-        let first
-        for (const pair of pairs()) {
-          if (!pair) continue
-          if (pair.provider !== HTTP_ROUTE && !adapterAvailable(ctx.llm, pair.provider)) continue
-          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-          if (capability.attemptable !== false) {
-            first = pair
-            break
-          }
-        }
-        const probeModels = async (baseURL, expectedModel) => {
-          try {
-            const response = await fetch(`${baseURL.replace(/\/$/, '')}/models`, {
-              method: 'GET',
-              signal: AbortSignal.timeout(8000),
-            })
-            const latencyMs = Date.now() - started
-            if (!response.ok) {
-              return { ok: false, latencyMs, status: response.status, error: `HTTP ${response.status}` }
-            }
-            const data = await readResponseJsonBounded(
-              response,
-              METADATA_RESPONSE_MAX_BYTES,
-              { label: 'vision backend /models response' },
-            ).catch(() => undefined)
-            const models = data && Array.isArray(data.data) ? data.data : undefined
-            const count = models ? models.length : undefined
-            if (
-              typeof expectedModel === 'string' &&
-              expectedModel !== '' &&
-              models &&
-              !models.some((entry) => entry && String(entry.id) === expectedModel)
-            ) {
-              return {
-                ok: false,
-                latencyMs,
-                status: response.status,
-                models: count,
-                endpoint: baseURL,
-                error: `configured model "${expectedModel}" was not returned by /models`,
-              }
-            }
-            return { ok: true, latencyMs, status: response.status, models: count, endpoint: baseURL }
-          } catch (error) {
-            return {
-              ok: false,
-              latencyMs: Date.now() - started,
-              error: error && error.message ? error.message : String(error),
-            }
-          }
-        }
-        // Explicit local configuration is the most likely thing the user is
-        // testing from this card. Probe it before a healthy OVH/default pair,
-        // and verify that the configured model identifier actually exists.
-        const localProbe = await probeLocalBackends(
-          localProvidersOf(current()),
-          (provider) => probeModels(provider.baseURL, provider.model),
-          started,
-        )
-        if (localProbe !== undefined) return localProbe
-        if (first !== undefined && first.provider === HTTP_ROUTE) {
-          const entry = httpRouteProviders().find((p) => `${p.name}/${p.model}` === first.model)
-          if (entry !== undefined) return probeModels(entry.baseURL, entry.model)
-        }
-        if (first !== undefined) {
-          try {
-            await ctx.llm.resolveModelInfo(first.provider, first.model)
-            return {
-              ok: true,
-              latencyMs: Date.now() - started,
-              detail: `${first.provider}/${first.model} metadata resolved (no network call)`,
-            }
-          } catch (error) {
-            return {
-              ok: false,
-              latencyMs: Date.now() - started,
-              error: error && error.message ? error.message : String(error),
-            }
-          }
-        }
-        const httpFirst = httpRouteProviders()[0]
-        if (httpFirst !== undefined) return probeModels(httpFirst.baseURL, httpFirst.model)
-        return { ok: false, error: 'no usable vision provider configured' }
-      }
-      return webCtx.webServer.register({
-        kind: 'exact',
-        path: '/_dsh/vision-router/test-connection',
-        handler: async (req, res) => {
-          if (req.method !== 'GET') {
-            res.setHeader('Allow', 'GET')
-            res.writeHead(405)
-            res.end()
-            return
-          }
-          try {
-            const result = await probe()
-            // Report only the supported Host-owned provider state. The
-            // historical stealth field remains readable, but DVR 2.3 never
-            // turns it into provider takeover authority.
-            const officialRouteAvailable = adapterAvailable(ctx.llm, 'deepseek-official')
-            result.stealth = {
-              configured: stealthEnabled,
-              active: false,
-              reason: hostOwnsOfficialDeepSeek && !officialRouteAvailable
-                ? 'host-owned-official-unavailable'
-                : undefined,
-              hostOwned: hostOwnsOfficialDeepSeek,
-            }
-            res.writeHead(result.ok ? 200 : 502, { 'content-type': 'application/json' })
-            res.end(JSON.stringify(result))
-          } catch (error) {
-            res.writeHead(500, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ ok: false, error: error && error.message ? error.message : String(error) }))
-          }
-        },
-      })
-    }, 'vision-router: test-connection route')
-  })
-
-  // Exact capability metadata for the settings card. DSH's public llm.models
-  // wire intentionally omits inputModalities, so the plugin exposes a narrow
-  // read-only view backed by the same resolveModelInfo() check used at runtime.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(
-      () =>
-        webCtx.webServer.register({
-          kind: 'exact',
-          path: '/_dsh/vision-router/model-capabilities',
-          handler: async (req, res) => {
-            if (req.method !== 'GET') {
-              res.setHeader('Allow', 'GET')
-              res.writeHead(405)
-              res.end()
-              return
-            }
-            try {
-              const capabilities = await collectVisionBackendCapabilities()
-              const builtinFallback = DEFAULT_HTTP_PROVIDERS.map((provider) => ({
-                id: `${provider.name}/${provider.model}`,
-                model: provider.model,
-              }))
-              res.writeHead(200, { 'content-type': 'application/json' })
-              res.end(JSON.stringify({ capabilities, builtinFallback, anonymousRpmPerModel: 2 }))
-            } catch (error) {
-              res.writeHead(500, { 'content-type': 'application/json' })
-              res.end(
-                JSON.stringify({
-                  capabilities: {},
-                  error: error && error.message ? error.message : String(error),
-                }),
-              )
-            }
-          },
-        }),
-      'vision-router: model capabilities route',
-    )
+  // Product diagnostics/settings support is a separate Web owner. Core supplies
+  // only the three coherent domain faces it already computes; route lifecycle,
+  // bounded /models probing and JSON response semantics live outside Core.
+  installVisionDiagnosticsRoutes(ctx, {
+    connection: {
+      candidatePairs: pairs,
+      localBackends: () => localProvidersOf(current()),
+      httpBackends: httpRouteProviders,
+      resolveCapability: resolveVisionBackendCapability,
+      httpRoute: HTTP_ROUTE,
+    },
+    capabilities: {
+      collect: collectVisionBackendCapabilities,
+      builtinFallback: DEFAULT_HTTP_PROVIDERS.map((provider) => ({
+        id: `${provider.name}/${provider.model}`,
+        model: provider.model,
+      })),
+    },
+    ownership: {
+      hostOwnsOfficialDeepSeek,
+      stealthConfigured: stealthEnabled,
+    },
   })
 
   // Expose the namespace to the web configuration boundary. The API proxy
