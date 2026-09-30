@@ -1,6 +1,6 @@
 # Compatibility seam inventory
 
-P0 records why each major compatibility seam exists and the condition that permits its removal. This inventory is normative for 2.x convergence: a shim without an exit criterion is architectural debt that cannot silently become permanent.
+P0 records why each major compatibility seam exists and the condition that permits its removal. This inventory is normative for DVR 2.3 convergence: a shim without an exit criterion is architectural debt that cannot silently become permanent.
 
 ## `lib/dsh-contract-compat.js`
 
@@ -10,14 +10,14 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **First needed for:** supported Settings lifecycle convergence plus durable profile migration. The pre-`0.1.5` single-attachment / DeepSeek-provider reconstruction path is retired in R2.3.
 - **Feature detection:** attachment `imageLimits` / normalization shape, settings registration/scope functions, and LLM registration ownership. `attachments.saveImages` remains a diagnostic/ownership fact; it no longer authorizes DVR to synthesize an official DeepSeek provider.
 - **Removal condition:** the supported Settings lifecycle has one native contract and durable profiles containing the historical attachment policy overlay are migrated or explicitly outside the data-compatibility window.
-- **Tests:** `rc6-rc7-compat` (retained durable/current cases), `minimum-host-settings-persistence`, `attachment-admission-policy`, `dsh-host-capabilities`, minimum/current/rc2 contract CI.
+- **Tests:** `dsh-host-compat` (retained durable/current cases), `minimum-host-settings-persistence`, `attachment-admission-policy`, `dsh-host-capabilities`, minimum/current/rc2 contract CI.
 
 ## `lib/adapter-update-coalescer.js`
 
 - **2.3 state:** `retain-host-gap`.
 - **Reason:** keep Vision Router-owned duck-typed adapters compatible with Host `prepareCall` dispatch and prevent synchronous adapter-topology events from recursively reconciling forever.
-- **Host gap:** older plugin adapters do not inherit the Host adapter base class; supported Host generations can emit adapter updates synchronously during registration.
-- **First needed for:** DSH 0.1.1 `prepareCall` and atomic registration behavior.
+- **Host gap:** Vision Router intentionally owns several plain/duck-typed adapters instead of inheriting the Host adapter base class; supported Host generations call base-class contracts and can emit adapter updates synchronously during registration.
+- **First needed for:** Host adapter-contract evolution (`prepareCall`, later image-request pricing) and synchronous registration reconciliation. The original version labels are historical origin only, not a current support dependency.
 - **Feature detection:** adapter-local `prepareCall` presence; actual `llm/adapters-updated` event path. No version inference.
 - **Removal condition:** every supported Vision Router adapter directly satisfies the Host adapter contract and supported Host event semantics no longer require the bounded coalescer.
 - **Tests:** `adapter-prepare-call-compat`, `runtime-boundary-fixes`, current-contract Host smoke.
@@ -45,11 +45,11 @@ P0 records why each major compatibility seam exists and the condition that permi
 ## `lib/settings-client-rc8-lifecycle.js`
 
 - **2.3 state:** `retain-host-gap`.
-- **Reason:** keep browser settings lifecycle coherent across legacy and current Host client generations.
-- **Host gap:** settings client attachment/replacement lifecycle is not identical across the support window.
-- **First needed for:** rc.8-era settings UI coexistence.
-- **Feature detection:** actual client/runtime lifecycle surfaces; never the Host version label.
-- **Removal condition:** supported Hosts expose one stable settings client lifecycle and the compatibility branch is proven unreachable by contract tests.
+- **Reason:** keep current Settings permission/risk wrappers attached when the Host module system switches registrations from queue to live loading.
+- **Host gap:** immutable supported sources from 0.1.5-rc.1 through 0.2.0-rc.2 still replace the live module `load` function during `create()`, so one boot-time wrapper is not stable across the complete client lifecycle.
+- **First needed for:** the older Settings UI coexistence work; retained now because the same loader replacement remains present on supported Hosts, not because rc.8 itself is supported.
+- **Feature detection:** actual `__ModuleLoader__.create/load` lifecycle and current Settings surfaces; never the Host version label.
+- **Removal condition:** supported Hosts expose one stable Settings client attachment lifecycle (or the shared carrier gives DVR a native post-create hook) and current product permission/risk wrappers no longer require reattachment.
 - **Tests:** settings IA, client lifecycle, remote-settings and Web acceptance regressions.
 
 ## `lib/http-compat.js`
@@ -109,6 +109,6 @@ A compatibility seam may be deleted only when all of the following are true:
 
 1. its **Removal condition** is satisfied by the declared support window;
 2. the relevant capability is proved by a gating Host contract fixture or direct feature test;
-3. deleting the seam leaves Node 22/24, minimum/legacy/current Host contracts and relevant platform tests green;
+3. deleting the seam leaves Node 22/24, minimum/current/mid-train/rc.2 Host evidence and relevant platform tests green;
 4. no Authority, Session, Storage or native-multimodal invariant changes as a side effect;
 5. the deletion is a focused change, not bundled into an unrelated routing/data-boundary refactor.

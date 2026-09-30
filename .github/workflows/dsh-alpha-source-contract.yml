@@ -39,14 +39,14 @@ on:
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
       - 'tests/adapter-prepare-call-compat.test.js'
-      - 'tests/rc6-rc7-compat.test.js'
+      - 'tests/dsh-host-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
       - 'tests/client-presentation-boundary.test.js'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   push:
-    branches: [main]
+    branches: [main, 2.3.0]
     paths:
       - 'cordis.patch.yml'
       - 'package.json'
@@ -84,7 +84,7 @@ on:
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
       - 'tests/adapter-prepare-call-compat.test.js'
-      - 'tests/rc6-rc7-compat.test.js'
+      - 'tests/dsh-host-compat.test.js'
       - 'tests/alpha1-*.test.js'
       - 'tests/attachment-admission-policy.test.js'
       - 'tests/clipboard-image-paste-compat.test.js'
@@ -120,12 +120,6 @@ jobs:
           - os: windows-latest
             dsh: 0.1.5-rc.3
           - os: ubuntu-latest
-            dsh: 0.1.5-alpha.2
-          - os: macos-latest
-            dsh: 0.1.5-alpha.2
-          - os: windows-latest
-            dsh: 0.1.5-alpha.2
-          - os: ubuntu-latest
             dsh: 0.1.7-rc.2
           - os: macos-latest
             dsh: 0.1.7-rc.2
@@ -153,15 +147,6 @@ jobs:
         with:
           repository: deepseek-ai/deepseek-harness
           ref: a4c74a91e06b00fe0b0937bde982170c526cc842
-          persist-credentials: false
-          path: dsh-exact
-
-      - name: Checkout exact DSH 0.1.5-alpha.2 source
-        if: matrix.dsh == '0.1.5-alpha.2'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: b2e3b2a0125854567a4a5fcba75782e42fe84901
           persist-credentials: false
           path: dsh-exact
 
@@ -207,15 +192,6 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
           DSH_EXPECTED_VERSION: 0.1.5-rc.3
           DSH_EXPECTED_COMMIT: a4c74a91e06b00fe0b0937bde982170c526cc842
-        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
-
-      - name: Run Vision Router against exact 0.1.5-alpha.2 source contracts
-        if: matrix.dsh == '0.1.5-alpha.2'
-        working-directory: dsh-exact
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.5-alpha.2
-          DSH_EXPECTED_COMMIT: b2e3b2a0125854567a4a5fcba75782e42fe84901
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Run Vision Router against exact 0.1.7-rc.2 source contracts

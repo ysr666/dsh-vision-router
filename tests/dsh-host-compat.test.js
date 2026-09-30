@@ -495,7 +495,7 @@ test('web connection provider waits for both runtime trust and the Web route car
   )
 })
 
-test('release evidence gates keep stable and preview contracts capability-scoped', async () => {
+test('release evidence separates supported exact-source coverage from historical browser surveillance', async () => {
   const [hostGate, browserGate, sourceGate, upstreamOverlayWatch] = await Promise.all([
     readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
@@ -520,11 +520,10 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   assert.match(sourceGate, /name: DSH exact source contract/)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.1/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.3/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.5-alpha\.2/g) ?? []).length, 3)
   assert.equal((sourceGate.match(/dsh: 0\.1\.7-rc\.2/g) ?? []).length, 3)
+  assert.doesNotMatch(sourceGate, /0\.1\.5-alpha\.2/)
   assert.equal((sourceGate.match(/183f08e9c6dde7e36cd2318eaee70b0da08fb35e/g) ?? []).length, 2)
   assert.equal((sourceGate.match(/a4c74a91e06b00fe0b0937bde982170c526cc842/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/b2e3b2a0125854567a4a5fcba75782e42fe84901/g) ?? []).length, 2)
   assert.equal((sourceGate.match(/477b4f420553e8a52c2fbccc464d7561b239c443/g) ?? []).length, 2)
   assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
   assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
@@ -537,7 +536,7 @@ test('release evidence gates keep stable and preview contracts capability-scoped
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-modules-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
-    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 4)
+    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 3)
   }
 })
 
