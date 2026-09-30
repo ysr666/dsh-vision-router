@@ -435,13 +435,14 @@ test('runtime boundary auto-mounts from image turns even when activation prose c
   assert.equal(registeredTools.has('vision_ground'), false)
 
   const payload = {
+    agent: { session: { header: { version: 4 } } },
     messages: [{ role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'sha256:auto' } }] }],
   }
   const decision = await preStep(payload, async () => ({ messages: payload.messages }))
   assert.equal(decision.messages.length, 2)
   const reminder = decision.messages[1]
   assert.match(reminder.id, /^vision-router-auto-mount-/)
-  assert.equal(reminder.source.plugin, 'dsh-vision-router')
+  assert.deepEqual(reminder.source, { kind: 'plugin:dsh-vision-router' })
   assert.match(reminder.content[0].text, /pixel-level vision tools/i)
   assert.doesNotMatch(reminder.content[0].text, /已挂载|本轮消息包含图片/)
 })
