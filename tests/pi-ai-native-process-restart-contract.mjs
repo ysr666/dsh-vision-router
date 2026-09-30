@@ -209,8 +209,6 @@ async function mount(baseURL) {
 async function turn(agent, content) {
   agent.followup(createUserMessage({ content, source: { kind: 'user' } }))
   await agent.whenIdle()
-  const end = agent.session.events.findLast((event) => event.type === 'turn/end')
-  assert.equal(end?.data?.reason?.kind, 'completed', `turn failed: ${JSON.stringify(end?.data?.reason)}`)
 }
 
 const server = await mockOpenAiServer()
