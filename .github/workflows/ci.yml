@@ -30,6 +30,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify canonical source/artifact mirror
         run: pnpm build:check
+      - name: Verify reproducible clean build
+        if: matrix.node == '22'
+        run: pnpm build:reproducible
       - run: pnpm test
 
   native-host-sharp:

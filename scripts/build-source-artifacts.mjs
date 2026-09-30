@@ -18,8 +18,18 @@ async function filesUnder(directory) {
   return out.sort()
 }
 
-function artifactPath(sourcePath) {
-  return path.join(ROOT, path.relative(SOURCE, sourcePath))
+function argumentValue(name) {
+  const index = process.argv.indexOf(name)
+  return index >= 0 ? process.argv[index + 1] : undefined
+}
+
+function artifactRoot() {
+  const raw = argumentValue('--out-dir')
+  return raw ? path.resolve(raw) : ROOT
+}
+
+function artifactPath(sourcePath, outputRoot) {
+  return path.join(outputRoot, path.relative(SOURCE, sourcePath))
 }
 
 async function sameBytes(left, right) {
@@ -33,14 +43,15 @@ async function sameBytes(left, right) {
 
 async function main() {
   const check = process.argv.includes('--check')
+  const outputRoot = artifactRoot()
   const sources = await filesUnder(SOURCE)
   const failures = []
 
   for (const source of sources) {
-    const artifact = artifactPath(source)
+    const artifact = artifactPath(source, outputRoot)
     if (check) {
       if (!await sameBytes(source, artifact)) {
-        failures.push(path.relative(ROOT, artifact))
+        failures.push(path.relative(outputRoot, artifact))
       }
       continue
     }
@@ -52,10 +63,11 @@ async function main() {
     throw new Error(`generated runtime artifacts are stale or missing:\n${failures.map((item) => `- ${item}`).join('\n')}`)
   }
 
+  const destination = outputRoot === ROOT ? 'package runtime tree' : outputRoot
   if (check) {
-    console.log(`source/artifact mirror is in sync (${sources.length} files)`)
+    console.log(`source/artifact mirror is in sync (${sources.length} files; ${destination})`)
   } else {
-    console.log(`built ${sources.length} runtime artifacts from src/`)
+    console.log(`built ${sources.length} runtime artifacts from src/ into ${destination}`)
   }
 }
 
