@@ -25,6 +25,7 @@
     "src/lib/vision-provider-transport.ts",
     "src/lib/vision-execution-order.ts",
     "src/lib/vision-execution-order-apply.ts",
+    "src/lib/turn-budget-context.ts",
     "tests/types/host/**/*.ts"
   ]
 }
