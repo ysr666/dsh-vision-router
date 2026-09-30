@@ -94,7 +94,7 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
   assert.match(support, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
-  assert.match(support, /not a preview support promise/i)
+  assert.match(support, /peer-admitted supported 0\.2\.x train/i)
   assert.match(support, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)
 })
