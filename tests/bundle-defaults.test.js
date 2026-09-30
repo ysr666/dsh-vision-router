@@ -152,6 +152,8 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
   assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
   assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
+  assert.match(workflow, /Run tests[\s\S]*Verify generated browser source[\s\S]*pnpm client:check/)
+  assert.match(workflow, /Verify release Host support policy[\s\S]*tests\/dsh-support-window\.test\.js/)
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
   assert.match(workflow, /already exists at \$REMOTE_TAG_SHA, expected \$RELEASE_SHA/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
