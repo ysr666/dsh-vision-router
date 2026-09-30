@@ -1,3 +1,4 @@
+import type { RequestInit as UndiciRequestInit } from 'undici'
 import {
   ERROR_RESPONSE_MAX_BYTES,
   MODEL_RESPONSE_MAX_BYTES,
@@ -27,9 +28,11 @@ const DEFAULT_PROXY_HOSTS = Object.freeze([
 
 type FetchInput = string | URL | Request
 
+export type ProviderFetchInit = UndiciRequestInit
+
 export type ProviderFetch = (
   input: FetchInput,
-  init?: RequestInit,
+  init?: ProviderFetchInit,
 ) => Promise<Response>
 
 export interface VisionProviderTransportContext {
@@ -61,7 +64,7 @@ export interface VisionProviderProxyDecision {
 export interface VisionProviderTransport {
   fetch(
     input: FetchInput,
-    init?: RequestInit,
+    init?: ProviderFetchInit,
     context?: VisionProviderFetchContext,
   ): Promise<Response>
   dispose(): Promise<void>
@@ -74,9 +77,11 @@ export interface VisionProviderTransport {
 // Capture before core.apply installs the legacy process-wide fetch patch. The
 // Router-owned transport uses this original function explicitly, so direct
 // provider calls are not coupled to later globalThis.fetch mutation.
+type HostFetchInit = Parameters<typeof globalThis.fetch>[1]
+
 const moduleFetch: ProviderFetch | undefined =
   typeof globalThis.fetch === 'function'
-    ? (input, init) => globalThis.fetch(input, init)
+    ? (input, init) => globalThis.fetch(input, init as HostFetchInit)
     : undefined
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -168,7 +173,7 @@ export function createVisionProviderTransport({
 
   const fetchProvider = async (
     input: FetchInput,
-    init: RequestInit = {},
+    init: ProviderFetchInit = {},
     context: VisionProviderFetchContext = {},
   ): Promise<Response> => {
     if (disposed) return fetchImpl(input, init)

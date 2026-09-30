@@ -1,6 +1,7 @@
+import type { Dispatcher } from 'undici'
 import { URL, domainToASCII } from 'node:url'
 
-export type FetchDispatcher = NonNullable<RequestInit['dispatcher']>
+export type FetchDispatcher = Dispatcher
 
 export interface DispatcherLike {
   dispatch(options: unknown, handler: unknown): unknown

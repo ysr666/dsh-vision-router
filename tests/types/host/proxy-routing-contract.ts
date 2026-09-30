@@ -1,3 +1,4 @@
+import type { Dispatcher } from 'undici'
 import {
   canonicalProxyHost,
   createPerHopProxyDispatcher,
@@ -19,7 +20,7 @@ const dispatcher = {
 
 if (proxyDispatcherLike(dispatcher)) {
   const perHop = createPerHopProxyDispatcher(dispatcher, dispatcher, ['example.com'])
-  const fetchDispatcher: RequestInit['dispatcher'] = perHop
+  const fetchDispatcher: Dispatcher = perHop
   void fetchDispatcher
 }
 
