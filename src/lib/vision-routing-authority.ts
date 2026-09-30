@@ -78,11 +78,12 @@ export function grantManualMeasurementFromUserAction(source: unknown = 'local-ui
   if (source !== 'local-ui') {
     throw new TypeError('manual measurement authority source must be local-ui')
   }
-  return Object.freeze({
+  const grant: ManualMeasurementGrant = {
     kind: 'manual-measurement',
     source,
     [MANUAL_MEASUREMENT_GRANT]: true,
-  })
+  }
+  return Object.freeze(grant)
 }
 
 export function hasManualMeasurementAuthority(value: unknown): value is ManualMeasurementGrant {
