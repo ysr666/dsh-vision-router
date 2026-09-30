@@ -224,7 +224,7 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
 
   const hardening = await readFile(new URL('../.github/workflows/adversarial-compat-hardening.yml', import.meta.url), 'utf8')
   const start = hardening.indexOf('  windows-node24-screenshot:')
-  const end = hardening.indexOf('\n  preview-host-contract:', start)
+  const end = hardening.indexOf('\n  linux-desktop-screenshot:', start)
   assert.ok(start >= 0 && end > start, 'Windows screenshot job anchors must remain explicit and ordered')
   const windows = hardening.slice(start, end)
   assert.match(windows, /timeout-minutes: 5/)
