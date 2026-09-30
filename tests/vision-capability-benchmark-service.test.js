@@ -160,6 +160,7 @@ test('manual benchmark manager rejects programmatic measurement without explicit
 
 test('exact invoker sends one selected vision-http provider directly and never enters fallback', async () => {
   const core = fakeCore()
+  const providerTransport = { fetch() { throw new Error('not called by injected callDirect') } }
   const candidate = {
     key: 'http:ovh-free/qwen3-vl',
     provider: 'vision-http',
@@ -175,6 +176,7 @@ test('exact invoker sends one selected vision-http provider directly and never e
     },
     streamExact: async () => { throw new Error('vision-http must not enter DSH adapter path') },
     randomUUID: () => '00000000-0000-4000-8000-000000000410',
+    providerTransport,
   })
   const backend = {
     provider: candidate.provider,
@@ -193,6 +195,7 @@ test('exact invoker sends one selected vision-http provider directly and never e
   assert.equal(calls[0].messages[0].content[0].type, 'image_url')
   assert.equal(calls[0].callOptions.sessionId, undefined)
   assert.equal(calls[0].callOptions.affinityId, 'vision-benchmark-00000000-0000-4000-8000-000000000410')
+  assert.equal(calls[0].callOptions.providerTransport, providerTransport)
   assert.equal(result.output, 'exact answer')
   assert.equal(result.transport, 'http-direct')
 })
