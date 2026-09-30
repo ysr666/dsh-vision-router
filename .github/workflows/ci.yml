@@ -33,6 +33,9 @@ jobs:
       - name: Verify reproducible clean build
         if: matrix.node == '22'
         run: pnpm build:reproducible
+      - name: Typecheck Host and Client contracts
+        if: matrix.node == '22'
+        run: pnpm typecheck
       - run: pnpm test
 
   native-host-sharp:
