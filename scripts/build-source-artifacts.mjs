@@ -1,9 +1,14 @@
-import { mkdir, readFile, readdir, copyFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, readdir, copyFile, stat, mkdtemp, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url))
 const SOURCE = path.join(ROOT, 'src')
+const require = createRequire(import.meta.url)
+const TSC = require.resolve('typescript/bin/tsc')
 
 async function filesUnder(directory) {
   const out = []
@@ -29,7 +34,33 @@ function artifactRoot() {
 }
 
 function artifactPath(sourcePath, outputRoot) {
-  return path.join(outputRoot, path.relative(SOURCE, sourcePath))
+  const relative = path.relative(SOURCE, sourcePath)
+  return path.join(outputRoot, relative.endsWith('.ts') ? relative.slice(0, -3) + '.js' : relative)
+}
+
+async function buildInto(outputRoot) {
+  const sources = await filesUnder(SOURCE)
+
+  for (const source of sources) {
+    if (!source.endsWith('.js')) continue
+    const artifact = artifactPath(source, outputRoot)
+    await mkdir(path.dirname(artifact), { recursive: true })
+    await copyFile(source, artifact)
+  }
+
+  const compiled = spawnSync(process.execPath, [
+    TSC,
+    '-p',
+    'tsconfig.build.json',
+    '--outDir',
+    outputRoot,
+  ], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  })
+  if (compiled.status !== 0) process.exit(compiled.status ?? 1)
+
+  return sources.map((source) => artifactPath(source, outputRoot))
 }
 
 async function sameBytes(left, right) {
@@ -44,30 +75,29 @@ async function sameBytes(left, right) {
 async function main() {
   const check = process.argv.includes('--check')
   const outputRoot = artifactRoot()
-  const sources = await filesUnder(SOURCE)
-  const failures = []
 
-  for (const source of sources) {
-    const artifact = artifactPath(source, outputRoot)
-    if (check) {
-      if (!await sameBytes(source, artifact)) {
-        failures.push(path.relative(outputRoot, artifact))
-      }
-      continue
+  if (!check) {
+    const artifacts = await buildInto(outputRoot)
+    const destination = outputRoot === ROOT ? 'package runtime tree' : outputRoot
+    console.log(`built ${artifacts.length} runtime artifacts from src/ into ${destination}`)
+    return
+  }
+
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'dvr-build-check-'))
+  try {
+    const generated = await buildInto(temporary)
+    const failures = []
+    for (const generatedPath of generated) {
+      const relative = path.relative(temporary, generatedPath)
+      const artifact = path.join(outputRoot, relative)
+      if (!await sameBytes(generatedPath, artifact)) failures.push(relative)
     }
-    await mkdir(path.dirname(artifact), { recursive: true })
-    await copyFile(source, artifact)
-  }
-
-  if (check && failures.length > 0) {
-    throw new Error(`generated runtime artifacts are stale or missing:\n${failures.map((item) => `- ${item}`).join('\n')}`)
-  }
-
-  const destination = outputRoot === ROOT ? 'package runtime tree' : outputRoot
-  if (check) {
-    console.log(`source/artifact mirror is in sync (${sources.length} files; ${destination})`)
-  } else {
-    console.log(`built ${sources.length} runtime artifacts from src/ into ${destination}`)
+    if (failures.length > 0) {
+      throw new Error(`generated runtime artifacts are stale or missing:\n${failures.map((item) => `- ${item}`).join('\n')}`)
+    }
+    console.log(`generated runtime artifacts are in sync (${generated.length} files)`)
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
   }
 }
 

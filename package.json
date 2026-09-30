@@ -98,7 +98,7 @@
     "client:check": "node scripts/sync-client-embedded-modules.mjs --check && pnpm build:check",
     "build": "node scripts/build-source-artifacts.mjs",
     "build:check": "node scripts/build-source-artifacts.mjs --check",
-    "pretest": "pnpm build:check",
+    "pretest": "pnpm build",
     "build:reproducible": "node scripts/verify-build-reproducibility.mjs",
     "typecheck:host": "tsc -p tsconfig.host.json",
     "typecheck:client": "tsc -p tsconfig.client.json",

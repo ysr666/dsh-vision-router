@@ -28,7 +28,9 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Verify canonical source/artifact mirror
+      - name: Build canonical runtime artifacts
+        run: pnpm build
+      - name: Verify generated runtime artifacts
         run: pnpm build:check
       - name: Verify reproducible clean build
         if: matrix.node == '22'

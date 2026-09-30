@@ -3,14 +3,14 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": [
-      "ES2024"
-    ],
+    "rootDir": "src",
+    "noEmit": false,
+    "declaration": false,
+    "sourceMap": false,
     "types": []
   },
   "include": [
     "src/lib/vision-routing-product.ts",
-    "src/lib/vision-routing-authority.ts",
-    "tests/types/host/**/*.ts"
+    "src/lib/vision-routing-authority.ts"
   ]
 }
