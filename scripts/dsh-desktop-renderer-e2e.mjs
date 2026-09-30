@@ -239,6 +239,28 @@ function collectDvrSources(value, out = []) {
   return out
 }
 
+function collectDvrMessages(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDvrMessages(item, out)
+    return out
+  }
+  if (value === null || typeof value !== 'object') return out
+  if (
+    typeof value.id === 'string' &&
+    value.id.startsWith('vision-router-') &&
+    typeof value.role === 'string' &&
+    Array.isArray(value.content)
+  ) {
+    out.push({
+      id: value.id,
+      role: value.role,
+      source: value.source ?? null,
+    })
+  }
+  for (const nested of Object.values(value)) collectDvrMessages(nested, out)
+  return out
+}
+
 export function apply(ctx) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(() => scope.webServer.register({
@@ -299,13 +321,15 @@ export function apply(ctx) {
       kind: 'exact',
       path: '/dvr-e2e-session-sources',
       handler(_request, response) {
-        const payload = scope.sessions.list().map((session) => ({
-          id: session.header?.id ?? null,
-          version: session.header?.version ?? null,
-          sources: collectDvrSources(
-            typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : [],
-          ),
-        }))
+        const payload = scope.sessions.list().map((session) => {
+          const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
+          return {
+            id: session.header?.id ?? null,
+            version: session.header?.version ?? null,
+            sources: collectDvrSources(events),
+            messages: collectDvrMessages(events),
+          }
+        })
         response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
         response.end(JSON.stringify({ sessions: payload }))
       },
@@ -864,6 +888,23 @@ try {
     false,
     `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
   )
+  const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
+  assert.ok(
+    dvrMessages.length > 0,
+    `real Session v4 log must expose at least one DVR-authored durable message by id: ${JSON.stringify(sessionSourceProbe)}`,
+  )
+  for (const message of dvrMessages) {
+    assert.equal(
+      message.source?.kind,
+      'plugin:dsh-vision-router',
+      `every DVR-authored Session v4 message must carry the producer-owned source: ${JSON.stringify(message)}`,
+    )
+    assert.equal(
+      message.source?.plugin,
+      undefined,
+      `DVR-authored Session v4 messages must not retain the legacy plugin field: ${JSON.stringify(message)}`,
+    )
+  }
 
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {
