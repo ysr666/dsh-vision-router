@@ -69,6 +69,7 @@ jobs:
               '@deepseek-ai/dsh-llm': v,
               '@deepseek-ai/dsh-llm-pi-ai': v,
               '@deepseek-ai/dsh-session': v,
+              '@deepseek-ai/dsh-session-projection': v,
               '@deepseek-ai/dsh-attachment-local': v,
               '@deepseek-ai/dsh-system-prompt': v,
               '@deepseek-ai/dsh-tools': v,
