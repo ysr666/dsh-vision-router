@@ -1,9 +1,13 @@
+import type { GenerateOptions } from '@deepseek-ai/dsh-llm/types'
+
 const ROUTE_OWNED_CALL_FIELDS = Object.freeze([
   'reasoningEffort',
   'temperature',
   'maxTokens',
   'stop',
-])
+] as const satisfies readonly (keyof GenerateOptions)[])
+
+export type DelegatedRouteOwnedCallField = (typeof ROUTE_OWNED_CALL_FIELDS)[number]
 
 /**
  * Project an internal Vision Router delegation onto a different provider/model.
@@ -16,10 +20,15 @@ const ROUTE_OWNED_CALL_FIELDS = Object.freeze([
  * Direct transports owned by Vision Router do not use this projection; their
  * wire compatibility remains the Router's responsibility.
  */
-export function projectDelegatedCallConfig(options) {
+export function projectDelegatedCallConfig<T extends object>(
+  options: T,
+): Omit<T, DelegatedRouteOwnedCallField>
+export function projectDelegatedCallConfig<T>(options: T): T
+export function projectDelegatedCallConfig(options: unknown): unknown {
   if (!options || typeof options !== 'object' || Array.isArray(options)) return options
-  if (!ROUTE_OWNED_CALL_FIELDS.some((field) => Object.hasOwn(options, field))) return options
-  const next = { ...options }
+  const record = options as Record<string, unknown>
+  if (!ROUTE_OWNED_CALL_FIELDS.some((field) => Object.hasOwn(record, field))) return options
+  const next = { ...record }
   for (const field of ROUTE_OWNED_CALL_FIELDS) delete next[field]
   return next
 }

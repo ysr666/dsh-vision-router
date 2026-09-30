@@ -13,6 +13,7 @@
     "src/lib/vision-routing-authority.ts",
     "src/lib/core-apply-lifecycle.ts",
     "src/lib/image-offload-compat.ts",
+    "src/lib/delegated-call-config.ts",
     "tests/types/host/**/*.ts"
   ]
 }
