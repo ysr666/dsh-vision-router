@@ -91,7 +91,7 @@ test('published support-window docs remain the authority for compatibility retir
     support,
     /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
   )
-  assert.match(support, /Exact next\/rc evidence[^\n]*0\.2\.0-rc\.2/)
+  assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
   assert.match(support, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
   assert.match(support, /not a preview support promise/i)
