@@ -170,6 +170,8 @@ async function mount(label) {
 async function turn(agent, content) {
   agent.followup(createUserMessage({ content, source: { kind: 'user' } }))
   await agent.whenIdle()
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
+  assert.equal(end?.data?.reason?.kind, 'completed', JSON.stringify(end?.data?.reason))
 }
 
 function assertPluginMessagesIdentified(messages) {

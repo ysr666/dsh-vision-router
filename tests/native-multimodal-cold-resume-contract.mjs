@@ -192,6 +192,8 @@ async function imageTurn(agent, refs, text) {
     source: { kind: 'user' },
   }))
   await agent.whenIdle()
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
+  assert.equal(end?.data?.reason?.kind, 'completed', `image turn did not complete: ${JSON.stringify(end?.data?.reason)}`)
 }
 
 async function textTurn(agent, text) {
@@ -200,6 +202,8 @@ async function textTurn(agent, text) {
     source: { kind: 'user' },
   }))
   await agent.whenIdle()
+  const end = agent.session.snapshotEvents().findLast((event) => event.type === 'turn/end')
+  assert.equal(end?.data?.reason?.kind, 'completed', `text turn did not complete: ${JSON.stringify(end?.data?.reason)}`)
 }
 
 function replayAssistants(messages) {
