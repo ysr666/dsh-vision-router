@@ -3,6 +3,7 @@ name: DSH 0.1.7 browser smoke
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'lib/public-entry.js'
       - 'lib/dsh-settings-017-compat.js'
       - 'lib/settings-client-017-compat.js'
