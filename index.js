@@ -30,6 +30,16 @@ function legacySessionEvents(session) {
   try { return session.events } catch { return undefined }
 }
 
+function throwIfVisionTaskAborted(signal, error) {
+  if (!signal?.aborted) return
+  if (signal.reason instanceof Error) throw signal.reason
+  if (error instanceof Error) throw error
+  const aborted = new Error('vision task aborted')
+  aborted.name = 'AbortError'
+  aborted.code = 'ABORT_ERR'
+  throw aborted
+}
+
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
@@ -4101,6 +4111,8 @@ ctx.logger?.info(
       async execute(args, exec) {
         const imageInput = resolveOcrImageInput(args)
         const session = exec?.agent?.session
+        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        throwIfVisionTaskAborted(taskSignal)
         const engine = resolveVisionOcrEngine(args.engine, current().ocrEngine)
         const degraded = degradedLocalState(session, imageInput)
         if (
@@ -4114,6 +4126,7 @@ ctx.logger?.info(
           )
         }
         const { bytes, mediaType } = await readImageBytes(exec, imageInput)
+        throwIfVisionTaskAborted(taskSignal)
         // ONE OCR budget shared by tesseract AND the vision fallback: tesseract
         // gets a capped slice (never more than 12s), the vision model only the
         // remainder. The two timeouts can never stack into a multi-minute wait.
@@ -4123,7 +4136,11 @@ ctx.logger?.info(
           let localAttempted = false
           try {
             localAttempted = true
-            const local = await ocrWithTesseractAdaptive(bytes, tesseractSlice)
+            const local = await ocrWithTesseractAdaptive(
+              bytes,
+              tesseractSlice,
+              { signal: taskSignal },
+            )
             if (local.text.trim() !== '') {
               if (session) {
                 visionTurnMemory.recordLocalOcr(
@@ -4150,6 +4167,7 @@ ctx.logger?.info(
             }
             if (engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text: '', uncertain: true })
           } catch (error) {
+            throwIfVisionTaskAborted(taskSignal, error)
             if (engine === 'tesseract') {
               throw new Error(
                 `vision_ocr: local tesseract failed (${error && error.message ? error.message : String(error)})`,
@@ -4157,7 +4175,7 @@ ctx.logger?.info(
             }
             ctx.logger?.warn('vision-router: tesseract OCR unavailable, falling back to vision model')
           } finally {
-            if (degraded.active && localAttempted && session) {
+            if (!taskSignal?.aborted && degraded.active && localAttempted && session) {
               visionTurnMemory.recordDegradedRefinement(
                 visionScopeOf(session),
                 degraded.sourceKey,
@@ -4165,6 +4183,7 @@ ctx.logger?.info(
             }
           }
         }
+        throwIfVisionTaskAborted(taskSignal)
         if (deadline.expired()) {
           return JSON.stringify({
             engine: 'none',
@@ -4182,6 +4201,7 @@ ctx.logger?.info(
           '请原样转述图中的所有文字，保持阅读顺序（从上到下、从左到右）与段落结构，不要添加解释。只输出文字本身。',
           { deadline },
         )
+        throwIfVisionTaskAborted(taskSignal)
         if (vision.ok === false) {
           return JSON.stringify({ engine: 'none', ...vision, text: '' })
         }
@@ -4210,9 +4230,13 @@ ctx.logger?.info(
       },
       output: stringOutput,
       async execute(args, exec) {
+        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        throwIfVisionTaskAborted(taskSignal)
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
+        throwIfVisionTaskAborted(taskSignal)
         const sharp = await loadSharp()
         const meta = await sharp(bytes, { failOn: 'none' }).metadata()
+        throwIfVisionTaskAborted(taskSignal)
         const width = meta.width ?? 0
         const height = meta.height ?? 0
         if (width <= 0 || height <= 0) {
@@ -4244,6 +4268,7 @@ ctx.logger?.info(
         let visionFailed = false
         const results = []
         for (let i = 0; i < windows.length; i++) {
+          throwIfVisionTaskAborted(taskSignal)
           if (deadline.expired()) {
             results.push({
               chunk: i + 1,
@@ -4273,16 +4298,23 @@ ctx.logger?.info(
           } finally {
             releaseTile()
           }
+          throwIfVisionTaskAborted(taskSignal)
           const chunkRel = `chunk-${String(i + 1).padStart(2, '0')}.png`
           await writeArtifactFile(workspace, artifactsRel, path.join(stem, chunkRel), chunk)
+          throwIfVisionTaskAborted(taskSignal)
           let text = ''
           let used = 'none'
           if (engine !== 'vision') {
             try {
-              const out = await ocrWithTesseract(chunk, Math.min(12000, deadline.remaining()))
+              const out = await ocrWithTesseract(
+                chunk,
+                Math.min(12000, deadline.remaining()),
+                { signal: taskSignal },
+              )
               text = out.trim()
               used = 'tesseract'
             } catch (error) {
+              throwIfVisionTaskAborted(taskSignal, error)
               if (engine === 'tesseract') {
                 throw new Error(
                   `vision_long_screenshot_ocr: tesseract failed on chunk ${i + 1} (${
@@ -4301,10 +4333,12 @@ ctx.logger?.info(
                 .removeAlpha()
                 .jpeg({ quality: 92 })
                 .toBuffer()
+              throwIfVisionTaskAborted(taskSignal)
               const instruction =
                 '请原样转述这张长截图分片中的所有文字，保持阅读顺序（从上到下、从左到右），' +
                 '不要添加解释，只输出文字本身。如果画面中没有可见文字，只输出 EMPTY，不要编造内容。'
               const visionResult = await answerVisionForTool(exec, visionBytes, 'image/jpeg', instruction, { deadline })
+              throwIfVisionTaskAborted(taskSignal)
               if (visionResult.ok === false) {
                 // Backend failure: stop burning vision calls for the remaining
                 // chunks (the breaker already tripped the broken backend).
@@ -4325,6 +4359,7 @@ ctx.logger?.info(
                       '禁止编造、禁止重复；总输出不超过 3000 字。没有任何文字就只输出 EMPTY。',
                     { deadline },
                   )
+                  throwIfVisionTaskAborted(taskSignal)
                   if (retry.ok === false) {
                     visionFailed = true
                     used = 'failed'
@@ -4343,6 +4378,7 @@ ctx.logger?.info(
                 if (text === 'EMPTY') text = ''
               }
             } catch (error) {
+              throwIfVisionTaskAborted(taskSignal, error)
               used = 'failed'
               ctx.logger?.warn(
                 'vision-router: long OCR chunk %d vision fallback failed: %s',
@@ -4351,6 +4387,7 @@ ctx.logger?.info(
               )
             }
           }
+          throwIfVisionTaskAborted(taskSignal)
           results.push({ chunk: i + 1, left, right, top, bottom, engine: used, chars: text.length, text })
         }
         const joined = results.map((r) => r.text).filter((t) => t !== '').join('\n\n')
@@ -4366,13 +4403,16 @@ ctx.logger?.info(
           engines,
           perChunk: results.map(({ text, ...rest }) => rest),
         }
+        throwIfVisionTaskAborted(taskSignal)
         const manifestPath = await writeArtifactFile(
           workspace,
           artifactsRel,
           path.join(stem, 'manifest.json'),
           JSON.stringify(manifest, null, 2),
         )
+        throwIfVisionTaskAborted(taskSignal)
         const mdPath = await writeArtifactFile(workspace, artifactsRel, path.join(stem, 'ocr.md'), joined)
+        throwIfVisionTaskAborted(taskSignal)
         const dir = path.dirname(mdPath)
         return JSON.stringify({
           text: joined,
@@ -4405,7 +4445,10 @@ ctx.logger?.info(
       },
       output: stringOutput,
       async execute(args, exec) {
+        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        throwIfVisionTaskAborted(taskSignal)
         const { bytes } = await readImageBytes(exec, args.image)
+        throwIfVisionTaskAborted(taskSignal)
         const steps = Number.isInteger(args.steps) && args.steps > 0 ? Math.min(args.steps, 16) : 4
         const colorMode = args.color !== false
         // Trace-specific pixel budget: vectorization gains nothing beyond
@@ -4417,6 +4460,7 @@ ctx.logger?.info(
           const traceMaxPixels = Math.min(downscaleEnabled() ? downscaleMaxPixels() : 1_000_000, 1_000_000)
           traceBytes = await downscaleImage(bytes, traceMaxPixels)
         }
+        throwIfVisionTaskAborted(taskSignal)
         let svg
         let colorCount = 0
         try {
@@ -4424,17 +4468,20 @@ ctx.logger?.info(
             const sharp = await loadSharp()
             const colors = Number.isInteger(args.colors) && args.colors > 0 ? Math.min(args.colors, 16) : 8
             const raw = await sharp(traceBytes, { failOn: 'none' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+            throwIfVisionTaskAborted(taskSignal)
             const palette = quantizeColors(raw.data, colors)
             colorCount = palette.length
-            svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs())
+            svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs(), { signal: taskSignal })
           } else {
-            svg = await posterizeSvg(traceBytes, steps, 'dominant', timeoutMs())
+            svg = await posterizeSvg(traceBytes, steps, 'dominant', timeoutMs(), { signal: taskSignal })
           }
         } catch (error) {
+          throwIfVisionTaskAborted(taskSignal, error)
           throw new Error(
             `vision_trace: potrace failed (${error && error.message ? error.message : String(error)})`,
           )
         }
+        throwIfVisionTaskAborted(taskSignal)
         const target = await saveArtifact(
           exec,
           `${artifactStem(args.image, colorMode ? 'trace-color' : `trace-${steps}`)}.svg`,

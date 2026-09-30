@@ -6,6 +6,8 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { createSecureHtmlScreenshotExecute } from '../lib/adversarial-hardening.js'
+import { createDesktopScreenshotTool } from '../lib/desktop-screenshot-tool.js'
+import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 import {
   buildPerMonitorWindowsScreenshotScript,
   captureWindowsDesktop,
@@ -106,6 +108,32 @@ test('aborting an active secure screenshot closes Chrome and prevents artifact p
   )
   assert.equal(harness.closeCalls, 1)
   assert.equal(harness.artifactWrites, 0)
+})
+
+test('desktop screenshot honors the ambient vision-task cancellation before OS capture', async () => {
+  const controller = new AbortController()
+  const reason = new Error('desktop turn cancelled')
+  controller.abort(reason)
+  let artifactWrites = 0
+  const tool = createDesktopScreenshotTool({
+    current: () => ({ desktopScreenshot: true, localOllama: {}, localLmStudio: {} }),
+    timeoutMs: () => 120000,
+    async saveArtifact() {
+      artifactWrites += 1
+      return '/workspace/screenshot.png'
+    },
+    stringOutput: { type: 'string' },
+    instantLocalStyle: () => 'structured',
+  })
+
+  await assert.rejects(
+    runWithVisionTurnBudget(
+      { signal: controller.signal, deadlineAt: Date.now() + 120000 },
+      () => tool.execute({}, { signal: new AbortController().signal }),
+    ),
+    /desktop turn cancelled/,
+  )
+  assert.equal(artifactWrites, 0)
 })
 
 test('Windows desktop capture enters per-monitor v2 on the exact capture thread and restores it', () => {
