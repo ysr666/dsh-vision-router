@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
