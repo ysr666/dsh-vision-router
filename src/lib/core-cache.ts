@@ -16,7 +16,7 @@ interface CacheEntry<Value> {
   readonly expiresAt: number
 }
 
-function cacheWeight(value: unknown): number {
+export function cacheWeight(value: unknown): number {
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value.byteLength
   if (typeof value === 'string') return Buffer.byteLength(value, 'utf8')
   try {
