@@ -41,7 +41,7 @@ export function createCache<Value = unknown>(
 ): CoreCache<Value> {
   const entries = new Map<string, CacheEntry<Value>>()
   const entryLimit = Math.max(0, Math.floor(Number(maxEntries) || 0))
-  const ttlMs = Number(ttlMsValue)
+  const ttlMs = ttlMsValue as number
   const maxBytes = Number.isFinite(Number(options.maxBytes)) && Number(options.maxBytes) >= 0
     ? Math.floor(Number(options.maxBytes))
     : 8 * 1024 * 1024
@@ -68,15 +68,15 @@ export function createCache<Value = unknown>(
 
   return {
     get(key: unknown): Value | undefined {
-      const normalizedKey = String(key)
-      const entry = entries.get(normalizedKey)
+      const rawKey = key as string
+      const entry = entries.get(rawKey)
       if (entry === undefined) return undefined
       if (entry.expiresAt <= Date.now()) {
-        remove(normalizedKey)
+        remove(rawKey)
         return undefined
       }
-      entries.delete(normalizedKey)
-      entries.set(normalizedKey, entry)
+      entries.delete(rawKey)
+      entries.set(rawKey, entry)
       return entry.value
     },
 
