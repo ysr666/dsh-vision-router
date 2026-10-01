@@ -117,3 +117,26 @@ export function createSessionVisionPolicyStore(
     },
   }
 }
+
+
+/**
+ * Process-scoped policy backend used while no durable Host sidecar is bound.
+ *
+ * The Map is closure-owned by the returned store, never process-global. It is
+ * intentionally replaceable by a durable table without changing policy,
+ * delegation, or authority semantics.
+ */
+export function createVolatileSessionVisionPolicyStore(): SessionVisionPolicyStore {
+  const rows = new Map<string, Readonly<SessionVisionPolicy>>()
+  return createSessionVisionPolicyStore({
+    get(key) {
+      return rows.get(key)
+    },
+    async put(key, value) {
+      rows.set(key, value)
+    },
+    async delete(key) {
+      rows.delete(key)
+    },
+  })
+}
