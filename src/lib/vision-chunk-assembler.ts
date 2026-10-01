@@ -60,7 +60,7 @@ export function createChunkAssembler(): VisionChunkAssembler {
       }
       case 'text-delta': {
         const part = parts.get(chunk.index)
-        if (part !== undefined) part.text += chunk.text ?? ''
+        if (part !== undefined) part.text += (chunk.text ?? '') as string
         break
       }
       case 'reasoning-delta':
@@ -125,14 +125,11 @@ export function createChunkAssembler(): VisionChunkAssembler {
 
 // Compile-time authority checks: the official failure shape remains accepted
 // through StreamChunk while legacy standalone failures stay visibly separate.
+type OfficialFinish = Extract<StreamChunk, { type: 'finish' }>
 type OfficialFailure = Extract<
-  StreamChunk,
-  { type: 'finish' }
->['reason'] extends infer Reason
-  ? Reason extends { kind: 'error' | 'aborted'; failure: infer Failure }
-    ? Failure
-    : never
-  : never
+  OfficialFinish['reason'],
+  { kind: 'error' | 'aborted' }
+>['failure']
 
 const _officialFailureAuthority: LlmFailure | undefined =
   undefined as OfficialFailure | undefined
