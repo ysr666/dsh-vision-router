@@ -119,15 +119,33 @@ async function productionRuntimeFiles() {
   return files
 }
 
-test('3.0 R0 records the current transitive package-root export topology', async () => {
-  const [publicEntry, entry, core] = await Promise.all([
+test('3.0 R7 package root exposes only the deliberate plugin and compatibility contract', async () => {
+  const [publicEntry, entry, core, root] = await Promise.all([
     text('lib/public-entry.js'),
     text('entry.js'),
     text('index.js'),
+    import(new URL('../lib/public-entry.js', import.meta.url)),
   ])
+
   assert.match(publicEntry, /export \* from '\.\.\/entry\.js'/)
-  assert.match(entry, /export \* from '\.\/index\.js'/)
+  assert.doesNotMatch(entry, /export \* from '\.\/index\.js'/)
+  assert.match(entry, /export \{ inject, name \} from '\.\/index\.js'/)
   assert.match(core, /export \* from '\.\/lib\/vision-resilience\.js'/)
+
+  assert.deepEqual(Object.keys(root).sort(), [
+    'Config',
+    'SETTINGS_CONTRACT_REVISION',
+    'apply',
+    'ensureVisionAttachmentAdmissionPolicy',
+    'hasBatchAttachmentContract',
+    'hostOwnsOfficialDeepSeekProvider',
+    'inject',
+    'installHostSettingsCompatibility',
+    'installVisionAttachmentAdmissionPolicy',
+    'name',
+    'protectHostProviderOwnership',
+    'sessionSurfaceReplacementIntent',
+  ])
 })
 
 test('production runtime never depends on DSH private source entry points', async () => {
