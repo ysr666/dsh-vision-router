@@ -4,6 +4,7 @@ import {
 } from './turn-budget-context.js'
 import { runWithDepthConfig } from './depth-guidance.js'
 import { runtimeLanguageFor } from './runtime-i18n.js'
+import { visionRouterMessageSource } from './session-message-source-compat.js'
 
 const STRUCTURED_EVIDENCE_TOOLS = new Set([
   'vision_describe',
@@ -440,7 +441,7 @@ function appendGuardMessage(decision, payload, state, config) {
               ? '已达到本轮设置的深挖次数上限。不要再调用视觉工具；请基于已经获得的证据作答，并明确仍存在的不确定性。'
               : '连续多次后续视觉调用都没有产出可用证据。不要继续重复调用视觉工具；请基于已经获得的证据作答，并明确仍存在的不确定性。',
       }],
-      source: { kind: 'plugin', plugin: 'dsh-vision-router' },
+      source: visionRouterMessageSource(payload?.agent?.session),
     }
     return appendSyntheticGuardOnce(decision, baseMessages, state, message, true)
   }
@@ -461,7 +462,7 @@ function appendGuardMessage(decision, payload, state, config) {
         ? 'The structured bootstrap is complete, but no usable task-directed visual evidence has been produced yet. Call at least one vision tool that can add or verify evidence, then answer after it succeeds.'
         : '结构化预识别已经完成，但目前还没有产出可用的任务定向视觉证据。请至少调用一个能新增或验证证据的视觉工具，成功后再作答。',
     }],
-    source: { kind: 'plugin', plugin: 'dsh-vision-router' },
+    source: visionRouterMessageSource(payload?.agent?.session),
   }
   return appendSyntheticGuardOnce(decision, baseMessages, state, message)
 }

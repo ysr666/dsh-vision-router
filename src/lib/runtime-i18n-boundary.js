@@ -2,6 +2,7 @@ import { createRuntimeI18n, DEEP_TOOL_MOUNT_STATE } from './runtime-i18n.js'
 import { depthCopyFor } from './depth-guidance.js'
 import { blocksHaveRetainedImage } from './image-offload-compat.js'
 import { captureFetchDelegate, installFetchWrapper } from './fetch-wrapper-lifecycle.js'
+import { visionRouterMessageSource } from './session-message-source-compat.js'
 
 const PLUGIN_NAME = 'dsh-vision-router'
 const DEEP_TOOL_NAMES = new Set([
@@ -433,7 +434,7 @@ function addAutoMountReminder(decision, payload, i18n) {
         : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`
     }`,
     content: [{ type: 'text', text: i18n.t('autoMountReminder') }],
-    source: { kind: 'plugin', plugin: PLUGIN_NAME },
+    source: visionRouterMessageSource(payload?.agent?.session),
   }
   const structuredIndex = base.findIndex((message) =>
     typeof message?.id === 'string' && message.id.startsWith('vision-router-structured-'),

@@ -13,29 +13,61 @@ import {
 } from './core-primitives.js'
 import { loadSharp } from './sharp-runtime.js'
 import { captureWindowsDesktop } from './windows-desktop-capture.js'
+import { currentVisionTurnBudgetSignal } from './turn-budget-context.js'
+import { combineSignals } from './vision-resilience.js'
 
-async function captureDesktopPng(target, timeoutMs, signal) {
-  const platform = process.platform
+function abortReason(signal, fallback = 'vision_screenshot aborted') {
+  if (signal?.reason instanceof Error) return signal.reason
+  const error = new Error(fallback)
+  error.name = 'AbortError'
+  error.code = 'ABORT_ERR'
+  return error
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal)
+}
+
+function isAbortFailure(error) {
+  return error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
+}
+
+export async function captureDesktopPng(target, timeoutMs, signal, options = {}) {
+  const platform = options.platform ?? process.platform
+  const run = options.execFileAsync ?? promisify(execFile)
+  const captureWindows = options.captureWindowsDesktop ?? captureWindowsDesktop
+  throwIfAborted(signal)
   if (platform === 'win32') {
     // Own DPI-aware capture at the implementation boundary rather than
     // depending on a process-wide execFile argument rewrite.
-    await captureWindowsDesktop(target, { timeoutMs, signal })
+    await captureWindows(target, { timeoutMs, signal })
+    throwIfAborted(signal)
     return platform
   }
   if (platform === 'darwin') {
     // Without -m, screencapture writes one file per display while the tool owns
     // exactly one artifact path, so request the main display explicitly.
-    await promisify(execFile)('screencapture', ['-x', '-m', target], {
+    await run('screencapture', ['-x', '-m', target], {
       timeout: timeoutMs,
       windowsHide: true,
+      ...(signal === undefined ? {} : { signal }),
     })
+    throwIfAborted(signal)
     return platform
   }
   try {
-    await promisify(execFile)('import', ['-window', 'root', target], { timeout: timeoutMs })
-  } catch {
-    await promisify(execFile)('scrot', [target], { timeout: timeoutMs })
+    await run('import', ['-window', 'root', target], {
+      timeout: timeoutMs,
+      ...(signal === undefined ? {} : { signal }),
+    })
+  } catch (error) {
+    if (signal?.aborted || isAbortFailure(error)) throw error
+    await run('scrot', [target], {
+      timeout: timeoutMs,
+      ...(signal === undefined ? {} : { signal }),
+    })
   }
+  throwIfAborted(signal)
   return platform
 }
 
@@ -58,7 +90,9 @@ async function identifyDesktopCapture(data, {
   timeoutMs,
   instantLocalStyle,
   providerTransport,
+  signal,
 } = {}) {
+  throwIfAborted(signal)
   const locals = localProvidersOf(current())
   if (locals.length === 0) {
     return {
@@ -68,6 +102,7 @@ async function identifyDesktopCapture(data, {
 
   const startedAt = Date.now()
   const identifyBytes = await downscaleForIdentification(data)
+  throwIfAborted(signal)
   const result = {}
   if (identifyBytes !== data) {
     result.identifyDownscaled = {
@@ -85,6 +120,7 @@ async function identifyDesktopCapture(data, {
   const deadlineAt = Date.now() + timeoutMs()
   const errors = []
   for (let index = 0; index < locals.length; index++) {
+    throwIfAborted(signal)
     const local = locals[index]
     const remainingMs = deadlineAt - Date.now()
     if (remainingMs <= 0) break
@@ -92,6 +128,9 @@ async function identifyDesktopCapture(data, {
     // first backend must not consume the entire fallback budget.
     const roundBudgetMs = Math.max(1, Math.floor(remainingMs / (locals.length - index)))
     const controller = new AbortController()
+    const roundSignal = signal
+      ? AbortSignal.any([signal, controller.signal])
+      : controller.signal
     const timer = setTimeout(() => controller.abort(), roundBudgetMs)
     try {
       const identified = await callLocalBackend(
@@ -99,7 +138,7 @@ async function identifyDesktopCapture(data, {
         [{ role: 'user', content }],
         {
           maxTokens: local.maxTokens ?? 2048,
-          signal: controller.signal,
+          signal: roundSignal,
           providerTransport,
         },
       )
@@ -111,6 +150,7 @@ async function identifyDesktopCapture(data, {
       }
       errors.push(`${local.name}: empty response`)
     } catch (error) {
+      if (signal?.aborted) throw abortReason(signal)
       errors.push(`${local.name}: ${error && error.message ? error.message : String(error)}`)
     } finally {
       clearTimeout(timer)
@@ -137,9 +177,15 @@ export function createDesktopScreenshotTool({
   stringOutput,
   instantLocalStyle,
   providerTransport,
+  captureDesktop = captureDesktopPng,
 } = {}) {
-  if (typeof current !== 'function' || typeof timeoutMs !== 'function' || typeof saveArtifact !== 'function') {
-    throw new TypeError('desktop screenshot tool requires live config, timeout and artifact callbacks')
+  if (
+    typeof current !== 'function' ||
+    typeof timeoutMs !== 'function' ||
+    typeof saveArtifact !== 'function' ||
+    typeof captureDesktop !== 'function'
+  ) {
+    throw new TypeError('desktop screenshot tool requires live config, timeout, artifact and capture callbacks')
   }
   if (typeof instantLocalStyle !== 'function') {
     throw new TypeError('desktop screenshot tool requires a live local describe style')
@@ -177,24 +223,37 @@ export function createDesktopScreenshotTool({
         `vision-screenshot-${Date.now()}-${Math.floor(Math.random() * 1e9)}.png`,
       )
       try {
-        const platform = await captureDesktopPng(tmp, timeoutMs(), exec?.signal)
+        const signal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+        throwIfAborted(signal)
+        const platform = await captureDesktop(tmp, timeoutMs(), signal)
+        throwIfAborted(signal)
         if (!existsSync(tmp)) {
           throw new Error(
             `vision_screenshot: no output produced on ${platform} (is a screen available?)`,
           )
         }
-        const data = await readFile(tmp)
-        const target = await saveArtifact(exec, `screenshot-${Date.now()}.png`, data)
-        const result = { path: target, bytes: data.length }
+        const data = await readFile(tmp, signal === undefined ? undefined : { signal })
+        throwIfAborted(signal)
+        let identification
         if (args.identify === true) {
-          Object.assign(result, await identifyDesktopCapture(data, {
+          identification = await identifyDesktopCapture(data, {
             current,
             timeoutMs,
             instantLocalStyle,
             providerTransport,
-          }))
+            signal,
+          })
         }
-        return JSON.stringify(result)
+        // Artifact publication is the final commit point. If optional local
+        // identification is cancelled, no successful screenshot result should
+        // already have escaped into the managed artifact store.
+        throwIfAborted(signal)
+        const target = await saveArtifact(exec, `screenshot-${Date.now()}.png`, data)
+        return JSON.stringify({
+          path: target,
+          bytes: data.length,
+          ...(identification ?? {}),
+        })
       } finally {
         try { await unlink(tmp) } catch { /* best effort cleanup */ }
       }

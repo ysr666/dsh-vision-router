@@ -14,6 +14,15 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **Session 与模型选择正确性补强**：有界 event-feed overflow 会恢复 still-current repair surface，不再静默丢第 257+ 个待修事件；Core async bootstrap 等 Promise settle 后再结束；Vision toggle 正确识别 DSH `ModelDirectory.select()` resolve 的 `{ ok: false }`，失败不会再被误判成成功。
 - **Session and model-selection correctness is stronger**: bounded event-feed overflow now recovers still-current repair surfaces instead of silently losing the 257th+ pending event; async Core bootstrap finishes only after Promise settlement; the Vision toggle now honors DSH `ModelDirectory.select()` resolved `{ ok: false }` failures instead of treating every resolved Promise as success.
 
+### Final pre-release hardening / 发布前最终加固
+
+- **Session v4 source ownership 根修（#606）**：所有真正写入 Session 的 DVR durable message producer 都按 `session.header.version` 直接产生正确 source；v4 使用 producer-owned `plugin:dsh-vision-router`，v3 保留旧格式。最终 normalization boundary 只保留 defense-in-depth，真实 rc.2 admission 直接调用官方断言覆盖。
+- **Session v4 source ownership root fix (#606)**: every DVR durable message producer now emits the Session-format source directly from `session.header.version`; v4 uses producer-owned `plugin:dsh-vision-router` while v3 retains the legacy shape. Final normalization remains defense-in-depth, with the upstream rc.2 admission assertion exercised directly.
+- **取消链路完成 ownership 收口**：turn/tool cancellation 继续传到 macOS/Linux 截图进程、截图识别、Tesseract、potrace Worker 与 pair/direct-HTTP provider 请求；用户取消是 terminal outcome，不再继续 fallback、污染 breaker 或在失败前先发布 screenshot artifact。
+- **Cancellation ownership is end-to-end**: turn/tool cancellation reaches macOS/Linux capture processes, screenshot identification, Tesseract, potrace workers, and pair/direct-HTTP provider calls. User cancellation is terminal, cannot fall through as a backend failure, cannot poison breaker state, and cannot publish a screenshot artifact before a cancelled identification finishes.
+- **显式 transport 与 UI/Settings 竞态修复（#610）**：text-projected preflight bridge 与 capability benchmark 继续显式持有 Router-owned `VisionProviderTransport`，不会绕过 `proxy/proxyHosts`，也没有恢复全局 transport registry；Remote Settings authorization 按 live RPC target 隔离，Vision toggle 的旧 selection completion 不再覆盖更新 selection 的 recovery state。
+- **Explicit transport and UI/Settings race fixes (#610)**: the text-projected preflight bridge and capability benchmark retain the Router-owned `VisionProviderTransport`, preserving `proxy/proxyHosts` without restoring a global transport registry. Remote Settings authorization is isolated per live RPC target, and stale Vision-toggle completions cannot overwrite newer recovery state.
+
 ### Host support & compatibility / Host 支持与兼容
 
 - **公开 Host 支持线调整**：DVR 2.3.x 对 DSH 0.1.x 从 `0.1.5-rc.1` 起连续支持，对 0.2.x 从已验证的 `0.2.0-rc.2` 起支持；默认开发 Host 精确锁定 `0.2.0-rc.2`。低于 0.1.5 的 Host 不再属于正式支持矩阵。
@@ -25,10 +34,10 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### Validation / 验证
 
-- R5 Architecture Closure 在 Node 22 / 24 均为 **132/132**；生产 ESM 图为 **166 modules / 347 relative edges / 0 cycles**。
-- R5 Architecture Closure is **132/132** on both Node 22 and Node 24; the production ESM graph is **166 modules / 347 relative edges / 0 cycles**.
-- 最终 full regression 在 Node 22 / 24 均为 **1556 tests / 1550 pass / 6 skip / 0 fail**；minimum/current Host、0.1.x exact-source 九宫格、rc.2 Linux/macOS/Windows、Chromium、Windows/macOS Desktop 均通过。
-- Final full regression is **1556 tests / 1550 pass / 6 skip / 0 fail** on both Node 22 and Node 24; minimum/current Host, the nine-job 0.1.x exact-source matrix, rc.2 Linux/macOS/Windows, Chromium, and Windows/macOS Desktop all pass.
+- 最终 Architecture Closure 在 Node 22 / 24 均为 **131/131**；生产 ESM 图为 **166 modules / 354 relative edges / 0 cycles**。
+- Final Architecture Closure is **131/131** on both Node 22 and Node 24; the production ESM graph is **166 modules / 354 relative edges / 0 cycles**.
+- 最终 full regression 在 Node 22 / 24 均为 **1569 tests / 1563 pass / 6 skip / 0 fail**，并额外通过 **10/10** backend-runtime-policy；minimum/current Host、0.1.7 Chromium/Windows/macOS Desktop、rc.2 exact-source Linux/macOS/Windows 与 real Host + Chromium 均通过。
+- Final full regression is **1569 tests / 1563 pass / 6 skip / 0 fail** on both Node 22 and Node 24, plus **10/10** backend-runtime-policy tests; minimum/current Host, 0.1.7 Chromium/Windows/macOS Desktop, rc.2 exact-source Linux/macOS/Windows, and real Host + Chromium all pass.
 - 固定 seed 与 rotating seed 的 property/adversarial fuzz 全通过；100MP 压缩图 stress 在三平台最高 RSS delta 为 **92.5 MiB**，低于 256 MiB gate，governor 最终无 active/queued 泄漏。
 - Deterministic and rotating property/adversarial fuzz both pass; 100MP compressed-image stress peaks at **92.5 MiB** RSS delta across the three OSes, below the 256 MiB gate, with no active/queued governor leak at completion.
 

@@ -14,7 +14,7 @@ export function createRemoteSettingsRiskClientBoundary(options = {}) {
   var connectionCache = typeof WeakMap === 'function' ? new WeakMap() : undefined
   var rpcCache = typeof WeakMap === 'function' ? new WeakMap() : undefined
   var contextCache = typeof WeakMap === 'function' ? new WeakMap() : undefined
-  var authorizationPromise
+  var authorizationByRpc = typeof WeakMap === 'function' ? new WeakMap() : undefined
   var CHANNEL = '/vision-router-settings'
   var AUTHORIZE_ENDPOINT = 'authorize'
 
@@ -64,8 +64,9 @@ export function createRemoteSettingsRiskClientBoundary(options = {}) {
   }
 
   async function authorizeAndRefresh(target, call) {
-    if (authorizationPromise) return authorizationPromise
-    authorizationPromise = (async function() {
+    var existing = authorizationByRpc && authorizationByRpc.get(target)
+    if (existing) return existing
+    var pending = (async function() {
       if (typeof confirmImpl !== 'function' || confirmImpl(riskMessage()) !== true) return undefined
       var authorized = await call.call(target, CHANNEL, AUTHORIZE_ENDPOINT, { acceptedRisk: true })
       if (!authorized || authorized.ok !== true) {
@@ -77,8 +78,13 @@ export function createRemoteSettingsRiskClientBoundary(options = {}) {
       }
       return call.call(target, CHANNEL, 'describe', {})
     })()
-    try { return await authorizationPromise }
-    finally { authorizationPromise = undefined }
+    if (authorizationByRpc) authorizationByRpc.set(target, pending)
+    try { return await pending }
+    finally {
+      if (authorizationByRpc && authorizationByRpc.get(target) === pending) {
+        authorizationByRpc.delete(target)
+      }
+    }
   }
 
   function wrapRpc(rpc) {

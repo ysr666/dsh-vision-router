@@ -324,7 +324,7 @@ function installRoutingAndHostProducts(host, owners, core) {
   }
 }
 
-function installExecutionBoundaries(host, owners, routing, core) {
+function installExecutionBoundaries(host, owners, routing, core, providerTransport) {
   const { capabilityStore, logging, runtimeConfig, runtimeI18nCoreScope, runtimePerformanceStore } = host
   const { sessionVisionRuntime } = owners
   const { breakerShadowHealth, liveDiscovery, reconciledCtx } = routing
@@ -376,11 +376,13 @@ function installExecutionBoundaries(host, owners, routing, core) {
     core,
     evidenceSource: (provider, model) => liveDiscovery.evidenceSource?.(provider, model),
     logger: logging.logger,
+    providerTransport,
     finalContextDecorator: runtimeI18nCoreScope.decorate,
   })
   const capabilityBenchmark = installCapabilityBenchmarkService(backendRuntimeCtx, runtimeConfig, core, {
     logger: logging.logger,
     store: capabilityStore,
+    providerTransport,
   })
   attachCapabilityBenchmarkPresentation(capabilityBenchmark, {
     ctx: backendRuntimeCtx,
@@ -480,6 +482,6 @@ export function applyVisionRuntimeComposition(ctx, config = {}, core, runtime = 
   const host = installHostAndSecurityBoundaries(ctx, config, core)
   const owners = createRuntimeOwners(host, core)
   const routing = installRoutingAndHostProducts(host, owners, core)
-  const execution = installExecutionBoundaries(host, owners, routing, core)
+  const execution = installExecutionBoundaries(host, owners, routing, core, runtime?.providerTransport)
   return applyMatureCoreBridge(host, owners, routing, execution, core, runtime)
 }

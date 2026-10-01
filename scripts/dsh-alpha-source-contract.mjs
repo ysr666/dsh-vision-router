@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -26,10 +27,14 @@ const DVR_POLICY = Object.freeze({
 })
 
 const importSource = (relative) => import(pathToFileURL(path.join(dshRoot, relative)).href)
-const [attachmentLocal, compat, adapterCompat] = await Promise.all([
+const [attachmentLocal, compat, adapterCompat, v4Admission, sourceCompat] = await Promise.all([
   importSource('packages/attachment/attachment-local/src/index.ts'),
   import(pathToFileURL(path.join(dvrRoot, 'lib/dsh-contract-compat.js')).href),
   import(pathToFileURL(path.join(dvrRoot, 'lib/adapter-update-coalescer.js')).href),
+  existsSync(path.join(dshRoot, 'packages/session/session-format-v3-to-v4/src/codec.ts'))
+    ? importSource('packages/session/session-format-v3-to-v4/src/codec.ts')
+    : Promise.resolve(undefined),
+  import(pathToFileURL(path.join(dvrRoot, 'lib/session-message-source-compat.js')).href),
 ])
 
 const actualCommit = execFileSync('git', ['-C', dshRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
@@ -176,6 +181,45 @@ assert.match(sessionControllerSource, /@Remote\(['"]modelCatalog['"]\)/)
 assert.match(sessionControllerSource, /modelCatalog\(\): Promise<ModelCatalog>/)
 assert.match(remoteEventsSource, /['"]credentials\/reference-updated['"]/)
 assert.match(connectionRpcSource, /requestRejection\(request: ConnectionTrustRequest\): ConnectionRequestRejection/)
+
+// 6. Do not stop at proving DVR's source selector returns the intended shape.
+// Feed an actual DVR-authored durable row into the exact upstream V4 admission
+// code so a future Host tightening fails this contract before a user turn does.
+// Older supported sources predate this V4 migration package, so they keep their
+// own exact-source contracts while V4-capable trains run this admission gate.
+if (expectedVersion.startsWith('0.2.')) {
+  assert.ok(v4Admission, 'DSH 0.2 train must expose the Session v4 admission source')
+}
+if (v4Admission) {
+  const dvrV4Message = Object.freeze({
+    role: 'user',
+    id: 'vision-router-v4-admission-contract',
+    content: Object.freeze([{ type: 'text', text: 'DVR Session v4 admission contract' }]),
+    source: Object.freeze(sourceCompat.visionRouterMessageSource({ header: { version: 4 } })),
+  })
+  const dvrV4Row = Object.freeze({
+    type: 'user/message',
+    seq: 0,
+    time: 0,
+    data: dvrV4Message,
+    surfaceOp: 'append',
+  })
+  assert.doesNotThrow(
+    () => v4Admission.assertV4RowAdmission(dvrV4Row),
+    'exact upstream Session v4 admission must accept DVR producer-owned durable messages',
+  )
+  assert.throws(
+    () => v4Admission.assertV4RowAdmission({
+      ...dvrV4Row,
+      data: {
+        ...dvrV4Message,
+        source: { kind: 'plugin', plugin: 'dsh-vision-router' },
+      },
+    }),
+    /format v4 message requires a producer-owned source kind/,
+    'exact upstream Session v4 admission must reject DVR legacy shared plugin sources',
+  )
+}
 
 console.log(JSON.stringify({
   ok: true,

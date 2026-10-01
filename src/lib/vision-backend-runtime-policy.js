@@ -215,7 +215,7 @@ function failureStream(message, code = 'VISION_IMAGE_DELIVERY_UNAVAILABLE') {
   }
 }
 
-function directStream(ctx, core, plan, call, logger, source) {
+function directStream(ctx, core, plan, call, logger, source, providerTransport) {
   return {
     async *[Symbol.asyncIterator]() {
       const started = Date.now()
@@ -252,6 +252,7 @@ function directStream(ctx, core, plan, call, logger, source) {
             maxTokens: call.maxTokens ?? 4096,
             signal: call.signal,
             sessionId: call.sessionId,
+            providerTransport,
             resolveCredential: async (ref) => ref === keyRef ? apiKey : undefined,
           },
         )
@@ -349,7 +350,7 @@ function llmWithRuntimePolicy(ctx, llm, options) {
                 )
                 return
               }
-              yield* directStream(ctx, core, plan, call, logger, source)
+              yield* directStream(ctx, core, plan, call, logger, source, options.providerTransport)
               return
             }
 

@@ -62,9 +62,13 @@ function normalizeHookResult(event, args, result) {
 
 /**
  * DSH Session V3 requires the historical {kind:'plugin', plugin:...} source,
- * while V4 rejects that wrapper in favor of producer-owned source kinds. Keep
- * every existing DVR message producer unchanged and normalize at the final
- * hook publication boundary using the Session's own durable header version.
+ * while V4 rejects that wrapper in favor of producer-owned source kinds.
+ *
+ * Session-facing DVR producers are responsible for calling
+ * visionRouterMessageSource(session) when they create a message. This final
+ * publication boundary is deliberately defense-in-depth: it protects legacy
+ * or future producers that accidentally reach a hook with the wrong DVR source,
+ * but producer correctness must not depend on this proxy being the sole owner.
  */
 export function installVisionRouterMessageSourceBoundary(ctx) {
   if (!ctx || typeof ctx !== 'object') return ctx
