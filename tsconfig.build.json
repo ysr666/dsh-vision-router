@@ -30,6 +30,7 @@
     "src/lib/image-resource-governor.ts",
     "src/lib/session-vision-mode-authority.ts",
     "src/lib/session-vision-policy.ts",
+    "src/lib/session-vision-policy-domain.ts",
     "src/lib/session-vision-delegation.ts",
     "src/lib/session-vision-delegation-boundary.ts",
     "src/lib/session-vision-state.ts",
