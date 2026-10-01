@@ -1,8 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import {
-  benchmarkAxisForVisionIntent,
-  inferToolVisionIntent,
-} from './vision-capability-router.js'
+import { benchmarkAxisForVisionIntent } from './vision-capability-evidence.js'
+import { inferToolVisionIntent } from './vision-capability-router.js'
 import { capabilityEvidenceFingerprint } from './vision-capability-identity.js'
 import { providerTransportFor } from './live-model-discovery.js'
 
