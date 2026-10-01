@@ -48,6 +48,7 @@
     "src/lib/session-affinity.ts",
     "src/lib/session-affinity-runtime.ts",
     "src/lib/session-surface-policy-domain.ts",
-    "src/lib/core-vision-surface-domain.ts"
+    "src/lib/core-vision-surface-domain.ts",
+    "src/lib/session-surface-compat.ts"
   ]
 }
