@@ -28,6 +28,7 @@ test('runtime composition creates one explicit SessionVisionRuntime and gives th
 test('production runtime receives only narrow Host Session readers', async () => {
   const runtime = await source('lib/runtime-composition.js')
   const compat = await source('lib/dsh-contract-compat.js')
+  const readers = await source('lib/session-query-readers.js')
 
   assert.match(runtime, /createSessionEventReader\(nativeImageCompat\.ctx\)/)
   assert.match(runtime, /readSessionEvent:\s*createSessionEventReader\(nativeImageCompat\.ctx\)/)
@@ -38,10 +39,14 @@ test('production runtime receives only narrow Host Session readers', async () =>
   )
   assert.match(runtime, /sessionTurnResolver,\s*sessionEventTailReader,\s*hostOwnsOfficialDeepSeek,/)
   assert.match(runtime, /const hostOwnsOfficialDeepSeek = hostOwnsOfficialDeepSeekProvider\(stabilizedCtx\)/)
-  assert.match(compat, /query\.readEvent\(\{ sessionId, seq \}\)/)
-  assert.match(compat, /query\.observeSession\(sessionId, \{ projectionMode: 'none' \}\)/)
-  assert.match(compat, /query\.readSession\(sessionId\)/)
-  assert.match(compat, /query\.readEvent\(request\)/)
+  assert.match(
+    compat,
+    /export \{[\s\S]*createSessionEventReader,[\s\S]*createSessionEventTailReader,[\s\S]*createSessionLogReader,[\s\S]*\} from '.\/session-query-readers\.js'/,
+  )
+  assert.match(readers, /readEvent\.call\(query, \{ sessionId, seq \}\)/)
+  assert.match(readers, /observeSession\.call\([\s\S]*projectionMode: 'none'/)
+  assert.match(readers, /readSession\.call\(query, sessionId\)/)
+  assert.match(readers, /readEvent\.call\(query, request\)/)
 })
 
 test('session state and index expose no hidden current owner or lookup monkey-patch seam', async () => {
