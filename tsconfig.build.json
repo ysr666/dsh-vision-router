@@ -43,6 +43,7 @@
     "src/lib/vision-capability-fingerprint.ts",
     "src/lib/core-cache.ts",
     "src/lib/vision-background-failure-policy.ts",
-    "src/lib/vision-chunk-assembler.ts"
+    "src/lib/vision-chunk-assembler.ts",
+    "src/lib/vision-background-stop-store-core.ts"
   ]
 }
