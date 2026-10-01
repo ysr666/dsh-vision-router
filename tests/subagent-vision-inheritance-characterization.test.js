@@ -25,6 +25,10 @@ function ctx() {
         return session.selectionState
       },
     },
+    get(name) {
+      if (name === 'sessionProjections') return this.sessionProjections
+      return undefined
+    },
   }
 }
 
@@ -41,6 +45,41 @@ function agent(provider, model = 'm') {
     },
   }
 }
+
+test('optional sessionProjections capability never requires direct Cordis service access', () => {
+  const projections = {
+    stateOf(session, key) {
+      assert.equal(key, 'modelSelection')
+      return session.selectionState
+    },
+  }
+  const ordinaryAdapter = { stream() {} }
+  const visionAdapter = { stream() {}, [OWNER]: { route: 'deepseek-vision' } }
+  const host = new Proxy({
+    llm: {
+      registration(provider) {
+        if (provider === 'deepseek-vision') return { adapter: visionAdapter }
+        if (provider === 'openai') return { adapter: ordinaryAdapter }
+        return undefined
+      },
+    },
+    get(name) {
+      if (name === 'sessionProjections') return projections
+      return undefined
+    },
+  }, {
+    get(target, property, receiver) {
+      if (property === 'sessionProjections') {
+        throw new Error('cannot get property "sessionProjections" without inject')
+      }
+      return Reflect.get(target, property, receiver)
+    },
+  })
+
+  const authority = resolveSessionVisionModeAuthority(host, agent('deepseek-vision'), {})
+  assert.equal(authority.enabled, true)
+  assert.equal(authority.reason, 'vision-router-route')
+})
 
 test('subagent characterization: inherited DVR route remains Vision ON', () => {
   // Current DSH resolveChildAgentOptions() inherits the parent requestHeader
