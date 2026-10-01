@@ -41,6 +41,7 @@
     "src/lib/vision-runtime-performance-store.ts",
     "src/lib/vision-capability-identity.ts",
     "src/lib/vision-capability-fingerprint.ts",
-    "src/lib/core-cache.ts"
+    "src/lib/core-cache.ts",
+    "src/lib/vision-background-failure-policy.ts"
   ]
 }
