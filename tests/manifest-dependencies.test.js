@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
 
 const manifestPath = new URL('../package.json', import.meta.url)
@@ -84,6 +85,21 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
 ])
+
+test('canonical repository source never tracks generated runtime artifacts', () => {
+  const root = new URL('../', import.meta.url)
+  const tracked = execFileSync(
+    'git',
+    ['ls-files', '--', 'entry.js', 'index.js', 'lib'],
+    { cwd: root, encoding: 'utf8' },
+  ).trim()
+
+  assert.equal(
+    tracked,
+    '',
+    'entry.js, index.js and lib/** are package build artifacts; canonical runtime source belongs under src/** only',
+  )
+})
 
 test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission range', async () => {
   const pkg = await manifest()
