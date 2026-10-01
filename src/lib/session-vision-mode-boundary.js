@@ -272,7 +272,12 @@ function wrapTools(tools, ctx, config, owned) {
           async execute(args, exec) {
             if (
               exec?.agent &&
-              !visionModeEnabledForAgent(ctx, exec.agent, liveConfig(ctx, config))
+              !visionModeEnabledForAgent(
+                ctx,
+                exec.agent,
+                liveConfig(ctx, config),
+                { sessionPolicy: sessionPolicyForAgent(exec.agent) },
+              )
             ) {
               throw visionModeDisabledError(definition.name)
             }
@@ -322,19 +327,33 @@ function wrapTools(tools, ctx, config, owned) {
  * It deliberately lives outside the retired legacy-core policy bridge, whose
  * identity-only closure contract remains frozen.
  */
-export function installSessionVisionModeBoundary(ctx, config = {}) {
+export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {}) {
   if (!isObject(ctx)) return { ctx, config }
   const restrictions = new WeakMap()
   const activeRestrictions = new Set()
   const assemblySnapshots = new WeakMap()
   const ownedVisionTools = new Map()
+  const sessionVisionPolicyStore = runtime?.sessionVisionPolicyStore
   let toolsView
+
+  const sessionPolicyForAgent = (agent) => {
+    const id = typeof agent?.id === 'string' ? agent.id : ''
+    if (id === '' || typeof sessionVisionPolicyStore?.get !== 'function') return undefined
+    try {
+      return sessionVisionPolicyStore.get(id)
+    } catch {
+      return undefined
+    }
+  }
 
   const resolveForAgent = (agent, options = {}) => resolveSessionVisionModeAuthority(
     ctx,
     agent,
     liveConfig(ctx, config),
-    options,
+    {
+      ...options,
+      sessionPolicy: options.sessionPolicy ?? sessionPolicyForAgent(agent),
+    },
   )
 
   const clearAgent = (agent) => {
@@ -493,6 +512,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}) {
                 {
                   turn: payload?.turn,
                   visionPolicy: currentSessionVisionPolicy(),
+                  sessionPolicy: sessionPolicyForAgent(agent),
                 },
               )
             syncAgentToolRestriction(
