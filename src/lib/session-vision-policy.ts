@@ -24,6 +24,8 @@ export interface SessionVisionPolicyTable {
 
 export interface SessionVisionPolicyStore {
   get(sessionId: string): Readonly<SessionVisionPolicy> | undefined
+  /** Optional durable hydration before the Session becomes model-facing. */
+  hydrate?(sessionId: string): Promise<Readonly<SessionVisionPolicy> | undefined>
   set(sessionId: string, policy: SessionVisionPolicy): Promise<Readonly<SessionVisionPolicy>>
   delete(sessionId: string): Promise<void>
 }
