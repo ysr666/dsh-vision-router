@@ -116,7 +116,9 @@
     "typecheck:client": "tsc -p tsconfig.client.json",
     "typecheck": "pnpm typecheck:host && pnpm typecheck:client",
     "prepare": "pnpm build",
-    "prepack": "pnpm build"
+    "prepack": "pnpm build",
+    "lint": "node scripts/lint-source-ownership.mjs",
+    "source:artifact:check": "node scripts/verify-source-artifact-map.mjs"
   },
   "dsh": {
     "client": {
