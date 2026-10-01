@@ -39,6 +39,7 @@
     "src/lib/session-vision-attachment-index.ts",
     "src/lib/vision-capability-evidence.ts",
     "src/lib/vision-runtime-performance-store.ts",
-    "src/lib/vision-capability-identity.ts"
+    "src/lib/vision-capability-identity.ts",
+    "src/lib/vision-capability-fingerprint.ts"
   ]
 }
