@@ -2,12 +2,19 @@ export const SESSION_VISION_POLICY_REVISION = 1 as const
 
 export type SessionVisionPolicySource = 'user' | 'delegation'
 
-export interface SessionVisionPolicy {
-  readonly revision: typeof SESSION_VISION_POLICY_REVISION
-  readonly enabled: boolean
-  readonly source: SessionVisionPolicySource
-  readonly inheritedFrom?: string
-}
+export type SessionVisionPolicy =
+  | Readonly<{
+      revision: typeof SESSION_VISION_POLICY_REVISION
+      enabled: boolean
+      source: 'user'
+      inheritedFrom?: never
+    }>
+  | Readonly<{
+      revision: typeof SESSION_VISION_POLICY_REVISION
+      enabled: boolean
+      source: 'delegation'
+      inheritedFrom: string
+    }>
 
 export interface SessionVisionPolicyTable {
   get(key: string): unknown
@@ -38,15 +45,22 @@ export function parseSessionVisionPolicy(value: unknown): Readonly<SessionVision
   if (typeof record.enabled !== 'boolean') return undefined
   if (record.source !== 'user' && record.source !== 'delegation') return undefined
 
-  const inheritedFrom = nonEmptyString(record.inheritedFrom)
-  if (record.source === 'delegation' && inheritedFrom === undefined) return undefined
-  if (record.source === 'user' && record.inheritedFrom !== undefined) return undefined
+  if (record.source === 'user') {
+    if (record.inheritedFrom !== undefined) return undefined
+    return Object.freeze({
+      revision: SESSION_VISION_POLICY_REVISION,
+      enabled: record.enabled,
+      source: 'user',
+    })
+  }
 
+  const inheritedFrom = nonEmptyString(record.inheritedFrom)
+  if (inheritedFrom === undefined) return undefined
   return Object.freeze({
     revision: SESSION_VISION_POLICY_REVISION,
     enabled: record.enabled,
-    source: record.source,
-    ...(inheritedFrom === undefined ? {} : { inheritedFrom }),
+    source: 'delegation',
+    inheritedFrom,
   })
 }
 
