@@ -42,6 +42,8 @@ export type SessionEventTailReader = (
   options?: unknown,
 ) => Promise<SessionEventTailReadResult>
 
+const disposeSymbol = (Symbol as unknown as { readonly dispose?: symbol }).dispose
+
 const SESSION_EVENT_TAIL_INITIAL_AFTER = 50
 const SESSION_EVENT_TAIL_MAX_EVENTS = 4096
 const SESSION_EVENT_TAIL_MAX_READS = 128
@@ -343,7 +345,9 @@ export function createSessionLogReader(ctx: unknown): SessionLogReader {
         }
         return { supported: true, events }
       } finally {
-        const dispose = propertyBag(observation)?.[Symbol.dispose]
+        const dispose = disposeSymbol === undefined
+          ? undefined
+          : propertyBag(observation)?.[disposeSymbol]
         if (typeof dispose === 'function') dispose.call(observation)
       }
     }
