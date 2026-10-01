@@ -37,6 +37,7 @@
     "src/lib/session-query-readers.ts",
     "src/lib/session-event-history-compat.ts",
     "src/lib/session-vision-attachment-index.ts",
-    "src/lib/vision-capability-evidence.ts"
+    "src/lib/vision-capability-evidence.ts",
+    "src/lib/vision-runtime-performance-store.ts"
   ]
 }
