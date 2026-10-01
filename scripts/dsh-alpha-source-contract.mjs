@@ -172,17 +172,43 @@ for (const provider of [
 
 // 5. The two client/Web bridges must point at exact public canary seams. Keep
 // this source-level evidence next to the runtime behavioral tests in DVR.
-const [sessionControllerSource, remoteEventsSource, connectionRpcSource] = await Promise.all([
+const [
+  sessionControllerSource,
+  remoteEventsSource,
+  connectionRpcSource,
+  sessionCoreSource,
+] = await Promise.all([
   readFile(path.join(dshRoot, 'packages/api/session-controller/src/index.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/api/remotes/src/remote-events.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/client/connection/src/rpc.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'packages/core/session/src/index.ts'), 'utf8'),
 ])
 assert.match(sessionControllerSource, /@Remote\(['"]modelCatalog['"]\)/)
 assert.match(sessionControllerSource, /modelCatalog\(\): Promise<ModelCatalog>/)
 assert.match(remoteEventsSource, /['"]credentials\/reference-updated['"]/)
 assert.match(connectionRpcSource, /requestRejection\(request: ConnectionTrustRequest\): ConnectionRequestRejection/)
 
-// 6. Do not stop at proving DVR's source selector returns the intended shape.
+// 6. Session Vision policy materialization consumes the public post-commit
+// session/event firehose. Pin only the cross-version contract DVR relies on:
+// listener arguments are (session, event), and observers run after the event
+// has entered the Session log. Do not couple this gate to private helper names
+// beyond the existing Session publication boundary.
+assert.match(
+  sessionCoreSource,
+  /['"]session\/event['"]\(this: Scoped<Session>, session: Session, event: SessionEvent\): void/,
+  'supported Hosts must expose the post-commit session/event(session, event) seam',
+)
+const sessionLogCommitAt = sessionCoreSource.indexOf('this.log.push(event as SessionEvent)')
+const sessionObserverPublishAt = sessionCoreSource.indexOf(
+  "invokeContainedSessionObservers(entry.emitCtx, 'session/event'",
+)
+assert.ok(sessionLogCommitAt >= 0, 'supported Hosts must commit Session events before publication')
+assert.ok(
+  sessionObserverPublishAt > sessionLogCommitAt,
+  'session/event observers must run after the exact event is committed to the Session log',
+)
+
+// 7. Do not stop at proving DVR's source selector returns the intended shape.
 // Feed an actual DVR-authored durable row into the exact upstream V4 admission
 // code so a future Host tightening fails this contract before a user turn does.
 // Older supported sources predate this V4 migration package, so they keep their
