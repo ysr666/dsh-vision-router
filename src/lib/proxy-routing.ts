@@ -84,11 +84,19 @@ export function createPerHopProxyDispatcher(
   const fallback = fallbackDispatcher as FetchDispatcher
 
   // Fetch types model a full Undici Dispatcher, while fetch dispatch itself
-  // consumes the dispatch() seam. Proxy the real fallback Dispatcher instead
-  // of returning a dispatch-only object so every other Dispatcher method and
-  // event surface keeps the Host-owned implementation and identity semantics.
-  return new Proxy(fallback, {
-    get(target, property, receiver) {
+  // consumes the dispatch() seam. A Host dispatcher may expose dispatch as a
+  // frozen/non-configurable own property; using that borrowed object directly
+  // as a Proxy target would make an overriding get trap violate ECMAScript
+  // Proxy invariants. Use a neutral shell with the same prototype instead.
+  //
+  // Every non-dispatch read still resolves against and binds to the real
+  // fallback Dispatcher, so the wrapper does not become a second owner for
+  // close/destroy/event state and instanceof-style prototype checks remain
+  // compatible with the borrowed dispatcher.
+  const shell = Object.create(Object.getPrototypeOf(fallback)) as object
+
+  return new Proxy(shell, {
+    get(_target, property) {
       if (property === 'dispatch') {
         return (
           options: Parameters<FetchDispatcher['dispatch']>[0],
@@ -101,8 +109,8 @@ export function createPerHopProxyDispatcher(
           return selected.dispatch(options, handler)
         }
       }
-      const value = Reflect.get(target, property, receiver)
-      return typeof value === 'function' ? value.bind(target) : value
+      const value = Reflect.get(fallback, property, fallback)
+      return typeof value === 'function' ? value.bind(fallback) : value
     },
-  })
+  }) as FetchDispatcher
 }
