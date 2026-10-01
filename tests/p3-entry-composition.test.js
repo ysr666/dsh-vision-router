@@ -72,9 +72,9 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     source.split('\n').length < 500,
     'runtime composition must remain orchestration-sized rather than becoming a new monolith',
   )
-  assert.match(source, /function installHostAndSecurityBoundaries\(ctx, config, core\)/)
+  assert.match(source, /function installHostAndSecurityBoundaries\(ctx, config, core, providerTransport\)/)
   assert.match(source, /function createRuntimeOwners\(host, core\)/)
-  assert.match(source, /function installRoutingAndHostProducts\(host, owners, core\)/)
+  assert.match(source, /function installRoutingAndHostProducts\(host, owners, core, providerTransport\)/)
   assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core, providerTransport\)/)
   assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)/)
   assert.match(
@@ -84,7 +84,12 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
   )
   assert.match(
     source,
-    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const host = installHostAndSecurityBoundaries\(ctx, config, core\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core, runtime\?\.providerTransport\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
+    /installLocalVisionStabilizer\([\s\S]*?\{ providerTransport \},[\s\S]*?installBackgroundCapabilityProfiling\([\s\S]*?\{ logger: logging\.logger, providerTransport \},/,
+    'background and local direct callers must share the explicit ProviderTransport capability',
+  )
+  assert.match(
+    source,
+    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const providerTransport = runtime\?\.providerTransport\s*const host = installHostAndSecurityBoundaries\(ctx, config, core, providerTransport\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core, providerTransport\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core, providerTransport\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
     'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
