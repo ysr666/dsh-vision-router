@@ -245,7 +245,7 @@ function projectAssemblyTools(assembly, enabled, owned) {
   return { ...assembly, tools }
 }
 
-function wrapTools(tools, ctx, config, owned) {
+function wrapTools(tools, ctx, config, owned, sessionPolicyForAgent) {
   if (!isObject(tools)) return tools
   return new Proxy(tools, {
     get(target, property) {
@@ -488,6 +488,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
             target,
             config,
             ownedVisionTools,
+            sessionPolicyForAgent,
           )
         }
         return toolsView
