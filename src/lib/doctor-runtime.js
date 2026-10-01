@@ -220,7 +220,6 @@ function chromiumCandidates(env = process.env) {
 }
 
 const HOST_PACKAGES = [
-  '@deepseek-ai/dsh-client-runtime',
   '@deepseek-ai/dsh-client-ui-settings-plugins',
   '@deepseek-ai/dsh-attachment-local',
   '@deepseek-ai/dsh-llm-deepseek',
