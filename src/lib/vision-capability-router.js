@@ -5,26 +5,18 @@
 // health only gates temporary availability. Model names/families never create
 // capability scores and unmeasured tasks never reorder the user's chain.
 
-export const VISION_INTENTS = Object.freeze([
-  'structured',
-  'ocr',
-  'document',
-  'ui',
-  'grounding',
-  'detection',
-  'general',
-  'chart_diagram',
-  'code_screenshot',
-  'visual_compare',
-])
+import {
+  BENCHMARK_AXES,
+  VISION_INTENTS,
+  benchmarkAxisForVisionIntent,
+  normalizeVisionIntent,
+} from './vision-capability-evidence.js'
 
-export const BENCHMARK_AXES = Object.freeze([
-  'structured',
-  'ocr',
-  'document',
-  'grounding',
-  'general',
-])
+export {
+  BENCHMARK_AXES,
+  VISION_INTENTS,
+  benchmarkAxisForVisionIntent,
+} from './vision-capability-evidence.js'
 
 // Internal compatibility vocabulary. `privacy` is the historical scorer name
 // for the user-facing `local` preference; unlike the old implementation it is
@@ -32,14 +24,6 @@ export const BENCHMARK_AXES = Object.freeze([
 export const VISION_STRATEGIES = Object.freeze(['quality', 'balanced', 'speed', 'privacy'])
 
 export const AUTO_REORDER_MIN_ADVANTAGE = 0.08
-
-const DIRECT_TASK_AXIS = Object.freeze({
-  structured: 'structured',
-  ocr: 'ocr',
-  document: 'document',
-  grounding: 'grounding',
-  general: 'general',
-})
 
 const BOOTSTRAP_VISUAL_INTENT = Object.freeze({
   chat: 'ui',
@@ -60,7 +44,7 @@ function clamp01(value, fallback = 0) {
 }
 
 function normalizedIntent(intent) {
-  return VISION_INTENTS.includes(intent) ? intent : 'general'
+  return normalizeVisionIntent(intent)
 }
 
 function normalizedStrategy(strategy) {
@@ -70,10 +54,6 @@ function normalizedStrategy(strategy) {
 function cleanEnum(value, allowed) {
   const text = typeof value === 'string' ? value.trim() : ''
   return allowed.has(text) ? text : 'unknown'
-}
-
-export function benchmarkAxisForVisionIntent(intent) {
-  return DIRECT_TASK_AXIS[normalizedIntent(intent)]
 }
 
 export function inferBootstrapVisionIntents(bootstrap = {}) {
