@@ -149,6 +149,56 @@ test('0.1.7 prelude keeps configForms activation but binds DVR through the local
   assert.ok(fetched >= 1)
 })
 
+test('0.1.7 prelude keeps an existing settingsScope only as the non-DVR namespace delegate', async () => {
+  let loadedSpec
+  let fetched = 0
+  const legacyScope = { getSnapshot() { return { value: { wrong: true } } } }
+  const otherScope = { getSnapshot() { return { value: { native: true } } } }
+  const original = {
+    bind(spec) {
+      return spec?.namespace === 'vision-router' ? legacyScope : otherScope
+    },
+  }
+  const loader = {
+    mode: 'live',
+    load(spec) { loadedSpec = spec; return spec },
+    create() { return this },
+  }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async () => {
+      fetched += 1
+      return {
+        ok: true,
+        async json() {
+          return { ok: true, value: { value: { routing: false }, base: {}, user: {}, revision: 0, writable: true } }
+        },
+      }
+    },
+  }
+  runInNewContext(SETTINGS_017_CLIENT_PRELUDE, sandbox)
+
+  const observed = {}
+  loader.load({
+    id: 'dsh-vision-router',
+    factory: () => ({
+      inject: ['settingsScope'],
+      apply(ctx) {
+        observed.vision = ctx.settingsScope.bind({ namespace: 'vision-router' })
+        observed.other = ctx.settingsScope.bind({ namespace: 'other-plugin' })
+      },
+    }),
+  })
+  const plugin = loadedSpec.factory(() => undefined)
+  plugin.apply({ settingsScope: original })
+
+  assert.notEqual(observed.vision, legacyScope, 'an empty legacy-shaped DVR scope must not bypass the local bridge')
+  assert.equal(observed.other, otherScope, 'unrelated namespaces must retain the Host binder')
+  await observed.vision.load()
+  assert.equal(observed.vision.getSnapshot().value.routing, false)
+  assert.ok(fetched >= 1)
+})
+
 test('0.1.7 prelude normalizes official Desktop page authority for lazy Connection reads', () => {
   let loadedSpec
   const connection = { isLoopback: false, rpc: { call() {} } }
