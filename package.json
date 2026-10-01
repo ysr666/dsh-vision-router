@@ -14,7 +14,10 @@
     "dsh-vision-router": "./lib/doctor-cli-p0.js"
   },
   "exports": {
-    ".": "./lib/public-entry.js",
+    ".": {
+      "types": "./lib/public-entry.d.ts",
+      "default": "./lib/public-entry.js"
+    },
     "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
@@ -128,5 +131,6 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "types": "lib/public-entry.d.ts"
 }
