@@ -15,6 +15,15 @@ const compatibilityModule = pathToFileURL(join(
 )).href
 const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
+const declaredDshPeers = Object.keys(manifest.peerDependencies ?? {})
+  .filter((name) => name.startsWith('@deepseek-ai/dsh-'))
+  .sort()
+
+assert.ok(
+  declaredDshPeers.length > 0,
+  'DVR manifest must declare at least one DSH Host peer for train admission',
+)
+
 const admitted = [
   // DVR 2.3 supports the 0.1.x line continuously from the first 0.1.5
   // release candidate; later 0.1.x releases are not enumerated exceptions.
@@ -58,7 +67,7 @@ for (const runtimeVersion of rejected) {
   assert.ok(issue, `DVR manifest must not pre-admit DSH ${runtimeVersion}`)
   assert.deepEqual(
     Object.keys(issue.peers).sort(),
-    ['@deepseek-ai/dsh-anonymous-user-id', '@deepseek-ai/dsh-llm-deepseek'],
+    declaredDshPeers,
     `DSH ${runtimeVersion} refusal must be caused only by DVR's declared DSH peers`,
   )
 }
@@ -67,4 +76,5 @@ console.log(JSON.stringify({
   ok: true,
   admitted,
   rejected,
+  declaredDshPeers,
 }))
