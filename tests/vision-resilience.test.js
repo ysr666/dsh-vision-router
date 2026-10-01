@@ -5,6 +5,7 @@
 
 import { test } from 'node:test'
 import { sessionIdentityOf } from '../lib/session-affinity.js'
+import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 import assert from 'node:assert/strict'
 import {
   classifyVisionFailure,
@@ -619,6 +620,31 @@ test('Test 4: 401 + 429 + timeout produce one classified result instead of a ret
 })
 
 // ── Test 5: total task deadline ────────────────────────────────────────────
+
+test('cancelled ambient vision budget aborts an in-flight provider attempt promptly', async () => {
+  const mock = await applyAndMount(
+    visionConfig({
+      visionTaskTimeoutMs: 20_000,
+      providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+    }),
+    { behaviors: { 'qwen-a/qwen3.6-flash': 'hang' } },
+  )
+  const tool = findTool(mock, 'vision_describe')
+  const controller = new AbortController()
+  const started = Date.now()
+  const pending = runWithVisionTurnBudget({ signal: controller.signal }, () =>
+    tool.execute(
+      { attachmentIds: [IMG_ID], question: 'cancel this visual request' },
+      { agent: { session: fakeSession(1) } },
+    ),
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  controller.abort()
+  const parsed = JSON.parse(await pending)
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.code, VISION_RESULT_CODES.TIMEOUT)
+  assert.ok(Date.now() - started < 1500, 'ambient cancellation must reach the provider instead of waiting for the 20s task timeout')
+})
 
 test('Test 5: hanging backends cannot multiply the task wall-clock', async () => {
   const mock = await applyAndMount(

@@ -22,10 +22,11 @@ async function collect(iterable) {
   return chunks
 }
 
-function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyVision = false } = {}) {
+function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyVision = false, providerTransport } = {}) {
   let adapterCalls = 0
   let directCalls = 0
   let directSessionId
+  let directProviderTransport
   let imageReads = 0
   let directMessages
   let registered
@@ -121,12 +122,13 @@ function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyV
     async callOpenAICompatible(_provider, wireMessages, callOptions) {
       directCalls += 1
       directSessionId = callOptions?.sessionId
+      directProviderTransport = callOptions?.providerTransport
       directMessages = wireMessages
       assert.equal(wireMessages[0].content.some((block) => block.type === 'image_url'), true)
       return '731'
     },
   }
-  const wrapped = contextWithVisionBackendRuntimePolicy(ctx, { core, config: settings.get('vision-router') })
+  const wrapped = contextWithVisionBackendRuntimePolicy(ctx, { core, config: settings.get('vision-router'), providerTransport })
   wrapped.tools.register({
     name: 'vision_describe',
     async execute() {
@@ -150,6 +152,7 @@ function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyV
     adapterCalls: () => adapterCalls,
     directCalls: () => directCalls,
     directSessionId: () => directSessionId,
+    directProviderTransport: () => directProviderTransport,
     imageReads: () => imageReads,
     directMessages: () => directMessages,
   }
@@ -169,6 +172,13 @@ test('text-projected explicit visual backend uses direct bridge before adapter d
   assert.equal(f.directCalls(), 1)
   assert.equal(f.directSessionId(), 'session-410-preflight')
   assert.equal(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === '731'), true)
+})
+
+test('text-projected direct bridge preserves the explicit provider transport', async () => {
+  const providerTransport = { fetch() { throw new Error('not called by this unit seam') } }
+  const f = fixture({ inputModalities: ['text'], providerTransport })
+  await f.run()
+  assert.equal(f.directProviderTransport(), providerTransport)
 })
 
 test('local-only policy blocks adapter and preflight bridge before any remote image delivery', async () => {

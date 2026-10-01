@@ -36,6 +36,65 @@ test('vision tool promise rejects promptly when the agent execution is cancelled
   finishUnderlying?.('late')
 })
 
+test('vision tool cancellation propagates into the underlying LLM stream', { timeout: 2_000 }, async () => {
+  let registered
+  let seenSignal
+  let startedResolve
+  let underlyingResolve
+  let underlyingAborted = false
+  const started = new Promise((resolve) => { startedResolve = resolve })
+  const underlyingDone = new Promise((resolve) => { underlyingResolve = resolve })
+  const ctx = {
+    llm: {
+      stream(options) {
+        seenSignal = options?.signal
+        return (async function* () {
+          startedResolve()
+          try {
+            await new Promise((resolve, reject) => {
+              const signal = options?.signal
+              const onAbort = () => {
+                underlyingAborted = true
+                reject(signal?.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError', code: 'ABORT_ERR' }))
+              }
+              if (!signal) return
+              if (signal.aborted) onAbort()
+              else signal.addEventListener('abort', onAbort, { once: true })
+            })
+          } finally {
+            underlyingResolve()
+          }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        })()
+      },
+    },
+    tools: {
+      register(def) { registered = def; return () => {} },
+    },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(ctx, { visionTaskTimeoutMs: 60_000 })
+  wrapped.tools.register({
+    name: 'vision_probe',
+    async execute() {
+      for await (const _chunk of wrapped.llm.stream({ provider: 'p', model: 'm', messages: [] })) {}
+      return 'late-success'
+    },
+  })
+
+  const controller = new AbortController()
+  const pending = registered.execute({}, {
+    signal: controller.signal,
+    agent: { session: { header: { cwd: '/workspace' } } },
+  })
+  await started
+  controller.abort()
+  await assert.rejects(pending, (error) => error?.code === 'ABORT_ERR')
+  await underlyingDone
+  assert.ok(seenSignal, 'the provider call must receive a cancellation signal')
+  assert.equal(seenSignal.aborted, true)
+  assert.equal(underlyingAborted, true, 'the underlying provider work must observe cancellation')
+})
+
 test('vision task deadline releases a turn when an uncooperative Host attachment save never settles', { timeout: 2_000 }, async () => {
   let registered
   let finishUnderlying

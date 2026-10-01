@@ -178,6 +178,7 @@ test('cached checker coalesces startup/card-open requests and reuses success', a
 test('cached checker turns registry failures into non-fatal status objects', async () => {
   const checker = createCachedUpdateChecker({
     currentVersion: '1.1.1',
+    registry: 'https://registry.npmjs.org',
     fetchImpl: async () => { throw new Error('offline') },
   })
   const result = await checker.check(false)

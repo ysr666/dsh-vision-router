@@ -239,6 +239,66 @@ test('resolved Host RemoteResult failures remain failures and populate recovery 
   assert.equal(api.recoveryFor(directory).getSnapshot(), null)
 })
 
+test('stale selection completions never overwrite the newest recovery state', async () => {
+  const window = { fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }) }
+  const html = hardenVisionToggleHtml('<html><head></head></html>')
+  const source = scriptsOfInjectedFixture(html).find((script) => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window,
+    Object,
+    Promise,
+    Array,
+    String,
+    Map,
+    Set,
+    WeakMap,
+    JSON,
+    Date,
+    Number,
+    Error,
+  })
+  const api = window.__dshVisionRouterRootHardening
+
+  const pending = []
+  const directory = {
+    select(selection) {
+      return new Promise((resolve) => pending.push({ selection, resolve }))
+    },
+  }
+  const old = api.select(directory, { provider: 'p', model: 'on' })
+  const newest = api.select(directory, { provider: 'p', model: 'off' })
+  await Promise.resolve()
+  assert.equal(pending.length, 2)
+
+  pending[1].resolve({ ok: true, value: undefined })
+  await newest
+  assert.equal(api.recoveryFor(directory).getSnapshot(), null)
+
+  pending[0].resolve({ ok: false, error: { code: 'stale', message: 'old failure' } })
+  const oldResult = await old
+  assert.equal(oldResult.ok, false)
+  assert.equal(api.recoveryFor(directory).getSnapshot(), null)
+
+  const pending2 = []
+  const directory2 = {
+    select(selection) {
+      return new Promise((resolve) => pending2.push({ selection, resolve }))
+    },
+  }
+  const oldSuccess = api.select(directory2, { provider: 'p', model: 'on' })
+  const newFailure = api.select(directory2, { provider: 'p', model: 'off' })
+  await Promise.resolve()
+
+  pending2[1].resolve({ ok: false, error: { code: 'latest', message: 'new failure' } })
+  await newFailure
+  assert.match(api.recoveryFor(directory2).getSnapshot().message, /latest: new failure/)
+
+  pending2[0].resolve({ ok: true, value: undefined })
+  await oldSuccess
+  assert.match(api.recoveryFor(directory2).getSnapshot().message, /latest: new failure/)
+})
+
 test('selection transport rejection is recoverable without mutating the Host directory store and identical double-clicks coalesce', async () => {
   const window = { fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }) }
   const html = hardenVisionToggleHtml('<html><head></head></html>')
