@@ -1,6 +1,8 @@
 import { currentSessionSurfacePolicy } from './session-surface-policy.js'
 import { sessionSurfaceReplacementIntent } from './session-surface-compat.js'
 import { createSessionVisionStateStore } from './session-vision-state.js'
+import { legacySessionEvents } from './session-event-history-compat.js'
+import { createSessionVisionAttachmentIndex } from './session-vision-attachment-index.js'
 
 const MAX_PENDING_REPAIR_EVENTS = 256
 const MAX_REPAIR_OVERFLOW_RANGES = 32
@@ -9,21 +11,6 @@ const MAX_REPAIR_OVERFLOW_READS_PER_PASS = 32
 
 function isObject(value) {
   return value !== null && typeof value === 'object'
-}
-
-function legacySessionEvents(session) {
-  try {
-    // dsh 0.1.2-alpha.4 removed the bare `session.events` array in favor of
-    // `session.snapshotEvents()`; both are handled so one build runs on both
-    // harness generations.
-    if (session && typeof session.snapshotEvents === 'function') {
-      const events = session.snapshotEvents()
-      return Array.isArray(events) ? events : undefined
-    }
-    return Array.isArray(session?.events) ? session.events : undefined
-  } catch {
-    return undefined
-  }
 }
 
 function surfaceNodes(session) {
@@ -52,9 +39,10 @@ function isReplacementEvent(event) {
 /**
  * Session visual data-plane index.
  *
- * SessionVisionStateStore remains the bounded storage owner. This object owns
- * target-only durable attachment recovery, event-feed-backed tool-result image
- * surface repair and expired structured guard-stop surface repair.
+ * SessionVisionStateStore remains the bounded storage owner. Attachment cache
+ * access and target-only durable recovery are delegated to one typed attachment
+ * index; this object owns event-feed-backed tool-result image surface repair and
+ * expired structured guard-stop surface repair.
  *
  * Supported DSH Hosts expose the post-commit `session/event` feed. Production
  * surface repair consumes only the exact frozen events observed on that feed;
@@ -83,106 +71,21 @@ export function createSessionVisionIndex({
   if (!store || typeof store !== 'object') {
     throw new TypeError('session vision index requires a state store')
   }
-  const primitiveLookup = typeof store.lookupAttachment === 'function'
-    ? store.lookupAttachment.bind(store)
-    : undefined
-  const toolSurfaceScans = new WeakMap()
-  const guardSurfaceScans = new WeakMap()
-  const pendingToolRepairEvents = new WeakMap()
-  const pendingGuardRepairEvents = new WeakMap()
-  const toolRepairOverflowRanges = new WeakMap()
-  const guardRepairOverflowRanges = new WeakMap()
-  const unsupportedSurfaceContracts = new WeakSet()
-  const repairReadWarnings = new WeakMap()
-  const repairFeedOverflowWarnings = new WeakSet()
-  const repairFeedObserverWarnings = new WeakMap()
-  const surfaceFeedBackfills = new WeakMap()
-  const attachmentRecoveryWarnings = new WeakMap()
-  let surfaceEventFeedActive = false
-
-  const recordAttachments = (session, refs) => {
-    if (!session || !Array.isArray(refs) || refs.length === 0) return
-    store.recordAttachments(session, refs)
-  }
-
-  // Synchronous lookup is cache-only. Projected short handles first warm this
-  // cache from current derived messages and must not trigger historical I/O.
-  const lookupAttachment = (session, id) => {
-    if (!primitiveLookup) return undefined
-    return primitiveLookup(session, id)
-  }
-
-  const recoverAttachmentsFromEvents = (session, ids, events) => {
-    const found = new Map()
-    if (!Array.isArray(events) || events.length === 0 || typeof core.collectEventAttachmentRefs !== 'function') {
-      return found
-    }
-    const wanted = new Set(ids.map((id) => String(id)))
-    for (const ref of core.collectEventAttachmentRefs(events)) {
-      if (!ref) continue
-      const id = String(ref.attachmentId ?? ref.id)
-      if (wanted.has(id) && !found.has(id)) found.set(id, ref)
-    }
-    if (found.size > 0) store.recordAttachments(session, [...found.values()])
-    return found
-  }
-
-  const warnAttachmentRecoveryFailure = (session, id, error) => {
-    const message = boundedMessage(error)
-    const key = `${String(id)}:${message}`
-    if (attachmentRecoveryWarnings.get(session) === key) return
-    attachmentRecoveryWarnings.set(session, key)
-    logger?.warn?.(
-      'vision-router: session attachment recovery failed id=%s error=%s',
-      String(id),
-      message,
-    )
-  }
-
-  const resolveAttachments = async (session, ids) => {
-    const requested = [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id)))]
-    const resolved = new Map()
-    const missing = []
-    for (const id of requested) {
-      const cached = lookupAttachment(session, id)
-      if (cached !== undefined) resolved.set(id, cached)
-      else missing.push(id)
-    }
-    if (missing.length === 0 || session === undefined) return resolved
-
-    let events
-    if (typeof readSessionLog === 'function') {
-      let result
-      try {
-        result = await readSessionLog(session)
-      } catch (error) {
-        warnAttachmentRecoveryFailure(session, missing[0], error)
-        return resolved
-      }
-      if (result?.supported === true) {
-        attachmentRecoveryWarnings.delete(session)
-        events = result.events
-      } else if (result?.supported !== false) {
-        warnAttachmentRecoveryFailure(
-          session,
-          missing[0],
-          new Error('Session log reader returned an invalid capability result'),
-        )
-        return resolved
-      }
-    }
-
-    // Historical/partial Hosts without SessionQuery keep the released fallback.
-    // Public rc8+ Hosts use readSessionLog above and never touch sync history.
-    if (events === undefined) events = legacySessionEvents(session)
-    const recovered = recoverAttachmentsFromEvents(session, missing, events)
-    for (const [id, ref] of recovered) resolved.set(id, ref)
-    return resolved
-  }
-
-  const resolveAttachment = async (session, id) => {
-    return (await resolveAttachments(session, [id])).get(String(id))
-  }
+  const attachmentIndex = createSessionVisionAttachmentIndex({
+    stateStore: store,
+    collectEventAttachmentRefs:
+      typeof core.collectEventAttachmentRefs === 'function'
+        ? (events) => core.collectEventAttachmentRefs(events)
+        : undefined,
+    readSessionLog,
+    logger,
+  })
+  const {
+    recordAttachments,
+    lookupAttachment,
+    resolveAttachment,
+    resolveAttachments,
+  } = attachmentIndex
 
   const pendingSurfaceScan = (scans, session) => {
     if (!session) return undefined
@@ -732,7 +635,7 @@ export function createSessionVisionIndex({
     if (typeof core.rewriteImageBlocks === 'function') {
       const found = core.rewriteImageBlocks(messages)
       if (Array.isArray(found?.attachments) && found.attachments.length > 0) {
-        store.recordAttachments(session, found.attachments)
+        recordAttachments(session, found.attachments)
       }
     }
     await ensureSurfaceEventFeedBackfill(session)
