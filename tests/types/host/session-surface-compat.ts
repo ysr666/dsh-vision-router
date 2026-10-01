@@ -12,15 +12,17 @@ const current: SessionSurfaceReplacementIntent | undefined =
   sessionSurfaceReplacementIntent({ header: { version: 4 } }, 7)
 
 if (legacy !== undefined && 'start' in legacy.surfaceOp) {
-  const exactLegacy: LegacySessionSurfaceReplacementIntent = legacy
-  const start: number = exactLegacy.surfaceOp.start
+  const start: number = legacy.surfaceOp.start
+  const end: number = legacy.surfaceOp.end
   void start
+  void end
 }
 
 if (current !== undefined && 'startSeq' in current.surfaceOp) {
-  const exactCurrent: CurrentSessionSurfaceReplacementIntent = current
-  const startSeq: number = exactCurrent.surfaceOp.startSeq
+  const startSeq: number = current.surfaceOp.startSeq
+  const endSeq: number = current.surfaceOp.endSeq
   void startSeq
+  void endSeq
 }
 
 const invalidLegacy: LegacySessionSurfaceReplacementIntent = {
