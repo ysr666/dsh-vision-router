@@ -62,7 +62,7 @@ export function apply(ctx, config = {}) {
     if (transportReleasePromise) return transportReleasePromise
     if (transportReleased) return Promise.resolve()
     transportReleased = true
-    transportReleasePromise = Promise.resolve(transport.dispose())
+    transportReleasePromise = Promise.resolve().then(() => transport.dispose())
     return transportReleasePromise
   }
   try {
@@ -75,7 +75,7 @@ export function apply(ctx, config = {}) {
     hardening.installClientBoundary()
     return result
   } catch (error) {
-    void releaseTransport()
+    void releaseTransport().catch(() => {})
     throw error
   }
 }
