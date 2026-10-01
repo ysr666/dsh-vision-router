@@ -2,8 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   assessTesseractOcr,
+  ocrWithTesseract,
   ocrWithTesseractAdaptive,
   parseTesseractTsv,
+  posterizeSvg,
+  posterizeSvgColor,
   selectTesseractOcrCandidate,
 } from '../lib/core-primitives.js'
 
@@ -114,6 +117,56 @@ test('an optional review failure never discards a successful local OCR result', 
   assert.deepEqual(result.attemptedPsms, [6, 3, 11])
 })
 
+
+test('local OCR and trace helpers make outer cancellation terminal', async () => {
+  const direct = new AbortController()
+  let directCalls = 0
+  const directResult = ocrWithTesseract(Buffer.from('png'), 12000, {
+    signal: direct.signal,
+    async exec(_file, _args, options) {
+      directCalls += 1
+      assert.equal(options.signal, direct.signal)
+      return { stdout: 'READY' }
+    },
+  })
+  assert.equal(await directResult, 'READY')
+  assert.equal(directCalls, 1)
+
+  const adaptive = new AbortController()
+  const reason = new Error('turn cancelled')
+  let adaptiveCalls = 0
+  await assert.rejects(
+    ocrWithTesseractAdaptive(Buffer.from('png'), 12000, {
+      signal: adaptive.signal,
+      async exec(_file, _args, options) {
+        adaptiveCalls += 1
+        assert.equal(options.signal, adaptive.signal)
+        adaptive.abort(reason)
+        throw reason
+      },
+    }),
+    /turn cancelled/,
+  )
+  assert.equal(adaptiveCalls, 1, 'abort must not fall through to alternate PSM review passes')
+
+  const trace = new AbortController()
+  const traceReason = new Error('trace cancelled')
+  trace.abort(traceReason)
+  await assert.rejects(
+    posterizeSvg(Buffer.from('not-used'), 4, 'dominant', 60000, { signal: trace.signal }),
+    /trace cancelled/,
+  )
+  await assert.rejects(
+    posterizeSvgColor(
+      Buffer.alloc(4),
+      { width: 1, height: 1, channels: 4 },
+      [{ hex: '#000000', count: 1, share: 1 }],
+      60000,
+      { signal: trace.signal },
+    ),
+    /trace cancelled/,
+  )
+})
 
 test('adaptive OCR normalizes invalid timeout budgets before dispatch', async () => {
   const seenTimeouts = []

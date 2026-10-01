@@ -808,6 +808,76 @@ test('vision-http reads local backend settings live, including URL/model/protoco
   }
 })
 
+test('vision_ocr propagates tool cancellation into an in-flight direct HTTP fallback', async () => {
+  const config0 = {
+    freeFallback: false,
+    ocrEngine: 'vision',
+    timeoutMs: 120000,
+    visionTaskTimeoutMs: 120000,
+    httpProviders: [{
+      name: 'cancel-probe',
+      baseURL: 'http://127.0.0.1:9/v1',
+      model: 'cancel-vl',
+      apiKeyEnv: '',
+    }],
+  }
+  const harness = bootHarness(config0)
+  const requestSignals = []
+  let requestCount = 0
+  let releaseStarted
+  const requestStarted = new Promise((resolve) => { releaseStarted = resolve })
+  const providerTransport = {
+    async fetch(_input, init) {
+      requestCount += 1
+      requestSignals.push(init.signal)
+      if (requestCount === 1) {
+        releaseStarted()
+        return new Promise((resolve, reject) => {
+          const abort = () => reject(init.signal?.reason ?? new Error('provider request aborted'))
+          if (init.signal?.aborted) abort()
+          else init.signal?.addEventListener('abort', abort, { once: true })
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'RECOVERED' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  apply(harness.ctx, Config(config0), { providerTransport })
+  const activate = harness.toolDefs.get('vision_activate')
+  assert.ok(activate)
+  await activate.execute({}, {})
+  const ocr = harness.toolDefs.get('vision_ocr')
+  assert.ok(ocr)
+
+  const workdir = mkdtempSync(path.join(tmpdir(), 'vr-ocr-cancel-'))
+  const imagePath = path.join(workdir, 'source.png')
+  writeFileSync(imagePath, PNG_BYTES)
+  const controller = new AbortController()
+  const session = { header: { cwd: workdir } }
+  try {
+    const pending = ocr.execute(
+      { image: imagePath, engine: 'vision' },
+      { signal: controller.signal, agent: { session } },
+    )
+    await requestStarted
+    controller.abort(new Error('ocr turn cancelled'))
+    await assert.rejects(pending, /ocr turn cancelled/)
+    assert.equal(requestSignals[0]?.aborted, true)
+
+    const recovered = JSON.parse(await ocr.execute(
+      { image: imagePath, engine: 'vision' },
+      { signal: new AbortController().signal, agent: { session } },
+    ))
+    assert.equal(recovered.engine, 'vision')
+    assert.equal(recovered.text, 'RECOVERED')
+    assert.equal(requestCount, 2, 'cancellation must not poison breaker or all-failed turn memory')
+  } finally {
+    rmSync(workdir, { recursive: true, force: true })
+  }
+})
+
 test('vision_screenshot is NOT registered until the user explicitly opts in (boot-time)', async () => {
   // Default (desktopScreenshot=false): the tool is absent from the model-
   // visible set entirely — a disabled default must not change the tool
