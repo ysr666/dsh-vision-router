@@ -35,6 +35,7 @@ function artifactRoot() {
 
 function artifactPath(sourcePath, outputRoot) {
   const relative = path.relative(SOURCE, sourcePath)
+  if (relative.endsWith('.d.ts')) return path.join(outputRoot, relative)
   return path.join(outputRoot, relative.endsWith('.ts') ? relative.slice(0, -3) + '.js' : relative)
 }
 
@@ -61,7 +62,7 @@ async function buildInto(outputRoot) {
   const sources = await filesUnder(SOURCE)
 
   for (const source of sources) {
-    if (!source.endsWith('.js')) continue
+    if (!source.endsWith('.js') && !source.endsWith('.d.ts')) continue
     const artifact = artifactPath(source, outputRoot)
     await mkdir(path.dirname(artifact), { recursive: true })
     await copyFile(source, artifact)
