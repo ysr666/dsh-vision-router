@@ -611,7 +611,7 @@ export function extractJson(text) {
   return undefined
 }
 
-export { createCache } from './core-cache.js'
+export { cacheWeight, createCache } from './core-cache.js'
 
 /** True when the harness llm service has a registered adapter for the provider route. */
 export function adapterAvailable(llm, provider) {
@@ -2857,7 +2857,6 @@ export {
   FAILURE_ADVICE,
   PERSISTED_GUARD_STOP_SURFACE_ID,
   imageMarker,
-  cacheWeight,
   visionAnswer,
   NON_GENERATIVE_VISION_MODEL_HINTS,
   VISION_MODEL_NAME_HINTS,
