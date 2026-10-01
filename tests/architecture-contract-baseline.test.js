@@ -14,7 +14,11 @@ test('package root and runtime support contract stay stable during architecture 
   const pkg = await packageJson()
   assert.equal(pkg.name, 'dsh-vision-router')
   assert.equal(pkg.main, 'lib/public-entry.js')
-  assert.equal(pkg.exports?.['.'], './lib/public-entry.js')
+  assert.equal(pkg.types, 'lib/public-entry.d.ts')
+  assert.deepEqual(pkg.exports?.['.'], {
+    types: './lib/public-entry.d.ts',
+    default: './lib/public-entry.js',
+  })
   assert.equal(pkg.exports?.['./client'], './lib/client.js')
   assert.equal(pkg.exports?.['./package.json'], './package.json')
   assert.equal(pkg.exports?.['./cordis.patch.yml'], './cordis.patch.yml')
@@ -120,8 +124,9 @@ async function productionRuntimeFiles() {
 }
 
 test('3.0 R7 package root exposes only the deliberate plugin and compatibility contract', async () => {
-  const [publicEntry, entry, core, root] = await Promise.all([
+  const [publicEntry, declaration, entry, core, root] = await Promise.all([
     text('lib/public-entry.js'),
+    text('lib/public-entry.d.ts'),
     text('entry.js'),
     text('index.js'),
     import(new URL('../lib/public-entry.js', import.meta.url)),
@@ -132,7 +137,7 @@ test('3.0 R7 package root exposes only the deliberate plugin and compatibility c
   assert.match(entry, /export \{ inject, name \} from '\.\/index\.js'/)
   assert.match(core, /export \* from '\.\/lib\/vision-resilience\.js'/)
 
-  assert.deepEqual(Object.keys(root).sort(), [
+  const publicNames = [
     'Config',
     'SETTINGS_CONTRACT_REVISION',
     'apply',
@@ -145,7 +150,18 @@ test('3.0 R7 package root exposes only the deliberate plugin and compatibility c
     'name',
     'protectHostProviderOwnership',
     'sessionSurfaceReplacementIntent',
-  ])
+  ]
+  assert.deepEqual(Object.keys(root).sort(), publicNames)
+
+  for (const name of publicNames) {
+    assert.match(
+      declaration,
+      new RegExp(`\\b(?:const|function) ${name}\\b`),
+      `${name} must have one deliberate package-root declaration`,
+    )
+  }
+  assert.doesNotMatch(declaration, /from ['"]\.\/.*['"]/)
+  assert.doesNotMatch(declaration, /@deepseek-ai\/[^'"]+\/src\//)
 })
 
 test('production runtime never depends on DSH private source entry points', async () => {
