@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   DSH_017_SETTINGS_COMPAT_MARK,
@@ -302,6 +305,34 @@ test('Vision Router message source follows the Session durable format version wi
   assert.deepEqual(visionRouterMessageSource({}), {
     kind: 'plugin', plugin: 'dsh-vision-router',
   })
+  assert.deepEqual(visionRouterMessageSource({ header: { version: '4' } }), {
+    kind: 'plugin', plugin: 'dsh-vision-router',
+  })
+})
+
+test('every production message producer delegates Session source selection to the compatibility helper', () => {
+  const root = dirname(dirname(fileURLToPath(import.meta.url)))
+  const productionFiles = [join(root, 'index.js')]
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) visit(path)
+      else if (entry.isFile() && entry.name.endsWith('.js')) productionFiles.push(path)
+    }
+  }
+  visit(join(root, 'lib'))
+  for (const producer of productionFiles) {
+    if (producer.endsWith('session-message-source-compat.js')) continue
+    const source = readFileSync(producer, 'utf8')
+    assert.doesNotMatch(
+      source,
+      /source:\s*\{\s*kind:\s*['"]plugin['"]\s*,\s*plugin:\s*['"]dsh-vision-router['"]\s*\}/u,
+      `${producer.slice(root.length + 1)} must not hard-code the Session v3 source`,
+    )
+  }
+  for (const producer of ['index.js', 'lib/runtime-i18n-boundary.js', 'lib/structured-flow-hardening.js', 'lib/vision-evidence-guidance.js']) {
+    assert.match(readFileSync(join(root, producer), 'utf8'), /visionRouterMessageSource\(/u)
+  }
 })
 
 test('Session source boundary normalizes final pre-step and post-execute DVR contexts but leaves foreign sources untouched', async () => {

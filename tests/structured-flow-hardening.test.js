@@ -133,7 +133,7 @@ test('bootstrap is one-shot per turn while fast strategy does not cap evidence c
     () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
     () => 'evidence',
   )
-  const session = {}
+  const session = { header: { version: 4 } }
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
 
@@ -279,7 +279,7 @@ test('mixed bootstrap and a one-call cap do not create an impossible two-branch 
     () => 'evidence',
   )
   const branches = registerMixedBranchTools(harness)
-  const session = {}
+  const session = { header: { version: 4 } }
   const exec = { agent: { session } }
   await preStep(harness, session, 1)
   await tools.bootstrap().execute({}, exec)
@@ -296,6 +296,7 @@ test('mixed bootstrap and a one-call cap do not create an impossible two-branch 
   )
   const stop = decision.messages.find((message) => String(message.id).includes('structured-guard-stop'))
   assert.ok(stop)
+  assert.deepEqual(stop.source, { kind: 'plugin:dsh-vision-router' })
   assert.match(stop.content[0].text, /深挖次数上限/)
 
   const blocked = JSON.parse(await branches.ocr().execute({}, exec))
