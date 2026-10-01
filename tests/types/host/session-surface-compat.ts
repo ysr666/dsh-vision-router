@@ -23,8 +23,8 @@ if (current !== undefined && 'startSeq' in current.surfaceOp) {
   void startSeq
 }
 
-// @ts-expect-error legacy replacement endpoints never use startSeq
 const invalidLegacy: LegacySessionSurfaceReplacementIntent = {
+  // @ts-expect-error legacy replacement endpoints never use startSeq
   surfaceOp: { op: 'replace', startSeq: 7, endSeq: 7 },
   sourceEventSeqs: [7],
 }
