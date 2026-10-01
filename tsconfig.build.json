@@ -31,6 +31,7 @@
     "src/lib/session-vision-mode-authority.ts",
     "src/lib/session-vision-policy.ts",
     "src/lib/session-vision-delegation.ts",
+    "src/lib/session-vision-delegation-boundary.ts",
     "src/lib/session-vision-state.ts",
     "src/lib/session-query-readers.ts",
     "src/lib/session-event-history-compat.ts",
