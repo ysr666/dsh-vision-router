@@ -169,6 +169,12 @@ jobs:
         with:
           node-version: 22.19.0
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Install exact Host workspace dependencies
         working-directory: dsh-exact
         env:
