@@ -14,7 +14,7 @@ export { SETTINGS_CONTRACT_REVISION }
 
 export const Config = composePublicVisionConfig(core.Config)
 
-export * from './index.js'
+export { inject, name } from './index.js'
 export { sessionSurfaceReplacementIntent } from './lib/session-surface-compat.js'
 export {
   ensureVisionAttachmentAdmissionPolicy,
