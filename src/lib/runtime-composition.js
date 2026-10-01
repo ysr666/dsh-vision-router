@@ -232,16 +232,18 @@ function createRuntimeOwners(host, core) {
     { rewriteHistoryImages: core.rewriteHistoryImages },
   )
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(legacyCoreCompat.ctx)
-  installSessionVisionDelegationBoundary(
-    legacyCoreCompat.ctx,
-    sessionVisionPolicyStore,
-    (parent) => resolveSessionVisionModeAuthority(
-      legacyCoreCompat.ctx,
-      parent,
-      legacyCoreCompat.config,
-      { sessionPolicy: sessionVisionPolicyStore.get(String(parent.id)) },
-    ),
-  )
+  legacyCoreCompat.ctx.inject?.(['agents'], (agentsCtx) => {
+    installSessionVisionDelegationBoundary(
+      agentsCtx,
+      sessionVisionPolicyStore,
+      (parent) => resolveSessionVisionModeAuthority(
+        agentsCtx,
+        parent,
+        legacyCoreCompat.config,
+        { sessionPolicy: sessionVisionPolicyStore.get(String(parent.id)) },
+      ),
+    )
+  })
   const sessionVisionModeCompat = installSessionVisionModeBoundary(
     legacyCoreCompat.ctx,
     legacyCoreCompat.config,
