@@ -2220,77 +2220,7 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   return text
 }
 
-/**
- * Minimal harness-chunk assembler (no dsh imports required). Feeds the raw
- * `llm/stream` chunk protocol and produces the final text of text blocks.
- * Terminal failures throw; a `max-tokens` finish returns the partial text.
- */
-export function createChunkAssembler() {
-  const parts = new Map()
-  const order = []
-  let finishKind
-  let failure
-
-  const push = (chunk) => {
-    if (!chunk || typeof chunk.type !== 'string') return
-    switch (chunk.type) {
-      case 'block-start': {
-        if (!parts.has(chunk.index)) {
-          order.push(chunk.index)
-          parts.set(chunk.index, { type: chunk.blockType, text: '' })
-        }
-        break
-      }
-      case 'text-delta': {
-        const part = parts.get(chunk.index)
-        if (part) part.text += chunk.text ?? ''
-        break
-      }
-      case 'reasoning-delta':
-      case 'tool-call-delta':
-      case 'usage':
-        break
-      case 'block-end': {
-        const part = parts.get(chunk.index)
-        if (part && chunk.block && typeof chunk.block.text === 'string') {
-          part.text = chunk.block.text
-        }
-        break
-      }
-      case 'finish': {
-        const reason = chunk.reason
-        if (reason && (reason.kind === 'error' || reason.kind === 'aborted')) {
-          failure = reason.failure
-        }
-        finishKind = reason && reason.kind ? reason.kind : 'stop'
-        break
-      }
-      case 'error':
-      case 'aborted':
-        failure = chunk.failure
-        break
-      default:
-        break
-    }
-  }
-
-  const finish = () => {
-    if (failure) {
-      throw new Error(failure && failure.message ? failure.message : String(failure))
-    }
-    if (finishKind !== undefined && finishKind !== 'stop' && finishKind !== 'max-tokens') {
-      throw new Error(`vision call finished with "${finishKind}"`)
-    }
-    return order
-      .map((index) => parts.get(index))
-      .filter((part) => part && part.type === 'text')
-      .map((part) => part.text)
-      .join('')
-      .trim()
-  }
-
-  return { push, finish }
-}
+export { createChunkAssembler } from './vision-chunk-assembler.js'
 
 async function visionAnswer(llm, options) {
   return runWithVisionSessionAffinity(options?.sessionId, async () => {
