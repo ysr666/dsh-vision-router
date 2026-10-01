@@ -124,7 +124,7 @@ test('shared remote-risk owner coalesces concurrent authorization and refreshes 
   )
 })
 
-test('remote-risk authorization coalesces only within one RPC target', async () => {
+test('remote-risk authorization stays isolated across live RPC replacement', async () => {
   let releaseA
   const gateA = new Promise((resolve) => { releaseA = resolve })
   const calls = []
@@ -160,16 +160,21 @@ test('remote-risk authorization coalesces only within one RPC target', async () 
     },
     locale: 'en-US',
   })
-  const wrappedA = boundary.wrapContext({
-    get(name) { return name === 'connection' ? { rpc: rpcA } : undefined },
-  }).get('connection').rpc
-  const wrappedB = boundary.wrapContext({
-    get(name) { return name === 'connection' ? { rpc: rpcB } : undefined },
-  }).get('connection').rpc
 
-  const pendingA = wrappedA.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  let currentRpc = rpcA
+  const connection = {
+    get rpc() { return currentRpc },
+  }
+  const wrappedContext = boundary.wrapContext({
+    get(name) { return name === 'connection' ? connection : undefined },
+  })
+  const wrappedConnection = wrappedContext.get('connection')
+  assert.equal(wrappedContext.get('connection'), wrappedConnection)
+
+  const pendingA = wrappedConnection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
   await Promise.resolve()
-  const resultB = await wrappedB.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  currentRpc = rpcB
+  const resultB = await wrappedConnection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
   assert.equal(resultB.value.owner, 'B')
   assert.equal(calls.filter(([name, endpoint]) => name === 'B' && endpoint === 'authorize').length, 1)
 
