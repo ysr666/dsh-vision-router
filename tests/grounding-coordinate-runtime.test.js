@@ -474,3 +474,10 @@ test('non-grounding tools pass through without execute replacement when no Sessi
   wrapped.tools.register({ name: 'vision_crop', execute })
   assert.equal(h.registered.get('vision_crop').execute, execute)
 })
+
+test('attachment handle wrapper preserves malformed Host registrations for Host-owned validation', async () => {
+  const mod = await import('../lib/vision-attachment-handle-runtime.js')
+  for (const value of [null, undefined]) {
+    assert.equal(mod.wrapVisionAttachmentHandleDefinition(value, { sessionVisionIndex: {} }), value)
+  }
+})

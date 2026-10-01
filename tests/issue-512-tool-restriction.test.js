@@ -351,3 +351,35 @@ test('Session policy keeps an ordinary child route enabled through direct tool e
   assert.ok(definition)
   assert.equal(await definition.execute({}, { agent: child }), 'policy-enabled')
 })
+
+
+test('committed model selection materializes user Session Vision authority over delegation snapshots', async () => {
+  const rows = new Map([
+    ['agent', { revision: 1, enabled: false, source: 'delegation', inheritedFrom: 'parent' }],
+  ])
+  const store = {
+    get(id) { return rows.get(id) },
+    async set(id, policy) {
+      rows.set(id, policy)
+      return policy
+    },
+    async delete(id) { rows.delete(id) },
+  }
+  const h = makeHarness({ sessionVisionPolicyStore: store })
+  const onSessionEvent = h.handlers.get('session/event')
+  assert.equal(typeof onSessionEvent, 'function')
+
+  onSessionEvent(
+    { id: 'agent' },
+    { type: 'model/selection', data: { provider: 'deepseek-vision', model: 'model' } },
+  )
+  await Promise.resolve()
+  assert.deepEqual(rows.get('agent'), { revision: 1, enabled: true, source: 'user' })
+
+  onSessionEvent(
+    { id: 'agent' },
+    { type: 'model/selection', data: { provider: 'deepseek-official', model: 'model' } },
+  )
+  await Promise.resolve()
+  assert.deepEqual(rows.get('agent'), { revision: 1, enabled: false, source: 'user' })
+})

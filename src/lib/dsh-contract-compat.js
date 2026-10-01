@@ -39,16 +39,11 @@ export {
 
 function attachmentStoreOf(ctx) {
   if (!ctx || typeof ctx !== 'object') return undefined
+  // attachments is an optional capability at this boundary. Context#get keeps
+  // the probe non-owning; lifecycle ownership is handled separately by inject.
   try {
-    if (typeof ctx.get === 'function') {
-      const store = ctx.get('attachments')
-      if (store && typeof store === 'object') return store
-    }
-  } catch {
-    // A detached/partial test context may not expose the service yet.
-  }
-  try {
-    const store = ctx.attachments
+    if (typeof ctx.get !== 'function') return undefined
+    const store = ctx.get('attachments')
     return store && typeof store === 'object' ? store : undefined
   } catch {
     return undefined
@@ -377,6 +372,9 @@ export function installHostSettingsCompatibility(ctx, entryConfig, options = {})
   const install = options.installSettingsSection ?? installSettingsSectionCompat
   const ns = options.namespace
   const Config = options.Config
+  if (typeof ns !== 'string' || ns.trim() === '') {
+    throw new TypeError('vision-router: host settings compatibility requires namespace')
+  }
   if (Config === undefined) {
     throw new TypeError('vision-router: host settings compatibility requires Config')
   }

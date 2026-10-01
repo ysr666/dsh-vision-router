@@ -122,7 +122,7 @@ const owned: boolean = hostOwnsOfficialDeepSeekProvider({})
 const admission = ensureVisionAttachmentAdmissionPolicy({})
 const installedAdmission = installVisionAttachmentAdmissionPolicy({})
 const protectedCtx = protectHostProviderOwnership({ llm: {} })
-const settingsCtx = installHostSettingsCompatibility({}, {}, { Config })
+const settingsCtx = installHostSettingsCompatibility({}, {}, { Config, namespace: 'vision-router' })
 const intent: SessionSurfaceReplacementIntent | undefined =
   sessionSurfaceReplacementIntent({ header: { version: 4 } }, 1)
 const applied: unknown = apply({}, config)
@@ -139,6 +139,10 @@ void settingsCtx
 void intent
 void applied
 
+// @ts-expect-error package root owns provider transport; runtime injection is internal
+apply({}, config, { providerTransport: {} })
+// @ts-expect-error settings compatibility requires an explicit namespace and Config
+installHostSettingsCompatibility({}, {}, {})
 // @ts-expect-error mature Core helpers are not package-root API
 void dvr.createCache
 `,

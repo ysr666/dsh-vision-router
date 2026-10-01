@@ -12,7 +12,6 @@ export const Config: Schemastery<
 export function apply(
   ctx: unknown,
   config?: Record<string, unknown>,
-  runtime?: Record<string, unknown>,
 ): unknown
 
 export interface LegacySessionSurfaceReplacementIntent {
@@ -80,8 +79,8 @@ export function installVisionAttachmentAdmissionPolicy(
 export function protectHostProviderOwnership<Context>(ctx: Context): Context
 
 export interface HostSettingsCompatibilityOptions {
-  readonly namespace?: string
-  readonly Config?: unknown
+  readonly namespace: string
+  readonly Config: unknown
   readonly installSettingsSection?: (
     ctx: unknown,
     namespace: unknown,
@@ -94,5 +93,5 @@ export interface HostSettingsCompatibilityOptions {
 export function installHostSettingsCompatibility<Context>(
   ctx: Context,
   entryConfig: Record<string, unknown>,
-  options?: HostSettingsCompatibilityOptions,
+  options: HostSettingsCompatibilityOptions,
 ): Context
