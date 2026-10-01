@@ -7,6 +7,10 @@ const sessionIndexSource = await readFile(
   new URL('../lib/session-vision-index.js', import.meta.url),
   'utf8',
 )
+const attachmentIndexSource = await readFile(
+  new URL('../lib/session-vision-attachment-index.js', import.meta.url),
+  'utf8',
+)
 
 test('runtime no longer owns cross-turn vision state in process-global raw Maps', () => {
   assert.match(source, /const sessionVisionRuntime = runtime\?\.sessionVision/)
@@ -30,10 +34,17 @@ test('session-visible paths use the bound memory view instead of the global comp
 })
 
 test('attachment cache miss recovers only the requested durable ids', () => {
-  assert.match(sessionIndexSource, /const wanted = new Set\(ids\.map\(\(id\) => String\(id\)\)\)/)
-  assert.match(sessionIndexSource, /wanted\.has\(id\) && !found\.has\(id\)/)
-  assert.match(sessionIndexSource, /store\.recordAttachments\(session, \[\.\.\.found\.values\(\)\]\)/)
-  assert.doesNotMatch(sessionIndexSource, /store\.recordAttachments\(session, core\.collectEventAttachmentRefs\(events\)\)/)
+  assert.match(sessionIndexSource, /createSessionVisionAttachmentIndex\(/)
+  assert.match(attachmentIndexSource, /const wanted = new Set\(ids\)/)
+  assert.match(attachmentIndexSource, /wanted\.has\(id\) && !found\.has\(id\)/)
+  assert.match(
+    attachmentIndexSource,
+    /stateStore\.recordAttachments\(session, \[\.\.\.found\.values\(\)\]\)/,
+  )
+  assert.doesNotMatch(
+    attachmentIndexSource,
+    /stateStore\.recordAttachments\(session, collectEventAttachmentRefs\(events\)\)/,
+  )
 })
 
 test('high-resolution upload admission remains separate from execution budgets', async () => {
