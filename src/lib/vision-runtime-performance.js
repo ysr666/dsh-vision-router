@@ -3,32 +3,16 @@ import { benchmarkAxisForVisionIntent } from './vision-capability-evidence.js'
 import { inferToolVisionIntent } from './vision-capability-router.js'
 import { capabilityEvidenceFingerprint } from './vision-capability-identity.js'
 import { providerTransportFor } from './live-model-discovery.js'
+import { createVisionRuntimePerformanceSampleStore } from './vision-runtime-performance-store.js'
 
-export const DEFAULT_RUNTIME_PERFORMANCE_MAX_AGE_MS = 60 * 60 * 1000
-export const DEFAULT_RUNTIME_PERFORMANCE_MAX_SAMPLES = 8
-export const DEFAULT_RUNTIME_PERFORMANCE_MIN_SAMPLES = 2
-export const DEFAULT_RUNTIME_PERFORMANCE_MAX_BACKENDS = 128
+export {
+  DEFAULT_RUNTIME_PERFORMANCE_MAX_AGE_MS,
+  DEFAULT_RUNTIME_PERFORMANCE_MAX_SAMPLES,
+  DEFAULT_RUNTIME_PERFORMANCE_MIN_SAMPLES,
+  DEFAULT_RUNTIME_PERFORMANCE_MAX_BACKENDS,
+} from './vision-runtime-performance-store.js'
 
 const runtimeScope = new AsyncLocalStorage()
-
-function finiteLatency(value) {
-  const number = Number(value)
-  return Number.isFinite(number) && number >= 0 ? number : undefined
-}
-
-function median(values) {
-  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b)
-  if (sorted.length === 0) return undefined
-  const middle = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 1
-    ? sorted[middle]
-    : (sorted[middle - 1] + sorted[middle]) / 2
-}
-
-function cleanBackendKey(value) {
-  const text = typeof value === 'string' ? value.trim() : ''
-  return text === '' ? undefined : text.slice(0, 512)
-}
 
 function backendParts(backendKey) {
   const key = cleanBackendKey(backendKey)
@@ -89,124 +73,13 @@ function failureFinish(chunk) {
 }
 
 export function createVisionRuntimePerformanceStore(options = {}) {
-  const now = typeof options.now === 'function' ? options.now : Date.now
-  const maxAgeMs = Math.max(1_000, Number(options.maxAgeMs) || DEFAULT_RUNTIME_PERFORMANCE_MAX_AGE_MS)
-  const maxSamples = Math.max(1, Math.min(64, Math.floor(Number(options.maxSamples) || DEFAULT_RUNTIME_PERFORMANCE_MAX_SAMPLES)))
-  const minSamples = Math.max(1, Math.min(maxSamples, Math.floor(Number(options.minSamples) || DEFAULT_RUNTIME_PERFORMANCE_MIN_SAMPLES)))
-  const maxBackends = Math.max(1, Math.min(1024, Math.floor(Number(options.maxBackends) || DEFAULT_RUNTIME_PERFORMANCE_MAX_BACKENDS)))
-  const records = new Map()
-  let identityContext = options.context
   const identityResolver = typeof options.identityResolver === 'function'
     ? options.identityResolver
     : (backendKey, ctx) => runtimePerformanceIdentityFor(ctx, backendKey)
-
-  const resolvedStorageKey = (backendKey) => {
-    const key = cleanBackendKey(backendKey)
-    if (!key) return undefined
-    let identity
-    try { identity = identityContext ? identityResolver(key, identityContext) : undefined } catch { identity = undefined }
-    return identity ? `${key}\u0000${identity}` : key
-  }
-
-  const pruneAxis = (samples, at) => samples.filter((sample) => at - sample.at <= maxAgeMs)
-
-  const pruneBackend = (key, at) => {
-    const axes = records.get(key)
-    if (!axes) return undefined
-    for (const [axis, samples] of axes) {
-      const current = pruneAxis(samples, at)
-      if (current.length === 0) axes.delete(axis)
-      else if (current.length !== samples.length) axes.set(axis, current)
-    }
-    if (axes.size === 0) {
-      records.delete(key)
-      return undefined
-    }
-    // LRU touch only on runtime-observation reads/writes; routing diagnostics
-    // are allowed to read this performance store because it is not the v1
-    // breaker and has no execution side effects.
-    records.delete(key)
-    records.set(key, axes)
-    return axes
-  }
-
-  const bound = () => {
-    while (records.size > maxBackends) {
-      const oldest = records.keys().next().value
-      if (oldest === undefined) break
-      records.delete(oldest)
-    }
-  }
-
-  return {
-    maxAgeMs,
-    maxSamples,
-    minSamples,
-    bindContext(ctx) {
-      identityContext = ctx
-    },
-    record(backendKey, axis, latencyMs, at = now()) {
-      const key = resolvedStorageKey(backendKey)
-      const latency = finiteLatency(latencyMs)
-      const timestamp = Number(at)
-      if (!key || !benchmarkAxisForVisionIntent(axis) || latency === undefined || !Number.isFinite(timestamp)) return false
-      let axes = pruneBackend(key, timestamp)
-      if (!axes) {
-        axes = new Map()
-        records.set(key, axes)
-      }
-      const current = pruneAxis(axes.get(axis) ?? [], timestamp)
-      current.push({ at: timestamp, latencyMs: latency })
-      if (current.length > maxSamples) current.splice(0, current.length - maxSamples)
-      axes.set(axis, current)
-      records.delete(key)
-      records.set(key, axes)
-      bound()
-      return true
-    },
-    get(backendKey, at = now()) {
-      const key = resolvedStorageKey(backendKey)
-      const timestamp = Number(at)
-      if (!key || !Number.isFinite(timestamp)) return undefined
-      const axes = pruneBackend(key, timestamp)
-      if (!axes) return undefined
-      const observedLatencyMsByAxis = {}
-      const runtimeLatencyMsByAxis = {}
-      const sampleCountByAxis = {}
-      const observedAtByAxis = {}
-      for (const [axis, samples] of axes) {
-        const latencies = samples.map((sample) => sample.latencyMs)
-        const value = median(latencies)
-        if (value === undefined) continue
-        observedLatencyMsByAxis[axis] = value
-        sampleCountByAxis[axis] = samples.length
-        observedAtByAxis[axis] = Math.max(...samples.map((sample) => sample.at))
-        if (samples.length >= minSamples) runtimeLatencyMsByAxis[axis] = value
-      }
-      return {
-        runtimeLatencyMsByAxis,
-        observedLatencyMsByAxis,
-        sampleCountByAxis,
-        observedAtByAxis,
-        maxAgeMs,
-        minSamples,
-      }
-    },
-    clear(backendKey) {
-      if (backendKey === undefined) {
-        records.clear()
-        return
-      }
-      const base = cleanBackendKey(backendKey)
-      if (!base) return
-      records.delete(base)
-      const prefix = `${base}\u0000`
-      for (const key of [...records.keys()]) if (key.startsWith(prefix)) records.delete(key)
-    },
-    size() {
-      return records.size
-    },
-  }
+  return createVisionRuntimePerformanceSampleStore({
+    ...options,
+    identityResolver,
+  })
 }
 
 export function withVisionRuntimePerformanceScope(toolName, args, fn) {
