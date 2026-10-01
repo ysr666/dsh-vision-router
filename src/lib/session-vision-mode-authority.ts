@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { VisionRouteIdentity } from './vision-execution-order.js'
+import { parseSessionVisionPolicy } from './session-vision-policy.js'
 
 const VISION_ROUTER_ADAPTER_OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 const VISION_ROUTER_OWNERSHIP = 'vision-router-owned'
@@ -9,6 +10,7 @@ const DEFAULT_CHAIN_ROUTE = 'vision-chain'
 const DEEPSEEK_SOURCE = 'deepseek-official'
 
 export type SessionVisionModeReason =
+  | 'session-policy'
   | 'vision-router-route'
   | 'ordinary-route'
   | 'unknown-route'
@@ -228,6 +230,7 @@ function routeOwnedByVisionRouter(
 
 export interface ResolveSessionVisionModeAuthorityOptions {
   readonly visionPolicy?: unknown
+  readonly sessionPolicy?: unknown
   readonly turn?: unknown
 }
 
@@ -247,12 +250,20 @@ export function resolveSessionVisionModeAuthority(
   options: ResolveSessionVisionModeAuthorityOptions = {},
 ): Readonly<SessionVisionModeAuthority> {
   const route = effectiveSessionModelSelection(ctx, agent)
+  const sessionPolicy = parseSessionVisionPolicy(options.sessionPolicy)
   const config = liveConfig(ctx, fallbackConfig)
-  const enabled = routeOwnedByVisionRouter(ctx, route, config, options.visionPolicy)
+  const routeEnabled = routeOwnedByVisionRouter(ctx, route, config, options.visionPolicy)
+  const enabled = sessionPolicy?.enabled ?? routeEnabled
   return Object.freeze({
     enabled,
     route: route ? Object.freeze({ ...route }) : undefined,
-    reason: enabled ? 'vision-router-route' : route ? 'ordinary-route' : 'unknown-route',
+    reason: sessionPolicy !== undefined
+      ? 'session-policy'
+      : routeEnabled
+        ? 'vision-router-route'
+        : route
+          ? 'ordinary-route'
+          : 'unknown-route',
     ...(options.turn === undefined ? {} : { turn: options.turn }),
   })
 }
