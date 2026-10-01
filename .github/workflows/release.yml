@@ -97,9 +97,18 @@ jobs:
           node <<'NODE'
           const pkg = require('./package.json')
           const scripts = pkg.scripts || {}
+          const requiredBuildLifecycle = {
+            prepare: 'pnpm build',
+            prepack: 'pnpm build',
+          }
+          for (const [name, expected] of Object.entries(requiredBuildLifecycle)) {
+            if (scripts[name] !== expected) {
+              console.error(`${name} must remain exactly ${JSON.stringify(expected)} for canonical source builds`)
+              process.exit(1)
+            }
+          }
           const forbidden = [
-            'preinstall', 'install', 'postinstall',
-            'prepack', 'postpack', 'prepare',
+            'preinstall', 'install', 'postinstall', 'postpack',
             'prepublish', 'prepublishOnly', 'publish', 'postpublish',
           ]
           const found = forbidden.filter(name => Object.prototype.hasOwnProperty.call(scripts, name))
@@ -111,6 +120,24 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build canonical package artifacts
+        run: pnpm build
+
+      - name: Verify generated package artifacts
+        run: pnpm build:check
+
+      - name: Lint canonical source ownership
+        run: pnpm lint
+
+      - name: Verify source-to-artifact evidence
+        run: pnpm source:artifact:check
+
+      - name: Verify reproducible clean build
+        run: pnpm build:reproducible
+
+      - name: Typecheck Host and Client contracts
+        run: pnpm typecheck
 
       - name: Run tests
         run: pnpm test
@@ -210,6 +237,23 @@ jobs:
           registry-url: 'https://registry.npmjs.org/'
           package-manager-cache: false
 
+      - name: Set up pnpm for explicit package build
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.20.0
+
+      - name: Install locked build dependencies without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build package artifacts from canonical source
+        run: pnpm build
+
+      - name: Verify package artifact mapping before pack
+        run: |
+          pnpm build:check
+          pnpm lint
+          pnpm source:artifact:check
+
       - name: Pin npm trusted-publishing client by verified tarball
         shell: bash
         env:
@@ -289,6 +333,8 @@ jobs:
           echo "files=$FILE_COUNT"
           echo "sha1=$LOCAL_SHA1"
           echo "sha256=$LOCAL_SHA256"
+
+          node scripts/verify-packed-public-api.mjs "$TARBALL"
 
       - name: Check existing npm version
         id: registry
