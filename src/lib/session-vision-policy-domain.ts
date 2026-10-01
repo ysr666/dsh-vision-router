@@ -69,7 +69,9 @@ function normalizedSessionId(value: unknown): string {
 }
 
 function storageDomainOf(ctx: SessionVisionPolicyDomainContext): StorageDomainFacilityLike | undefined {
-  if (ctx.storageDomain && typeof ctx.storageDomain.open === 'function') return ctx.storageDomain
+  // storageDomain is optional across the supported Host window. Reading the
+  // Cordis service property without inject() turns capability detection into a
+  // hard dependency; Context#get is the non-owning, live lookup seam here.
   try {
     const candidate = ctx.get?.('storageDomain') as StorageDomainFacilityLike | undefined
     return candidate && typeof candidate.open === 'function' ? candidate : undefined
