@@ -38,14 +38,15 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
-function contextService(ctx: unknown, name: string): unknown {
+function contextGetter(ctx: unknown): ((name: string) => unknown) | undefined {
   const get = propertyBag(ctx)?.get
-  if (typeof get !== 'function') return undefined
-  try {
-    return get.call(ctx, name)
-  } catch {
-    return undefined
-  }
+  return typeof get === 'function'
+    ? (name: string) => get.call(ctx, name)
+    : undefined
+}
+
+function credentialValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
 }
 
 export function visionCredentialFingerprint(value: unknown): string {
@@ -85,14 +86,19 @@ export async function resolveVisionCredential(
     }
   }
 
-  const credentials = contextService(ctx, 'credentials')
+  let credentials: unknown
+  try {
+    credentials = contextGetter(ctx)?.('credentials')
+  } catch {
+    credentials = undefined
+  }
   if (credentials !== undefined) {
     try {
       const resolve = propertyBag(credentials)?.resolve
       const hit = typeof resolve === 'function'
         ? await resolve.call(credentials, key)
         : undefined
-      const value = nonEmpty(propertyBag(hit)?.value)
+      const value = credentialValue(propertyBag(hit)?.value)
       return {
         required: true,
         value,
@@ -111,14 +117,24 @@ export async function resolveVisionCredential(
     }
   }
 
-  const launchEnvironment = contextService(ctx, 'launchEnvironment')
+  let launchEnvironment: unknown
+  try {
+    launchEnvironment = contextGetter(ctx)?.('launchEnvironment')
+  } catch {
+    return {
+      required: true,
+      value: undefined,
+      fingerprint: 'unresolved',
+      source: 'launch-environment-error',
+    }
+  }
   if (launchEnvironment !== undefined) {
     try {
       const get = propertyBag(launchEnvironment)?.get
       const hit = typeof get === 'function'
         ? get.call(launchEnvironment, key)
         : undefined
-      const value = nonEmpty(propertyBag(hit)?.value)
+      const value = credentialValue(propertyBag(hit)?.value)
       return {
         required: true,
         value,
