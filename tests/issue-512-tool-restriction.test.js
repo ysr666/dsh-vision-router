@@ -5,7 +5,7 @@ import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-bou
 
 const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
-function makeHarness({ failRestriction = false } = {}) {
+function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {}) {
   const handlers = new Map()
   const definitions = new Map()
   const restrictCalls = []
@@ -76,11 +76,12 @@ function makeHarness({ failRestriction = false } = {}) {
       return cleanup
     },
   }
-  const mode = installSessionVisionModeBoundary(ctx, config)
+  const mode = installSessionVisionModeBoundary(ctx, config, { sessionVisionPolicyStore })
 
-  function makeAgent(provider = 'deepseek-official') {
+  function makeAgent(provider = 'deepseek-official', id = 'agent') {
     const activeRestrictions = []
     const agent = {
+      id,
       session: {
         selectionState: {
           lastUsed: { provider, model: 'model' },
@@ -319,4 +320,34 @@ test('issue #512: a foreign tool that reuses an unmounted DVR name is not restri
     'vision_screenshot',
     'foreign_tool',
   ])
+})
+
+
+test('Session policy keeps an ordinary child route enabled through direct tool execution', async () => {
+  const sessionVisionPolicyStore = {
+    get(id) {
+      if (id !== 'child') return undefined
+      return {
+        revision: 1,
+        enabled: true,
+        source: 'delegation',
+        inheritedFrom: 'parent',
+      }
+    },
+  }
+  const harness = makeHarness({ sessionVisionPolicyStore })
+  harness.mode.ctx.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return 'policy-enabled'
+    },
+  })
+
+  const child = harness.makeAgent('deepseek-official', 'child')
+  harness.handlers.get('agent/created')?.({ agent: child })
+
+  assert.deepEqual(harness.restrictCalls, [])
+  const definition = harness.definitions.get('vision_describe')
+  assert.ok(definition)
+  assert.equal(await definition.execute({}, { agent: child }), 'policy-enabled')
 })
