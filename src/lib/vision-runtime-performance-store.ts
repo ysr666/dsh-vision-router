@@ -120,7 +120,7 @@ export function createVisionRuntimePerformanceSampleStore(
     if (key === undefined) return undefined
     let identity: unknown
     try {
-      identity = identityContext !== undefined && identityResolver !== undefined
+      identity = identityContext && identityResolver !== undefined
         ? identityResolver(key, identityContext)
         : undefined
     } catch {
