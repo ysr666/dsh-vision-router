@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { capabilityBenchmarkFingerprint } from './vision-capability-benchmark.js'
+import { capabilityBenchmarkFingerprint } from './vision-capability-fingerprint.js'
 
 type UnknownRecord = Record<PropertyKey, unknown>
 
