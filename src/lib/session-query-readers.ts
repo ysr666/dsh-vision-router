@@ -68,19 +68,13 @@ function sessionQueryOf(ctx: unknown): UnknownRecord | undefined {
   const context = objectRecord(ctx)
   if (context === undefined) return undefined
 
+  // sessionQuery is an optional capability. Cordis service property reads may
+  // register a hard pending dependency outside inject(); Context#get is the
+  // non-owning capability probe and is the only supported lookup here.
   try {
     const get = context.get
-    if (typeof get === 'function') {
-      const query = get.call(ctx, 'sessionQuery')
-      const record = objectRecord(query)
-      if (record !== undefined) return record
-    }
-  } catch {
-    // A partial/legacy Host may not expose SessionQuery through ctx.get().
-  }
-
-  try {
-    return objectRecord(context.sessionQuery)
+    if (typeof get !== 'function') return undefined
+    return objectRecord(get.call(ctx, 'sessionQuery'))
   } catch {
     return undefined
   }

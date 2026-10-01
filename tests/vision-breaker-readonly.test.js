@@ -14,16 +14,17 @@ import {
 
 test('session turn resolver prefers Host turnBoundary projection without reading deprecated history', () => {
   let reads = 0
-  const ctx = {
-    sessionProjections: {
-      stateOf(session, key) {
-        assert.equal(session.id, 'session-projected')
-        assert.equal(key, 'turnBoundary')
-        return { lastTurn: 11 }
-      },
+  const projections = {
+    stateOf(session, key) {
+      assert.equal(session.id, 'session-projected')
+      assert.equal(key, 'turnBoundary')
+      return { lastTurn: 11 }
     },
-    get() {
-      throw new Error('direct Host projection service should be preferred')
+  }
+  const ctx = {
+    get(name) {
+      assert.equal(name, 'sessionProjections')
+      return projections
     },
   }
   const session = {
@@ -41,16 +42,19 @@ test('session turn resolver prefers Host turnBoundary projection without reading
 
 test('session turn resolver exposes a current-turn event anchor from the Host projection', () => {
   const resolver = createSessionTurnResolver({
-    sessionProjections: {
-      stateOf(_session, key) {
-        assert.equal(key, 'turnBoundary')
-        return {
-          openTurnStartSeq: 10,
-          lastStepStartSeq: 14,
-          lastStepBoundary: { kind: 'end', seq: 17 },
-          lastTurn: 4,
-        }
-      },
+    get(name) {
+      assert.equal(name, 'sessionProjections')
+      return {
+        stateOf(_session, key) {
+          assert.equal(key, 'turnBoundary')
+          return {
+            openTurnStartSeq: 10,
+            lastStepStartSeq: 14,
+            lastStepBoundary: { kind: 'end', seq: 17 },
+            lastTurn: 4,
+          }
+        },
+      }
     },
   })
   const session = { id: 'anchor-session' }
@@ -60,15 +64,18 @@ test('session turn resolver exposes a current-turn event anchor from the Host pr
 
 test('session turn resolver never reuses a previous-turn boundary when no turn is open', () => {
   const resolver = createSessionTurnResolver({
-    sessionProjections: {
-      stateOf() {
-        return {
-          openTurnStartSeq: null,
-          lastStepStartSeq: 14,
-          lastStepBoundary: { kind: 'end', seq: 17 },
-          lastTurn: 4,
-        }
-      },
+    get(name) {
+      assert.equal(name, 'sessionProjections')
+      return {
+        stateOf() {
+          return {
+            openTurnStartSeq: null,
+            lastStepStartSeq: 14,
+            lastStepBoundary: { kind: 'end', seq: 17 },
+            lastTurn: 4,
+          }
+        },
+      }
     },
   })
   assert.equal(resolver.eventAnchorOf({ id: 'between-turns' }), undefined)

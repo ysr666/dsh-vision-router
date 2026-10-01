@@ -58,6 +58,8 @@ interface SessionVisionPolicyDomainContext {
 export interface SessionVisionPolicyRuntimeStore extends SessionVisionPolicyStore {
   /** Whether this process still has a usable durable sidecar. */
   readonly durable: boolean
+  /** Evict only the hot in-process copy after one Agent lifetime ends. */
+  release(sessionId: string): void
 }
 
 function normalizedSessionId(value: unknown): string {
@@ -83,18 +85,28 @@ function storageDomainOf(ctx: SessionVisionPolicyDomainContext): StorageDomainFa
  * Create a synchronous-read policy store with lazy official DSH sidecar
  * hydration. No storage capability means ordinary volatile operation.
  *
+ * Domain ownership is bound to the consumer fiber before any asynchronous open
+ * begins. That ordering is deliberate: an HMR/unload racing a slow open must
+ * await/close the eventual handle instead of leaving a same-name domain behind
+ * in the longer-lived storageDomain facility. Live facility replacement also
+ * retires the previous handle before opening against the replacement.
+ *
  * Once a storage failure is observed, this store degrades to volatile for the
  * rest of its lifetime. Vision availability must not depend on auxiliary
- * persistence health; a later process can retry the durable seam from scratch.
+ * persistence health; a later plugin generation can retry the durable seam.
  */
 export function createSessionVisionPolicyRuntimeStore(
   ctx: SessionVisionPolicyDomainContext,
 ): SessionVisionPolicyRuntimeStore {
   const cache = new Map<string, Readonly<SessionVisionPolicy>>()
-  let domainPromise: Promise<Domain<DomainSpec>> | undefined
+  const closedDomains = new WeakSet<object>()
+  let activeFacility: StorageDomainFacilityLike | undefined
+  let domainPromise: Promise<Domain<DomainSpec> | undefined> | undefined
+  let transition: Promise<void> = Promise.resolve()
   let durableDisabled = false
+  let lifecycleClosed = false
+  let lifecycleBound = false
   let warned = false
-  let closeRegistered = false
 
   const warnDegraded = (error: unknown) => {
     if (warned) return
@@ -107,37 +119,100 @@ export function createSessionVisionPolicyRuntimeStore(
     } catch {}
   }
 
-  const disableDurability = (error: unknown) => {
+  const markDurabilityFailed = (error: unknown) => {
     durableDisabled = true
-    domainPromise = undefined
     warnDegraded(error)
   }
 
+  const closeDomainOnce = async (domain: Domain<DomainSpec>): Promise<void> => {
+    const key = domain as unknown as object
+    if (closedDomains.has(key)) return
+    closedDomains.add(key)
+    try {
+      await domain.close()
+    } catch (error) {
+      warnDegraded(error)
+    }
+  }
+
+  const retireActiveDomain = async (): Promise<void> => {
+    const pending = domainPromise
+    domainPromise = undefined
+    activeFacility = undefined
+    if (pending === undefined) return
+    try {
+      const domain = await pending
+      if (domain !== undefined) await closeDomainOnce(domain)
+    } catch (error) {
+      warnDegraded(error)
+    }
+  }
+
+  const enqueueRetire = (): Promise<void> => {
+    transition = transition.then(retireActiveDomain, retireActiveDomain)
+    return transition
+  }
+
+  if (typeof ctx.effect === 'function') {
+    try {
+      ctx.effect(
+        () => {
+          lifecycleBound = true
+          return async () => {
+            lifecycleClosed = true
+            await enqueueRetire()
+          }
+        },
+        'vision-router: Session Vision policy domain lifecycle',
+      )
+    } catch (error) {
+      markDurabilityFailed(error)
+    }
+  }
+
+  const ensureDomainFor = async (facility: StorageDomainFacilityLike): Promise<void> => {
+    if (lifecycleClosed || durableDisabled) return
+    if (activeFacility === facility && domainPromise !== undefined) return
+    if (domainPromise !== undefined || activeFacility !== undefined) {
+      await retireActiveDomain()
+    }
+    if (lifecycleClosed || durableDisabled) return
+
+    activeFacility = facility
+    let opening: Promise<Domain<DomainSpec> | undefined>
+    opening = facility.open(sessionVisionPolicyDomainSpec)
+      .then(async (domain) => {
+        if (
+          lifecycleClosed
+          || durableDisabled
+          || activeFacility !== facility
+          || domainPromise !== opening
+        ) {
+          await closeDomainOnce(domain)
+          return undefined
+        }
+        return domain
+      })
+      .catch((error) => {
+        if (domainPromise === opening) {
+          domainPromise = undefined
+          activeFacility = undefined
+          markDurabilityFailed(error)
+        }
+        return undefined
+      })
+    domainPromise = opening
+  }
+
   const openDomain = async (): Promise<Domain<DomainSpec> | undefined> => {
-    if (durableDisabled) return undefined
+    if (!lifecycleBound || lifecycleClosed || durableDisabled) return undefined
     const facility = storageDomainOf(ctx)
     if (facility === undefined) return undefined
-    if (domainPromise === undefined) {
-      domainPromise = facility.open(sessionVisionPolicyDomainSpec)
-        .then((domain) => {
-          if (!closeRegistered && typeof ctx.effect === 'function') {
-            closeRegistered = true
-            try {
-              ctx.effect(
-                () => () => domain.close(),
-                'vision-router: Session Vision policy domain lifecycle',
-              )
-            } catch {
-              // The facility itself closes leftovers on unmount.
-            }
-          }
-          return domain
-        })
-        .catch((error) => {
-          disableDurability(error)
-          return undefined as never
-        })
-    }
+    transition = transition.then(
+      () => ensureDomainFor(facility),
+      () => ensureDomainFor(facility),
+    )
+    await transition
     return await domainPromise
   }
 
@@ -147,9 +222,17 @@ export function createSessionVisionPolicyRuntimeStore(
     return domain.table('policies') as unknown as KvTable<string, SessionVisionPolicy>
   }
 
+  const failDurabilityAndRetire = async (error: unknown): Promise<void> => {
+    markDurabilityFailed(error)
+    await enqueueRetire()
+  }
+
   return {
     get durable() {
-      return !durableDisabled && storageDomainOf(ctx) !== undefined
+      return lifecycleBound
+        && !lifecycleClosed
+        && !durableDisabled
+        && storageDomainOf(ctx) !== undefined
     },
 
     get(sessionId) {
@@ -167,34 +250,47 @@ export function createSessionVisionPolicyRuntimeStore(
         if (policy !== undefined) cache.set(key, policy)
         return policy
       } catch (error) {
-        disableDurability(error)
+        await failDurabilityAndRetire(error)
         return undefined
       }
+    },
+
+    release(sessionId) {
+      const key = normalizedSessionId(sessionId)
+      // A durable row can be rehydrated on the next Agent creation. Keep the
+      // process-local copy when durability is unavailable so volatile support
+      // does not lose the only Session-scoped truth it has.
+      if (this.durable) cache.delete(key)
     },
 
     async set(sessionId, policy) {
       const key = normalizedSessionId(sessionId)
       const normalized = parseSessionVisionPolicy(policy)
       if (normalized === undefined) throw new TypeError('invalid session vision policy')
+
+      // Publish process-local authority before the first await. A committed
+      // model/selection event must affect the next prompt immediately even if
+      // sidecar I/O is still settling; delegation still awaits this method and
+      // therefore preserves its stronger durability-before-child-release rule.
+      cache.set(key, normalized)
       try {
         const handle = await table()
         if (handle !== undefined) await handle.put(key, normalized)
       } catch (error) {
-        disableDurability(error)
+        await failDurabilityAndRetire(error)
       }
-      cache.set(key, normalized)
       return normalized
     },
 
     async delete(sessionId) {
       const key = normalizedSessionId(sessionId)
+      cache.delete(key)
       try {
         const handle = await table()
         if (handle !== undefined) await handle.delete(key)
       } catch (error) {
-        disableDurability(error)
+        await failDurabilityAndRetire(error)
       }
-      cache.delete(key)
     },
   }
 }

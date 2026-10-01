@@ -233,6 +233,8 @@ function routeOwnedByVisionRouter(
 export interface ResolveSessionVisionModeAuthorityOptions {
   readonly visionPolicy?: unknown
   readonly sessionPolicy?: unknown
+  /** Explicit just-committed selection, used before projections need to catch up. */
+  readonly route?: unknown
   readonly turn?: unknown
 }
 
@@ -251,7 +253,7 @@ export function resolveSessionVisionModeAuthority(
   fallbackConfig: unknown = {},
   options: ResolveSessionVisionModeAuthorityOptions = {},
 ): Readonly<SessionVisionModeAuthority> {
-  const route = effectiveSessionModelSelection(ctx, agent)
+  const route = routeFrom(options.route) ?? effectiveSessionModelSelection(ctx, agent)
   const sessionPolicy = parseSessionVisionPolicy(options.sessionPolicy)
   const config = liveConfig(ctx, fallbackConfig)
   const routeEnabled = routeOwnedByVisionRouter(ctx, route, config, options.visionPolicy)

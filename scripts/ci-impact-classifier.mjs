@@ -10,34 +10,34 @@ const matches = (path, patterns) => patterns.some((pattern) => (
 
 const DOCS = [/^README(?:\.[^/]+)?$/i, /^docs\//, /^SECURITY\.md$/, /^LICENSE(?:\.[^/]+)?$/]
 const BROWSER = [
-  /^lib\/client(?:-|\.)/, /^lib\/web\//, /^lib\/settings(?:-|\.)/, /^lib\/session-affinity/,
-  /^lib\/.*-client-prelude\.js$/, /^lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
-  'lib/guide-vision-toggle-highlight.js', 'lib/remote-settings-risk-confirmation.js',
-  'lib/v2-settings-ia-integration.js', 'lib/vision-capability-benchmark-client.js',
-  'lib/vision-exact-check-client.js', 'lib/vision-routing-settings-prelude.js',
+  /^src\/lib\/client(?:-|\.)/, /^src\/lib\/web\//, /^src\/lib\/settings(?:-|\.)/, /^src\/lib\/session-affinity/,
+  /^src\/lib\/.*-client-prelude\.js$/, /^src\/lib\/vision-model-visibility-boundary(?:-main)?\.js$/,
+  'src/lib/guide-vision-toggle-highlight.js', 'src/lib/remote-settings-risk-confirmation.js',
+  'src/lib/v2-settings-ia-integration.js', 'src/lib/vision-capability-benchmark-client.js',
+  'src/lib/vision-exact-check-client.js', 'src/lib/vision-routing-settings-prelude.js',
   /^scripts\/.*browser.*\.mjs$/, 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs',
   /^tests\/.*(?:browser|client|settings).*\.test\.js$/,
   'tests/clipboard-image-paste-compat.test.js', 'tests/issue-367-remote-session-inject.test.js',
   /^tests\/issue-284-(?:model-visibility|vision-selection-effort)\.test\.js$/,
 ]
 const HOST = [
-  'entry.js', 'index.js', 'package.json', 'pnpm-lock.yaml', 'cordis.patch.yml',
-  /^lib\/dsh-/, /^lib\/runtime-composition\.js$/, /^lib\/public-entry\.js$/,
-  /^lib\/vision-provider-transport\.js$/, /^lib\/http-compat\.js$/, /^lib\/pi-ai-/,
-  /^lib\/session-vision-/, /^lib\/session-turn-resolver\.js$/, /^lib\/image-offload-compat\.js$/, /^lib\/web-capability-boundary\.js$/,
+  'src/entry.js', 'src/index.js', 'package.json', 'pnpm-lock.yaml', 'cordis.patch.yml',
+  /^src\/lib\/dsh-/, /^src\/lib\/runtime-composition\.js$/, /^src\/lib\/public-entry\.js$/,
+  /^src\/lib\/vision-provider-transport\.(?:js|ts)$/, /^src\/lib\/http-compat\.js$/, /^src\/lib\/pi-ai-/,
+  /^src\/lib\/session-vision-/, /^src\/lib\/session-turn-resolver\.js$/, /^src\/lib\/image-offload-compat\.(?:js|ts)$/, /^src\/lib\/web-capability-boundary\.js$/,
 ]
 const WINDOWS = [
-  'lib/windows-desktop-capture.js', 'lib/tesseract-exec-compat.js',
+  'src/lib/windows-desktop-capture.js', 'src/lib/tesseract-exec-compat.js',
   'tests/qa-screenshot-runtime.test.js', 'tests/tesseract-node24-boot.test.js',
   '.github/workflows/adversarial-compat-hardening.yml',
 ]
 const RESOURCE = [
-  'lib/image-resource-governor.js', 'lib/pixel-diff-stream.js', 'lib/vision-artifact-store.js',
-  /^lib\/artifact-/, /^tests\/large-image-resource-/, /^tests\/image-resource-governor\.test\.js$/,
+  'src/lib/image-resource-governor.ts', 'src/lib/pixel-diff-stream.js', 'src/lib/vision-artifact-store.js',
+  /^src\/lib\/artifact-/, /^tests\/large-image-resource-/, /^tests\/image-resource-governor\.test\.js$/,
   'scripts/image-resource-stress.mjs', '.github/workflows/resource-stress.yml',
 ]
 const NATIVE = [
-  'lib/native-image-coexistence.js', /^tests\/native-image-coexistence\.test\.js$/,
+  'src/lib/native-image-coexistence.js', /^tests\/native-image-coexistence\.test\.js$/,
   /^tests\/issue-289-native-nonintervention\.test\.js$/,
 ]
 const ROUTING_META = [

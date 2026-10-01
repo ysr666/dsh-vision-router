@@ -1,4 +1,5 @@
 import { currentSessionVisionPolicy } from './native-image-coexistence.js'
+import { userSessionVisionPolicy } from './session-vision-policy.js'
 import {
   clearSessionVisionModeAuthorityForAgent,
   rememberSessionVisionModeAssemblyAuthorityForAgent,
@@ -400,7 +401,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   // Code Mode's tools:sdk are generated for real Agent-loop assemblies. The
   // returned variable is unused and never reaches the model.
   try {
-    const systemPrompt = ctx?.systemPrompt ?? ctx?.get?.('systemPrompt')
+    const systemPrompt = ctx?.get?.('systemPrompt')
     if (typeof systemPrompt?.variable === 'function') {
       systemPrompt.variable(MODE_SYNC_VARIABLE, (context) => {
         captureForAssembly(context)
@@ -456,6 +457,30 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     ctx.on?.('agent/disposed', ({ agent }) => {
       clearAgent(agent)
       releaseAgentToolRestriction(agent, restrictions, activeRestrictions)
+      const id = typeof agent?.id === 'string' ? agent.id : ''
+      if (id !== '') {
+        try { sessionVisionPolicyStore?.release?.(id) } catch {}
+      }
+    })
+
+    // DSH persists explicit composer/model-picker intent as model/selection.
+    // Materialize the matching DVR Session authority from that exact durable
+    // event so a delegated snapshot can always be overridden by a later user
+    // choice. Route-derived compatibility remains the fallback until a Session
+    // has made an explicit selection.
+    ctx.on?.('session/event', (session, event) => {
+      if (event?.type !== 'model/selection') return
+      const id = typeof session?.id === 'string' ? session.id : ''
+      if (id === '' || typeof sessionVisionPolicyStore?.set !== 'function') return
+      const authority = resolveSessionVisionModeAuthority(
+        ctx,
+        { id, session },
+        liveConfig(ctx, config),
+        { route: event.data },
+      )
+      void sessionVisionPolicyStore
+        .set(id, userSessionVisionPolicy(authority.enabled))
+        .catch(() => {})
     })
   } catch {
     // Minimum Hosts may not expose every lifecycle event. Prompt assembly and

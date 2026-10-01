@@ -1,10 +1,6 @@
 function projectionServiceOf(ctx) {
-  try {
-    const service = ctx?.sessionProjections
-    if (service && typeof service.stateOf === 'function') return service
-  } catch {
-    // Some compatibility contexts expose services only through get().
-  }
+  // sessionProjections is optional here; probing the Cordis service property
+  // outside inject() would turn this reader into a hard pending dependency.
   try {
     const service = ctx?.get?.('sessionProjections')
     return service && typeof service.stateOf === 'function' ? service : undefined

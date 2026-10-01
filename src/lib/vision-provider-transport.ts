@@ -79,10 +79,14 @@ export interface VisionProviderTransport {
 // provider calls are not coupled to later globalThis.fetch mutation.
 type HostFetchInit = Parameters<typeof globalThis.fetch>[1]
 
-const moduleFetch: ProviderFetch | undefined =
+const capturedHostFetch =
   typeof globalThis.fetch === 'function'
-    ? (input, init) => globalThis.fetch(input, init as HostFetchInit)
+    ? globalThis.fetch.bind(globalThis)
     : undefined
+
+const moduleFetch: ProviderFetch | undefined = capturedHostFetch
+  ? (input, init) => capturedHostFetch(input, init as HostFetchInit)
+  : undefined
 
 function objectRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

@@ -24,6 +24,14 @@ function runtimeWithAttachments(attachments, llm = {}) {
   }
 }
 
+function runtimeWithSessionQuery(sessionQuery) {
+  return {
+    get(name) {
+      return name === 'sessionQuery' ? sessionQuery : undefined
+    },
+  }
+}
+
 test('contract detection follows the released attachment API, not unrelated LLM methods', () => {
   const single = runtimeWithAttachments(
     { saveImage() {}, readImage() {}, validateImage() {} },
@@ -72,11 +80,9 @@ test('bounded Session event reader follows the live Host service and keeps missi
 
 test('bounded Session event reader propagates advertised Host failures instead of masking them', async () => {
   const failure = new Error('query unavailable')
-  const read = createSessionEventReader({
-    sessionQuery: {
-      async readEvent() { throw failure },
-    },
-  })
+  const read = createSessionEventReader(runtimeWithSessionQuery({
+    async readEvent() { throw failure },
+  }))
   await assert.rejects(() => read({ id: 'session-reader' }, 0), (error) => error === failure)
   await assert.rejects(() => read({ id: 'session-reader' }, -1), /non-negative safe integer/)
 })
@@ -108,7 +114,7 @@ test('bounded Session tail reader adapts to Host window limits and returns only 
       }
     },
   }
-  const readTail = createSessionEventTailReader({ sessionQuery: query })
+  const readTail = createSessionEventTailReader(runtimeWithSessionQuery(query))
   const session = { id: 'tail-reader' }
   const result = await readTail(session, 1)
   assert.equal(result.supported, true)
@@ -129,9 +135,8 @@ test('bounded Session tail reader adapts to Host window limits and returns only 
 test('bounded Session tail reader supports a Host configured with readWindowMax zero', async () => {
   const events = Array.from({ length: 4 }, (_, seq) => ({ seq, type: 'step/start', data: { seq } }))
   const requests = []
-  const readTail = createSessionEventTailReader({
-    sessionQuery: {
-      async readEvent(request) {
+  const readTail = createSessionEventTailReader(runtimeWithSessionQuery({
+    async readEvent(request) {
         requests.push({ ...request })
         if ((request.after ?? 0) > 0) {
           const error = new Error('window disabled')
@@ -146,8 +151,7 @@ test('bounded Session tail reader supports a Host configured with readWindowMax 
         }
         return { target: event, events: [event], startSeq: request.seq, endSeq: request.seq }
       },
-    },
-  })
+  }))
 
   const result = await readTail({ id: 'zero-window' }, 1)
   assert.deepEqual(result.events.map((event) => event.seq), [2, 3])
@@ -159,9 +163,8 @@ test('bounded Session tail reader supports a Host configured with readWindowMax 
 
 
 test('bounded Session tail reader fails closed on a sparse or shape-drifted Host window', async () => {
-  const readSparse = createSessionEventTailReader({
-    sessionQuery: {
-      async readEvent(request) {
+  const readSparse = createSessionEventTailReader(runtimeWithSessionQuery({
+    async readEvent(request) {
         return {
           target: { seq: request.seq, type: 'step/start', data: {} },
           events: [
@@ -171,20 +174,17 @@ test('bounded Session tail reader fails closed on a sparse or shape-drifted Host
           endSeq: request.seq + 2,
         }
       },
-    },
-  })
+  }))
   await assert.rejects(
     () => readSparse({ id: 'sparse-window' }, 4),
     /non-contiguous seq 6; expected 5/,
   )
 
-  const readMissingWindow = createSessionEventTailReader({
-    sessionQuery: {
-      async readEvent(request) {
+  const readMissingWindow = createSessionEventTailReader(runtimeWithSessionQuery({
+    async readEvent(request) {
         return { target: { seq: request.seq, type: 'step/start', data: {} } }
       },
-    },
-  })
+  }))
   await assert.rejects(
     () => readMissingWindow({ id: 'missing-window' }, 4),
     /returned no event window/,
@@ -196,9 +196,9 @@ test('bounded Session tail reader keeps missing capability explicit and propagat
   assert.deepEqual(await readMissing({ id: 'tail-reader' }, 0), { supported: false })
 
   const failure = new Error('session query unavailable')
-  const readFailing = createSessionEventTailReader({
-    sessionQuery: { async readEvent() { throw failure } },
-  })
+  const readFailing = createSessionEventTailReader(runtimeWithSessionQuery({
+    async readEvent() { throw failure },
+  }))
   await assert.rejects(() => readFailing({ id: 'tail-reader' }, 0), (error) => error === failure)
   await assert.rejects(() => readFailing({ id: 'tail-reader' }, -1), /non-negative safe integer/)
 })
@@ -244,24 +244,20 @@ test('async Session log reader prefers one observation lease and disposes it aft
 
 test('async Session log reader falls back to readSession when observation capability is absent', async () => {
   const events = [{ seq: 0, type: 'user/message', data: {} }]
-  const read = createSessionLogReader({
-    sessionQuery: {
-      async readSession(sessionId) {
-        return { session: { id: sessionId }, events }
-      },
+  const read = createSessionLogReader(runtimeWithSessionQuery({
+    async readSession(sessionId) {
+      return { session: { id: sessionId }, events }
     },
-  })
+  }))
   assert.deepEqual(await read({ id: 'session-log-reader' }), { supported: true, events })
 })
 
 test('async Session log reader propagates advertised Host failures instead of masking them', async () => {
   const failure = new Error('session log unavailable')
-  const read = createSessionLogReader({
-    sessionQuery: {
-      async observeSession() { throw failure },
-      async readSession() { throw new Error('must not mask an advertised observation failure') },
-    },
-  })
+  const read = createSessionLogReader(runtimeWithSessionQuery({
+    async observeSession() { throw failure },
+    async readSession() { throw new Error('must not mask an advertised observation failure') },
+  }))
   await assert.rejects(() => read({ id: 'session-log-reader' }), (error) => error === failure)
 })
 
@@ -547,4 +543,16 @@ test('bundle patch defines Vision Router attachment storage admission including 
   assert.match(patch, /maxImagePixels:\s*100000000/)
   assert.match(patch, /maxImageDimension:\s*10000/)
   assert.doesNotMatch(patch, /maxImageDimension:\s*(?:32768|65535|99999)/)
+})
+
+
+test('host settings compatibility rejects incomplete public options before registration', () => {
+  assert.throws(
+    () => installHostSettingsCompatibility({}, {}, { Config: EntryConfig }),
+    /requires namespace/,
+  )
+  assert.throws(
+    () => installHostSettingsCompatibility({}, {}, { namespace: 'vision-router' }),
+    /requires Config/,
+  )
 })

@@ -26,6 +26,8 @@ export interface SessionVisionPolicyStore {
   get(sessionId: string): Readonly<SessionVisionPolicy> | undefined
   /** Optional durable hydration before the Session becomes model-facing. */
   hydrate?(sessionId: string): Promise<Readonly<SessionVisionPolicy> | undefined>
+  /** Drop only process-local hot state while retaining durable Session truth. */
+  release?(sessionId: string): void
   set(sessionId: string, policy: SessionVisionPolicy): Promise<Readonly<SessionVisionPolicy>>
   delete(sessionId: string): Promise<void>
 }

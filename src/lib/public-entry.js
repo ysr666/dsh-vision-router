@@ -57,10 +57,13 @@ export function apply(ctx, config = {}) {
     config: () => liveVisionConfig(hardening.ctx, config),
   })
   let transportReleased = false
+  let transportReleasePromise
   const releaseTransport = () => {
-    if (transportReleased) return
+    if (transportReleasePromise) return transportReleasePromise
+    if (transportReleased) return Promise.resolve()
     transportReleased = true
-    void transport.dispose()
+    transportReleasePromise = Promise.resolve().then(() => transport.dispose())
+    return transportReleasePromise
   }
   try {
     runtimeCtx?.effect?.(
@@ -72,7 +75,7 @@ export function apply(ctx, config = {}) {
     hardening.installClientBoundary()
     return result
   } catch (error) {
-    releaseTransport()
+    void releaseTransport().catch(() => {})
     throw error
   }
 }

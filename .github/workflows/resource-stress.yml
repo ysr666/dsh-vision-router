@@ -5,10 +5,10 @@ on:
     branches: [main]
     paths:
       - 'src/**'
-      - 'index.js'
-      - 'entry.js'
-      - 'lib/image-resource-governor.js'
-      - 'lib/pixel-diff-stream.js'
+      - 'src/index.js'
+      - 'src/entry.js'
+      - 'src/lib/image-resource-governor.ts'
+      - 'src/lib/pixel-diff-stream.js'
       - 'tests/large-image-resource-integration.test.js'
       - 'scripts/image-resource-stress.mjs'
       - 'package.json'
@@ -17,10 +17,10 @@ on:
   push:
     branches: [main]
     paths:
-      - 'index.js'
-      - 'entry.js'
-      - 'lib/image-resource-governor.js'
-      - 'lib/pixel-diff-stream.js'
+      - 'src/index.js'
+      - 'src/entry.js'
+      - 'src/lib/image-resource-governor.ts'
+      - 'src/lib/pixel-diff-stream.js'
       - 'tests/large-image-resource-integration.test.js'
       - 'scripts/image-resource-stress.mjs'
       - 'package.json'

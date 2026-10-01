@@ -10,6 +10,35 @@ import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
 
+
+test('default provider transport keeps the module-captured fetch across later global wrappers', async () => {
+  const originalFetch = globalThis.fetch
+  let capturedCalls = 0
+  let replacementCalls = 0
+  try {
+    globalThis.fetch = async () => {
+      capturedCalls += 1
+      return new Response('captured')
+    }
+    const isolated = await import(`../lib/vision-provider-transport.js?r10-capture=${Date.now()}-${Math.random()}`)
+    globalThis.fetch = async () => {
+      replacementCalls += 1
+      return new Response('replacement')
+    }
+    const transport = isolated.createVisionProviderTransport({ config: { proxy: '' } })
+    try {
+      const response = await transport.fetch('https://example.invalid/r10-fetch-capture')
+      assert.equal(await response.text(), 'captured')
+      assert.equal(capturedCalls, 1)
+      assert.equal(replacementCalls, 0)
+    } finally {
+      await transport.dispose()
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function okOpenAI(text = 'ok') {
   return new Response(JSON.stringify({ choices: [{ message: { content: text } }] }), {
     status: 200,
@@ -608,7 +637,9 @@ test('public entry passes provider transport explicitly before scoped Host proxy
   assert.ok(legacyBoundaryAt > applyAt, 'Host-owned compatibility observer must wrap the completed runtime fetch chain')
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
   assert.doesNotMatch(source, /installVisionProviderTransport|currentVisionProviderTransport/)
-  assert.match(source, /void transport\.dispose\(\)/)
+  assert.match(source, /transportReleasePromise = Promise\.resolve\(\)\.then\(\(\) => transport\.dispose\(\)\)/)
+  assert.match(source, /runtimeCtx\?\.effect\?\.\([\s\S]*\(\) => releaseTransport/)
+  assert.doesNotMatch(source, /void transport\.dispose\(\)/)
 })
 
 

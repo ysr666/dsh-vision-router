@@ -270,7 +270,10 @@ export function wrapVisionAttachmentHandleDefinition<T extends VisionToolDefinit
   def: T,
   options: WrapVisionAttachmentOptions = {},
 ): T {
-  if (typeof def.execute !== 'function') return def
+  // Tool definitions arrive from the Host registry at runtime. Static generic
+  // constraints cannot replace this boundary guard: partial/legacy Hosts may
+  // still pass nullish or malformed values before their own validation runs.
+  if (def === null || typeof def !== 'object' || typeof def.execute !== 'function') return def
   const toolName = def.name
   const fields = typeof toolName === 'string'
     ? TOOL_FIELDS[toolName as keyof typeof TOOL_FIELDS] as ToolFieldSpec | undefined

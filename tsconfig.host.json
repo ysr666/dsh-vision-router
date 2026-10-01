@@ -18,6 +18,7 @@
     "src/lib/delegated-call-config.ts",
     "src/lib/vision-attachment-handle-runtime.ts",
     "src/lib/public-config.ts",
+    "src/lib/public-entry.d.ts",
     "src/lib/proxy-url-compat.ts",
     "src/lib/proxy-routing.ts",
     "src/lib/proxy-dispatcher-pool.ts",

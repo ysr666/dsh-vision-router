@@ -4,8 +4,8 @@ on:
   pull_request:
     paths:
       - 'src/**'
-      - 'index.js'
-      - 'lib/**'
+      - 'src/index.js'
+      - 'src/lib/**'
       - 'scripts/security-adversarial-fuzz.mjs'
       - 'tests/security-property-fuzz.test.js'
       - '.github/workflows/adversarial-fuzz.yml'
