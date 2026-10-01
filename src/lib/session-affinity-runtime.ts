@@ -120,7 +120,7 @@ export function streamWithVisionSessionAffinity<Item>(
           }
           return affinityRuntime.run(state, async () => {
             try {
-              const active = await iteratorPromise
+              const active = await ensure()
               return typeof active.return === 'function'
                 ? await active.return(value)
                 : { done: true, value } as IteratorReturnResult<unknown>
@@ -137,7 +137,7 @@ export function streamWithVisionSessionAffinity<Item>(
           }
           return affinityRuntime.run(state, async () => {
             try {
-              const active = await iteratorPromise
+              const active = await ensure()
               if (typeof active.throw === 'function') return await active.throw(error)
               throw error
             } finally {
