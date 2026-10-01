@@ -64,8 +64,10 @@ function contextGet(ctx: unknown, name: string): unknown {
 }
 
 function selectionProjection(ctx: unknown, session: unknown): VisionRouteIdentity | undefined {
-  let projections = property(ctx, 'sessionProjections')
-  if (!projections) projections = contextGet(ctx, 'sessionProjections')
+  // sessionProjections is an optional Host capability, not a declared plugin
+  // dependency. Cordis service properties throw when read outside inject(), so
+  // capability detection must use Context#get rather than property access.
+  const projections = contextGet(ctx, 'sessionProjections')
 
   const stateOf = property(projections, 'stateOf')
   if (typeof stateOf !== 'function') return undefined
