@@ -27,12 +27,12 @@ void persistentClass
 const invalidPersistentClass: PersistentBackgroundFailureClass = 'auth'
 void invalidPersistentClass
 
-// @ts-expect-error ui has no direct benchmark axis and cannot key durable benchmark evidence
 void store.mark({
   fingerprint: `ep2_${'b'.repeat(32)}`,
   key: 'provider/model',
   provider: 'provider',
   model: 'model',
+  // @ts-expect-error ui has no direct benchmark axis and cannot key durable benchmark evidence
   axis: 'ui',
   errorClass: 'protocol',
   recordedAt: 1_000,
