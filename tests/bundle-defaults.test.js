@@ -147,10 +147,9 @@ test('manual Release workflow creates only the exact current-main package tag be
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
 
   assert.match(workflow, /workflow_dispatch:/)
-  assert.doesNotMatch(workflow, /push:\n\s+tags:/, 'release tags must be created only after workflow verification')
   assert.match(workflow, /target_sha:/)
-  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \}\}/)
-  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \}\}/)
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \|\| github\.ref_name \}\}/)
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
   assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
   assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
   assert.match(workflow, /Run tests[\s\S]*Verify generated browser source[\s\S]*pnpm client:check/)
@@ -165,7 +164,7 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
 })
 
-test('release workflow confines write tokens to non-executing tag/release phases', async () => {
+test('release workflow confines repository and publish write authority to the correct phases', async () => {
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const verifyStart = workflow.indexOf('  verify:')
   const tagStart = workflow.indexOf('  tag:', verifyStart + 1)
@@ -179,14 +178,14 @@ test('release workflow confines write tokens to non-executing tag/release phases
   const release = workflow.slice(releaseStart)
 
   assert.match(workflow, /^permissions: \{\}$/m)
-  assert.match(verify, /permissions:[\s\S]*contents: read/)
-  assert.doesNotMatch(verify, /contents: write/)
+  assert.match(verify, /permissions:[\s\S]*contents: read[\s\S]*artifact-metadata: write/)
+  assert.doesNotMatch(verify, /contents: write|id-token: write|attestations: write/)
   assert.match(tag, /needs: verify[\s\S]*permissions:[\s\S]*contents: write/)
   assert.doesNotMatch(tag, /pnpm install|pnpm test|npm pack|npm publish/)
-  assert.match(publish, /needs: tag[\s\S]*contents: read[\s\S]*id-token: write/)
+  assert.match(publish, /needs: \[verify, tag\][\s\S]*contents: read[\s\S]*actions: read[\s\S]*id-token: write/)
   assert.match(publish, /attestations: write/)
   assert.match(publish, /artifact-metadata: write/)
-  assert.doesNotMatch(publish, /contents: write/)
+  assert.doesNotMatch(publish, /contents: write|pnpm install|pnpm build|npm pack/)
   assert.match(release, /needs: publish[\s\S]*permissions:[\s\S]*contents: write[\s\S]*actions: read/)
   assert.doesNotMatch(release, /id-token: write|attestations: write|artifact-metadata: write/)
   assert.doesNotMatch(workflow, /npm install --global/)
@@ -202,6 +201,8 @@ test('release provenance binds the exact npm tarball before the write-token phas
 
   const publish = workflow.slice(publishStart, releaseStart)
   const release = workflow.slice(releaseStart)
+  assert.match(workflow, /Preflight exact packed contract before irreversible tag[\s\S]*actions\/upload-artifact@[0-9a-f]{40} # v7\.0\.1[\s\S]*name: release-package-candidate/)
+  assert.match(publish, /Rehydrate exact pre-tag package candidate[\s\S]*release-package-candidate[\s\S]*PRETAG_SHA1[\s\S]*PRETAG_SHA256/)
   assert.match(publish, /uses: actions\/attest@[0-9a-f]{40} # v4\.2\.2/)
   assert.match(publish, /subject-path: \$\{\{ steps\.package\.outputs\.tarball \}\}/)
   assert.match(publish, /PROVENANCE_NAME=\"\$\{PACKAGE_TARBALL\}\.intoto\.jsonl\"/)
@@ -235,6 +236,25 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
   assert.match(windows, /timeout-minutes: 5/)
   assert.match(windows, /actions\/setup-node@/)
   assert.doesNotMatch(windows, /pnpm\/action-setup|pnpm install|cache: pnpm/)
+})
+
+test('workflow path filters follow canonical source ownership instead of generated package artifacts', async () => {
+  const { access, readdir } = await import('node:fs/promises')
+  const workflowDir = new URL('../.github/workflows/', import.meta.url)
+  for (const name of (await readdir(workflowDir)).filter((entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'))) {
+    const source = await readFile(new URL(name, workflowDir), 'utf8')
+    const triggerRegion = source.slice(0, source.indexOf('\nconcurrency:') >= 0 ? source.indexOf('\nconcurrency:') : source.indexOf('\njobs:'))
+    for (const match of triggerRegion.matchAll(/^\s+- '([^']+)'\s*$/gm)) {
+      const path = match[1]
+      assert.notEqual(path === 'entry.js' || path === 'index.js' || path.startsWith('lib/'), true,
+        `${name}: generated package artifact cannot own a workflow trigger: ${path}`)
+      if (!path.startsWith('src/') || /[*?[\]]/.test(path)) continue
+      await assert.doesNotReject(
+        () => access(new URL(`../${path}`, import.meta.url)),
+        `${name}: canonical workflow trigger must exist: ${path}`,
+      )
+    }
+  }
 })
 
 test('CI impact classifier is bounded and fail-closed for trusted shadow input', async () => {

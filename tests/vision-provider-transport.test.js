@@ -637,7 +637,8 @@ test('public entry passes provider transport explicitly before scoped Host proxy
   assert.ok(legacyBoundaryAt > applyAt, 'Host-owned compatibility observer must wrap the completed runtime fetch chain')
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
   assert.doesNotMatch(source, /installVisionProviderTransport|currentVisionProviderTransport/)
-  assert.match(source, /transportReleasePromise = Promise\.resolve\(transport\.dispose\(\)\)/)
+  assert.match(source, /transportReleasePromise = Promise\.resolve\(\)\.then\(\(\) => transport\.dispose\(\)\)/)
+  assert.match(source, /runtimeCtx\?\.effect\?\.\([\s\S]*\(\) => releaseTransport/)
   assert.doesNotMatch(source, /void transport\.dispose\(\)/)
 })
 
