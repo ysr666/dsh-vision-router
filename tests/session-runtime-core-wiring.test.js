@@ -25,6 +25,24 @@ test('runtime composition creates one explicit SessionVisionRuntime and gives th
   )
 })
 
+test('Session Vision delegation binds to the Agent service through an explicit lifecycle child', async () => {
+  const runtime = await source('lib/runtime-composition.js')
+
+  assert.match(
+    runtime,
+    /legacyCoreCompat\.ctx\.inject\?\.\(\['agents'\], \(agentsCtx\) => \{/,
+  )
+  assert.match(
+    runtime,
+    /installSessionVisionDelegationBoundary\(\s*agentsCtx,/,
+  )
+  assert.doesNotMatch(
+    runtime,
+    /installSessionVisionDelegationBoundary\(\s*legacyCoreCompat\.ctx,/,
+    'reading ctx.agents during root apply would turn optional timing into a hard Cordis dependency',
+  )
+})
+
 test('production runtime receives only narrow Host Session readers', async () => {
   const runtime = await source('lib/runtime-composition.js')
   const compat = await source('lib/dsh-contract-compat.js')
