@@ -118,6 +118,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Compute exact DSH web build cache key
         id: dsh-build-key
         working-directory: dsh-017
@@ -268,6 +274,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Compute exact DSH build cache key
         id: dsh-build-key
         working-directory: dsh-017
@@ -395,6 +407,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Install DSH workspace dependencies
         working-directory: dsh-017
         env:
