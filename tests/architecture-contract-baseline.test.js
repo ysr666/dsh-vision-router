@@ -164,6 +164,39 @@ test('3.0 R7 package root exposes only the deliberate plugin and compatibility c
   assert.doesNotMatch(declaration, /@deepseek-ai\/[^'"]+\/src\//)
 })
 
+test('cross-repository Host workflows materialize canonical DVR artifacts after checkout', async () => {
+  const workflows = [
+    '.github/workflows/alpha-browser-cold-toggle-smoke.yml',
+    '.github/workflows/dsh-017-browser-smoke.yml',
+    '.github/workflows/dsh-017-real-host-smoke.yml',
+    '.github/workflows/dsh-017-source-contract.yml',
+    '.github/workflows/dsh-020-rc2-validation.yml',
+    '.github/workflows/dsh-alpha-source-contract.yml',
+    '.github/workflows/dsh-preview-browser-smoke.yml',
+    '.github/workflows/dsh-upstream-web-modules-watch.yml',
+  ]
+
+  for (const workflow of workflows) {
+    const source = await text(workflow)
+    const checkouts = source.match(/^\s+path: dvr$/gm) ?? []
+    const materialize = source.match(
+      /^\s+- name: Materialize Vision Router package artifacts$/gm,
+    ) ?? []
+
+    assert.ok(checkouts.length > 0, `${workflow}: expected at least one DVR checkout`)
+    assert.equal(
+      materialize.length,
+      checkouts.length,
+      `${workflow}: every current DVR checkout job must materialize canonical package artifacts`,
+    )
+    assert.match(
+      source,
+      /Materialize Vision Router package artifacts[\s\S]*?working-directory: dvr[\s\S]*?pnpm install --frozen-lockfile --ignore-scripts[\s\S]*?pnpm build[\s\S]*?pnpm build:check/,
+      `${workflow}: materialization must remain explicit and lifecycle-script independent`,
+    )
+  }
+})
+
 test('production runtime never depends on DSH private source entry points', async () => {
   const forbidden = [
     /@deepseek-ai\/[^'"\s]+\/src\//,
