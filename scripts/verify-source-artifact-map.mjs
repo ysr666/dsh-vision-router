@@ -23,7 +23,7 @@ function slash(value) {
   return value.split(path.sep).join('/')
 }
 
-function artifactRelative(sourcePath) {
+function artifactPathFor(sourcePath) {
   const relative = slash(path.relative(SOURCE, sourcePath))
   if (relative.endsWith('.d.ts')) return relative
   if (relative.endsWith('.ts')) return relative.slice(0, -3) + '.js'
@@ -42,7 +42,7 @@ const failures = []
 
 for (const source of sources) {
   const sourceRelative = slash(path.relative(ROOT, source))
-  const artifactRelative = artifactRelative(source)
+  const artifactRelative = artifactPathFor(source)
   if (expected.has(artifactRelative)) {
     failures.push(
       `${artifactRelative}: duplicate canonical owners ${expected.get(artifactRelative)} and ${sourceRelative}`,
