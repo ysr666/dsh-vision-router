@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { resolveSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
+import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
 
 const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
@@ -55,6 +56,47 @@ test('subagent characterization: explicit ordinary child route currently drops V
   // while DVR still derives Session Vision authority only from route ownership.
   // Phase 2 will replace this behavior with inherited Session policy authority.
   const authority = resolveSessionVisionModeAuthority(ctx(), agent('openai'), {})
+  assert.equal(authority.enabled, false)
+  assert.equal(authority.reason, 'ordinary-route')
+})
+
+
+test('subagent target: inherited Session policy keeps Vision ON across an explicit ordinary child model', () => {
+  const authority = resolveSessionVisionModeAuthority(
+    ctx(),
+    agent('openai'),
+    {},
+    { sessionPolicy: {
+      revision: 1,
+      enabled: true,
+      source: 'delegation',
+      inheritedFrom: 'parent',
+    } },
+  )
+  assert.equal(authority.enabled, true)
+  assert.equal(authority.reason, 'session-policy')
+  assert.deepEqual(authority.route, { provider: 'openai', model: 'm' })
+})
+
+test('child-local explicit OFF policy outranks a DVR-owned route', () => {
+  const authority = resolveSessionVisionModeAuthority(
+    ctx(),
+    agent('deepseek-vision'),
+    {},
+    { sessionPolicy: userSessionVisionPolicy(false) },
+  )
+  assert.equal(authority.enabled, false)
+  assert.equal(authority.reason, 'session-policy')
+  assert.deepEqual(authority.route, { provider: 'deepseek-vision', model: 'm' })
+})
+
+test('malformed Session policy is ignored and preserves route-derived compatibility', () => {
+  const authority = resolveSessionVisionModeAuthority(
+    ctx(),
+    agent('openai'),
+    {},
+    { sessionPolicy: { revision: 1, enabled: true, source: 'delegation' } },
+  )
   assert.equal(authority.enabled, false)
   assert.equal(authority.reason, 'ordinary-route')
 })
