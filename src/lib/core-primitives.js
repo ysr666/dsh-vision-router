@@ -2220,7 +2220,8 @@ export async function callOpenAICompatible(provider, messages, options = {}) {
   return text
 }
 
-export { createChunkAssembler } from './vision-chunk-assembler.js'
+import { createChunkAssembler } from './vision-chunk-assembler.js'
+export { createChunkAssembler }
 
 async function visionAnswer(llm, options) {
   return runWithVisionSessionAffinity(options?.sessionId, async () => {
