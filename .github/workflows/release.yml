@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -20,7 +17,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -31,8 +28,8 @@ jobs:
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -68,17 +65,10 @@ jobs:
           }
 
           git fetch --no-tags origin main:refs/remotes/origin/main
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            [ "$(git rev-parse origin/main)" = "$RELEASE_SHA" ] || {
-              echo "::error::manual release target must be the exact current origin/main HEAD"
-              exit 1
-            }
-          else
-            git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
-              echo "::error::release tag is not reachable from origin/main"
-              exit 1
-            }
-          fi
+          [ "$(git rev-parse origin/main)" = "$RELEASE_SHA" ] || {
+            echo "::error::manual release target must be the exact current origin/main HEAD"
+            exit 1
+          }
 
           # Release identity and artifact verification are hard gates. README /
           # release-note freshness is useful documentation hygiene, but must not
@@ -148,6 +138,22 @@ jobs:
       - name: Verify release Host support policy
         run: node --test tests/dsh-support-window.test.js
 
+      - name: Preflight exact packed contract before irreversible tag
+        shell: bash
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+          RELEASE_REGISTRY_PROBE_ATTEMPTS: '3'
+          RELEASE_REGISTRY_DELAY_MS: '2000'
+        run: |
+          set -euo pipefail
+          rm -f pretag-pack.json
+          npm pack --json > pretag-pack.json
+          TARBALL="$(node -e "const p=require('./pretag-pack.json'); if(!Array.isArray(p)||p.length!==1||!p[0].filename) process.exit(1); process.stdout.write(p[0].filename)")"
+          LOCAL_SHA1="$(sha1sum "$TARBALL" | awk '{print $1}')"
+          VERSION="$(node -p "require('./package.json').version")"
+          node scripts/verify-packed-public-api.mjs "$TARBALL"
+          node scripts/release-registry-identity.mjs probe "$VERSION" "$LOCAL_SHA1"
+
 
   tag:
     name: Materialize verified release tag
@@ -157,8 +163,8 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Ensure immutable release tag exists at verified SHA
         shell: bash
@@ -175,11 +181,6 @@ jobs:
             echo "$RELEASE_TAG already exists at the verified release SHA"
             exit 0
           fi
-
-          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || {
-            echo "::error::tag event did not resolve to an existing remote tag"
-            exit 1
-          }
 
           CURRENT_MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
           [ "$CURRENT_MAIN_SHA" = "$RELEASE_SHA" ] || {
@@ -220,8 +221,8 @@ jobs:
       attestation_url: ${{ steps.attest.outputs.attestation-url }}
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -417,8 +418,8 @@ jobs:
       contents: write
       actions: read
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
       RELEASE_VERSION: ${{ needs.publish.outputs.release_version }}
       PACKAGE_TARBALL: ${{ needs.publish.outputs.package_tarball }}
       PACKAGE_FILE_COUNT: ${{ needs.publish.outputs.package_file_count }}

@@ -5,10 +5,10 @@ on:
     paths:
       - 'src/**'
       - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'index.js'
+      - 'src/index.js'
       - 'cordis.patch.yml'
       - 'package.json'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/ci-heavy-host-impact.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
@@ -21,10 +21,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'index.js'
+      - 'src/index.js'
       - 'cordis.patch.yml'
       - 'package.json'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/ci-heavy-host-impact.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'

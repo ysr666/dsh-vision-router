@@ -8,7 +8,7 @@ on:
       - 'src/**'
       - 'package.json'
       - 'cordis.patch.yml'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-peer-admission-contract.mjs'
       - 'scripts/dsh-proxy-egress-contract.mjs'
@@ -28,7 +28,7 @@ on:
     paths:
       - 'package.json'
       - 'cordis.patch.yml'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/**'
       - '.github/workflows/dsh-020-rc2-validation.yml'
 

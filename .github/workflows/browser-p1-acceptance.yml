@@ -3,10 +3,10 @@ name: Browser P1 acceptance
 on:
   pull_request:
     paths:
-      - 'lib/client.js'
-      - 'lib/settings-native-card-layout.js'
-      - 'lib/settings-ia-client-prelude.js'
-      - 'lib/vision-capability-benchmark-client.js'
+      - 'src/lib/client.js'
+      - 'src/lib/settings-native-card-layout.js'
+      - 'src/lib/settings-ia-client-prelude.js'
+      - 'src/lib/vision-capability-benchmark-client.js'
       - 'tests/browser-p1-acceptance.test.js'
       - '.github/workflows/browser-p1-acceptance.yml'
 
