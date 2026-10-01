@@ -611,77 +611,7 @@ export function extractJson(text) {
   return undefined
 }
 
-function cacheWeight(value) {
-  if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value.byteLength
-  if (typeof value === 'string') return Buffer.byteLength(value, 'utf8')
-  try {
-    const encoded = JSON.stringify(value)
-    return Buffer.byteLength(encoded === undefined ? String(value) : encoded, 'utf8')
-  } catch {
-    return Buffer.byteLength(String(value), 'utf8')
-  }
-}
-
-/** LRU+TTL cache bounded by BOTH entry count and retained bytes. */
-export function createCache(maxEntries, ttlMs, options = {}) {
-  const entries = new Map()
-  const entryLimit = Math.max(0, Math.floor(Number(maxEntries) || 0))
-  const maxBytes = Number.isFinite(Number(options.maxBytes)) && Number(options.maxBytes) >= 0
-    ? Math.floor(Number(options.maxBytes))
-    : 8 * 1024 * 1024
-  const maxEntryBytes = Number.isFinite(Number(options.maxEntryBytes)) && Number(options.maxEntryBytes) >= 0
-    ? Math.floor(Number(options.maxEntryBytes))
-    : Math.min(maxBytes, 1024 * 1024)
-  let retainedBytes = 0
-
-  const remove = (key) => {
-    const entry = entries.get(key)
-    if (!entry) return
-    retainedBytes = Math.max(0, retainedBytes - entry.weight)
-    entries.delete(key)
-  }
-  const evict = () => {
-    while (entries.size > entryLimit || retainedBytes > maxBytes) {
-      const oldest = entries.keys().next().value
-      if (oldest === undefined) break
-      remove(oldest)
-    }
-  }
-
-  return {
-    get(key) {
-      const entry = entries.get(key)
-      if (!entry) return undefined
-      if (entry.expiresAt <= Date.now()) {
-        remove(key)
-        return undefined
-      }
-      entries.delete(key)
-      entries.set(key, entry)
-      return entry.value
-    },
-    set(key, value) {
-      const normalizedKey = String(key)
-      const weight = Buffer.byteLength(normalizedKey, 'utf8') + cacheWeight(value)
-      remove(normalizedKey)
-      if (entryLimit === 0 || maxBytes === 0 || weight > maxEntryBytes || weight > maxBytes) return false
-      entries.set(normalizedKey, {
-        value,
-        weight,
-        expiresAt: ttlMs <= 0 ? Infinity : Date.now() + ttlMs,
-      })
-      retainedBytes += weight
-      evict()
-      return entries.has(normalizedKey)
-    },
-    get size() {
-      return entries.size
-    },
-    get bytes() {
-      return retainedBytes
-    },
-  }
-}
+export { createCache } from './core-cache.js'
 
 /** True when the harness llm service has a registered adapter for the provider route. */
 export function adapterAvailable(llm, provider) {
