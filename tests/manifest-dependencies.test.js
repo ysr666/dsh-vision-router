@@ -117,6 +117,23 @@ test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission r
   }
 })
 
+test('client package graph does not revive the retired dsh-client-runtime row', async () => {
+  const pkg = await manifest()
+  const inject = Array.isArray(pkg.dsh?.client?.inject) ? pkg.dsh.client.inject : []
+  const doctorRuntime = await readFile(new URL('../lib/doctor-runtime.js', import.meta.url), 'utf8')
+
+  assert.equal(
+    inject.includes('@deepseek-ai/dsh-client-runtime'),
+    false,
+    'DSH 0.2 client graph has no dsh-client-runtime package row',
+  )
+  assert.doesNotMatch(
+    doctorRuntime,
+    /@deepseek-ai\/dsh-client-runtime/,
+    'Doctor must not diagnose a Host package that no longer exists',
+  )
+})
+
 test('host-provided peers are optional so profile installs never warn about missing peers', async () => {
   const pkg = await manifest()
   const optionalPeers = [
