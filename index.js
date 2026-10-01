@@ -3421,6 +3421,8 @@ ctx.logger?.info(
     // budget with every backend attempt inside.
     const answerVision = async (imageBytes, mediaType, instruction, options = {}) => {
       const scope = options.scope ?? 'anon:0'
+      const taskSignal = options.signal
+      throwIfVisionTaskAborted(taskSignal)
       const deadline = options.deadline ?? createDeadline(visionTaskTimeoutMs())
       // Turn memory fast path: all backends already failed this turn — answer
       // instantly, do not touch the network again.
@@ -3435,7 +3437,9 @@ ctx.logger?.info(
       const errors = []
       const attempted = []
       const block = await visionBlocksFromBytes(imageBytes, mediaType)
+      throwIfVisionTaskAborted(taskSignal)
       const usablePairs = await resolveToolVisionPairs()
+      throwIfVisionTaskAborted(taskSignal)
       // Freeze one fallback walk. Settings changes are observed by the next
       // task, never between two attempts in the current task.
       const httpFallbacks = httpProviders()
@@ -3467,6 +3471,7 @@ ctx.logger?.info(
         errors.push(`${backendKey}: ${message}`)
       }
       for (const pair of usablePairs) {
+        throwIfVisionTaskAborted(taskSignal)
         if (localOnlyVisionEnabled(current()) && !isLocalBackendPair(pair)) {
           errors.push(`${pair.provider}/${pair.model}: skipped (local-only vision policy)`)
           continue
@@ -3484,6 +3489,7 @@ ctx.logger?.info(
         // the direct channel bridge that was meant to rescue them.
         const pairKey = `${pair.provider}/${pair.model}`
         const fingerprint = await credentialFingerprintFor({ provider: pair.provider })
+        throwIfVisionTaskAborted(taskSignal)
         const gate = visionBreaker.inspect(pairKey, fingerprint, scope)
         if (gate.blocked) {
           errors.push(`${pairKey}: skipped (circuit open: ${gate.reason})`)
@@ -3492,6 +3498,7 @@ ctx.logger?.info(
         let pairCapability = pairCapabilities.get(pairKey)
         if (pairCapability === undefined) {
           pairCapability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          throwIfVisionTaskAborted(taskSignal)
           pairCapabilities.set(pairKey, pairCapability)
         }
         // Local backends get an independent anti-hang budget (fair share of
@@ -3506,7 +3513,7 @@ ctx.logger?.info(
             )
           : timeoutMs()
         const attemptSignal = combineSignals(
-          currentVisionTurnBudgetSignal(),
+          taskSignal,
           deadline.signal(),
           AbortSignal.timeout(attemptBudgetMs),
         )
@@ -3523,8 +3530,10 @@ ctx.logger?.info(
               bridgeInstruction: instruction,
             },
           )
+          throwIfVisionTaskAborted(taskSignal)
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
         } catch (error) {
+          throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
           visionBreaker.record(pairKey, fingerprint, classification, scope)
           recordFailure(pairKey, classification, error && error.message ? error.message : String(error))
@@ -3532,6 +3541,7 @@ ctx.logger?.info(
       }
       const httpContent = toOpenAIContent([block], () => imageBytes)
       for (const provider of httpFallbacks) {
+        throwIfVisionTaskAborted(taskSignal)
         if (localOnlyVisionEnabled(current()) && !isLoopbackVisionBaseURL(provider?.baseURL)) {
           errors.push(`http:${provider?.name}/${provider?.model}: skipped (local-only vision policy)`)
           continue
@@ -3545,6 +3555,7 @@ ctx.logger?.info(
         }
         const backendKey = `http:${provider.name}/${provider.model}`
         const fingerprint = await credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv })
+        throwIfVisionTaskAborted(taskSignal)
         const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
         if (gate.blocked) {
           errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
@@ -3557,7 +3568,7 @@ ctx.logger?.info(
             {
               maxTokens: provider.maxTokens ?? 4096,
               signal: combineSignals(
-                currentVisionTurnBudgetSignal(),
+                taskSignal,
                 deadline.signal(),
                 AbortSignal.timeout(timeoutMs()),
               ),
@@ -3565,13 +3576,16 @@ ctx.logger?.info(
               resolveCredential,
             },
           )
+          throwIfVisionTaskAborted(taskSignal)
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
         } catch (error) {
+          throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
           visionBreaker.record(backendKey, fingerprint, classification, scope)
           recordFailure(backendKey, classification, error && error.message ? error.message : String(error))
         }
       }
+      throwIfVisionTaskAborted(taskSignal)
       const failure = await visionFailureResult(scope, attempted, errors.join(' | '))
       return attempted.length > 0 ? failure : { ...failure, code: VISION_RESULT_CODES.UNSUPPORTED_BACKEND }
     }
@@ -3582,6 +3596,7 @@ ctx.logger?.info(
       const session = exec && exec.agent && exec.agent.session
       return answerVision(imageBytes, mediaType, instruction, {
         ...options,
+        signal: combineSignals(options.signal, currentVisionTurnBudgetSignal(), exec?.signal),
         scope: visionScopeOf(session),
         sessionId: sessionIdentityOf(session),
       })
@@ -4111,7 +4126,7 @@ ctx.logger?.info(
       async execute(args, exec) {
         const imageInput = resolveOcrImageInput(args)
         const session = exec?.agent?.session
-        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        const taskSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
         throwIfVisionTaskAborted(taskSignal)
         const engine = resolveVisionOcrEngine(args.engine, current().ocrEngine)
         const degraded = degradedLocalState(session, imageInput)
@@ -4230,7 +4245,7 @@ ctx.logger?.info(
       },
       output: stringOutput,
       async execute(args, exec) {
-        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        const taskSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
         throwIfVisionTaskAborted(taskSignal)
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
         throwIfVisionTaskAborted(taskSignal)
@@ -4445,7 +4460,7 @@ ctx.logger?.info(
       },
       output: stringOutput,
       async execute(args, exec) {
-        const taskSignal = currentVisionTurnBudgetSignal() ?? exec?.signal
+        const taskSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
         throwIfVisionTaskAborted(taskSignal)
         const { bytes } = await readImageBytes(exec, args.image)
         throwIfVisionTaskAborted(taskSignal)

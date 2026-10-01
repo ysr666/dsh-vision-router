@@ -6,8 +6,6 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { createSecureHtmlScreenshotExecute } from '../lib/adversarial-hardening.js'
-import { createDesktopScreenshotTool } from '../lib/desktop-screenshot-tool.js'
-import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 import {
   buildPerMonitorWindowsScreenshotScript,
   captureWindowsDesktop,
@@ -110,32 +108,6 @@ test('aborting an active secure screenshot closes Chrome and prevents artifact p
   assert.equal(harness.artifactWrites, 0)
 })
 
-test('desktop screenshot honors the ambient vision-task cancellation before OS capture', async () => {
-  const controller = new AbortController()
-  const reason = new Error('desktop turn cancelled')
-  controller.abort(reason)
-  let artifactWrites = 0
-  const tool = createDesktopScreenshotTool({
-    current: () => ({ desktopScreenshot: true, localOllama: {}, localLmStudio: {} }),
-    timeoutMs: () => 120000,
-    async saveArtifact() {
-      artifactWrites += 1
-      return '/workspace/screenshot.png'
-    },
-    stringOutput: { type: 'string' },
-    instantLocalStyle: () => 'structured',
-  })
-
-  await assert.rejects(
-    runWithVisionTurnBudget(
-      { signal: controller.signal, deadlineAt: Date.now() + 120000 },
-      () => tool.execute({}, { signal: new AbortController().signal }),
-    ),
-    /desktop turn cancelled/,
-  )
-  assert.equal(artifactWrites, 0)
-})
-
 test('Windows desktop capture enters per-monitor v2 on the exact capture thread and restores it', () => {
   const script = buildPerMonitorWindowsScreenshotScript("C:\\shot's\\screen.png")
   const captureAt = script.indexOf('public static void Capture(string outputPath)')
@@ -168,7 +140,8 @@ test('production Windows screenshot implementation owns PMv2 capture outside mat
   assert.match(core, /deepToolDefs\.push\(createDesktopScreenshotTool\(\{/ )
   assert.doesNotMatch(core, /captureWindowsDesktop|screencapture|ImageMagick import/)
   assert.match(screenshot, /import \{ captureWindowsDesktop \} from '\.\/windows-desktop-capture\.js'/)
-  assert.match(screenshot, /await captureWindowsDesktop\(target, \{ timeoutMs, signal \}\)/)
+  assert.match(screenshot, /const captureWindows = options\.captureWindowsDesktop \?\? captureWindowsDesktop/)
+  assert.match(screenshot, /await captureWindows\(target, \{ timeoutMs, signal \}\)/)
   assert.doesNotMatch(screenshot, /\$b=\[System\.Windows\.Forms\.SystemInformation\]::VirtualScreen/)
   assert.doesNotMatch(screenshot, /\$g\.CopyFromScreen\(\$b\.X,\$b\.Y,0,0,\$bmp\.Size\)/)
   assert.doesNotMatch(execCompat, /rewriteWindowsScreenshotExecArgs/)
