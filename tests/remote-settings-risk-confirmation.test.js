@@ -124,6 +124,67 @@ test('shared remote-risk owner coalesces concurrent authorization and refreshes 
   )
 })
 
+test('remote-risk authorization stays isolated across live RPC replacement', async () => {
+  let releaseA
+  const gateA = new Promise((resolve) => { releaseA = resolve })
+  const calls = []
+  let confirms = 0
+  const makeRpc = (name) => {
+    let enabled = false
+    return {
+      async call(_channel, endpoint) {
+        calls.push([name, endpoint])
+        if (endpoint === 'describe') {
+          return {
+            ok: true,
+            value: enabled
+              ? { enabled: true, owner: name }
+              : { enabled: false, reason: 'permission-disabled', writable: false },
+          }
+        }
+        if (endpoint === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT) {
+          if (name === 'A') await gateA
+          enabled = true
+          return { ok: true, value: { enabled: true, owner: name } }
+        }
+        throw new Error('unexpected endpoint ' + endpoint)
+      },
+    }
+  }
+  const rpcA = makeRpc('A')
+  const rpcB = makeRpc('B')
+  const boundary = createRemoteSettingsRiskClientBoundary({
+    confirmImpl() {
+      confirms += 1
+      return true
+    },
+    locale: 'en-US',
+  })
+  let currentRpc = rpcA
+  const connection = {
+    get rpc() { return currentRpc },
+  }
+  const rawContext = {
+    get(name) { return name === 'connection' ? connection : undefined },
+  }
+  const wrapped = boundary.wrapContext(rawContext)
+  const wrappedConnection = wrapped.get('connection')
+  assert.equal(wrapped.get('connection'), wrappedConnection)
+
+  const pendingA = wrappedConnection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  await Promise.resolve()
+  currentRpc = rpcB
+  const resultB = await wrappedConnection.rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  assert.equal(resultB.value.owner, 'B')
+  assert.equal(calls.filter(([name, endpoint]) => name === 'B' && endpoint === 'authorize').length, 1)
+
+  releaseA()
+  const resultA = await pendingA
+  assert.equal(resultA.value.owner, 'A')
+  assert.equal(calls.filter(([name, endpoint]) => name === 'A' && endpoint === 'authorize').length, 1)
+  assert.equal(confirms, 2)
+})
+
 test('shared remote-risk owner normalizes official loopback only when requested', () => {
   const connection = { isLoopback: false, rpc: { call() {} } }
   const context = { get(name) { return name === 'connection' ? connection : undefined } }
