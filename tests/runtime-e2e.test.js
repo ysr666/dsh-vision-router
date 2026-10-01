@@ -21,6 +21,11 @@ import {
   apply,
   Config,
 } from '../index.js'
+import {
+  captureDesktopPng,
+  createDesktopScreenshotTool,
+} from '../lib/desktop-screenshot-tool.js'
+import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 
 // 1x1 透明 PNG，真实图片字节。
 const PNG_BYTES = Buffer.from(
@@ -806,6 +811,168 @@ test('vision-http reads local backend settings live, including URL/model/protoco
     await first.close()
     await second.close()
   }
+})
+
+test('vision_screenshot merges ambient and exec cancellation before OS capture', async () => {
+  const ambient = new AbortController()
+  const exec = new AbortController()
+  exec.abort(new Error('desktop tool cancelled'))
+  let captures = 0
+  let artifactWrites = 0
+  const tool = createDesktopScreenshotTool({
+    current: () => ({ desktopScreenshot: true }),
+    timeoutMs: () => 120000,
+    async captureDesktop() {
+      captures += 1
+      return 'test'
+    },
+    async saveArtifact() {
+      artifactWrites += 1
+      return '/workspace/screenshot.png'
+    },
+    stringOutput: { type: 'string' },
+    instantLocalStyle: () => 'structured',
+  })
+
+  await assert.rejects(
+    runWithVisionTurnBudget(
+      { signal: ambient.signal, deadlineAt: Date.now() + 120000 },
+      () => tool.execute({}, { signal: exec.signal }),
+    ),
+    /desktop tool cancelled/,
+  )
+  assert.equal(captures, 0, 'a pre-aborted exec signal must not be hidden by a live ambient signal')
+  assert.equal(artifactWrites, 0)
+})
+
+test('vision_screenshot aborts an in-flight capture and never publishes an artifact', async () => {
+  const controller = new AbortController()
+  let releaseStarted
+  const captureStarted = new Promise((resolve) => { releaseStarted = resolve })
+  let artifactWrites = 0
+  const tool = createDesktopScreenshotTool({
+    current: () => ({ desktopScreenshot: true }),
+    timeoutMs: () => 120000,
+    async captureDesktop(_target, _timeoutMs, signal) {
+      releaseStarted()
+      await new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(signal.reason)
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+      return 'test'
+    },
+    async saveArtifact() {
+      artifactWrites += 1
+      return '/workspace/screenshot.png'
+    },
+    stringOutput: { type: 'string' },
+    instantLocalStyle: () => 'plain',
+  })
+
+  const pending = tool.execute({}, { signal: controller.signal })
+  await captureStarted
+  controller.abort(new Error('capture cancelled'))
+  await assert.rejects(pending, /capture cancelled/)
+  assert.equal(artifactWrites, 0)
+})
+
+test('vision_screenshot cancellation during identify prevents artifact publication', async () => {
+  const controller = new AbortController()
+  let releaseStarted
+  const identifyStarted = new Promise((resolve) => { releaseStarted = resolve })
+  let artifactWrites = 0
+  let requestSignal
+  const tool = createDesktopScreenshotTool({
+    current: () => ({
+      desktopScreenshot: true,
+      localOllama: {
+        enabled: true,
+        baseURL: 'http://127.0.0.1:11434/v1',
+        model: 'test-vl',
+        format: 'openai',
+      },
+    }),
+    timeoutMs: () => 120000,
+    async captureDesktop(target) {
+      writeFileSync(target, PNG_BYTES)
+      return 'test'
+    },
+    async saveArtifact() {
+      artifactWrites += 1
+      return '/workspace/screenshot.png'
+    },
+    stringOutput: { type: 'string' },
+    instantLocalStyle: () => 'plain',
+    providerTransport: {
+      async fetch(_input, init) {
+        requestSignal = init.signal
+        releaseStarted()
+        return new Promise((resolve, reject) => {
+          const abort = () => reject(init.signal.reason)
+          if (init.signal?.aborted) abort()
+          else init.signal?.addEventListener('abort', abort, { once: true })
+        })
+      },
+    },
+  })
+
+  const pending = tool.execute({ identify: true }, { signal: controller.signal })
+  await identifyStarted
+  controller.abort(new Error('identify cancelled'))
+  await assert.rejects(pending, /identify cancelled/)
+  assert.equal(requestSignal?.aborted, true)
+  assert.equal(artifactWrites, 0, 'identify cancellation must happen before artifact publication')
+})
+
+test('desktop capture forwards cancellation to macOS/Linux child processes without abort fallback', async () => {
+  const mac = new AbortController()
+  let releaseMac
+  const macStarted = new Promise((resolve) => { releaseMac = resolve })
+  let macOptions
+  const macPending = captureDesktopPng('/tmp/mac.png', 120000, mac.signal, {
+    platform: 'darwin',
+    async execFileAsync(file, args, options) {
+      assert.equal(file, 'screencapture')
+      assert.deepEqual(args, ['-x', '-m', '/tmp/mac.png'])
+      macOptions = options
+      releaseMac()
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true })
+      })
+    },
+  })
+  await macStarted
+  mac.abort(new Error('mac capture cancelled'))
+  await assert.rejects(macPending, /mac capture cancelled/)
+  assert.equal(macOptions.signal, mac.signal)
+
+  const linux = new AbortController()
+  const calls = []
+  await captureDesktopPng('/tmp/linux.png', 120000, linux.signal, {
+    platform: 'linux',
+    async execFileAsync(file, _args, options) {
+      calls.push({ file, signal: options.signal })
+      if (file === 'import') throw new Error('import unavailable')
+      return { stdout: '', stderr: '' }
+    },
+  })
+  assert.deepEqual(calls.map((call) => call.file), ['import', 'scrot'])
+  assert.ok(calls.every((call) => call.signal === linux.signal))
+
+  const linuxAbort = new AbortController()
+  const abortCalls = []
+  await assert.rejects(
+    captureDesktopPng('/tmp/linux-abort.png', 120000, linuxAbort.signal, {
+      platform: 'linux',
+      async execFileAsync(file) {
+        abortCalls.push(file)
+        linuxAbort.abort(new Error('linux capture cancelled'))
+        throw linuxAbort.signal.reason
+      },
+    }),
+    /linux capture cancelled/,
+  )
+  assert.deepEqual(abortCalls, ['import'], 'an aborted import must not fall through to scrot')
 })
 
 test('vision_screenshot is NOT registered until the user explicitly opts in (boot-time)', async () => {
