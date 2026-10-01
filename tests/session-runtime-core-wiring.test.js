@@ -59,6 +59,20 @@ test('session state and index expose no hidden current owner or lookup monkey-pa
   assert.match(index, /stateStore \?\? createSessionVisionStateStore\(\)/)
 })
 
+test('Session attachment access has one explicit typed owner beneath the data-plane index', async () => {
+  const index = await source('lib/session-vision-index.js')
+  const attachments = await source('lib/session-vision-attachment-index.js')
+  const historyCompat = await source('lib/session-event-history-compat.js')
+
+  assert.match(index, /createSessionVisionAttachmentIndex\(/)
+  assert.match(index, /const \{[\s\S]*recordAttachments,[\s\S]*lookupAttachment,[\s\S]*resolveAttachment,[\s\S]*resolveAttachments,[\s\S]*\} = attachmentIndex/)
+  assert.doesNotMatch(index, /attachmentRecoveryWarnings|recoverAttachmentsFromEvents/)
+  assert.doesNotMatch(index, /function legacySessionEvents\s*\(/)
+  assert.match(attachments, /const attachmentRecoveryWarnings = new WeakMap/)
+  assert.match(attachments, /legacySessionEvents\(session\)/)
+  assert.match(historyCompat, /snapshotEvents\.call\(session\)/)
+})
+
 test('core delegates Session indexing, recovery and surface repair to SessionVisionIndex only', async () => {
   const core = await source('index.js')
 
