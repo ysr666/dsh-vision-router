@@ -87,6 +87,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-exact/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Install exact Host workspace dependencies
         working-directory: dsh-exact
         env:
