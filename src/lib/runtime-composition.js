@@ -18,7 +18,7 @@ import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
 import { installLegacyCoreVisionPolicyBridge } from './legacy-core-vision-policy-bridge.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
-import { createVolatileSessionVisionPolicyStore } from './session-vision-policy.js'
+import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
 import { installSessionVisionDelegationBoundary } from './session-vision-delegation-boundary.js'
 import { installPiAiBridgeWireCompat } from './pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './live-model-discovery.js'
@@ -231,7 +231,7 @@ function createRuntimeOwners(host, core) {
     nativeImageCompat.config,
     { rewriteHistoryImages: core.rewriteHistoryImages },
   )
-  const sessionVisionPolicyStore = createVolatileSessionVisionPolicyStore()
+  const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(legacyCoreCompat.ctx)
   installSessionVisionDelegationBoundary(
     legacyCoreCompat.ctx,
     sessionVisionPolicyStore,
