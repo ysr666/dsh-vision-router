@@ -87,6 +87,21 @@ export function createSessionVisionIndex({
     resolveAttachments,
   } = attachmentIndex
 
+  // Surface repair/feed state remains owned by SessionVisionIndex. Attachment
+  // cache/recovery state lives exclusively in SessionVisionAttachmentIndex.
+  const toolSurfaceScans = new WeakMap()
+  const guardSurfaceScans = new WeakMap()
+  const pendingToolRepairEvents = new WeakMap()
+  const pendingGuardRepairEvents = new WeakMap()
+  const toolRepairOverflowRanges = new WeakMap()
+  const guardRepairOverflowRanges = new WeakMap()
+  const unsupportedSurfaceContracts = new WeakSet()
+  const repairReadWarnings = new WeakMap()
+  const repairFeedOverflowWarnings = new WeakSet()
+  const repairFeedObserverWarnings = new WeakMap()
+  const surfaceFeedBackfills = new WeakMap()
+  let surfaceEventFeedActive = false
+
   const pendingSurfaceScan = (scans, session) => {
     if (!session) return undefined
     const nodes = surfaceNodes(session)
