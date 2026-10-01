@@ -25,12 +25,15 @@ function durableHarness(seed = []) {
     },
     async close() { closes.push(true) },
   }
+  const storageDomain = {
+    async open(spec) {
+      assert.equal(spec, sessionVisionPolicyDomainSpec)
+      return domain
+    },
+  }
   const ctx = {
-    storageDomain: {
-      async open(spec) {
-        assert.equal(spec, sessionVisionPolicyDomainSpec)
-        return domain
-      },
+    get(name) {
+      return name === 'storageDomain' ? storageDomain : undefined
     },
     effect(setup) {
       this.cleanup = setup()
@@ -48,6 +51,40 @@ test('runtime policy store stays volatile when Host has no storageDomain', async
   await store.set('s', userSessionVisionPolicy(true))
   assert.equal(store.get('s')?.enabled, true)
   assert.equal(await store.hydrate('s'), store.get('s'))
+})
+
+test('optional storageDomain capability never requires direct Cordis service access', async () => {
+  const rows = new Map()
+  const domain = {
+    table() {
+      return {
+        get(key) { return rows.get(key) },
+        async put(key, value) { rows.set(key, value) },
+        async delete(key) { rows.delete(key) },
+      }
+    },
+    async close() {},
+  }
+  const host = new Proxy({
+    get(name) {
+      if (name === 'storageDomain') {
+        return { async open() { return domain } }
+      }
+      return undefined
+    },
+  }, {
+    get(target, property, receiver) {
+      if (property === 'storageDomain') {
+        throw new Error('cannot get property "storageDomain" without inject')
+      }
+      return Reflect.get(target, property, receiver)
+    },
+  })
+
+  const store = createSessionVisionPolicyRuntimeStore(host)
+  assert.equal(store.durable, true)
+  await store.set('session', userSessionVisionPolicy(true))
+  assert.equal(rows.get('session')?.enabled, true)
 })
 
 test('runtime policy store writes and hydrates through the official sidecar shape', async () => {
@@ -74,8 +111,11 @@ test('runtime policy store writes and hydrates through the official sidecar shap
 test('durable sidecar failure degrades once to volatile without blocking Vision', async () => {
   const warnings = []
   const store = createSessionVisionPolicyRuntimeStore({
-    storageDomain: {
-      async open() { throw new Error('storage offline') },
+    get(name) {
+      if (name !== 'storageDomain') return undefined
+      return {
+        async open() { throw new Error('storage offline') },
+      }
     },
     logger: { warn(...args) { warnings.push(args) } },
   })
