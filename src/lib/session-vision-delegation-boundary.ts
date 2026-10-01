@@ -11,8 +11,8 @@ export interface SessionVisionDelegationAgentRegistry<A extends SessionVisionDel
 }
 
 export interface SessionVisionDelegationContext<A extends SessionVisionDelegationAgent> {
-  readonly agents: SessionVisionDelegationAgentRegistry<A>
-  on(
+  readonly agents?: Partial<SessionVisionDelegationAgentRegistry<A>>
+  on?(
     event: 'agent/created',
     listener: (event: Readonly<{ agent: A }>) => Promise<void> | void,
   ): unknown
@@ -32,11 +32,22 @@ export function installSessionVisionDelegationBoundary<
   ctx: SessionVisionDelegationContext<A>,
   store: SessionVisionPolicyStore,
   resolveParentAuthority: ResolveSessionVisionAuthority<A>,
-): void {
-  ctx.on('agent/created', async ({ agent: child }) => {
-    const parent = ctx.agents.currentInitiator()
+): boolean {
+  const currentInitiator = ctx.agents?.currentInitiator
+  const isOwnedBy = ctx.agents?.isOwnedBy
+  const on = ctx.on
+  if (
+    typeof currentInitiator !== 'function'
+    || typeof isOwnedBy !== 'function'
+    || typeof on !== 'function'
+  ) {
+    return false
+  }
+
+  on.call(ctx, 'agent/created', async ({ agent: child }) => {
+    const parent = currentInitiator.call(ctx.agents)
     if (parent === undefined || parent.id === child.id) return
-    if (!ctx.agents.isOwnedBy(child.id, parent)) return
+    if (!isOwnedBy.call(ctx.agents, child.id, parent)) return
 
     await materializeDelegatedSessionVisionPolicy(
       store,
@@ -45,4 +56,5 @@ export function installSessionVisionDelegationBoundary<
       resolveParentAuthority,
     )
   })
+  return true
 }
