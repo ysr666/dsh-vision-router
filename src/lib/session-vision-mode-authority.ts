@@ -356,9 +356,10 @@ export function visionModeEnabledForAgent(
   ctx: unknown,
   agent: unknown,
   fallbackConfig: unknown = {},
+  options: ResolveSessionVisionModeAuthorityOptions = {},
 ): boolean {
   if (!isWeakKey(agent)) return true
   const snapshot = agentAuthorities.get(agent)
   if (snapshot) return snapshot.enabled === true
-  return resolveSessionVisionModeAuthority(ctx, agent, fallbackConfig).enabled === true
+  return resolveSessionVisionModeAuthority(ctx, agent, fallbackConfig, options).enabled === true
 }
