@@ -107,6 +107,10 @@ try {
     throw new Error(`Desktop profile install failed (${String(install.status)})\n${install.stdout}\n${install.stderr}`)
   }
 
+  // Keep the web port explicit so this contract can run beside the other Desktop
+  // scenarios in one job instead of silently requiring 19387 to be free.
+  writeFileSync(join(paths.profile, 'cordis.patch.yml'),
+    `- id: webserver\n  config:\n    host: 127.0.0.1\n    port: ${String(Number.parseInt(process.env.DVR_DESKTOP_BASE_PORT ?? '19387', 10) || 19387)}\n`)
   host = new DesktopHostProcess(process.execPath, project, paths.profile)
   const ready = await host.start()
 
