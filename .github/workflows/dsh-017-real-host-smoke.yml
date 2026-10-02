@@ -111,6 +111,12 @@ jobs:
         with:
           version: 11.7.0
 
+      - name: Restore cached Node runtime
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/node
+          key: node-runtime-${{ runner.os }}-${{ runner.arch }}-22.19.0
+
       - name: Install Node 22 browser runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -178,55 +184,89 @@ jobs:
             dsh-017/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
+      # `playwright install --with-deps` fetches the Chromium OS packages with apt on
+      # every run; when the runner image lacks them the mirror can take minutes. Caching
+      # the downloaded .deb files keeps the install identical while removing that tail.
+      - name: Restore cached Playwright system packages
+        id: playwright-apt-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/playwright-apt-archives
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Seed the apt package cache
+        if: steps.playwright-apt-cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/cache/apt/archives/partial
+          sudo cp -n ~/playwright-apt-archives/*.deb /var/cache/apt/archives/ || true
+
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-017
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
 
-      - name: Run bundle HMR recompose stability against DSH 0.1.7
-        working-directory: dsh-017
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
-        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
 
-      - name: Run Desktop Host structured bootstrap against DSH 0.1.7
-        working-directory: dsh-017
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
-        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Collect Playwright system packages
+        id: playwright-apt-collect
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/playwright-apt-archives
+          sudo cp -n /var/cache/apt/archives/*.deb ~/playwright-apt-archives/ || true
+          sudo chown -R "$(id -u):$(id -g)" ~/playwright-apt-archives
+          count="$(find ~/playwright-apt-archives -name '*.deb' | wc -l | tr -d ' ')"
+          printf 'packages=%s\n' "$count" >> "$GITHUB_OUTPUT"
 
-      - name: Run cold Vision toggle against DSH 0.1.7
+      # Only a run that actually downloaded packages has something worth caching: an
+      # empty archive would pin this key to a useless entry.
+      - name: Save Playwright system packages from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-apt-cache.outputs.cache-hit != 'true' && steps.playwright-apt-collect.outputs.packages != '0'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/playwright-apt-archives
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
+      # Five independent Host/browser scenarios: each builds its own temp home and asks
+      # the Host for a free port (`--port 0`), so they run together instead of one after
+      # another. Every assertion and diagnostic path is unchanged, and the step fails if
+      # any scenario fails.
+      - name: Run the DSH 0.1.7 Host scenarios
         working-directory: dsh-017
+        shell: bash
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.png
-        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
-
-      - name: Run mixed attachment lifecycle against DSH 0.1.7
-        working-directory: dsh-017
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-mixed.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-mixed.png
-        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
-
-      - name: Run real Settings mount, save, reload, and readback against DSH 0.1.7
-        working-directory: dsh-017
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-settings.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-settings.png
-        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: |
+          set -uo pipefail
+          out="${RUNNER_TEMP:-/tmp}/dvr-host-suite"
+          mkdir -p "$out"
+          pids=(); names=()
+          node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs > "$out/bundle-recompose.log" 2>&1 &
+          pids+=("$!"); names+=("bundle-recompose")
+          node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs > "$out/injection.log" 2>&1 &
+          pids+=("$!"); names+=("injection")
+          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-cold-toggle.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-cold-toggle.png" \
+            node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs > "$out/cold-toggle.log" 2>&1 &
+          pids+=("$!"); names+=("cold-toggle")
+          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-mixed.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-mixed.png" \
+            node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs > "$out/mixed.log" 2>&1 &
+          pids+=("$!"); names+=("mixed")
+          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-settings.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-settings.png" \
+            node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs > "$out/settings.log" 2>&1 &
+          pids+=("$!"); names+=("settings")
+          status=0
+          for i in "${!pids[@]}"; do
+            wait "${pids[$i]}" || { status=1; echo "::error::${names[$i]} failed"; }
+          done
+          for i in "${!pids[@]}"; do
+            echo "::group::${names[$i]}"
+            cat "$out/${names[$i]}.log" || true
+            echo "::endgroup::"
+          done
+          exit "$status"
 
       - name: Upload diagnostics on failure
         if: failure()
@@ -266,6 +306,12 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.7.0
+
+      - name: Restore cached Node runtime
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/node
+          key: node-runtime-${{ runner.os }}-${{ runner.arch }}-${{ matrix.node }}
 
       - name: Install Node ${{ matrix.node }} Desktop runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -420,6 +466,12 @@ jobs:
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.7.0
+
+      - name: Restore cached Node runtime
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/node
+          key: node-runtime-${{ runner.os }}-${{ runner.arch }}-24.21.0
 
       - name: Install Node 24 Desktop runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

@@ -86,6 +86,12 @@ jobs:
         with:
           version: 11.7.0
 
+      - name: Restore cached Node runtime
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/node
+          key: node-runtime-${{ runner.os }}-${{ runner.arch }}-22.19.0
+
       - name: Install Node 22 browser runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -168,7 +174,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/playwright-apt-archives
-          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dsh-alpha/pnpm-lock.yaml') }}
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
 
       - name: Seed the apt package cache
         if: steps.playwright-apt-cache.outputs.cache-hit == 'true'
@@ -203,7 +209,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/playwright-apt-archives
-          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dsh-alpha/pnpm-lock.yaml') }}
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
 
       - name: Run cold Vision toggle against real Host and Chromium
         id: smoke
