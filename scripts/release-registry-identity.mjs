@@ -64,6 +64,23 @@ export async function waitForRegistryIdentity({
   return { state: 'timeout', attempt: attempts }
 }
 
+export async function inspectRegistryIdentity({
+  packageName,
+  version,
+  fetchImpl = fetch,
+  attempts = DEFAULT_PROBE_ATTEMPTS,
+  delayMs = DEFAULT_DELAY_MS,
+  sleepImpl = sleep,
+}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = await lookupRegistryIdentity({ packageName, version, fetchImpl })
+    if (result.state === 'visible' || result.state === 'fatal') return { ...result, attempt }
+    if (attempt === attempts) return { state: 'timeout', attempt, last: result }
+    await sleepImpl(delayMs)
+  }
+  return { state: 'timeout', attempt: attempts }
+}
+
 async function writeOutput(path, key, value) {
   if (!path) return
   await appendFile(path, `${key}=${value}\n`, 'utf8')
@@ -71,8 +88,37 @@ async function writeOutput(path, key, value) {
 
 async function main(argv) {
   const [mode, version, expectedSha1] = argv
+  if (mode === 'inspect') {
+    if (!version || argv.length !== 2) {
+      throw new Error('usage: release-registry-identity.mjs inspect <version>')
+    }
+    const attempts = Number(process.env.RELEASE_REGISTRY_PROBE_ATTEMPTS || DEFAULT_PROBE_ATTEMPTS)
+    const delayMs = Number(process.env.RELEASE_REGISTRY_DELAY_MS || DEFAULT_DELAY_MS)
+    const result = await inspectRegistryIdentity({
+      packageName: RELEASE_PACKAGE_NAME,
+      version,
+      attempts,
+      delayMs,
+    })
+    if (result.state === 'visible') {
+      await writeOutput(process.env.GITHUB_OUTPUT, 'already_published', 'true')
+      await writeOutput(process.env.GITHUB_OUTPUT, 'remote_sha1', result.sha1)
+      console.log(JSON.stringify({ published: true, sha1: result.sha1 }))
+      return
+    }
+    if (result.state === 'timeout' && result.last?.state === 'missing') {
+      await writeOutput(process.env.GITHUB_OUTPUT, 'already_published', 'false')
+      console.log(JSON.stringify({ published: false }))
+      return
+    }
+    if (result.state === 'timeout') {
+      throw new Error(`npm registry inspection did not settle within ${attempts * delayMs}ms (last=${result.last?.state || 'unknown'})`)
+    }
+    throw new Error(`npm registry inspection failed: ${result.detail || result.state}`)
+  }
+
   if (!['probe', 'wait'].includes(mode) || !version || !expectedSha1 || argv.length !== 3) {
-    throw new Error('usage: release-registry-identity.mjs <probe|wait> <version> <expected-sha1>')
+    throw new Error('usage: release-registry-identity.mjs <inspect|probe|wait> <version> [expected-sha1]')
   }
   const packageName = RELEASE_PACKAGE_NAME
   const attempts = mode === 'probe'
