@@ -128,10 +128,32 @@ try {
   } catch (error) {
     if (!(error instanceof TypeError)) throw error
   }
-  const emptyIntent = runtime.sessionSurfaceReplacementIntent({ header: { version: 4 } }, 0)
-  if (emptyIntent !== undefined) {
-    throw new Error(`packed sessionSurfaceReplacementIntent({header:{version:4}}, 0) drifted: ${JSON.stringify(emptyIntent)}`)
+  // Version 4 is a supported format: it must always yield the replacement shape
+  // for a non-negative seq (returning undefined here would make the Session index
+  // log a bogus "unsupported Session format version=4" warning and skip repair).
+  // Only an unsupported/absent format produces no intent.
+  const version4Intent = runtime.sessionSurfaceReplacementIntent({ header: { version: 4 } }, 0)
+  const expectedVersion4Intent = {
+    surfaceOp: { op: 'replace', startSeq: 0, endSeq: 0 },
+    sourceEventSeqs: [0],
   }
+  if (JSON.stringify(version4Intent) !== JSON.stringify(expectedVersion4Intent)) {
+    throw new Error(`packed sessionSurfaceReplacementIntent({header:{version:4}}, 0) drifted: ${JSON.stringify(version4Intent)}`)
+  }
+  const unsupportedIntent = runtime.sessionSurfaceReplacementIntent({ header: { version: 5 } }, 0)
+  if (unsupportedIntent !== undefined) {
+    throw new Error(`packed sessionSurfaceReplacementIntent({header:{version:5}}, 0) should not produce an intent: ${JSON.stringify(unsupportedIntent)}`)
+  }
+  try {
+    runtime.installHostSettingsCompatibility({}, {}, {
+      Config: runtime.Config,
+      namespace: 'vision-router',
+    })
+    throw new Error('packed installHostSettingsCompatibility accepted a context without inject()')
+  } catch (error) {
+    if (!(error instanceof TypeError) || !/inject/.test(String(error?.message))) throw error
+  }
+
   if (runtime.apply.length !== 1 || runtime.sessionSurfaceReplacementIntent.length !== 2) {
     throw new Error('packed public function arity drifted from the published declaration')
   }
@@ -197,8 +219,14 @@ apply({}, config)
 apply({ effect: () => () => {} }, config, { providerTransport: {} })
 // @ts-expect-error settings compatibility requires an explicit namespace and Config
 installHostSettingsCompatibility({ inject: () => {} }, {}, {})
-// @ts-expect-error settings compatibility requires a context that can inject
-installHostSettingsCompatibility({}, {}, { Config, namespace: 'vision-router' })
+// The declared context keeps inject optional and enforces it at runtime, so this
+// is a *valid* declarative match; the runtime contract is asserted below.
+const settingsCtxWithoutInject = installHostSettingsCompatibility(
+  {},
+  {},
+  { Config, namespace: 'vision-router' },
+)
+void settingsCtxWithoutInject
 // @ts-expect-error Session surface replacement requires an explicit sequence
 sessionSurfaceReplacementIntent({ header: { version: 4 } })
 // @ts-expect-error mature Core helpers are not package-root API
