@@ -9,6 +9,7 @@ import { createVisionProviderTransport } from '../lib/vision-provider-transport.
 import { fetchWithOpenAICompatibility } from '../lib/http-compat.js'
 import { callAnthropicCompatible } from '../lib/catalog-corrections.js'
 import { effectiveProxyUrlForUndici } from '../lib/proxy-url-compat.js'
+import { callLocalBackend } from '../lib/core-primitives.js'
 
 
 test('default provider transport keeps the module-captured fetch across later global wrappers', async () => {
@@ -945,4 +946,36 @@ test('public package entry rejects a Host without Cordis lifecycle before runtim
     () => publicApply(throwing),
     /malformed lifecycle getter/,
   )
+})
+
+test('the LM Studio native transport also follows the Router-owned provider transport', async () => {
+  // #634: callLocalBackend's openai/anthropic branches pass providerTransport, but
+  // the `format: 'lmstudio'` native branch built its options without it and posted
+  // with ambient fetch, so a remote LM Studio bypassed proxy/proxyHosts.
+  const calls = []
+  const transport = createVisionProviderTransport({
+    fetchImpl: async (input) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ output: [{ type: 'message', content: 'lmstudio-via-transport' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const previousFetch = globalThis.fetch
+  let ambient = 0
+  globalThis.fetch = async () => { ambient += 1; return new Response('{}', { status: 500 }) }
+  try {
+    const text = await callLocalBackend(
+      { name: 'local-lmstudio', baseURL: 'http://remote-lmstudio.example:1234/v1', model: 'qwen2.5-vl', format: 'lmstudio' },
+      [{ role: 'user', content: 'look' }],
+      { allowKeyless: true, providerTransport: transport, maxTokens: 64 },
+    )
+    assert.equal(text, 'lmstudio-via-transport')
+    assert.equal(calls.length, 1, 'the native LM Studio call must use the Router-owned transport')
+    assert.equal(ambient, 0, 'the native LM Studio call must not fall back to ambient fetch')
+  } finally {
+    globalThis.fetch = previousFetch
+    await transport.dispose()
+  }
 })

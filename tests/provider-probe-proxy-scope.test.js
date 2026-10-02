@@ -237,3 +237,74 @@ test('the settings test-connection probe uses the same scoped transport', async 
     globalThis.fetch = previousFetch
   }
 })
+
+test('the test-connection probe follows the Router-owned transport for a vision-http backend', async () => {
+  // #633: the legacy pair scope only covers non-router-owned providers, so a
+  // vision-http direct backend (the plugin's default shape) probed with ambient
+  // fetch while real turns used the Router-owned transport.
+  const calls = []
+  const routes = new Map()
+  const cfg = {
+    proxy: 'http://127.0.0.1:19600',
+    proxyHosts: ['remote.example'],
+    providers: [{ provider: 'vision-http', model: 'glm-4.6v-flash', fallbacks: [] }],
+  }
+  const ctx = {
+    llm: { registration() { return { id: 'mock' } } },
+    get(name) {
+      if (name === 'settings') return { get: (ns) => (ns === 'vision-router' ? cfg : undefined) }
+      return undefined
+    },
+    inject(_deps, callback) {
+      callback({
+        webServer: {
+          register(route) {
+            routes.set(route.path, route)
+            return () => {}
+          },
+        },
+        effect(factory) { return factory() },
+      })
+    },
+  }
+  const transport = {
+    fetch: async (input) => {
+      calls.push(String(input))
+      return new Response(JSON.stringify({ data: [{ id: 'glm-4.6v-flash' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  installVisionDiagnosticsRoutes(ctx, {
+    transport,
+    connection: {
+      candidatePairs: () => [],
+      localBackends: () => [],
+      httpBackends: () => [{ name: 'vision-http', baseURL: 'http://remote.example/v1', model: 'glm-4.6v-flash' }],
+      resolveCapability: async () => ({ attemptable: true }),
+      httpRoute: 'vision-http',
+    },
+    capabilities: { collect: async () => ({}), builtinFallback: [] },
+    ownership: { hostOwnsOfficialDeepSeek: false, stealthConfigured: false },
+  })
+  const route = routes.get(VISION_TEST_CONNECTION_PATH)
+  assert.ok(route, 'the test-connection route must be registered')
+  const previousFetch = globalThis.fetch
+  let ambient = 0
+  globalThis.fetch = async () => { ambient += 1; return new Response('{}', { status: 500 }) }
+  const res = {
+    status: undefined,
+    headers: {},
+    setHeader(name, value) { this.headers[String(name).toLowerCase()] = value },
+    writeHead(status) { this.status = status },
+    end() {},
+  }
+  try {
+    await route.handler({ method: 'GET' }, res)
+    assert.equal(calls.length, 1, 'the probe must use the Router-owned transport')
+    assert.equal(ambient, 0, 'the probe must not fall back to ambient fetch')
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+})

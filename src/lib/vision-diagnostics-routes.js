@@ -106,7 +106,15 @@ export function installVisionDiagnosticsRoutes(ctx, options = {}) {
   // inside the adapter's proxy scope) do not have. Use the fetch the boundary
   // currently owns, with the module-load capture as the fallback.
   const injectedFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undefined
-  const resolveFetch = () => injectedFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
+  // Probes must describe the egress real vision turns use. That egress is the
+  // Router-owned provider transport, which also owns the proxy/proxyHosts decision;
+  // the legacy pair scope below only covers non-router-owned providers, so a
+  // vision-http direct backend would otherwise probe with ambient fetch.
+  const transport = options.transport
+  const transportFetch = typeof transport?.fetch === 'function'
+    ? (input, init) => transport.fetch(input, init, { allowProxy: true })
+    : undefined
+  const resolveFetch = () => injectedFetch ?? transportFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
   const connectionConfig = () => {
     try {
       const live = ctx?.get?.('settings')?.get?.('vision-router')
