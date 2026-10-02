@@ -552,6 +552,7 @@ export function createBackgroundCapabilityProfiler({
   let lastForegroundAt = Number(now())
   let runningController
   let runningWork
+  let tickTask
   let topologyDirty = false
   let lastAuthority = resolveVisionRoutingAuthority(activeSettings(ctx, config))
   const backoff = new Map()
@@ -689,7 +690,7 @@ export function createBackgroundCapabilityProfiler({
     }
   }
 
-  const tick = async () => {
+  const runTick = async () => {
     if (stopped || runningController) return
     const currentNow = Number(now())
     const current = activeSettings(ctx, config)
@@ -864,6 +865,32 @@ export function createBackgroundCapabilityProfiler({
     }
   }
 
+  const tick = () => {
+    if (tickTask) return tickTask
+    let tracked
+    // `tracked` is assigned before any rejection can be observed: the timer
+    // callback and the lifecycle disposer both call tick(), and a background
+    // scan that throws must degrade to a logged failure instead of an
+    // unhandled process-level rejection.
+    tracked = Promise.resolve()
+      .then(runTick)
+      .catch((error) => {
+        try {
+          logger?.warn?.(
+            'vision-router: background benchmark tick failed: %s',
+            bounded(error?.message ?? error),
+          )
+        } catch {
+          /* diagnostics only */
+        }
+      })
+      .finally(() => {
+        if (tickTask === tracked) tickTask = undefined
+      })
+    tickTask = tracked
+    return tracked
+  }
+
   const foregroundStart = () => {
     activeForeground += 1
     lastForegroundAt = Number(now())
@@ -893,6 +920,7 @@ export function createBackgroundCapabilityProfiler({
     if (timer !== undefined) clearTimer(timer)
     timer = undefined
     yieldBackground('background profiler stopped')
+    return tickTask ?? Promise.resolve()
   }
 
   schedule(idleMs)
@@ -1022,16 +1050,25 @@ export function installBackgroundCapabilityProfiling(ctx, config, core, store, o
     // Event-driven wakeups are an optimization; the short authority scan remains.
   }
 
+  let lifecycleOwned = true
   try {
-    ctx?.effect?.(() => () => {
+    ctx?.effect?.(() => async () => {
       for (const dispose of eventDisposers.splice(0)) {
         try { dispose() } catch {}
       }
-      profiler.stop()
+      await profiler.stop()
     }, 'vision-router: background capability profiler')
   } catch {
-    // Cleanup registration is best-effort; the profiler remains process-scoped.
+    lifecycleOwned = false
+    for (const dispose of eventDisposers.splice(0)) {
+      try { dispose() } catch {}
+    }
+    void profiler.stop().catch(() => {})
   }
+
+  // An inactive/unowned generation must not continue admitting client scripts,
+  // routes, or tool wrappers after its profiler ownership was rejected.
+  if (!lifecycleOwned) return { ctx, profiler }
 
   installVisionExactCheckClient(ctx)
 

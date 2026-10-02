@@ -5,6 +5,15 @@ import { stripTrailingSlashes } from './string-normalization.js'
 const require = createRequire(import.meta.url)
 const packageJson = require('../package.json')
 
+// Capture the process fetch once, at module evaluation, exactly like the
+// Router-owned provider transport. Reading `globalThis.fetch` per call would
+// re-admit DVR's own later-installed process-wide wrappers (legacy proxy,
+// i18n/pi-ai bridge) into DVR's product-metadata requests, and would make the
+// transport used for a request depend on when the request happens to run.
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
+
 export const PACKAGE_NAME = 'dsh-vision-router'
 export const CURRENT_VERSION = String(packageJson.version ?? '')
 export const DEFAULT_NPM_REGISTRY = 'https://registry.npmjs.org'
@@ -149,7 +158,7 @@ async function fetchLatestReleaseVersion({ fetchImpl, releaseApi, signal, timeou
  * read-only metadata request against npmjs instead of showing a false failure.
  */
 export async function checkPackageUpdate({
-  fetchImpl = globalThis.fetch,
+  fetchImpl = moduleFetch,
   currentVersion = CURRENT_VERSION,
   registry = registryBaseFromEnv(),
   fallbackRegistry = DEFAULT_NPM_REGISTRY,
@@ -247,7 +256,7 @@ export async function checkPackageUpdate({
  * settings card reuses that result, and the manual button can force a refresh.
  */
 export function createCachedUpdateChecker({
-  fetchImpl = (...args) => globalThis.fetch(...args),
+  fetchImpl = moduleFetch,
   currentVersion = CURRENT_VERSION,
   registry = registryBaseFromEnv(),
   fallbackRegistry = DEFAULT_NPM_REGISTRY,

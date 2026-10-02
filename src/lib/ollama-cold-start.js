@@ -10,6 +10,17 @@ export const OLLAMA_WARMUP_KEEP_ALIVE = '30m'
 export const OLLAMA_WARMUP_TIMEOUT_MS = 120000
 export const OLLAMA_PROBE_TIMEOUT_MS = 1500
 
+// Capture the process fetch once, at module evaluation, exactly like the
+// Router-owned provider transport. A per-call `(...args) =>
+// globalThis.fetch(...args)` default would re-admit DVR's own later-installed
+// process-wide fetch wrappers (legacy proxy boundary, i18n/pi-ai bridge) into
+// Ollama warmup traffic, so the transport a warmup uses would depend on when
+// the warmup happens to run. Probe-only traffic must stay on the same frozen
+// transport as Router-owned provider calls.
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
+
 function errorText(error) {
   return error && error.message ? error.message : String(error)
 }
@@ -71,6 +82,32 @@ function timeoutSignal(ms, controllers) {
   }
 }
 
+function abortReason(signal) {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new Error('Ollama warmup aborted')
+}
+
+function awaitAbortable(task, signal) {
+  if (!signal || typeof signal.addEventListener !== 'function') return Promise.resolve(task)
+  if (signal.aborted) return Promise.reject(abortReason(signal))
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (callback, value) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      callback(value)
+    }
+    const onAbort = () => finish(reject, abortReason(signal))
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(task).then(
+      (value) => finish(resolve, value),
+      (error) => finish(reject, error),
+    )
+  })
+}
+
 async function cancelBody(response) {
   try {
     await response?.body?.cancel?.()
@@ -112,7 +149,7 @@ async function readOllamaJson(response, label) {
  * that the model finished loading.
  */
 export function createOllamaWarmupManager({
-  fetchImpl = (...args) => globalThis.fetch(...args),
+  fetchImpl = moduleFetch,
   logger,
   probeTimeoutMs = OLLAMA_PROBE_TIMEOUT_MS,
   warmupTimeoutMs = OLLAMA_WARMUP_TIMEOUT_MS,
@@ -121,6 +158,7 @@ export function createOllamaWarmupManager({
   const inFlight = new Map()
   const controllers = new Set()
   let disposed = false
+  let disposePromise
 
   const run = async (provider, reason, forceKeepAlive) => {
     const key = providerKey(provider)
@@ -136,12 +174,18 @@ export function createOllamaWarmupManager({
 
     const probe = timeoutSignal(probeTimeoutMs, controllers)
     try {
-      const response = await fetchImpl(psUrl, { method: 'GET', signal: probe.signal })
+      const response = await awaitAbortable(
+        fetchImpl(psUrl, { method: 'GET', signal: probe.signal }),
+        probe.signal,
+      )
       if (!response?.ok) {
-        await cancelBody(response)
+        await awaitAbortable(cancelBody(response), probe.signal)
         return { ok: false, reason: `probe-http-${response?.status ?? 'unknown'}` }
       }
-      const payload = await readOllamaJson(response, 'Ollama /api/ps response')
+      const payload = await awaitAbortable(
+        readOllamaJson(response, 'Ollama /api/ps response'),
+        probe.signal,
+      )
       loaded = psContainsModel(payload, provider.model)
       if (loaded && forceKeepAlive !== true) {
         return {
@@ -159,7 +203,7 @@ export function createOllamaWarmupManager({
 
     const warm = timeoutSignal(warmupTimeoutMs, controllers)
     try {
-      const response = await fetchImpl(generateUrl, {
+      const response = await awaitAbortable(fetchImpl(generateUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -169,16 +213,19 @@ export function createOllamaWarmupManager({
           keep_alive: keepAlive,
         }),
         signal: warm.signal,
-      })
+      }), warm.signal)
       if (!response?.ok) {
-        await cancelBody(response)
+        await awaitAbortable(cancelBody(response), warm.signal)
         return { ok: false, reason: `warmup-http-${response?.status ?? 'unknown'}` }
       }
       // Do not cancel a successful preload body. A real HTTP fetch resolves as
       // soon as headers are available, so draining the bounded JSON response is
       // what proves Ollama finished loading the model before the inference
       // deadline is allowed to start.
-      await readOllamaJson(response, 'Ollama preload response')
+      await awaitAbortable(
+        readOllamaJson(response, 'Ollama preload response'),
+        warm.signal,
+      )
       const durationMs = Date.now() - startedAt
       if (durationMs >= 1000) {
         try {
@@ -240,12 +287,17 @@ export function createOllamaWarmupManager({
   }
 
   const dispose = () => {
+    if (disposePromise) return disposePromise
     disposed = true
     for (const controller of controllers) {
       try { controller.abort(new Error('Vision Router disposed')) } catch { /* best effort */ }
     }
-    controllers.clear()
-    inFlight.clear()
+    const admitted = [...inFlight.values()]
+    disposePromise = Promise.allSettled(admitted).then(() => {
+      controllers.clear()
+      inFlight.clear()
+    })
+    return disposePromise
   }
 
   return { ensure, background, dispose }
@@ -325,14 +377,10 @@ export function installOllamaColdStartGuard(ctx, config = {}, core, options = {}
       try { scopeUnwatch() } catch { /* best effort */ }
       scopeUnwatch = undefined
     }
-    backgroundWarm('settings-ready')
-    if (typeof scope.watch === 'function') {
-      try {
-        scopeUnwatch = scope.watch(() => backgroundWarm('settings-changed'))
-      } catch {
-        scopeUnwatch = undefined
-      }
-    }
+
+    // Own this dynamic Settings generation before it can start warmup work or
+    // install a watcher. A rejected child fiber must never leave rawScope
+    // pointing at a dead Settings service.
     try {
       ownerCtx?.effect?.(
         () => () => {
@@ -345,7 +393,17 @@ export function installOllamaColdStartGuard(ctx, config = {}, core, options = {}
         'vision-router: Ollama warmup settings lifecycle',
       )
     } catch {
-      /* lifecycle registration is best effort */
+      if (rawScope === scope) rawScope = undefined
+      return
+    }
+
+    backgroundWarm('settings-ready')
+    if (typeof scope.watch === 'function') {
+      try {
+        scopeUnwatch = scope.watch(() => backgroundWarm('settings-changed'))
+      } catch {
+        scopeUnwatch = undefined
+      }
     }
   }
 
@@ -455,18 +513,24 @@ export function installOllamaColdStartGuard(ctx, config = {}, core, options = {}
 
   try {
     ctx.effect?.(
-      () => () => {
+      () => async () => {
         rawScope = undefined
         if (typeof scopeUnwatch === 'function') {
           try { scopeUnwatch() } catch { /* best effort */ }
           scopeUnwatch = undefined
         }
-        manager.dispose()
+        await manager.dispose()
       },
       'vision-router: Ollama cold-start guard',
     )
   } catch {
-    /* cleanup registration is best effort */
+    rawScope = undefined
+    if (typeof scopeUnwatch === 'function') {
+      try { scopeUnwatch() } catch { /* best effort */ }
+      scopeUnwatch = undefined
+    }
+    void Promise.resolve(manager.dispose()).catch(() => {})
+    return ctx
   }
 
   // Composition-level localOllama may already be enabled before Settings
