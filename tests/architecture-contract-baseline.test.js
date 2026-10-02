@@ -91,9 +91,15 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /2\.0\.x/)
   assert.match(support, /0\.1\.0-rc\.6/)
   assert.match(support, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
+  // The frozen contract pins the *current* release line's row and keeps the
+  // previous line pinned as history: v3.0.0 moved the current row to `3.0.x`.
   assert.match(
     support,
-    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
+    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| historical 2\.3 baseline \|/,
+  )
+  assert.match(
+    support,
+    /\| `3\.0\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
   )
   assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
