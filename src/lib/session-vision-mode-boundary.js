@@ -337,6 +337,20 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   const sessionVisionPolicyStore = runtime?.sessionVisionPolicyStore
   let toolsView
 
+  // This boundary can install Agent-scoped restrictions whose lifetime exceeds
+  // the plugin generation. Establish the generation owner before registering
+  // prompt/event hooks that can ever create those restrictions.
+  try {
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => releaseAllAgentToolRestrictions(activeRestrictions),
+        'vision-router: Session Vision restriction lifecycle',
+      )
+    }
+  } catch {
+    return { ctx, config }
+  }
+
   const sessionPolicyForAgent = (agent) => {
     const id = typeof agent?.id === 'string' ? agent.id : ''
     if (id === '' || typeof sessionVisionPolicyStore?.get !== 'function') return undefined
@@ -485,23 +499,6 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   } catch {
     // Minimum Hosts may not expose every lifecycle event. Prompt assembly and
     // execution guards preserve the safety boundary without making apply fail.
-  }
-
-  // tools.restrict() is invoked through the long-lived Agent scope so its
-  // disposer belongs to that scope, not to this plugin fiber. A Settings/HMR
-  // recompose can therefore retire this boundary while the Agent survives. If
-  // we do not release those masks here, the next boundary generation cannot
-  // discover or dispose the old WeakMap entries and Vision tools stay hidden
-  // even after the Session selects a Router-owned route again.
-  try {
-    if (typeof ctx.effect === 'function') {
-      ctx.effect(
-        () => () => releaseAllAgentToolRestrictions(activeRestrictions),
-        'vision-router: Session Vision restriction lifecycle',
-      )
-    }
-  } catch {
-    // Agent disposal / live enable transitions still release their own masks.
   }
 
   const wrapped = new Proxy(ctx, {

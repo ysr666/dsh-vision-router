@@ -55,12 +55,17 @@ function stateFor(root) {
 }
 
 function serviceOf(ctx, name) {
+  if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return undefined
+  if (typeof ctx.get === 'function') {
+    try {
+      const value = ctx.get(name)
+      return value === undefined || value === null ? undefined : value
+    } catch {
+      return undefined
+    }
+  }
   try {
-    const value = typeof ctx?.get === 'function' ? ctx.get(name) : undefined
-    if (value !== undefined && value !== null) return value
-  } catch {}
-  try {
-    const value = ctx?.[name]
+    const value = ctx[name]
     return value === undefined || value === null ? undefined : value
   } catch {
     return undefined
@@ -283,17 +288,34 @@ export function installDsh017RootLocalSettingsTransport(ctx) {
     }
     state.current = generation
     trace('generation-mount', { generation: generation.id })
-    ensureRootRoute(root, state)
 
-    if (typeof settingsCtx?.effect === 'function') {
+    let generationDisposed = false
+    const disposeGeneration = () => {
+      if (generationDisposed) return
+      generationDisposed = true
+      generation.active = false
+      if (state.current === generation) state.current = undefined
+      trace('generation-dispose', { generation: generation.id })
+    }
+
+    try {
+      if (typeof settingsCtx?.effect !== 'function') {
+        throw new Error('Vision Router requires lifecycle ownership for the DSH 0.1.7 settings generation')
+      }
       settingsCtx.effect(
-        () => () => {
-          generation.active = false
-          if (state.current === generation) state.current = undefined
-          trace('generation-dispose', { generation: generation.id })
-        },
+        () => disposeGeneration,
         'vision-router: DSH 0.1.7 settings generation',
       )
+    } catch (error) {
+      disposeGeneration()
+      throw error
+    }
+
+    try {
+      ensureRootRoute(root, state)
+    } catch (error) {
+      disposeGeneration()
+      throw error
     }
   })
 }

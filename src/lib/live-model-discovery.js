@@ -673,42 +673,61 @@ export function installLiveModelDiscovery(ctx, options = {}) {
     // Event forwarding is an optimization; the request path still refreshes.
   }
 
-  ctx?.inject?.(['webServer'], (webCtx) => {
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: LIVE_MODELS_PATH,
-      handler: async (req, res) => {
-        if (req.method !== 'GET') {
-          res.setHeader('Allow', 'GET')
-          sendJson(res, 405, { ok: false, error: 'method not allowed' })
-          return
-        }
-        try {
-          const url = new URL(req.url ?? LIVE_MODELS_PATH, 'http://localhost')
-          // The snapshot itself is safe for an authenticated remote Settings UI,
-          // but refresh drives Host-side provider I/O and may resolve stored
-          // credentials. Preserve local ?refresh=1 behavior while making every
-          // remote GET a passive read of already-owned discovery state.
-          const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
-          sendJson(res, 200, await manager.snapshot({ schedule }))
-        } catch (error) {
-          sendJson(res, 500, { ok: false, error: boundedError(error) })
-        }
-      },
-    }), 'vision-router: live provider model discovery')
-  })
+  let disposePromise
+  const disposeLifecycle = () => {
+    if (disposePromise) return disposePromise
+    lifecycleDisposed = true
+    if (startupTimer !== undefined) {
+      clearTimeout(startupTimer)
+      startupTimer = undefined
+    }
+    for (const dispose of disposers.splice(0)) {
+      try { dispose() } catch { /* best effort */ }
+    }
+    disposePromise = Promise.resolve(manager.dispose())
+    return disposePromise
+  }
+
+  // Own every timer/listener/manager resource before any later Host seam can
+  // throw. This keeps injection failure from stranding a live generation.
+  try {
+    ctx?.effect?.(
+      () => disposeLifecycle,
+      'vision-router: live model discovery lifecycle',
+    )
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
+  }
 
   try {
-    ctx?.effect?.(() => () => {
-      lifecycleDisposed = true
-      if (startupTimer !== undefined) clearTimeout(startupTimer)
-      for (const dispose of disposers) {
-        try { dispose() } catch { /* best effort */ }
-      }
-      void manager.dispose()
-    }, 'vision-router: live model discovery lifecycle')
-  } catch {
-    // Host service disposal still tears down the registered route.
+    ctx?.inject?.(['webServer'], (webCtx) => {
+      webCtx.effect(() => webCtx.webServer.register({
+        kind: 'exact',
+        path: LIVE_MODELS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET')
+            sendJson(res, 405, { ok: false, error: 'method not allowed' })
+            return
+          }
+          try {
+            const url = new URL(req.url ?? LIVE_MODELS_PATH, 'http://localhost')
+            // The snapshot itself is safe for an authenticated remote Settings UI,
+            // but refresh drives Host-side provider I/O and may resolve stored
+            // credentials. Preserve local ?refresh=1 behavior while making every
+            // remote GET a passive read of already-owned discovery state.
+            const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
+            sendJson(res, 200, await manager.snapshot({ schedule }))
+          } catch (error) {
+            sendJson(res, 500, { ok: false, error: boundedError(error) })
+          }
+        },
+      }), 'vision-router: live provider model discovery')
+    })
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
   }
   return manager
 }

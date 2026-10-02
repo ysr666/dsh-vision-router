@@ -383,3 +383,18 @@ test('committed model selection materializes user Session Vision authority over 
   await Promise.resolve()
   assert.deepEqual(rows.get('agent'), { revision: 1, enabled: false, source: 'user' })
 })
+
+test('Session Vision boundary establishes lifecycle ownership before admitting long-lived Agent hooks', () => {
+  let onCalls = 0
+  const ctx = {
+    tools: {},
+    get() { return undefined },
+    on() { onCalls += 1; return () => {} },
+    effect() { throw new Error('inactive fiber') },
+  }
+
+  const result = installSessionVisionModeBoundary(ctx, { tool: true })
+
+  assert.equal(result.ctx, ctx)
+  assert.equal(onCalls, 0, 'an unowned generation must not register hooks that can create Agent-scoped masks')
+})

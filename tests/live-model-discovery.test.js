@@ -840,3 +840,131 @@ test('dispose fences a late fetch that ignores AbortSignal and never persists it
   assert.equal((await manager.snapshot({ schedule: false })).providers.some((entry) => entry.provider === 'zai'), false)
   assert.equal([...mem.files.values()].some((body) => String(body).includes('too-late')), false)
 })
+
+
+test('live model discovery lifecycle cleanup awaits an in-flight provider refresh', async () => {
+  const mem = memoryCacheFs()
+  const base = fakeDiscoveryContext()
+  let lifecycleCleanup
+  let releaseFetch
+  let markStarted
+  const started = new Promise((resolve) => { markStarted = resolve })
+  const gate = new Promise((resolve) => { releaseFetch = resolve })
+  const ctx = {
+    ...base,
+    on() { return () => {} },
+    inject() {},
+    effect(factory) {
+      lifecycleCleanup = factory()
+      return lifecycleCleanup
+    },
+  }
+  const manager = installLiveModelDiscovery(ctx, {
+    cacheFile: '/virtual/live-models.json',
+    fsOps: mem.ops,
+    fetchImpl: async () => {
+      markStarted()
+      await gate
+      return new Response(JSON.stringify({ data: [{ id: 'glm-live' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  await manager.ready()
+  manager.queueConfigured()
+  await started
+  const cleanup = lifecycleCleanup()
+  assert.equal(typeof cleanup?.then, 'function', 'Cordis async disposer must return the manager shutdown promise')
+  let settled = false
+  cleanup.then(() => { settled = true })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false, 'cleanup must wait for the aborted/in-flight refresh to settle')
+  releaseFetch()
+  await cleanup
+})
+
+test('live model discovery tears down admitted resources when webServer injection fails', async () => {
+  const mem = memoryCacheFs()
+  let cleanup
+  let listenerDisposals = 0
+  const ctx = {
+    ...fakeDiscoveryContext(),
+    on() {
+      return () => { listenerDisposals += 1 }
+    },
+    effect(factory) {
+      cleanup = factory()
+      return cleanup
+    },
+    inject() {
+      throw new Error('inactive fiber')
+    },
+  }
+
+  assert.throws(
+    () => installLiveModelDiscovery(ctx, {
+      cacheFile: '/virtual/inject-failure.json',
+      fsOps: mem.ops,
+    }),
+    /inactive fiber/,
+  )
+  while (listenerDisposals < 4) await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(listenerDisposals, 4)
+  assert.equal(typeof cleanup, 'function')
+  await cleanup()
+})
+
+test('client live-model context cache does not retain a wrapper rejected by lifecycle ownership', () => {
+  let captured
+  const loader = { load(spec) { captured = spec } }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async () => new Response('{}', { status: 500 }),
+    Response,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    console,
+  }
+  vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, sandbox)
+  sandbox.window.__ModuleLoader__.load({
+    id: 'dsh-vision-router',
+    factory() {
+      return { apply(ctx) { return ctx } }
+    },
+  })
+  const exported = captured.factory(() => {})
+  const ctx = {
+    get() { return undefined },
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = exported.apply(ctx)
+  ctx.effect = (factory) => { ctx.dispose = factory() }
+  const second = exported.apply(ctx)
+
+  assert.notEqual(second, first, 'the second generation must receive a fresh live-client wrapper')
+  ctx.dispose?.()
+})
+
+test('client live-model cache is one-shot when the Host has no lifecycle surface', () => {
+  let captured
+  const loader = { load(spec) { captured = spec } }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async () => new Response('{}', { status: 500 }),
+    Response,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    console,
+  }
+  vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, sandbox)
+  sandbox.window.__ModuleLoader__.load({
+    id: 'dsh-vision-router',
+    factory() { return { apply(ctx) { return ctx } } },
+  })
+  const exported = captured.factory(() => {})
+  const ctx = { get() { return undefined } }
+  assert.notEqual(exported.apply(ctx), exported.apply(ctx))
+})
