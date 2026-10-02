@@ -52,7 +52,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'contextWithVisionBackendRuntimePolicy(',
     'installCapabilityBenchmarkService(',
     'installTesseractExecFileCompat(backendRuntimeCtx)',
-    'contextWithAgentRequestRouteAuthority(backendRuntimeCtx)',
+    'contextWithAgentRequestRouteAuthority(backendRuntimeCtx, {',
     '() => core.apply(',
   ]
 
@@ -73,6 +73,11 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'runtime composition must remain orchestration-sized rather than becoming a new monolith',
   )
   assert.match(source, /function installHostAndSecurityBoundaries\(ctx, config, core\)/)
+  assert.doesNotMatch(
+    source,
+    /configureAgentRequestRouteAuthority/,
+    'production composition must pass request-authority options explicitly instead of staging generation state in a module WeakMap',
+  )
   assert.match(source, /function createRuntimeOwners\(host, core\)/)
   assert.match(source, /function installRoutingAndHostProducts\(host, owners, core\)/)
   assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core, providerTransport\)/)
