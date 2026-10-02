@@ -197,13 +197,17 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
       get: function(target, property) {
         if (property === 'settingsScope') {
           var original = safeGet(target, 'settingsScope');
-          if (original && typeof original.bind === 'function') return original;
           // DSH 0.1.7 configForms only mirrors Config fields declared volatile.
           // DVR must keep its public Config ordinary for the older supported Host
           // window, so its namespace intentionally uses the local-only ConfigEditor
-          // bridge while other namespaces may still delegate to native configForms.
+          // bridge. Even when a Host exposes a legacy-shaped settingsScope, its
+          // vision-router view may be empty; keep it only as the delegate for
+          // every other namespace instead of letting it bypass the local bridge.
           var official = configFormsBinder(target);
-          return syntheticBinder(ctx, official);
+          return syntheticBinder(
+            ctx,
+            original && typeof original.bind === 'function' ? original : official
+          );
         }
         if (property === 'get') {
           var getter = Reflect.get(target, property, target);

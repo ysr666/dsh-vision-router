@@ -433,6 +433,77 @@ test('issue #284 visibility prelude survives the rc8 queue-to-live loader replac
   })
 })
 
+
+test('issue #620 visibility prelude follows a queue loader that returns a distinct live loader', () => {
+  const input = state({
+    current: { provider: 'opencode-go', model: 'qwen3.6-plus' },
+    groups: [
+      group('opencode-go', 'OpenCode Go', ['qwen3.6-plus']),
+      group('opencode-go-vision', 'OpenCode Go + 自动识图', ['qwen3.6-plus']),
+    ],
+  })
+  let registered
+  const liveLoader = { load(spec) { registered = spec; return spec } }
+  const queueLoader = {
+    load(spec) { return spec },
+    create() { return liveLoader },
+  }
+  const window = { __ModuleLoader__: queueLoader }
+  vm.runInNewContext(VISION_MODEL_VISIBILITY_PRELUDE, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, Math, JSON,
+  })
+  const created = queueLoader.create()
+  created.load({
+    id: MODEL_SELECTION_TARGET,
+    factory() {
+      return {
+        apply(ctx) {
+          ctx.inject(['modelDirectories'], (scope) => {
+            const visible = scope.modelDirectories.directoryFor('session-1').store.getSnapshot()
+            assert.deepEqual(ids(visible.groups), ['opencode-go'])
+          })
+        },
+      }
+    },
+  })
+
+  const directory = {
+    store: { subscribe() { return () => {} }, getSnapshot() { return input } },
+    async load() { return input },
+    async select() {},
+  }
+  const models = { directoryFor() { return directory } }
+  const settings = {
+    subscribe() { return () => {} },
+    getSnapshot() { return { value: { autoWrapProviders: true } } },
+  }
+  assert.equal(typeof registered?.factory, 'function')
+  const plugin = registered.factory(() => ({}))
+  plugin.apply({
+    settingsScope: { bind() { return settings } },
+    inject(_deps, callback) { callback({ modelDirectories: models }) },
+  })
+})
+
+test('issue #620 visibility prelude follows later ModuleLoader replacements', () => {
+  let registered
+  const first = { load(spec) { return spec } }
+  const second = { load(spec) { registered = spec; return spec } }
+  const window = { __ModuleLoader__: first }
+  vm.runInNewContext(VISION_MODEL_VISIBILITY_PRELUDE, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, Math, JSON,
+  })
+
+  window.__ModuleLoader__ = second
+  second.load({
+    id: MODEL_SELECTION_TARGET,
+    factory: () => ({ apply() {} }),
+  })
+  assert.equal(typeof registered?.factory, 'function')
+  const plugin = registered.factory(() => ({}))
+  assert.equal(plugin.apply.__visionRouterModelVisibility, true)
+})
+
 test('issue #284 real DSH model-selection dependency contract exposes settingsScope to the visibility decorator', () => {
   let registered
   const loader = {

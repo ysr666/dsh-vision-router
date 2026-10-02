@@ -419,6 +419,7 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
       function create() {
         var result = originalCreate.apply(this, arguments);
         patchLoader(loader);
+        if (result && result !== loader) patchLoader(result);
         return result;
       }
       try { Object.defineProperty(create, '__visionRouterModelVisibility', { value: true }); } catch (_) {}
@@ -427,31 +428,29 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
   }
 
   function install() {
-    if (window.__ModuleLoader__) {
-      patchLoader(window.__ModuleLoader__);
-      return;
-    }
     var descriptor = Object.getOwnPropertyDescriptor(window, '__ModuleLoader__');
+    var current;
+    try { current = window.__ModuleLoader__; } catch (_) { current = undefined; }
+    if (current) patchLoader(current);
     if (descriptor && descriptor.configurable === false) return;
-    var stored;
+    var previousGet = descriptor && descriptor.get;
+    var previousSet = descriptor && descriptor.set;
+    var stored = descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      ? descriptor.value
+      : current;
     Object.defineProperty(window, '__ModuleLoader__', {
       configurable: true,
-      enumerable: true,
-      get: function(){ return stored; },
+      enumerable: !descriptor || descriptor.enumerable !== false,
+      get: function(){ return previousGet ? previousGet.call(window) : stored; },
       set: function(value) {
-        stored = value;
-        patchLoader(value);
-        Object.defineProperty(window, '__ModuleLoader__', {
-          configurable: true,
-          enumerable: true,
-          writable: true,
-          value: stored
-        });
+        if (previousSet) previousSet.call(window, value); else stored = value;
+        try { patchLoader(previousGet ? previousGet.call(window) : value); } catch (_) {}
       }
     });
+    if (stored) patchLoader(stored);
   }
 
-  install();
+  try { install(); } catch (_) {}
 })();`
 
 export function injectVisionModelVisibilityBoundary(html) {
