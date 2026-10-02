@@ -290,3 +290,106 @@ test('successful local Ollama adapter calls renew residency without delaying the
   assert.equal(chunks.at(-1)?.reason?.kind, 'stop')
   assert.deepEqual(calls, ['post-success-renewal'])
 })
+
+
+test('Ollama manager disposal does not hang on a fetch that ignores AbortSignal', async () => {
+  let releaseFetch
+  let markStarted
+  const started = new Promise((resolve) => { markStarted = resolve })
+  const gate = new Promise((resolve) => { releaseFetch = resolve })
+  const manager = createOllamaWarmupManager({
+    fetchImpl: async () => {
+      markStarted()
+      await gate
+      return new Response(JSON.stringify({ models: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  const pending = manager.ensure({
+    name: 'local-ollama',
+    baseURL: 'http://127.0.0.1:11434/v1',
+    model: 'vl',
+  })
+  await started
+  const disposal = manager.dispose()
+  assert.equal(typeof disposal?.then, 'function')
+  await disposal
+  const result = await pending
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'probe-failed')
+
+  // The hostile fetch may still settle later, but DVR has already detached its
+  // generation and must not wait for or publish that stale result.
+  releaseFetch()
+  await new Promise((resolve) => setImmediate(resolve))
+})
+
+test('Ollama cold-start guard exposes its async manager disposal to Cordis', async () => {
+  const settings = { localOllama: { enabled: true, model: 'qwen2.5vl' } }
+  const harness = makeGuardHarness(settings)
+  let cleanup
+  harness.ctx.effect = (factory) => { cleanup = factory(); return cleanup }
+  let releaseDispose
+  let disposed = false
+  const manager = {
+    ensure() { return Promise.resolve({ ok: true }) },
+    background() {},
+    dispose() { return new Promise((resolve) => { releaseDispose = () => { disposed = true; resolve() } }) },
+  }
+  installOllamaColdStartGuard(harness.ctx, settings, harness.core, { manager })
+  const task = cleanup()
+  assert.equal(typeof task?.then, 'function')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(disposed, false)
+  releaseDispose()
+  await task
+  assert.equal(disposed, true)
+})
+
+
+test('Ollama guard rolls back to the original context when lifecycle ownership fails', async () => {
+  const settings = { localOllama: { enabled: true, model: 'qwen2.5vl' } }
+  const harness = makeGuardHarness(settings)
+  harness.ctx.effect = () => { throw new Error('inactive fiber') }
+  let disposeCalls = 0
+  let backgroundCalls = 0
+  const manager = {
+    ensure() { return Promise.resolve({ ok: true }) },
+    background() { backgroundCalls += 1 },
+    dispose() { disposeCalls += 1; return Promise.resolve() },
+  }
+  const result = installOllamaColdStartGuard(harness.ctx, settings, harness.core, { manager })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(result, harness.ctx)
+  assert.equal(disposeCalls, 1)
+  assert.equal(backgroundCalls, 0)
+})
+
+test('Ollama ignores a Settings scope whose child lifecycle owner is rejected', () => {
+  const settings = { localOllama: { enabled: true, model: 'qwen2.5vl' } }
+  const harness = makeGuardHarness(settings)
+  let watches = 0
+  const scope = {
+    get: () => settings,
+    watch() { watches += 1; return () => {} },
+  }
+  harness.settingsCtx.settings.register = () => scope
+  harness.settingsCtx.effect = () => { throw new Error('inactive settings fiber') }
+  const reasons = []
+  const manager = {
+    ensure() { return Promise.resolve({ ok: true }) },
+    background(_provider, options) { reasons.push(options.reason) },
+    dispose() { return Promise.resolve() },
+  }
+
+  const guarded = installOllamaColdStartGuard(harness.ctx, settings, harness.core, { manager })
+  const before = reasons.length
+  guarded.inject(['settings'], (settingsCtx) => {
+    settingsCtx.settings.register('vision-router', {}, { base: settings })
+  })
+
+  assert.equal(reasons.length, before, 'rejected Settings generation must not start settings-ready warmup')
+  assert.equal(watches, 0, 'rejected Settings generation must not install a watcher')
+})
