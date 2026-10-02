@@ -222,16 +222,23 @@ export function installVisionModelRegistry(ctx, liveDiscovery, options = {}) {
   if (!liveDiscovery || typeof liveDiscovery.snapshot !== 'function') return liveDiscovery
   if (liveDiscovery.snapshot.__visionRouterRegistry === true) return liveDiscovery
 
-  const originalSnapshot = liveDiscovery.snapshot.bind(liveDiscovery)
+  const originalSnapshot = liveDiscovery.snapshot
   const originalHasModel = typeof liveDiscovery.hasModel === 'function'
-    ? liveDiscovery.hasModel.bind(liveDiscovery)
-    : () => false
-  const originalEvidenceSource = typeof liveDiscovery.evidenceSource === 'function'
-    ? liveDiscovery.evidenceSource.bind(liveDiscovery)
+    ? liveDiscovery.hasModel
     : undefined
+  const originalEvidenceSource = typeof liveDiscovery.evidenceSource === 'function'
+    ? liveDiscovery.evidenceSource
+    : undefined
+  const callSnapshot = (request) => Reflect.apply(originalSnapshot, liveDiscovery, [request])
+  const callHasModel = (provider, model) => originalHasModel === undefined
+    ? false
+    : Reflect.apply(originalHasModel, liveDiscovery, [provider, model])
+  const callEvidenceSource = (provider, model) => originalEvidenceSource === undefined
+    ? undefined
+    : Reflect.apply(originalEvidenceSource, liveDiscovery, [provider, model])
 
   const wrappedSnapshot = async (request) => decorateVisionModelSnapshot(
-    await originalSnapshot(request),
+    await callSnapshot(request),
     { ctx, config: options.config ?? {} },
   )
   // Diagnostics-only provenance. This must never become the admission oracle:
@@ -239,15 +246,15 @@ export function installVisionModelRegistry(ctx, liveDiscovery, options = {}) {
   // endpoint evidence OR exact endpoint-scoped trusted hint).
   const wrappedEvidenceSource = (provider, model) => {
     if (isProviderActive(ctx, provider) && hasTrustedVisionHint(ctx, provider, model)) return 'known'
-    if (originalHasModel(provider, model)) return 'live'
+    if (callHasModel(provider, model)) return 'live'
     try {
-      return originalEvidenceSource?.(provider, model)
+      return callEvidenceSource(provider, model)
     } catch {
       return undefined
     }
   }
   const wrappedHasModel = (provider, model) => (
-    originalHasModel(provider, model) ||
+    callHasModel(provider, model) ||
     (isProviderActive(ctx, provider) && hasTrustedVisionHint(ctx, provider, model))
   )
 
@@ -258,17 +265,23 @@ export function installVisionModelRegistry(ctx, liveDiscovery, options = {}) {
   liveDiscovery.hasModel = wrappedHasModel
   liveDiscovery.evidenceSource = wrappedEvidenceSource
 
+  const restore = () => {
+    if (liveDiscovery.snapshot === wrappedSnapshot) liveDiscovery.snapshot = originalSnapshot
+    if (liveDiscovery.hasModel === wrappedHasModel) {
+      if (originalHasModel === undefined) delete liveDiscovery.hasModel
+      else liveDiscovery.hasModel = originalHasModel
+    }
+    if (liveDiscovery.evidenceSource === wrappedEvidenceSource) {
+      if (originalEvidenceSource === undefined) delete liveDiscovery.evidenceSource
+      else liveDiscovery.evidenceSource = originalEvidenceSource
+    }
+  }
   try {
-    ctx?.effect?.(() => () => {
-      if (liveDiscovery.snapshot === wrappedSnapshot) liveDiscovery.snapshot = originalSnapshot
-      if (liveDiscovery.hasModel === wrappedHasModel) liveDiscovery.hasModel = originalHasModel
-      if (liveDiscovery.evidenceSource === wrappedEvidenceSource) {
-        if (originalEvidenceSource === undefined) delete liveDiscovery.evidenceSource
-        else liveDiscovery.evidenceSource = originalEvidenceSource
-      }
-    }, 'vision-router: private model registry sources')
+    ctx?.effect?.(() => restore, 'vision-router: private model registry sources')
   } catch {
-    // The manager itself is disposed with the plugin; restoration is hygiene.
+    // The manager can outlive this failed composition attempt. Do not leave
+    // generation-specific method projections installed without an owner.
+    restore()
   }
   return liveDiscovery
 }

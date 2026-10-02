@@ -31,7 +31,10 @@ test('endpoint edit rotates breaker identity without invalidating the selected v
     },
     inject(deps, callback) {
       if (deps.includes('settings')) {
-        return callback({ settings: { register() { return scope } } })
+        return callback({
+          settings: { register() { return scope } },
+          effect(factory) { return factory() },
+        })
       }
       return undefined
     },

@@ -504,13 +504,18 @@ export function installVisionRouterFileLogging(ctx, options = {}) {
     // next apply would reuse an object whose routes are no longer mounted.
     try {
       ctx.effect?.(
-        () => () => {
+        () => async () => {
           if (installs.get(ctx) === installed) installs.delete(ctx)
+          await sink.flush()
         },
         'vision-router: diagnostics file logger lifecycle',
       )
-    } catch {
-      // Cache expiry is a hardening aid; logging itself must stay non-fatal.
+    } catch (error) {
+      // Filesystem diagnostics may degrade, but lifecycle ownership may not.
+      // Continuing here would publish routes and a file-writing logger after
+      // Cordis already rejected this plugin generation.
+      if (installs.get(ctx) === installed) installs.delete(ctx)
+      throw error
     }
   }
 

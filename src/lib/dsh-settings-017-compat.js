@@ -6,8 +6,10 @@ const REVISION_REGISTRY_KEY = Symbol.for('dsh-vision-router.settings-017-revisio
 
 function revisionRegistry() {
   let registry = globalThis[REVISION_REGISTRY_KEY]
-  if (!(registry instanceof Map)) {
-    registry = new Map()
+  if (!(registry instanceof WeakMap)) {
+    // The pre-R11 registry was a process-global Map keyed only by document
+    // paths. Replace it rather than retaining stale profile keys forever.
+    registry = new WeakMap()
     Object.defineProperty(globalThis, REVISION_REGISTRY_KEY, {
       value: registry,
       configurable: true,
@@ -94,13 +96,20 @@ function revisionKey(editor, namespace) {
  * resets every browser connection, which forces a fresh descriptor read.
  */
 function revisionFor(editor, namespace, current, inherited) {
+  const identity = serviceIdentity(editor)
+  if (!identity || (typeof identity !== 'object' && typeof identity !== 'function')) return 0
+  const registry = revisionRegistry()
+  let states = registry.get(identity)
+  if (!(states instanceof Map)) {
+    states = new Map()
+    registry.set(identity, states)
+  }
   const key = revisionKey(editor, namespace)
   const valueFingerprint = fingerprint({ current, inherited })
-  const registry = revisionRegistry()
-  const previous = registry.get(key)
+  const previous = states.get(key)
   if (!previous) {
     const state = { fingerprint: valueFingerprint, revision: 0 }
-    registry.set(key, state)
+    states.set(key, state)
     return state.revision
   }
   if (previous.fingerprint !== valueFingerprint) {
@@ -123,12 +132,10 @@ function serviceIdentity(value) {
 }
 
 function serviceOf(ctx, name) {
+  if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return undefined
+  if (typeof ctx.get !== 'function') return undefined
   try {
-    const value = typeof ctx?.get === 'function' ? ctx.get(name) : undefined
-    if (value !== undefined && value !== null) return value
-  } catch {}
-  try {
-    const value = ctx?.[name]
+    const value = ctx.get(name)
     return value === undefined || value === null ? undefined : value
   } catch {
     return undefined

@@ -34,11 +34,10 @@ function artifactsDirOf(config) {
 
 function contextService(ctx, name) {
   try {
-    if (typeof ctx?.get === 'function') return ctx.get(name)
+    return typeof ctx?.get === 'function' ? ctx.get(name) : undefined
   } catch {
     return undefined
   }
-  return ctx?.[name]
 }
 
 async function readSourceBytes(ctx, core, sessionVisionIndex, exec, image) {

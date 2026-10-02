@@ -326,7 +326,15 @@ export function installVisionRouterExecFileCompat(ctx, options = {}) {
   }
 
   if (ctx && typeof ctx.effect === 'function') {
-    ctx.effect(() => dispose, 'vision-router: execFile compatibility')
+    try {
+      ctx.effect(() => dispose, 'vision-router: execFile compatibility')
+    } catch (error) {
+      // The process-global execFile seam was already mutated above. If Cordis
+      // cannot own this generation, undo exactly this installation before the
+      // failure escapes so no orphan patch survives HMR/startup failure.
+      dispose()
+      throw error
+    }
   }
   return dispose
 }

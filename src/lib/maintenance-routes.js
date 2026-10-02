@@ -20,9 +20,7 @@ function json(res, status, body, headers = {}) {
 export function installVisionMaintenanceRoutes(ctx, options = {}) {
   if (!ctx || typeof ctx.inject !== 'function') return
   const logger = options.logger ?? ctx.logger
-  const updateChecker = options.updateChecker ?? createCachedUpdateChecker({
-    fetchImpl: (...args) => globalThis.fetch(...args),
-  })
+  const updateChecker = options.updateChecker ?? createCachedUpdateChecker()
   const selfUpdatePlan = options.selfUpdatePlan ?? detectDshSelfUpdatePlan()
   const updateRunner = options.runUpdate ?? runDshPluginUpdate
   const tokenFactory = options.tokenFactory ?? (() => randomBytes(24).toString('base64url'))

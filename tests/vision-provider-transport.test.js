@@ -638,7 +638,8 @@ test('public entry passes provider transport explicitly before scoped Host proxy
   assert.match(source, /config:\s*\(\) => liveVisionConfig/)
   assert.doesNotMatch(source, /installVisionProviderTransport|currentVisionProviderTransport/)
   assert.match(source, /transportReleasePromise = Promise\.resolve\(\)\.then\(\(\) => transport\.dispose\(\)\)/)
-  assert.match(source, /runtimeCtx\?\.effect\?\.\([\s\S]*\(\) => releaseTransport/)
+  assert.match(source, /runtimeCtx\.effect\([\s\S]*\(\) => releaseTransport/)
+  assert.match(source, /requires a Cordis lifecycle context with effect\(\)/)
   assert.doesNotMatch(source, /void transport\.dispose\(\)/)
 })
 
@@ -905,4 +906,43 @@ test('settings copy recommends native socks5 while documenting legacy socks5h co
   assert.match(source, /or socks5:\/\/127\.0\.0\.1:10808; legacy socks5h:\/\/ values are supported/)
   assert.doesNotMatch(source, /或 socks5h:\/\/127\.0\.0\.1:10808/)
   assert.doesNotMatch(source, /or socks5h:\/\/127\.0\.0\.1:10808/)
+})
+
+test('transport credential resolver survives a throwing resolve getter', async () => {
+  const envName = Object.keys(process.env).find((name) =>
+    typeof process.env[name] === 'string' && process.env[name] !== ''
+  )
+  assert.ok(envName)
+  const expected = process.env[envName]
+  const credentials = new Proxy({}, {
+    get(_target, property) {
+      if (property === 'resolve') throw new Error('partial credential service')
+      return undefined
+    },
+  })
+  const transport = createVisionProviderTransport({
+    ctx: { get(name) { return name === 'credentials' ? credentials : undefined } },
+    fetchImpl: async () => okOpenAI(),
+  })
+  assert.equal(await transport.resolveCredential(envName), expected)
+  await transport.dispose()
+})
+
+test('public package entry rejects a Host without Cordis lifecycle before runtime composition', async () => {
+  const { apply: publicApply } = await import('../lib/public-entry.js')
+  assert.throws(
+    () => publicApply({}),
+    /requires a Cordis lifecycle context with effect\(\)/,
+  )
+
+  const throwing = new Proxy({}, {
+    get(_target, property) {
+      if (property === 'effect') throw new Error('malformed lifecycle getter')
+      return undefined
+    },
+  })
+  assert.throws(
+    () => publicApply(throwing),
+    /malformed lifecycle getter/,
+  )
 })

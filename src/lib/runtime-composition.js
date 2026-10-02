@@ -33,7 +33,6 @@ import { installLocalMutationRouteBoundary } from './web-capability-boundary.js'
 import { installScreenshotSourceBoundary } from './screenshot-source-boundary.js'
 import { installVisionToolRuntimeBoundary } from './vision-tool-runtime-boundary.js'
 import {
-  configureAgentRequestRouteAuthority,
   contextWithAgentRequestRouteAuthority,
 } from './agent-request-route-authority.js'
 import { contextWithGroundingCoordinateFrame } from './grounding-coordinate-runtime.js'
@@ -138,7 +137,9 @@ function installHostAndSecurityBoundaries(ctx, config, core) {
     config,
     core,
   )
-  const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core)
+  const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core, {
+    logger: logging.logger,
+  })
   const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(
     ollamaColdStartCtx,
     hardenedConfig,
@@ -395,12 +396,11 @@ function installExecutionBoundaries(host, owners, routing, core, providerTranspo
   // Core owns exactly one agent/request routing hook. Protect the completed
   // provider/model handoff at that event boundary so future route-switch logic
   // cannot accidentally carry source-model call defaults into the target.
-  configureAgentRequestRouteAuthority(backendRuntimeCtx, {
+  const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx, {
     wrapperRoute: runtimeConfig.wrapperRoute,
     chainRoute: runtimeConfig.chainRoute,
     logger: logging.logger,
   })
-  const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx)
 
   return { coreRequestAuthorityCtx }
 }

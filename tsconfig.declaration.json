@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ES2024"
+    ],
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": false
+  },
+  "include": [
+    "tests/types/declaration/**/*.ts"
+  ]
+}

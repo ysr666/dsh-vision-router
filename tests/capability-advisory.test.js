@@ -124,3 +124,15 @@ test('screenshot source boundary blocks execution before the renderer when conta
   )
   assert.equal(rendererCalls, 1)
 })
+
+test('screenshot source boundary refreshes its cached wrapper when Core identity changes', () => {
+  const ctx = { tools: { register() { return () => {} } } }
+  const firstCore = { toRealPath() { return '/first' } }
+  const secondCore = { toRealPath() { return '/second' } }
+
+  const first = installScreenshotSourceBoundary(ctx, firstCore)
+  assert.equal(installScreenshotSourceBoundary(ctx, firstCore), first)
+
+  const second = installScreenshotSourceBoundary(ctx, secondCore)
+  assert.notEqual(second, first, 'a later Core generation must not reuse a wrapper closing over the old Core')
+})

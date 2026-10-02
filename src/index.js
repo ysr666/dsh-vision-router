@@ -1049,8 +1049,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
     }
-    const httpHandle = ctx.llm.registerAdapter([HTTP_ROUTE], httpAdapter)
-    ctx.effect(() => httpHandle, 'vision-router: vision-http route')
+    ctx.llm.registerAdapter([HTTP_ROUTE], httpAdapter)
 
   }
 
@@ -1354,7 +1353,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const spec = wanted.get(provider)
       if (spec === undefined) {
         try {
-          held.handle()
+          held.registration()
           twinHandles.delete(provider)
         } catch (error) {
           ctx.logger?.warn(
@@ -1372,7 +1371,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         held.state.models = spec.models
         held.state.sourceName = spec.sourceName
         try {
-          held.handle.replace([`${provider}-vision`])
+          held.registration.replace([`${provider}-vision`])
           held.key = nextKey
         } catch (error) {
           held.state.models = previousModels
@@ -1394,10 +1393,12 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const handle = ctx.llm.registerAdapter([twinRoute], makeTwinAdapter(provider, state))
-        ctx.effect(() => handle, `vision-router: twin route ${twinRoute}`)
+        const registration = ctx.llm.registerAdapter(
+          [twinRoute],
+          makeTwinAdapter(provider, state),
+        )
         twinHandles.set(provider, {
-          handle,
+          registration,
           state,
           key: twinSpecKey(spec.models, spec.sourceName),
         })
@@ -4666,34 +4667,48 @@ ctx.logger?.info(
     activateDeepTools = () => {
       if (deepActive) return '视觉深看工具已在挂载状态。'
       deepActive = true
-      for (const def of deepToolDefs) {
-        const registeredDef =
-          def.name === 'vision_bootstrap' || typeof def.execute !== 'function'
-            ? def
-            : {
-                ...def,
-                async execute(args, exec) {
-                  const session = exec && exec.agent && exec.agent.session
-                  const state = session ? structuredBootstrapTurnState.get(session) : undefined
-                  if (structuredBootstrapEnabled() && state && state.required && state.completed !== true) {
-                    return JSON.stringify({
-                      ok: false,
-                      code: state.failed ? 'STRUCTURED_BOOTSTRAP_FAILED' : 'STRUCTURED_BOOTSTRAP_REQUIRED',
-                      retryable: !state.failed,
-                      reason: state.failed
-                        ? 'the required structured bootstrap visual pass failed; do not make more visual calls this turn'
-                        : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
-                    })
-                  }
-                  // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
-                  // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
-                  // Tool-specific execution policy belongs to the tool itself; this wrapper owns
-                  // only bootstrap ordering and never rewrites model/user arguments.
-                  const result = await def.execute(args, exec)
-                  return result
-                },
-              }
-        deepDisposers.push(ctx.tools.register(registeredDef))
+      try {
+        for (const def of deepToolDefs) {
+          const registeredDef =
+            def.name === 'vision_bootstrap' || typeof def.execute !== 'function'
+              ? def
+              : {
+                  ...def,
+                  async execute(args, exec) {
+                    const session = exec && exec.agent && exec.agent.session
+                    const state = session ? structuredBootstrapTurnState.get(session) : undefined
+                    if (structuredBootstrapEnabled() && state && state.required && state.completed !== true) {
+                      return JSON.stringify({
+                        ok: false,
+                        code: state.failed ? 'STRUCTURED_BOOTSTRAP_FAILED' : 'STRUCTURED_BOOTSTRAP_REQUIRED',
+                        retryable: !state.failed,
+                        reason: state.failed
+                          ? 'the required structured bootstrap visual pass failed; do not make more visual calls this turn'
+                          : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
+                      })
+                    }
+                    // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
+                    // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
+                    // Tool-specific execution policy belongs to the tool itself; this wrapper owns
+                    // only bootstrap ordering and never rewrites model/user arguments.
+                    const result = await def.execute(args, exec)
+                    return result
+                  },
+                }
+          deepDisposers.push(ctx.tools.register(registeredDef))
+        }
+      } catch (error) {
+        // A partial mount must never be reported as mounted: retire what this
+        // attempt registered, release the latch and surface the failure.
+        deepDisposers.splice(0).forEach((dispose) => {
+          try {
+            dispose()
+          } catch {
+            // Rollback is best effort; the original registration error wins.
+          }
+        })
+        deepActive = false
+        throw error
       }
       return (
         '视觉深看工具已挂载：vision_bootstrap（结构化预识别）、vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
@@ -4703,20 +4718,32 @@ ctx.logger?.info(
         '注意：vision_ocr 只用于读取图片文字；视觉工具返回 ok:false 后端不可用结果时，不要改问法重复调用，继续文本任务。'
       )
     }
+    ctx.effect(
+      () => () => {
+        deepDisposers.splice(0).forEach((dispose) => dispose())
+        deepActive = false
+      },
+      'vision-router: deep tools',
+    )
+
     if (progressive) {
-      ctx.tools.register({
-        name: 'vision_activate',
-        description:
-          'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
-          'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
-          'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
-          'automatically on image turns; call this only when you need them on a text-only turn.',
-        parameters: { type: 'object', properties: {}, additionalProperties: false },
-        output: stringOutput,
-        async execute() {
-          return activateDeepTools()
-        },
-      })
+      ctx.effect(
+        () =>
+          ctx.tools.register({
+            name: 'vision_activate',
+            description:
+              'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
+              'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
+              'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
+              'automatically on image turns; call this only when you need them on a text-only turn.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+            output: stringOutput,
+            async execute() {
+              return activateDeepTools()
+            },
+          }),
+        'vision-router: progressive bootstrap tool',
+      )
       const skills = ctx.get('skills')
       if (skills !== undefined && typeof skills.register === 'function') {
         ctx.effect(
@@ -4767,13 +4794,6 @@ ctx.logger?.info(
     } else {
       activateDeepTools()
     }
-    ctx.effect(
-      () => () => {
-        deepDisposers.splice(0).forEach((dispose) => dispose())
-        deepActive = false
-      },
-      'vision-router: deep tools',
-    )
   }
 
   // ── settings seam: the Web 设置 > 插件 > 插件配置 panel owns a
@@ -4784,6 +4804,9 @@ ctx.logger?.info(
   // @deepseek-ai/dsh-settings: the published npm build trails the deployment,
   // and the service API is the stable contract here.
   ctx.inject(['settings'], (sctx) => {
+    // Registration and the live-settings subscription are Host contract calls:
+    // they must happen for every supported Host, independently of whether the
+    // lifecycle seam below can run eagerly. Only ownership needs the factory.
     const scope = sctx.settings.register('vision-router', Config, {
       base: config,
     })
@@ -4791,20 +4814,35 @@ ctx.logger?.info(
     // With the settings document now visible, reconcile the routing mounts
     // (wrapper route, chain route) against the resolved values.
     syncRoutingMounts()
-    sctx.effect(
-      () => () => {
-        // The settings provider went away: fall back to the composition entry.
-        current = () => config
-      },
-      'vision-router: settings fallback',
-    )
-    scope.watch(() => {
-      // Most consumers read current() per call, but the wrappedProviders
-      // twins and the routing mounts are registered eagerly: re-sync them
-      // whenever the settings document loads or the user edits the card.
-      syncTwins()
-      syncRoutingMounts()
-    })
+    let disposeWatch
+    if (typeof scope.watch === 'function') {
+      disposeWatch = scope.watch(() => {
+        // Most consumers read current() per call, but the wrappedProviders
+        // twins and the routing mounts are registered eagerly: re-sync them
+        // whenever the settings document loads or the user edits the card.
+        syncTwins()
+        syncRoutingMounts()
+      })
+    }
+    const restore = () => {
+      if (typeof disposeWatch === 'function') disposeWatch()
+      disposeWatch = undefined
+      // The settings provider went away: fall back to the composition entry.
+      current = () => config
+    }
+    if (typeof sctx.effect !== 'function') {
+      // No lifecycle seam: this injection's context owns the source, so there is
+      // nothing for DVR to restore when the Settings service itself goes away.
+      return
+    }
+    try {
+      sctx.effect(() => restore, 'vision-router: settings source')
+    } catch (error) {
+      // Registration already published the scope and its subscription: withdraw
+      // both before the failure escapes, exactly as the owner would on unload.
+      restore()
+      throw error
+    }
   })
 
   // Product diagnostics/settings support is a separate Web owner. Core supplies
@@ -4836,7 +4874,7 @@ ctx.logger?.info(
   // (plus a fixed product allowlist) — without this directory entry the Web
   // card's settingsScope binder reports the namespace as unavailable.
   try {
-    const providerDirectory = ctx.llm.registerConfigurableProviders([
+    ctx.llm.registerConfigurableProviders([
       {
         provider: 'vision-router',
         displayName: '视觉路由（自动识图）',
@@ -4844,7 +4882,6 @@ ctx.logger?.info(
         settingsPath: [],
       },
     ])
-    ctx.effect(() => providerDirectory, 'vision-router: configurable provider directory')
   } catch (error) {
     ctx.logger?.warn(
       'vision-router: configurable provider registration failed: %s',

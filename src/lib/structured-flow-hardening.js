@@ -630,7 +630,7 @@ function wrapSettingsScope(scope) {
   })
 }
 
-function wrapSettingsService(settings, setScope) {
+function wrapSettingsService(settings, bindScope) {
   if (!settings || typeof settings !== 'object') return settings
   return new Proxy(settings, {
     get(target, property) {
@@ -643,7 +643,7 @@ function wrapSettingsService(settings, setScope) {
       return (namespace, ...args) => {
         const scope = register.call(target, namespace, ...args)
         if (namespace !== 'vision-router') return scope
-        setScope(scope)
+        if (bindScope(scope) !== true) return scope
         return wrapSettingsScope(scope)
       }
     },
@@ -652,7 +652,8 @@ function wrapSettingsService(settings, setScope) {
 
 function wrapSettingsContext(childCtx, setScope) {
   if (!childCtx || typeof childCtx !== 'object' || !childCtx.settings) return childCtx
-  const settings = wrapSettingsService(childCtx.settings, setScope)
+  const bindScope = (scope) => setScope(scope, childCtx)
+  const settings = wrapSettingsService(childCtx.settings, bindScope)
   return new Proxy(childCtx, {
     get(target, property) {
       if (property === 'settings') return settings
@@ -666,7 +667,24 @@ export function installStructuredFlowHardening(ctx, config = {}) {
   if (!ctx || typeof ctx !== 'object') return ctx
   const states = new WeakMap()
   let settingsScope
-  const setSettingsScope = (scope) => { settingsScope = scope }
+  const setSettingsScope = (scope, ownerCtx) => {
+    if (!scope || (typeof scope !== 'object' && typeof scope !== 'function')) return false
+    // Settings is a dynamic child service. Never retain a scope unless the
+    // child fiber owns its lifetime; otherwise an HMR gap can read stale config.
+    try {
+      if (typeof ownerCtx?.effect !== 'function') return false
+      ownerCtx.effect(
+        () => () => {
+          if (settingsScope === scope) settingsScope = undefined
+        },
+        'vision-router: structured flow settings lifecycle',
+      )
+    } catch {
+      return false
+    }
+    settingsScope = scope
+    return true
+  }
   const activeConfig = () => {
     try {
       const value = settingsScope && typeof settingsScope.get === 'function' ? settingsScope.get() : config

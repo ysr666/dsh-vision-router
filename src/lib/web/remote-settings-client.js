@@ -20,14 +20,11 @@ export const SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE = String.raw`(function(){
   var connectionCache = typeof WeakMap === 'function' ? new WeakMap() : undefined;
 
   function safeGet(ctx, name) {
-    if (!ctx) return undefined;
+    if (!ctx || typeof ctx.get !== 'function') return undefined;
     try {
-      if (typeof ctx.get === 'function') {
-        var value = ctx.get(name);
-        if (value !== undefined && value !== null) return value;
-      }
-    } catch (_) {}
-    try { return ctx[name]; } catch (_) { return undefined; }
+      var value = ctx.get(name);
+      return value === undefined || value === null ? undefined : value;
+    } catch (_) { return undefined; }
   }
 
   function isLoopbackLocation(locationLike) {

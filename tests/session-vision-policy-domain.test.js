@@ -244,3 +244,148 @@ test('durable hot cache can be released and rehydrated without deleting Session 
   assert.equal((await store.hydrate('session'))?.enabled, true)
   assert.equal(h.rows.get('session')?.enabled, true)
 })
+
+
+test('same-Session durable writes preserve Session event order under reordered storage completion', async () => {
+  const rows = new Map()
+  const pending = []
+  const domain = {
+    table() {
+      return {
+        get(key) { return rows.get(key) },
+        put(key, value) {
+          return new Promise((resolve) => {
+            pending.push({ key, value, resolve: () => { rows.set(key, value); resolve() } })
+          })
+        },
+        async delete(key) { rows.delete(key) },
+      }
+    },
+    async close() {},
+  }
+  const ctx = {
+    get(name) { return name === 'storageDomain' ? { async open() { return domain } } : undefined },
+    effect(setup) { this.cleanup = setup() },
+  }
+  const store = createSessionVisionPolicyRuntimeStore(ctx)
+  const first = store.set('session', userSessionVisionPolicy(true))
+  const second = store.set('session', userSessionVisionPolicy(false))
+  while (pending.length < 1) await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(pending.length, 1, 'later durable write must wait behind the earlier Session event')
+
+  pending[0].resolve()
+  await first
+  while (pending.length < 2) await new Promise((resolve) => setImmediate(resolve))
+  pending[1].resolve()
+  await second
+
+  assert.equal(store.get('session')?.enabled, false, 'hot authority follows the newest Session event')
+  assert.equal(rows.get('session')?.enabled, false, 'durable authority must preserve the same event order')
+})
+
+
+test('policy domain unload waits for an admitted durable mutation before closing its handle', async () => {
+  let resolvePut
+  let putStarted = false
+  let closes = 0
+  const domain = {
+    table() {
+      return {
+        get() { return undefined },
+        put() {
+          putStarted = true
+          return new Promise((resolve) => { resolvePut = resolve })
+        },
+        async delete() {},
+      }
+    },
+    async close() { closes += 1 },
+  }
+  const ctx = {
+    get(name) { return name === 'storageDomain' ? { async open() { return domain } } : undefined },
+    effect(setup) { this.cleanup = setup() },
+  }
+  const store = createSessionVisionPolicyRuntimeStore(ctx)
+  const write = store.set('session', userSessionVisionPolicy(true))
+  while (!putStarted) await new Promise((resolve) => setImmediate(resolve))
+  const cleanup = ctx.cleanup()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(closes, 0, 'consumer unload must not close the domain underneath an admitted put')
+  resolvePut()
+  await Promise.all([write, cleanup])
+  assert.equal(closes, 1)
+})
+
+
+test('late durable hydration cannot overwrite a newer in-process Session selection', async () => {
+  const rows = new Map([['session', userSessionVisionPolicy(false)]])
+  let releaseOpen
+  const domain = {
+    table() {
+      return {
+        get(key) { return rows.get(key) },
+        async put(key, value) { rows.set(key, value) },
+        async delete(key) { rows.delete(key) },
+      }
+    },
+    async close() {},
+  }
+  const facility = {
+    open() { return new Promise((resolve) => { releaseOpen = () => resolve(domain) }) },
+  }
+  const ctx = {
+    get(name) { return name === 'storageDomain' ? facility : undefined },
+    effect(setup) { this.cleanup = setup() },
+  }
+  const store = createSessionVisionPolicyRuntimeStore(ctx)
+  const hydration = store.hydrate('session')
+  while (typeof releaseOpen !== 'function') await new Promise((resolve) => setImmediate(resolve))
+  const selection = store.set('session', userSessionVisionPolicy(true))
+  releaseOpen()
+  await Promise.all([hydration, selection])
+
+  assert.equal(rows.get('session')?.enabled, true)
+  assert.equal(store.get('session')?.enabled, true, 'cold hydration must not replace newer live authority')
+})
+
+
+test('policy domain unload drains a mutation admitted behind an earlier same-Session write', async () => {
+  const rows = new Map()
+  const pending = []
+  let closes = 0
+  const domain = {
+    table() {
+      return {
+        get(key) { return rows.get(key) },
+        put(key, value) {
+          return new Promise((resolve) => {
+            pending.push({ key, value, resolve: () => { rows.set(key, value); resolve() } })
+          })
+        },
+        async delete(key) { rows.delete(key) },
+      }
+    },
+    async close() { closes += 1 },
+  }
+  const facility = { async open() { return domain } }
+  const ctx = {
+    get(name) { return name === 'storageDomain' ? facility : undefined },
+    effect(setup) { this.cleanup = setup() },
+  }
+  const store = createSessionVisionPolicyRuntimeStore(ctx)
+  const first = store.set('session', userSessionVisionPolicy(true))
+  const second = store.set('session', userSessionVisionPolicy(false))
+  while (pending.length < 1) await new Promise((resolve) => setImmediate(resolve))
+
+  const cleanup = ctx.cleanup()
+  pending[0].resolve()
+  await first
+  while (pending.length < 2) await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(closes, 0, 'unload must keep the domain alive for already-admitted queued writes')
+  pending[1].resolve()
+  await Promise.all([second, cleanup])
+
+  assert.equal(rows.get('session')?.enabled, false, 'the queued pre-unload mutation must reach durable storage')
+  assert.equal(closes, 1)
+})

@@ -2,18 +2,12 @@ const UNKNOWN = 'unknown'
 
 function serviceOf(ctx, name) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return undefined
+  if (typeof ctx.get !== 'function') return undefined
   try {
-    if (typeof ctx.get === 'function') {
-      const service = ctx.get(name)
-      if (service !== undefined && service !== null) return service
-    }
-  } catch {
-    // Capability diagnostics are advisory and must not break plugin startup.
-  }
-  try {
-    const service = ctx[name]
+    const service = ctx.get(name)
     return service === undefined || service === null ? undefined : service
   } catch {
+    // Capability diagnostics are advisory and must not break plugin startup.
     return undefined
   }
 }

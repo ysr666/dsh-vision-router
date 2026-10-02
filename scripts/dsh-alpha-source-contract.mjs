@@ -130,7 +130,39 @@ assert.equal(Buffer.compare(Buffer.from(migratedPrepared.data), Buffer.from(sour
 // synchronously without optional-chaining the method itself. Reproduce that
 // call shape through DVR's private registration boundary so every duck-typed
 // adapter receives LlmAdapter's `undefined` default before registration.
-const llmSource = await readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8')
+const [llmSource, cordisReflectSource, cordisFiberSource, webServerSource] = await Promise.all([
+  readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'vendor/cordis/src/reflect.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'vendor/cordis/src/fiber.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'packages/host/webserver/src/index.ts'), 'utf8'),
+])
+
+// Host ownership ledger: pin the three cross-cutting contracts DVR relies on
+// across every exact source generation in this workflow.
+assert.match(cordisReflectSource, /Read a service from the store without the inject requirement/)
+assert.match(
+  cordisFiberSource,
+  /effect\(execute: \(\) => SyncEffect, label\?: string\): Disposable<Promise<void>>/,
+  'Cordis effect() must remain a required plugin-fiber lifecycle primitive',
+)
+const adapterRegisterAt = llmSource.indexOf('registerAdapter(providers: string[], adapter: LlmAdapter)')
+assert.ok(adapterRegisterAt >= 0, 'Host LLM must expose registerAdapter()')
+const adapterRegisterEnd = llmSource.indexOf('\n  /**', adapterRegisterAt + 1)
+const adapterRegisterBlock = llmSource.slice(adapterRegisterAt, adapterRegisterEnd)
+assert.match(adapterRegisterBlock, /this\.ctx\.effect/, 'LLM adapter registration must remain self-fiber-owned')
+const directoryRegisterAt = llmSource.indexOf('registerConfigurableProviders(entries: readonly LlmConfigurableProvider[])')
+assert.ok(directoryRegisterAt >= 0, 'Host LLM must expose registerConfigurableProviders()')
+const directoryRegisterEnd = llmSource.indexOf('\n  /**', directoryRegisterAt + 1)
+const directoryRegisterBlock = llmSource.slice(directoryRegisterAt, directoryRegisterEnd)
+assert.match(directoryRegisterBlock, /this\.ctx\.effect/, 'LLM directory registration must remain self-fiber-owned')
+const webRegisterAt = webServerSource.indexOf('register(route: WebRoute)')
+assert.ok(webRegisterAt >= 0, 'Host WebServer must expose register()')
+const webRegisterEnd = webServerSource.indexOf('\n  /**', webRegisterAt + 1)
+const webRegisterBlock = webServerSource.slice(webRegisterAt, webRegisterEnd)
+assert.match(webRegisterBlock, /table\.set\(route\.path, route\)/)
+assert.match(webRegisterBlock, /return \(\) => \{ table\.delete\(route\.path\) \}/)
+assert.doesNotMatch(webRegisterBlock, /ctx\.effect/, 'WebServer routes remain caller-owned')
+
 assert.match(
   llmSource,
   /listProviders\(\): LlmProviderInfo\[\]/,

@@ -503,12 +503,20 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
       }
     });
     if (contexts) contexts.set(ctx, wrapped);
+    var disposeLifecycle = function() {
+      live.dispose();
+      if (contexts && contexts.get(ctx) === wrapped) contexts.delete(ctx);
+    };
+    var lifecycleOwned = false;
     try {
-      if (typeof ctx.effect === 'function') ctx.effect(function(){ return function(){ live.dispose(); }; }, 'vision-router: live model catalog client');
+      if (typeof ctx.effect === 'function') {
+        ctx.effect(function(){ return disposeLifecycle; }, 'vision-router: live model catalog client');
+        lifecycleOwned = true;
+      }
     } catch (_) {}
-    // Warm the Host cache as soon as the plugin activates. By the time the user
-    // opens Settings, stale-while-revalidate normally has a snapshot ready.
-    void live.refresh(true);
+    if (!lifecycleOwned) disposeLifecycle();
+    // Warm the Host cache only after Cordis owns this client generation.
+    if (lifecycleOwned) void live.refresh(true);
     return wrapped;
   }
 

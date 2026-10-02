@@ -367,3 +367,19 @@ test('returning an unstarted scoped stream never starts upstream work', async ()
   assert.deepEqual(await iterator.return('done'), { done: true, value: 'done' })
   assert.equal(starts, 0)
 })
+
+
+test('effect registration failure rolls back the process fetch wire wrapper', () => {
+  const saved = globalThis.fetch
+  const original = async () => new Response('ok')
+  globalThis.fetch = original
+  try {
+    assert.throws(
+      () => installPiAiBridgeWireCompat({ effect() { throw new Error('inactive fiber') } }),
+      /inactive fiber/,
+    )
+    assert.equal(globalThis.fetch, original)
+  } finally {
+    globalThis.fetch = saved
+  }
+})

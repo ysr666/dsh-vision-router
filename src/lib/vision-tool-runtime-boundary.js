@@ -17,6 +17,9 @@ const toolRuntime = new AsyncLocalStorage()
 const wrappedContexts = new WeakMap()
 const runtimeStates = new WeakMap()
 const wrappedFileSystems = new WeakMap()
+// Settings proxies are cached per underlying service/scope and per runtime
+// state. Re-creating them on every `ctx.settings` read would re-run scope
+// activation and register a second lifecycle effect for the same generation.
 const wrappedSettings = new WeakMap()
 const wrappedScopes = new WeakMap()
 const wrappedLlms = new WeakMap()
@@ -104,7 +107,7 @@ function createRuntimeState(initialConfig = {}) {
   const cache = new LiveDescribeCache()
   const endpoints = new HttpEndpointRevisionTracker()
   const transparentReasoning = new Map()
-  let config = {
+  const fallbackConfig = {
     cache: true,
     cacheMaxEntries: 200,
     cacheTtlSeconds: 3600,
@@ -115,8 +118,13 @@ function createRuntimeState(initialConfig = {}) {
       ? initialConfig
       : {}),
   }
+  let config = fallbackConfig
   let signature = stableRuntimeConfigSignature(config)
   let revision = 0
+  let activeSettingsGeneration
+  // scope -> { runtimeState, token, ownsLifecycle }: the generation registry
+  // that makes repeated activation idempotent per runtime.
+  const wiredScopes = new WeakMap()
 
   const noteConfig = (value) => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return config
@@ -133,6 +141,59 @@ function createRuntimeState(initialConfig = {}) {
     })
     endpoints.project(value.httpProviders)
     return config
+  }
+
+  const activateSettingsScope = (scope, ownerCtx, runtimeState) => {
+    if (!scope || (typeof scope !== 'object' && typeof scope !== 'function')) return undefined
+    // Registering the same scope twice (repeated `ctx.settings` reads, a
+    // generation that re-registers its namespace) must not stack lifecycle
+    // owners or mint a competing generation: reuse the existing one.
+    const known = wiredScopes.get(scope)
+    if (known && known.runtimeState === runtimeState) {
+      if (activeSettingsGeneration?.token !== known.token) {
+        activeSettingsGeneration = { token: known.token, scope, ownsLifecycle: known.ownsLifecycle }
+      }
+      return known.token
+    }
+    const token = {}
+    // Lifecycle ownership is an optimisation, not a precondition: a context
+    // without `effect()` (harness contexts, non-Cordis embeddings) still needs
+    // live settings to reach the runtime, but the generation must then be the
+    // most recently registered scope so a stale scope cannot outrank it.
+    let ownsLifecycle = false
+    try {
+      if (typeof ownerCtx?.effect === 'function') {
+        ownerCtx.effect(
+          () => () => {
+            if (activeSettingsGeneration?.token !== token) return
+            activeSettingsGeneration = undefined
+            noteConfig(fallbackConfig)
+          },
+          'vision-router: tool runtime settings lifecycle',
+        )
+        ownsLifecycle = true
+      }
+    } catch {
+      ownsLifecycle = false
+    }
+    wiredScopes.set(scope, { runtimeState, token, ownsLifecycle })
+    activeSettingsGeneration = { token, scope, ownsLifecycle }
+    try {
+      if (typeof scope.get === 'function') noteConfig(scope.get())
+    } catch {
+      // Boot config remains authoritative until the scope becomes readable.
+    }
+    return token
+  }
+
+  const noteSettingsConfig = (token, value) => {
+    // Only the active generation may write config. An unowned generation is
+    // still "the active one" while it is the latest registration, so a
+    // lifecycle-less context keeps its watch path exactly as before the token
+    // existed, while a retired generation can no longer resurrect stale config.
+    if (token === undefined || activeSettingsGeneration?.token !== token) return false
+    noteConfig(value)
+    return true
   }
 
   const rememberTransparentReasoning = (key, value) => {
@@ -156,6 +217,8 @@ function createRuntimeState(initialConfig = {}) {
     cache,
     endpoints,
     noteConfig,
+    activateSettingsScope,
+    noteSettingsConfig,
     config: () => config,
     revision: () => revision,
     rememberTransparentReasoning,
@@ -242,9 +305,12 @@ function wrapFileSystem(fs) {
   return wrapped
 }
 
-function projectLiveSettings(value, runtimeState) {
+function projectLiveSettings(value, runtimeState, settingsToken) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
-  runtimeState.noteConfig(value)
+  if (settingsToken !== undefined && runtimeState.noteSettingsConfig(settingsToken, value) !== true) {
+    return value
+  }
+  if (settingsToken === undefined) runtimeState.noteConfig(value)
   const toolState = toolRuntime.getStore()
   const httpProviders = runtimeState.endpoints.project(value.httpProviders)
   const suppressCoreCache = toolState?.disableCoreCache === true && value.cache !== false
@@ -256,21 +322,16 @@ function projectLiveSettings(value, runtimeState) {
   }
 }
 
-function wrapSettingsScope(scope, runtimeState) {
+function wrapSettingsScope(scope, runtimeState, settingsToken) {
   if (!scope || (typeof scope !== 'object' && typeof scope !== 'function')) return scope
-  let byRuntime = wrappedScopes.get(scope)
-  if (!byRuntime) {
-    byRuntime = new WeakMap()
-    wrappedScopes.set(scope, byRuntime)
-  }
-  const cached = byRuntime.get(runtimeState)
-  if (cached) return cached
+  const cached = wrappedScopes.get(scope)
+  if (cached && cached.runtimeState === runtimeState && cached.token === settingsToken) return cached.wrapped
   const wrapped = new Proxy(scope, {
     get(target, property) {
       if (property === 'get') {
         const get = Reflect.get(target, property, target)
         if (typeof get !== 'function') return get
-        return (...args) => projectLiveSettings(get.apply(target, args), runtimeState)
+        return (...args) => projectLiveSettings(get.apply(target, args), runtimeState, settingsToken)
       }
       if (property === 'watch') {
         const watch = Reflect.get(target, property, target)
@@ -278,7 +339,7 @@ function wrapSettingsScope(scope, runtimeState) {
         return (callback, ...rest) => watch.call(target, (...args) => {
           try {
             const get = Reflect.get(target, 'get', target)
-            if (typeof get === 'function') runtimeState.noteConfig(get.call(target))
+            if (typeof get === 'function') runtimeState.noteSettingsConfig(settingsToken, get.call(target))
           } catch {
             // Diagnostics refresh is best effort.
           }
@@ -289,19 +350,14 @@ function wrapSettingsScope(scope, runtimeState) {
       return typeof value === 'function' ? value.bind(target) : value
     },
   })
-  byRuntime.set(runtimeState, wrapped)
+  wrappedScopes.set(scope, { runtimeState, token: settingsToken, wrapped })
   return wrapped
 }
 
-function wrapSettingsService(settings, runtimeState) {
+function wrapSettingsService(settings, runtimeState, ownerCtx) {
   if (!settings || (typeof settings !== 'object' && typeof settings !== 'function')) return settings
-  let byRuntime = wrappedSettings.get(settings)
-  if (!byRuntime) {
-    byRuntime = new WeakMap()
-    wrappedSettings.set(settings, byRuntime)
-  }
-  const cached = byRuntime.get(runtimeState)
-  if (cached) return cached
+  const cached = wrappedSettings.get(settings)
+  if (cached && cached.runtimeState === runtimeState) return cached.wrapped
   const wrapped = new Proxy(settings, {
     get(target, property) {
       if (property === 'register') {
@@ -310,25 +366,22 @@ function wrapSettingsService(settings, runtimeState) {
         return (namespace, ...args) => {
           const scope = register.call(target, namespace, ...args)
           if (namespace !== 'vision-router') return scope
-          try {
-            if (typeof scope?.get === 'function') runtimeState.noteConfig(scope.get())
-          } catch {
-            // Core can still run from boot config if settings are late.
-          }
-          return wrapSettingsScope(scope, runtimeState)
+          const settingsToken = runtimeState.activateSettingsScope(scope, ownerCtx, runtimeState)
+          if (settingsToken === undefined) return scope
+          return wrapSettingsScope(scope, runtimeState, settingsToken)
         }
       }
       const value = Reflect.get(target, property, target)
       return typeof value === 'function' ? value.bind(target) : value
     },
   })
-  byRuntime.set(runtimeState, wrapped)
+  wrappedSettings.set(settings, { runtimeState, wrapped })
   return wrapped
 }
 
 function wrapSettingsContext(ctx, runtimeState) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function') || !ctx.settings) return ctx
-  const settings = wrapSettingsService(ctx.settings, runtimeState)
+  const settings = wrapSettingsService(ctx.settings, runtimeState, ctx)
   return new Proxy(ctx, {
     get(target, property) {
       if (property === 'settings') return settings
@@ -716,6 +769,22 @@ export function installVisionToolRuntimeBoundary(ctx, initialConfig = {}) {
   })
   wrappedContexts.set(ctx, wrapped)
   runtimeStates.set(wrapped, runtimeState)
+  let lifecycleOwned = false
+  try {
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => {
+          if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
+        },
+        'vision-router: vision tool runtime context lifecycle',
+      )
+      lifecycleOwned = true
+    }
+  } catch {
+    // Keep the current returned view usable as a one-shot boundary.
+  }
+  // runtimeState captures this generation's config/cache/endpoint revision.
+  if (!lifecycleOwned && wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
   return wrapped
 }
 

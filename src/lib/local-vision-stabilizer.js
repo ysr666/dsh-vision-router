@@ -180,7 +180,12 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
   }
 
   const localMessages = async (options) => {
-    const attachments = ctx.get('attachments')
+    let attachments
+    try {
+      attachments = typeof ctx?.get === 'function' ? ctx.get('attachments') : undefined
+    } catch {
+      attachments = undefined
+    }
     const current = actualConfig()
     const messages = []
     for (const message of options.messages ?? []) {
@@ -380,11 +385,8 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
           const scope = target.register(namespace, schema, fixedOptions)
           if (namespace === 'vision-router') {
             rawScope = scope
-            captureConfig(undefined, scope)
-            syncScreenshot()
-            // The Settings service is dynamic. Never keep its scope after the
-            // owning injection fiber unloads; during the gap fall back to the
-            // composition config, then bind the new scope on service restore.
+            // The Settings service is dynamic. Establish ownership before the
+            // scope can change screenshot state or install wrapped watchers.
             try {
               ownerCtx?.effect?.(
                 () => () => {
@@ -396,8 +398,12 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
                 'vision-router: local settings scope lifecycle',
               )
             } catch {
-              /* lifecycle hardening must not block Settings registration */
+              if (rawScope === scope) rawScope = undefined
+              resolvedConfig = config
+              return scope
             }
+            captureConfig(undefined, scope)
+            syncScreenshot()
             return wrapScope(scope)
           }
           return scope
@@ -459,7 +465,10 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
         'vision-router: screenshot permission route lifecycle',
       )
     } catch {
-      /* parent stabilizer cleanup remains a final fallback */
+      // webServer.register() is caller-owned in supported DSH Hosts. If this
+      // injected child cannot own the disposer, withdraw the route now rather
+      // than keeping it alive until the parent DVR generation eventually exits.
+      releaseScreenshotPermissionRoute(webServer, handle)
     }
   }
 
@@ -511,20 +520,25 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
       }
     : undefined
 
+  const disposeLifecycle = () => {
+    rawScope = undefined
+    unmountScreenshot()
+    for (const [webServer, handle] of screenshotPermissionRoutes) {
+      releaseScreenshotPermissionRoute(webServer, handle)
+    }
+    screenshotPermissionRoutes.clear()
+  }
+
   try {
     ctx.effect?.(
-      () => () => {
-        rawScope = undefined
-        unmountScreenshot()
-        for (const [webServer, handle] of screenshotPermissionRoutes) {
-          releaseScreenshotPermissionRoute(webServer, handle)
-        }
-        screenshotPermissionRoutes.clear()
-      },
+      () => disposeLifecycle,
       'vision-router: local vision stabilizer',
     )
   } catch {
-    /* cleanup registration is best effort */
+    // Routes/settings state may already have been admitted above. Roll them
+    // back immediately and do not expose an unowned wrapper to this generation.
+    disposeLifecycle()
+    return { ctx, bootConfig }
   }
 
   const stabilizedCtx = new Proxy(ctx, {

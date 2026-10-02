@@ -1,8 +1,17 @@
+import {
+  currentLegacyGlobalProxyFetch,
+  legacyGlobalProxyPairFor,
+  runWithLegacyGlobalProxyScope,
+} from './legacy-global-proxy-boundary.js'
 import { probeLocalBackends } from './local-connection-probe.js'
 import {
   METADATA_RESPONSE_MAX_BYTES,
   readResponseJsonBounded,
 } from './http-body-limit.js'
+
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
 
 export const VISION_TEST_CONNECTION_PATH = '/_dsh/vision-router/test-connection'
 export const VISION_MODEL_CAPABILITIES_PATH = '/_dsh/vision-router/model-capabilities'
@@ -92,7 +101,28 @@ export function installVisionDiagnosticsRoutes(ctx, options = {}) {
   const httpRoute = typeof connection.httpRoute === 'string' && connection.httpRoute !== ''
     ? connection.httpRoute
     : 'vision-http'
-  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : globalThis.fetch
+  // The proxy boundary installs its wrapper after apply(), so a capture taken here
+  // would make "test connection" report failures that real vision turns (which run
+  // inside the adapter's proxy scope) do not have. Use the fetch the boundary
+  // currently owns, with the module-load capture as the fallback.
+  const injectedFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undefined
+  const resolveFetch = () => injectedFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
+  const connectionConfig = () => {
+    try {
+      const live = ctx?.get?.('settings')?.get?.('vision-router')
+      if (live !== null && typeof live === 'object' && !Array.isArray(live)) return live
+    } catch {
+      // No settings namespace on this Host: probes stay unscoped, as before.
+    }
+    return {}
+  }
+  const scopedProbe = (providerName, baseURL, expectedModel, startedAt) => {
+    const work = () => probeModels(resolveFetch(), baseURL, expectedModel, startedAt)
+    const pair = legacyGlobalProxyPairFor(connectionConfig(), providerName)
+    return pair === undefined
+      ? work()
+      : runWithLegacyGlobalProxyScope(pair.provider, pair.model, work)
+  }
 
   const probeConnection = async () => {
     const started = Date.now()
@@ -109,7 +139,7 @@ export function installVisionDiagnosticsRoutes(ctx, options = {}) {
 
     const localProbe = await probeLocalBackends(
       getArray(connection.localBackends),
-      (provider) => probeModels(fetchImpl, provider.baseURL, provider.model, started),
+      (provider) => scopedProbe(provider.name ?? provider.id, provider.baseURL, provider.model, started),
       started,
     )
     if (localProbe !== undefined) return localProbe
@@ -117,7 +147,7 @@ export function installVisionDiagnosticsRoutes(ctx, options = {}) {
     const httpBackends = getArray(connection.httpBackends)
     if (first !== undefined && first.provider === httpRoute) {
       const entry = httpBackends.find((provider) => `${provider.name}/${provider.model}` === first.model)
-      if (entry !== undefined) return probeModels(fetchImpl, entry.baseURL, entry.model, started)
+      if (entry !== undefined) return scopedProbe(entry.name, entry.baseURL, entry.model, started)
     }
 
     if (first !== undefined) {
@@ -138,7 +168,7 @@ export function installVisionDiagnosticsRoutes(ctx, options = {}) {
     }
 
     const httpFirst = httpBackends[0]
-    if (httpFirst !== undefined) return probeModels(fetchImpl, httpFirst.baseURL, httpFirst.model, started)
+    if (httpFirst !== undefined) return scopedProbe(httpFirst.provider ?? httpFirst.name ?? httpRoute, httpFirst.baseURL, httpFirst.model, started)
     return { ok: false, error: 'no usable vision provider configured' }
   }
 

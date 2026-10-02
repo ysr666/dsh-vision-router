@@ -52,6 +52,10 @@ export async function probeRuntime({
   dshHome,
   applicableProfiles = [],
   timeoutMs = 800,
+  // Doctor probes are a CLI surface: they never install a process fetch
+  // wrapper and must observe whatever transport the surrounding process
+  // currently provides.
+  // diagnostics-lint: sealed-process-global
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('runtime probe requires fetch')

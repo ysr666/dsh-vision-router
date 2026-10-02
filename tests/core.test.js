@@ -1379,13 +1379,34 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
     },
     logger: { warn() {}, info() {}, error() {} },
     effect(fn) {
-      if (typeof fn === 'function') fn()
-      return () => {}
+      const dispose = typeof fn === 'function' ? fn() : undefined
+      let active = true
+      return () => {
+        if (!active) return
+        active = false
+        return typeof dispose === 'function' ? dispose() : undefined
+      }
     },
     on(event, handler) {
       captured.on.set(event, handler)
     },
-    inject(_deps, callback) {
+    inject(deps, callback) {
+      const effect = (factory) => {
+        const dispose = typeof factory === 'function' ? factory() : undefined
+        let active = true
+        return () => {
+          if (!active) return
+          active = false
+          return typeof dispose === 'function' ? dispose() : undefined
+        }
+      }
+      if (Array.isArray(deps) && deps.includes('webServer')) {
+        callback({
+          webServer: { register() { return () => {} } },
+          effect,
+        })
+        return
+      }
       // settings seam: run synchronously against a mock settings service that
       // mirrors the real one — schema defaults over the composition entry
       // (apply's `config`, passed as `base`) over the user document (userDoc).
@@ -1393,18 +1414,21 @@ function mockHarnessCtx({ stockRoute = false, config0 = {}, skills = false, atta
         get: () => ({ ...Config({}), ...userDoc }),
         watch: (fn) => {
           settingsWatchers.push(fn)
+          return () => {
+            const index = settingsWatchers.indexOf(fn)
+            if (index !== -1) settingsWatchers.splice(index, 1)
+          }
         },
       }
-      const sctx = {
+      callback({
         settings: {
           register: (_name, _schema, options) => {
             const base = options && options.base ? options.base : {}
             return { ...scope, get: () => ({ ...Config({}), ...base, ...userDoc }) }
           },
         },
-        effect: () => () => {},
-      }
-      callback(sctx)
+        effect,
+      })
     },
     tools: {
       register: (tool) => { captured.tools.push(tool); return () => {} },

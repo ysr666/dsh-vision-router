@@ -5,6 +5,11 @@ import process from 'node:process'
 import { resolveDshHome } from './doctor.js'
 import { MODEL_RESPONSE_MAX_BYTES, readResponseJsonBounded } from './http-body-limit.js'
 import { stripTrailingSlashes } from './string-normalization.js'
+import {
+  currentLegacyGlobalProxyFetch,
+  legacyGlobalProxyPairFor,
+  runWithLegacyGlobalProxyScope,
+} from './legacy-global-proxy-boundary.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
 
 export const LIVE_MODELS_PATH = '/_dsh/vision-router/live-models'
@@ -16,6 +21,10 @@ export const DEFAULT_LIVE_MODEL_CONCURRENCY = 3
 export const DEFAULT_MAX_MODELS_PER_PROVIDER = 2_000
 
 const SUPPORTED_DISCOVERY_PROTOCOLS = new Set(['openai-completions', 'openai-responses'])
+
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
@@ -162,19 +171,57 @@ async function saveCache(file, providers, fsOps) {
   await fsOps.rename(temporary, file)
 }
 
+function plainProviderMap(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+
+/**
+ * Host-side provider profiles have two possible homes on a real DSH host:
+ *  - the settings service (some Host lines mirror a plugin's config there), and
+ *  - the profile configuration owned by the Host config editor, which is where
+ *    DSH 0.2.0-rc.2 keeps `llm-pi-ai.providers` (the Models page writes them
+ *    back to the profile patch, never to a settings section).
+ * Reading only the settings section made live discovery a dead path on that
+ * Host: `configuredProviderTransports()` returned `[]` and no `/models` probe
+ * could ever run.
+ */
+function configEditorProviders(ctx) {
+  try {
+    const editor = ctx?.get?.('configEditor')
+    if (editor === undefined || typeof editor.configuration !== 'function') return undefined
+    const rows = editor.configuration()
+    if (!Array.isArray(rows)) return undefined
+    const row = rows.find((candidate) => {
+      const options = candidate?.entry?.options
+      return options?.id === 'llm-pi-ai' || options?.name === '@deepseek-ai/dsh-llm-pi-ai'
+    })
+    if (row === undefined) return undefined
+    // The row exists, so an absent/empty providers map means "no providers are
+    // configured" — authoritative, which lets the cache drop removed entries.
+    // Only a missing row or an unavailable editor stays non-authoritative, so a
+    // transient read can never delete evidence.
+    const inherited = plainProviderMap(row.inherited?.providers) ?? {}
+    const override = plainProviderMap(row.override?.providers) ?? {}
+    return { ...inherited, ...override }
+  } catch {
+    return undefined
+  }
+}
+
 function piProfilesState(ctx) {
   try {
     const settings = ctx?.get?.('settings')
-    if (!settings || typeof settings.get !== 'function') return { authoritative: false, providers: {} }
-    const value = settings.get('llm-pi-ai')
-    const providers = value?.providers
-    if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
-      return { authoritative: false, providers: {} }
+    if (settings && typeof settings.get === 'function') {
+      const value = settings.get('llm-pi-ai')
+      const providers = plainProviderMap(value?.providers)
+      if (providers !== undefined) return { authoritative: true, providers }
     }
-    return { authoritative: true, providers }
   } catch {
-    return { authoritative: false, providers: {} }
+    // Fall through to the profile-configuration source below.
   }
+  const fromEditor = configEditorProviders(ctx)
+  if (fromEditor !== undefined) return { authoritative: true, providers: fromEditor }
+  return { authoritative: false, providers: {} }
 }
 
 function rawPiProfiles(ctx) {
@@ -188,6 +235,21 @@ function providerConfigurationToken(provider, raw) {
     nonEmpty(raw?.api) ?? '',
     nonEmpty(raw?.apiKeyEnv) ?? '',
   ])
+}
+
+// The boundary resolves its pair list from the live config; read the same shape so
+// the scope we open is one the boundary will accept.
+function liveProxyConfig(ctx, fallbackConfig = {}) {
+  try {
+    const settings = ctx?.get?.('settings')
+    const live = settings?.get?.('vision-router')
+    if (live !== null && typeof live === 'object' && !Array.isArray(live)) {
+      return { ...fallbackConfig, ...live }
+    }
+  } catch {
+    // Fall back to the composition config.
+  }
+  return fallbackConfig
 }
 
 function visionProviderPriority(ctx, fallbackConfig = {}) {
@@ -350,7 +412,13 @@ function boundedError(error) {
 
 export function createLiveModelDiscoveryManager(ctx, options = {}) {
   const now = typeof options.now === 'function' ? options.now : Date.now
-  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : globalThis.fetch
+  // The proxy boundary installs its wrapper after apply() returns, so a capture
+  // taken here would keep the raw host fetch and silently ignore a configured
+  // `proxy` in the probes below. Ask the boundary for the fetch it currently owns
+  // instead of reading the process global at call time (L1-sealed-process-global);
+  // the module-load capture stays as the last-resort fallback.
+  const injectedFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undefined
+  const resolveFetch = () => injectedFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
   const freshMs = Math.max(1_000, Number(options.freshMs) || DEFAULT_LIVE_MODEL_FRESH_MS)
   const staleMs = Math.max(freshMs, Number(options.staleMs) || DEFAULT_LIVE_MODEL_STALE_MS)
   const timeoutMs = Math.max(500, Number(options.timeoutMs) || DEFAULT_LIVE_MODEL_TIMEOUT_MS)
@@ -510,11 +578,15 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     try {
       const headers = { accept: 'application/json' }
       if (plan.apiKey !== undefined) headers.authorization = `Bearer ${plan.apiKey}`
-      const response = await fetchImpl(listingURL(plan.baseURL), {
+      const probe = () => resolveFetch()(listingURL(plan.baseURL), {
         method: 'GET',
         headers,
         signal: controller.signal,
       })
+      const proxyPair = legacyGlobalProxyPairFor(liveProxyConfig(ctx, fallbackConfig), provider)
+      const response = proxyPair === undefined
+        ? await probe()
+        : await runWithLegacyGlobalProxyScope(proxyPair.provider, proxyPair.model, probe)
       if (!response?.ok) {
         const error = new Error(`provider model listing answered HTTP ${response?.status ?? 'unknown'}`)
         error.status = response?.status
@@ -673,42 +745,61 @@ export function installLiveModelDiscovery(ctx, options = {}) {
     // Event forwarding is an optimization; the request path still refreshes.
   }
 
-  ctx?.inject?.(['webServer'], (webCtx) => {
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: LIVE_MODELS_PATH,
-      handler: async (req, res) => {
-        if (req.method !== 'GET') {
-          res.setHeader('Allow', 'GET')
-          sendJson(res, 405, { ok: false, error: 'method not allowed' })
-          return
-        }
-        try {
-          const url = new URL(req.url ?? LIVE_MODELS_PATH, 'http://localhost')
-          // The snapshot itself is safe for an authenticated remote Settings UI,
-          // but refresh drives Host-side provider I/O and may resolve stored
-          // credentials. Preserve local ?refresh=1 behavior while making every
-          // remote GET a passive read of already-owned discovery state.
-          const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
-          sendJson(res, 200, await manager.snapshot({ schedule }))
-        } catch (error) {
-          sendJson(res, 500, { ok: false, error: boundedError(error) })
-        }
-      },
-    }), 'vision-router: live provider model discovery')
-  })
+  let disposePromise
+  const disposeLifecycle = () => {
+    if (disposePromise) return disposePromise
+    lifecycleDisposed = true
+    if (startupTimer !== undefined) {
+      clearTimeout(startupTimer)
+      startupTimer = undefined
+    }
+    for (const dispose of disposers.splice(0)) {
+      try { dispose() } catch { /* best effort */ }
+    }
+    disposePromise = Promise.resolve(manager.dispose())
+    return disposePromise
+  }
+
+  // Own every timer/listener/manager resource before any later Host seam can
+  // throw. This keeps injection failure from stranding a live generation.
+  try {
+    ctx?.effect?.(
+      () => disposeLifecycle,
+      'vision-router: live model discovery lifecycle',
+    )
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
+  }
 
   try {
-    ctx?.effect?.(() => () => {
-      lifecycleDisposed = true
-      if (startupTimer !== undefined) clearTimeout(startupTimer)
-      for (const dispose of disposers) {
-        try { dispose() } catch { /* best effort */ }
-      }
-      void manager.dispose()
-    }, 'vision-router: live model discovery lifecycle')
-  } catch {
-    // Host service disposal still tears down the registered route.
+    ctx?.inject?.(['webServer'], (webCtx) => {
+      webCtx.effect(() => webCtx.webServer.register({
+        kind: 'exact',
+        path: LIVE_MODELS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET')
+            sendJson(res, 405, { ok: false, error: 'method not allowed' })
+            return
+          }
+          try {
+            const url = new URL(req.url ?? LIVE_MODELS_PATH, 'http://localhost')
+            // The snapshot itself is safe for an authenticated remote Settings UI,
+            // but refresh drives Host-side provider I/O and may resolve stored
+            // credentials. Preserve local ?refresh=1 behavior while making every
+            // remote GET a passive read of already-owned discovery state.
+            const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
+            sendJson(res, 200, await manager.snapshot({ schedule }))
+          } catch (error) {
+            sendJson(res, 500, { ok: false, error: boundedError(error) })
+          }
+        },
+      }), 'vision-router: live provider model discovery')
+    })
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
   }
   return manager
 }

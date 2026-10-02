@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
@@ -37,8 +34,8 @@ jobs:
       contents: read
       artifact-metadata: write
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -74,30 +71,42 @@ jobs:
           }
 
           git fetch --no-tags origin main:refs/remotes/origin/main
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            [ "$(git rev-parse origin/main)" = "$RELEASE_SHA" ] || {
-              echo "::error::manual release target must be the exact current origin/main HEAD"
-              exit 1
-            }
-          else
-            git merge-base --is-ancestor "$RELEASE_SHA" origin/main || {
-              echo "::error::release tag is not reachable from origin/main"
-              exit 1
-            }
-          fi
+          CURRENT_MAIN_SHA="$(git rev-parse origin/main)"
+          REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+          [ -z "$REMOTE_TAG_SHA" ] || {
+            echo "::error::$RELEASE_TAG already exists at $REMOTE_TAG_SHA. A released version is immutable; pick the next version instead of re-releasing $RELEASE_TAG."
+            exit 1
+          }
+          # The dispatch ref decides the OIDC SourceRepositoryDigest that
+          # actions/attest records and that `gh attestation verify
+          # --source-digest` enforces. Dispatching from a branch that is not the
+          # release commit therefore mints provenance for the wrong commit, so
+          # the only safe release target is the exact current origin/main HEAD.
+          [ "$CURRENT_MAIN_SHA" = "$RELEASE_SHA" ] || {
+            echo "::error::manual release target must be the exact current origin/main HEAD ($CURRENT_MAIN_SHA)"
+            exit 1
+          }
 
-          # Release identity and artifact verification are hard gates. README /
-          # release-note freshness is useful documentation hygiene, but must not
-          # make an otherwise verified hotfix impossible to publish. A curated
-          # docs/releases/<tag>.md file takes precedence over CHANGELOG.md.
+          # Release identity and artifact verification are hard gates, and the
+          # release-documentation contract is part of the release: both README
+          # announcement bars must carry the version being released, and either
+          # a curated docs/releases/<tag>.md file or a matching CHANGELOG.md
+          # section must exist. AGENTS.md rule 9 owns this contract.
           for f in README.md README.zh.md; do
-            if ! grep -q "$EXPECTED_TAG" "$f"; then
-              echo "::warning::$f does not yet mention $EXPECTED_TAG"
+            BAR="$(awk '
+              /^>[[:space:]]*\[!WARNING\]/ { inbar = 1; next }
+              inbar && /^>/ { print; next }
+              inbar { exit }
+            ' "$f")"
+            if ! printf '%s\n' "$BAR" | grep -Eq "(${EXPECTED_TAG}|${VERSION})"; then
+              echo "::error::$f is missing a top [!WARNING] announcement bar mentioning ${EXPECTED_TAG}; update the bar before releasing"
+              exit 1
             fi
           done
           CURATED_NOTES="docs/releases/$EXPECTED_TAG.md"
           if [ ! -s "$CURATED_NOTES" ] && ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
-            echo "::warning::no curated release notes or CHANGELOG.md section for $EXPECTED_TAG; release notes will use the commit list"
+            echo "::error::no curated release notes ($CURATED_NOTES) and no CHANGELOG.md section for $EXPECTED_TAG"
+            exit 1
           fi
 
           node <<'NODE'
@@ -186,11 +195,24 @@ jobs:
           npm pack --json > pretag-pack.json
           TARBALL="$(node -e "const p=require('./pretag-pack.json'); if(!Array.isArray(p)||p.length!==1||!p[0].filename) process.exit(1); process.stdout.write(p[0].filename)")"
           FILE_COUNT="$(node -e "const p=require('./pretag-pack.json'); process.stdout.write(String(p[0].files?.length ?? ''))")"
-          LOCAL_SHA1="$(sha1sum "$TARBALL" | awk '{print $1}')"
-          LOCAL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
           VERSION="$(node -p "require('./package.json').version")"
           node scripts/verify-packed-public-api.mjs "$TARBALL"
-          node scripts/release-registry-identity.mjs probe "$VERSION" "$LOCAL_SHA1"
+
+          # A version on npm without this exact SHA-1 means someone published
+          # outside this workflow, or a previous release of the same version
+          # already happened. Both are unrecoverable here: the immutable tag and
+          # npm version are single-use, so refuse before creating anything.
+          INSPECT_OUTPUT="$RUNNER_TEMP/release-registry-inspect.out"
+          : > "$INSPECT_OUTPUT"
+          GITHUB_OUTPUT="$INSPECT_OUTPUT" node scripts/release-registry-identity.mjs inspect "$VERSION"
+          ALREADY_PUBLISHED="$(awk -F= '$1=="already_published" {print $2}' "$INSPECT_OUTPUT" | tail -n1)"
+          [ "$ALREADY_PUBLISHED" != "true" ] || {
+            echo "::error::npm already exposes dsh-vision-router@$VERSION; refusing to adopt or republish a pre-existing registry version"
+            exit 1
+          }
+
+          LOCAL_SHA1="$(sha1sum "$TARBALL" | awk '{print $1}')"
+          LOCAL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "file_count=$FILE_COUNT" >> "$GITHUB_OUTPUT"
           echo "sha1=$LOCAL_SHA1" >> "$GITHUB_OUTPUT"
@@ -213,8 +235,8 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
     steps:
       - name: Ensure immutable release tag exists at verified SHA
         shell: bash
@@ -277,8 +299,8 @@ jobs:
       attestation_url: ${{ steps.attest.outputs.attestation-url }}
     env:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
       PRETAG_TARBALL: ${{ needs.verify.outputs.package_tarball }}
       PRETAG_FILE_COUNT: ${{ needs.verify.outputs.package_file_count }}
       PRETAG_SHA1: ${{ needs.verify.outputs.package_sha1 }}
@@ -472,8 +494,8 @@ jobs:
       contents: write
       actions: read
     env:
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-      RELEASE_SHA: ${{ inputs.target_sha || github.sha }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_SHA: ${{ inputs.target_sha }}
       RELEASE_VERSION: ${{ needs.publish.outputs.release_version }}
       PACKAGE_TARBALL: ${{ needs.publish.outputs.package_tarball }}
       PACKAGE_FILE_COUNT: ${{ needs.publish.outputs.package_file_count }}
@@ -585,20 +607,64 @@ jobs:
             echo "- verify: \`gh attestation verify $PACKAGE_TARBALL -R $GITHUB_REPOSITORY --bundle $PROVENANCE_NAME --signer-workflow $GITHUB_REPOSITORY/.github/workflows/release.yml\`"
           } >> release-notes.md
 
-      - name: Create GitHub Release once
+      - name: Create immutable GitHub Release (draft, attach, publish)
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "$RELEASE_TAG already has a GitHub Release; refusing to rewrite published release notes or assets."
-            exit 0
+
+          # Immutability applies the moment a release is published, so the
+          # release is created as a draft, every immutable asset is attached and
+          # verified, and only then is it published. A failure before the final
+          # publish leaves a draft that can be deleted and retried, never a
+          # published release that is missing or mismatching assets.
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --draft \
+              --title "$RELEASE_TAG" \
+              --notes-file release-notes.md
           fi
-          gh release create "$RELEASE_TAG" \
-            --verify-tag \
-            --title "$RELEASE_TAG" \
-            --notes-file release-notes.md \
+
+          for asset in "$PACKAGE_TARBALL" "$PROVENANCE_NAME" "SHA256SUMS.txt"; do
+            [ -s "$asset" ] || {
+              echo "::error::release asset $asset is missing locally"
+              exit 1
+            }
+          done
+
+          gh release upload "$RELEASE_TAG" \
             "$PACKAGE_TARBALL" \
+            "$PROVENANCE_NAME" \
             "SHA256SUMS.txt" \
-            "$PROVENANCE_NAME"
+            --clobber
+
+          ASSETS="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for asset in "$PACKAGE_TARBALL" "$PROVENANCE_NAME" "SHA256SUMS.txt"; do
+            printf '%s\n' "$ASSETS" | grep -Fqx -- "$asset" || {
+              echo "::error::GitHub Release draft is missing required asset $asset"
+              exit 1
+            }
+          done
+
+          # Verify the attached tarball against the verified pre-tag candidate
+          # rather than trusting the upload.
+          VERIFY_DIR="$RUNNER_TEMP/release-asset-verify"
+          rm -rf "$VERIFY_DIR"
+          mkdir -p "$VERIFY_DIR"
+          gh release download "$RELEASE_TAG" --pattern "$PACKAGE_TARBALL" --dir "$VERIFY_DIR"
+          [ "$(sha256sum "$VERIFY_DIR/$PACKAGE_TARBALL" | awk '{print $1}')" = "$PACKAGE_SHA256" ] || {
+            echo "::error::attached release tarball does not match the verified package SHA-256"
+            exit 1
+          }
+
+          # Publish only after every asset is attached and verified. Once
+          # published the release is immutable, so a draft is the last state in
+          # which a retry can still change anything.
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "false" ] || {
+            echo "::error::GitHub Release $RELEASE_TAG is still a draft after publish"
+            exit 1
+          }
+          echo "published $RELEASE_TAG with $(printf '%s\n' "$ASSETS" | grep -c . ) verified assets"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

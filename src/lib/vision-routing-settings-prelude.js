@@ -446,7 +446,7 @@ export const VISION_ROUTING_SETTINGS_PRELUDE = String.raw`(function(){
     try { state.backgroundTimer && state.backgroundTimer.unref && state.backgroundTimer.unref(); } catch (_) {}
     schedule();
 
-    var dispose = function() {
+    var dispose = async function() {
       state.disposed = true;
       if (state.scanTimer !== undefined) clearTimeout(state.scanTimer);
       if (state.backgroundTimer !== undefined) clearInterval(state.backgroundTimer);
@@ -456,13 +456,18 @@ export const VISION_ROUTING_SETTINGS_PRELUDE = String.raw`(function(){
         try { disposeRemote(); } catch (_) {}
       });
       state.remoteDisposers.length = 0;
-      if (remote && scope && typeof scope.dispose === 'function') void scope.dispose();
       if (state.panel && state.panel.parentNode) state.panel.parentNode.removeChild(state.panel);
       if (states) states.delete(ctx);
+      if (remote && scope && typeof scope.dispose === 'function') await scope.dispose();
     };
+    var lifecycleOwned = false;
     try {
-      if (typeof ctx.effect === 'function') ctx.effect(function(){ return dispose; }, 'vision-router: routing settings product panel');
+      if (typeof ctx.effect === 'function') {
+        ctx.effect(function(){ return dispose; }, 'vision-router: routing settings product panel');
+        lifecycleOwned = true;
+      }
     } catch (_) {}
+    if (!lifecycleOwned) void dispose().catch(function(){});
   }
 
   function patchLoader(loader) {

@@ -224,14 +224,16 @@ export function createVisionProviderTransport({
       const name = typeof ref === 'string' ? ref.trim() : ''
       if (!name) return undefined
       const credentials = credentialService(ctx)
-      if (credentials && typeof credentials.resolve === 'function') {
-        try {
-          const hit = await credentials.resolve(name)
+      try {
+        const resolve = credentials?.resolve
+        if (typeof resolve === 'function') {
+          const hit = await Reflect.apply(resolve, credentials, [name])
           const value = objectRecord(hit)?.value
           if (typeof value === 'string' && value !== '') return value
-        } catch {
-          // Environment remains the compatibility fallback.
         }
+      } catch {
+        // A missing/partial/throwing Host credential service must not suppress
+        // the supported environment-variable compatibility fallback.
       }
       return envCredential(name)
     },

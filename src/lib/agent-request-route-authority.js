@@ -1,8 +1,6 @@
 import { projectDelegatedCallConfig } from './delegated-call-config.js'
 import { contextWithTwinImageCapabilityFallback } from './twin-image-capability-fallback.js'
 
-const routeAuthorityOptionsByContext = new WeakMap()
-
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
@@ -31,21 +29,6 @@ export function projectAgentRequestRouteHandoff(sourceConfig, resultConfig) {
 }
 
 /**
- * Runtime composition can publish route identities before Core.apply without
- * changing the mature `contextWithAgentRequestRouteAuthority(backendRuntimeCtx)`
- * boundary shape. The WeakMap keeps this per-context and garbage-collectable.
- */
-export function configureAgentRequestRouteAuthority(ctx, options = {}) {
-  if (!isObject(ctx)) return ctx
-  routeAuthorityOptionsByContext.set(ctx, {
-    wrapperRoute: options.wrapperRoute,
-    chainRoute: options.chainRoute,
-    logger: options.logger,
-  })
-  return ctx
-}
-
-/**
  * Private Core-facing context. It wraps only `agent/request` handlers and only
  * projects a result when that handler demonstrably changed provider/model.
  * Ordinary request handlers and direct LLM calls retain caller identity.
@@ -60,9 +43,7 @@ export function configureAgentRequestRouteAuthority(ctx, options = {}) {
  */
 export function contextWithAgentRequestRouteAuthority(ctx, options) {
   if (!isObject(ctx)) return ctx
-  const fallbackOptions = isObject(options)
-    ? options
-    : routeAuthorityOptionsByContext.get(ctx) ?? {}
+  const fallbackOptions = isObject(options) ? options : {}
   const routeAuthorityCtx = new Proxy(ctx, {
     get(target, property) {
       if (property !== 'on') {

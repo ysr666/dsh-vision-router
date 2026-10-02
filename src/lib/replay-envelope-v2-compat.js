@@ -88,15 +88,20 @@ export function contextWithReplayEnvelopeV2Compat(ctx) {
     },
   })
   wrappedContexts.set(ctx, wrapped)
+  let lifecycleOwned = false
   try {
-    ctx.effect?.(
-      () => () => {
-        if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
-      },
-      'vision-router: rc7 replay envelope compatibility lifecycle',
-    )
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => {
+          if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
+        },
+        'vision-router: rc7 replay envelope compatibility lifecycle',
+      )
+      lifecycleOwned = true
+    }
   } catch {
-    /* lifecycle hardening must not block plugin apply */
+    // The current caller can still use this one-shot compatibility view.
   }
+  if (!lifecycleOwned && wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
   return wrapped
 }

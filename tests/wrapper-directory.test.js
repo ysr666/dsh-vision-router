@@ -64,6 +64,9 @@ function fakeContext({
         state.ownedDirectory = next.map((entry) => ({ ...entry, settingsPath: [...entry.settingsPath] }))
         emit('llm/adapters-updated')
       }
+      // Real DSH registerConfigurableProviders() internally binds this handle
+      // to the caller fiber through Cordis. Mirror that service ownership here.
+      disposals.push(handle)
       return handle
     },
   }
@@ -264,4 +267,17 @@ test('deduplicates identical sync warnings across repeated adapter events', () =
 
   assert.equal(warns.length, 1)
   assert.match(warns[0], /Models-directory alias sync failed/)
+})
+
+
+test('effect registration failure prevents Models-directory admission entirely', () => {
+  const { ctx, state } = fakeContext()
+  ctx.effect = () => { throw new Error('inactive fiber') }
+  ctx.on = () => assert.fail('an unowned generation must not register event listeners')
+  installWrapperDirectoryAlias(ctx)
+  assert.equal(state.registerCalls, 0)
+  assert.deepEqual(state.ownedDirectory, [])
+  state.visionConfig = { wrapperRoute: 'relay-auto-vision' }
+  assert.doesNotThrow(() => installWrapperDirectoryAlias(ctx))
+  assert.deepEqual(state.ownedDirectory, [])
 })

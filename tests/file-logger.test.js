@@ -380,3 +380,72 @@ test('file logging installation cache expires with the plugin fiber so routes re
     await rm(root, { recursive: true, force: true })
   }
 })
+
+
+test('file logger lifecycle cleanup awaits its admitted write queue before replacement', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-log-drain-'))
+  let releaseAppend
+  let appendStarted
+  const appendStartedPromise = new Promise((resolve) => { appendStarted = resolve })
+  let pluginCleanup
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    effect(factory) { pluginCleanup = factory(); return pluginCleanup },
+    inject() {},
+  }
+  try {
+    const installed = installVisionRouterFileLogging(ctx, {
+      dshHome: root,
+      fsOps: {
+        async mkdir() {},
+        async stat() { const error = new Error('missing'); error.code = 'ENOENT'; throw error },
+        async rm() {},
+        async rename() {},
+        async appendFile() {
+          if (typeof releaseAppend !== 'function') {
+            appendStarted()
+            await new Promise((resolve) => { releaseAppend = resolve })
+          }
+        },
+      },
+    })
+    installed.logger.info('blocked lifecycle write')
+    await appendStartedPromise
+    const cleanup = pluginCleanup()
+    assert.equal(typeof cleanup?.then, 'function')
+    let settled = false
+    cleanup.then(() => { settled = true })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(settled, false, 'replacement generation must wait for the old sink queue')
+    releaseAppend()
+    await cleanup
+  } finally {
+    releaseAppend?.()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('file logger rejects an unowned generation before publishing diagnostics routes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'vision-router-log-unowned-'))
+  let injectCalls = 0
+  const ctx = {
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    effect() { throw new Error('inactive fiber') },
+    inject() { injectCalls += 1 },
+  }
+  try {
+    assert.throws(
+      () => installVisionRouterFileLogging(ctx, { dshHome: root }),
+      /inactive fiber/,
+    )
+    assert.equal(injectCalls, 0, 'route injection must not run after lifecycle ownership is rejected')
+    assert.throws(
+      () => installVisionRouterFileLogging(ctx, { dshHome: root }),
+      /inactive fiber/,
+      'a rejected generation must not remain memoized',
+    )
+    assert.equal(injectCalls, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

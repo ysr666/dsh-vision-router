@@ -414,3 +414,90 @@ test('screenshot permission route follows webServer replacement instead of stayi
   assert.equal(previous.has(path), false)
   assert.equal(current.has(path), true)
 })
+
+test('local stabilizer rolls back admitted routes when parent lifecycle ownership fails', () => {
+  const harness = makeHarness({ desktopScreenshot: true })
+  harness.ctx.effect = () => { throw new Error('inactive fiber') }
+
+  const installed = installLocalVisionStabilizer(harness.ctx, {}, makeCore())
+
+  assert.equal(installed.ctx, harness.ctx, 'an unowned generation must not expose the private runtime wrapper')
+  assert.equal(
+    harness.webRoutes.has('/_dsh/vision-router/request-screenshot-permission'),
+    false,
+    'the route admitted before parent ownership must be withdrawn',
+  )
+})
+
+test('local vision treats a throwing optional attachment probe as unavailable instead of failing the turn', async () => {
+  const harness = makeHarness({
+    localOllama: { enabled: true, baseURL: 'http://ollama/v1', model: 'vl' },
+  })
+  const core = makeCore()
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  installSettingsLikeCore(stabilized)
+  stabilized.llm.registerAdapter(['vision-http'], {
+    async *stream() { yield { type: 'finish', reason: { kind: 'stop' } } },
+  })
+  harness.ctx.get = () => { throw new Error('Host service graph unavailable') }
+
+  for await (const _chunk of harness.adapters.get('vision-http').stream({
+    model: 'local-ollama/vl',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: 'x' } },
+        { type: 'text', text: 'continue without image bytes' },
+      ],
+    }],
+  })) {
+    // drain
+  }
+
+  assert.equal(core.calls.length, 1)
+  assert.equal(core.calls[0].messages[0].content.some((block) => block.type === 'image_url'), false)
+})
+
+test('local stabilizer does not retain a Settings scope whose child lifecycle owner is rejected', () => {
+  const harness = makeHarness({ desktopScreenshot: true })
+  const originalInject = harness.ctx.inject.bind(harness.ctx)
+  const rejectedScope = {
+    get() { return { desktopScreenshot: true } },
+    watch() { throw new Error('watch must not be installed') },
+  }
+  harness.ctx.inject = (deps, callback) => {
+    if (deps.includes('settings')) {
+      return callback({
+        settings: { register: () => rejectedScope },
+        effect() { throw new Error('inactive settings fiber') },
+      })
+    }
+    return originalInject(deps, callback)
+  }
+
+  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, makeCore())
+  stabilized.inject(['settings'], (settingsCtx) => {
+    const returned = settingsCtx.settings.register('vision-router', {}, { base: {} })
+    assert.equal(returned, rejectedScope, 'failed child ownership must return the unwrapped Host scope')
+  })
+
+  stabilized.tools.register({ name: 'vision_screenshot', execute() {} })
+  assert.equal(
+    harness.toolDefs.has('vision_screenshot'),
+    false,
+    'dead Settings generation must not remain authoritative for screenshot enablement',
+  )
+})
+
+test('screenshot permission route is withdrawn when webServer child ownership is rejected', () => {
+  const harness = makeHarness({ desktopScreenshot: true })
+  harness.webCtx.effect = () => { throw new Error('inactive webServer fiber') }
+
+  installLocalVisionStabilizer(harness.ctx, {}, makeCore())
+
+  assert.equal(
+    harness.webRoutes.has('/_dsh/vision-router/request-screenshot-permission'),
+    false,
+    'caller-owned WebServer route must not survive a rejected child lifecycle owner',
+  )
+})

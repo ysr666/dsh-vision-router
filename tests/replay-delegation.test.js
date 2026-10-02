@@ -7,6 +7,7 @@ import {
   rebindDelegatedReplayOptions,
   rebindDelegatedReplaySources,
 } from '../lib/replay-delegation.js'
+import { contextWithReplayEnvelopeV2Compat } from '../lib/replay-envelope-v2-compat.js'
 
 function assistant({
   sourceProvider = 'opencodex-vision',
@@ -104,6 +105,10 @@ test('contextWithDelegatedReplay scopes rebinding to the context view and preser
   }
   const ctx = {
     llm,
+    effect(factory) {
+      this.cleanup = factory()
+      return this.cleanup
+    },
     ping() {
       assert.equal(this, ctx)
       return 'pong'
@@ -948,4 +953,36 @@ test('issue #504 follow-up: official catalog outage does not block Core-owned co
     1,
     'the short outage backoff should also coalesce the second rejected identity lookup',
   )
+})
+
+
+test('delegated replay cache does not retain an unowned wrapper after effect registration fails', () => {
+  const ctx = {
+    llm: { registerAdapter() {}, stream() {} },
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = contextWithDelegatedReplay(ctx, { wrapperRoute: 'first-wrapper' })
+  const second = contextWithDelegatedReplay(ctx, { wrapperRoute: 'second-wrapper' })
+  assert.notEqual(second, first)
+})
+
+test('replay-envelope compatibility cache does not survive failed lifecycle ownership', () => {
+  const ctx = {
+    llm: { stream() {} },
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = contextWithReplayEnvelopeV2Compat(ctx)
+  const second = contextWithReplayEnvelopeV2Compat(ctx)
+  assert.notEqual(second, first)
+})
+
+test('generation-owned replay wrappers are never memoized without a lifecycle surface', () => {
+  const ctx = { llm: { registerAdapter() {}, stream() {} } }
+  const firstDelegation = contextWithDelegatedReplay(ctx, { wrapperRoute: 'first-wrapper' })
+  const secondDelegation = contextWithDelegatedReplay(ctx, { wrapperRoute: 'second-wrapper' })
+  assert.notEqual(secondDelegation, firstDelegation)
+
+  const firstEnvelope = contextWithReplayEnvelopeV2Compat(ctx)
+  const secondEnvelope = contextWithReplayEnvelopeV2Compat(ctx)
+  assert.notEqual(secondEnvelope, firstEnvelope)
 })

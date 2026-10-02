@@ -385,7 +385,7 @@ export function currentSessionVisionPolicy() {
   return imageTurn.getStore()?.policy
 }
 
-function settingsServiceView(settings, state) {
+function settingsServiceView(settings, state, ownerCtx) {
   if (!isObject(settings)) return settings
   return new Proxy(settings, {
     get(target, property) {
@@ -394,7 +394,19 @@ function settingsServiceView(settings, state) {
         if (typeof register !== 'function') return register
         return (namespace, ...args) => {
           const scope = register.call(target, namespace, ...args)
-          if (namespace === 'vision-router') state.settingsScope = scope
+          if (namespace !== 'vision-router') return scope
+          try {
+            if (typeof ownerCtx?.effect !== 'function') return scope
+            ownerCtx.effect(
+              () => () => {
+                if (state.settingsScope === scope) state.settingsScope = undefined
+              },
+              'vision-router: native image settings lifecycle',
+            )
+          } catch {
+            return scope
+          }
+          state.settingsScope = scope
           return scope
         }
       }
@@ -406,7 +418,7 @@ function settingsServiceView(settings, state) {
 
 function injectedContextView(child, state) {
   if (!isObject(child)) return child
-  const settings = settingsServiceView(child.settings, state)
+  const settings = settingsServiceView(child.settings, state, child)
   return new Proxy(child, {
     get(target, property) {
       if (property === 'settings') return settings

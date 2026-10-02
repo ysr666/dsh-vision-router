@@ -14,14 +14,11 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
   var connectionCache = typeof WeakMap === 'function' ? new WeakMap() : undefined;
 
   function safeGet(ctx, name) {
-    if (!ctx) return undefined;
+    if (!ctx || typeof ctx.get !== 'function') return undefined;
     try {
-      if (typeof ctx.get === 'function') {
-        var value = ctx.get(name);
-        if (value !== undefined && value !== null) return value;
-      }
-    } catch (_) {}
-    try { return ctx[name]; } catch (_) { return undefined; }
+      var value = ctx.get(name);
+      return value === undefined || value === null ? undefined : value;
+    } catch (_) { return undefined; }
   }
 
   function isLoopbackLocation(locationLike) {
@@ -212,6 +209,11 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
           var getter = Reflect.get(target, property, target);
           if (typeof getter !== 'function') return getter;
           return function(name) {
+            if (name === 'settingsScope') {
+              var original = safeGet(target, 'settingsScope');
+              if (original && typeof original.bind === 'function') return original;
+              return syntheticBinder(ctx, configFormsBinder(target));
+            }
             var value = getter.call(target, name);
             return name === 'connection' ? normalizeConnection(value) : value;
           };

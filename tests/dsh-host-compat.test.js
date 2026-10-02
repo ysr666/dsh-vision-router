@@ -285,6 +285,26 @@ test('host provider ownership blocks only synthetic official routes', () => {
   )
 })
 
+test('provider ownership guard rejects a single host-owned route without touching the host registrar', () => {
+  const calls = []
+  const ctx = {
+    llm: {
+      registerAdapter(routes) {
+        calls.push(routes)
+        return () => {}
+      },
+    },
+  }
+  const wrapped = protectHostProviderOwnership(ctx)
+  assert.throws(
+    () => wrapped.llm.registerAdapter('deepseek-official', {}),
+    (error) =>
+      error?.code === 'DSH_HOST_PROVIDER_OWNERSHIP'
+      && /provider takeover/.test(String(error?.message)),
+  )
+  assert.deepEqual(calls, [])
+})
+
 test('host settings bridge uses the common public SettingsProvider seam and masks legacy stealth', () => {
   let value = { foo: 'user', stealth: true }
   let serviceWatcher
@@ -555,4 +575,53 @@ test('host settings compatibility rejects incomplete public options before regis
     () => installHostSettingsCompatibility({}, {}, { namespace: 'vision-router' }),
     /requires Config/,
   )
+})
+
+test('host settings compatibility requires a callable inject and registers nothing without one', () => {
+  assert.throws(
+    () => installHostSettingsCompatibility({}, {}, { namespace: 'vision-router', Config: EntryConfig }),
+    (error) => error instanceof TypeError && /inject/i.test(String(error?.message)),
+  )
+})
+
+test('host settings compatibility facade refuses a foreign settings namespace', () => {
+  const ctx = { inject() {} }
+  const wrapped = installHostSettingsCompatibility(ctx, {}, {
+    namespace: 'vision-router',
+    Config: EntryConfig,
+  })
+  let settingsCtx
+  wrapped.inject(['settings'], (next) => {
+    settingsCtx = next
+  })
+  assert.ok(settingsCtx, 'compat inject must publish a settings context')
+  assert.throws(
+    () => settingsCtx.settings.register('other-namespace'),
+    /unexpected settings namespace/,
+  )
+})
+
+test('host settings compatibility rolls back its watcher when child lifecycle ownership fails', () => {
+  let watchDisposed = 0
+  const scope = {
+    get() { return { foo: 'live' } },
+    watch() { return () => { watchDisposed += 1 } },
+  }
+  const ctx = {
+    inject(_dependencies, callback) {
+      callback({
+        settings: { register() { return scope } },
+        effect() { throw new Error('inactive fiber') },
+      })
+    },
+  }
+
+  assert.throws(
+    () => installHostSettingsCompatibility(ctx, { foo: 'base' }, {
+      Config: { name: 'fake-schema' },
+      namespace: 'vision-router',
+    }),
+    /inactive fiber/,
+  )
+  assert.equal(watchDisposed, 1)
 })

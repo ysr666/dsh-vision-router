@@ -430,3 +430,51 @@ test('running structured tool clamps core network/OCR timeouts to remaining turn
     Date.now = originalNow
   }
 })
+
+test('structured flow drops a Settings scope as soon as its child generation unloads', async () => {
+  const handlers = new Map()
+  const defs = new Map()
+  const fallback = { visionDepth: 'standard', visionDepthMaxCalls: 1 }
+  const live = { visionDepth: 'standard', visionDepthMaxCalls: 0 }
+  let disposeScope
+  const rawScope = { get() { return live } }
+  const settingsChild = {
+    settings: { register() { return rawScope } },
+    effect(factory) { disposeScope = factory(); return disposeScope },
+  }
+  const ctx = {
+    on(event, handler) { handlers.set(event, handler); return () => handlers.delete(event) },
+    tools: {
+      register(def) { defs.set(def.name, def); return () => defs.delete(def.name) },
+    },
+    inject(dependencies, callback) {
+      if (dependencies.includes('settings')) callback(settingsChild)
+    },
+  }
+  const wrapped = installStructuredFlowHardening(ctx, fallback)
+  wrapped.inject(['settings'], (child) => child.settings.register('vision-router', {}, { base: fallback }))
+  wrapped.on('agent/pre-step', async (_payload, next) => next())
+  const h = { wrapped, handlers, defs }
+  const tools = registerFlowTools(
+    h,
+    () => bootstrapSuccess({ visual_kind: 'general', mixed_of: [] }),
+    () => 'evidence',
+  )
+
+  const liveSession = {}
+  const liveExec = { agent: { session: liveSession } }
+  await preStep(h, liveSession, 1)
+  await tools.bootstrap().execute({}, liveExec)
+  assert.equal(await tools.describe().execute({}, liveExec), 'evidence')
+  assert.equal(await tools.describe().execute({}, liveExec), 'evidence', 'live scope disables the cap')
+
+  disposeScope()
+
+  const fallbackSession = {}
+  const fallbackExec = { agent: { session: fallbackSession } }
+  await preStep(h, fallbackSession, 1)
+  await tools.bootstrap().execute({}, fallbackExec)
+  assert.equal(await tools.describe().execute({}, fallbackExec), 'evidence')
+  const blocked = JSON.parse(await tools.describe().execute({}, fallbackExec))
+  assert.equal(blocked.code, 'VISION_DEPTH_LIMIT', 'after unload the composition fallback must regain authority')
+})
