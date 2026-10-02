@@ -165,7 +165,13 @@ test('vision-http dispatches OpenAI local providers through callLocalBackend so 
     localOllama: { enabled: true, baseURL: 'http://ollama/v1', model: 'vl', temperature: 0.3, top_p: 0.7 },
   })
   const core = makeCore()
-  const { ctx: stabilized } = installLocalVisionStabilizer(harness.ctx, {}, core)
+  const providerTransport = { fetch() {} }
+  const { ctx: stabilized } = installLocalVisionStabilizer(
+    harness.ctx,
+    {},
+    core,
+    { providerTransport },
+  )
   installSettingsLikeCore(stabilized)
   let delegated = 0
   stabilized.llm.registerAdapter(['vision-http'], {
@@ -180,6 +186,7 @@ test('vision-http dispatches OpenAI local providers through callLocalBackend so 
   assert.equal(core.calls.length, 1)
   assert.equal(core.calls[0].provider.temperature, 0.3)
   assert.equal(core.calls[0].provider.top_p, 0.7)
+  assert.equal(core.calls[0].options.providerTransport, providerTransport)
   assert.ok(chunks.some((chunk) => chunk.type === 'text-delta' && chunk.text === 'local answer'))
 })
 
