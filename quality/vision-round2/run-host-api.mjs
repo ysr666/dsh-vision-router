@@ -10,6 +10,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ROUND2_SUITE_REVISION } from './corpus.mjs'
 
+const MAX_PAGE_HISTORY_BYTES = 8 * 1024 * 1024
+
 const DEFAULT_ARTIFACTS = '.artifacts/vision-quality-round2'
 const DEFAULT_PROVIDER = 'deepseek-vision'
 const DEFAULT_MODEL = 'deepseek-flash'
@@ -390,7 +392,15 @@ async function runCase(item, options) {
       model: surface.model,
       visionToolCount: surface.visionToolCount,
     }
-    await writeFile(historyPath, `${JSON.stringify(observed.page, null, 2)}\n`)
+    const pageJson = `${JSON.stringify(observed.page, null, 2)}\n`
+    // The page state is read back from the Host this harness spawns itself, so the
+    // content is the child's own JSON; the bound keeps a misbehaving child from
+    // filling the operator's disk, and keeps the write a bounded, known-size record
+    // instead of an unbounded copy of a network payload.
+    if (Buffer.byteLength(pageJson) > MAX_PAGE_HISTORY_BYTES) {
+      throw new Error(`page history exceeds ${MAX_PAGE_HISTORY_BYTES} bytes`)
+    }
+    await writeFile(historyPath, pageJson)
     return result
   } finally {
     await stopChild(child)
