@@ -6,11 +6,13 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 import {
+  configuredProviderTransports,
   createLiveModelDiscoveryManager,
   installLiveModelDiscovery,
   LIVE_MODEL_CACHE_VERSION,
   liveModelCachePath,
   normalizeOpenAIModelListing,
+  providerTransportFor,
   routeFingerprint,
 } from '../lib/live-model-discovery.js'
 import {
@@ -967,4 +969,61 @@ test('client live-model cache is one-shot when the Host has no lifecycle surface
   const exported = captured.factory(() => {})
   const ctx = { get() { return undefined } }
   assert.notEqual(exported.apply(ctx), exported.apply(ctx))
+})
+
+// ── Host profile-configuration source (real DSH keeps providers there) ──────
+
+function configEditorContext(rows, { settingsProviders } = {}) {
+  return {
+    llm: { registration() { return undefined } },
+    get(name) {
+      if (name === 'settings') {
+        return settingsProviders === undefined
+          ? undefined
+          : { get: (namespace) => (namespace === 'llm-pi-ai' ? { providers: settingsProviders } : undefined) }
+      }
+      if (name === 'configEditor') {
+        return typeof rows === 'function' ? { configuration: rows } : { configuration: () => rows }
+      }
+      return undefined
+    },
+  }
+}
+
+test('provider profiles fall back to the Host config editor when the settings section carries none', () => {
+  const ctx = configEditorContext([
+    {
+      entry: { options: { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai' } },
+      inherited: { providers: { mock: { baseURL: 'http://127.0.0.1:19500/v1', api: 'openai-completions' } } },
+      override: { providers: { second: { baseURL: 'https://second.example/v1', api: 'openai-completions' } } },
+    },
+  ])
+  const providers = configuredProviderTransports(ctx).map((transport) => transport.provider).sort()
+  assert.deepEqual(providers, ['mock', 'second'])
+  assert.equal(providerTransportFor(ctx, 'mock').baseURL, 'http://127.0.0.1:19500/v1')
+  assert.equal(providerTransportFor(ctx, 'second').baseURL, 'https://second.example/v1')
+})
+
+test('an override in the config editor wins over the inherited profile value', () => {
+  const ctx = configEditorContext([
+    {
+      entry: { options: { id: 'llm-pi-ai' } },
+      inherited: { providers: { mock: { baseURL: 'http://inherited.example/v1' } } },
+      override: { providers: { mock: { baseURL: 'http://override.example/v1' } } },
+    },
+  ])
+  assert.equal(providerTransportFor(ctx, 'mock').baseURL, 'http://override.example/v1')
+})
+
+test('the settings section stays authoritative when it lists providers', () => {
+  const ctx = configEditorContext(
+    [{ entry: { options: { id: 'llm-pi-ai' } }, inherited: {}, override: { providers: { fromEditor: { baseURL: 'https://editor.example/v1' } } } }],
+    { settingsProviders: { fromSettings: { baseURL: 'https://settings.example/v1' } } },
+  )
+  assert.deepEqual(configuredProviderTransports(ctx).map((transport) => transport.provider), ['fromSettings'])
+})
+
+test('a throwing config editor never breaks the discovery path', () => {
+  const ctx = configEditorContext(() => { throw new Error('editor unavailable') })
+  assert.deepEqual(configuredProviderTransports(ctx), [])
 })

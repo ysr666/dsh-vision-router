@@ -162,19 +162,54 @@ async function saveCache(file, providers, fsOps) {
   await fsOps.rename(temporary, file)
 }
 
+function plainProviderMap(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+
+/**
+ * Host-side provider profiles have two possible homes on a real DSH host:
+ *  - the settings service (some Host lines mirror a plugin's config there), and
+ *  - the profile configuration owned by the Host config editor, which is where
+ *    DSH 0.2.0-rc.2 keeps `llm-pi-ai.providers` (the Models page writes them
+ *    back to the profile patch, never to a settings section).
+ * Reading only the settings section made live discovery a dead path on that
+ * Host: `configuredProviderTransports()` returned `[]` and no `/models` probe
+ * could ever run.
+ */
+function configEditorProviders(ctx) {
+  try {
+    const editor = ctx?.get?.('configEditor')
+    if (editor === undefined || typeof editor.configuration !== 'function') return undefined
+    const rows = editor.configuration()
+    if (!Array.isArray(rows)) return undefined
+    const row = rows.find((candidate) => {
+      const options = candidate?.entry?.options
+      return options?.id === 'llm-pi-ai' || options?.name === '@deepseek-ai/dsh-llm-pi-ai'
+    })
+    if (row === undefined) return undefined
+    const inherited = plainProviderMap(row.inherited?.providers)
+    const override = plainProviderMap(row.override?.providers)
+    if (inherited === undefined && override === undefined) return undefined
+    return { ...(inherited ?? {}), ...(override ?? {}) }
+  } catch {
+    return undefined
+  }
+}
+
 function piProfilesState(ctx) {
   try {
     const settings = ctx?.get?.('settings')
-    if (!settings || typeof settings.get !== 'function') return { authoritative: false, providers: {} }
-    const value = settings.get('llm-pi-ai')
-    const providers = value?.providers
-    if (!providers || typeof providers !== 'object' || Array.isArray(providers)) {
-      return { authoritative: false, providers: {} }
+    if (settings && typeof settings.get === 'function') {
+      const value = settings.get('llm-pi-ai')
+      const providers = plainProviderMap(value?.providers)
+      if (providers !== undefined) return { authoritative: true, providers }
     }
-    return { authoritative: true, providers }
   } catch {
-    return { authoritative: false, providers: {} }
+    // Fall through to the profile-configuration source below.
   }
+  const fromEditor = configEditorProviders(ctx)
+  if (fromEditor !== undefined) return { authoritative: true, providers: fromEditor }
+  return { authoritative: false, providers: {} }
 }
 
 function rawPiProfiles(ctx) {
