@@ -183,6 +183,7 @@ jobs:
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
 
       - name: Collect Playwright system packages
+        id: playwright-apt-collect
         if: always()
         shell: bash
         run: |
@@ -190,9 +191,15 @@ jobs:
           mkdir -p ~/playwright-apt-archives
           sudo cp -n /var/cache/apt/archives/*.deb ~/playwright-apt-archives/ || true
           sudo chown -R "$(id -u):$(id -g)" ~/playwright-apt-archives
+          count="$(find ~/playwright-apt-archives -name '*.deb' | wc -l | tr -d ' ')"
+          printf 'packages=%s\n' "$count" >> "$GITHUB_OUTPUT"
+          printf 'collected %s package(s)\n' "$count"
 
+      # Only a run that actually downloaded packages has something worth caching:
+      # saving an empty archive would pin this key to a useless entry, and a later
+      # hit would then skip the save that could have replaced it.
       - name: Save Playwright system packages from main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-apt-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-apt-cache.outputs.cache-hit != 'true' && steps.playwright-apt-collect.outputs.packages != '0'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/playwright-apt-archives
