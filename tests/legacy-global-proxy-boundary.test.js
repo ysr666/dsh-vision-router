@@ -431,10 +431,60 @@ test('H2 moves ProxyAgent ownership out of Core and scopes every DVR-owned Host 
   assert.ok((core.match(/streamWithLegacyGlobalProxyScope\(/g) ?? []).length >= 2)
   assert.match(benchmark, /streamWithLegacyGlobalProxyScope\(/)
   assert.doesNotMatch(boundary, /new ProxyAgent\(/)
-  assert.match(pool, /new ProxyAgent\(proxyUrl\)/)
+  assert.match(pool, /new (?:Constructor|ProxyAgent)\(proxyUrl\)/)
   const hostAdmission = boundary.indexOf('if (!proxyHostMatchesAny(url.hostname, proxyHosts))')
   const projection = boundary.indexOf('const effectiveProxyUrl = effectiveProxyUrlForUndici(proxyUrl)', hostAdmission)
   assert.ok(hostAdmission >= 0)
   assert.ok(projection > hostAdmission, 'proxy URL compatibility projection must stay after host admission')
   assert.match(boundary, /createPerHopProxyDispatcher\(proxyDispatcher, fallbackDispatcher, proxyHosts\)/)
+})
+
+
+test('Cordis cleanup awaits legacy proxy dispatcher retirement', async () => {
+  const saved = globalThis.fetch
+  let releaseClose
+  let closeStarted
+  const closeStartedPromise = new Promise((resolve) => { closeStarted = resolve })
+  class BlockingProxyAgent {
+    constructor() {}
+    dispatch() {}
+    async close() {
+      closeStarted()
+      await new Promise((resolve) => { releaseClose = resolve })
+    }
+  }
+  const config = baseConfig()
+  const originalFetch = async (_input, init = {}) => {
+    selectedDispatcher(init.dispatcher, 'https://provider.example.test')
+    return new Response('ok')
+  }
+  let cleanup
+  try {
+    globalThis.fetch = originalFetch
+    installLegacyGlobalProxyBoundary({
+      get() { return { get: () => config } },
+      effect(factory) { cleanup = factory() },
+    }, config, {
+      originalFetch,
+      importUndici: async () => fakeUndiciModule(BlockingProxyAgent),
+    })
+    await drain(streamWithLegacyGlobalProxyScope(hostPair.provider, hostPair.model, () => ({
+      async *[Symbol.asyncIterator]() {
+        await globalThis.fetch('https://provider.example.test/owned')
+        yield 'done'
+      },
+    })))
+    const disposal = cleanup()
+    assert.equal(typeof disposal?.then, 'function')
+    await closeStartedPromise
+    let settled = false
+    disposal.then(() => { settled = true })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(settled, false, 'Cordis unload must wait for owned ProxyAgent.close()')
+    releaseClose()
+    await disposal
+  } finally {
+    releaseClose?.()
+    globalThis.fetch = saved
+  }
 })

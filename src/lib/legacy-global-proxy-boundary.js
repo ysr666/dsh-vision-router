@@ -230,18 +230,24 @@ export function installLegacyGlobalProxyBoundary(ctx, config = {}, options = {})
 
   const restoreFetch = installFetchWrapper(scopedFetch)
   let disposed = false
+  let disposePromise
   const dispose = () => {
-    if (disposed) return
+    if (disposePromise) return disposePromise
+    if (disposed) return Promise.resolve()
     disposed = true
     active = false
-    void dispatcherPool.dispose()
+    // Process-wide fetch ownership is released synchronously; the returned
+    // Promise owns only DVR's private dispatcher retirement and is awaitable by
+    // the Cordis fiber during HMR/unload.
     restoreFetch()
+    disposePromise = dispatcherPool.dispose()
+    return disposePromise
   }
   if (typeof ctx?.effect === 'function') {
     try {
       ctx.effect(() => dispose, 'vision-router: scoped legacy proxy fetch')
     } catch (error) {
-      dispose()
+      void dispose().catch(() => {})
       throw error
     }
   }

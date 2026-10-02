@@ -342,8 +342,9 @@ export function installPiAiBridgeWireCompat(ctx, logger) {
   }
   try {
     ctx?.effect?.(() => cleanup, 'vision-router: pi-ai bridge wire compatibility')
-  } catch {
-    // Direct callers without Cordis lifecycle still receive the cleanup below.
+  } catch (error) {
+    cleanup()
+    throw error
   }
   return cleanup
 }
