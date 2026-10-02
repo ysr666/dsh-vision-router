@@ -227,46 +227,51 @@ jobs:
         with:
           path: ~/playwright-apt-archives
           key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
-      # Five independent Host/browser scenarios: each builds its own temp home and asks
-      # the Host for a free port (`--port 0`), so they run together instead of one after
-      # another. Every assertion and diagnostic path is unchanged, and the step fails if
-      # any scenario fails.
-      - name: Run the DSH 0.1.7 Host scenarios
+      - name: Run bundle HMR recompose stability against DSH 0.1.7
         working-directory: dsh-017
-        shell: bash
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
-          DVR_DESKTOP_BASE_PORT: '19410'
-        run: |
-          set -uo pipefail
-          out="${RUNNER_TEMP:-/tmp}/dvr-host-suite"
-          mkdir -p "$out"
-          pids=(); names=()
-          node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs > "$out/bundle-recompose.log" 2>&1 &
-          pids+=("$!"); names+=("bundle-recompose")
-          node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs > "$out/injection.log" 2>&1 &
-          pids+=("$!"); names+=("injection")
-          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-cold-toggle.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-cold-toggle.png" \
-            node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs > "$out/cold-toggle.log" 2>&1 &
-          pids+=("$!"); names+=("cold-toggle")
-          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-mixed.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-mixed.png" \
-            node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs > "$out/mixed.log" 2>&1 &
-          pids+=("$!"); names+=("mixed")
-          SMOKE_DIAGNOSTIC_PATH="$RUNNER_TEMP/dsh-017-settings.json" SMOKE_SCREENSHOT_PATH="$RUNNER_TEMP/dsh-017-settings.png" \
-            node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs > "$out/settings.log" 2>&1 &
-          pids+=("$!"); names+=("settings")
-          status=0
-          for i in "${!pids[@]}"; do
-            wait "${pids[$i]}" || { status=1; echo "::error::${names[$i]} failed"; }
-          done
-          for i in "${!pids[@]}"; do
-            echo "::group::${names[$i]}"
-            cat "$out/${names[$i]}.log" || true
-            echo "::endgroup::"
-          done
-          exit "$status"
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+
+      - name: Run Desktop Host structured bootstrap against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
+      - name: Run cold Vision toggle against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-cold-toggle.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+
+      - name: Run mixed attachment lifecycle against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-mixed.png
+        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
+
+      - name: Run real Settings mount, save, reload, and readback against DSH 0.1.7
+        working-directory: dsh-017
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
 
       - name: Upload diagnostics on failure
         if: failure()
