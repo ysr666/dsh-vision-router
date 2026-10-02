@@ -86,6 +86,25 @@ test('L2: declared-dependency files and callback contexts are out of scope', () 
   assert.deepEqual(violationsFor(injected), [])
 })
 
+test('L2: computed Context reads are violations in both spellings', () => {
+  const dynamic = [
+    'function service(ctx, name) {',
+    '  return ctx?.[name]',
+    '}',
+  ].join('\n')
+  const literal = "function service(ctx) {\n  return ctx?.['attachments']\n}"
+  for (const source of [dynamic, literal]) {
+    const found = violationsFor(source)
+    assert.equal(found.length, 1, `expected one violation for: ${source}`)
+    assert.equal(found[0].rule, 'L2-optional-capability-computed-read')
+  }
+})
+
+test('L2: Symbol-keyed Context reads stay accepted', () => {
+  const source = "const marker = ctx?.[Symbol.for('vision-router:owned')]"
+  assert.deepEqual(violationsFor(source), [])
+})
+
 test('the shipped source tree satisfies both invariants', async () => {
   const violations = await scanSource()
   assert.deepEqual(violations, [], `lifecycle invariant violations:\n${violations.map((v) => `${v.file}:${v.line} ${v.rule}`).join('\n')}`)

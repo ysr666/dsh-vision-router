@@ -218,6 +218,27 @@ export function findViolations(source, file = '<inline>') {
       reportedLines.add(line)
       report('L2-optional-capability-direct-read', match.index, `bare ctx.${match[1]} read; use Context#get() as an optional probe or an explicit inject`)
     }
+
+    // A computed read reaches the same dependency-enforcing property path as
+    // `ctx.name`, so a literal-name regex is not enough: `ctx?.['attachments']`
+    // and even `ctx?.[name]` bypass the rule above. Symbol-keyed reads stay
+    // allowed (Host identity lookups, not capability probes).
+    const computedRead = new RegExp(
+      `(?<![\\w$.?])(?:ctx|ownerCtx|settingsCtx)\\s*\\??\\.?\\s*\\[\\s*([^\\]]{1,120}?)\\s*\\]`,
+      'g',
+    )
+    for (const match of masked.matchAll(computedRead)) {
+      const key = match[1].trim()
+      if (/^Symbol\s*\./.test(key)) continue
+      const line = lineOf(masked, match.index)
+      if (reportedLines.has(line)) continue
+      reportedLines.add(line)
+      report(
+        'L2-optional-capability-computed-read',
+        match.index,
+        'computed Context read; use Context#get() with a literal capability name',
+      )
+    }
   }
 
   return violations
