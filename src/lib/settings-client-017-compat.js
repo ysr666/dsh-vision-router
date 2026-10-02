@@ -15,12 +15,12 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
 
   function safeGet(ctx, name) {
     if (!ctx) return undefined;
-    try {
-      if (typeof ctx.get === 'function') {
+    if (typeof ctx.get === 'function') {
+      try {
         var value = ctx.get(name);
-        if (value !== undefined && value !== null) return value;
-      }
-    } catch (_) {}
+        return value === undefined || value === null ? undefined : value;
+      } catch (_) { return undefined; }
+    }
     try { return ctx[name]; } catch (_) { return undefined; }
   }
 
@@ -212,6 +212,11 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
           var getter = Reflect.get(target, property, target);
           if (typeof getter !== 'function') return getter;
           return function(name) {
+            if (name === 'settingsScope') {
+              var original = safeGet(target, 'settingsScope');
+              if (original && typeof original.bind === 'function') return original;
+              return syntheticBinder(ctx, configFormsBinder(target));
+            }
             var value = getter.call(target, name);
             return name === 'connection' ? normalizeConnection(value) : value;
           };

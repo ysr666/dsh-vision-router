@@ -352,13 +352,23 @@ export function installLocalMutationRouteBoundary(ctx) {
           }
           return inject.call(target, dependencies, (childCtx) => {
             const getConnection = () => {
-              try {
-                if (typeof childCtx?.get === 'function') return childCtx.get('connection')
-              } catch {}
-              try {
-                if (typeof target?.get === 'function') return target.get('connection')
-              } catch {}
-              return childCtx?.connection ?? target?.connection
+              if (typeof childCtx?.get === 'function') {
+                try {
+                  const connection = childCtx.get('connection')
+                  if (connection !== undefined && connection !== null) return connection
+                } catch {}
+              }
+              if (typeof target?.get === 'function') {
+                try {
+                  const connection = target.get('connection')
+                  return connection === undefined || connection === null ? undefined : connection
+                } catch {
+                  return undefined
+                }
+              }
+              // Non-Cordis harness compatibility only. Supported DSH Hosts have
+              // Context#get from the 0.1.5 floor onward.
+              try { return childCtx?.connection ?? target?.connection } catch { return undefined }
             }
             // Preserve the ORIGINAL child context identity for rc.6 ownership,
             // but never leave our registrar wrapper visible to other plugins.
