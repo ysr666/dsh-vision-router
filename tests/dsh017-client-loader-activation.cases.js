@@ -191,7 +191,9 @@ test('0.1.7 prelude keeps an existing settingsScope only as the non-DVR namespac
     }),
   })
   const plugin = loadedSpec.factory(() => undefined)
-  plugin.apply({ settingsScope: original })
+  plugin.apply({
+    get(name) { return name === 'settingsScope' ? original : undefined },
+  })
 
   assert.notEqual(observed.vision, legacyScope, 'an empty legacy-shaped DVR scope must not bypass the local bridge')
   assert.equal(observed.other, otherScope, 'unrelated namespaces must retain the Host binder')
