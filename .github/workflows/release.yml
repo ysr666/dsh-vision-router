@@ -87,18 +87,26 @@ jobs:
             exit 1
           }
 
-          # Release identity and artifact verification are hard gates. README /
-          # release-note freshness is useful documentation hygiene, but must not
-          # make an otherwise verified hotfix impossible to publish. A curated
-          # docs/releases/<tag>.md file takes precedence over CHANGELOG.md.
+          # Release identity and artifact verification are hard gates, and the
+          # release-documentation contract is part of the release: both README
+          # announcement bars must carry the version being released, and either
+          # a curated docs/releases/<tag>.md file or a matching CHANGELOG.md
+          # section must exist. AGENTS.md rule 9 owns this contract.
           for f in README.md README.zh.md; do
-            if ! grep -q "$EXPECTED_TAG" "$f"; then
-              echo "::warning::$f does not yet mention $EXPECTED_TAG"
+            BAR="$(awk '
+              /^>[[:space:]]*\[!WARNING\]/ { inbar = 1; next }
+              inbar && /^>/ { print; next }
+              inbar { exit }
+            ' "$f")"
+            if ! printf '%s\n' "$BAR" | grep -Eq "(${EXPECTED_TAG}|${VERSION})"; then
+              echo "::error::$f is missing a top [!WARNING] announcement bar mentioning ${EXPECTED_TAG}; update the bar before releasing"
+              exit 1
             fi
           done
           CURATED_NOTES="docs/releases/$EXPECTED_TAG.md"
           if [ ! -s "$CURATED_NOTES" ] && ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
-            echo "::warning::no curated release notes or CHANGELOG.md section for $EXPECTED_TAG; release notes will use the commit list"
+            echo "::error::no curated release notes ($CURATED_NOTES) and no CHANGELOG.md section for $EXPECTED_TAG"
+            exit 1
           fi
 
           node <<'NODE'

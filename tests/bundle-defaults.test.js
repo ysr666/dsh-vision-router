@@ -173,6 +173,27 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
 })
 
+test('release workflow refuses stale README announcement bars and missing release notes', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+  // Documentation freshness is part of the release contract, not a warning:
+  // both README bars must carry the released version and either curated notes
+  // or a matching CHANGELOG section must exist.
+  assert.ok(
+    workflow.includes('^>[[:space:]]*\\[!WARNING\\]'),
+    'release workflow must scope the freshness check to the top [!WARNING] announcement bar',
+  )
+  assert.match(
+    workflow,
+    /::error::\$f is missing a top \[!WARNING\] announcement bar mentioning \$\{EXPECTED_TAG\}; update the bar before releasing/,
+  )
+  assert.match(
+    workflow,
+    /::error::no curated release notes \(\$CURATED_NOTES\) and no CHANGELOG\.md section for \$EXPECTED_TAG/,
+  )
+  assert.doesNotMatch(workflow, /::warning::\$f does not yet mention/)
+  assert.doesNotMatch(workflow, /::warning::no curated release notes/)
+})
+
 test('release workflow confines repository and publish write authority to the correct phases', async () => {
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const verifyStart = workflow.indexOf('  verify:')
