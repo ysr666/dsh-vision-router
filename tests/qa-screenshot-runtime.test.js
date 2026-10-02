@@ -131,7 +131,7 @@ test('Windows desktop capture enters per-monitor v2 on the exact capture thread 
 
 test('production Windows screenshot implementation owns PMv2 capture outside mature Core', async () => {
   const [core, screenshot, execCompat] = await Promise.all([
-    readFile(new URL('../index.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/index.js', import.meta.url), 'utf8'),
     readFile(new URL('../lib/desktop-screenshot-tool.js', import.meta.url), 'utf8'),
     readFile(new URL('../lib/tesseract-exec-compat.js', import.meta.url), 'utf8'),
   ])
