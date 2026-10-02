@@ -337,6 +337,7 @@ jobs:
           key: ${{ steps.dsh-build-key.outputs.key }}
 
       - name: Run official Windows Desktop Host authenticated-request contract
+        if: matrix.node != '24.21.0'
         working-directory: dsh-017
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
@@ -344,13 +345,9 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
 
-      - name: Run Node 24 multi-plugin Connection ordering adversary
+      - name: Run the Windows Desktop Host scenarios
         if: matrix.node == '24.21.0'
         working-directory: dsh-017
-        # Two independent shard processes cover the same six load orders: each
-        # scenario still boots its own Host with a fresh home, and the script
-        # derives its web port from the global scenario number so the shards never
-        # contend for one listener.
         shell: bash
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
@@ -358,30 +355,36 @@ jobs:
           DSH_EXPECTED_VERSION: 0.1.7-rc.2
           DVR_SMOKE_TIMING: '1'
           DVR_MULTIPLUGIN_SHARD_COUNT: '2'
-        run: |
-          set -uo pipefail
-          pids=()
-          for index in 0 1; do
-            DVR_MULTIPLUGIN_SHARD_INDEX="$index" node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs &
-            pids+=("$!")
-          done
-          status=0
-          for pid in "${pids[@]}"; do
-            wait "$pid" || status=1
-          done
-          exit "$status"
-
-
-      - name: Run real Windows Desktop renderer lifecycle
-        if: matrix.node == '24.21.0'
-        working-directory: dsh-017
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-017
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
+          DVR_MULTIPLUGIN_BASE_PORT: '19400'
+          DVR_DESKTOP_BASE_PORT: '19410'
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-017-windows-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-017-windows-desktop-renderer.png
-        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+        run: |
+          set -uo pipefail
+          out="${RUNNER_TEMP:-/tmp}/dvr-desktop-suite"
+          mkdir -p "$out"
+          pids=(); names=()
+          # Three independent Desktop scenarios: each builds its own home, boots its
+          # own Host and uses its own web port, so they run together instead of one
+          # after another. Every load order, probe and assertion is unchanged.
+          node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs > "$out/injection.log" 2>&1 &
+          pids+=("$!"); names+=("injection")
+          node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs > "$out/renderer.log" 2>&1 &
+          pids+=("$!"); names+=("renderer")
+          for index in 0 1; do
+            DVR_MULTIPLUGIN_SHARD_INDEX="$index" node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs > "$out/multiplugin-$index.log" 2>&1 &
+            pids+=("$!"); names+=("multiplugin-$index")
+          done
+          status=0
+          for i in "${!pids[@]}"; do
+            wait "${pids[$i]}" || { status=1; echo "::error::${names[$i]} failed"; }
+          done
+          for i in "${!pids[@]}"; do
+            echo "::group::${names[$i]}"
+            cat "$out/${names[$i]}.log" || true
+            echo "::endgroup::"
+          done
+          exit "$status"
 
       - name: Upload Windows Desktop renderer diagnostics on failure
         if: matrix.node == '24.21.0' && failure()

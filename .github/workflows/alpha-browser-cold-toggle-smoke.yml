@@ -157,9 +157,53 @@ jobs:
             dsh-alpha/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
 
+      # `playwright install --with-deps` fetches the Chromium OS packages with
+      # apt on every run. The runner image usually already has them, but when it
+      # does not, apt pulls ~9 packages from the Ubuntu mirror at whatever
+      # throughput that day allows — measured between 26 s and 444 s for the same
+      # step. Caching the downloaded .deb files keeps the install itself
+      # unchanged while removing that network tail.
+      - name: Restore cached Playwright system packages
+        id: playwright-apt-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/playwright-apt-archives
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dsh-alpha/pnpm-lock.yaml') }}
+
+      - name: Seed the apt package cache
+        if: steps.playwright-apt-cache.outputs.cache-hit == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/cache/apt/archives/partial
+          sudo cp -n ~/playwright-apt-archives/*.deb /var/cache/apt/archives/ || true
+
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-alpha
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+
+      - name: Collect Playwright system packages
+        id: playwright-apt-collect
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/playwright-apt-archives
+          sudo cp -n /var/cache/apt/archives/*.deb ~/playwright-apt-archives/ || true
+          sudo chown -R "$(id -u):$(id -g)" ~/playwright-apt-archives
+          count="$(find ~/playwright-apt-archives -name '*.deb' | wc -l | tr -d ' ')"
+          printf 'packages=%s\n' "$count" >> "$GITHUB_OUTPUT"
+          printf 'collected %s package(s)\n' "$count"
+
+      # Only a run that actually downloaded packages has something worth caching:
+      # saving an empty archive would pin this key to a useless entry, and a later
+      # hit would then skip the save that could have replaced it.
+      - name: Save Playwright system packages from main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-apt-cache.outputs.cache-hit != 'true' && steps.playwright-apt-collect.outputs.packages != '0'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/playwright-apt-archives
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('dsh-alpha/pnpm-lock.yaml') }}
 
       - name: Run cold Vision toggle against real Host and Chromium
         id: smoke
