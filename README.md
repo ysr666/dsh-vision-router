@@ -151,6 +151,15 @@ For normal npm/npx installs, installation is a single command:
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
 
+> [!IMPORTANT]
+> **Which profile?** Install into an **existing profile that already serves the Web UI**:
+>
+> - Web DSH: `--profile web` (default data directory `~/.dsh`);
+> - the official DeepSeek Harness desktop app: `--profile desktop` (same `~/.dsh` data directory; reload the plugin or restart the app afterwards);
+> - Oh-DSH Desktop: its data directory is `~/.ohdsh`, see [Oh-DSH Desktop](#oh-dsh-desktop) below.
+>
+> `dsh plugin add` only adds the plugin to the profile you name. A **brand-new** profile contains just `@deepseek-ai/dsh-base`, and `dsh web` never binds a port in that state (no Web surface). Install into an existing profile, or give the new profile a Web surface first.
+
 > [!WARNING]
 > If this profile already loads community plugins manually through `cordis.patch.yml`, do **not** mix that legacy setup with `dsh plugin add` / `dsh plugin list`: current DSH CLI behavior can also append bundle-patch dependencies to `dsh.profile.bundles`, causing those plugins to register twice. Migrate the existing manual plugin rows to bundle-managed loading first, or keep using the manual installation path. See [deepseek-harness discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889).
 

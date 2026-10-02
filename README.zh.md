@@ -149,6 +149,15 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
 
+> [!IMPORTANT]
+> **装到哪个 profile？** 请装进**已经存在、并且自带 Web 界面**的 profile：
+>
+> - 网页版 DSH：`--profile web`（默认数据目录 `~/.dsh`）；
+> - 官方 DeepSeek Harness 桌面应用：`--profile desktop`（同一个 `~/.dsh` 数据目录，装完在应用里重新加载插件或重启一次应用）；
+> - Oh-DSH Desktop：数据目录是 `~/.ohdsh`，见下方 [Oh-DSH Desktop](#oh-dsh-desktop)。
+>
+> `dsh plugin add` 只是把插件加进**指定** profile。**全新创建**的 profile 只含 `@deepseek-ai/dsh-base`，此时 `dsh web` 不会绑定端口（没有 Web 面）。请装进已有的 profile，或先让新 profile 具备 Web 面。
+
 > [!WARNING]
 > 如果这个 profile 里已经有通过 `cordis.patch.yml` **手动挂载**的社区插件，不要再把这种旧式加载方式与 `dsh plugin add` / `dsh plugin list` 混用：当前 DSH CLI 可能同时把带 bundle patch 的依赖追加到 `dsh.profile.bundles`，导致这些插件被重复注册。请先把原有手动插件迁移到 bundle 管理方式，或继续沿用手动安装路径。详见 [deepseek-harness Discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889)。
 
