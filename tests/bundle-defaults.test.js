@@ -126,10 +126,12 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('release line stays on the stable v2 package identity', async () => {
+test('release line stays on a single stable major package identity', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(pkg.name, 'dsh-vision-router')
-  assert.match(pkg.version, /^2\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+  // One stable major per release line (2.x through v2.3.0, 3.x from v3.0.0 on):
+  // a 0.x line or a prerelease-only identity is still refused.
+  assert.match(pkg.version, /^(?:2|3)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 })
 
 test('v2.0.0 ships curated release notes and the tag workflow consumes them first', async () => {

@@ -69,7 +69,7 @@ test('public READMEs state stable support policy and delegate forward-boundary e
   ])
 
   for (const source of [english, chinese]) {
-    assert.match(source, /2\.3\.x/)
+    assert.match(source, /3\.0\.x/)
     assert.match(source, /0\.1\.5/)
     assert.match(source, /0\.1\.5-rc\.1/)
     assert.match(source, /0\.1\.5-rc\.3/)

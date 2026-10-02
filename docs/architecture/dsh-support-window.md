@@ -1,6 +1,6 @@
 # DSH Host support window
 
-Status: normative for the current DVR 2.x compatibility program.
+Status: normative for the current DVR 3.x compatibility program.
 
 ## Public support policy
 
@@ -9,7 +9,8 @@ The public support policy contains only released Host semantics. Preview/canary 
 | DVR train | Minimum Supported Host | Current Stable Host | Ordinary development Host |
 |---|---|---|---|
 | `2.2.x` | `0.1.0-rc.8` | `0.1.5-rc.3` | historical 2.2 development baseline |
-| `2.3.x` | **DSH `0.1.5` train** | `0.1.5-rc.3` | **exact `0.2.0-rc.2`** |
+| `2.3.x` | **DSH `0.1.5` train** | `0.1.5-rc.3` | historical 2.3 baseline |
+| `3.0.x` | **DSH `0.1.5` train** | `0.1.5-rc.3` | **exact `0.2.0-rc.2`** |
 
 DVR `2.2.x` keeps `0.1.0-rc.8` as its historical public floor.
 
@@ -54,9 +55,10 @@ DVR 2.0.x minimum: DSH 0.1.0-rc.6
 DVR 2.1.x minimum: DSH 0.1.0-rc.8
 DVR 2.2.x minimum: DSH 0.1.0-rc.8
 DVR 2.3.x minimum: DSH 0.1.5 train (earliest admitted release: 0.1.5-rc.1)
+DVR 3.0.x minimum: DSH 0.1.5 train (unchanged from 2.3.x; earliest admitted release: 0.1.5-rc.1)
 ```
 
-Users on DSH trains older than `0.1.5` must upgrade DSH before upgrading to DVR 2.3.x.
+Users on DSH trains older than `0.1.5` must upgrade DSH before upgrading to DVR 2.3.x or 3.0.x.
 
 The 2.3 floor increase authorizes a fresh deletion audit for Host-version compatibility whose only purpose was keeping pre-`0.1.5` Hosts running. It does **not** authorize deleting compatibility for durable data merely because the Host that originally produced that data is no longer supported. Session logs, replay envelopes, persisted settings and other long-lived inputs require separate reachability evidence on supported Hosts.
 
