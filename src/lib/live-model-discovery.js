@@ -187,10 +187,13 @@ function configEditorProviders(ctx) {
       return options?.id === 'llm-pi-ai' || options?.name === '@deepseek-ai/dsh-llm-pi-ai'
     })
     if (row === undefined) return undefined
-    const inherited = plainProviderMap(row.inherited?.providers)
-    const override = plainProviderMap(row.override?.providers)
-    if (inherited === undefined && override === undefined) return undefined
-    return { ...(inherited ?? {}), ...(override ?? {}) }
+    // The row exists, so an absent/empty providers map means "no providers are
+    // configured" — authoritative, which lets the cache drop removed entries.
+    // Only a missing row or an unavailable editor stays non-authoritative, so a
+    // transient read can never delete evidence.
+    const inherited = plainProviderMap(row.inherited?.providers) ?? {}
+    const override = plainProviderMap(row.override?.providers) ?? {}
+    return { ...inherited, ...override }
   } catch {
     return undefined
   }

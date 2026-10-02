@@ -1023,6 +1023,51 @@ test('the settings section stays authoritative when it lists providers', () => {
   assert.deepEqual(configuredProviderTransports(ctx).map((transport) => transport.provider), ['fromSettings'])
 })
 
+test('an existing config-editor row with no providers is authoritative and prunes the cache', async () => {
+  const cacheFile = '/virtual/live-models-prune-editor.json'
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({
+      version: LIVE_MODEL_CACHE_VERSION,
+      providers: [{ provider: 'gone', fingerprint: 'gone-route', discoveredAt: 9_000, models: [{ id: 'gone-model' }] }],
+    }),
+  })
+  const ctx = configEditorContext([
+    { entry: { options: { id: 'llm-pi-ai' } }, inherited: {}, override: {} },
+  ])
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+  await manager.ready()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers, [])
+  await manager.dispose()
+  assert.deepEqual(JSON.parse(mem.files.get(cacheFile)).providers, [])
+})
+
+test('a missing config-editor row is not authoritative and never deletes evidence', async () => {
+  const cacheFile = '/virtual/live-models-missing-row.json'
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({
+      version: LIVE_MODEL_CACHE_VERSION,
+      providers: [{ provider: 'keep', fingerprint: 'keep-route', discoveredAt: 9_000, models: [{ id: 'keep-model' }] }],
+    }),
+  })
+  const ctx = configEditorContext([
+    { entry: { options: { id: 'something-else' } }, inherited: {}, override: {} },
+  ])
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+  await manager.ready()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers.map((entry) => entry.provider), ['keep'])
+  await manager.dispose()
+})
+
 test('a throwing config editor never breaks the discovery path', () => {
   const ctx = configEditorContext(() => { throw new Error('editor unavailable') })
   assert.deepEqual(configuredProviderTransports(ctx), [])
