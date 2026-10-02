@@ -517,15 +517,20 @@ export function contextWithVisionExecutionPolicy(ctx, options = {}) {
     },
   })
   wrappedContexts.set(ctx, wrapped)
+  let lifecycleOwned = false
   try {
-    ctx.effect?.(
-      () => () => {
-        if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
-      },
-      'vision-router: strict vision execution policy context',
-    )
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => {
+          if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
+        },
+        'vision-router: strict vision execution policy context',
+      )
+      lifecycleOwned = true
+    }
   } catch {
-    /* lifecycle hardening must never block plugin apply */
+    // The current caller may still use this private view.
   }
+  if (!lifecycleOwned && wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
   return wrapped
 }

@@ -270,3 +270,24 @@ test('default cloud attempt reserves the final quarter of a 120s task for fallba
   assert.equal(adapterAttemptBudgetMs({ timeoutMs: 120000, visionTaskTimeoutMs: 120000, freeFallback: false }, 'bg'), 120000)
   assert.equal(adapterAttemptBudgetMs({ timeoutMs: 120000, visionTaskTimeoutMs: 120000, freeFallback: true }, 'vision-http'), 120000)
 })
+
+test('backend runtime policy cache expires with the owning Cordis generation', () => {
+  let cleanup
+  const ctx = {
+    effect(factory) { cleanup = factory() },
+  }
+  const first = contextWithVisionBackendRuntimePolicy(ctx, { config: { marker: 'first' } })
+  assert.equal(contextWithVisionBackendRuntimePolicy(ctx, { config: { marker: 'same-generation' } }), first)
+  cleanup()
+  const second = contextWithVisionBackendRuntimePolicy(ctx, { config: { marker: 'second' } })
+  assert.notEqual(second, first)
+})
+
+test('backend runtime policy cache never pins generation-owned options after effect failure', () => {
+  const ctx = {
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = contextWithVisionBackendRuntimePolicy(ctx, { config: { marker: 'first' } })
+  const second = contextWithVisionBackendRuntimePolicy(ctx, { config: { marker: 'second' } })
+  assert.notEqual(second, first)
+})

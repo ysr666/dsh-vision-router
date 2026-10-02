@@ -415,5 +415,21 @@ export function contextWithVisionBackendRuntimePolicy(ctx, options = {}) {
     ? finalContextDecorator(wrapped)
     : wrapped
   wrappedContexts.set(ctx, result)
+  let lifecycleOwned = false
+  try {
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => {
+          if (wrappedContexts.get(ctx) === result) wrappedContexts.delete(ctx)
+        },
+        'vision-router: backend runtime policy context lifecycle',
+      )
+      lifecycleOwned = true
+    }
+  } catch {
+    // The current caller can still use this one-shot policy view.
+  }
+  // options contains generation-owned config/transport/evidence closures.
+  if (!lifecycleOwned && wrappedContexts.get(ctx) === result) wrappedContexts.delete(ctx)
   return result
 }

@@ -329,3 +329,20 @@ test('policy state is isolated to vision tool execution and reset by the next ad
   // Outside a vision tool there is no execution-policy scope.
   assert.notEqual(wrapped.llm.registration('doubao').adapter.config, undefined)
 })
+
+
+test('execution-policy cache does not retain an unowned wrapper after effect registration fails', () => {
+  const fixture = fakeContext(() => terminalFailureStream({ message: 'unused', code: 'UNUSED' }))
+  fixture.ctx.effect = () => { throw new Error('inactive fiber') }
+  const first = contextWithVisionExecutionPolicy(fixture.ctx, { logger: { warn() {} } })
+  const second = contextWithVisionExecutionPolicy(fixture.ctx, { logger: { warn() {} } })
+  assert.notEqual(second, first)
+})
+
+test('execution-policy cache is one-shot when the Host has no lifecycle surface', () => {
+  const fixture = fakeContext(() => terminalFailureStream({ message: 'unused', code: 'UNUSED' }))
+  delete fixture.ctx.effect
+  const first = contextWithVisionExecutionPolicy(fixture.ctx, { logger: { warn() {} } })
+  const second = contextWithVisionExecutionPolicy(fixture.ctx, { logger: { warn() {} } })
+  assert.notEqual(second, first)
+})

@@ -110,7 +110,7 @@ function wrapTools(tools, ctx, core) {
 export function installScreenshotSourceBoundary(ctx, core) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return ctx
   const cached = wrappedContexts.get(ctx)
-  if (cached) return cached
+  if (cached?.core === core) return cached.wrapped
   let wrapped
   wrapped = new Proxy(ctx, {
     get(target, property) {
@@ -119,6 +119,6 @@ export function installScreenshotSourceBoundary(ctx, core) {
       return typeof value === 'function' ? value.bind(target) : value
     },
   })
-  wrappedContexts.set(ctx, wrapped)
+  wrappedContexts.set(ctx, { core, wrapped })
   return wrapped
 }

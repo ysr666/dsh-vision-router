@@ -548,15 +548,20 @@ export function contextWithDelegatedReplay(ctx, options = {}) {
     },
   })
   wrappedContexts.set(ctx, wrapped)
+  let lifecycleOwned = false
   try {
-    ctx.effect?.(
-      () => () => {
-        if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
-      },
-      'vision-router: delegated replay context lifecycle',
-    )
+    if (typeof ctx.effect === 'function') {
+      ctx.effect(
+        () => () => {
+          if (wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
+        },
+        'vision-router: delegated replay context lifecycle',
+      )
+      lifecycleOwned = true
+    }
   } catch {
-    /* lifecycle hardening must not block plugin apply */
+    // The current caller may still use this private view.
   }
+  if (!lifecycleOwned && wrappedContexts.get(ctx) === wrapped) wrappedContexts.delete(ctx)
   return wrapped
 }
