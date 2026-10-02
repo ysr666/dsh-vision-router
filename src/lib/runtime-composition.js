@@ -137,7 +137,9 @@ function installHostAndSecurityBoundaries(ctx, config, core) {
     config,
     core,
   )
-  const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core)
+  const ollamaColdStartCtx = installOllamaColdStartGuard(hardenedCtx, hardenedConfig, core, {
+    logger: logging.logger,
+  })
   const { ctx: stabilizedCtx, bootConfig } = installLocalVisionStabilizer(
     ollamaColdStartCtx,
     hardenedConfig,

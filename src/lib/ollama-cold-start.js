@@ -343,7 +343,7 @@ export function installOllamaColdStartGuard(ctx, config = {}, core, options = {}
 
   let rawScope
   let scopeUnwatch
-  const manager = options.manager || createOllamaWarmupManager({ logger: ctx.logger })
+  const manager = options.manager || createOllamaWarmupManager({ logger: options.logger ?? ctx.logger })
   const rawInject = typeof ctx.inject === 'function' ? ctx.inject.bind(ctx) : undefined
   const rawOn = typeof ctx.on === 'function' ? ctx.on.bind(ctx) : undefined
   const rawLlm = ctx.llm

@@ -393,3 +393,29 @@ test('Ollama ignores a Settings scope whose child lifecycle owner is rejected', 
   assert.equal(reasons.length, before, 'rejected Settings generation must not start settings-ready warmup')
   assert.equal(watches, 0, 'rejected Settings generation must not install a watcher')
 })
+
+test('Ollama guard routes background warmup failures to the provided logger', async () => {
+  // Reserve a loopback port, then close it so the probe fails fast.
+  const probe = createServer()
+  await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve))
+  const { port } = probe.address()
+  await new Promise((resolve) => probe.close(resolve))
+
+  const settings = {
+    localOllama: { enabled: true, model: 'qwen2.5vl', baseURL: `http://127.0.0.1:${port}/v1` },
+  }
+  const harness = makeGuardHarness(settings)
+  const warnings = []
+  const logger = { info() {}, warn: (...args) => warnings.push(args), error() {} }
+  installOllamaColdStartGuard(harness.ctx, settings, harness.core, { logger })
+
+  const deadline = Date.now() + 5000
+  while (warnings.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  assert.ok(
+    warnings.length > 0,
+    'an unreachable Ollama warmup must be observable through the provided logger',
+  )
+  assert.match(String(warnings[0][0]), /Ollama warmup skipped\/failed/)
+})
