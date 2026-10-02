@@ -98,7 +98,7 @@ function legacyCoreVisionSettings(ctx, fallback) {
   return { ...current, autoActivateOnImage: false }
 }
 
-function installHostAndSecurityBoundaries(ctx, config, core) {
+function installHostAndSecurityBoundaries(ctx, config, core, providerTransport) {
   // SessionVisionIndex calls planGuardStopShadows before Core.apply. Keep that
   // one helper behind the live-locale facade; the final Core itself still gets
   // the ordinary composition identity and is localized by the scoped context.
@@ -144,6 +144,7 @@ function installHostAndSecurityBoundaries(ctx, config, core) {
     ollamaColdStartCtx,
     hardenedConfig,
     core,
+    { providerTransport },
   )
 
   const routingProduct = resolveVisionRoutingProduct(bootConfig)
@@ -260,7 +261,7 @@ function createRuntimeOwners(host, core) {
   }
 }
 
-function installRoutingAndHostProducts(host, owners, core) {
+function installRoutingAndHostProducts(host, owners, core, providerTransport) {
   const { capabilityStore, logging, runtimeConfig, runtimePerformanceStore } = host
   const { sessionVisionModeCompat } = owners
   // Final structured-flow guard sits closest to core.apply so it sees the
@@ -281,7 +282,7 @@ function installRoutingAndHostProducts(host, owners, core) {
     runtimeConfig,
     core,
     capabilityStore,
-    { logger: logging.logger },
+    { logger: logging.logger, providerTransport },
   )
   const sessionTurnResolver = createSessionTurnResolver(backgroundProfiling.ctx)
   const sessionEventTailReader = createSessionEventTailReader(backgroundProfiling.ctx)
@@ -479,9 +480,10 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
 }
 
 export function applyVisionRuntimeComposition(ctx, config = {}, core, runtime = {}) {
-  const host = installHostAndSecurityBoundaries(ctx, config, core)
+  const providerTransport = runtime?.providerTransport
+  const host = installHostAndSecurityBoundaries(ctx, config, core, providerTransport)
   const owners = createRuntimeOwners(host, core)
-  const routing = installRoutingAndHostProducts(host, owners, core)
-  const execution = installExecutionBoundaries(host, owners, routing, core, runtime?.providerTransport)
+  const routing = installRoutingAndHostProducts(host, owners, core, providerTransport)
+  const execution = installExecutionBoundaries(host, owners, routing, core, providerTransport)
   return applyMatureCoreBridge(host, owners, routing, execution, core, runtime)
 }

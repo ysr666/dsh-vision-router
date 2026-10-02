@@ -43,7 +43,7 @@ export async function triggerDesktopScreenshotPermission({
   }
 }
 
-export function installLocalVisionStabilizer(ctx, config = {}, core) {
+export function installLocalVisionStabilizer(ctx, config = {}, core, installOptions = {}) {
   config = normalizeRuntimeVisionConfig(config)
   if (!ctx || typeof ctx !== 'object') return { ctx, bootConfig: config }
 
@@ -270,6 +270,7 @@ export function installLocalVisionStabilizer(ctx, config = {}, core) {
             const text = await core.callLocalBackend(local, await localMessages(options), {
               maxTokens: local.maxTokens ?? 4096,
               signal: options.signal,
+              providerTransport: installOptions?.providerTransport,
               resolveCredential,
             })
             if (text !== '') {

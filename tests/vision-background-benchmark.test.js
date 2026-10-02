@@ -107,6 +107,27 @@ test('all policy is explicit authorization for paid configured cloud backends', 
   assert.deepEqual(seen, [['http:paid-cloud/vision-paid', 'ocr']])
 })
 
+
+test('installed background profiler forwards the Router-owned transport to automatic measurements', async () => {
+  const config = settings({ backgroundBenchmarking: 'all' })
+  const providerTransport = { fetch() {} }
+  let seenTransport
+  const installed = installBackgroundCapabilityProfiling(
+    fakeCtx(config), config, fakeCore(), memoryStore(),
+    {
+      providerTransport,
+      invokerOptions: { providerTransport: { fetch() { throw new Error('stale transport') } } },
+      idleMs: 0, gapMs: 0, scanMs: 0,
+      setTimer: inertTimer,
+      clearTimer() {},
+      runAxisBenchmark: async ({ options }) => { seenTransport = options?.providerTransport },
+    },
+  )
+  await installed.profiler.tick()
+  installed.profiler.stop()
+  assert.equal(seenTransport, providerTransport)
+})
+
 test('explicit off to all opt-in bypasses only the startup idle window and wakes immediately', async () => {
   const config = settings({ backgroundBenchmarking: 'off' })
   const seen = []

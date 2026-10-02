@@ -184,6 +184,29 @@ test('exact image check can probe the current live adapter model before it enter
   assert.equal(seen.model, 'hy3')
 })
 
+
+test('exact image check forwards the Router-owned transport to direct HTTP probes', async () => {
+  const config = settings()
+  const providerTransport = { fetch() {} }
+  let seenTransport
+  await assert.rejects(
+    runExactVisionCheck({
+      ctx: fakeCtx(config), config, core: fakeCore(), store: { async get() {} },
+      provider: 'vision-http', model: 'paid-cloud/vision-paid',
+      invokerOptions: {
+        providerTransport,
+        renderFixture: async () => Buffer.from('png'),
+        callDirect(_provider, _messages, callOptions) {
+          seenTransport = callOptions.providerTransport
+          throw new Error('reached exact direct invocation')
+        },
+      },
+    }),
+    /reached exact direct invocation/,
+  )
+  assert.equal(seenTransport, providerTransport)
+})
+
 test('exact image check is bounded, selection-safe, and does not expose raw backend errors as primary copy', () => {
   assert.match(VISION_EXACT_CHECK_CLIENT, /activeRuns/)
   assert.match(VISION_EXACT_CHECK_CLIENT, /abortActive/)
