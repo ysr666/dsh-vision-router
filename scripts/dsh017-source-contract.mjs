@@ -29,6 +29,8 @@ const [
   v4AdmissionSource,
   v3ToV4Source,
   webBundleSource,
+  cordisReflectSource,
+  llmRuntimeSource,
 ] = await Promise.all([
   readFile(path.join(dshRoot, 'packages/boot/config-editor/src/index.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/settings/settings/src/index.ts'), 'utf8'),
@@ -36,6 +38,8 @@ const [
   readFile(path.join(dshRoot, 'packages/session/session-format-v3-to-v4/src/message-sources.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/session/session-format-v3-to-v4/src/sources.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/bundle/web-app/cordis.patch.yml'), 'utf8'),
+  readFile(path.join(dshRoot, 'vendor/cordis/src/reflect.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8'),
 ])
 
 // 0.1.7 ordinary plugin configuration is profile-owned. ConfigEditor is the
@@ -53,6 +57,20 @@ assert.match(settingsSource, /static inject = \['configEditor', 'profileContext'
 assert.match(settingsSource, /const form = volatileForm\(schema\)/)
 assert.match(settingsSource, /Config field .* is not volatile/)
 assert.doesNotMatch(settingsSource, /\bregister\s*\(namespace/)
+
+// Optional-service probing is non-owning in this Host line. Context#get()
+// resolves the active service directly without requiring inject(), while an
+// ordinary context property read is the dependency-enforcing proxy path.
+assert.match(cordisReflectSource, /Read a service from the store without the inject requirement/)
+assert.match(cordisReflectSource, /get<K extends string & keyof this>\(name: K, strict\?: boolean\)/)
+assert.match(cordisReflectSource, /cannot get property .* without inject/)
+
+// LLM registrations already own their lifecycle in the Host service. DVR must
+// not wrap these returned handles in a second plugin ctx.effect().
+assert.match(llmRuntimeSource, /registerAdapter\(providers: string\[\], adapter: LlmAdapter\)/)
+assert.match(llmRuntimeSource, /const dispose = this\.ctx\.effect[\s\S]*llm\.registerAdapter\(\)/)
+assert.match(llmRuntimeSource, /registerConfigurableProviders\(entries: readonly LlmConfigurableProvider\[\]\)/)
+assert.match(llmRuntimeSource, /const dispose = this\.ctx\.effect[\s\S]*llm\.registerConfigurableProviders\(\)/)
 
 // Session v4 is the exact durable writer contract in the 0.1.7 train.
 assert.match(sessionTypesSource, /export const SESSION_FORMAT_VERSION = 4/)
