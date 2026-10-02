@@ -30,7 +30,39 @@ const orders = [
   ['dvr-fixture-rpc', 'dvr-fixture-waterfall', 'dsh-vision-router'],
   ['dvr-fixture-waterfall', 'dsh-vision-router', 'dvr-fixture-rpc'],
   ['dvr-fixture-waterfall', 'dvr-fixture-rpc', 'dsh-vision-router'],
-]
+] || []
+
+// Sharding keeps every load order in the matrix while letting the runner execute
+// them as independent Host boots. The web port is derived from the global scenario
+// number so concurrent scenarios never contend for one listener (the previous
+// shape silently required 19387 to be free, which is not true on a developer
+// machine and would break any parallel execution).
+const SHARD_COUNT = Math.max(1, Number.parseInt(process.env.DVR_MULTIPLUGIN_SHARD_COUNT ?? '1', 10) || 1)
+const SHARD_INDEX = Math.max(0, Math.min(SHARD_COUNT - 1,
+  Number.parseInt(process.env.DVR_MULTIPLUGIN_SHARD_INDEX ?? '0', 10) || 0))
+const BASE_PORT = Number.parseInt(process.env.DVR_MULTIPLUGIN_BASE_PORT ?? '19387', 10) || 19387
+const assignedScenarios = orders
+  .map((order, index) => ({ order, sequence: index + 1 }))
+  .filter((scenario) => (scenario.sequence - 1) % SHARD_COUNT === SHARD_INDEX)
+
+// Opt-in phase timing: these Desktop jobs are dominated by process and
+// file-system cost, so the breakdown stays observable without changing behaviour.
+const TIMING = process.env.DVR_SMOKE_TIMING === '1'
+const nowMs = () => Number(process.hrtime.bigint() / 1000000n)
+function phaseTimer(scenario) {
+  let last = nowMs()
+  const phases = {}
+  return {
+    mark(label) {
+      const current = nowMs()
+      phases[label] = current - last
+      last = current
+    },
+    report() {
+      if (TIMING) console.error(`TIMING ${JSON.stringify({ scenario, phases })}`)
+    },
+  }
+}
 
 function writeFixture(root, name, source) {
   const dir = join(root, name)
@@ -155,6 +187,7 @@ async function rpcProbe(base, cookie, channel, method) {
 }
 
 async function runScenario(order, sequence) {
+  const timer = phaseTimer(sequence)
   const root = mkdtempSync(join(tmpdir(), `dvr-017-multiplugin-${sequence}-`))
   const home = join(root, 'home')
   const project = join(root, 'project')
@@ -169,6 +202,7 @@ async function runScenario(order, sequence) {
     process.env.DSH_TELEMETRY_MODE = 'DISABLED'
     process.env.DEEPSEEK_API_KEY = ['keyless', 'dvr', 'desktop', 'multiplugin', 'no-call'].join('-')
 
+    timer.mark('prepareProject')
     prepareDevelopmentProject({
       projectDir: project,
       cliDir: join(dshRoot, 'apps/cli'),
@@ -184,11 +218,13 @@ async function runScenario(order, sequence) {
       target,
     })
 
+    timer.mark('copyNodeAndAssets')
     cpSync(join(dshRoot, 'packages/skill/skill-office/assets'), join(root, 'runtime/office-skills'), { recursive: true })
     const bundledNodeDir = join(root, 'runtime/primary-runtime/dependencies/node/bin')
     mkdirSync(bundledNodeDir, { recursive: true })
     cpSync(process.execPath, join(bundledNodeDir, process.platform === 'win32' ? 'node.exe' : 'node'))
 
+    timer.mark('applyRelease')
     const paths = resolveDesktopPaths(home)
     const manager = new DesktopProjectManager(paths, { dsh: project })
     await manager.applyRelease()
@@ -207,6 +243,7 @@ async function runScenario(order, sequence) {
     manifest.dsh.profile.bundles.push(...order, 'dvr-fixture-webserver-observer')
     writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
 
+    timer.mark('fixtures')
     const pnpmEntry = join(dshRoot, 'apps/desktop/node_modules/pnpm/bin/pnpm.mjs')
     const install = spawnSync(process.execPath, [pnpmEntry, 'install', '--dir', paths.profile, '--ignore-scripts'], {
       env: process.env,
@@ -217,8 +254,14 @@ async function runScenario(order, sequence) {
       throw new Error(`Desktop profile install failed (${String(install.status)})\n${install.stdout}\n${install.stderr}`)
     }
 
+    timer.mark('pnpmInstall')
+    writeFileSync(join(paths.profile, 'cordis.patch.yml'),
+      `- id: webserver\n  config:\n    host: 127.0.0.1\n    port: ${String(BASE_PORT + sequence - 1)}\n`)
+    timer.mark('portPatch')
     host = new DesktopHostProcess(process.execPath, project, paths.profile)
     const ready = await host.start()
+    if (TIMING) console.error(`READY ${ready.url}`)
+    timer.mark('hostStart')
     const cookie = await readCookie(ready.url)
     const indexStatus = await requireStatus(ready.url, '/', cookie, 200)
     const apiMissing = await requireStatus(ready.url, '/api/__dvr_multiplugin_missing__', cookie, 404)
@@ -231,6 +274,8 @@ async function runScenario(order, sequence) {
       && row.text.includes('data-vision-router-settings-017-compat'))
     if (rows.length !== 1) throw new Error(`expected one DVR structured prelude, found ${rows.length}`)
 
+    timer.mark('probes')
+    timer.report()
     return {
       sequence,
       order,
@@ -252,8 +297,8 @@ const previousEnv = new Map(['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DEEPSEEK_API_KEY
   .map((name) => [name, process.env[name]]))
 const results = []
 try {
-  for (let index = 0; index < orders.length; index += 1) {
-    results.push(await runScenario(orders[index], index + 1))
+  for (const { order, sequence } of assignedScenarios) {
+    results.push(await runScenario(order, sequence))
   }
   console.log(JSON.stringify({
     ok: true,

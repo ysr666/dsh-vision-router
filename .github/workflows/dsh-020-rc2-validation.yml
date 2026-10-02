@@ -427,11 +427,29 @@ jobs:
       - name: Run Node 24 multi-plugin ordering adversary
         if: matrix.node == '24.21.0'
         working-directory: dsh-020
+        # Two independent shard processes cover the same six load orders: each
+        # scenario still boots its own Host with a fresh home, and the script
+        # derives its web port from the global scenario number so the shards never
+        # contend for one listener.
+        shell: bash
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-020
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: 0.2.0-rc.2
-        run: node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+          DVR_SMOKE_TIMING: '1'
+          DVR_MULTIPLUGIN_SHARD_COUNT: '2'
+        run: |
+          set -uo pipefail
+          pids=()
+          for index in 0 1; do
+            DVR_MULTIPLUGIN_SHARD_INDEX="$index" node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
 
       - name: Run real Windows Desktop renderer lifecycle
         if: matrix.node == '24.21.0'
