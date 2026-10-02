@@ -56,16 +56,9 @@ function stateFor(root) {
 
 function serviceOf(ctx, name) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return undefined
-  if (typeof ctx.get === 'function') {
-    try {
-      const value = ctx.get(name)
-      return value === undefined || value === null ? undefined : value
-    } catch {
-      return undefined
-    }
-  }
+  if (typeof ctx.get !== 'function') return undefined
   try {
-    const value = ctx[name]
+    const value = ctx.get(name)
     return value === undefined || value === null ? undefined : value
   } catch {
     return undefined
