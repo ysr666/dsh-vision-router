@@ -165,39 +165,30 @@ export function installWrapperDirectoryAlias(ctx, baseConfig = {}, logger = ctx 
     }
   }
 
-  sync()
-  // DSH's registerConfigurableProviders ties its internal cleanup to the
-  // shared LLM service context, not to this plugin's fiber: without an
-  // explicit plugin-scoped disposer the directory entry survives a plugin
-  // reload, and the reloaded instance then mistakes the stale row for an
-  // external owner and never takes the route back. Dispose through this
-  // plugin's own lifecycle so reloads re-publish cleanly.
+  // DSH registerConfigurableProviders() has been caller-fiber-owned since the
+  // supported 0.1.5 floor. This effect owns only DVR's local generation state;
+  // do not double-own or double-dispose the Host registration handle.
   if (typeof ctx.effect === 'function') {
     try {
       ctx.effect(
         () => () => {
           disposed = true
-          if (handle) {
-            const current = handle
-            handle = undefined
-            ownedProvider = undefined
-            heldKey = undefined
-            try {
-              current()
-            } catch (error) {
-              warn(
-                'vision-router: failed to dispose Models-directory alias:',
-                error && error.message ? error.message : String(error),
-              )
-            }
-          }
+          handle = undefined
+          ownedProvider = undefined
+          heldKey = undefined
         },
-        'vision-router: models-directory alias lifecycle',
+        'vision-router: models-directory alias local state',
       )
     } catch {
-      /* lifecycle wiring must not break alias sync */
+      disposed = true
+      return sync
     }
   }
+
+  // Establish the generation owner before publishing a directory alias or
+  // subscribing to events that could later republish it.
+  sync()
+  if (disposed) return sync
   if (typeof ctx.on === 'function') {
     ctx.on('llm/adapters-updated', sync)
     ctx.on('settings/updated', (ns) => {

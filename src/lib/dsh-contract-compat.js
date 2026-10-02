@@ -351,14 +351,20 @@ export function installSettingsSectionCompat(ctx, namespace, Config, entryConfig
     hooks.setSource(() => scope.get())
     hooks.onChange()
     const disposeWatch = scope.watch(() => hooks.onChange())
-    sctx.effect(
-      () => () => {
-        if (typeof disposeWatch === 'function') disposeWatch()
-        hooks.setSource(() => entryConfig)
-        hooks.onChange()
-      },
-      'vision-router: host settings compatibility source',
-    )
+    const restore = () => {
+      if (typeof disposeWatch === 'function') disposeWatch()
+      hooks.setSource(() => entryConfig)
+      hooks.onChange()
+    }
+    try {
+      sctx.effect(
+        () => restore,
+        'vision-router: host settings compatibility source',
+      )
+    } catch (error) {
+      restore()
+      throw error
+    }
   })
 }
 

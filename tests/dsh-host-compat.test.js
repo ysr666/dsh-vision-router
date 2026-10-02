@@ -556,3 +556,28 @@ test('host settings compatibility rejects incomplete public options before regis
     /requires Config/,
   )
 })
+
+test('host settings compatibility rolls back its watcher when child lifecycle ownership fails', () => {
+  let watchDisposed = 0
+  const scope = {
+    get() { return { foo: 'live' } },
+    watch() { return () => { watchDisposed += 1 } },
+  }
+  const ctx = {
+    inject(_dependencies, callback) {
+      callback({
+        settings: { register() { return scope } },
+        effect() { throw new Error('inactive fiber') },
+      })
+    },
+  }
+
+  assert.throws(
+    () => installHostSettingsCompatibility(ctx, { foo: 'base' }, {
+      Config: { name: 'fake-schema' },
+      namespace: 'vision-router',
+    }),
+    /inactive fiber/,
+  )
+  assert.equal(watchDisposed, 1)
+})
