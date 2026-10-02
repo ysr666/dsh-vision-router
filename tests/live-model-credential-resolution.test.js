@@ -179,3 +179,64 @@ test('a mounted credentials seam miss does not fall through to an unrelated ambi
     await rm(dshHome, { recursive: true, force: true })
   }
 })
+
+test('a throwing launchEnvironment probe defers instead of reading the ambient key', async () => {
+  const dshHome = await mkdtemp(path.join(os.tmpdir(), 'vision-router-launch-env-throw-'))
+  const ref = 'VISION_ROUTER_DISCOVERY_LAUNCH_ENV_THROWS'
+  const previous = process.env[ref]
+  process.env[ref] = 'ambient-should-not-be-used'
+  let fetchCalls = 0
+  const ctx = discoveryContext({
+    ref,
+    launchEnvironment: () => ({ get() { throw new Error('launch environment unavailable') } }),
+  })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    dshHome,
+    fetchImpl: async () => {
+      fetchCalls += 1
+      return listingResponse()
+    },
+  })
+
+  try {
+    await manager.ready()
+    manager.queueConfigured()
+    await waitForSettled(manager)
+    assert.equal(fetchCalls, 0, 'a throwing launchEnvironment must not trigger an anonymous probe')
+    assert.equal((await manager.snapshot()).providers.length, 0)
+  } finally {
+    await manager.dispose()
+    if (previous === undefined) delete process.env[ref]
+    else process.env[ref] = previous
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
+
+test('a partial launchEnvironment service defers instead of reading the ambient key', async () => {
+  const dshHome = await mkdtemp(path.join(os.tmpdir(), 'vision-router-launch-env-partial-'))
+  const ref = 'VISION_ROUTER_DISCOVERY_LAUNCH_ENV_PARTIAL'
+  const previous = process.env[ref]
+  process.env[ref] = 'ambient-should-not-be-used'
+  let fetchCalls = 0
+  const ctx = discoveryContext({ ref, launchEnvironment: () => 42 })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    dshHome,
+    fetchImpl: async () => {
+      fetchCalls += 1
+      return listingResponse()
+    },
+  })
+
+  try {
+    await manager.ready()
+    manager.queueConfigured()
+    await waitForSettled(manager)
+    assert.equal(fetchCalls, 0, 'a partial launchEnvironment service must not trigger an anonymous probe')
+    assert.equal((await manager.snapshot()).providers.length, 0)
+  } finally {
+    await manager.dispose()
+    if (previous === undefined) delete process.env[ref]
+    else process.env[ref] = previous
+    await rm(dshHome, { recursive: true, force: true })
+  }
+})
