@@ -103,6 +103,9 @@ export function createSessionVisionPolicyRuntimeStore(
   let activeFacility: StorageDomainFacilityLike | undefined
   let domainPromise: Promise<Domain<DomainSpec> | undefined> | undefined
   let transition: Promise<void> = Promise.resolve()
+  const mutationTails = new Map<string, Promise<void>>()
+  const activeMutations = new Set<Promise<void>>()
+  const hydrationTokens = new Map<string, object>()
   let durableDisabled = false
   let lifecycleClosed = false
   let lifecycleBound = false
@@ -160,6 +163,10 @@ export function createSessionVisionPolicyRuntimeStore(
           lifecycleBound = true
           return async () => {
             lifecycleClosed = true
+            // No new durable mutation is admitted after lifecycleClosed flips.
+            // Wait every mutation that was already admitted before closing the
+            // shared domain underneath it.
+            await Promise.allSettled([...activeMutations])
             await enqueueRetire()
           }
         },
@@ -170,20 +177,23 @@ export function createSessionVisionPolicyRuntimeStore(
     }
   }
 
-  const ensureDomainFor = async (facility: StorageDomainFacilityLike): Promise<void> => {
-    if (lifecycleClosed || durableDisabled) return
+  const ensureDomainFor = async (
+    facility: StorageDomainFacilityLike,
+    allowClosed = false,
+  ): Promise<void> => {
+    if ((lifecycleClosed && !allowClosed) || durableDisabled) return
     if (activeFacility === facility && domainPromise !== undefined) return
     if (domainPromise !== undefined || activeFacility !== undefined) {
       await retireActiveDomain()
     }
-    if (lifecycleClosed || durableDisabled) return
+    if ((lifecycleClosed && !allowClosed) || durableDisabled) return
 
     activeFacility = facility
     let opening: Promise<Domain<DomainSpec> | undefined>
     opening = facility.open(sessionVisionPolicyDomainSpec)
       .then(async (domain) => {
         if (
-          lifecycleClosed
+          (lifecycleClosed && !allowClosed)
           || durableDisabled
           || activeFacility !== facility
           || domainPromise !== opening
@@ -204,20 +214,20 @@ export function createSessionVisionPolicyRuntimeStore(
     domainPromise = opening
   }
 
-  const openDomain = async (): Promise<Domain<DomainSpec> | undefined> => {
-    if (!lifecycleBound || lifecycleClosed || durableDisabled) return undefined
+  const openDomain = async (allowClosed = false): Promise<Domain<DomainSpec> | undefined> => {
+    if (!lifecycleBound || (lifecycleClosed && !allowClosed) || durableDisabled) return undefined
     const facility = storageDomainOf(ctx)
     if (facility === undefined) return undefined
     transition = transition.then(
-      () => ensureDomainFor(facility),
-      () => ensureDomainFor(facility),
+      () => ensureDomainFor(facility, allowClosed),
+      () => ensureDomainFor(facility, allowClosed),
     )
     await transition
     return await domainPromise
   }
 
-  const table = async (): Promise<KvTable<string, SessionVisionPolicy> | undefined> => {
-    const domain = await openDomain()
+  const table = async (allowClosed = false): Promise<KvTable<string, SessionVisionPolicy> | undefined> => {
+    const domain = await openDomain(allowClosed)
     if (domain === undefined) return undefined
     return domain.table('policies') as unknown as KvTable<string, SessionVisionPolicy>
   }
@@ -225,6 +235,29 @@ export function createSessionVisionPolicyRuntimeStore(
   const failDurabilityAndRetire = async (error: unknown): Promise<void> => {
     markDurabilityFailed(error)
     await enqueueRetire()
+  }
+
+  const enqueueMutation = (key: string, mutate: () => Promise<void>): Promise<void> => {
+    if (lifecycleClosed) return Promise.resolve()
+    const previous = mutationTails.get(key) ?? Promise.resolve()
+    let current: Promise<void>
+    // Admission is decided above. Once admitted, a mutation must run even if
+    // lifecycle shutdown begins while it is queued behind an earlier mutation;
+    // the disposer waits activeMutations before retiring the domain.
+    current = previous.then(mutate, mutate)
+    mutationTails.set(key, current)
+    activeMutations.add(current)
+    void current.then(
+      () => {
+        activeMutations.delete(current)
+        if (mutationTails.get(key) === current) mutationTails.delete(key)
+      },
+      () => {
+        activeMutations.delete(current)
+        if (mutationTails.get(key) === current) mutationTails.delete(key)
+      },
+    )
+    return current
   }
 
   return {
@@ -243,20 +276,27 @@ export function createSessionVisionPolicyRuntimeStore(
       const key = normalizedSessionId(sessionId)
       const existing = cache.get(key)
       if (existing !== undefined) return existing
+      const token = {}
+      hydrationTokens.set(key, token)
       try {
         const handle = await table()
+        if (hydrationTokens.get(key) !== token) return cache.get(key)
         if (handle === undefined) return undefined
         const policy = parseSessionVisionPolicy(handle.get(key))
+        if (hydrationTokens.get(key) !== token) return cache.get(key)
         if (policy !== undefined) cache.set(key, policy)
         return policy
       } catch (error) {
         await failDurabilityAndRetire(error)
         return undefined
+      } finally {
+        if (hydrationTokens.get(key) === token) hydrationTokens.delete(key)
       }
     },
 
     release(sessionId) {
       const key = normalizedSessionId(sessionId)
+      hydrationTokens.delete(key)
       // A durable row can be rehydrated on the next Agent creation. Keep the
       // process-local copy when durability is unavailable so volatile support
       // does not lose the only Session-scoped truth it has.
@@ -265,6 +305,7 @@ export function createSessionVisionPolicyRuntimeStore(
 
     async set(sessionId, policy) {
       const key = normalizedSessionId(sessionId)
+      hydrationTokens.delete(key)
       const normalized = parseSessionVisionPolicy(policy)
       if (normalized === undefined) throw new TypeError('invalid session vision policy')
 
@@ -273,24 +314,32 @@ export function createSessionVisionPolicyRuntimeStore(
       // sidecar I/O is still settling; delegation still awaits this method and
       // therefore preserves its stronger durability-before-child-release rule.
       cache.set(key, normalized)
-      try {
-        const handle = await table()
-        if (handle !== undefined) await handle.put(key, normalized)
-      } catch (error) {
-        await failDurabilityAndRetire(error)
-      }
+      await enqueueMutation(key, async () => {
+        try {
+          // This mutation was admitted before lifecycle close; the disposer
+          // waits it before retiring the domain, so it may finish durable I/O.
+          const handle = await table(true)
+          if (handle !== undefined) await handle.put(key, normalized)
+        } catch (error) {
+          await failDurabilityAndRetire(error)
+        }
+      })
       return normalized
     },
 
     async delete(sessionId) {
       const key = normalizedSessionId(sessionId)
+      hydrationTokens.delete(key)
       cache.delete(key)
-      try {
-        const handle = await table()
-        if (handle !== undefined) await handle.delete(key)
-      } catch (error) {
-        await failDurabilityAndRetire(error)
-      }
+      await enqueueMutation(key, async () => {
+        try {
+          // Same admission rule as set(): pre-close deletes must not be lost.
+          const handle = await table(true)
+          if (handle !== undefined) await handle.delete(key)
+        } catch (error) {
+          await failDurabilityAndRetire(error)
+        }
+      })
     },
   }
 }
