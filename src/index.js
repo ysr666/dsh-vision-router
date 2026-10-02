@@ -4667,34 +4667,48 @@ ctx.logger?.info(
     activateDeepTools = () => {
       if (deepActive) return '视觉深看工具已在挂载状态。'
       deepActive = true
-      for (const def of deepToolDefs) {
-        const registeredDef =
-          def.name === 'vision_bootstrap' || typeof def.execute !== 'function'
-            ? def
-            : {
-                ...def,
-                async execute(args, exec) {
-                  const session = exec && exec.agent && exec.agent.session
-                  const state = session ? structuredBootstrapTurnState.get(session) : undefined
-                  if (structuredBootstrapEnabled() && state && state.required && state.completed !== true) {
-                    return JSON.stringify({
-                      ok: false,
-                      code: state.failed ? 'STRUCTURED_BOOTSTRAP_FAILED' : 'STRUCTURED_BOOTSTRAP_REQUIRED',
-                      retryable: !state.failed,
-                      reason: state.failed
-                        ? 'the required structured bootstrap visual pass failed; do not make more visual calls this turn'
-                        : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
-                    })
-                  }
-                  // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
-                  // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
-                  // Tool-specific execution policy belongs to the tool itself; this wrapper owns
-                  // only bootstrap ordering and never rewrites model/user arguments.
-                  const result = await def.execute(args, exec)
-                  return result
-                },
-              }
-        deepDisposers.push(ctx.tools.register(registeredDef))
+      try {
+        for (const def of deepToolDefs) {
+          const registeredDef =
+            def.name === 'vision_bootstrap' || typeof def.execute !== 'function'
+              ? def
+              : {
+                  ...def,
+                  async execute(args, exec) {
+                    const session = exec && exec.agent && exec.agent.session
+                    const state = session ? structuredBootstrapTurnState.get(session) : undefined
+                    if (structuredBootstrapEnabled() && state && state.required && state.completed !== true) {
+                      return JSON.stringify({
+                        ok: false,
+                        code: state.failed ? 'STRUCTURED_BOOTSTRAP_FAILED' : 'STRUCTURED_BOOTSTRAP_REQUIRED',
+                        retryable: !state.failed,
+                        reason: state.failed
+                          ? 'the required structured bootstrap visual pass failed; do not make more visual calls this turn'
+                          : 'call vision_bootstrap and wait for its universal structured visual result before any other vision tool',
+                      })
+                    }
+                    // 识图档位不在这里做调用次数拦截；显式 visionDepthMaxCalls 由
+                    // structured-flow hardening 统一执行，避免与 evidence 完成状态重复计数。
+                    // Tool-specific execution policy belongs to the tool itself; this wrapper owns
+                    // only bootstrap ordering and never rewrites model/user arguments.
+                    const result = await def.execute(args, exec)
+                    return result
+                  },
+                }
+          deepDisposers.push(ctx.tools.register(registeredDef))
+        }
+      } catch (error) {
+        // A partial mount must never be reported as mounted: retire what this
+        // attempt registered, release the latch and surface the failure.
+        deepDisposers.splice(0).forEach((dispose) => {
+          try {
+            dispose()
+          } catch {
+            // Rollback is best effort; the original registration error wins.
+          }
+        })
+        deepActive = false
+        throw error
       }
       return (
         '视觉深看工具已挂载：vision_bootstrap（结构化预识别）、vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
@@ -4713,19 +4727,23 @@ ctx.logger?.info(
     )
 
     if (progressive) {
-      ctx.tools.register({
-        name: 'vision_activate',
-        description:
-          'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
-          'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
-          'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
-          'automatically on image turns; call this only when you need them on a text-only turn.',
-        parameters: { type: 'object', properties: {}, additionalProperties: false },
-        output: stringOutput,
-        async execute() {
-          return activateDeepTools()
-        },
-      })
+      ctx.effect(
+        () =>
+          ctx.tools.register({
+            name: 'vision_activate',
+            description:
+              'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
+              'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
+              'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
+              'automatically on image turns; call this only when you need them on a text-only turn.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+            output: stringOutput,
+            async execute() {
+              return activateDeepTools()
+            },
+          }),
+        'vision-router: progressive bootstrap tool',
+      )
       const skills = ctx.get('skills')
       if (skills !== undefined && typeof skills.register === 'function') {
         ctx.effect(
