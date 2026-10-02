@@ -51,18 +51,23 @@ for (const source of sources) {
   }
   expected.set(artifactRelative, sourceRelative)
 
+  // Read both files once instead of stat()-then-read: the previous shape was a
+  // check-then-use pair (a file could disappear between the two calls), and it
+  // made the verifier report a *stale* artifact identity on a race. A missing
+  // artifact is still reported as such; any other read error keeps propagating.
   const artifact = path.join(ROOT, artifactRelative)
-  try {
-    await stat(artifact)
-  } catch {
+  const [sourceResult, artifactResult] = await Promise.all([
+    readFile(source).then((bytes) => ({ bytes }), (error) => ({ error })),
+    readFile(artifact).then((bytes) => ({ bytes }), (error) => ({ error })),
+  ])
+  if (artifactResult.error) {
+    if (artifactResult.error.code !== 'ENOENT') throw artifactResult.error
     failures.push(`${sourceRelative}: missing package artifact ${artifactRelative}`)
     continue
   }
-
-  const [sourceBytes, artifactBytes] = await Promise.all([
-    readFile(source),
-    readFile(artifact),
-  ])
+  if (sourceResult.error) throw sourceResult.error
+  const sourceBytes = sourceResult.bytes
+  const artifactBytes = artifactResult.bytes
 
   if (
     (sourceRelative.endsWith('.js') || sourceRelative.endsWith('.d.ts'))
