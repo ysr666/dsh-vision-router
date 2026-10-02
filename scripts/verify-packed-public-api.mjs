@@ -90,6 +90,52 @@ try {
     )
   }
 
+  // Declaration-versus-runtime execution check. The consumer program below only
+  // type-checks the sample, so behaviour that types cannot express (a required
+  // Cordis fiber, a parameter domain narrower than `number`) must be asserted
+  // here or it ships unverified.
+  const isCordisLifecycleContext = (value) => {
+    try {
+      return typeof value?.effect === 'function'
+    } catch {
+      return false
+    }
+  }
+  const contextWithoutEffect = new Proxy({}, {
+    get(target, property) {
+      if (property === 'effect') return undefined
+      if (property === 'inject') return () => {}
+      if (property === 'on') return () => () => {}
+      if (property === 'get') return () => undefined
+      return Reflect.get(target, property)
+    },
+  })
+  if (isCordisLifecycleContext(contextWithoutEffect)) {
+    throw new Error('packed public API probe is not a lifecycle-less context')
+  }
+  try {
+    runtime.apply(contextWithoutEffect, {})
+    throw new Error('packed apply() accepted a context without Cordis effect(); the declared lifecycle precondition is not enforced')
+  } catch (error) {
+    if (!/Cordis lifecycle context/.test(String(error?.message))) throw error
+  }
+  if (typeof runtime.sessionSurfaceReplacementIntent !== 'function') {
+    throw new Error('packed sessionSurfaceReplacementIntent missing')
+  }
+  try {
+    runtime.sessionSurfaceReplacementIntent({ header: { version: 4 } }, -1)
+    throw new Error('packed sessionSurfaceReplacementIntent accepted a negative seq')
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error
+  }
+  const emptyIntent = runtime.sessionSurfaceReplacementIntent({ header: { version: 4 } }, 0)
+  if (emptyIntent !== undefined) {
+    throw new Error(`packed sessionSurfaceReplacementIntent({header:{version:4}}, 0) drifted: ${JSON.stringify(emptyIntent)}`)
+  }
+  if (runtime.apply.length !== 1 || runtime.sessionSurfaceReplacementIntent.length !== 2) {
+    throw new Error('packed public function arity drifted from the published declaration')
+  }
+
   const consumer = path.join(temporary, 'consumer')
   await mkdir(path.join(consumer, 'node_modules'), { recursive: true })
   await symlink(packageRoot, path.join(consumer, 'node_modules', 'dsh-vision-router'), 'junction')
@@ -122,10 +168,16 @@ const owned: boolean = hostOwnsOfficialDeepSeekProvider({})
 const admission = ensureVisionAttachmentAdmissionPolicy({})
 const installedAdmission = installVisionAttachmentAdmissionPolicy({})
 const protectedCtx = protectHostProviderOwnership({ llm: {} })
-const settingsCtx = installHostSettingsCompatibility({}, {}, { Config, namespace: 'vision-router' })
+const settingsCtx = installHostSettingsCompatibility(
+  { inject: () => {} },
+  {},
+  { Config, namespace: 'vision-router' },
+)
 const intent: SessionSurfaceReplacementIntent | undefined =
   sessionSurfaceReplacementIntent({ header: { version: 4 } }, 1)
-const applied: unknown = apply({}, config)
+// The plugin root requires a Cordis lifecycle context; a plain object is
+// rejected at runtime, so the sample must carry the declared precondition.
+const applied: unknown = apply({ effect: () => () => {} }, config)
 
 void exactName
 void exactRevision
@@ -139,10 +191,16 @@ void settingsCtx
 void intent
 void applied
 
+// @ts-expect-error a lifecycle-less context is not a CordisLifecycleContext
+apply({}, config)
 // @ts-expect-error package root owns provider transport; runtime injection is internal
-apply({}, config, { providerTransport: {} })
+apply({ effect: () => () => {} }, config, { providerTransport: {} })
 // @ts-expect-error settings compatibility requires an explicit namespace and Config
-installHostSettingsCompatibility({}, {}, {})
+installHostSettingsCompatibility({ inject: () => {} }, {}, {})
+// @ts-expect-error settings compatibility requires a context that can inject
+installHostSettingsCompatibility({}, {}, { Config, namespace: 'vision-router' })
+// @ts-expect-error Session surface replacement requires an explicit sequence
+sessionSurfaceReplacementIntent({ header: { version: 4 } })
 // @ts-expect-error mature Core helpers are not package-root API
 void dvr.createCache
 `,

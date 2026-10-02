@@ -147,19 +147,28 @@ test('manual Release workflow creates only the exact current-main package tag be
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
 
   assert.match(workflow, /workflow_dispatch:/)
+  assert.doesNotMatch(workflow, /\npush:\s*\n[\s\S]{0,120}tags:/, 'a pushed tag must never be a release entry point')
   assert.match(workflow, /target_sha:/)
-  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \|\| github\.ref_name \}\}/)
-  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \}\}/)
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \}\}/)
   assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
+  // A released version is immutable and single-use: an existing tag is refused,
+  // never "recovered". Re-dispatching a tag from a ref that is not the release
+  // commit mints provenance for the wrong SourceRepositoryDigest, which is
+  // exactly what the removed recovery branch used to allow.
+  assert.match(workflow, /already exists at \$REMOTE_TAG_SHA\. A released version is immutable/)
+  assert.doesNotMatch(workflow, /RELEASE_RECOVERY/)
+  assert.doesNotMatch(workflow, /permitting recovery after main advanced/)
+  assert.match(workflow, /SourceRepositoryDigest/)
   assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
   assert.match(workflow, /Run tests[\s\S]*Verify generated browser source[\s\S]*pnpm client:check/)
   assert.match(workflow, /Verify release Host support policy[\s\S]*tests\/dsh-support-window\.test\.js/)
   assert.match(
     workflow,
-    /Preflight exact packed contract before irreversible tag[\s\S]*npm pack --json[\s\S]*verify-packed-public-api\.mjs[\s\S]*release-registry-identity\.mjs probe[\s\S]*Ensure immutable release tag exists at verified SHA/,
+    /Preflight exact packed contract before irreversible tag[\s\S]*npm pack --json[\s\S]*verify-packed-public-api\.mjs[\s\S]*release-registry-identity\.mjs inspect[\s\S]*Ensure immutable release tag exists at verified SHA/,
   )
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
-  assert.match(workflow, /already exists at \$REMOTE_TAG_SHA, expected \$RELEASE_SHA/)
+  assert.match(workflow, /refusing to adopt or republish a pre-existing registry version/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
   assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
 })
@@ -213,6 +222,22 @@ test('release provenance binds the exact npm tarball before the write-token phas
   assert.match(release, /gh run download \"\$GITHUB_RUN_ID\"[\s\S]*--name release-provenance/)
   assert.match(release, /release provenance handoff failed SHA-256 verification/)
   assert.match(release, /gh release create[\s\S]*\"\$PROVENANCE_NAME\"/)
+  // Immutability applies the moment a release is published, so every asset must
+  // be attached to a draft and verified before the release becomes public.
+  assert.match(release, /Create immutable GitHub Release \(draft, attach, publish\)/)
+  assert.match(release, /gh release create "\$RELEASE_TAG" \\\n\s+--verify-tag \\\n\s+--draft/)
+  assert.match(release, /gh release upload "\$RELEASE_TAG"[\s\S]*"\$PACKAGE_TARBALL"[\s\S]*"\$PROVENANCE_NAME"[\s\S]*"SHA256SUMS\.txt"/)
+  assert.match(release, /attached release tarball does not match the verified package SHA-256/)
+  assert.match(release, /gh release edit "\$RELEASE_TAG" --draft=false --latest/)
+  assert.match(release, /is still a draft after publish/)
+  const draftIndex = release.indexOf('--draft')
+  const uploadIndex = release.indexOf('gh release upload "$RELEASE_TAG"')
+  const verifyIndex = release.indexOf('attached release tarball does not match')
+  const publishIndex = release.indexOf('--draft=false --latest')
+  assert.ok(
+    draftIndex > 0 && uploadIndex > draftIndex && verifyIndex > uploadIndex && publishIndex > verifyIndex,
+    'release assets must be attached and verified before the immutable release is published',
+  )
 })
 
 test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm setup', async () => {
