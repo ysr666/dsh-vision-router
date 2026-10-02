@@ -1049,8 +1049,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
     }
-    const httpHandle = ctx.llm.registerAdapter([HTTP_ROUTE], httpAdapter)
-    ctx.effect(() => httpHandle, 'vision-router: vision-http route')
+    ctx.llm.registerAdapter([HTTP_ROUTE], httpAdapter)
 
   }
 
@@ -1354,7 +1353,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const spec = wanted.get(provider)
       if (spec === undefined) {
         try {
-          held.handle()
+          held.registration()
           twinHandles.delete(provider)
         } catch (error) {
           ctx.logger?.warn(
@@ -1372,7 +1371,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         held.state.models = spec.models
         held.state.sourceName = spec.sourceName
         try {
-          held.handle.replace([`${provider}-vision`])
+          held.registration.replace([`${provider}-vision`])
           held.key = nextKey
         } catch (error) {
           held.state.models = previousModels
@@ -1394,10 +1393,12 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const handle = ctx.llm.registerAdapter([twinRoute], makeTwinAdapter(provider, state))
-        ctx.effect(() => handle, `vision-router: twin route ${twinRoute}`)
+        const registration = ctx.llm.registerAdapter(
+          [twinRoute],
+          makeTwinAdapter(provider, state),
+        )
         twinHandles.set(provider, {
-          handle,
+          registration,
           state,
           key: twinSpecKey(spec.models, spec.sourceName),
         })
@@ -4703,6 +4704,14 @@ ctx.logger?.info(
         '注意：vision_ocr 只用于读取图片文字；视觉工具返回 ok:false 后端不可用结果时，不要改问法重复调用，继续文本任务。'
       )
     }
+    ctx.effect(
+      () => () => {
+        deepDisposers.splice(0).forEach((dispose) => dispose())
+        deepActive = false
+      },
+      'vision-router: deep tools',
+    )
+
     if (progressive) {
       ctx.tools.register({
         name: 'vision_activate',
@@ -4767,13 +4776,6 @@ ctx.logger?.info(
     } else {
       activateDeepTools()
     }
-    ctx.effect(
-      () => () => {
-        deepDisposers.splice(0).forEach((dispose) => dispose())
-        deepActive = false
-      },
-      'vision-router: deep tools',
-    )
   }
 
   // ── settings seam: the Web 设置 > 插件 > 插件配置 panel owns a
@@ -4784,6 +4786,9 @@ ctx.logger?.info(
   // @deepseek-ai/dsh-settings: the published npm build trails the deployment,
   // and the service API is the stable contract here.
   ctx.inject(['settings'], (sctx) => {
+    // Registration and the live-settings subscription are Host contract calls:
+    // they must happen for every supported Host, independently of whether the
+    // lifecycle seam below can run eagerly. Only ownership needs the factory.
     const scope = sctx.settings.register('vision-router', Config, {
       base: config,
     })
@@ -4791,20 +4796,35 @@ ctx.logger?.info(
     // With the settings document now visible, reconcile the routing mounts
     // (wrapper route, chain route) against the resolved values.
     syncRoutingMounts()
-    sctx.effect(
-      () => () => {
-        // The settings provider went away: fall back to the composition entry.
-        current = () => config
-      },
-      'vision-router: settings fallback',
-    )
-    scope.watch(() => {
-      // Most consumers read current() per call, but the wrappedProviders
-      // twins and the routing mounts are registered eagerly: re-sync them
-      // whenever the settings document loads or the user edits the card.
-      syncTwins()
-      syncRoutingMounts()
-    })
+    let disposeWatch
+    if (typeof scope.watch === 'function') {
+      disposeWatch = scope.watch(() => {
+        // Most consumers read current() per call, but the wrappedProviders
+        // twins and the routing mounts are registered eagerly: re-sync them
+        // whenever the settings document loads or the user edits the card.
+        syncTwins()
+        syncRoutingMounts()
+      })
+    }
+    const restore = () => {
+      if (typeof disposeWatch === 'function') disposeWatch()
+      disposeWatch = undefined
+      // The settings provider went away: fall back to the composition entry.
+      current = () => config
+    }
+    if (typeof sctx.effect !== 'function') {
+      // No lifecycle seam: this injection's context owns the source, so there is
+      // nothing for DVR to restore when the Settings service itself goes away.
+      return
+    }
+    try {
+      sctx.effect(() => restore, 'vision-router: settings source')
+    } catch (error) {
+      // Registration already published the scope and its subscription: withdraw
+      // both before the failure escapes, exactly as the owner would on unload.
+      restore()
+      throw error
+    }
   })
 
   // Product diagnostics/settings support is a separate Web owner. Core supplies
@@ -4836,7 +4856,7 @@ ctx.logger?.info(
   // (plus a fixed product allowlist) — without this directory entry the Web
   // card's settingsScope binder reports the namespace as unavailable.
   try {
-    const providerDirectory = ctx.llm.registerConfigurableProviders([
+    ctx.llm.registerConfigurableProviders([
       {
         provider: 'vision-router',
         displayName: '视觉路由（自动识图）',
@@ -4844,7 +4864,6 @@ ctx.logger?.info(
         settingsPath: [],
       },
     ])
-    ctx.effect(() => providerDirectory, 'vision-router: configurable provider directory')
   } catch (error) {
     ctx.logger?.warn(
       'vision-router: configurable provider registration failed: %s',
