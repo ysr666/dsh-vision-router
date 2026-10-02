@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
+import {
+  getVisionToolRuntimeState,
+  installVisionToolRuntimeBoundary,
+} from '../lib/vision-tool-runtime-boundary.js'
 
 test('vision tool runtime boundary never proxies unrelated injected child contexts', () => {
   const webChild = { webServer: {}, effect() {} }
@@ -130,7 +133,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     'const backendRuntimeCtx = contextWithVisionBackendRuntimePolicy(performanceCtx, {',
   )
   const requestAuthorityAt = source.indexOf(
-    'const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx)',
+    'const coreRequestAuthorityCtx = contextWithAgentRequestRouteAuthority(backendRuntimeCtx, {',
   )
   const coreApplyAt = source.indexOf('() => core.apply(')
   const finishOnceAt = source.indexOf('const finishSchemaBootstrapOnce = () => {')
@@ -212,4 +215,72 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     false,
     'a second prepareCall/coalescer wrapper would capture a pre-wrapper stream again',
   )
+})
+
+test('vision tool runtime cache expires with the owning Cordis generation', () => {
+  let cleanup
+  const ctx = {
+    effect(factory) { cleanup = factory() },
+  }
+  const first = installVisionToolRuntimeBoundary(ctx, { cache: false })
+  assert.equal(installVisionToolRuntimeBoundary(ctx, { cache: true }), first)
+  assert.equal(getVisionToolRuntimeState(first).config().cache, false)
+
+  cleanup()
+  const second = installVisionToolRuntimeBoundary(ctx, { cache: true })
+  assert.notEqual(second, first)
+  assert.equal(getVisionToolRuntimeState(second).config().cache, true)
+})
+
+test('vision tool runtime cache never pins a wrapper when effect registration fails', () => {
+  const ctx = {
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = installVisionToolRuntimeBoundary(ctx, { cache: false })
+  const second = installVisionToolRuntimeBoundary(ctx, { cache: true })
+  assert.notEqual(second, first)
+})
+
+test('tool runtime Settings projection is generation-tokened and late stale scope reads cannot republish config', () => {
+  let childCleanup
+  let lateWatch
+  let liveConfig = { cache: false, cacheMaxEntries: 10, cacheTtlSeconds: 10, httpProviders: [] }
+  const scope = {
+    get() { return liveConfig },
+    watch(callback) { lateWatch = callback; return () => {} },
+  }
+  const settingsChild = {
+    settings: { register() { return scope } },
+    effect(factory) { childCleanup = factory(); return childCleanup },
+  }
+  const ctx = {
+    effect(factory) { this.outerCleanup = factory(); return this.outerCleanup },
+    inject(dependencies, callback) {
+      if (dependencies.includes('settings')) return callback(settingsChild)
+    },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(ctx, {
+    cache: true,
+    cacheMaxEntries: 200,
+    cacheTtlSeconds: 3600,
+    httpProviders: [],
+  })
+  let projectedScope
+  wrapped.inject(['settings'], (child) => {
+    projectedScope = child.settings.register('vision-router')
+  })
+  projectedScope.watch(() => {})
+
+  const state = getVisionToolRuntimeState(wrapped)
+  assert.equal(state.config().cache, false)
+
+  childCleanup()
+  assert.equal(state.config().cache, true, 'unload must restore the boot config')
+
+  liveConfig = { cache: false, cacheMaxEntries: 1, cacheTtlSeconds: 1, httpProviders: [] }
+  assert.equal(projectedScope.get().cache, false, 'stale caller still sees its own retired scope')
+  assert.equal(state.config().cache, true, 'retired scope get() must not republish stale runtime config')
+
+  lateWatch()
+  assert.equal(state.config().cache, true, 'retired scope watch callback must not republish stale runtime config')
 })

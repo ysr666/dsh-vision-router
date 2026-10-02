@@ -3,13 +3,14 @@ name: DSH 0.1.7 browser smoke
 on:
   pull_request:
     paths:
-      - 'lib/public-entry.js'
-      - 'lib/dsh-settings-017-compat.js'
-      - 'lib/settings-client-017-compat.js'
-      - 'lib/session-message-source-compat.js'
-      - 'lib/web/**'
-      - 'lib/client.js'
-      - 'lib/*-client-prelude.js'
+      - 'src/**'
+      - 'src/lib/public-entry.js'
+      - 'src/lib/dsh-settings-017-compat.js'
+      - 'src/lib/settings-client-017-compat.js'
+      - 'src/lib/session-message-source-compat.js'
+      - 'src/lib/web/**'
+      - 'src/lib/client.js'
+      - 'src/lib/*-client-prelude.js'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
@@ -17,13 +18,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'lib/public-entry.js'
-      - 'lib/dsh-settings-017-compat.js'
-      - 'lib/settings-client-017-compat.js'
-      - 'lib/session-message-source-compat.js'
-      - 'lib/web/**'
-      - 'lib/client.js'
-      - 'lib/*-client-prelude.js'
+      - 'src/lib/public-entry.js'
+      - 'src/lib/dsh-settings-017-compat.js'
+      - 'src/lib/settings-client-017-compat.js'
+      - 'src/lib/session-message-source-compat.js'
+      - 'src/lib/web/**'
+      - 'src/lib/client.js'
+      - 'src/lib/*-client-prelude.js'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
@@ -69,6 +70,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-preview/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Compute exact DSH web build cache key
         id: dsh-build-key
         working-directory: dsh-preview

@@ -1,0 +1,344 @@
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { tmpdir } from 'node:os'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
+import { promisify } from 'node:util'
+
+
+const require = createRequire(import.meta.url)
+const childProcess = require('node:child_process')
+
+// One shared child-process compatibility seam. It owns every narrow transform
+// Vision Router needs around promisify(execFile), so lifecycle cleanup never
+// has to unwind multiple wrappers in a particular order.
+const installStates = new WeakMap()
+
+function bytesView(input) {
+  if (Buffer.isBuffer(input)) return input
+  if (ArrayBuffer.isView(input)) {
+    return Buffer.from(input.buffer, input.byteOffset, input.byteLength)
+  }
+  if (input instanceof ArrayBuffer) return Buffer.from(input)
+  return Buffer.from(input)
+}
+
+function extensionForBytes(input) {
+  const bytes = bytesView(input)
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return '.png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return '.jpg'
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return '.webp'
+  if (bytes.length >= 6) {
+    const gif = bytes.toString('ascii', 0, 6)
+    if (gif === 'GIF87a' || gif === 'GIF89a') return '.gif'
+  }
+  return '.img'
+}
+
+function isTesseractCompatCall(file, args, options) {
+  const isTesseract = typeof file === 'string' && /(^|[\\/])tesseract(?:\.exe)?$/i.test(file)
+  const readsStdin = Array.isArray(args) && (args[0] === 'stdin' || args[0] === '-')
+  const hasInput =
+    options &&
+    typeof options === 'object' &&
+    Object.prototype.hasOwnProperty.call(options, 'input') &&
+    options.input !== undefined &&
+    options.input !== null
+  return isTesseract && readsStdin && hasInput
+}
+
+function nativePromisified(execFileImpl, originalCustom) {
+  if (typeof originalCustom === 'function') return originalCustom
+  return (file, args, options) => new Promise((resolve, reject) => {
+    execFileImpl(file, args, options, (error, stdout, stderr) => {
+      if (error) {
+        if (error && typeof error === 'object') {
+          try {
+            error.stdout = stdout
+            error.stderr = stderr
+          } catch {
+            /* preserve the original error */
+          }
+        }
+        reject(error)
+        return
+      }
+      resolve({ stdout, stderr })
+    })
+  })
+}
+
+/**
+ * Create the historical Tesseract stdin compatibility layer. Kept as a public
+ * helper because tests/consumers already import it directly.
+ */
+export function createTesseractPromisifyCompat(execFileImpl, originalCustom, options = {}) {
+  if (typeof execFileImpl !== 'function') {
+    throw new TypeError('createTesseractPromisifyCompat: execFileImpl must be a function')
+  }
+
+  const delegate = nativePromisified(execFileImpl, originalCustom)
+  const makeTempDir = options.mkdtemp ?? mkdtemp
+  const writeTempFile = options.writeFile ?? writeFile
+  const removeTempDir = options.rm ?? rm
+  const resolveRealPath = options.realpath ?? realpath
+  const tempDir = options.tempDir ?? tmpdir()
+  let resolvedTempDir
+  let active = true
+
+  const stagingRoot = async () => {
+    if (resolvedTempDir !== undefined) return resolvedTempDir
+    try {
+      resolvedTempDir = await resolveRealPath(tempDir)
+    } catch {
+      // Some tests/embedders provide a virtual temp root. Preserve the old
+      // path when canonicalization is unavailable instead of disabling OCR.
+      resolvedTempDir = tempDir
+    }
+    return resolvedTempDir
+  }
+
+  async function tesseractPromisifyCompat(file, args, execOptions) {
+    if (!active || !isTesseractCompatCall(file, args, execOptions)) {
+      return delegate(file, args, execOptions)
+    }
+
+    const bytes = bytesView(execOptions.input)
+    let dir
+    try {
+      dir = await makeTempDir(path.join(await stagingRoot(), 'dsh-vision-router-ocr-'))
+      const inputPath = path.join(dir, `input${extensionForBytes(bytes)}`)
+      await writeTempFile(inputPath, bytes)
+
+      const { input: _ignoredInput, ...restOptions } = execOptions
+      const nextOptions = { ...restOptions, windowsHide: true }
+      const nextArgs = [inputPath, ...args.slice(1)]
+      return await delegate(file, nextArgs, nextOptions)
+    } finally {
+      if (dir) {
+        try {
+          await removeTempDir(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 })
+        } catch {
+          // Cleanup is best-effort. Antivirus/indexing may briefly hold the
+          // file; never turn a successful OCR result into a tool failure.
+        }
+      }
+    }
+  }
+
+  Object.defineProperty(tesseractPromisifyCompat, 'deactivate', {
+    configurable: false,
+    enumerable: false,
+    value() { active = false },
+  })
+  Object.defineProperty(tesseractPromisifyCompat, 'active', {
+    configurable: false,
+    enumerable: false,
+    get() { return active },
+  })
+
+  return tesseractPromisifyCompat
+}
+
+/**
+ * Historical public helper name retained for compatibility. Screenshot capture
+ * no longer participates in this process-wide seam (#409); only the Tesseract
+ * stdin compatibility behavior remains.
+ */
+export function createVisionRouterExecFilePromisifyCompat(execFileImpl, originalCustom, options = {}) {
+  return createTesseractPromisifyCompat(execFileImpl, originalCustom, options)
+}
+
+function canReplaceCustomPromisify(execFileImpl) {
+  const descriptor = Object.getOwnPropertyDescriptor(execFileImpl, promisify.custom)
+  if (descriptor === undefined) return Object.isExtensible(execFileImpl)
+  if ('writable' in descriptor) return descriptor.writable === true
+  return typeof descriptor.set === 'function'
+}
+
+function setCustomPromisify(execFileImpl, custom) {
+  const descriptor = Object.getOwnPropertyDescriptor(execFileImpl, promisify.custom)
+  if (descriptor === undefined) {
+    Object.defineProperty(execFileImpl, promisify.custom, {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: custom,
+    })
+    return
+  }
+  execFileImpl[promisify.custom] = custom
+}
+
+function restoreCustomPromisify(execFileImpl, originalCustom) {
+  if (originalCustom === undefined) delete execFileImpl[promisify.custom]
+  else execFileImpl[promisify.custom] = originalCustom
+}
+
+function callbackForwarder(execFileImpl, patchedCustom) {
+  const wrapped = function execFile(...args) {
+    return Reflect.apply(execFileImpl, this, args)
+  }
+  Object.defineProperty(wrapped, promisify.custom, {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: patchedCustom,
+  })
+  return wrapped
+}
+
+function builtinExportSynchronizer(moduleObject, options) {
+  const builtinModule = options.builtinChildProcessModule ?? childProcess
+  const synchronize = options.syncBuiltinESMExports ?? syncBuiltinESMExports
+  return () => {
+    if (moduleObject === builtinModule) synchronize()
+  }
+}
+
+function warnInstallDegraded(ctx, reason) {
+  try {
+    ctx?.logger?.warn?.(
+      'vision-router: execFile compatibility could not be installed (%s); continuing without local OCR stdin compatibility',
+      reason,
+    )
+  } catch {
+    /* boot must never fail for optional child-process compatibility */
+  }
+}
+
+/**
+ * Install the process-wide execFile compatibility boundary used only by the
+ * historical local Tesseract stdin path. Windows desktop capture is direct and
+ * intentionally independent of this lifecycle. The public runtime still calls
+ * the historical installTesseractExecFileCompat alias.
+ */
+export function installVisionRouterExecFileCompat(ctx, options = {}) {
+  const moduleObject = options.childProcessModule ?? childProcess
+  if (!moduleObject || typeof moduleObject !== 'object' || typeof moduleObject.execFile !== 'function') {
+    throw new TypeError('installVisionRouterExecFileCompat: childProcessModule.execFile must be a function')
+  }
+
+  const execFileImpl = moduleObject.execFile
+  let state = installStates.get(execFileImpl)
+  if (state === undefined) {
+    const synchronizeBuiltinExports = builtinExportSynchronizer(moduleObject, options)
+    const originalCustom = execFileImpl[promisify.custom]
+    const patchedCustom = createVisionRouterExecFilePromisifyCompat(execFileImpl, originalCustom, options)
+
+    if (canReplaceCustomPromisify(execFileImpl)) {
+      try {
+        setCustomPromisify(execFileImpl, patchedCustom)
+        // Electron can expose distinct CJS and ESM execFile function objects.
+        // Synchronize after mutating the CJS custom hook so existing ESM named
+        // imports observe the same promisify.custom compatibility function.
+        synchronizeBuiltinExports()
+      } catch (error) {
+        try {
+          if (execFileImpl[promisify.custom] === patchedCustom) {
+            restoreCustomPromisify(execFileImpl, originalCustom)
+            synchronizeBuiltinExports()
+          }
+        } catch {
+          /* best effort rollback; the CJS hook is restored before re-sync */
+        }
+        patchedCustom.deactivate?.()
+        warnInstallDegraded(ctx, error && error.message ? error.message : String(error))
+        return () => {}
+      }
+      state = {
+        count: 0,
+        mode: 'custom-property',
+        moduleObject,
+        execFileImpl,
+        exposedExecFile: execFileImpl,
+        originalCustom,
+        patchedCustom,
+        synchronizeBuiltinExports,
+      }
+      installStates.set(execFileImpl, state)
+    } else {
+      const exposedExecFile = callbackForwarder(execFileImpl, patchedCustom)
+      try {
+        moduleObject.execFile = exposedExecFile
+        if (moduleObject.execFile !== exposedExecFile) throw new Error('child_process.execFile export is not writable')
+        synchronizeBuiltinExports()
+      } catch (error) {
+        try {
+          if (moduleObject.execFile === exposedExecFile) {
+            moduleObject.execFile = execFileImpl
+            synchronizeBuiltinExports()
+          }
+        } catch {
+          /* best effort rollback */
+        }
+        patchedCustom.deactivate?.()
+        warnInstallDegraded(ctx, error && error.message ? error.message : String(error))
+        return () => {}
+      }
+      state = {
+        count: 0,
+        mode: 'module-wrapper',
+        moduleObject,
+        execFileImpl,
+        exposedExecFile,
+        originalCustom,
+        patchedCustom,
+        synchronizeBuiltinExports,
+      }
+      installStates.set(execFileImpl, state)
+      installStates.set(exposedExecFile, state)
+    }
+  }
+  state.count += 1
+
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    state.count = Math.max(0, state.count - 1)
+    if (state.count !== 0) return
+
+    try { state.patchedCustom.deactivate?.() } catch { /* best effort */ }
+    const stillOwnsCustom = state.exposedExecFile[promisify.custom] === state.patchedCustom
+
+    if (state.mode === 'custom-property') {
+      if (stillOwnsCustom) {
+        try {
+          restoreCustomPromisify(state.execFileImpl, state.originalCustom)
+          state.synchronizeBuiltinExports()
+        } catch { /* best effort */ }
+      }
+    } else if (
+      state.mode === 'module-wrapper' &&
+      state.moduleObject.execFile === state.exposedExecFile &&
+      stillOwnsCustom
+    ) {
+      try {
+        state.moduleObject.execFile = state.execFileImpl
+        state.synchronizeBuiltinExports()
+      } catch {
+        /* a later host/plugin mutation stays authoritative */
+      }
+    }
+
+    installStates.delete(state.execFileImpl)
+    installStates.delete(state.exposedExecFile)
+  }
+
+  if (ctx && typeof ctx.effect === 'function') {
+    try {
+      ctx.effect(() => dispose, 'vision-router: execFile compatibility')
+    } catch (error) {
+      // The process-global execFile seam was already mutated above. If Cordis
+      // cannot own this generation, undo exactly this installation before the
+      // failure escapes so no orphan patch survives HMR/startup failure.
+      dispose()
+      throw error
+    }
+  }
+  return dispose
+}
+
+// Backward-compatible public name. Runtime composition and existing tests use
+// this symbol; the implementation now owns the full narrow execFile seam.
+export const installTesseractExecFileCompat = installVisionRouterExecFileCompat

@@ -1,0 +1,805 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import process from 'node:process'
+import { resolveDshHome } from './doctor.js'
+import { MODEL_RESPONSE_MAX_BYTES, readResponseJsonBounded } from './http-body-limit.js'
+import { stripTrailingSlashes } from './string-normalization.js'
+import {
+  currentLegacyGlobalProxyFetch,
+  legacyGlobalProxyPairFor,
+  runWithLegacyGlobalProxyScope,
+} from './legacy-global-proxy-boundary.js'
+import { isLocalUiRequest } from './web-capability-boundary.js'
+
+export const LIVE_MODELS_PATH = '/_dsh/vision-router/live-models'
+export const LIVE_MODEL_CACHE_VERSION = 2
+export const DEFAULT_LIVE_MODEL_FRESH_MS = 15 * 60 * 1000
+export const DEFAULT_LIVE_MODEL_STALE_MS = 24 * 60 * 60 * 1000
+export const DEFAULT_LIVE_MODEL_TIMEOUT_MS = 6_000
+export const DEFAULT_LIVE_MODEL_CONCURRENCY = 3
+export const DEFAULT_MAX_MODELS_PER_PROVIDER = 2_000
+
+const SUPPORTED_DISCOVERY_PROTOCOLS = new Set(['openai-completions', 'openai-responses'])
+
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
+
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+function normalizeBaseURL(value) {
+  const text = nonEmpty(value)
+  if (text === undefined) return undefined
+  let parsed
+  try {
+    parsed = new URL(text)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  parsed.hash = ''
+  parsed.search = ''
+  return stripTrailingSlashes(parsed.toString())
+}
+
+function boundedLabel(value, max = 512) {
+  const text = nonEmpty(value)
+  return text === undefined ? undefined : text.slice(0, max)
+}
+
+export function normalizeOpenAIModelListing(body, { maxModels = DEFAULT_MAX_MODELS_PER_PROVIDER } = {}) {
+  const data = body && typeof body === 'object' ? body.data : undefined
+  if (!Array.isArray(data)) {
+    const error = new Error('provider model listing has no data array')
+    error.code = 'LIVE_MODEL_LISTING_INVALID'
+    throw error
+  }
+  const seen = new Set()
+  const models = []
+  const limit = Math.max(1, Math.floor(Number(maxModels) || DEFAULT_MAX_MODELS_PER_PROVIDER))
+  for (const raw of data) {
+    if (models.length >= limit) break
+    if (!raw || typeof raw !== 'object') continue
+    const id = boundedLabel(raw.id)
+    if (id === undefined || seen.has(id)) continue
+    seen.add(id)
+    const name = boundedLabel(raw.name ?? raw.display_name)
+    models.push(name === undefined ? { id } : { id, name })
+  }
+  return models
+}
+
+export function liveModelCachePath(dshHome = resolveDshHome()) {
+  return path.join(dshHome, 'cache', 'vision-router', 'live-models.json')
+}
+
+export function routeFingerprint({ provider, baseURL, api }) {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      provider: String(provider ?? ''),
+      baseURL: String(baseURL ?? ''),
+      api: String(api ?? ''),
+    }))
+    .digest('hex')
+}
+
+function listingURL(baseURL) {
+  return `${stripTrailingSlashes(baseURL)}/models`
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
+  res.end(JSON.stringify(body))
+}
+
+function cleanCachedProvider(entry) {
+  if (!entry || typeof entry !== 'object') return undefined
+  const provider = nonEmpty(entry.provider)
+  const fingerprint = nonEmpty(entry.fingerprint)
+  const discoveredAt = Number(entry.discoveredAt)
+  if (provider === undefined || fingerprint === undefined || !Number.isFinite(discoveredAt) || discoveredAt <= 0) {
+    return undefined
+  }
+  const models = Array.isArray(entry.models)
+    ? entry.models.flatMap((model) => {
+        const id = boundedLabel(model?.id)
+        if (id === undefined) return []
+        const name = boundedLabel(model?.name)
+        return [name === undefined ? { id } : { id, name }]
+      }).slice(0, DEFAULT_MAX_MODELS_PER_PROVIDER)
+    : []
+  return {
+    provider,
+    fingerprint,
+    discoveredAt,
+    models,
+    evidenceGeneration: -1,
+    routeMismatch: false,
+    ...(typeof entry.lastError === 'string' && entry.lastError !== '' ? { lastError: entry.lastError.slice(0, 300) } : {}),
+  }
+}
+
+function persistedProvider(entry) {
+  return {
+    provider: entry.provider,
+    fingerprint: entry.fingerprint,
+    discoveredAt: entry.discoveredAt,
+    models: entry.models,
+    ...(entry.lastError ? { lastError: entry.lastError } : {}),
+  }
+}
+
+function cacheEnvelope(entries) {
+  return {
+    version: LIVE_MODEL_CACHE_VERSION,
+    providers: entries,
+  }
+}
+
+async function loadCache(file, fsOps) {
+  try {
+    const body = JSON.parse(await fsOps.readFile(file, 'utf8'))
+    if (!body || body.version !== LIVE_MODEL_CACHE_VERSION || !Array.isArray(body.providers)) return new Map()
+    return new Map(
+      body.providers
+        .map(cleanCachedProvider)
+        .filter(Boolean)
+        .map((entry) => [entry.provider, entry]),
+    )
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return new Map()
+    return new Map()
+  }
+}
+
+async function saveCache(file, providers, fsOps) {
+  const directory = path.dirname(file)
+  const temporary = `${file}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
+  await fsOps.mkdir(directory, { recursive: true })
+  const entries = [...providers.values()]
+    .filter((entry) => entry && entry.routeMismatch !== true)
+    .sort((left, right) => left.provider.localeCompare(right.provider))
+    .slice(0, 64)
+    .map(persistedProvider)
+  await fsOps.writeFile(temporary, JSON.stringify(cacheEnvelope(entries)), { encoding: 'utf8', mode: 0o600 })
+  await fsOps.rename(temporary, file)
+}
+
+function plainProviderMap(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+
+/**
+ * Host-side provider profiles have two possible homes on a real DSH host:
+ *  - the settings service (some Host lines mirror a plugin's config there), and
+ *  - the profile configuration owned by the Host config editor, which is where
+ *    DSH 0.2.0-rc.2 keeps `llm-pi-ai.providers` (the Models page writes them
+ *    back to the profile patch, never to a settings section).
+ * Reading only the settings section made live discovery a dead path on that
+ * Host: `configuredProviderTransports()` returned `[]` and no `/models` probe
+ * could ever run.
+ */
+function configEditorProviders(ctx) {
+  try {
+    const editor = ctx?.get?.('configEditor')
+    if (editor === undefined || typeof editor.configuration !== 'function') return undefined
+    const rows = editor.configuration()
+    if (!Array.isArray(rows)) return undefined
+    const row = rows.find((candidate) => {
+      const options = candidate?.entry?.options
+      return options?.id === 'llm-pi-ai' || options?.name === '@deepseek-ai/dsh-llm-pi-ai'
+    })
+    if (row === undefined) return undefined
+    // The row exists, so an absent/empty providers map means "no providers are
+    // configured" — authoritative, which lets the cache drop removed entries.
+    // Only a missing row or an unavailable editor stays non-authoritative, so a
+    // transient read can never delete evidence.
+    const inherited = plainProviderMap(row.inherited?.providers) ?? {}
+    const override = plainProviderMap(row.override?.providers) ?? {}
+    return { ...inherited, ...override }
+  } catch {
+    return undefined
+  }
+}
+
+function piProfilesState(ctx) {
+  try {
+    const settings = ctx?.get?.('settings')
+    if (settings && typeof settings.get === 'function') {
+      const value = settings.get('llm-pi-ai')
+      const providers = plainProviderMap(value?.providers)
+      if (providers !== undefined) return { authoritative: true, providers }
+    }
+  } catch {
+    // Fall through to the profile-configuration source below.
+  }
+  const fromEditor = configEditorProviders(ctx)
+  if (fromEditor !== undefined) return { authoritative: true, providers: fromEditor }
+  return { authoritative: false, providers: {} }
+}
+
+function rawPiProfiles(ctx) {
+  return piProfilesState(ctx).providers
+}
+
+function providerConfigurationToken(provider, raw) {
+  return JSON.stringify([
+    provider,
+    normalizeBaseURL(raw?.baseURL) ?? '',
+    nonEmpty(raw?.api) ?? '',
+    nonEmpty(raw?.apiKeyEnv) ?? '',
+  ])
+}
+
+// The boundary resolves its pair list from the live config; read the same shape so
+// the scope we open is one the boundary will accept.
+function liveProxyConfig(ctx, fallbackConfig = {}) {
+  try {
+    const settings = ctx?.get?.('settings')
+    const live = settings?.get?.('vision-router')
+    if (live !== null && typeof live === 'object' && !Array.isArray(live)) {
+      return { ...fallbackConfig, ...live }
+    }
+  } catch {
+    // Fall back to the composition config.
+  }
+  return fallbackConfig
+}
+
+function visionProviderPriority(ctx, fallbackConfig = {}) {
+  const preferred = new Set()
+  const collect = (value) => {
+    for (const pair of Array.isArray(value?.providers) ? value.providers : []) {
+      if (pair && nonEmpty(pair.provider) !== undefined && pair.provider !== 'vision-http') preferred.add(pair.provider)
+    }
+  }
+  collect(fallbackConfig)
+  try {
+    const settings = ctx?.get?.('settings')
+    collect(settings?.get?.('vision-router'))
+  } catch {
+    // Composition config still provides the startup priority set.
+  }
+  return preferred
+}
+
+function resolvedPiProfile(ctx, provider) {
+  try {
+    const registration = ctx?.llm?.registration?.(provider)
+    const profiles = registration?.adapter?.config?.profiles
+    const map = typeof profiles === 'function' ? profiles.call(registration.adapter.config) : undefined
+    return map?.get?.(provider)
+  } catch {
+    return undefined
+  }
+}
+
+function firstString(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim() !== '')?.trim()
+}
+
+function transportForProvider(ctx, provider, rawProfile) {
+  const resolved = resolvedPiProfile(ctx, provider)
+  const baseURL = normalizeBaseURL(firstString(
+    rawProfile?.baseURL,
+    resolved?.baseURL,
+    resolved?.piProvider?.baseUrl,
+  ))
+  const api = firstString(rawProfile?.api, resolved?.api)
+  const apiKeyEnv = firstString(rawProfile?.apiKeyEnv, resolved?.apiKeyEnv)
+  return { baseURL, api, apiKeyEnv }
+}
+
+export function providerTransportFor(ctx, provider) {
+  const id = nonEmpty(provider)
+  if (id === undefined) return undefined
+  const raw = rawPiProfiles(ctx)[id]
+  if (!raw || typeof raw !== 'object') return undefined
+  const transport = transportForProvider(ctx, id, raw)
+  if (transport.baseURL === undefined) return undefined
+  return {
+    provider: id,
+    baseURL: transport.baseURL,
+    api: transport.api ?? 'openai-completions',
+    apiKeyEnv: transport.apiKeyEnv,
+  }
+}
+
+export function configuredProviderTransports(ctx) {
+  return Object.keys(rawPiProfiles(ctx))
+    .map((provider) => providerTransportFor(ctx, provider))
+    .filter(Boolean)
+}
+
+function launchEnvironmentCredential(ctx, ref) {
+  try {
+    const launchEnvironment = ctx?.get?.('launchEnvironment')
+    if (launchEnvironment !== undefined) {
+      const hit = launchEnvironment?.get?.(ref)
+      return hit && typeof hit.value === 'string' && hit.value.length > 0 ? hit.value : undefined
+    }
+  } catch {
+    return undefined
+  }
+  // Compositions that did not boot through the DSH launcher have no immutable
+  // launch-environment snapshot. In that legacy/test posture, process.env is
+  // the launch environment just as DSH's launchEnvironmentOf(ctx) fallback is.
+  const ambient = process.env[ref]
+  return typeof ambient === 'string' && ambient.length > 0 ? ambient : undefined
+}
+
+async function resolveCredential(ctx, ref) {
+  if (typeof ref !== 'string' || ref === '') {
+    return { required: false, value: undefined, source: 'none' }
+  }
+
+  let credentials
+  try {
+    credentials = ctx?.get?.('credentials')
+  } catch {
+    credentials = undefined
+  }
+
+  // Match llm-pi-ai's credential ownership exactly. Once the credentials seam
+  // exists, a named ref belongs to it: a miss/error must NOT fall through to a
+  // possibly unrelated ambient key. This also keeps live discovery from
+  // probing an authenticated endpoint anonymously while the service is still
+  // mounting during startup.
+  if (credentials !== undefined) {
+    try {
+      const hit = await credentials?.resolve?.(ref)
+      if (hit && typeof hit.value === 'string' && hit.value.length > 0) {
+        return { required: true, value: hit.value, source: 'credentials' }
+      }
+      return { required: true, value: undefined, source: 'credentials-miss' }
+    } catch {
+      return { required: true, value: undefined, source: 'credentials-error' }
+    }
+  }
+
+  const value = launchEnvironmentCredential(ctx, ref)
+  return {
+    required: true,
+    value,
+    source: value === undefined ? 'launch-environment-miss' : 'launch-environment',
+  }
+}
+
+async function providerPlan(ctx, provider) {
+  const transport = providerTransportFor(ctx, provider)
+  if (transport === undefined) return { ok: false, reason: 'missing-base-url' }
+  if (!SUPPORTED_DISCOVERY_PROTOCOLS.has(transport.api)) {
+    return { ok: false, reason: 'unsupported-protocol' }
+  }
+  const credential = await resolveCredential(ctx, transport.apiKeyEnv)
+  // DSH llm-pi-ai treats a named apiKeyEnv as mandatory. Sending `/models`
+  // without that key is both misleading (the user sees a spurious 401) and can
+  // poison route fingerprints/cache evidence. Defer instead; the browser's
+  // refresh polling and credential-reference invalidation will retry once the
+  // credential seam is ready or the user stores the key.
+  if (credential.required && credential.value === undefined) {
+    return {
+      ok: false,
+      reason: 'credential-unresolved',
+      credentialSource: credential.source,
+    }
+  }
+  const apiKey = credential.value
+  return {
+    ok: true,
+    provider,
+    baseURL: transport.baseURL,
+    api: transport.api,
+    apiKey,
+    fingerprint: routeFingerprint({
+      provider,
+      baseURL: transport.baseURL,
+      api: transport.api,
+    }),
+  }
+}
+
+function boundedError(error) {
+  const text = error && error.message ? error.message : String(error)
+  return text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').slice(0, 300)
+}
+
+export function createLiveModelDiscoveryManager(ctx, options = {}) {
+  const now = typeof options.now === 'function' ? options.now : Date.now
+  // The proxy boundary installs its wrapper after apply() returns, so a capture
+  // taken here would keep the raw host fetch and silently ignore a configured
+  // `proxy` in the probes below. Ask the boundary for the fetch it currently owns
+  // instead of reading the process global at call time (L1-sealed-process-global);
+  // the module-load capture stays as the last-resort fallback.
+  const injectedFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undefined
+  const resolveFetch = () => injectedFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
+  const freshMs = Math.max(1_000, Number(options.freshMs) || DEFAULT_LIVE_MODEL_FRESH_MS)
+  const staleMs = Math.max(freshMs, Number(options.staleMs) || DEFAULT_LIVE_MODEL_STALE_MS)
+  const timeoutMs = Math.max(500, Number(options.timeoutMs) || DEFAULT_LIVE_MODEL_TIMEOUT_MS)
+  const concurrency = Math.max(1, Math.min(8, Math.floor(Number(options.concurrency) || DEFAULT_LIVE_MODEL_CONCURRENCY)))
+  const cacheFile = options.cacheFile ?? liveModelCachePath(options.dshHome)
+  const fsOps = {
+    readFile: options.fsOps?.readFile ?? readFile,
+    mkdir: options.fsOps?.mkdir ?? mkdir,
+    writeFile: options.fsOps?.writeFile ?? writeFile,
+    rename: options.fsOps?.rename ?? rename,
+  }
+  const logger = options.logger ?? ctx?.logger
+  const fallbackConfig = options.config ?? {}
+  let providers = new Map()
+  let version = 0
+  let evidenceGeneration = 0
+  let configuredProviders
+  let configuredTokens = new Map()
+  let providerGenerations = new Map()
+  let providerGenerationSequence = 0
+  let active = 0
+  let disposed = false
+  let saveTail = Promise.resolve()
+  const inflight = new Map()
+  const inflightAuthority = new Map()
+  const queued = new Map()
+  const backoffUntil = new Map()
+  const activeControllers = new Map()
+
+  const persist = () => {
+    saveTail = saveTail
+      .then(() => saveCache(cacheFile, providers, fsOps))
+      .catch((error) => logger?.warn?.('vision-router: live model cache write failed: %s', boundedError(error)))
+    return saveTail
+  }
+
+  const pruneUnconfiguredState = () => {
+    if (!(configuredProviders instanceof Set)) return false
+    let providerCacheChanged = false
+    for (const provider of [...providers.keys()]) {
+      if (configuredProviders.has(provider)) continue
+      providers.delete(provider)
+      providerCacheChanged = true
+    }
+    for (const provider of [...queued.keys()]) {
+      if (!configuredProviders.has(provider)) queued.delete(provider)
+    }
+    for (const provider of [...backoffUntil.keys()]) {
+      if (!configuredProviders.has(provider)) backoffUntil.delete(provider)
+    }
+    for (const [provider, controller] of activeControllers.entries()) {
+      if (configuredProviders.has(provider)) continue
+      try { controller.abort() } catch {}
+    }
+    if (providerCacheChanged) version += 1
+    return providerCacheChanged
+  }
+
+  const reconcileConfiguredProviders = () => {
+    const state = piProfilesState(ctx)
+    if (!state.authoritative) return state.providers
+    const next = new Set(Object.keys(state.providers))
+    const nextTokens = new Map([...next].map((provider) => [
+      provider,
+      providerConfigurationToken(provider, state.providers[provider]),
+    ]))
+    const nextGenerations = new Map()
+    for (const provider of next) {
+      const unchanged = configuredProviders instanceof Set &&
+        configuredProviders.has(provider) &&
+        configuredTokens.get(provider) === nextTokens.get(provider)
+      if (unchanged && providerGenerations.has(provider)) {
+        nextGenerations.set(provider, providerGenerations.get(provider))
+      } else {
+        providerGenerationSequence += 1
+        nextGenerations.set(provider, providerGenerationSequence)
+      }
+    }
+    configuredProviders = next
+    configuredTokens = nextTokens
+    providerGenerations = nextGenerations
+    if (pruneUnconfiguredState()) void persist()
+    return state.providers
+  }
+
+  const currentDiscoveryAuthority = (provider) => ({
+    providerGeneration: providerGenerations.get(provider) ?? 0,
+    evidenceGeneration,
+  })
+
+  const sameDiscoveryAuthority = (left, right) => (
+    left?.providerGeneration === right?.providerGeneration &&
+    left?.evidenceGeneration === right?.evidenceGeneration
+  )
+
+  const discoveryStillCurrent = (provider, authority) => (
+    sameDiscoveryAuthority(authority, currentDiscoveryAuthority(provider)) &&
+    (!(configuredProviders instanceof Set) || configuredProviders.has(provider))
+  )
+
+  const cacheReady = loadCache(cacheFile, fsOps).then((loaded) => {
+    if (disposed) return
+    providers = loaded
+    reconcileConfiguredProviders()
+  })
+
+  const visibleEntry = (entry, at = now()) => {
+    if (!entry || entry.routeMismatch === true || at - entry.discoveredAt > staleMs) return undefined
+    const currentEvidence = entry.evidenceGeneration === evidenceGeneration
+    return {
+      provider: entry.provider,
+      models: entry.models,
+      discoveredAt: entry.discoveredAt,
+      stale: !currentEvidence || at - entry.discoveredAt > freshMs,
+      live: currentEvidence,
+      ...(entry.lastError ? { lastError: entry.lastError } : {}),
+    }
+  }
+
+  const snapshot = async ({ schedule = false } = {}) => {
+    await cacheReady
+    if (schedule) queueConfigured()
+    const at = now()
+    return {
+      ok: true,
+      version,
+      refreshing: active > 0 || queued.size > 0,
+      providers: [...providers.values()].map((entry) => visibleEntry(entry, at)).filter(Boolean),
+    }
+  }
+
+  const discover = async (provider, authorityAtStart) => {
+    const plan = await providerPlan(ctx, provider)
+    if (!plan.ok || disposed || !discoveryStillCurrent(provider, authorityAtStart)) return
+    const generationAtStart = authorityAtStart.evidenceGeneration
+    const previous = providers.get(provider)
+    const at = now()
+    const sameRoute = previous?.fingerprint === plan.fingerprint
+    const currentEvidence = previous?.evidenceGeneration === generationAtStart
+
+    if (sameRoute && currentEvidence && at - previous.discoveredAt <= freshMs) return
+    if ((backoffUntil.get(provider) ?? 0) > at) return
+
+    if (previous && !sameRoute) {
+      providers.set(provider, {
+        ...previous,
+        routeMismatch: true,
+        evidenceGeneration: -1,
+        lastError: undefined,
+      })
+      version += 1
+    }
+
+    const controller = new AbortController()
+    activeControllers.set(provider, controller)
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const headers = { accept: 'application/json' }
+      if (plan.apiKey !== undefined) headers.authorization = `Bearer ${plan.apiKey}`
+      const probe = () => resolveFetch()(listingURL(plan.baseURL), {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+      })
+      const proxyPair = legacyGlobalProxyPairFor(liveProxyConfig(ctx, fallbackConfig), provider)
+      const response = proxyPair === undefined
+        ? await probe()
+        : await runWithLegacyGlobalProxyScope(proxyPair.provider, proxyPair.model, probe)
+      if (!response?.ok) {
+        const error = new Error(`provider model listing answered HTTP ${response?.status ?? 'unknown'}`)
+        error.status = response?.status
+        throw error
+      }
+      const body = await readResponseJsonBounded(response, MODEL_RESPONSE_MAX_BYTES, {
+        label: `${provider} model listing`,
+      })
+      const models = normalizeOpenAIModelListing(body, { maxModels: options.maxModels })
+      if (disposed || !discoveryStillCurrent(provider, authorityAtStart)) return
+      providers.set(provider, {
+        provider,
+        fingerprint: plan.fingerprint,
+        discoveredAt: now(),
+        models,
+        evidenceGeneration: generationAtStart,
+        routeMismatch: false,
+      })
+      backoffUntil.delete(provider)
+      version += 1
+      void persist()
+    } catch (error) {
+      if (disposed || !discoveryStillCurrent(provider, authorityAtStart)) return
+      const current = providers.get(provider)
+      const message = boundedError(error)
+      if (current) {
+        providers.set(provider, { ...current, lastError: message })
+        version += 1
+      }
+      backoffUntil.set(provider, now() + 30_000)
+      logger?.debug?.('vision-router: live model discovery failed for %s: %s', provider, message)
+    } finally {
+      clearTimeout(timer)
+      if (activeControllers.get(provider) === controller) activeControllers.delete(provider)
+    }
+  }
+
+  const pump = () => {
+    if (disposed) return
+    while (active < concurrency && queued.size > 0) {
+      let picked
+      for (const candidate of queued.values()) {
+        if (inflight.has(candidate.provider)) continue
+        if (!picked || candidate.priority < picked.priority ||
+            (candidate.priority === picked.priority && candidate.order < picked.order)) picked = candidate
+      }
+      if (!picked) return
+      queued.delete(picked.provider)
+      active += 1
+      const authorityAtStart = currentDiscoveryAuthority(picked.provider)
+      const task = discover(picked.provider, authorityAtStart)
+        .catch(() => {})
+        .finally(() => {
+          active = Math.max(0, active - 1)
+          inflight.delete(picked.provider)
+          inflightAuthority.delete(picked.provider)
+          pump()
+        })
+      inflight.set(picked.provider, task)
+      inflightAuthority.set(picked.provider, authorityAtStart)
+    }
+  }
+
+  let order = 0
+  const queue = (provider, priority = 10) => {
+    if (disposed || nonEmpty(provider) === undefined || provider === 'vision-http') return
+    const existing = queued.get(provider)
+    const next = { provider, priority: Number(priority) || 0, order: order++ }
+    if (!existing || next.priority < existing.priority) queued.set(provider, next)
+    pump()
+  }
+
+  function queueConfigured() {
+    const raw = reconcileConfiguredProviders()
+    const preferred = visionProviderPriority(ctx, fallbackConfig)
+    for (const provider of Object.keys(raw)) {
+      const activeAuthority = inflightAuthority.get(provider)
+      if (activeAuthority && sameDiscoveryAuthority(activeAuthority, currentDiscoveryAuthority(provider))) continue
+      queue(provider, preferred.has(provider) ? 0 : 10)
+    }
+  }
+
+  const hasModel = (provider, model) => {
+    const entry = providers.get(provider)
+    if (
+      !entry ||
+      entry.routeMismatch === true ||
+      entry.evidenceGeneration !== evidenceGeneration ||
+      now() - entry.discoveredAt > staleMs
+    ) return false
+    return entry.models.some((candidate) => candidate.id === model)
+  }
+
+  const invalidate = () => {
+    evidenceGeneration += 1
+    version += 1
+    backoffUntil.clear()
+    queueConfigured()
+  }
+
+  return {
+    ready: () => cacheReady,
+    snapshot,
+    queue,
+    queueConfigured,
+    hasModel,
+    invalidate,
+    async dispose() {
+      disposed = true
+      queued.clear()
+      for (const controller of activeControllers.values()) {
+        try { controller.abort() } catch {}
+      }
+      await Promise.allSettled([...inflight.values(), cacheReady, saveTail])
+      activeControllers.clear()
+      inflightAuthority.clear()
+    },
+  }
+}
+
+export function installLiveModelDiscovery(ctx, options = {}) {
+  const manager = createLiveModelDiscoveryManager(ctx, options)
+  let startupTimer
+  const scheduleStartup = () => {
+    if (startupTimer !== undefined || typeof setTimeout !== 'function') return
+    startupTimer = setTimeout(() => {
+      startupTimer = undefined
+      manager.queueConfigured()
+    }, 750)
+    startupTimer.unref?.()
+  }
+  scheduleStartup()
+
+  let credentialInvalidationQueued = false
+  let lifecycleDisposed = false
+  const onInvalidate = () => {
+    if (!lifecycleDisposed) manager.invalidate()
+  }
+  const onCredentialInvalidate = () => {
+    if (lifecycleDisposed || credentialInvalidationQueued) return
+    credentialInvalidationQueued = true
+    manager.invalidate()
+    Promise.resolve().then(() => { credentialInvalidationQueued = false })
+  }
+  const disposers = []
+  try {
+    for (const event of ['settings/document-updated', 'llm/adapters-updated']) {
+      const dispose = ctx?.on?.(event, onInvalidate)
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+    for (const event of ['credentials/reference-updated', 'credentials/updated']) {
+      const dispose = ctx?.on?.(event, onCredentialInvalidate)
+      if (typeof dispose === 'function') disposers.push(dispose)
+    }
+  } catch {
+    // Event forwarding is an optimization; the request path still refreshes.
+  }
+
+  let disposePromise
+  const disposeLifecycle = () => {
+    if (disposePromise) return disposePromise
+    lifecycleDisposed = true
+    if (startupTimer !== undefined) {
+      clearTimeout(startupTimer)
+      startupTimer = undefined
+    }
+    for (const dispose of disposers.splice(0)) {
+      try { dispose() } catch { /* best effort */ }
+    }
+    disposePromise = Promise.resolve(manager.dispose())
+    return disposePromise
+  }
+
+  // Own every timer/listener/manager resource before any later Host seam can
+  // throw. This keeps injection failure from stranding a live generation.
+  try {
+    ctx?.effect?.(
+      () => disposeLifecycle,
+      'vision-router: live model discovery lifecycle',
+    )
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
+  }
+
+  try {
+    ctx?.inject?.(['webServer'], (webCtx) => {
+      webCtx.effect(() => webCtx.webServer.register({
+        kind: 'exact',
+        path: LIVE_MODELS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET') {
+            res.setHeader('Allow', 'GET')
+            sendJson(res, 405, { ok: false, error: 'method not allowed' })
+            return
+          }
+          try {
+            const url = new URL(req.url ?? LIVE_MODELS_PATH, 'http://localhost')
+            // The snapshot itself is safe for an authenticated remote Settings UI,
+            // but refresh drives Host-side provider I/O and may resolve stored
+            // credentials. Preserve local ?refresh=1 behavior while making every
+            // remote GET a passive read of already-owned discovery state.
+            const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
+            sendJson(res, 200, await manager.snapshot({ schedule }))
+          } catch (error) {
+            sendJson(res, 500, { ok: false, error: boundedError(error) })
+          }
+        },
+      }), 'vision-router: live provider model discovery')
+    })
+  } catch (error) {
+    void disposeLifecycle().catch(() => {})
+    throw error
+  }
+  return manager
+}

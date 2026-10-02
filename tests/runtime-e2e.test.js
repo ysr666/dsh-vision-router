@@ -1292,3 +1292,45 @@ test('vision chain falls through from a hung local backend to the next local bac
     rmSync(workdir, { recursive: true, force: true })
   }
 })
+
+// ── E. 深看工具挂载的所有权与失败回滚 ─────────────────────────────────────
+test('deep tool mounting owns every registration and rolls back a partial failure', async () => {
+  const harness = bootHarness({ progressiveTools: true })
+  const effects = []
+  let registered = 0
+  let failAt = Number.POSITIVE_INFINITY
+  harness.ctx.tools.register = (def) => {
+    registered += 1
+    if (registered === failAt) throw new Error('registrar refused')
+    harness.toolDefs.set(def.name, def)
+    return () => {
+      if (harness.toolDefs.get(def.name) === def) harness.toolDefs.delete(def.name)
+    }
+  }
+  harness.ctx.effect = (fn) => {
+    const dispose = typeof fn === 'function' ? fn() : undefined
+    effects.push(dispose)
+    return dispose
+  }
+  apply(harness.ctx, Config({ progressiveTools: true }))
+
+  const activate = harness.toolDefs.get('vision_activate')
+  assert.ok(activate, 'progressive mode should register vision_activate')
+  const baseline = harness.toolDefs.size
+
+  failAt = registered + 3
+  await assert.rejects(() => activate.execute({}, {}), /registrar refused/)
+  assert.equal(harness.toolDefs.size, baseline, 'a partial mount must be rolled back')
+  assert.ok(harness.toolDefs.has('vision_activate'), 'rollback must not unmount the bootstrap tool')
+
+  failAt = Number.POSITIVE_INFINITY
+  const message = await activate.execute({}, {})
+  assert.match(String(message), /已挂载/)
+  assert.ok(harness.toolDefs.has('vision_describe'), 'retry after rollback must mount the full set')
+  assert.ok(harness.toolDefs.size > baseline)
+
+  for (const dispose of effects.reverse()) {
+    if (typeof dispose === 'function') await dispose()
+  }
+  assert.equal(harness.toolDefs.size, 0, 'disposing the fiber must unmount every registered tool')
+})

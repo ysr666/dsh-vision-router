@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { lookupRegistryIdentity, waitForRegistryIdentity } from '../scripts/release-registry-identity.mjs'
+import { inspectRegistryIdentity, lookupRegistryIdentity, waitForRegistryIdentity } from '../scripts/release-registry-identity.mjs'
 
 function response(status, body = {}) {
   return {
@@ -116,4 +116,32 @@ test('unexpected client/auth responses fail instead of permitting a publish', as
   assert.equal(result.state, 'fatal')
   assert.equal(result.attempt, 1)
   assert.equal(result.detail, 'HTTP 401')
+})
+
+test('registry inspection reports an existing release without assuming local tarball byte identity', async () => {
+  const result = await inspectRegistryIdentity({
+    packageName: 'pkg',
+    version: '1.0.0',
+    attempts: 3,
+    delayMs: 1,
+    sleepImpl: async () => {},
+    fetchImpl: async () => response(200, { dist: { shasum: 'registry-sha' } }),
+  })
+  assert.deepEqual(result, { state: 'visible', sha1: 'registry-sha', attempt: 1 })
+})
+
+test('registry inspection retries transient and missing visibility before declaring recovery unpublished', async () => {
+  const sequence = [503, 404, 404]
+  let calls = 0
+  const result = await inspectRegistryIdentity({
+    packageName: 'pkg',
+    version: '1.0.0',
+    attempts: 3,
+    delayMs: 1,
+    sleepImpl: async () => {},
+    fetchImpl: async () => response(sequence[calls++] ?? 404),
+  })
+  assert.equal(result.state, 'timeout')
+  assert.equal(result.last.state, 'missing')
+  assert.equal(calls, 3)
 })

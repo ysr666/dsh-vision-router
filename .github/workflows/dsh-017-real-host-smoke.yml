@@ -3,11 +3,12 @@ name: DSH 0.1.7 real Host smoke
 on:
   pull_request:
     paths:
+      - 'src/**'
       - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'index.js'
+      - 'src/index.js'
       - 'cordis.patch.yml'
       - 'package.json'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/ci-heavy-host-impact.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
@@ -20,10 +21,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'index.js'
+      - 'src/index.js'
       - 'cordis.patch.yml'
       - 'package.json'
-      - 'lib/**'
+      - 'src/lib/**'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/ci-heavy-host-impact.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
@@ -117,6 +118,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Compute exact DSH web build cache key
         id: dsh-build-key
         working-directory: dsh-017
@@ -267,6 +274,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Compute exact DSH build cache key
         id: dsh-build-key
         working-directory: dsh-017
@@ -394,6 +407,12 @@ jobs:
           cache: pnpm
           cache-dependency-path: dsh-017/pnpm-lock.yaml
 
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
       - name: Install DSH workspace dependencies
         working-directory: dsh-017
         env:

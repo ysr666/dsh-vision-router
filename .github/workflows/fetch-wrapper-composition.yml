@@ -3,7 +3,8 @@ name: Fetch wrapper composition
 on:
   pull_request:
     paths:
-      - 'lib/**'
+      - 'src/**'
+      - 'src/lib/**'
       - 'tests/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -11,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'lib/**'
+      - 'src/lib/**'
       - 'tests/**'
       - 'package.json'
       - 'pnpm-lock.yaml'

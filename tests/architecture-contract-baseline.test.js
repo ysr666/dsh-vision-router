@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 
 async function text(path) {
   return readFile(new URL(`../${path}`, import.meta.url), 'utf8')
@@ -14,7 +14,11 @@ test('package root and runtime support contract stay stable during architecture 
   const pkg = await packageJson()
   assert.equal(pkg.name, 'dsh-vision-router')
   assert.equal(pkg.main, 'lib/public-entry.js')
-  assert.equal(pkg.exports?.['.'], './lib/public-entry.js')
+  assert.equal(pkg.types, 'lib/public-entry.d.ts')
+  assert.deepEqual(pkg.exports?.['.'], {
+    types: './lib/public-entry.d.ts',
+    default: './lib/public-entry.js',
+  })
   assert.equal(pkg.exports?.['./client'], './lib/client.js')
   assert.equal(pkg.exports?.['./package.json'], './package.json')
   assert.equal(pkg.exports?.['./cordis.patch.yml'], './cordis.patch.yml')
@@ -87,9 +91,15 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /2\.0\.x/)
   assert.match(support, /0\.1\.0-rc\.6/)
   assert.match(support, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
+  // The frozen contract pins the *current* release line's row and keeps the
+  // previous line pinned as history: v3.0.0 moved the current row to `3.0.x`.
   assert.match(
     support,
-    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
+    /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| historical 2\.3 baseline \|/,
+  )
+  assert.match(
+    support,
+    /\| `3\.0\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
   )
   assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
   assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
@@ -97,4 +107,115 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /peer-admitted supported 0\.2\.x train/i)
   assert.match(support, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)
+})
+
+
+async function productionRuntimeFiles() {
+  const files = ['entry.js', 'index.js']
+
+  async function walk(directory, prefix) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = `${prefix}/${entry.name}`
+      if (entry.isDirectory()) {
+        await walk(new URL(`${entry.name}/`, directory), relative)
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        files.push(relative)
+      }
+    }
+  }
+
+  await walk(new URL('../lib/', import.meta.url), 'lib')
+  await walk(new URL('../src/', import.meta.url), 'src')
+  return files
+}
+
+test('3.0 R7 package root exposes only the deliberate plugin and compatibility contract', async () => {
+  const [publicEntry, declaration, entry, core, root] = await Promise.all([
+    text('lib/public-entry.js'),
+    text('lib/public-entry.d.ts'),
+    text('entry.js'),
+    text('index.js'),
+    import(new URL('../lib/public-entry.js', import.meta.url)),
+  ])
+
+  assert.match(publicEntry, /export \* from '\.\.\/entry\.js'/)
+  assert.doesNotMatch(entry, /export \* from '\.\/index\.js'/)
+  assert.match(entry, /export \{ inject, name \} from '\.\/index\.js'/)
+  assert.match(core, /export \* from '\.\/lib\/vision-resilience\.js'/)
+
+  const publicNames = [
+    'Config',
+    'SETTINGS_CONTRACT_REVISION',
+    'apply',
+    'ensureVisionAttachmentAdmissionPolicy',
+    'hasBatchAttachmentContract',
+    'hostOwnsOfficialDeepSeekProvider',
+    'inject',
+    'installHostSettingsCompatibility',
+    'installVisionAttachmentAdmissionPolicy',
+    'name',
+    'protectHostProviderOwnership',
+    'sessionSurfaceReplacementIntent',
+  ]
+  assert.deepEqual(Object.keys(root).sort(), publicNames)
+
+  for (const name of publicNames) {
+    assert.match(
+      declaration,
+      new RegExp(`\\b(?:const|function) ${name}\\b`),
+      `${name} must have one deliberate package-root declaration`,
+    )
+  }
+  assert.doesNotMatch(declaration, /from ['"]\.\/.*['"]/)
+  assert.doesNotMatch(declaration, /@deepseek-ai\/[^'"]+\/src\//)
+})
+
+test('cross-repository Host workflows materialize canonical DVR artifacts after checkout', async () => {
+  const workflows = [
+    '.github/workflows/alpha-browser-cold-toggle-smoke.yml',
+    '.github/workflows/dsh-017-browser-smoke.yml',
+    '.github/workflows/dsh-017-real-host-smoke.yml',
+    '.github/workflows/dsh-017-source-contract.yml',
+    '.github/workflows/dsh-020-rc2-validation.yml',
+    '.github/workflows/dsh-alpha-source-contract.yml',
+    '.github/workflows/dsh-preview-browser-smoke.yml',
+    '.github/workflows/dsh-upstream-web-modules-watch.yml',
+  ]
+
+  for (const workflow of workflows) {
+    const source = await text(workflow)
+    const checkouts = source.match(/^\s+path: dvr$/gm) ?? []
+    const materialize = source.match(
+      /^\s+- name: Materialize Vision Router package artifacts$/gm,
+    ) ?? []
+
+    assert.ok(checkouts.length > 0, `${workflow}: expected at least one DVR checkout`)
+    assert.equal(
+      materialize.length,
+      checkouts.length,
+      `${workflow}: every current DVR checkout job must materialize canonical package artifacts`,
+    )
+    assert.match(
+      source,
+      /Materialize Vision Router package artifacts[\s\S]*?working-directory: dvr[\s\S]*?pnpm install --frozen-lockfile --ignore-scripts[\s\S]*?pnpm build[\s\S]*?pnpm build:check/,
+      `${workflow}: materialization must remain explicit and lifecycle-script independent`,
+    )
+  }
+})
+
+test('production runtime never depends on DSH private source entry points', async () => {
+  const forbidden = [
+    /@deepseek-ai\/[^'"\s]+\/src\//,
+    /deepseek-harness\/packages\/[^'"\s]+\/src\//,
+  ]
+  for (const path of await productionRuntimeFiles()) {
+    const source = await text(path)
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(
+        source,
+        pattern,
+        `${path} must depend on package-exported DSH contracts, not private source paths`,
+      )
+    }
+  }
 })

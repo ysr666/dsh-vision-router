@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  configureAgentRequestRouteAuthority,
   contextWithAgentRequestRouteAuthority,
 } from '../lib/agent-request-route-authority.js'
 import {
@@ -96,11 +95,10 @@ test('live custom wrapper and chain routes are never mistaken for generated twin
 
 test('production authority configuration excludes custom wrapper and chain routes before Settings mounts', () => {
   const { ctx, registrations } = registrationHarness(undefined)
-  configureAgentRequestRouteAuthority(ctx, {
+  const wrapped = contextWithAgentRequestRouteAuthority(ctx, {
     wrapperRoute: 'src-vision',
     chainRoute: 'chain-vision',
   })
-  const wrapped = contextWithAgentRequestRouteAuthority(ctx)
   const mainWrapper = {
     async *stream() {
       yield { type: 'finish', reason: { kind: 'stop' } }
@@ -143,11 +141,10 @@ test('a former custom wrapper name can become an ordinary generated twin after l
       },
     },
   }
-  configureAgentRequestRouteAuthority(ctx, {
+  const wrapped = contextWithAgentRequestRouteAuthority(ctx, {
     wrapperRoute: 'src-vision',
     chainRoute: 'vision-chain',
   })
-  const wrapped = contextWithAgentRequestRouteAuthority(ctx)
   const oldMain = {
     async *stream() {
       yield { type: 'finish', reason: { kind: 'stop' } }

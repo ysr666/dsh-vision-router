@@ -25,9 +25,28 @@ test('runtime composition creates one explicit SessionVisionRuntime and gives th
   )
 })
 
+test('Session Vision delegation binds to the Agent service through an explicit lifecycle child', async () => {
+  const runtime = await source('lib/runtime-composition.js')
+
+  assert.match(
+    runtime,
+    /legacyCoreCompat\.ctx\.inject\?\.\(\['agents'\], \(agentsCtx\) => \{/,
+  )
+  assert.match(
+    runtime,
+    /installSessionVisionDelegationBoundary\(\s*agentsCtx,/,
+  )
+  assert.doesNotMatch(
+    runtime,
+    /installSessionVisionDelegationBoundary\(\s*legacyCoreCompat\.ctx,/,
+    'reading ctx.agents during root apply would turn optional timing into a hard Cordis dependency',
+  )
+})
+
 test('production runtime receives only narrow Host Session readers', async () => {
   const runtime = await source('lib/runtime-composition.js')
   const compat = await source('lib/dsh-contract-compat.js')
+  const readers = await source('lib/session-query-readers.js')
 
   assert.match(runtime, /createSessionEventReader\(nativeImageCompat\.ctx\)/)
   assert.match(runtime, /readSessionEvent:\s*createSessionEventReader\(nativeImageCompat\.ctx\)/)
@@ -38,10 +57,14 @@ test('production runtime receives only narrow Host Session readers', async () =>
   )
   assert.match(runtime, /sessionTurnResolver,\s*sessionEventTailReader,\s*hostOwnsOfficialDeepSeek,/)
   assert.match(runtime, /const hostOwnsOfficialDeepSeek = hostOwnsOfficialDeepSeekProvider\(stabilizedCtx\)/)
-  assert.match(compat, /query\.readEvent\(\{ sessionId, seq \}\)/)
-  assert.match(compat, /query\.observeSession\(sessionId, \{ projectionMode: 'none' \}\)/)
-  assert.match(compat, /query\.readSession\(sessionId\)/)
-  assert.match(compat, /query\.readEvent\(request\)/)
+  assert.match(
+    compat,
+    /export \{[\s\S]*createSessionEventReader,[\s\S]*createSessionEventTailReader,[\s\S]*createSessionLogReader,[\s\S]*\} from '.\/session-query-readers\.js'/,
+  )
+  assert.match(readers, /readEvent\.call\(query, \{ sessionId, seq \}\)/)
+  assert.match(readers, /observeSession\.call\([\s\S]*projectionMode: 'none'/)
+  assert.match(readers, /readSession\.call\(query, sessionId\)/)
+  assert.match(readers, /readEvent\.call\(query, request\)/)
 })
 
 test('session state and index expose no hidden current owner or lookup monkey-patch seam', async () => {
@@ -52,6 +75,20 @@ test('session state and index expose no hidden current owner or lookup monkey-pa
   assert.doesNotMatch(index, /currentSessionVisionStateStore|legacyLookupDelegation|adoptStore/)
   assert.doesNotMatch(index, /store\.lookupAttachment\s*=(?!=)/)
   assert.match(index, /stateStore \?\? createSessionVisionStateStore\(\)/)
+})
+
+test('Session attachment access has one explicit typed owner beneath the data-plane index', async () => {
+  const index = await source('lib/session-vision-index.js')
+  const attachments = await source('lib/session-vision-attachment-index.js')
+  const historyCompat = await source('lib/session-event-history-compat.js')
+
+  assert.match(index, /createSessionVisionAttachmentIndex\(/)
+  assert.match(index, /const \{[\s\S]*recordAttachments,[\s\S]*lookupAttachment,[\s\S]*resolveAttachment,[\s\S]*resolveAttachments,[\s\S]*\} = attachmentIndex/)
+  assert.doesNotMatch(index, /attachmentRecoveryWarnings|recoverAttachmentsFromEvents/)
+  assert.doesNotMatch(index, /function legacySessionEvents\s*\(/)
+  assert.match(attachments, /const attachmentRecoveryWarnings = new WeakMap/)
+  assert.match(attachments, /legacySessionEvents\(session\)/)
+  assert.match(historyCompat, /snapshotEvents\.call\(session\)/)
 })
 
 test('core delegates Session indexing, recovery and surface repair to SessionVisionIndex only', async () => {

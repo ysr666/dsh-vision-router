@@ -187,3 +187,51 @@ test('ordinary text and explicitly registered plugin-wrapper turns retain the ex
     assert.deepEqual(observed, [true, true])
   }
 })
+test('native-image policy drops an injected Settings scope when its child generation unloads', async () => {
+  const handlers = new Map()
+  let disposeScope
+  const liveConfig = { rewriteImages: false, routing: false }
+  const scope = { get() { return liveConfig } }
+  const settingsChild = {
+    settings: { register() { return scope } },
+    effect(factory) { disposeScope = factory(); return disposeScope },
+  }
+  const ctx = {
+    llm: {
+      async resolveModelInfo(provider, model) {
+        return { provider, id: model, inputModalities: ['text'] }
+      },
+    },
+    get() { return undefined },
+    on(event, handler) { handlers.set(event, handler); return () => handlers.delete(event) },
+    inject(dependencies, callback) {
+      if (dependencies.includes('settings')) return callback(settingsChild)
+    },
+  }
+  const wrapped = contextWithNativeImageCoexistence(ctx, {
+    rewriteImages: true,
+    routing: false,
+  }).ctx
+  wrapped.inject(['settings'], (child) => child.settings.register('vision-router'))
+  let policy
+  wrapped.on('agent/pre-step', async (_payload, next) => {
+    policy = currentSessionVisionPolicy()
+    return next()
+  })
+
+  const handler = handlers.get('agent/pre-step')
+  const textRoute = session('host-text', 'model')
+  await handler({ agent: { session: textRoute } }, async () => ({ kind: 'ok' }))
+  assert.equal(policy?.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
+  assert.equal(policy?.rewriteCurrentImages, false, 'live child Settings disables rewriting')
+
+  disposeScope()
+
+  await handler({ agent: { session: textRoute } }, async () => ({ kind: 'ok' }))
+  assert.equal(policy?.ownership, IMAGE_OWNERSHIP.TEXT_ONLY)
+  assert.equal(
+    policy?.rewriteCurrentImages,
+    true,
+    'after Settings unload the composition fallback must regain policy authority',
+  )
+})

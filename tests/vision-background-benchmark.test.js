@@ -421,3 +421,53 @@ test('installed profiler is shared through the capability store without becoming
   assert.equal(Object.keys(store).includes('backgroundProfiler'), false)
   installed.profiler.stop()
 })
+
+test('background profiler coalesces a second tick while candidate discovery is still in flight', async () => {
+  let releaseScan
+  const scanGate = new Promise((resolve) => { releaseScan = resolve })
+  let reads = 0
+  let runs = 0
+  const store = {
+    async get() {
+      reads += 1
+      await scanGate
+      return undefined
+    },
+    async put(record) { return record },
+  }
+  const profiler = profilerFor(
+    settings(),
+    async () => { runs += 1 },
+    { store },
+  )
+
+  const first = profiler.tick()
+  while (reads < 1) await new Promise((resolve) => setImmediate(resolve))
+  const second = profiler.tick()
+  await new Promise((resolve) => setImmediate(resolve))
+  const readsBeforeRelease = reads
+  releaseScan()
+  await Promise.all([first, second])
+  profiler.stop()
+
+  assert.equal(readsBeforeRelease, 1, 'candidate discovery must be single-flight before a benchmark owns runningController')
+  assert.equal(runs, 1, 'one wake burst must not launch the same background benchmark twice')
+})
+
+
+test('background profiler becomes inert when Cordis cannot own its cleanup', async () => {
+  const config = settings()
+  const disposals = []
+  const ctx = fakeCtx(config)
+  ctx.on = () => { const stop = () => { disposals.push('stopped') }; return stop }
+  ctx.effect = () => { throw new Error('inactive fiber') }
+  const installed = installBackgroundCapabilityProfiling(ctx, config, fakeCore(), memoryStore(), {
+    setTimer: inertTimer,
+    clearTimer() {},
+    runAxisBenchmark: async () => { throw new Error('must stay stopped') },
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(installed.ctx, ctx, 'an unowned profiler generation must not expose tool/client wrappers')
+  assert.equal(installed.profiler.snapshot().stopped, true)
+  assert.equal(disposals.length, 5)
+})

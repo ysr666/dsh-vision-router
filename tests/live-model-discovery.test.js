@@ -6,11 +6,13 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 import {
+  configuredProviderTransports,
   createLiveModelDiscoveryManager,
   installLiveModelDiscovery,
   LIVE_MODEL_CACHE_VERSION,
   liveModelCachePath,
   normalizeOpenAIModelListing,
+  providerTransportFor,
   routeFingerprint,
 } from '../lib/live-model-discovery.js'
 import {
@@ -839,4 +841,234 @@ test('dispose fences a late fetch that ignores AbortSignal and never persists it
   await disposing
   assert.equal((await manager.snapshot({ schedule: false })).providers.some((entry) => entry.provider === 'zai'), false)
   assert.equal([...mem.files.values()].some((body) => String(body).includes('too-late')), false)
+})
+
+
+test('live model discovery lifecycle cleanup awaits an in-flight provider refresh', async () => {
+  const mem = memoryCacheFs()
+  const base = fakeDiscoveryContext()
+  let lifecycleCleanup
+  let releaseFetch
+  let markStarted
+  const started = new Promise((resolve) => { markStarted = resolve })
+  const gate = new Promise((resolve) => { releaseFetch = resolve })
+  const ctx = {
+    ...base,
+    on() { return () => {} },
+    inject() {},
+    effect(factory) {
+      lifecycleCleanup = factory()
+      return lifecycleCleanup
+    },
+  }
+  const manager = installLiveModelDiscovery(ctx, {
+    cacheFile: '/virtual/live-models.json',
+    fsOps: mem.ops,
+    fetchImpl: async () => {
+      markStarted()
+      await gate
+      return new Response(JSON.stringify({ data: [{ id: 'glm-live' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    },
+  })
+  await manager.ready()
+  manager.queueConfigured()
+  await started
+  const cleanup = lifecycleCleanup()
+  assert.equal(typeof cleanup?.then, 'function', 'Cordis async disposer must return the manager shutdown promise')
+  let settled = false
+  cleanup.then(() => { settled = true })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false, 'cleanup must wait for the aborted/in-flight refresh to settle')
+  releaseFetch()
+  await cleanup
+})
+
+test('live model discovery tears down admitted resources when webServer injection fails', async () => {
+  const mem = memoryCacheFs()
+  let cleanup
+  let listenerDisposals = 0
+  const ctx = {
+    ...fakeDiscoveryContext(),
+    on() {
+      return () => { listenerDisposals += 1 }
+    },
+    effect(factory) {
+      cleanup = factory()
+      return cleanup
+    },
+    inject() {
+      throw new Error('inactive fiber')
+    },
+  }
+
+  assert.throws(
+    () => installLiveModelDiscovery(ctx, {
+      cacheFile: '/virtual/inject-failure.json',
+      fsOps: mem.ops,
+    }),
+    /inactive fiber/,
+  )
+  while (listenerDisposals < 4) await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(listenerDisposals, 4)
+  assert.equal(typeof cleanup, 'function')
+  await cleanup()
+})
+
+test('client live-model context cache does not retain a wrapper rejected by lifecycle ownership', () => {
+  let captured
+  const loader = { load(spec) { captured = spec } }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async () => new Response('{}', { status: 500 }),
+    Response,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    console,
+  }
+  vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, sandbox)
+  sandbox.window.__ModuleLoader__.load({
+    id: 'dsh-vision-router',
+    factory() {
+      return { apply(ctx) { return ctx } }
+    },
+  })
+  const exported = captured.factory(() => {})
+  const ctx = {
+    get() { return undefined },
+    effect() { throw new Error('inactive fiber') },
+  }
+  const first = exported.apply(ctx)
+  ctx.effect = (factory) => { ctx.dispose = factory() }
+  const second = exported.apply(ctx)
+
+  assert.notEqual(second, first, 'the second generation must receive a fresh live-client wrapper')
+  ctx.dispose?.()
+})
+
+test('client live-model cache is one-shot when the Host has no lifecycle surface', () => {
+  let captured
+  const loader = { load(spec) { captured = spec } }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async () => new Response('{}', { status: 500 }),
+    Response,
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    console,
+  }
+  vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, sandbox)
+  sandbox.window.__ModuleLoader__.load({
+    id: 'dsh-vision-router',
+    factory() { return { apply(ctx) { return ctx } } },
+  })
+  const exported = captured.factory(() => {})
+  const ctx = { get() { return undefined } }
+  assert.notEqual(exported.apply(ctx), exported.apply(ctx))
+})
+
+// ── Host profile-configuration source (real DSH keeps providers there) ──────
+
+function configEditorContext(rows, { settingsProviders } = {}) {
+  return {
+    llm: { registration() { return undefined } },
+    get(name) {
+      if (name === 'settings') {
+        return settingsProviders === undefined
+          ? undefined
+          : { get: (namespace) => (namespace === 'llm-pi-ai' ? { providers: settingsProviders } : undefined) }
+      }
+      if (name === 'configEditor') {
+        return typeof rows === 'function' ? { configuration: rows } : { configuration: () => rows }
+      }
+      return undefined
+    },
+  }
+}
+
+test('provider profiles fall back to the Host config editor when the settings section carries none', () => {
+  const ctx = configEditorContext([
+    {
+      entry: { options: { id: 'llm-pi-ai', name: '@deepseek-ai/dsh-llm-pi-ai' } },
+      inherited: { providers: { mock: { baseURL: 'http://127.0.0.1:19500/v1', api: 'openai-completions' } } },
+      override: { providers: { second: { baseURL: 'https://second.example/v1', api: 'openai-completions' } } },
+    },
+  ])
+  const providers = configuredProviderTransports(ctx).map((transport) => transport.provider).sort()
+  assert.deepEqual(providers, ['mock', 'second'])
+  assert.equal(providerTransportFor(ctx, 'mock').baseURL, 'http://127.0.0.1:19500/v1')
+  assert.equal(providerTransportFor(ctx, 'second').baseURL, 'https://second.example/v1')
+})
+
+test('an override in the config editor wins over the inherited profile value', () => {
+  const ctx = configEditorContext([
+    {
+      entry: { options: { id: 'llm-pi-ai' } },
+      inherited: { providers: { mock: { baseURL: 'http://inherited.example/v1' } } },
+      override: { providers: { mock: { baseURL: 'http://override.example/v1' } } },
+    },
+  ])
+  assert.equal(providerTransportFor(ctx, 'mock').baseURL, 'http://override.example/v1')
+})
+
+test('the settings section stays authoritative when it lists providers', () => {
+  const ctx = configEditorContext(
+    [{ entry: { options: { id: 'llm-pi-ai' } }, inherited: {}, override: { providers: { fromEditor: { baseURL: 'https://editor.example/v1' } } } }],
+    { settingsProviders: { fromSettings: { baseURL: 'https://settings.example/v1' } } },
+  )
+  assert.deepEqual(configuredProviderTransports(ctx).map((transport) => transport.provider), ['fromSettings'])
+})
+
+test('an existing config-editor row with no providers is authoritative and prunes the cache', async () => {
+  const cacheFile = '/virtual/live-models-prune-editor.json'
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({
+      version: LIVE_MODEL_CACHE_VERSION,
+      providers: [{ provider: 'gone', fingerprint: 'gone-route', discoveredAt: 9_000, models: [{ id: 'gone-model' }] }],
+    }),
+  })
+  const ctx = configEditorContext([
+    { entry: { options: { id: 'llm-pi-ai' } }, inherited: {}, override: {} },
+  ])
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+  await manager.ready()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers, [])
+  await manager.dispose()
+  assert.deepEqual(JSON.parse(mem.files.get(cacheFile)).providers, [])
+})
+
+test('a missing config-editor row is not authoritative and never deletes evidence', async () => {
+  const cacheFile = '/virtual/live-models-missing-row.json'
+  const mem = memoryCacheFs({
+    [cacheFile]: JSON.stringify({
+      version: LIVE_MODEL_CACHE_VERSION,
+      providers: [{ provider: 'keep', fingerprint: 'keep-route', discoveredAt: 9_000, models: [{ id: 'keep-model' }] }],
+    }),
+  })
+  const ctx = configEditorContext([
+    { entry: { options: { id: 'something-else' } }, inherited: {}, override: {} },
+  ])
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile,
+    fsOps: mem.ops,
+    now: () => 10_000,
+    fetchImpl: async () => { throw new Error('not needed') },
+  })
+  await manager.ready()
+  assert.deepEqual((await manager.snapshot({ schedule: false })).providers.map((entry) => entry.provider), ['keep'])
+  await manager.dispose()
+})
+
+test('a throwing config editor never breaks the discovery path', () => {
+  const ctx = configEditorContext(() => { throw new Error('editor unavailable') })
+  assert.deepEqual(configuredProviderTransports(ctx), [])
 })

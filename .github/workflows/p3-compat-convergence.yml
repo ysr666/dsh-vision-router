@@ -3,13 +3,14 @@ name: P3 Compatibility Convergence
 on:
   pull_request:
     paths:
-      - 'entry.js'
+      - 'src/**'
+      - 'src/entry.js'
       - 'README.md'
       - 'README.zh.md'
-      - 'lib/dsh-support-window.js'
-      - 'lib/doctor-cli-p0.js'
-      - 'lib/web/**'
-      - 'lib/runtime-composition.js'
+      - 'src/lib/dsh-support-window.js'
+      - 'src/lib/doctor-cli-p0.js'
+      - 'src/lib/web/**'
+      - 'src/lib/runtime-composition.js'
       - 'docs/architecture/dsh-support-window.md'
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'
@@ -19,13 +20,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'entry.js'
+      - 'src/entry.js'
       - 'README.md'
       - 'README.zh.md'
-      - 'lib/dsh-support-window.js'
-      - 'lib/doctor-cli-p0.js'
-      - 'lib/web/**'
-      - 'lib/runtime-composition.js'
+      - 'src/lib/dsh-support-window.js'
+      - 'src/lib/doctor-cli-p0.js'
+      - 'src/lib/web/**'
+      - 'src/lib/runtime-composition.js'
       - 'docs/architecture/dsh-support-window.md'
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'

@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
 
 const manifestPath = new URL('../package.json', import.meta.url)
@@ -85,6 +86,21 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
 ])
 
+test('canonical repository source never tracks generated runtime artifacts', () => {
+  const root = new URL('../', import.meta.url)
+  const tracked = execFileSync(
+    'git',
+    ['ls-files', '--', 'entry.js', 'index.js', 'lib'],
+    { cwd: root, encoding: 'utf8' },
+  ).trim()
+
+  assert.equal(
+    tracked,
+    '',
+    'entry.js, index.js and lib/** are package build artifacts; canonical runtime source belongs under src/** only',
+  )
+})
+
 test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission range', async () => {
   const pkg = await manifest()
   const hostPeers = [
@@ -99,6 +115,23 @@ test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission r
     assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
     assert.equal(pkg.devDependencies?.[name], '0.2.0-rc.2', `${name} development fixture must pin exact rc.2`)
   }
+})
+
+test('client package graph does not revive the retired dsh-client-runtime row', async () => {
+  const pkg = await manifest()
+  const inject = Array.isArray(pkg.dsh?.client?.inject) ? pkg.dsh.client.inject : []
+  const doctorRuntime = await readFile(new URL('../lib/doctor-runtime.js', import.meta.url), 'utf8')
+
+  assert.equal(
+    inject.includes('@deepseek-ai/dsh-client-runtime'),
+    false,
+    'DSH 0.2 client graph has no dsh-client-runtime package row',
+  )
+  assert.doesNotMatch(
+    doctorRuntime,
+    /@deepseek-ai\/dsh-client-runtime/,
+    'Doctor must not diagnose a Host package that no longer exists',
+  )
 })
 
 test('host-provided peers are optional so profile installs never warn about missing peers', async () => {

@@ -130,7 +130,39 @@ assert.equal(Buffer.compare(Buffer.from(migratedPrepared.data), Buffer.from(sour
 // synchronously without optional-chaining the method itself. Reproduce that
 // call shape through DVR's private registration boundary so every duck-typed
 // adapter receives LlmAdapter's `undefined` default before registration.
-const llmSource = await readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8')
+const [llmSource, cordisReflectSource, cordisFiberSource, webServerSource] = await Promise.all([
+  readFile(path.join(dshRoot, 'packages/llm/llm/src/index.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'vendor/cordis/src/reflect.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'vendor/cordis/src/fiber.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'packages/host/webserver/src/index.ts'), 'utf8'),
+])
+
+// Host ownership ledger: pin the three cross-cutting contracts DVR relies on
+// across every exact source generation in this workflow.
+assert.match(cordisReflectSource, /Read a service from the store without the inject requirement/)
+assert.match(
+  cordisFiberSource,
+  /effect\(execute: \(\) => SyncEffect, label\?: string\): Disposable<Promise<void>>/,
+  'Cordis effect() must remain a required plugin-fiber lifecycle primitive',
+)
+const adapterRegisterAt = llmSource.indexOf('registerAdapter(providers: string[], adapter: LlmAdapter)')
+assert.ok(adapterRegisterAt >= 0, 'Host LLM must expose registerAdapter()')
+const adapterRegisterEnd = llmSource.indexOf('\n  /**', adapterRegisterAt + 1)
+const adapterRegisterBlock = llmSource.slice(adapterRegisterAt, adapterRegisterEnd)
+assert.match(adapterRegisterBlock, /this\.ctx\.effect/, 'LLM adapter registration must remain self-fiber-owned')
+const directoryRegisterAt = llmSource.indexOf('registerConfigurableProviders(entries: readonly LlmConfigurableProvider[])')
+assert.ok(directoryRegisterAt >= 0, 'Host LLM must expose registerConfigurableProviders()')
+const directoryRegisterEnd = llmSource.indexOf('\n  /**', directoryRegisterAt + 1)
+const directoryRegisterBlock = llmSource.slice(directoryRegisterAt, directoryRegisterEnd)
+assert.match(directoryRegisterBlock, /this\.ctx\.effect/, 'LLM directory registration must remain self-fiber-owned')
+const webRegisterAt = webServerSource.indexOf('register(route: WebRoute)')
+assert.ok(webRegisterAt >= 0, 'Host WebServer must expose register()')
+const webRegisterEnd = webServerSource.indexOf('\n  /**', webRegisterAt + 1)
+const webRegisterBlock = webServerSource.slice(webRegisterAt, webRegisterEnd)
+assert.match(webRegisterBlock, /table\.set\(route\.path, route\)/)
+assert.match(webRegisterBlock, /return \(\) => \{ table\.delete\(route\.path\) \}/)
+assert.doesNotMatch(webRegisterBlock, /ctx\.effect/, 'WebServer routes remain caller-owned')
+
 assert.match(
   llmSource,
   /listProviders\(\): LlmProviderInfo\[\]/,
@@ -172,17 +204,43 @@ for (const provider of [
 
 // 5. The two client/Web bridges must point at exact public canary seams. Keep
 // this source-level evidence next to the runtime behavioral tests in DVR.
-const [sessionControllerSource, remoteEventsSource, connectionRpcSource] = await Promise.all([
+const [
+  sessionControllerSource,
+  remoteEventsSource,
+  connectionRpcSource,
+  sessionCoreSource,
+] = await Promise.all([
   readFile(path.join(dshRoot, 'packages/api/session-controller/src/index.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/api/remotes/src/remote-events.ts'), 'utf8'),
   readFile(path.join(dshRoot, 'packages/client/connection/src/rpc.ts'), 'utf8'),
+  readFile(path.join(dshRoot, 'packages/core/session/src/index.ts'), 'utf8'),
 ])
 assert.match(sessionControllerSource, /@Remote\(['"]modelCatalog['"]\)/)
 assert.match(sessionControllerSource, /modelCatalog\(\): Promise<ModelCatalog>/)
 assert.match(remoteEventsSource, /['"]credentials\/reference-updated['"]/)
 assert.match(connectionRpcSource, /requestRejection\(request: ConnectionTrustRequest\): ConnectionRequestRejection/)
 
-// 6. Do not stop at proving DVR's source selector returns the intended shape.
+// 6. Session Vision policy materialization consumes the public post-commit
+// session/event firehose. Pin only the cross-version contract DVR relies on:
+// listener arguments are (session, event), and observers run after the event
+// has entered the Session log. Do not couple this gate to private helper names
+// beyond the existing Session publication boundary.
+assert.match(
+  sessionCoreSource,
+  /['"]session\/event['"]\(this: Scoped<Session>, session: Session, event: SessionEvent\): void/,
+  'supported Hosts must expose the post-commit session/event(session, event) seam',
+)
+const sessionLogCommitAt = sessionCoreSource.indexOf('this.log.push(event as SessionEvent)')
+const sessionObserverPublishAt = sessionCoreSource.indexOf(
+  "invokeContainedSessionObservers(entry.emitCtx, 'session/event'",
+)
+assert.ok(sessionLogCommitAt >= 0, 'supported Hosts must commit Session events before publication')
+assert.ok(
+  sessionObserverPublishAt > sessionLogCommitAt,
+  'session/event observers must run after the exact event is committed to the Session log',
+)
+
+// 7. Do not stop at proving DVR's source selector returns the intended shape.
 // Feed an actual DVR-authored durable row into the exact upstream V4 admission
 // code so a future Host tightening fails this contract before a user turn does.
 // Older supported sources predate this V4 migration package, so they keep their

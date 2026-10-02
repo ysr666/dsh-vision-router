@@ -260,3 +260,34 @@ test('trusted hints do not authorize a proxy, subdomain, or lookalike endpoint',
     assert.equal(manager.hasModel('zhipu-glm', 'glm-4.6v-flash'), false, baseURL)
   }
 })
+
+test('model registry restores manager methods when lifecycle ownership fails', () => {
+  const { ctx } = fakeContext({
+    active: ['zhipu-glm'],
+    visionSettings: { providers: [{ provider: 'zhipu-glm', model: 'saved-vl', fallbacks: [] }] },
+  })
+  ctx.effect = () => { throw new Error('inactive fiber') }
+  const snapshot = async () => ({ ok: true, version: 1, refreshing: false, providers: [] })
+  const hasModel = () => false
+  const manager = { snapshot, hasModel }
+
+  installVisionModelRegistry(ctx, manager)
+
+  assert.equal(manager.snapshot, snapshot)
+  assert.equal(manager.hasModel, hasModel)
+  assert.equal(Object.hasOwn(manager, 'evidenceSource'), false)
+})
+
+
+test('model registry cleanup preserves absence of optional manager methods', () => {
+  const { ctx } = fakeContext({ active: ['zhipu-glm'] })
+  ctx.effect = () => { throw new Error('inactive fiber') }
+  const snapshot = async () => ({ ok: true, version: 1, refreshing: false, providers: [] })
+  const manager = { snapshot }
+
+  installVisionModelRegistry(ctx, manager)
+
+  assert.equal(manager.snapshot, snapshot)
+  assert.equal(Object.hasOwn(manager, 'hasModel'), false)
+  assert.equal(Object.hasOwn(manager, 'evidenceSource'), false)
+})

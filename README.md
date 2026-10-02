@@ -42,9 +42,9 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v2.3.0)**
+> 📌 **Announcement (v3.0.0)**
 >
-> **v2.3.0:** Architecture hardening and compatibility convergence. The supported DSH 0.1.x window now starts at `0.1.5-rc.1`, while the 0.2.x train starts at verified `0.2.0-rc.2`; composition, Session repair, Settings/browser ownership and Desktop lifecycle contracts are hardened, and only proven-unreachable pre-floor shims are retired. [What’s new →](docs/releases/v2.3.0.md)
+> **v3.0.0: Session Vision policy now has a durable owner.** The supported DSH 0.1.x window now starts at `0.1.5-rc.1`, while the 0.2.x train starts at verified `0.2.0-rc.2`; Vision authority lives in a scoped, Host-storage-backed policy store, hydrates before child sessions publish, and binds delegation to the Host Agent lifecycle. The package root is a deliberate, typed public API, the runtime installation is grouped into explicit composition phases with an explicitly passed provider transport, and a new required peer (`@deepseek-ai/dsh-storage-domain`) is added. This release also closes the R11 adversarial final audit. [What’s new →](docs/releases/v3.0.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
@@ -150,6 +150,15 @@ For normal npm/npx installs, installation is a single command:
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
+
+> [!IMPORTANT]
+> **Which profile?** Install into an **existing profile that already serves the Web UI**:
+>
+> - Web DSH: `--profile web` (default data directory `~/.dsh`);
+> - the official DeepSeek Harness desktop app: `--profile desktop` (same `~/.dsh` data directory; reload the plugin or restart the app afterwards);
+> - Oh-DSH Desktop: its data directory is `~/.ohdsh`, see [Oh-DSH Desktop](#oh-dsh-desktop) below.
+>
+> `dsh plugin add` only adds the plugin to the profile you name. A **brand-new** profile contains just `@deepseek-ai/dsh-base`, and `dsh web` never binds a port in that state (no Web surface). Install into an existing profile, or give the new profile a Web surface first.
 
 > [!WARNING]
 > If this profile already loads community plugins manually through `cordis.patch.yml`, do **not** mix that legacy setup with `dsh plugin add` / `dsh plugin list`: current DSH CLI behavior can also append bundle-patch dependencies to `dsh.profile.bundles`, causing those plugins to register twice. Migrate the existing manual plugin rows to bundle-managed loading first, or keep using the manual installation path. See [deepseek-harness discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889).
@@ -436,7 +445,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 2.3.x supports DSH 0.1.x continuously from `0.1.5-rc.1` (current stable evidence: `0.1.5-rc.3`) and supports the 0.2.x train from verified `0.2.0-rc.2`. Exact `0.2.0-rc.2` is also the ordinary 2.3 development Host. Pre-0.1.5 Hosts are unsupported, and DVR no longer publishes the older jagged 0.1.x exception list. Runtime behavior remains capability-based. See [DSH Host support window](docs/architecture/dsh-support-window.md).
+- **DSH Host support policy:** DVR 3.0.x supports DSH 0.1.x continuously from `0.1.5-rc.1` (current stable evidence: `0.1.5-rc.3`) and supports the 0.2.x train from verified `0.2.0-rc.2`. Exact `0.2.0-rc.2` is also the ordinary 3.0 development Host. Pre-0.1.5 Hosts are unsupported, and DVR no longer publishes the older jagged 0.1.x exception list. Runtime behavior remains capability-based. See [DSH Host support window](docs/architecture/dsh-support-window.md).
 - Node ≥ 22 (host side).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.

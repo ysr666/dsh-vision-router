@@ -220,3 +220,57 @@ test('root settings transport stays absent on legacy SettingsProvider hosts', ()
   assert.equal(harness.routes.length, 0)
   assert.equal(harness.rootDisposers.length, 0)
 })
+
+test('root settings transport binds generation ownership before admitting the root route', () => {
+  let rootInjectCalls = 0
+  const settings = {
+    [DSH_017_SETTINGS_COMPAT_MARK]: true,
+    describe() { return [descriptor(0, { visionDepth: 'standard' })] },
+    async mutate() {},
+  }
+  const root = {
+    inject() {
+      rootInjectCalls += 1
+      throw new Error('root route must not be reached')
+    },
+  }
+  const ctx = {
+    root,
+    get(name) { return name === 'settings' ? settings : undefined },
+    inject(_dependencies, callback) {
+      callback({
+        settings,
+        get(name) { return name === 'settings' ? settings : undefined },
+        effect() { throw new Error('inactive fiber') },
+      })
+    },
+  }
+
+  assert.throws(() => installDsh017RootLocalSettingsTransport(ctx), /inactive fiber/)
+  assert.equal(rootInjectCalls, 0)
+})
+
+test('root settings transport rejects a compatible Settings generation without lifecycle ownership', () => {
+  let rootInjectCalls = 0
+  const settings = {
+    [DSH_017_SETTINGS_COMPAT_MARK]: true,
+    describe() { return [descriptor(0, { visionDepth: 'standard' })] },
+    async mutate() {},
+  }
+  const ctx = {
+    root: { inject() { rootInjectCalls += 1 } },
+    get(name) { return name === 'settings' ? settings : undefined },
+    inject(_dependencies, callback) {
+      callback({
+        settings,
+        get(name) { return name === 'settings' ? settings : undefined },
+      })
+    },
+  }
+
+  assert.throws(
+    () => installDsh017RootLocalSettingsTransport(ctx),
+    /requires lifecycle ownership/,
+  )
+  assert.equal(rootInjectCalls, 0)
+})

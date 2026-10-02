@@ -126,10 +126,12 @@ test('entry contract exposes the custom depth tier to every settings entry point
   assert.equal(custom.visionDepthMaxCalls, 7)
 })
 
-test('release line stays on the stable v2 package identity', async () => {
+test('release line stays on a single stable major package identity', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
   assert.equal(pkg.name, 'dsh-vision-router')
-  assert.match(pkg.version, /^2\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+  // One stable major per release line (2.x through v2.3.0, 3.x from v3.0.0 on):
+  // a 0.x line or a prerelease-only identity is still refused.
+  assert.match(pkg.version, /^(?:2|3)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 })
 
 test('v2.0.0 ships curated release notes and the tag workflow consumes them first', async () => {
@@ -147,20 +149,54 @@ test('manual Release workflow creates only the exact current-main package tag be
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
 
   assert.match(workflow, /workflow_dispatch:/)
+  assert.doesNotMatch(workflow, /\npush:\s*\n[\s\S]{0,120}tags:/, 'a pushed tag must never be a release entry point')
   assert.match(workflow, /target_sha:/)
-  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \|\| github\.ref_name \}\}/)
-  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \|\| github\.sha \}\}/)
+  assert.match(workflow, /RELEASE_TAG: \$\{\{ inputs\.tag \}\}/)
+  assert.match(workflow, /RELEASE_SHA: \$\{\{ inputs\.target_sha \}\}/)
   assert.match(workflow, /manual release target must be the exact current origin\/main HEAD/)
+  // A released version is immutable and single-use: an existing tag is refused,
+  // never "recovered". Re-dispatching a tag from a ref that is not the release
+  // commit mints provenance for the wrong SourceRepositoryDigest, which is
+  // exactly what the removed recovery branch used to allow.
+  assert.match(workflow, /already exists at \$REMOTE_TAG_SHA\. A released version is immutable/)
+  assert.doesNotMatch(workflow, /RELEASE_RECOVERY/)
+  assert.doesNotMatch(workflow, /permitting recovery after main advanced/)
+  assert.match(workflow, /SourceRepositoryDigest/)
   assert.match(workflow, /Run tests[\s\S]*Ensure immutable release tag exists at verified SHA/)
   assert.match(workflow, /Run tests[\s\S]*Verify generated browser source[\s\S]*pnpm client:check/)
   assert.match(workflow, /Verify release Host support policy[\s\S]*tests\/dsh-support-window\.test\.js/)
+  assert.match(
+    workflow,
+    /Preflight exact packed contract before irreversible tag[\s\S]*npm pack --json[\s\S]*verify-packed-public-api\.mjs[\s\S]*release-registry-identity\.mjs inspect[\s\S]*Ensure immutable release tag exists at verified SHA/,
+  )
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
-  assert.match(workflow, /already exists at \$REMOTE_TAG_SHA, expected \$RELEASE_SHA/)
+  assert.match(workflow, /refusing to adopt or republish a pre-existing registry version/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
   assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
 })
 
-test('release workflow confines write tokens to non-executing tag/release phases', async () => {
+test('release workflow refuses stale README announcement bars and missing release notes', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
+  // Documentation freshness is part of the release contract, not a warning:
+  // both README bars must carry the released version and either curated notes
+  // or a matching CHANGELOG section must exist.
+  assert.ok(
+    workflow.includes('^>[[:space:]]*\\[!WARNING\\]'),
+    'release workflow must scope the freshness check to the top [!WARNING] announcement bar',
+  )
+  assert.match(
+    workflow,
+    /::error::\$f is missing a top \[!WARNING\] announcement bar mentioning \$\{EXPECTED_TAG\}; update the bar before releasing/,
+  )
+  assert.match(
+    workflow,
+    /::error::no curated release notes \(\$CURATED_NOTES\) and no CHANGELOG\.md section for \$EXPECTED_TAG/,
+  )
+  assert.doesNotMatch(workflow, /::warning::\$f does not yet mention/)
+  assert.doesNotMatch(workflow, /::warning::no curated release notes/)
+})
+
+test('release workflow confines repository and publish write authority to the correct phases', async () => {
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const verifyStart = workflow.indexOf('  verify:')
   const tagStart = workflow.indexOf('  tag:', verifyStart + 1)
@@ -174,14 +210,14 @@ test('release workflow confines write tokens to non-executing tag/release phases
   const release = workflow.slice(releaseStart)
 
   assert.match(workflow, /^permissions: \{\}$/m)
-  assert.match(verify, /permissions:[\s\S]*contents: read/)
-  assert.doesNotMatch(verify, /contents: write/)
+  assert.match(verify, /permissions:[\s\S]*contents: read[\s\S]*artifact-metadata: write/)
+  assert.doesNotMatch(verify, /contents: write|id-token: write|attestations: write/)
   assert.match(tag, /needs: verify[\s\S]*permissions:[\s\S]*contents: write/)
   assert.doesNotMatch(tag, /pnpm install|pnpm test|npm pack|npm publish/)
-  assert.match(publish, /needs: tag[\s\S]*contents: read[\s\S]*id-token: write/)
+  assert.match(publish, /needs: \[verify, tag\][\s\S]*contents: read[\s\S]*actions: read[\s\S]*id-token: write/)
   assert.match(publish, /attestations: write/)
   assert.match(publish, /artifact-metadata: write/)
-  assert.doesNotMatch(publish, /contents: write/)
+  assert.doesNotMatch(publish, /contents: write|pnpm install|pnpm build|npm pack/)
   assert.match(release, /needs: publish[\s\S]*permissions:[\s\S]*contents: write[\s\S]*actions: read/)
   assert.doesNotMatch(release, /id-token: write|attestations: write|artifact-metadata: write/)
   assert.doesNotMatch(workflow, /npm install --global/)
@@ -197,6 +233,8 @@ test('release provenance binds the exact npm tarball before the write-token phas
 
   const publish = workflow.slice(publishStart, releaseStart)
   const release = workflow.slice(releaseStart)
+  assert.match(workflow, /Preflight exact packed contract before irreversible tag[\s\S]*actions\/upload-artifact@[0-9a-f]{40} # v7\.0\.1[\s\S]*name: release-package-candidate/)
+  assert.match(publish, /Rehydrate exact pre-tag package candidate[\s\S]*release-package-candidate[\s\S]*PRETAG_SHA1[\s\S]*PRETAG_SHA256/)
   assert.match(publish, /uses: actions\/attest@[0-9a-f]{40} # v4\.2\.2/)
   assert.match(publish, /subject-path: \$\{\{ steps\.package\.outputs\.tarball \}\}/)
   assert.match(publish, /PROVENANCE_NAME=\"\$\{PACKAGE_TARBALL\}\.intoto\.jsonl\"/)
@@ -207,6 +245,22 @@ test('release provenance binds the exact npm tarball before the write-token phas
   assert.match(release, /gh run download \"\$GITHUB_RUN_ID\"[\s\S]*--name release-provenance/)
   assert.match(release, /release provenance handoff failed SHA-256 verification/)
   assert.match(release, /gh release create[\s\S]*\"\$PROVENANCE_NAME\"/)
+  // Immutability applies the moment a release is published, so every asset must
+  // be attached to a draft and verified before the release becomes public.
+  assert.match(release, /Create immutable GitHub Release \(draft, attach, publish\)/)
+  assert.match(release, /gh release create "\$RELEASE_TAG" \\\n\s+--verify-tag \\\n\s+--draft/)
+  assert.match(release, /gh release upload "\$RELEASE_TAG"[\s\S]*"\$PACKAGE_TARBALL"[\s\S]*"\$PROVENANCE_NAME"[\s\S]*"SHA256SUMS\.txt"/)
+  assert.match(release, /attached release tarball does not match the verified package SHA-256/)
+  assert.match(release, /gh release edit "\$RELEASE_TAG" --draft=false --latest/)
+  assert.match(release, /is still a draft after publish/)
+  const draftIndex = release.indexOf('--draft')
+  const uploadIndex = release.indexOf('gh release upload "$RELEASE_TAG"')
+  const verifyIndex = release.indexOf('attached release tarball does not match')
+  const publishIndex = release.indexOf('--draft=false --latest')
+  assert.ok(
+    draftIndex > 0 && uploadIndex > draftIndex && verifyIndex > uploadIndex && publishIndex > verifyIndex,
+    'release assets must be attached and verified before the immutable release is published',
+  )
 })
 
 test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm setup', async () => {
@@ -232,26 +286,45 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
   assert.doesNotMatch(windows, /pnpm\/action-setup|pnpm install|cache: pnpm/)
 })
 
+test('workflow path filters follow canonical source ownership instead of generated package artifacts', async () => {
+  const { access, readdir } = await import('node:fs/promises')
+  const workflowDir = new URL('../.github/workflows/', import.meta.url)
+  for (const name of (await readdir(workflowDir)).filter((entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'))) {
+    const source = await readFile(new URL(name, workflowDir), 'utf8')
+    const triggerRegion = source.slice(0, source.indexOf('\nconcurrency:') >= 0 ? source.indexOf('\nconcurrency:') : source.indexOf('\njobs:'))
+    for (const match of triggerRegion.matchAll(/^\s+- '([^']+)'\s*$/gm)) {
+      const path = match[1]
+      assert.notEqual(path === 'entry.js' || path === 'index.js' || path.startsWith('lib/'), true,
+        `${name}: generated package artifact cannot own a workflow trigger: ${path}`)
+      if (!path.startsWith('src/') || /[*?[\]]/.test(path)) continue
+      await assert.doesNotReject(
+        () => access(new URL(`../${path}`, import.meta.url)),
+        `${name}: canonical workflow trigger must exist: ${path}`,
+      )
+    }
+  }
+})
+
 test('CI impact classifier is bounded and fail-closed for trusted shadow input', async () => {
   const { classifyCiImpact, classifyCiImpactJsonLines, MAX_CI_IMPACT_INPUT_BYTES, MAX_CI_IMPACT_PATHS } = await import('../scripts/ci-impact-classifier.mjs')
 
   assert.equal(classifyCiImpact(['docs/doctor.md', 'README.md']).docsOnly, true)
-  assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).windows, true)
-  assert.equal(classifyCiImpact(['lib/windows-desktop-capture.js']).full, false)
-  assert.equal(classifyCiImpact(['lib/client.js']).browser, true)
-  const sessionTurnResolver = classifyCiImpact(['lib/session-turn-resolver.js'])
+  assert.equal(classifyCiImpact(['src/lib/windows-desktop-capture.js']).windows, true)
+  assert.equal(classifyCiImpact(['src/lib/windows-desktop-capture.js']).full, false)
+  assert.equal(classifyCiImpact(['src/lib/client.js']).browser, true)
+  const sessionTurnResolver = classifyCiImpact(['src/lib/session-turn-resolver.js'])
   assert.equal(sessionTurnResolver.host, true)
   assert.equal(sessionTurnResolver.browser, false)
   assert.equal(sessionTurnResolver.full, false)
   assert.deepEqual(sessionTurnResolver.reasons, [])
-  const imageOffloadCompat = classifyCiImpact(['lib/image-offload-compat.js'])
+  const imageOffloadCompat = classifyCiImpact(['src/lib/image-offload-compat.js'])
   assert.equal(imageOffloadCompat.host, true)
   assert.equal(imageOffloadCompat.browser, false)
   assert.equal(imageOffloadCompat.full, false)
   assert.deepEqual(imageOffloadCompat.reasons, [])
   const issue431 = classifyCiImpact([
-    'lib/client-presentation-boundary-main.js',
-    'lib/vision-model-visibility-boundary-main.js',
+    'src/lib/client-presentation-boundary-main.js',
+    'src/lib/vision-model-visibility-boundary-main.js',
     'tests/issue-284-model-visibility.test.js',
     'tests/issue-284-vision-selection-effort.test.js',
   ])
@@ -260,12 +333,12 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
   assert.equal(issue431.full, false)
   assert.deepEqual(issue431.reasons, [])
   for (const path of [
-    'lib/live-model-client-prelude.js',
-    'lib/settings-ia-client-prelude.js',
-    'lib/settings-limit-client-prelude.js',
-    'lib/strict-live-model-client-prelude.js',
-    'lib/vision-turn-budget-client-prelude.js',
-    'lib/wrapper-scope-client-prelude.js',
+    'src/lib/live-model-client-prelude.js',
+    'src/lib/settings-ia-client-prelude.js',
+    'src/lib/settings-limit-client-prelude.js',
+    'src/lib/strict-live-model-client-prelude.js',
+    'src/lib/vision-turn-budget-client-prelude.js',
+    'src/lib/wrapper-scope-client-prelude.js',
     'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs',
     'tests/clipboard-image-paste-compat.test.js',
     'tests/issue-367-remote-session-inject.test.js',
@@ -276,16 +349,16 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
     assert.equal(browserOnly.full, false, `${path}: known browser-scoped change`)
   }
   for (const path of [
-    'lib/client-host-compat-prelude.js',
-    'lib/guide-vision-toggle-highlight.js',
-    'lib/remote-settings-risk-confirmation.js',
-    'lib/settings-client-loader-lifecycle.js',
-    'lib/settings-factory-lifecycle.js',
-    'lib/settings-native-card-layout.js',
-    'lib/v2-settings-ia-integration.js',
-    'lib/vision-capability-benchmark-client.js',
-    'lib/vision-exact-check-client.js',
-    'lib/vision-routing-settings-prelude.js',
+    'src/lib/client-host-compat-prelude.js',
+    'src/lib/guide-vision-toggle-highlight.js',
+    'src/lib/remote-settings-risk-confirmation.js',
+    'src/lib/settings-client-loader-lifecycle.js',
+    'src/lib/settings-factory-lifecycle.js',
+    'src/lib/settings-native-card-layout.js',
+    'src/lib/v2-settings-ia-integration.js',
+    'src/lib/vision-capability-benchmark-client.js',
+    'src/lib/vision-exact-check-client.js',
+    'src/lib/vision-routing-settings-prelude.js',
   ]) {
     const browserOnly = classifyCiImpact([path])
     assert.equal(browserOnly.browser, true, `${path}: audited browser boundary`)
@@ -294,9 +367,9 @@ test('CI impact classifier is bounded and fail-closed for trusted shadow input',
   }
   assert.equal(classifyCiImpact(['package.json']).full, true)
   assert.deepEqual(classifyCiImpact(['package.json']).reasons, ['CI/package routing metadata changed'])
-  assert.equal(classifyCiImpact(['lib/new-unknown-boundary.js']).full, true)
+  assert.equal(classifyCiImpact(['src/lib/new-unknown-boundary.js']).full, true)
   assert.equal(classifyCiImpact([]).full, true)
-  assert.equal(classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('lib/client.js')).full, true)
+  assert.equal(classifyCiImpact(Array(MAX_CI_IMPACT_PATHS + 1).fill('src/lib/client.js')).full, true)
   assert.equal(classifyCiImpact(['x'.repeat(MAX_CI_IMPACT_INPUT_BYTES + 1)]).full, true)
 
   assert.equal(classifyCiImpactJsonLines('\"docs/doctor.md\"\n\"README.md\"\n').docsOnly, true)
@@ -346,7 +419,7 @@ test('client prelude changes always trigger the real browser and alpha source ga
   ]
   for (const name of workflows) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    const trigger = "      - 'lib/*-client-prelude.js'"
+    const trigger = "      - 'src/lib/*-client-prelude.js'"
     assert.equal(source.split(trigger).length - 1, 2, `${name}: client preludes must trigger PR and main`)
   }
 })
@@ -358,20 +431,20 @@ test('audited browser integration modules always trigger every real browser and 
     'dsh-alpha-source-contract.yml',
   ]
   const boundaries = [
-    'lib/client-host-compat-prelude.js',
-    'lib/guide-vision-toggle-highlight.js',
-    'lib/remote-settings-risk-confirmation.js',
-    'lib/settings-client-loader-lifecycle.js',
-    'lib/settings-factory-lifecycle.js',
-    'lib/settings-native-card-layout.js',
-    'lib/v2-settings-ia-integration.js',
-    'lib/vision-capability-benchmark-client.js',
-    'lib/vision-exact-check-client.js',
-    'lib/vision-routing-settings-prelude.js',
+    'src/lib/client-host-compat-prelude.js',
+    'src/lib/guide-vision-toggle-highlight.js',
+    'src/lib/remote-settings-risk-confirmation.js',
+    'src/lib/settings-client-loader-lifecycle.js',
+    'src/lib/settings-factory-lifecycle.js',
+    'src/lib/settings-native-card-layout.js',
+    'src/lib/v2-settings-ia-integration.js',
+    'src/lib/vision-capability-benchmark-client.js',
+    'src/lib/vision-exact-check-client.js',
+    'src/lib/vision-routing-settings-prelude.js',
   ]
   for (const name of workflows) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.equal(source.split("      - 'lib/web/**'").length - 1, 2, `${name}: lib/web must trigger PR and main`)
+    assert.equal(source.split("      - 'src/lib/web/**'").length - 1, 2, `${name}: lib/web must trigger PR and main`)
     for (const path of boundaries) {
       const trigger = `      - '${path}'`
       assert.equal(source.split(trigger).length - 1, 2, `${name}: ${path} must trigger PR and main`)
@@ -388,8 +461,8 @@ test('model visibility boundary changes always trigger the real browser and alph
   for (const name of workflows) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     for (const path of [
-      'lib/vision-model-visibility-boundary-main.js',
-      'lib/vision-model-visibility-boundary.js',
+      'src/lib/vision-model-visibility-boundary-main.js',
+      'src/lib/vision-model-visibility-boundary.js',
     ]) {
       const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       assert.equal((source.match(new RegExp(escaped, 'g')) ?? []).length, 2, `${name}: ${path} must trigger PR and main`)
@@ -435,11 +508,11 @@ test('DSH release evidence changes always trigger exact source and real browser 
     readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
   ])
 
-  for (const path of ["'package.json'", "'lib/dsh-support-window.js'"]) {
+  for (const path of ["'package.json'", "'src/lib/dsh-support-window.js'"]) {
     assert.equal((browser.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
   }
   assert.equal((source.match(/'package\.json'/g) ?? []).length, 2)
-  assert.equal((source.match(/'lib\/dsh-support-window\.js'/g) ?? []).length, 2)
+  assert.equal((source.match(/'src\/lib\/dsh-support-window\.js'/g) ?? []).length, 2)
 })
 
 test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
@@ -557,7 +630,7 @@ test('heavy Host classifier skips only version-only curated release metadata', a
 
   const peerChanged = { ...release, peerDependencies: { dsh: '>=0.2.0-rc.1 <0.3.0-0' } }
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: peerChanged }).heavy, true)
-  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'src/lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-020-rc2-validation.yml'], basePackage: base, headPackage: release }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
 })

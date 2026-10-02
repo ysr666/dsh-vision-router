@@ -154,3 +154,22 @@ test('real Node child_process locked descriptor installs without crashing and sy
   assert.equal(childProcess.execFile, originalExecFile)
   assert.equal(esmExecFile, originalExecFile)
 })
+
+test('execFile compatibility rolls back its process mutation when lifecycle ownership fails', () => {
+  const execFile = function execFile() { return { pid: 1 } }
+  const fakeBuiltin = { execFile }
+  const ctx = {
+    effect() { throw new Error('inactive fiber') },
+  }
+
+  assert.throws(
+    () => installTesseractExecFileCompat(ctx, {
+      childProcessModule: fakeBuiltin,
+      builtinChildProcessModule: fakeBuiltin,
+      syncBuiltinESMExports() {},
+    }),
+    /inactive fiber/,
+  )
+  assert.equal(execFile[promisify.custom], undefined)
+  assert.equal(fakeBuiltin.execFile, execFile)
+})

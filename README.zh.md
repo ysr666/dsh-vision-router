@@ -42,9 +42,9 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v2.3.0）**
+> 📌 **公告（v3.0.0）**
 >
-> **v2.3.0：架构加固与兼容收敛。DSH 0.1.x 正式支持线提高到 `0.1.5-rc.1` 起，0.2.x 从已验证的 `0.2.0-rc.2` 起；composition、Session repair、Settings/浏览器 ownership 与 Desktop lifecycle 均完成加固，只退休已证明在新支持窗口不可达的旧 shim。** [查看完整更新 →](docs/releases/v2.3.0.md)
+> **v3.0.0：Session Vision policy 有了持久归属。DSH 0.1.x 正式支持线提高到 `0.1.5-rc.1` 起，0.2.x 从已验证的 `0.2.0-rc.2` 起；识图权威由作用域化的、Host storage 背书的策略存储持有，子会话发布前完成 hydrate，委派绑定 Host Agent 生命周期；包根改为显式声明且带类型的公共 API，运行时装配显式分阶段、provider transport 必须显式传入，并新增必需 peer `@deepseek-ai/dsh-storage-domain`。本版本同时完成 R11 对抗终审。** [查看完整更新 →](docs/releases/v3.0.0.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
@@ -148,6 +148,15 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 ```sh
 npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 ```
+
+> [!IMPORTANT]
+> **装到哪个 profile？** 请装进**已经存在、并且自带 Web 界面**的 profile：
+>
+> - 网页版 DSH：`--profile web`（默认数据目录 `~/.dsh`）；
+> - 官方 DeepSeek Harness 桌面应用：`--profile desktop`（同一个 `~/.dsh` 数据目录，装完在应用里重新加载插件或重启一次应用）；
+> - Oh-DSH Desktop：数据目录是 `~/.ohdsh`，见下方 [Oh-DSH Desktop](#oh-dsh-desktop)。
+>
+> `dsh plugin add` 只是把插件加进**指定** profile。**全新创建**的 profile 只含 `@deepseek-ai/dsh-base`，此时 `dsh web` 不会绑定端口（没有 Web 面）。请装进已有的 profile，或先让新 profile 具备 Web 面。
 
 > [!WARNING]
 > 如果这个 profile 里已经有通过 `cordis.patch.yml` **手动挂载**的社区插件，不要再把这种旧式加载方式与 `dsh plugin add` / `dsh plugin list` 混用：当前 DSH CLI 可能同时把带 bundle patch 的依赖追加到 `dsh.profile.bundles`，导致这些插件被重复注册。请先把原有手动插件迁移到 bundle 管理方式，或继续沿用手动安装路径。详见 [deepseek-harness Discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889)。
@@ -434,7 +443,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略：** DVR 2.3.x 从 `0.1.5-rc.1` 起连续支持 DSH 0.1.x（当前稳定证据为 `0.1.5-rc.3`），并从已验证的 `0.2.0-rc.2` 起支持 0.2.x；精确 `0.2.0-rc.2` 同时作为 2.3 默认开发 Host。低于 0.1.5 的 Host 不再支持，也不再维护旧的 0.1.x 锯齿式例外列表。运行时仍按能力判断，而不是按版本字符串分支。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
+- **DSH Host 支持策略：** DVR 3.0.x 从 `0.1.5-rc.1` 起连续支持 DSH 0.1.x（当前稳定证据为 `0.1.5-rc.3`），并从已验证的 `0.2.0-rc.2` 起支持 0.2.x；精确 `0.2.0-rc.2` 同时作为 3.0 默认开发 Host。低于 0.1.5 的 Host 不再支持，也不再维护旧的 0.1.x 锯齿式例外列表。运行时仍按能力判断，而不是按版本字符串分支。详见 [DSH Host 支持窗口](docs/architecture/dsh-support-window.md)。
 - Node ≥ 22（宿主侧）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

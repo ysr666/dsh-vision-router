@@ -5,6 +5,35 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.0.0
+
+### Session Vision policy ownership / Session 识图策略归属
+
+- **策略有了持久归属**：新增作用域化策略存储与 Host storage 背书的持久层。识图权威按 Session 持有；子会话发布前完成 hydrate，直接识图检查同样携带该策略，委派绑定 Host Agent 生命周期而不是从环境状态反推。没有持久能力的 Host 回退到作用域化易失后端。
+- **Policy survives delegation:** a delegated child session inherits the owner's Vision authority through the policy store, and the Host Agent lifecycle decides when that delegation ends.
+- **Added a required peer:** `@deepseek-ai/dsh-storage-domain` (`>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0`) backs the durable policy layer.
+
+### Package root / 包根 API
+
+- **根入口改为显式声明的 API**：移除单体 `index.js`，改由精简的 public entry 加声明文件承载，`exports["."]` 增加 `types`；打包公共 API 契约直接加载该入口并校验声明面与运行时一致。
+- **The published surface is asserted, not assumed:** the packed contract executes the entry, checks arity and lifecycle preconditions, and type-checks a consumer sample against the shipped declarations.
+
+### Architecture & transport / 架构与传输
+
+- **显式 composition 与传输归属**：运行时装配分成显式阶段；router 自有 provider HTTP 接收显式传入的 `VisionProviderTransport`，Core 不再安装 process-wide proxy fetch。
+- **Provider probes follow the scoped proxy path:** live model discovery and the settings connection check run inside the same configured-pair proxy scope as vision turns, taking the transport the proxy boundary owns instead of reading the process global at call time.
+
+### R11 adversarial final audit / R11 对抗终审
+
+- **20 项发现全部关闭**，每项都记录了守护它的产物（lint 规则、契约测试、发布状态机、真实 Host 边界测试），并补齐了防止同类缺陷回归的门。
+- **Client stability:** the composer vision chip keeps a constant width, full opacity and no disabled churn while the model directory rebuilds.
+
+### Release integrity / 发布完整性
+
+- **发布状态机 refusal-first、draft-safe**：注册表身份与包内容在发布前后比对；README 公告条与发布说明成为硬门禁；tag 由工作流在验证后的 SHA 上自行固化，已发布的版本不可重放。
+- **CI honesty:** the pnpm-free Windows runtime smoke receives built artifacts from a build job instead of installing a package manager, and the packed public-API contract pins the real runtime contract rather than an assumed one.
+
+
 ## v2.3.0
 
 ### Architecture & correctness / 架构与正确性

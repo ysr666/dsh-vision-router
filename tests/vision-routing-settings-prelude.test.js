@@ -53,6 +53,13 @@ test('routing choices reuse the stabilized SettingsScope and readback-safe save 
   assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /settings\.mutate/)
 })
 
+test('remote routing controls await their private Settings scope during HMR cleanup', () => {
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /var dispose = async function\(\)/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /await scope\.dispose\(\)/)
+  assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /void dispose\(\)\.catch\(function\(\)\{\}\)/)
+  assert.doesNotMatch(VISION_ROUTING_SETTINGS_PRELUDE, /void scope\.dispose\(\)/)
+})
+
 test('remote routing controls refresh on connection resets and settings document changes', () => {
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /ctx\.on\('connection\/reset', reloadRemote\)/)
   assert.match(VISION_ROUTING_SETTINGS_PRELUDE, /ctx\.remote\.\$on\('settings\/document-updated'/)
