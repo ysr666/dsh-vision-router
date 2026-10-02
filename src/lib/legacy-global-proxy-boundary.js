@@ -15,6 +15,11 @@ import {
 } from './proxy-routing.js'
 
 const legacyProxyScope = new AsyncLocalStorage()
+// The one process-wide fetch this boundary currently owns. Consumers that must
+// follow the same egress path ask for it here instead of reading `globalThis.fetch`
+// at call time (which the lifecycle invariant forbids and which would re-admit
+// whatever wrapper happens to be installed later).
+let installedScopedFetch
 
 export const LEGACY_GLOBAL_PROXY_REMOVAL_CONDITION =
   'Remove the remaining wrapper when explicit Vision Router proxy overrides no longer need Host-owned adapter interception and the legacy direct whole-turn fallback is retired by product policy.'
@@ -84,6 +89,36 @@ export function currentLegacyGlobalProxyScope() {
 export function legacyGlobalProxyScopeAllows(config = {}, state = currentLegacyGlobalProxyScope()) {
   if (!visionProxyOverrideConfigured(config) || state?.active !== true) return false
   return configuredHostOwnedPair(config, state.provider, state.model)
+}
+
+// Probe paths (live model discovery, the settings "test connection" route) do not
+// stream a provider turn, so they have no adapter call to open a scope for them.
+// Without a scope, `scopedFetch` falls through to the original fetch and a
+// configured `proxy` silently does not apply — while real vision turns to the same
+// provider are proxied. Expose the exact pair lookup and a plain-promise scope
+// runner so those probes follow the same egress path as the traffic they describe.
+export function currentLegacyGlobalProxyFetch() {
+  return installedScopedFetch
+}
+
+export function legacyGlobalProxyPairFor(config = {}, provider) {
+  if (!visionProxyOverrideConfigured(config) || typeof provider !== 'string' || provider === '') return undefined
+  return configuredPairs(config).find(
+    (pair) => pair.provider === provider && !routerOwnedProvider(pair.provider, config),
+  )
+}
+
+export function runWithLegacyGlobalProxyScope(provider, model, work) {
+  if (typeof work !== 'function') throw new TypeError('legacy proxy scope requires work')
+  if (!validPair(provider, model)) return work()
+  const state = { provider, model, active: true }
+  return legacyProxyScope.run(state, async () => {
+    try {
+      return await work()
+    } finally {
+      state.active = false
+    }
+  })
 }
 
 // AsyncIterable work is lazy: the adapter normally opens its network request on
@@ -229,6 +264,7 @@ export function installLegacyGlobalProxyBoundary(ctx, config = {}, options = {})
   }
 
   const restoreFetch = installFetchWrapper(scopedFetch)
+  installedScopedFetch = scopedFetch
   let disposed = false
   let disposePromise
   const dispose = () => {
@@ -236,6 +272,7 @@ export function installLegacyGlobalProxyBoundary(ctx, config = {}, options = {})
     if (disposed) return Promise.resolve()
     disposed = true
     active = false
+    if (installedScopedFetch === scopedFetch) installedScopedFetch = undefined
     // Process-wide fetch ownership is released synchronously; the returned
     // Promise owns only DVR's private dispatcher retirement and is awaitable by
     // the Cordis fiber during HMR/unload.

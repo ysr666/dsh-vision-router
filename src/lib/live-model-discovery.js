@@ -5,6 +5,11 @@ import process from 'node:process'
 import { resolveDshHome } from './doctor.js'
 import { MODEL_RESPONSE_MAX_BYTES, readResponseJsonBounded } from './http-body-limit.js'
 import { stripTrailingSlashes } from './string-normalization.js'
+import {
+  currentLegacyGlobalProxyFetch,
+  legacyGlobalProxyPairFor,
+  runWithLegacyGlobalProxyScope,
+} from './legacy-global-proxy-boundary.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
 
 export const LIVE_MODELS_PATH = '/_dsh/vision-router/live-models'
@@ -16,6 +21,10 @@ export const DEFAULT_LIVE_MODEL_CONCURRENCY = 3
 export const DEFAULT_MAX_MODELS_PER_PROVIDER = 2_000
 
 const SUPPORTED_DISCOVERY_PROTOCOLS = new Set(['openai-completions', 'openai-responses'])
+
+const moduleFetch = typeof globalThis.fetch === 'function'
+  ? globalThis.fetch.bind(globalThis)
+  : undefined
 
 function nonEmpty(value) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
@@ -228,6 +237,21 @@ function providerConfigurationToken(provider, raw) {
   ])
 }
 
+// The boundary resolves its pair list from the live config; read the same shape so
+// the scope we open is one the boundary will accept.
+function liveProxyConfig(ctx, fallbackConfig = {}) {
+  try {
+    const settings = ctx?.get?.('settings')
+    const live = settings?.get?.('vision-router')
+    if (live !== null && typeof live === 'object' && !Array.isArray(live)) {
+      return { ...fallbackConfig, ...live }
+    }
+  } catch {
+    // Fall back to the composition config.
+  }
+  return fallbackConfig
+}
+
 function visionProviderPriority(ctx, fallbackConfig = {}) {
   const preferred = new Set()
   const collect = (value) => {
@@ -388,7 +412,13 @@ function boundedError(error) {
 
 export function createLiveModelDiscoveryManager(ctx, options = {}) {
   const now = typeof options.now === 'function' ? options.now : Date.now
-  const fetchImpl = typeof options.fetchImpl === 'function' ? options.fetchImpl : globalThis.fetch
+  // The proxy boundary installs its wrapper after apply() returns, so a capture
+  // taken here would keep the raw host fetch and silently ignore a configured
+  // `proxy` in the probes below. Ask the boundary for the fetch it currently owns
+  // instead of reading the process global at call time (L1-sealed-process-global);
+  // the module-load capture stays as the last-resort fallback.
+  const injectedFetch = typeof options.fetchImpl === 'function' ? options.fetchImpl : undefined
+  const resolveFetch = () => injectedFetch ?? currentLegacyGlobalProxyFetch() ?? moduleFetch
   const freshMs = Math.max(1_000, Number(options.freshMs) || DEFAULT_LIVE_MODEL_FRESH_MS)
   const staleMs = Math.max(freshMs, Number(options.staleMs) || DEFAULT_LIVE_MODEL_STALE_MS)
   const timeoutMs = Math.max(500, Number(options.timeoutMs) || DEFAULT_LIVE_MODEL_TIMEOUT_MS)
@@ -548,11 +578,15 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     try {
       const headers = { accept: 'application/json' }
       if (plan.apiKey !== undefined) headers.authorization = `Bearer ${plan.apiKey}`
-      const response = await fetchImpl(listingURL(plan.baseURL), {
+      const probe = () => resolveFetch()(listingURL(plan.baseURL), {
         method: 'GET',
         headers,
         signal: controller.signal,
       })
+      const proxyPair = legacyGlobalProxyPairFor(liveProxyConfig(ctx, fallbackConfig), provider)
+      const response = proxyPair === undefined
+        ? await probe()
+        : await runWithLegacyGlobalProxyScope(proxyPair.provider, proxyPair.model, probe)
       if (!response?.ok) {
         const error = new Error(`provider model listing answered HTTP ${response?.status ?? 'unknown'}`)
         error.status = response?.status
