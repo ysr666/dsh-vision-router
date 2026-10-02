@@ -34,6 +34,16 @@ function liveVisionConfig(ctx, fallback) {
  * settings therefore leave DSH/Host as the sole network authority.
  */
 export function apply(ctx, config = {}) {
+  // Cordis effect() is a required plugin-fiber primitive across the entire
+  // supported DSH window, not an optional capability. Refuse malformed/partial
+  // Hosts before any DVR route, wrapper, transport, watcher or global mutation
+  // can be published without a lifecycle owner.
+  let effect
+  try { effect = ctx?.effect } catch (error) { throw error }
+  if (typeof effect !== 'function') {
+    throw new TypeError('vision-router requires a Cordis lifecycle context with effect()')
+  }
+
   // DSH 0.1.7 replaces SettingsProvider.register() with profile-owned
   // ConfigEditor writes for ordinary fields. Feature-detect that exact contract
   // and present DVR's mature settings face without changing older Hosts.
@@ -66,7 +76,7 @@ export function apply(ctx, config = {}) {
     return transportReleasePromise
   }
   try {
-    runtimeCtx?.effect?.(
+    runtimeCtx.effect(
       () => releaseTransport,
       'vision-router: provider transport',
     )
