@@ -66,12 +66,6 @@ jobs:
         with:
           version: ${{ steps.package-manager.outputs.version }}
 
-      - name: Restore cached Node runtime
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.tool_cache }}/node
-          key: node-runtime-${{ runner.os }}-${{ runner.arch }}-22.19.0
-
       - name: Install Node contract runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
