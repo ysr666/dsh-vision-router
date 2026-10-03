@@ -81,6 +81,14 @@ Version labels describe support policy and CI evidence; runtime branching still 
 
 DVR must not turn these tables into widespread version-string conditionals. Runtime compatibility continues to feature-detect the concrete Host seam it needs. If a capability cannot be proven safely, the compatibility path fails open or reports an explicit unsupported/unknown state according to that seam's contract.
 
+The same rule binds the contract gate. `scripts/dsh-host-contract-smoke.mjs` derives the settings
+seam from the Host it is pointed at (`EXPECT_SETTINGS_MODE=auto`): the `0.1.5` train exposes
+`SettingsProvider.register()`, while the `0.1.7` release and every `0.2.x` Host since — `0.2.0-rc.2`
+through the `0.2.1` alpha line — replace it with `SettingsForms.describe()` plus ConfigEditor
+`configuration()`/`edit()`. A gate that pins one shape reports an unsupported Host for a Host DVR
+supports, so the floating canaries derive the seam, the pinned legs keep naming theirs explicitly,
+and a Host with neither reviewed seam fails the gate by name instead of passing silently.
+
 ## Compatibility-retirement rule
 
 The 2.3.x `0.1.5` train floor makes any compatibility path used only by pre-`0.1.5` Hosts eligible for a fresh deletion audit, but does not automatically authorize deletion. Durable session formats, replay envelopes, adapter wire shapes, and other historical inputs may outlive the Host version that originally produced them.

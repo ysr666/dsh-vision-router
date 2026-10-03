@@ -89,16 +89,55 @@ jobs:
           const installed = spawnSync('pnpm', ['install'], { cwd: hostDir, stdio: 'inherit' })
           if (installed.status !== 0) process.exit(installed.status ?? 1)
           fs.appendFileSync(process.env.GITHUB_ENV, `DSH_CONTRACT_HOST_DIR=${hostDir}\n`)
+      # Every contract runs even when an earlier one fails, and one aggregate step
+      # reports them together: a single stale expectation must not hide the state of
+      # the other contracts on a new upstream alpha.
       - name: Verify alpha Host capability contract
+        id: alpha-host-capability
+        continue-on-error: true
         env:
           EXPECT_BATCH: 'true'
           EXPECT_DIMENSION: 'true'
           EXPECT_CURRENT: 'true'
+          # The seam is read from the Host, so a release that swaps the settings
+          # surface again is reported as a contract change instead of an expectation.
+          EXPECT_SETTINGS_MODE: auto
         run: node scripts/dsh-host-contract-smoke.mjs
       - name: Verify alpha pi-ai final OpenCode wire
+        id: alpha-pi-ai-wire
+        continue-on-error: true
         run: node tests/opencode-session-wire-contract.mjs
       - name: Verify alpha Session v2 native image process-restart lifecycle
+        id: alpha-native-lifecycle
+        continue-on-error: true
         run: node scripts/dsh-preview-native-lifecycle-contract.mjs
+      - name: Require every alpha contract
+        if: always()
+        run: |
+          failed=''
+          for entry in \
+            "Host capability:${{ steps.alpha-host-capability.outcome }}" \
+            "pi-ai wire:${{ steps.alpha-pi-ai-wire.outcome }}" \
+            "native lifecycle:${{ steps.alpha-native-lifecycle.outcome }}"; do
+            name="${entry%%:*}"
+            outcome="${entry##*:}"
+            printf '  %-18s %s\n' "$name" "$outcome"
+            [ "$outcome" = 'success' ] || failed="$failed $name"
+          done
+          {
+            echo "### Alpha contracts against @deepseek-ai/dsh ${DSH_VERSION}"
+            echo
+            echo "| contract | outcome |"
+            echo '| --- | --- |'
+            echo "| Host capability | ${{ steps.alpha-host-capability.outcome }} |"
+            echo "| pi-ai wire | ${{ steps.alpha-pi-ai-wire.outcome }} |"
+            echo "| native lifecycle | ${{ steps.alpha-native-lifecycle.outcome }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$failed" ]; then
+            echo "::error::alpha contracts failed:$failed"
+            exit 1
+          fi
+          echo "all alpha contracts passed against @deepseek-ai/dsh ${DSH_VERSION}"
       - name: Compatibility investigation hint
         if: failure()
         run: |
