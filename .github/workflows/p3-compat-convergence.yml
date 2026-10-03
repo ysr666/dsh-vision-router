@@ -15,6 +15,7 @@ on:
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'
       - 'tests/dsh-support-window.test.js'
+      - 'tests/doctor-host-capabilities.test.js'
       - 'tests/p3-*.test.js'
       - '.github/workflows/p3-compat-convergence.yml'
   push:
@@ -31,6 +32,7 @@ on:
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'
       - 'tests/dsh-support-window.test.js'
+      - 'tests/doctor-host-capabilities.test.js'
       - 'tests/p3-*.test.js'
       - '.github/workflows/p3-compat-convergence.yml'
 
