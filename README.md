@@ -42,9 +42,15 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v3.0.0)**
+> 📌 **Announcement (v3.0.1)**
 >
-> **v3.0.0: Session Vision policy now has a durable owner.** The supported DSH 0.1.x window now starts at `0.1.5-rc.1`, while the 0.2.x train starts at verified `0.2.0-rc.2`; Vision authority lives in a scoped, Host-storage-backed policy store, hydrates before child sessions publish, and binds delegation to the Host Agent lifecycle. The package root is a deliberate, typed public API, the runtime installation is grouped into explicit composition phases with an explicitly passed provider transport, and a new required peer (`@deepseek-ai/dsh-storage-domain`) is added. This release also closes the R11 adversarial final audit. [What’s new →](docs/releases/v3.0.0.md)
+> **v3.0.1: five corrective fixes on the 3.0 line.** The Vision Router settings surface
+> reads and writes real values on the Desktop shell, the model picker no longer groups the
+> same model twice, and every provider leg that can reach a remote provider — background
+> profiling, the local vision stabilizer, the settings "test connection" probe and the
+> LM Studio native transport — now follows the same `proxy` / `proxyHosts` decision as
+> foreground vision turns. Supported Hosts are unchanged: DSH 0.1.x from `0.1.5-rc.1`,
+> DSH 0.2.x from verified `0.2.0-rc.2`. [What’s new →](docs/releases/v3.0.1.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
