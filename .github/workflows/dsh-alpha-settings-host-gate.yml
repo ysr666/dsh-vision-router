@@ -10,6 +10,12 @@ name: Latest DSH Alpha Settings Host Gate
 on:
   schedule:
     - cron: '23 5 * * 1'
+  # Merging a pin bump is the review step for adopting a new alpha, so the gate re-runs on
+  # the push that lands it instead of waiting for the next weekly run.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dsh-alpha-settings-host-gate.yml'
   workflow_dispatch:
 permissions:
   contents: read
