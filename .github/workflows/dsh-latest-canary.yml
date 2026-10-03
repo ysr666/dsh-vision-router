@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/dsh-latest-canary.yml'
       - 'scripts/dsh-host-contract-smoke.mjs'
+      - 'scripts/host-settings-seam.mjs'
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
