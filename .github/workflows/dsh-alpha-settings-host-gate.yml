@@ -11,16 +11,6 @@ on:
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
-    inputs:
-      version:
-        description: Exact DSH version to test (defaults to the published alpha dist-tag)
-        required: false
-        type: string
-      source_sha:
-        description: Upstream source commit to build (defaults to the tag of the resolved version)
-        required: false
-        type: string
-
 permissions:
   contents: read
 
@@ -34,48 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      # A published version is the only stable handle on a drifting channel: resolve the
-      # dist-tag, then map it to the upstream source via its release tag. An annotated tag
-      # points at a tag object, so dereference it once before checking out.
-      - name: Resolve the alpha release and its source commit
-        id: resolve
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED_VERSION: ${{ inputs.version }}
-          REQUESTED_SHA: ${{ inputs.source_sha }}
-        run: |
-          set -euo pipefail
-          VERSION="$REQUESTED_VERSION"
-          if [ -z "$VERSION" ]; then
-            VERSION="$(npm view @deepseek-ai/dsh dist-tags.alpha)"
-          fi
-          test -n "$VERSION"
-          SHA="$REQUESTED_SHA"
-          if [ -z "$SHA" ]; then
-            REF="$(gh api "repos/deepseek-ai/deepseek-harness/git/ref/tags/dsh-v${VERSION}")"
-            SHA="$(printf '%s' "$REF" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')"
-            TYPE="$(printf '%s' "$REF" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])')"
-            if [ "$TYPE" = "tag" ]; then
-              SHA="$(gh api "repos/deepseek-ai/deepseek-harness/git/tags/${SHA}" --jq '.object.sha')"
-            fi
-          fi
-          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$' || {
-            echo "::error::resolved alpha source is not a commit: $SHA"
-            exit 1
-          }
-          echo "Testing @deepseek-ai/dsh $VERSION at $SHA"
-          {
-            printf 'version=%s\n' "$VERSION"
-            printf 'sha=%s\n' "$SHA"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo '### Alpha settings host gate'
-            echo
-            echo "- DSH version: \`$VERSION\`"
-            echo "- source commit: \`$SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -85,7 +33,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ steps.resolve.outputs.sha }}
+          ref: 5badb15009ae1756c3afe0ae0cef1faafc290ccc # dsh-v0.2.1-alpha.1
           persist-credentials: false
           path: dsh-alpha
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -97,6 +45,22 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22.19.0
+
+      - name: Read the Host version under test
+        id: resolve
+        working-directory: dsh-alpha
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          test -n "$VERSION"
+          echo "Testing @deepseek-ai/dsh $VERSION"
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Alpha settings host gate'
+            echo
+            echo "- DSH version: \`$VERSION\`"
+            echo "- source commit: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Materialize Vision Router package artifacts
         working-directory: dvr
