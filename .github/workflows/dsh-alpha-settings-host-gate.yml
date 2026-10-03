@@ -1,0 +1,121 @@
+name: Latest DSH Alpha Settings Host Gate
+
+# The alpha channel is drift surveillance, not the support-policy evidence point: the
+# canaries resolve a floating version, and the support window only moves when it is
+# advanced explicitly. What the channel lacked was the real-Host settings lifecycle the
+# 0.2.0-rc.2 boundary runs, so a settings-surface change could satisfy every contract check
+# and still break mount / save / reload / readback on a real alpha Host. This lane builds
+# the source a published alpha maps to and drives the same real browser lifecycle against
+# it, so the drifting channel is measured end to end instead of only by contract.
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  # Merging a pin bump is the review step for adopting a new alpha, so the gate re-runs on
+  # the push that lands it instead of waiting for the next weekly run.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dsh-alpha-settings-host-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: dsh-alpha-settings-host-gate
+  cancel-in-progress: false
+
+jobs:
+  alpha-settings-host:
+    name: real alpha Host + Chromium settings lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout the resolved alpha source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 5badb15009ae1756c3afe0ae0cef1faafc290ccc # dsh-v0.2.1-alpha.1
+          persist-credentials: false
+          path: dsh-alpha
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      # No `cache: pnpm` here on purpose: this lane runs on a schedule from the default
+      # branch and checks out a floating upstream ref, so anything it writes into a shared
+      # cache would come from code nobody pinned. The store lives for this run only.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+
+      - name: Read the Host version under test
+        id: resolve
+        working-directory: dsh-alpha
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          test -n "$VERSION"
+          echo "Testing @deepseek-ai/dsh $VERSION"
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Alpha settings host gate'
+            echo
+            echo "- DSH version: \`$VERSION\`"
+            echo "- source commit: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install alpha Host workspace dependencies
+        working-directory: dsh-alpha
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      # This lane touches no cache at all, on purpose: it runs from the default branch on a
+      # schedule against a floating upstream ref, so anything it read from or wrote to a
+      # shared cache would come from code nobody pinned. The Chromium install therefore pays
+      # the mirror cost on its own, which a weekly lane can afford.
+      - name: Build the alpha Host runtime
+        working-directory: dsh-alpha
+        run: pnpm run build
+
+      - name: Install Chromium
+        working-directory: dsh-alpha
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      # The gate this lane exists for: the same real browser lifecycle the 0.2.0-rc.2
+      # boundary runs, against a Host built from the resolved alpha source.
+      - name: Run Settings mount/save/reload/readback lifecycle
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+      - name: Run Desktop Host injection contract
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-alpha-settings-host-diagnostics
+          path: |
+            ${{ runner.temp }}/dsh-alpha-settings.json
+            ${{ runner.temp }}/dsh-alpha-settings.png
+          if-no-files-found: ignore

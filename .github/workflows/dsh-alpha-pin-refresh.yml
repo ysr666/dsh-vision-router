@@ -1,0 +1,193 @@
+name: Refresh the Alpha Settings Gate Pin
+
+# The gate executes a reviewed upstream commit on purpose. Nothing upstream publishes can
+# substitute for that review: the 0.2.1 alpha commit is unsigned, its release tag is a
+# lightweight tag with no signed object, and the npm packages carry no provenance
+# attestation, so the only signal that travels with the code is npm's post-publish integrity
+# signature. Discovery can still be automatic — this workflow watches the published alpha,
+# collects every check that *can* be automated, and opens a pull request that bumps the pin.
+# Merging it is the review, and it re-runs the gate.
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+# The pull request is opened with GITHUB_TOKEN, so it does not start workflow runs by itself.
+# The gate runs on the push that merges it instead.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dsh-alpha-pin-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: open or update the pin bump
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dvr
+
+      - name: Resolve the published alpha
+        id: alpha
+        shell: bash
+        working-directory: dvr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(npm view @deepseek-ai/dsh dist-tags.alpha)"
+          test -n "$VERSION"
+          REF="$(gh api "repos/deepseek-ai/deepseek-harness/git/ref/tags/dsh-v${VERSION}")"
+          SHA="$(printf '%s' "$REF" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')"
+          TYPE="$(printf '%s' "$REF" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["type"])')"
+          if [ "$TYPE" = "tag" ]; then
+            SHA="$(gh api "repos/deepseek-ai/deepseek-harness/git/tags/${SHA}" --jq '.object.sha')"
+          fi
+          printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "::error::resolved alpha source is not a commit: $SHA"
+            exit 1
+          }
+          printf 'version=%s\nsha=%s\n' "$VERSION" "$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Collect the automatable evidence
+        id: evidence
+        shell: bash
+        working-directory: dvr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.alpha.outputs.version }}
+          SHA: ${{ steps.alpha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          TAG_TYPE="$(gh api "repos/deepseek-ai/deepseek-harness/git/ref/tags/dsh-v${VERSION}" --jq '.object.type')"
+          VERIFICATION="$(gh api "repos/deepseek-ai/deepseek-harness/commits/${SHA}" --jq '.commit.verification | "verified=\(.verified), reason=\(.reason)"')"
+          REACHABILITY="$(gh api "repos/deepseek-ai/deepseek-harness/compare/${SHA}...HEAD" --jq '.status')"
+          HEAD_SHA="$(gh api repos/deepseek-ai/deepseek-harness/commits/HEAD --jq '.sha')"
+          INTEGRITY="$(npm view "@deepseek-ai/dsh@${VERSION}" dist.integrity)"
+          PUBLISHED="$(npm view "@deepseek-ai/dsh@${VERSION}" time --json | python3 -c 'import json,sys,os; print(json.load(sys.stdin).get(os.environ["VERSION"], "unknown"))')"
+          {
+            printf 'tag_type=%s\n' "$TAG_TYPE"
+            printf 'verification=%s\n' "$VERIFICATION"
+            printf 'reachability=%s\n' "$REACHABILITY"
+            printf 'upstream_head=%s\n' "$HEAD_SHA"
+            printf 'integrity=%s\n' "$INTEGRITY"
+            printf 'published=%s\n' "$PUBLISHED"
+          } >> "$GITHUB_OUTPUT"
+          echo "alpha $VERSION at $SHA ($REACHABILITY of upstream HEAD)"
+
+      - name: Stop when the pin is already current
+        id: pin
+        shell: bash
+        working-directory: dvr
+        env:
+          SHA: ${{ steps.alpha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          GATE=".github/workflows/dsh-alpha-settings-host-gate.yml"
+          CURRENT="$(grep -oE 'ref: [0-9a-f]{40}' "$GATE" | head -1 | awk '{print $2}')"
+          test -n "$CURRENT"
+          echo "current=$CURRENT"
+          if [ "$CURRENT" = "$SHA" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The gate already pins $SHA."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rewrite the pin
+        if: steps.pin.outputs.changed == 'true'
+        shell: bash
+        working-directory: dvr
+        env:
+          VERSION: ${{ steps.alpha.outputs.version }}
+          SHA: ${{ steps.alpha.outputs.sha }}
+          CURRENT: ${{ steps.pin.outputs.current }}
+        run: |
+          set -euo pipefail
+          GATE=".github/workflows/dsh-alpha-settings-host-gate.yml"
+          python3 - "$GATE" "$CURRENT" "$SHA" "$VERSION" <<'PY'
+          import pathlib, re, sys
+          path, current, sha, version = sys.argv[1:5]
+          p = pathlib.Path(path)
+          text = p.read_text()
+          assert f'ref: {current}' in text, 'current pin not found'
+          # The trailing comment names the release the commit belongs to, so it moves with it.
+          updated, count = re.subn(
+            r'ref: [0-9a-f]{40} # dsh-v[\w.-]+',
+            f'ref: {sha} # dsh-v{version}',
+            text,
+            count=1,
+          )
+          assert count == 1, 'pin line not rewritten'
+          p.write_text(updated)
+          print(f'pinned {current} -> {sha} (dsh-v{version})')
+          PY
+          grep -nE 'ref: [0-9a-f]{40} # dsh-v' "$GATE"
+
+      - name: Open or update the bump pull request
+        if: steps.pin.outputs.changed == 'true'
+        shell: bash
+        working-directory: dvr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.alpha.outputs.version }}
+          SHA: ${{ steps.alpha.outputs.sha }}
+          CURRENT: ${{ steps.pin.outputs.current }}
+          TAG_TYPE: ${{ steps.evidence.outputs.tag_type }}
+          VERIFICATION: ${{ steps.evidence.outputs.verification }}
+          REACHABILITY: ${{ steps.evidence.outputs.reachability }}
+          UPSTREAM_HEAD: ${{ steps.evidence.outputs.upstream_head }}
+          INTEGRITY: ${{ steps.evidence.outputs.integrity }}
+          PUBLISHED: ${{ steps.evidence.outputs.published }}
+        run: |
+          set -euo pipefail
+          BRANCH="ci/alpha-pin-refresh"
+          cat > /tmp/bump-body.md <<MD
+          ## What this proposes
+
+          Bump the alpha settings gate from \`${CURRENT}\` to \`${SHA}\`
+          (\`dsh-v${VERSION}\`, published ${PUBLISHED}).
+
+          Merging this re-runs the gate on the push, so the new pin is verified end to end
+          (real browser settings lifecycle + Desktop Host injection) against the source below.
+
+          ## Automatable evidence
+
+          | Check | Result |
+          | --- | --- |
+          | version → tag \`dsh-v${VERSION}\` | resolved |
+          | tag object type | \`${TAG_TYPE}\` |
+          | commit signature | \`${VERIFICATION}\` |
+          | mainline position | \`${REACHABILITY}\` (upstream HEAD \`${UPSTREAM_HEAD}\`) |
+          | npm integrity | \`${INTEGRITY}\` |
+
+          ## Why a person still decides
+
+          None of the rows above is an authenticity signal: the commit is unsigned, the tag is
+          a lightweight tag with no signed object, and the packages carry no provenance
+          attestation, so npm's integrity signature only proves the tarball was not altered
+          after publishing. What is automatic here is discovery, comparison and evidence
+          collection; adopting an upstream alpha for execution in this repository stays a
+          reviewed decision, which is this merge.
+
+          MD
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$BRANCH"
+          git add .github/workflows/dsh-alpha-settings-host-gate.yml
+          git commit -m "ci: bump the alpha settings gate pin to dsh-v${VERSION}"
+          git push --force-with-lease origin "$BRANCH"
+          if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
+            gh pr comment "$BRANCH" --body-file /tmp/bump-body.md
+            echo "updated the existing pull request"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "ci: bump the alpha settings gate pin to dsh-v${VERSION}" \
+              --body-file /tmp/bump-body.md
+          fi
