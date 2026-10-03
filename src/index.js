@@ -2442,6 +2442,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               memory: sessionImageMemory,
               timeoutMs: timeoutMs(),
               downscaleMaxPixels: instantLocalMaxPixels(),
+              providerTransport,
             })
             if (instantMap.size > 0) {
               ctx.logger?.info(
