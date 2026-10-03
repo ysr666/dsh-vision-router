@@ -42,9 +42,13 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v3.0.0）**
+> 📌 **公告（v3.0.1）**
 >
-> **v3.0.0：Session Vision policy 有了持久归属。DSH 0.1.x 正式支持线提高到 `0.1.5-rc.1` 起，0.2.x 从已验证的 `0.2.0-rc.2` 起；识图权威由作用域化的、Host storage 背书的策略存储持有，子会话发布前完成 hydrate，委派绑定 Host Agent 生命周期；包根改为显式声明且带类型的公共 API，运行时装配显式分阶段、provider transport 必须显式传入，并新增必需 peer `@deepseek-ai/dsh-storage-domain`。本版本同时完成 R11 对抗终审。** [查看完整更新 →](docs/releases/v3.0.0.md)
+> **v3.0.1：3.0 线上的五处修正。** Desktop 壳上的 Vision Router 设置面能读取并写入真实值，
+> 模型选择器不再把同一模型重复分组；所有可能触达远程 provider 的腿 —— 后台基准分析、本地视觉
+> 稳定器、设置里的「测试连接」探针、LM Studio native 传输 —— 现在都与前台视觉轮次遵守同一套
+> `proxy` / `proxyHosts` 判定。支持的 Host 不变：DSH 0.1.x 自 `0.1.5-rc.1` 起，DSH 0.2.x 自
+> 已验证的 `0.2.0-rc.2` 起。 [查看完整更新 →](docs/releases/v3.0.1.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />

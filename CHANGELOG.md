@@ -5,6 +5,26 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.0.1
+
+### 五处消费者可见修复 / Five consumer-visible fixes
+
+- **Desktop 设置页显示与写入真实值**：某些 Host 暴露 legacy 形状的 `settingsScope`，其 `vision-router` 视图可能为空而原生 config forms 仍可用。现在该 scope 只作为其他命名空间的委派者，不再绕过本地设置桥 —— Desktop 壳上的 Vision Router 设置面能读到、写入真实值。（#619）
+- **Settings values on the Desktop shell:** a legacy-shaped `settingsScope` may return an empty `vision-router` namespace while native config forms keep working; it is now kept only as the delegate for other namespaces instead of bypassing the local settings bridge. (#619)
+- **模型选择器不再重复分组**：模型可见性边界现在会补丁它能够触达的每个 loader 实例（包括边界安装之后才发布的 loader），选择器不再把同一模型分成两组。（#620）
+- **Model picker catalog:** the model-visibility boundary patches every loader instance it can reach, including one published after the boundary installs, so a model is no longer grouped twice. (#620)
+- **后台与本地 provider 腿接入 Router 自己的 transport**：把 provider transport 透传进本地视觉稳定器、Host/安全边界与后台基准，这些腿从此与前台视觉轮次一样遵守 `proxy` / `proxyHosts`。（#623）
+- **Background and local provider legs:** the Router-owned provider transport is threaded into the local vision stabilizer, the host/security boundaries and the background benchmark, so those legs honor `proxy` / `proxyHosts` like foreground turns. (#623)
+- **「测试连接」探针走真实出口**：探针改为使用 `runtime.providerTransport`，不再依赖只能覆盖非 router-owned provider 的 legacy 配置对 scope —— 这正是 `vision-http` 直连后端（本插件默认形态）过去绕过代理的原因；只配置 legacy scope 的 Host 仍回退到边界 fetch。（#633）
+- **Connection probe egress:** the settings "test connection" probe takes the Router-owned transport instead of relying on the legacy configured-pair scope, which cannot cover a `vision-http` direct backend; the legacy boundary fetch stays as the fallback. (#633)
+- **LM Studio native 传输不再丢弃 transport**：`callLocalBackend` 的 `format: 'lmstudio'` 分支补上 `providerTransport`，原生 `POST /api/v1/chat` 经 `transport.fetch` 发出，与 openai / anthropic 两条腿一致 —— 远程 LM Studio 与其他 provider 一样可达。（#634）
+- **LM Studio native transport:** the `format: 'lmstudio'` branch no longer drops `providerTransport`, and the native request goes through `transport.fetch`, matching the openai and anthropic legs. (#634)
+
+### 内部加固（不改变包行为） / Internal hardening (no package behavior change)
+
+- 精确 Node 运行时缓存与 Playwright 系统包缓存；Desktop 对抗脚本分片与场景并发；Host 契约 gate 改为**从 Host 派生 settings seam**（`auto`），并让 alpha canary 的三条契约全部执行、聚合报告；e2e workflow 触发覆盖补齐。
+- Exact Node-runtime and Playwright system-package caches; Desktop adversary sharding and scenario concurrency; the Host contract gate now derives the settings seam from the Host (`auto`) and the alpha canary reports all three contracts; e2e workflow trigger coverage.
+
 ## v3.0.0
 
 ### Session Vision policy ownership / Session 识图策略归属
