@@ -110,26 +110,14 @@ jobs:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
-      # Weekly cadence would let a DSH build cache expire between runs, and a floating
-      # checkout must not write shared caches at all, so this lane restores the Playwright
-      # apt cache the per-PR gates refresh and never saves one.
+      # This lane touches no cache at all, on purpose: it runs from the default branch on a
+      # schedule against a floating upstream ref, so anything it read from or wrote to a
+      # shared cache would come from code nobody pinned. The Chromium install therefore pays
+      # the mirror cost on its own, which a weekly lane can afford.
       - name: Build the alpha Host runtime
         working-directory: dsh-alpha
         run: pnpm run build
 
-      - name: Restore cached Playwright system packages
-        id: playwright-apt-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/playwright-apt-archives
-          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
-      - name: Seed the apt package cache
-        if: steps.playwright-apt-cache.outputs.cache-hit == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo mkdir -p /var/cache/apt/archives/partial
-          sudo cp -n ~/playwright-apt-archives/*.deb /var/cache/apt/archives/ || true
       - name: Install Chromium
         working-directory: dsh-alpha
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
