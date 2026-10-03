@@ -8,6 +8,21 @@ name: Latest DSH Alpha Settings Host Gate
 # the source a published alpha maps to and drives the same real browser lifecycle against
 # it, so the drifting channel is measured end to end instead of only by contract.
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/dsh-alpha-settings-host-gate.yml'
+      - 'scripts/build-source-artifacts.mjs'
+      - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-peer-admission-contract.mjs'
+      - 'scripts/dsh-proxy-egress-contract.mjs'
+      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'src/**'
   schedule:
     - cron: '23 5 * * 1'
   # Merging a pin bump is the review step for adopting a new alpha, so the gate re-runs on
@@ -21,12 +36,92 @@ permissions:
   contents: read
 
 concurrency:
-  group: dsh-alpha-settings-host-gate
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  alpha-exact-source:
+    name: exact alpha source / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.1-alpha.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 5badb15009ae1756c3afe0ae0cef1faafc290ccc
+          persist-credentials: false
+          path: dsh-alpha
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22.19.0
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact alpha Host workspace dependencies
+        working-directory: dsh-alpha
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Run exact source and Host-owned Sharp contract
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.1
+          DSH_EXPECTED_COMMIT: 5badb15009ae1756c3afe0ae0cef1faafc290ccc
+        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify public 0.2 train peer admission
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
+      - name: Verify Host proxy egress authority
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-alpha
+        run: pnpm run build
+      - name: Run real macOS Desktop renderer lifecycle
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.1
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload macOS Desktop diagnostics on failure
+        if: matrix.os == 'macos-latest' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-alpha-macos-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.*
+          if-no-files-found: ignore
+
   alpha-settings-host:
-    name: real alpha Host + Chromium settings lifecycle
+    name: real alpha Host + Chromium lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -91,8 +186,31 @@ jobs:
       - name: Install Chromium
         working-directory: dsh-alpha
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
-      # The gate this lane exists for: the same real browser lifecycle the 0.2.0-rc.2
-      # boundary runs, against a Host built from the resolved alpha source.
+      - name: Run bundle recompose stability
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Run cold Vision lifecycle
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-cold-toggle.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+      - name: Run mixed attachment lifecycle
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-mixed.png
+        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
       - name: Run Settings mount/save/reload/readback lifecycle
         working-directory: dsh-alpha
         env:
@@ -116,6 +234,90 @@ jobs:
         with:
           name: dsh-alpha-settings-host-diagnostics
           path: |
-            ${{ runner.temp }}/dsh-alpha-settings.json
-            ${{ runner.temp }}/dsh-alpha-settings.png
+            ${{ runner.temp }}/dsh-alpha-*.json
+            ${{ runner.temp }}/dsh-alpha-*.png
+          if-no-files-found: ignore
+
+  alpha-windows-desktop:
+    name: Windows alpha Desktop / Node ${{ matrix.node }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22.19.0, 24.21.0]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.1-alpha.1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 5badb15009ae1756c3afe0ae0cef1faafc290ccc
+          persist-credentials: false
+          path: dsh-alpha
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact alpha Host workspace dependencies
+        working-directory: dsh-alpha
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build exact Desktop runtime
+        working-directory: dsh-alpha
+        run: pnpm run build
+      - name: Run authenticated Desktop Host contract
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.1
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Run Node 24 Desktop renderer lifecycle
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.1
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Run Node 24 multi-plugin ordering adversary
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-alpha
+        shell: bash
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.1
+          DVR_MULTIPLUGIN_BASE_PORT: '19600'
+        run: |
+          set -euo pipefail
+          for index in 0 1; do
+            DVR_MULTIPLUGIN_SHARD_COUNT=2 DVR_MULTIPLUGIN_SHARD_INDEX="$index" \
+              node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+          done
+      - name: Upload Windows Desktop diagnostics on failure
+        if: matrix.node == '24.21.0' && failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dsh-alpha-windows-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.*
           if-no-files-found: ignore
