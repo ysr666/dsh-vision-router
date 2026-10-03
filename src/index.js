@@ -4849,6 +4849,8 @@ ctx.logger?.info(
   // only the three coherent domain faces it already computes; route lifecycle,
   // bounded /models probing and JSON response semantics live outside Core.
   installVisionDiagnosticsRoutes(ctx, {
+    // Same egress as real vision turns: the Router-owned provider transport.
+    transport: runtime?.providerTransport,
     connection: {
       candidatePairs: pairs,
       localBackends: () => localProvidersOf(current()),

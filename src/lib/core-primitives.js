@@ -1937,7 +1937,11 @@ async function callLmStudioNative(provider, messages, options = {}) {
     ...(typeof options.temperature === 'number' ? { temperature: options.temperature } : {}),
     ...(typeof options.top_p === 'number' ? { top_p: options.top_p } : {}),
   }
-  const response = await fetch(`${apiRoot}/api/v1/chat`, {
+  const transport = options.providerTransport
+  const requestFetch = typeof transport?.fetch === 'function'
+    ? (input, init) => transport.fetch(input, init, { providerName: provider.name, allowProxy: true })
+    : fetch
+  const response = await requestFetch(`${apiRoot}/api/v1/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -1984,6 +1988,9 @@ export async function callLocalBackend(provider, messages, options = {}) {
     return callLmStudioNative(provider, messages, {
       maxTokens,
       signal: options.signal,
+      // The native LM Studio transport is a provider leg like the openai/anthropic
+      // ones: it must use the Router-owned transport so proxy/proxyHosts apply.
+      providerTransport: options.providerTransport,
       ...(typeof provider.reasoningEffort === 'string' ? { reasoningEffort: provider.reasoningEffort } : {}),
       ...sampling,
     })
