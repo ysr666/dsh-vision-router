@@ -14,6 +14,7 @@ on:
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-017-browser-smoke.yml'
   push:
     branches: [main]
@@ -28,6 +29,7 @@ on:
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-017-browser-smoke.yml'
   workflow_dispatch:
 

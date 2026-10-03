@@ -7,6 +7,7 @@ on:
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
       - 'tests/dsh-host-compat.test.js'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-upstream-web-modules-watch.yml'
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - 'scripts/dsh-web-modules-overlay-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
       - 'tests/dsh-host-compat.test.js'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-upstream-web-modules-watch.yml'
   schedule:
     - cron: '17 3 * * *'

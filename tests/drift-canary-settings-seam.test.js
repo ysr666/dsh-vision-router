@@ -79,9 +79,12 @@ test('the channel canary PR trigger covers its smoke script and every local modu
 })
 
 // Workflow path filters decide whether a gate runs at all. Derive both sides mechanically:
-// every repo file a workflow executes (its `run:` blocks) must be covered by that workflow's
-// pull_request.paths, and the end-to-end gates that build or drive the product must trigger
-// on the whole source tree — a hand-picked file list cannot track what the build really uses.
+// every repo file a workflow executes — files named in its `run:` blocks and files behind the
+// `pnpm <script>` commands it invokes — must be covered by that workflow's pull_request.paths,
+// and the end-to-end gates that build or drive the product must trigger on the whole source
+// tree. Implicit install lifecycle scripts are out of scope here: `ci.yml` runs `pnpm install`
+// and the full suite on every pull request, so build tooling is exercised even when a filtered
+// gate stays idle.
 function globToRegExp(pattern) {
   let source = ''
   for (let i = 0; i < pattern.length; i += 1) {
@@ -122,7 +125,28 @@ function pullRequestPatterns(workflow) {
   return patterns
 }
 
-function executedRepoFiles(workflow) {
+let packageScriptsPromise = null
+
+async function packageScripts() {
+  packageScriptsPromise ??= readFile(new URL('../package.json', import.meta.url), 'utf8')
+    .then((text) => JSON.parse(text).scripts ?? {})
+  return packageScriptsPromise
+}
+
+function collectRepoFiles(text, scripts, seen, files) {
+  for (const match of text.matchAll(/(?<![\w/])(?:\.\.\/dvr\/)?((?:scripts|tests)\/[\w./-]+\.(?:mjs|js))/g)) {
+    files.add(match[1])
+  }
+  for (const match of text.matchAll(/\bpnpm(?:\s+run)?\s+([\w:-]+)/g)) {
+    const name = match[1]
+    if (seen.has(name)) continue
+    seen.add(name)
+    if (scripts[name]) collectRepoFiles(scripts[name], scripts, seen, files)
+  }
+  return files
+}
+
+async function executedRepoFiles(workflow) {
   const lines = workflow.split('\n')
   const blocks = []
   let current = null
@@ -138,12 +162,9 @@ function executedRepoFiles(workflow) {
     if (line.match(/^\s*/)[0].length > current.indent) current.text += `\n${line}`
     else current = null
   }
+  const scripts = await packageScripts()
   const files = new Set()
-  for (const block of blocks) {
-    for (const match of block.text.matchAll(/(?<![\w/])(?:\.\.\/dvr\/)?((?:scripts|tests)\/[\w./-]+\.(?:mjs|js))/g)) {
-      files.add(match[1])
-    }
-  }
+  for (const block of blocks) collectRepoFiles(block.text, scripts, new Set(), files)
   return [...files].sort()
 }
 
@@ -155,7 +176,7 @@ test('every PR-triggered workflow triggers on the repo files it executes', async
     const workflow = await readWorkflow(name)
     const patterns = pullRequestPatterns(workflow)
     if (patterns.length === 0) continue
-    for (const executed of executedRepoFiles(workflow)) {
+    for (const executed of await executedRepoFiles(workflow)) {
       if (!isCoveredBy(executed, patterns)) violations.push(`${name}: ${executed}`)
     }
   }

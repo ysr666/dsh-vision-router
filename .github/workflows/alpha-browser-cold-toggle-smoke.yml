@@ -25,6 +25,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'cordis.patch.yml'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
   push:
     branches: [main]
@@ -51,6 +52,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'cordis.patch.yml'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
   workflow_dispatch:
 
