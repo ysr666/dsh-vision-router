@@ -8,6 +8,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 
 const CANARIES = ['dsh-alpha-canary.yml', 'dsh-latest-canary.yml']
 
@@ -50,4 +51,29 @@ test('the alpha canary reports every contract instead of stopping at the first f
   }
   assert.match(workflow, /name: Require every alpha contract\n\s+if: always\(\)/)
   assert.match(workflow, /alpha contracts failed/)
+})
+
+// The channel canary decides from `pull_request.paths` whether to run at all. Its smoke
+// script grew a local module in the settings-seam repair, and a path list that names only
+// the smoke silently skips the one gate that meets real floating Hosts. Derive the smoke's
+// relative module imports so a future extraction cannot fall out of the trigger again.
+test('the channel canary PR trigger covers its smoke script and every local module it imports', async () => {
+  const workflow = await readWorkflow('dsh-latest-canary.yml')
+  const pathsBlock = workflow.match(/\n {4}paths:\n((?: {6}- '[^']+'\n)+)/)?.[1] ?? ''
+  const triggeredPaths = [...pathsBlock.matchAll(/- '([^']+)'/g)].map((m) => m[1])
+  assert.ok(triggeredPaths.length > 0, 'dsh-latest-canary.yml must keep a pull_request paths list')
+
+  const smoke = await readFile(new URL('../scripts/dsh-host-contract-smoke.mjs', import.meta.url), 'utf8')
+  const localModules = [...new Set([...smoke.matchAll(/from '(\.\.?\/[^']+\.mjs)'/g)].map((m) => m[1]))]
+  const requiredPaths = [
+    'scripts/dsh-host-contract-smoke.mjs',
+    ...localModules.map((specifier) => path.posix.normalize(path.posix.join('scripts', specifier))),
+  ]
+
+  for (const requiredPath of requiredPaths) {
+    assert.ok(
+      triggeredPaths.includes(requiredPath),
+      `dsh-latest-canary.yml must also run when ${requiredPath} changes`,
+    )
+  }
 })
