@@ -7,7 +7,7 @@
 // resolve their version from the registry, and report every contract they run.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 
 const CANARIES = ['dsh-alpha-canary.yml', 'dsh-latest-canary.yml']
@@ -75,5 +75,124 @@ test('the channel canary PR trigger covers its smoke script and every local modu
       triggeredPaths.includes(requiredPath),
       `dsh-latest-canary.yml must also run when ${requiredPath} changes`,
     )
+  }
+})
+
+// Workflow path filters decide whether a gate runs at all. Derive both sides mechanically:
+// every repo file a workflow executes — files named in its `run:` blocks and files behind the
+// `pnpm <script>` commands it invokes — must be covered by that workflow's pull_request.paths,
+// and the end-to-end gates that build or drive the product must trigger on the whole source
+// tree. Implicit install lifecycle scripts are out of scope here: `ci.yml` runs `pnpm install`
+// and the full suite on every pull request, so build tooling is exercised even when a filtered
+// gate stays idle.
+function globToRegExp(pattern) {
+  let source = ''
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i]
+    if (char === '*') {
+      if (pattern[i + 1] === '*') { source += '.*'; i += 1 } else { source += '[^/]*' }
+    } else if ('\\^$.|?+()[]{}'.includes(char)) {
+      source += `\\${char}`
+    } else {
+      source += char
+    }
+  }
+  return new RegExp(`^${source}$`)
+}
+
+function isCoveredBy(target, patterns) {
+  return patterns.some((pattern) => (
+    pattern.includes('*') ? globToRegExp(pattern).test(target) : pattern === target
+  ))
+}
+
+function pullRequestPatterns(workflow) {
+  const lines = workflow.split('\n')
+  const start = lines.findIndex((line) => line === '  pull_request:')
+  if (start === -1) return []
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (/^ {2}\S/.test(lines[i])) { end = i; break }
+  }
+  const patterns = []
+  let inPaths = false
+  for (const line of lines.slice(start + 1, end)) {
+    const key = line.match(/^ {4}(paths|paths-ignore):\s*$/)
+    if (key) { inPaths = key[1] === 'paths'; continue }
+    const item = line.match(/^ {6}- '([^']+)'\s*$/)
+    if (item && inPaths) patterns.push(item[1])
+  }
+  return patterns
+}
+
+let packageScriptsPromise = null
+
+async function packageScripts() {
+  packageScriptsPromise ??= readFile(new URL('../package.json', import.meta.url), 'utf8')
+    .then((text) => JSON.parse(text).scripts ?? {})
+  return packageScriptsPromise
+}
+
+function collectRepoFiles(text, scripts, seen, files) {
+  for (const match of text.matchAll(/(?<![\w/])(?:\.\.\/dvr\/)?((?:scripts|tests)\/[\w./-]+\.(?:mjs|js))/g)) {
+    files.add(match[1])
+  }
+  for (const match of text.matchAll(/\bpnpm(?:\s+run)?\s+([\w:-]+)/g)) {
+    const name = match[1]
+    if (seen.has(name)) continue
+    seen.add(name)
+    if (scripts[name]) collectRepoFiles(scripts[name], scripts, seen, files)
+  }
+  return files
+}
+
+async function executedRepoFiles(workflow) {
+  const lines = workflow.split('\n')
+  const blocks = []
+  let current = null
+  for (const line of lines) {
+    const run = line.match(/^(\s*)run:\s*(.*)$/)
+    if (run) {
+      current = { indent: run[1].length, text: run[2] }
+      blocks.push(current)
+      continue
+    }
+    if (!current) continue
+    if (line.trim() === '') { current.text += '\n'; continue }
+    if (line.match(/^\s*/)[0].length > current.indent) current.text += `\n${line}`
+    else current = null
+  }
+  const scripts = await packageScripts()
+  const files = new Set()
+  for (const block of blocks) collectRepoFiles(block.text, scripts, new Set(), files)
+  return [...files].sort()
+}
+
+test('every PR-triggered workflow triggers on the repo files it executes', async () => {
+  const workflowsDir = new URL('../.github/workflows/', import.meta.url)
+  const names = (await readdir(workflowsDir)).filter((name) => name.endsWith('.yml')).sort()
+  const violations = []
+  for (const name of names) {
+    const workflow = await readWorkflow(name)
+    const patterns = pullRequestPatterns(workflow)
+    if (patterns.length === 0) continue
+    for (const executed of await executedRepoFiles(workflow)) {
+      if (!isCoveredBy(executed, patterns)) violations.push(`${name}: ${executed}`)
+    }
+  }
+  assert.deepEqual(violations, [], 'PR triggers must cover the repo files each workflow executes')
+})
+
+const PRODUCT_GATES = [
+  'alpha-browser-cold-toggle-smoke.yml',
+  'browser-p1-acceptance.yml',
+  'dsh-alpha-source-contract.yml',
+]
+
+test('end-to-end gates trigger on the whole product source tree', async () => {
+  for (const name of PRODUCT_GATES) {
+    const patterns = pullRequestPatterns(await readWorkflow(name))
+    assert.ok(patterns.length > 0, `${name} must keep a pull_request paths list`)
+    assert.ok(patterns.includes('src/**'), `${name} must trigger on src/**`)
   }
 })

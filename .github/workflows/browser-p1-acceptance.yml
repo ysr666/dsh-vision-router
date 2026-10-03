@@ -3,11 +3,15 @@ name: Browser P1 acceptance
 on:
   pull_request:
     paths:
+      - 'src/**'
       - 'src/lib/client.js'
       - 'src/lib/settings-native-card-layout.js'
       - 'src/lib/settings-ia-client-prelude.js'
       - 'src/lib/vision-capability-benchmark-client.js'
       - 'tests/browser-p1-acceptance.test.js'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'cordis.patch.yml'
       - '.github/workflows/browser-p1-acceptance.yml'
 
 permissions:

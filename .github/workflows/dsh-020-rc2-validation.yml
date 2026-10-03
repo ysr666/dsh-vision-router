@@ -22,6 +22,7 @@ on:
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-020-rc2-validation.yml'
   push:
     branches: [main]
@@ -30,6 +31,7 @@ on:
       - 'cordis.patch.yml'
       - 'src/lib/**'
       - 'scripts/**'
+      - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-020-rc2-validation.yml'
 
 permissions:
