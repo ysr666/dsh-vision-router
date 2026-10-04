@@ -12,11 +12,12 @@ on:
     - cron: '41 5 * * 1'
   workflow_dispatch:
 
-# The pull request is opened with GITHUB_TOKEN, so it does not start workflow runs by itself.
-# The gate runs on the push that merges it instead.
+# Top-level stays read-only; the write grants live on the single job that needs them. That
+# posture, and why the resulting Scorecard alerts are accepted rather than chased, is recorded
+# in docs/architecture/ci-risk-posture.md. The pull request is opened with GITHUB_TOKEN, so it
+# starts no workflow runs by itself: the gate runs on the push that merges it.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: dsh-alpha-pin-refresh
@@ -27,6 +28,9 @@ jobs:
     name: open or update the pin bump
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
