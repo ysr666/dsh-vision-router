@@ -79,6 +79,40 @@ jobs:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
+      - name: Compute the alpha Host build cache key
+        if: matrix.os == 'macos-latest'
+        id: dsh-cache-key
+        working-directory: dsh-alpha
+        shell: bash
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-alpha-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the alpha Host build
+        if: matrix.os == 'macos-latest'
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
       - name: Run exact source and Host-owned Sharp contract
         working-directory: dsh-alpha
         env:
@@ -99,9 +133,23 @@ jobs:
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
       - name: Build exact macOS Desktop runtime
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-alpha
         run: pnpm run build
+      - name: Save the alpha Host build
+        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
       - name: Run real macOS Desktop renderer lifecycle
         if: matrix.os == 'macos-latest'
         working-directory: dsh-alpha
@@ -175,13 +223,60 @@ jobs:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
+      - name: Compute the alpha Host build cache key
+        id: dsh-cache-key
+        working-directory: dsh-alpha
+        shell: bash
+        env:
+          NODE_VERSION: '22.19.0'
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-alpha-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the alpha Host build
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
       # This lane touches no cache at all, on purpose: it runs from the default branch on a
       # schedule against a floating upstream ref, so anything it read from or wrote to a
       # shared cache would come from code nobody pinned. The Chromium install therefore pays
       # the mirror cost on its own, which a weekly lane can afford.
       - name: Build the alpha Host runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-alpha
         run: pnpm run build
+      - name: Save the alpha Host build
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
 
       - name: Install Chromium
         working-directory: dsh-alpha
@@ -277,9 +372,56 @@ jobs:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
+      - name: Compute the alpha Host build cache key
+        id: dsh-cache-key
+        working-directory: dsh-alpha
+        shell: bash
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-alpha-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the alpha Host build
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
       - name: Build exact Desktop runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
         working-directory: dsh-alpha
         run: pnpm run build
+      - name: Save the alpha Host build
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
       - name: Run authenticated Desktop Host contract
         working-directory: dsh-alpha
         env:
