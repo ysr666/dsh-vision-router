@@ -4114,3 +4114,63 @@ test('vision-http chain keeps format=openai local backends on the compatible end
     globalThis.fetch = original
   }
 })
+
+test('issue #646 pre-step instant describe uses the Router-owned provider transport', async () => {
+  const config = {
+    routing: false,
+    rewriteImages: true,
+    instantDescribe: true,
+    structuredVisionBootstrap: false,
+    downscale: false,
+    freeFallback: false,
+    localLmStudio: {
+      enabled: true,
+      baseURL: 'https://remote-lm.example/v1',
+      model: 'qwen2.5-vl',
+      format: 'lmstudio',
+    },
+  }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const transportCalls = []
+  const providerTransport = {
+    async fetch(input, init) {
+      transportCalls.push({ url: String(input), body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({
+        output: [{ type: 'message', content: 'transport-ok' }],
+        stats: { total_output_tokens: 2 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    },
+  }
+  apply(ctx, Config(config), { providerTransport })
+
+  const original = globalThis.fetch
+  let bareFetchCalls = 0
+  globalThis.fetch = async () => {
+    bareFetchCalls += 1
+    throw new Error('bare fetch must not own provider egress')
+  }
+  try {
+    const attachment = {
+      attachmentId: 'sha256:64664664664664664664664664664664',
+      mediaType: 'image/png',
+      name: 'issue-646.png',
+    }
+    const messages = [{
+      role: 'user',
+      content: [{ type: 'image', attachment }, { type: 'text', text: 'describe' }],
+    }]
+    const preStep = captured.on.get('agent/pre-step')
+    assert.equal(typeof preStep, 'function')
+    await preStep(
+      { agent: { session: { id: 'issue-646', events: [] } }, messages, turn: 1 },
+      async () => ({ messages }),
+    )
+  } finally {
+    globalThis.fetch = original
+  }
+
+  assert.equal(bareFetchCalls, 0)
+  assert.equal(transportCalls.length, 1)
+  assert.equal(transportCalls[0].url, 'https://remote-lm.example/api/v1/chat')
+  assert.equal(transportCalls[0].body.model, 'qwen2.5-vl')
+})
