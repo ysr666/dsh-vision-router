@@ -137,7 +137,7 @@ jobs:
         working-directory: dsh-alpha
         run: pnpm run build
       - name: Save the alpha Host build
-        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**', 'dsh-alpha/packages/*/*/lib/**', 'dsh-alpha/vendor/*/lib/**', 'dsh-alpha/apps/*/lib/**', 'dsh-alpha/apps/*/dist/**', 'dsh-alpha/native/system/packages/*/lib/**', 'dsh-alpha/native/system/packages/*/bin/**', 'dsh-alpha/.dsh-build/**') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -264,7 +264,7 @@ jobs:
         working-directory: dsh-alpha
         run: pnpm run build
       - name: Save the alpha Host build
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**', 'dsh-alpha/packages/*/*/lib/**', 'dsh-alpha/vendor/*/lib/**', 'dsh-alpha/apps/*/lib/**', 'dsh-alpha/apps/*/dist/**', 'dsh-alpha/native/system/packages/*/lib/**', 'dsh-alpha/native/system/packages/*/bin/**', 'dsh-alpha/.dsh-build/**') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -409,7 +409,7 @@ jobs:
         working-directory: dsh-alpha
         run: pnpm run build
       - name: Save the alpha Host build
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**') != ''
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-alpha/lib/**', 'dsh-alpha/packages/*/*/lib/**', 'dsh-alpha/vendor/*/lib/**', 'dsh-alpha/apps/*/lib/**', 'dsh-alpha/apps/*/dist/**', 'dsh-alpha/native/system/packages/*/lib/**', 'dsh-alpha/native/system/packages/*/bin/**', 'dsh-alpha/.dsh-build/**') != ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
