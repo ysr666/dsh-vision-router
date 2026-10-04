@@ -10,15 +10,20 @@ import path from 'node:path'
 // added a test for that one leg, so a fifth leg could still arrive unnoticed.
 //
 // This guard states the class instead of a leg:
-//   1. every call site of a provider primitive threads `providerTransport`, or forwards the
-//      options object that carries it — a leg that builds its own options object and forgets
-//      the field is exactly the #646 shape, and a leg that omits the object entirely is the
-//      #623/#634 shape;
+//   1. every call site of a provider primitive threads `providerTransport`, or forwards an options
+//      object that cannot drop it. The check is value-shaped rather than textual, because a textual
+//      one is satisfied by a token that only appears inside a string or a comment, and it treats
+//      every forwarded identifier as innocent — including one the same file builds as an object
+//      literal without the field. A leg that builds its own options object and forgets the field is
+//      the #646 shape; a leg that omits the object entirely is the #623/#634 shape; and a leg that
+//      hoists the literal into a local variable is the shape this rule closes;
 //   2. a file that names a provider endpoint either references the transport or is a listed
 //      exemption whose reason is re-checked against the source, so an exemption cannot rot
 //      and a new egress file cannot slip in.
-// Coverage boundary: this is a source contract. It proves the transport is *threaded*, not
-// that a Host honors it — the per-leg runtime tests cover the behaviour.
+// Coverage boundary: this is a source contract. It proves the transport is *threaded*, not that a
+// Host honors it — the per-leg runtime tests cover the behaviour. It reads values one hop deep, so
+// an options object assembled across several functions is outside what it can prove, and an endpoint
+// assembled from concatenated fragments is outside the endpoint pattern.
 //
 // A new leg now fails here with the file and line to fix, instead of in the field.
 
@@ -172,6 +177,39 @@ function topLevelArguments(text) {
   return parts
 }
 
+/** Drops string bodies, so a token quoted inside a literal cannot claim to be a threaded value. */
+function withoutStrings(text) {
+  return text.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, "''")
+}
+
+/**
+ * Balanced text of a same-file object literal assigned to `identifier`, if the file declares one.
+ * A null result means the identifier comes from elsewhere — a parameter, a destructured value or an
+ * import — so threading happens at the caller and this site only forwards it.
+ */
+function localObjectLiteral(source, identifier) {
+  const declaration = new RegExp(`(?:const|let|var)\\s+${identifier}\\s*=\\s*\\{`).exec(source)
+  if (!declaration) return null
+  const start = source.indexOf('{', declaration.index)
+  let depth = 0
+  let quote = null
+  for (let i = start; i < source.length; i += 1) {
+    const char = source[i]
+    if (quote) {
+      if (char === '\\') { i += 1; continue }
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') { quote = char; continue }
+    if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
 function lineOf(source, index) {
   return source.slice(0, index).split('\n').length
 }
@@ -197,14 +235,24 @@ test('every provider primitive call site threads the Router-owned transport', ()
     for (const [name, minimumArguments] of PROVIDER_PRIMITIVES) {
       for (const call of callArguments(code, name)) {
         const args = topLevelArguments(call.text)
-        const threaded = call.text.includes('providerTransport') || OPTIONS_FORWARD.test(call.text)
-        const forwards = args.length >= minimumArguments && TRAILING_IDENTIFIER.test(call.text)
+        // The transport must appear as a value: a token inside a string literal is not one.
+        const values = withoutStrings(call.text)
+        const threaded = values.includes('providerTransport') || OPTIONS_FORWARD.test(values)
+        // A forwarded identifier counts only when it cannot be a locally built object literal that
+        // drops the field; when the file declares one, that literal has to carry the transport.
+        const forwardedTo = args.length >= minimumArguments && TRAILING_IDENTIFIER.test(call.text)
+          ? args[args.length - 1]
+          : null
+        const local = forwardedTo === null ? null : localObjectLiteral(code, forwardedTo)
+        const forwards = forwardedTo !== null && (local === null || withoutStrings(local).includes('providerTransport'))
         if (threaded || forwards) continue
         const where = `${relative(file)}:${lineOf(code, call.index)}`
         violations.push(
           args.length < minimumArguments
             ? `${where} ${name}(...) passes ${args.length} arguments: its options object is missing entirely`
-            : `${where} ${name}(...) builds an options object without providerTransport`,
+            : local === null
+              ? `${where} ${name}(...) builds an options object without providerTransport`
+              : `${where} ${name}(...) forwards the locally built '${forwardedTo}' without providerTransport`,
         )
       }
     }
