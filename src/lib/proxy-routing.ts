@@ -29,6 +29,11 @@ export function canonicalProxyHost(value: unknown): string {
   if (host === '') return ''
   if (host.endsWith('.')) host = host.slice(0, -1)
   if (host === '') return ''
+  // A `*.host` entry means "this host and its subdomains", which is exactly what the matcher
+  // already does for a bare hostname. `domainToASCII` rejects the star, so leaving it in place
+  // makes the entry equal no real hostname: the configured host silently proxies nothing.
+  if (host.startsWith('*.')) host = host.slice(2)
+  if (host === '') return ''
 
   // WHATWG URL.hostname keeps IPv6 literals bracketed. domainToASCII does not
   // accept an IPv6 literal at all, so case-fold it directly. The brackets are
