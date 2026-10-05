@@ -10,6 +10,11 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **「识图」按钮不再自绘边框、窄屏下塌缩为图标（#654）**：它过去带 1px 边框、12px 字号与选中时的品牌色描边/填充，在窄屏输入框里比同排的官方 chip 更占位且更抢眼。现在它的尺寸、圆角、hover、focus ring 与选中态全部改用官方 chip 的 token（`ui-plan` 的 PlanChip 与官方 access-mode chip 的同一套），并跟随输入框所在的 size container：行宽 ≤460px（官方 access-mode chip 使用的同一个临界点）时只留 14px 状态图标。实测同一窗口下按钮宽 72px → 30px，标签隐藏、图标保留。
 - **The composer Vision chip no longer draws its own chrome and collapses on narrow rows (#654):** it used to carry a 1px border, 12px type and a brand-coloured outline/fill while selected, which took more room and read heavier than its shipped neighbours. Its size, radius, hover, focus ring and selected state now come from the shipped chip tokens (the same ones `ui-plan`'s PlanChip and the access-mode trigger use), and it follows the composer row's size container: below the same 460px cut the shipped access-mode chip uses, only the 14px state glyph remains. Measured in one window: the chip goes from 72px to 30px wide, label hidden, glyph kept.
 
+### 展示给用户的图片会跟随回复正文出现 / A presented image now travels with the reply body
+
+- **`vision_present` 的图不再只躺在工具卡片里**：图片卡片渲染在工具调用旁，读者停在长对话底部时它可能在几千像素之上，等于没看到（真机 DOM 实测：图确实渲染了，但位于视口上方 1500–8000px）。现在工具结果会回带一段可直接粘贴的 `replyImage`（`![label](<绝对路径>)`）并明确要求把它放进可见回复——客户端会把消息正文里的本地图片路径改写成可显示 URL，所以图片出现在读者正在读的地方。工具卡片照旧保留，两条通道并存。
+- **A presented image no longer lives only inside the tool card:** the card renders next to the tool call, so a reader who is at the end of a long conversation can have it thousands of pixels above them (measured on a real host: the images rendered, at 1500–8000px above the viewport). The tool result now carries a paste-ready `replyImage` (`![label](<absolute path>)`) plus the rule to put it in the visible reply — the client rewrites a local image path in the reply body into a displayable URL, so the image lands where the reader is. The tool card stays as it was; both channels coexist.
+
 ## v3.0.1
 
 ### 五处消费者可见修复 / Five consumer-visible fixes
