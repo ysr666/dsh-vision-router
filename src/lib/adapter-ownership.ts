@@ -4,16 +4,13 @@
  * Three modules used to interpret the same process-wide symbol on their own, and
  * two of them treated "the marker is not undefined" as ownership — so a foreign
  * adapter that wrote `'anything'`, `false`, `null` or `0` onto the shared symbol
- * was classified as Vision Router's own adapter. The marker value is a token this
- * package freezes, so ownership means "a frozen owner token is present".
+ * was classified as Vision Router's own adapter. Ownership now means "a marker
+ * *object* is present"; the per-function notes below record what that does and
+ * does not prove.
  *
  * The symbol stays `Symbol.for(...)` so separately loaded copies of this package
  * still recognize each other's adapters; the rule about its *value* lives here
  * once.
- *
- * Residual risk, stated rather than hidden: in-process code able to run arbitrary
- * JavaScript can still freeze a look-alike token. Removing that needs one shared
- * authority instead of a process-wide symbol, which is a larger design change.
  */
 export const VISION_ROUTER_ADAPTER_OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
