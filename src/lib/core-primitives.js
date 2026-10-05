@@ -336,6 +336,11 @@ export function rewriteToolResultImages(content, replace) {
 
 export function renderVisionPresent(value) {
   const attachment = value.attachment
+  // The card renders the image next to the tool call, which can sit far above a reader who is at
+  // the end of a long conversation. The reply body is where that reader actually is, and the
+  // client rewrites an absolute local image path written in Markdown into a displayable URL, so
+  // the result hands back a paste-ready snippet plus the rule that says why it matters.
+  const label = String(value.label === undefined ? 'image' : value.label).replace(/[[\]]/g, '')
   return [
     {
       type: 'text',
@@ -347,6 +352,10 @@ export function renderVisionPresent(value) {
         bytes: value.bytes,
         safePresentation: true,
         attachmentId: String(attachment.attachmentId),
+        replyImage: `![${label}](<${value.path}>)`,
+        replyImageHint:
+          'Also put replyImage in your visible reply: the host renders an absolute image path in a message ' +
+          'at full size where the reader is, while this card only shows a thumbnail that later messages push away.',
       }),
     },
     { type: 'image', attachment },

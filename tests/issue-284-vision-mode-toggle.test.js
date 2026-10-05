@@ -385,12 +385,19 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   // chip width by ~18px and reflow the trailing composer row.
   assert.equal(offButton.children.length, 2)
   assert.equal(offButton.children[0]?.type, 'span')
-  assert.equal(offButton.children[0]?.props.style.width, 14)
-  assert.equal(offButton.children[0]?.props.style.height, 14)
-  assert.equal(offButton.children[0]?.children[0]?.type, 'svg')
-  assert.equal(offButton.children[0]?.children[0]?.props.width, 14)
-  assert.equal(offButton.children[0]?.children[0]?.props.height, 14)
-  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
+  // The fixed 14px box lives in the chip stylesheet, which also owns the 460px collapse;
+  // the markup carries the class both select.
+  assert.equal(offButton.children[0]?.props.className, 'vr-vision-toggle-glyph')
+  // One 14px slot, two glyphs: the Vision eye and the check that marks the enabled state.
+  // The chip stylesheet shows the check only while the label is there to explain it.
+  assert.equal(offButton.children[0]?.children.length, 2)
+  assert.equal(offButton.children[0]?.children[0]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.width, 14)
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.height, 14)
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
+  assert.equal(offButton.children[0]?.children[1]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check')
+  assert.equal(offButton.children[0]?.children[1]?.children[0]?.children[0]?.props.stroke, 'currentColor')
   offButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go-vision')
@@ -400,12 +407,16 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   assert.equal(onButton.props['aria-pressed'], true)
   assert.equal(onButton.children.length, 2)
   assert.equal(onButton.children[0]?.type, 'span')
-  assert.equal(onButton.children[0]?.props.style.width, 14)
-  assert.equal(onButton.children[0]?.props.style.height, 14)
-  assert.equal(onButton.children[0]?.children[0]?.type, 'svg')
-  assert.equal(onButton.children[0]?.children[0]?.props.width, 14)
-  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
-  assert.match(onButton.props.style.boxShadow, /brand-primary/)
+  assert.equal(onButton.children[0]?.props.className, 'vr-vision-toggle-glyph')
+  // Same slot in both states; the stylesheet is what swaps eye for check, and only while the
+  // label is present (<=460px keeps the eye so a collapsed chip still says what it does).
+  assert.equal(onButton.children[0]?.children.length, 2)
+  assert.equal(onButton.children[0]?.children[0]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye')
+  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.width, 14)
+  assert.equal(onButton.children[0]?.children[1]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check')
+  // The selected treatment is the shipped ghost-active token pair, pinned by the chip
+  // stylesheet instead of an inline brand shadow.
+  assert.equal(onButton.props['data-active'], 'true')
   onButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go')
@@ -444,8 +455,9 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
 
   const before = buttonOf(harness.render())
   assert.equal(before.props['aria-pressed'], true)
-  assert.equal(before.children[0]?.children[0]?.type, 'svg')
-  assert.equal(before.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(before.children[0]?.children.length, 2)
+  assert.equal(before.children[0]?.children[0]?.children[0]?.type, 'svg')
+  assert.equal(before.children[0]?.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
   before.props.onClick()
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -457,8 +469,8 @@ test('issue #284 image-session rejection uses transient toast and keeps the real
   const toast = firstChildOfType(rendered, harness.primitives.Toast)
   assert.equal(button.props['aria-pressed'], true)
   assert.equal(button.props.disabled, false)
-  assert.equal(button.children[0]?.children[0]?.type, 'svg')
-  assert.equal(button.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(button.children[0]?.children[0]?.children[0]?.type, 'svg')
+  assert.equal(button.children[0]?.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
   assert.equal(button.children[1].children[0], '识图')
   assert.equal(button.children.length, 2)
   assert.equal(button.props.title, '关闭识图模式')
@@ -505,21 +517,24 @@ test('issue #284 patches onboarding copy and accurately explains the guide spotl
   const main = harness.localeRegistrations.find((entry) => entry.namespace === 'vision-router')
   assert.ok(main)
   assert.equal(main.dictionaries.zh.quickStartTitle, '聊天模型 + 识图模式')
-  assert.match(main.dictionaries.zh.quickStartBody, /出现 ✓ 表示已开启/)
+  assert.match(main.dictionaries.zh.quickStartBody, /它变成选中态（高亮底色）表示已开启/)
   assert.match(main.dictionaries.zh.onboardingStep1Title, /开启识图/)
   assert.match(main.dictionaries.zh.onboardingStep1Body, /模型选择器左侧的「识图」/)
   assert.match(main.dictionaries.zh.guideStep1Body, /^高亮的是聊天模型选择器/)
   assert.equal(main.dictionaries.zh.guideStep1Body.includes('和「识图」按钮已经被高亮'), false)
-  assert.match(main.dictionaries.en.quickStartBody, /a ✓ means it is on/)
+  assert.match(main.dictionaries.en.quickStartBody, /lights up in its selected state to mean it is on/)
 })
 
 test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs', () => {
   const harness = createBrowserHarness()
   const offButton = buttonOf(harness.render())
   assert.equal(offButton.children[0]?.type, 'span')
-  assert.equal(offButton.children[0]?.children[0]?.type, 'svg')
-  assert.equal(offButton.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
-  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
+  assert.equal(offButton.children[0]?.children.length, 2)
+  assert.equal(offButton.children[0]?.children[0]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.type, 'svg')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
+  assert.equal(offButton.children[0]?.children[0]?.children[0]?.children[0]?.props.fill, 'currentColor')
+  assert.equal(offButton.children[0]?.children[1]?.props.className, 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check')
 
   harness.setSnapshot({
     current: { provider: 'opencode-go-vision', model: 'qwen3.6-plus', reasoningEffort: 'high' },
@@ -528,9 +543,9 @@ test('issue #357 uses fixed SVG icons instead of platform-dependent text glyphs'
     error: null,
   })
   const onButton = buttonOf(harness.render())
-  assert.equal(onButton.children[0]?.children[0]?.type, 'svg')
-  assert.equal(onButton.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
-  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
+  assert.equal(onButton.children[0]?.children[0]?.children[0]?.type, 'svg')
+  assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.viewBox, '0 0 14 14')
+  // Both states ship both glyphs; the stylesheet swaps them, and the negative form of each
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '👁')"), false)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
 })
@@ -573,14 +588,16 @@ test('issue #284 smooths only the directory reload owned by this Vision toggle',
   assert.equal(partial.props.disabled, true)
   assert.equal(partial.props['aria-busy'], true)
   assert.equal(partial.props.title, '切换中')
-  assert.equal(partial.props.style.opacity, 1)
-  assert.equal(partial.children[0]?.props.style.width, 14)
+  // Waiting on this toggle's own selection must not grey the chip: only the
+  // unavailable/loading states set the dimming attribute.
+  assert.equal(partial.props['data-dimmed'], 'false')
+  assert.equal(partial.children[0]?.props.className, 'vr-vision-toggle-glyph')
 
   harness.setSnapshot({ current: null, groups: [], status: 'idle', pending: target, error: null })
   const empty = buttonOf(harness.render())
   assert.equal(empty.props['aria-pressed'], true)
   assert.equal(empty.props.disabled, true)
-  assert.equal(empty.props.style.opacity, 1)
+  assert.equal(empty.props['data-dimmed'], 'false')
 
   harness.resolveSelection()
   await new Promise((resolve) => setImmediate(resolve))
@@ -605,13 +622,13 @@ test('issue #284 smooths only the directory reload owned by this Vision toggle',
   assert.equal(externalPartial.props.disabled, true)
   assert.equal(externalPartial.props['aria-busy'], true)
   assert.equal(externalPartial.props.title, '加载中')
-  assert.equal(externalPartial.props.style.opacity, 0.45)
+  assert.equal(externalPartial.props['data-dimmed'], 'true')
 
   harness.setSnapshot({ current: null, groups: [], status: 'loading', pending: null, error: null })
   const resetLoading = buttonOf(harness.render())
   assert.equal(resetLoading.props['aria-pressed'], false)
   assert.equal(resetLoading.props.disabled, true)
-  assert.equal(resetLoading.props.style.opacity, 0.45)
+  assert.equal(resetLoading.props['data-dimmed'], 'true')
 })
 
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
@@ -623,7 +640,10 @@ test('issue #284 remains explicit and persistent with no send/image auto-reset h
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("require('@deepseek-ai/dsh-client-ui-primitives')"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("failed: '模型操作失败：{message}'"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("fill: 'currentColor'"), true)
+  // Both glyphs ship as fixed SVG: the filled eye and the stroked check.
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("stroke: 'currentColor'"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes(".vr-vision-toggle-glyph-check{display:none}"), true)
+  assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("@container (min-width:460.01px)"), true)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '👁')"), false)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes("}, '✓')"), false)
   assert.equal(CLIENT_PRESENTATION_PRELUDE.includes('failedShort'), false)

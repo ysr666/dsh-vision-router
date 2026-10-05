@@ -432,21 +432,21 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     if (next.zh && typeof next.zh === 'object') {
       next.zh = Object.assign({}, next.zh, {
         quickStartTitle: '聊天模型 + 识图模式',
-        quickStartBody: '先选择你平时使用的聊天模型。需要看图时，点击输入框旁的「识图」；出现 ✓ 表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。',
+        quickStartBody: '先选择你平时使用的聊天模型。需要看图时，点击输入框旁的「识图」；它变成选中态（高亮底色）表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。',
         onboardingStep1Title: '1 · 选择聊天模型并开启识图',
-        onboardingStep1Body: '先在聊天页右下角选择你平时使用的模型。需要看图时，点击模型选择器左侧的「识图」；出现 ✓ 表示已开启，不需要时再主动关闭。',
+        onboardingStep1Body: '先在聊天页右下角选择你平时使用的模型。需要看图时，点击模型选择器左侧的「识图」；它变成选中态（高亮底色）表示已开启，不需要时再主动关闭。',
         guideStep1Title: '第 1 步 · 选择聊天模型并认识「识图」',
-        guideStep1Body: '高亮的是聊天模型选择器；它左侧就是「识图」按钮。先选择你平时使用的聊天模型；需要看图时点击「识图」，出现 ✓ 表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。选好后点击「下一步」。'
+        guideStep1Body: '高亮的是聊天模型选择器；它左侧就是「识图」按钮。先选择你平时使用的聊天模型；需要看图时点击「识图」，它变成选中态（高亮底色）表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。选好后点击「下一步」。'
       });
     }
     if (next.en && typeof next.en === 'object') {
       next.en = Object.assign({}, next.en, {
         quickStartTitle: 'Chat model + Vision mode',
-        quickStartBody: 'Choose the chat model you normally use first. When you need image understanding, click “Vision” beside the composer; a ✓ means it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route.',
+        quickStartBody: 'Choose the chat model you normally use first. When you need image understanding, click “Vision” beside the composer; the chip lights up in its selected state to mean it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route.',
         onboardingStep1Title: '1 · Choose your chat model and enable Vision',
-        onboardingStep1Body: 'Choose the model you normally use from the lower-right chat selector. When you need image understanding, click “Vision” immediately to the left of the model selector; a ✓ means it is on. Turn it off again when you no longer need it.',
+        onboardingStep1Body: 'Choose the model you normally use from the lower-right chat selector. When you need image understanding, click “Vision” immediately to the left of the model selector; the chip lights up in its selected state to mean it is on. Turn it off again when you no longer need it.',
         guideStep1Title: 'Step 1 · Choose your chat model and find “Vision”',
-        guideStep1Body: 'The highlighted control is the chat model selector; the “Vision” button is immediately to its left. Choose your normal chat model first, then click “Vision” when you need image understanding. A ✓ means it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route. Click “Next” when done.'
+        guideStep1Body: 'The highlighted control is the chat model selector; the “Vision” button is immediately to its left. Choose your normal chat model first, then click “Vision” when you need image understanding. The chip lights up in its selected state to mean it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route. Click “Next” when done.'
       });
     }
     return next;
@@ -948,6 +948,89 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     }, 'vision-router: clipboard image paste normalization');
   }
 
+  // The composer chip chrome follows the shipped mode chips (ui-plan's PlanChip and the
+  // access-mode trigger): 28px tall, token radius, no border, token hover fill, the shipped
+  // focus ring, and the shipped "selected chip" treatment while Vision is on. The composer row
+  // is a size container (InputBar .row), so the label collapses to the 14px glyph below the
+  // shipped 460px cut — the same cut the access-mode trigger uses — instead of squeezing the
+  // model trigger on narrow windows.
+  var VISION_TOGGLE_CSS = '' +
+    '.vr-vision-toggle{display:inline-flex;align-items:center;gap:4px;min-width:0;height:28px;' +
+    'padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;' +
+    'color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;font-weight:500;' +
+    'line-height:20px;cursor:pointer;white-space:nowrap}' +
+    '.vr-vision-toggle:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}' +
+    '.vr-vision-toggle:focus-visible{outline:var(--dsw-focus-ring-width) solid ' +
+    'var(--dsw-focus-ring-color,var(--dsw-alias-brand-primary));outline-offset:2px}' +
+    '.vr-vision-toggle:disabled{cursor:default}' +
+    // Dim only the states that read as "cannot be used right now". A disabled chip that is
+    // merely waiting for this toggle's own selection keeps full opacity, so the composer does
+    // not flash a greyed control while the model swap it owns is still settling.
+    '.vr-vision-toggle[data-dimmed="true"]{opacity:.45}' +
+    '.vr-vision-toggle[data-active="true"]{color:var(--dsw-alias-label-primary);' +
+    'background:var(--dsw-alias-button-ghost-active-fill);' +
+    'box-shadow:inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border)}' +
+    '.vr-vision-toggle[data-active="true"]:hover:not(:disabled){' +
+    'background:var(--dsw-alias-button-ghost-active-hover)}' +
+    '.vr-vision-toggle-glyph{display:inline-flex;align-items:center;justify-content:center;' +
+    'flex:0 0 auto;width:14px;height:14px;font-size:13px;line-height:1;color:currentColor}' +
+    '.vr-vision-toggle-glyph-part{display:inline-flex;align-items:center;justify-content:center;' +
+    'width:14px;height:14px}' +
+    // The check carries the state only while the label is there to explain it. Once the label
+    // collapses (the shipped 460px cut below) a bare check means nothing, so the Vision eye —
+    // the only thing that still says what the chip does — stays, and the chip's selected chrome
+    // marks on/off on its own.
+    '.vr-vision-toggle-glyph-check{display:none}' +
+    '@container (min-width:460.01px){' +
+    '.vr-vision-toggle[data-active="true"] .vr-vision-toggle-glyph-eye{display:none}' +
+    '.vr-vision-toggle[data-active="true"] .vr-vision-toggle-glyph-check{display:inline-flex}}' +
+    '@container (max-width:460px){.vr-vision-toggle-label{display:none}}';
+
+  function installVisionToggleStyles() {
+    if (typeof document === 'undefined' || !document.head) return undefined;
+    var tag = document.createElement('style');
+    tag.dataset.plugin = 'dsh-vision-router';
+    tag.dataset.pluginCss = 'dsh-vision-router/mode-toggle';
+    tag.textContent = VISION_TOGGLE_CSS;
+    document.head.appendChild(tag);
+    return function(){ tag.remove(); };
+  }
+
+  // A presented image that mounts below the reader is the same as not being shown: the card
+  // renders next to its tool call, and a reader who is at the end of a long conversation has
+  // that call thousands of pixels above them. The card calls this on mount; it only moves the
+  // reader for content that arrived below the viewport — a card that is already visible is left
+  // alone, and so is history above the reader when a session is opened.
+  function focusPresentedCard(node, viewportHeight) {
+    if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+    var rect = node.getBoundingClientRect();
+    if (rect.top <= viewportHeight) return false;
+    var scroller = node.parentElement;
+    var hops = 0;
+    while (scroller && hops < 20) {
+      var style = typeof getComputedStyle === 'function' ? getComputedStyle(scroller) : undefined;
+      var scrollable = /(auto|scroll)/.test(String(style && style.overflowY)) &&
+        scroller.scrollHeight > scroller.clientHeight + 4;
+      if (scrollable) {
+        var box = scroller.getBoundingClientRect();
+        scroller.scrollTop += (rect.top - box.top) - (box.height / 2 - rect.height / 2);
+        return true;
+      }
+      scroller = scroller.parentElement;
+      hops += 1;
+    }
+    return false;
+  }
+
+  try {
+    globalThis.__dvrPresentFocus = function () {
+      if (typeof document === 'undefined') return false;
+      var cards = document.querySelectorAll('[data-dvr-present]');
+      var last = cards[cards.length - 1];
+      return last ? focusPresentedCard(last, globalThis.innerHeight || 0) : false;
+    };
+  } catch (_) {}
+
   function installVisionModeToggle(ctx, React, primitives) {
     if (!ctx || typeof ctx.inject !== 'function' || !React) return;
     var zh = {
@@ -973,6 +1056,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
 
     try {
       ctx.effect(function(){ return ctx.locale.register(VISION_MODE_NS, { zh: zh, en: en }); }, 'vision-router: mode toggle locale');
+    } catch (_) {}
+    try {
+      ctx.effect(function(){ return installVisionToggleStyles(); }, 'vision-router: mode toggle styles');
     } catch (_) {}
 
     function FallbackToast(props) {
@@ -1004,9 +1090,13 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     }
 
     var ToastComponent = primitives && typeof primitives.Toast === 'function' ? primitives.Toast : FallbackToast;
-    var WarningIcon = primitives && typeof primitives.IconWarningOutline16 === 'function'
-      ? primitives.IconWarningOutline16
-      : undefined;
+    // The product icon set names weights, not sizes (IconWarningOutlineRegular); the old
+    // "…16" spelling never existed, so the toast silently fell back to a text glyph.
+    var WarningIcon = primitives && typeof primitives.IconWarningOutlineRegular === 'function'
+      ? primitives.IconWarningOutlineRegular
+      : primitives && typeof primitives.IconWarningOutline16 === 'function'
+        ? primitives.IconWarningOutline16
+        : undefined;
 
     var settings = bindVisionModeSettings(ctx);
     var unavailableSettingsState = { value: undefined };
@@ -1106,29 +1196,6 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             : livePair.mode === 'unavailable'
               ? t('unavailable')
               : active ? t('disable') : t('enable');
-        var style = {
-          appearance: 'none',
-          minHeight: 28,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 5,
-          padding: '4px 8px',
-          borderRadius: 8,
-          border: '1px solid ' + (active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'),
-          background: active
-            ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent)'
-            : 'transparent',
-          color: active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
-          boxShadow: active ? 'inset 0 0 0 1px var(--dsw-alias-brand-primary)' : 'none',
-          font: 'inherit',
-          fontSize: 12,
-          lineHeight: 1.4,
-          fontWeight: active ? 650 : 500,
-          cursor: disabled ? 'default' : 'pointer',
-          opacity: disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 0.45 : 1,
-          whiteSpace: 'nowrap'
-        };
-
         function announceRejectedSelection() {
           var latest;
           try {
@@ -1155,7 +1222,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           'aria-busy': busy || loading,
           title: title,
           disabled: disabled,
-          style: style,
+          className: 'vr-vision-toggle',
+          'data-active': active ? 'true' : 'false',
+          'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 'true' : 'false',
           onClick: function() {
             if (disabled || !pair.target || typeof props.select !== 'function') return;
             var target = pair.target;
@@ -1179,25 +1248,19 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             });
           }
         },
-          // One fixed 14px leading slot carries the state icon: the eye when the
-          // route is ordinary, the check when Vision is on. Appending the check
-          // only while active changed the chip width by ~18px and reflowed the
-          // composer row; reserving trailing space kept the width but left the
-          // inactive chip visually off-centre.
+          // One fixed 14px leading slot carries both glyphs: the Vision eye and the check that
+          // marks the enabled state. The stylesheet shows the check only while the label is
+          // present (the same 460px container cut that collapses the label), because a bare check
+          // tells a reader nothing — once the label is gone the eye, which still says what the
+          // chip does, stays. The slot is a fixed 14px box either way, so the chip width never
+          // changes with the state.
           React.createElement('span', {
             'aria-hidden': 'true',
-            style: {
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flex: '0 0 auto',
-              width: 14,
-              height: 14,
-              fontSize: 13,
-              lineHeight: 1
-            }
-          }, active ? '✓' : '👁'),
-          React.createElement('span', null, t('label'))
+            className: 'vr-vision-toggle-glyph'
+          },
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye' }, '👁'),
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check' }, '✓')),
+          React.createElement('span', { className: 'vr-vision-toggle-label' }, t('label'))
         );
 
         var toastNode = toast
