@@ -109,6 +109,35 @@ export function kindForHttpStatus(status) {
   return undefined
 }
 
+/** Read one field without letting a hostile getter escape the classifier. */
+function safeFailureField(error, name) {
+  try {
+    return error === null || error === undefined ? undefined : error[name]
+  } catch {
+    return undefined
+  }
+}
+
+/** Read the human-readable text; a throwing toString() must not escape either. */
+function safeFailureText(error) {
+  try {
+    return String(safeFailureField(error, 'message') ?? error ?? '')
+  } catch {
+    return ''
+  }
+}
+
+/** Map a branded error code to a kind using own keys only (no prototype hits). */
+function kindForCode(code) {
+  let key
+  try {
+    key = code === null || code === undefined ? '' : String(code)
+  } catch {
+    key = ''
+  }
+  return Object.hasOwn(CODE_KIND_MAP, key) ? CODE_KIND_MAP[key] : undefined
+}
+
 /**
  * Classify a backend failure into the shared taxonomy plus a provider-retry
  * verdict. Deterministic failures (AUTH / INVALID_REQUEST / REGION / TOS)
@@ -117,8 +146,8 @@ export function kindForHttpStatus(status) {
  * the task deadline still has budget.
  */
 export function classifyVisionFailure(error) {
-  const message = String((error && error.message) ?? error ?? '')
-  let kind = CODE_KIND_MAP[(error && error.code) ?? ''] ?? kindForHttpStatus(error && error.status)
+  const message = safeFailureText(error)
+  let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(safeFailureField(error, 'status'))
   if (kind === undefined) {
     for (const [candidate, patterns] of KIND_BY_PATTERN) {
       if (patterns.some((pattern) => pattern.test(message))) {

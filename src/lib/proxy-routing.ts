@@ -31,9 +31,16 @@ export function canonicalProxyHost(value: unknown): string {
   if (host === '') return ''
 
   // WHATWG URL.hostname keeps IPv6 literals bracketed. domainToASCII does not
-  // accept a bare IPv6 literal, so preserve the bracketed spelling and only
-  // case-fold it. Proxy hosts are otherwise DNS names and can be IDNA-folded.
-  if (host.startsWith('[') && host.endsWith(']')) return host.toLowerCase()
+  // accept an IPv6 literal at all, so case-fold it directly. The brackets are
+  // pure spelling for the same address: stripping them is what lets a configured
+  // `::1` match a URL-derived `[::1]`. A bracketed non-literal (say
+  // `[example.com]`) keeps its spelling, so nothing about DNS is widened.
+  if (host.startsWith('[') && host.endsWith(']')) {
+    const literal = host.slice(1, -1).trim()
+    if (literal === '') return ''
+    return literal.includes(':') ? literal.toLowerCase() : host.toLowerCase()
+  }
+  if (host.includes(':')) return host.toLowerCase()
   const ascii = domainToASCII(host)
   return (ascii || host).toLowerCase()
 }

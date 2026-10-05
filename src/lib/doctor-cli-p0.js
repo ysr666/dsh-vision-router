@@ -8,6 +8,7 @@ import {
   normalizeDshHostCapabilities,
 } from './dsh-host-capabilities.js'
 import { DOCTOR_RESPONSE_MAX_BYTES, readResponseJsonBounded } from './http-body-limit.js'
+import { redactDiagnosticText } from './diagnostic-redaction.js'
 import {
   DSH_SUPPORT_WINDOW,
   DSH_VERIFICATION_EVIDENCE,
@@ -16,6 +17,10 @@ import {
 } from './dsh-support-window.js'
 
 const HOST_CAPABILITIES_PATH = '/_dsh/vision-router/host-capabilities'
+const DOCTOR_PROBE_TIMEOUT_MS = 1500
+// The fence is a backstop, not a competing deadline: it must sit after the signal
+// so a cooperative fetch keeps reporting the abort reason it reports today.
+const DOCTOR_PROBE_FENCE_MS = DOCTOR_PROBE_TIMEOUT_MS + 250
 
 function commandOf(argv) {
   const first = argv.find((value) => typeof value === 'string' && !value.startsWith('-'))
@@ -51,11 +56,34 @@ export async function probeDoctorHostCapabilities({ baseUrl, fetchImpl = globalT
     if (typeof fetchImpl !== 'function') {
       return { ok: false, source: 'runtime-unavailable', capabilities: unknownSnapshot() }
     }
-    const response = await fetchImpl(normalized, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(1500),
+    // The signal below only bounds a fetch that honours it. A non-cooperative
+    // implementation would leave this probe pending forever, so the same inline
+    // fence the live-model discovery uses (its own timer + explicit cleanup)
+    // bounds the await itself. The signal stays so a cooperative fetch still
+    // reports the aborted reason it reports today.
+    // The fence deliberately keeps the event loop alive: this is a foreground
+    // probe the CLI is waiting on, unlike the background benchmark timers that
+    // unref themselves. (Node's own AbortSignal.timeout timer is unref'd, so
+    // unref'ing this one too would let the process exit before it fires.)
+    let deadlineTimer
+    const deadline = new Promise((_, reject) => {
+      deadlineTimer = setTimeout(() => {
+        reject(new Error(`Doctor Host capability probe exceeded ${DOCTOR_PROBE_TIMEOUT_MS}ms`))
+      }, DOCTOR_PROBE_FENCE_MS)
     })
+    let response
+    try {
+      response = await Promise.race([
+        fetchImpl(normalized, {
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(DOCTOR_PROBE_TIMEOUT_MS),
+        }),
+        deadline,
+      ])
+    } finally {
+      clearTimeout(deadlineTimer)
+    }
     if (!response.ok) {
       return {
         ok: false,
@@ -73,10 +101,13 @@ export async function probeDoctorHostCapabilities({ baseUrl, fetchImpl = globalT
       capabilities: normalizeDshHostCapabilities(body?.capabilities),
     }
   } catch (error) {
+    // A fetch failure can echo the request URL, and a proxy failure can echo the
+    // proxy URL with its userinfo; the doctor report is meant to be shareable, so
+    // the message is redacted at the source rather than at each print site.
     return {
       ok: false,
       source: 'runtime-unavailable',
-      error: error instanceof Error ? error.message : String(error),
+      error: redactDiagnosticText(error instanceof Error ? error.message : String(error), 200),
       capabilities: unknownSnapshot(),
     }
   }

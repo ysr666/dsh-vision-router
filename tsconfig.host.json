@@ -11,6 +11,7 @@
     ]
   },
   "include": [
+    "src/lib/adapter-ownership.ts",
     "src/lib/vision-routing-product.ts",
     "src/lib/vision-routing-authority.ts",
     "src/lib/core-apply-lifecycle.ts",

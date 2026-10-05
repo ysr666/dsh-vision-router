@@ -24,7 +24,10 @@ export function supportWindowUpgradeAdvice(capabilities = {}) {
     })
   }
 
-  if (batchAttachments === 'unknown' || maxImageDimension === 'unknown') {
+  // Capability evidence is tri-state (`true` / `false` / `'unknown'`). Only an
+  // explicit `true` proves the support floor, so a missing field, a wrong-typed
+  // value and `'unknown'` all mean "not proven" rather than "capable".
+  if (batchAttachments !== true || maxImageDimension !== true) {
     return Object.freeze({
       level: 'unknown',
       code: 'HOST_CURRENT_FLOOR_UNKNOWN',
