@@ -4,10 +4,13 @@
  *
  * PRODUCT CONTRACT (2.3+): acceptedRisk is reminder/friction only. It is not
  * authentication, authorization, local-presence proof, or a credential.
+ *
+ * This function is serialized with `toString()` into the browser boundary source
+ * below, so its body must stay self-contained: no imported helper and no free
+ * identifier may appear inside it.
  */
-import { objectRecord } from './core-primitives.js'
 export function createRemoteSettingsRiskClientBoundary(rawOptions) {
-  var options = objectRecord(rawOptions) ?? {}
+  var options = rawOptions !== null && typeof rawOptions === 'object' ? rawOptions : {}
   var confirmImpl = options.confirmImpl
   var alertImpl = options.alertImpl
   var locale = options.locale
