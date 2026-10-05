@@ -948,6 +948,44 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     }, 'vision-router: clipboard image paste normalization');
   }
 
+  // The composer chip chrome follows the shipped mode chips (ui-plan's PlanChip and the
+  // access-mode trigger): 28px tall, token radius, no border, token hover fill, the shipped
+  // focus ring, and the shipped "selected chip" treatment while Vision is on. The composer row
+  // is a size container (InputBar .row), so the label collapses to the 14px glyph below the
+  // shipped 460px cut — the same cut the access-mode trigger uses — instead of squeezing the
+  // model trigger on narrow windows.
+  var VISION_TOGGLE_CSS = '' +
+    '.vr-vision-toggle{display:inline-flex;align-items:center;gap:4px;min-width:0;height:28px;' +
+    'padding:0 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;' +
+    'color:var(--dsw-alias-label-secondary);font:inherit;font-size:13px;font-weight:500;' +
+    'line-height:20px;cursor:pointer;white-space:nowrap}' +
+    '.vr-vision-toggle:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}' +
+    '.vr-vision-toggle:focus-visible{outline:var(--dsw-focus-ring-width) solid ' +
+    'var(--dsw-focus-ring-color,var(--dsw-alias-brand-primary));outline-offset:2px}' +
+    '.vr-vision-toggle:disabled{cursor:default}' +
+    // Dim only the states that read as "cannot be used right now". A disabled chip that is
+    // merely waiting for this toggle's own selection keeps full opacity, so the composer does
+    // not flash a greyed control while the model swap it owns is still settling.
+    '.vr-vision-toggle[data-dimmed="true"]{opacity:.45}' +
+    '.vr-vision-toggle[data-active="true"]{color:var(--dsw-alias-label-primary);' +
+    'background:var(--dsw-alias-button-ghost-active-fill);' +
+    'box-shadow:inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border)}' +
+    '.vr-vision-toggle[data-active="true"]:hover:not(:disabled){' +
+    'background:var(--dsw-alias-button-ghost-active-hover)}' +
+    '.vr-vision-toggle-glyph{display:inline-flex;align-items:center;justify-content:center;' +
+    'flex:0 0 auto;width:14px;height:14px;font-size:13px;line-height:1;color:currentColor}' +
+    '@container (max-width:460px){.vr-vision-toggle-label{display:none}}';
+
+  function installVisionToggleStyles() {
+    if (typeof document === 'undefined' || !document.head) return undefined;
+    var tag = document.createElement('style');
+    tag.dataset.plugin = 'dsh-vision-router';
+    tag.dataset.pluginCss = 'dsh-vision-router/mode-toggle';
+    tag.textContent = VISION_TOGGLE_CSS;
+    document.head.appendChild(tag);
+    return function(){ tag.remove(); };
+  }
+
   function installVisionModeToggle(ctx, React, primitives) {
     if (!ctx || typeof ctx.inject !== 'function' || !React) return;
     var zh = {
@@ -973,6 +1011,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
 
     try {
       ctx.effect(function(){ return ctx.locale.register(VISION_MODE_NS, { zh: zh, en: en }); }, 'vision-router: mode toggle locale');
+    } catch (_) {}
+    try {
+      ctx.effect(function(){ return installVisionToggleStyles(); }, 'vision-router: mode toggle styles');
     } catch (_) {}
 
     function FallbackToast(props) {
@@ -1004,9 +1045,13 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     }
 
     var ToastComponent = primitives && typeof primitives.Toast === 'function' ? primitives.Toast : FallbackToast;
-    var WarningIcon = primitives && typeof primitives.IconWarningOutline16 === 'function'
-      ? primitives.IconWarningOutline16
-      : undefined;
+    // The product icon set names weights, not sizes (IconWarningOutlineRegular); the old
+    // "…16" spelling never existed, so the toast silently fell back to a text glyph.
+    var WarningIcon = primitives && typeof primitives.IconWarningOutlineRegular === 'function'
+      ? primitives.IconWarningOutlineRegular
+      : primitives && typeof primitives.IconWarningOutline16 === 'function'
+        ? primitives.IconWarningOutline16
+        : undefined;
 
     var settings = bindVisionModeSettings(ctx);
     var unavailableSettingsState = { value: undefined };
@@ -1106,29 +1151,6 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             : livePair.mode === 'unavailable'
               ? t('unavailable')
               : active ? t('disable') : t('enable');
-        var style = {
-          appearance: 'none',
-          minHeight: 28,
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 5,
-          padding: '4px 8px',
-          borderRadius: 8,
-          border: '1px solid ' + (active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-border-l2)'),
-          background: active
-            ? 'color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent)'
-            : 'transparent',
-          color: active ? 'var(--dsw-alias-brand-primary)' : 'var(--dsw-alias-label-secondary)',
-          boxShadow: active ? 'inset 0 0 0 1px var(--dsw-alias-brand-primary)' : 'none',
-          font: 'inherit',
-          fontSize: 12,
-          lineHeight: 1.4,
-          fontWeight: active ? 650 : 500,
-          cursor: disabled ? 'default' : 'pointer',
-          opacity: disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 0.45 : 1,
-          whiteSpace: 'nowrap'
-        };
-
         function announceRejectedSelection() {
           var latest;
           try {
@@ -1155,7 +1177,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           'aria-busy': busy || loading,
           title: title,
           disabled: disabled,
-          style: style,
+          className: 'vr-vision-toggle',
+          'data-active': active ? 'true' : 'false',
+          'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 'true' : 'false',
           onClick: function() {
             if (disabled || !pair.target || typeof props.select !== 'function') return;
             var target = pair.target;
@@ -1179,25 +1203,17 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             });
           }
         },
-          // One fixed 14px leading slot carries the state icon: the eye when the
+          // One fixed 14px leading slot carries the state glyph: the eye when the
           // route is ordinary, the check when Vision is on. Appending the check
           // only while active changed the chip width by ~18px and reflowed the
           // composer row; reserving trailing space kept the width but left the
-          // inactive chip visually off-centre.
+          // inactive chip visually off-centre. The slot is styled by the chip's
+          // own stylesheet so the collapse below 460px keeps exactly this glyph.
           React.createElement('span', {
             'aria-hidden': 'true',
-            style: {
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flex: '0 0 auto',
-              width: 14,
-              height: 14,
-              fontSize: 13,
-              lineHeight: 1
-            }
+            className: 'vr-vision-toggle-glyph'
           }, active ? '✓' : '👁'),
-          React.createElement('span', null, t('label'))
+          React.createElement('span', { className: 'vr-vision-toggle-label' }, t('label'))
         );
 
         var toastNode = toast

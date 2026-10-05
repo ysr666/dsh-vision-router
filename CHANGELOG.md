@@ -5,6 +5,11 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+### 输入框「识图」按钮改为官方 chip 形态并在窄屏塌缩 / The composer Vision chip follows the shipped chip chrome and collapses on narrow rows
+
+- **「识图」按钮不再自绘边框、窄屏下塌缩为图标（#654）**：它过去带 1px 边框、12px 字号与选中时的品牌色描边/填充，在窄屏输入框里比同排的官方 chip 更占位且更抢眼。现在它的尺寸、圆角、hover、focus ring 与选中态全部改用官方 chip 的 token（`ui-plan` 的 PlanChip 与官方 access-mode chip 的同一套），并跟随输入框所在的 size container：行宽 ≤460px（官方 access-mode chip 使用的同一个临界点）时只留 14px 状态图标。实测同一窗口下按钮宽 72px → 30px，标签隐藏、图标保留。
+- **The composer Vision chip no longer draws its own chrome and collapses on narrow rows (#654):** it used to carry a 1px border, 12px type and a brand-coloured outline/fill while selected, which took more room and read heavier than its shipped neighbours. Its size, radius, hover, focus ring and selected state now come from the shipped chip tokens (the same ones `ui-plan`'s PlanChip and the access-mode trigger use), and it follows the composer row's size container: below the same 460px cut the shipped access-mode chip uses, only the 14px state glyph remains. Measured in one window: the chip goes from 72px to 30px wide, label hidden, glyph kept.
+
 ## v3.0.1
 
 ### 五处消费者可见修复 / Five consumer-visible fixes

@@ -385,8 +385,9 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   // chip width by ~18px and reflow the trailing composer row.
   assert.equal(offButton.children.length, 2)
   assert.equal(offButton.children[0]?.type, 'span')
-  assert.equal(offButton.children[0]?.props.style.width, 14)
-  assert.equal(offButton.children[0]?.props.style.height, 14)
+  // The fixed 14px box lives in the chip stylesheet, which also owns the 460px collapse;
+  // the markup carries the class both select.
+  assert.equal(offButton.children[0]?.props.className, 'vr-vision-toggle-glyph')
   assert.equal(offButton.children[0]?.children[0]?.type, 'svg')
   assert.equal(offButton.children[0]?.children[0]?.props.width, 14)
   assert.equal(offButton.children[0]?.children[0]?.props.height, 14)
@@ -400,12 +401,13 @@ test('issue #284 browser prelude wires the right-slot toggle to shared directory
   assert.equal(onButton.props['aria-pressed'], true)
   assert.equal(onButton.children.length, 2)
   assert.equal(onButton.children[0]?.type, 'span')
-  assert.equal(onButton.children[0]?.props.style.width, 14)
-  assert.equal(onButton.children[0]?.props.style.height, 14)
+  assert.equal(onButton.children[0]?.props.className, 'vr-vision-toggle-glyph')
   assert.equal(onButton.children[0]?.children[0]?.type, 'svg')
   assert.equal(onButton.children[0]?.children[0]?.props.width, 14)
   assert.equal(onButton.children[0]?.children[0]?.children[0]?.props.stroke, 'currentColor')
-  assert.match(onButton.props.style.boxShadow, /brand-primary/)
+  // The selected treatment is the shipped ghost-active token pair, pinned by the chip
+  // stylesheet instead of an inline brand shadow.
+  assert.equal(onButton.props['data-active'], 'true')
   onButton.props.onClick()
   await Promise.resolve()
   assert.equal(harness.selections.at(-1)?.provider, 'opencode-go')
@@ -573,14 +575,16 @@ test('issue #284 smooths only the directory reload owned by this Vision toggle',
   assert.equal(partial.props.disabled, true)
   assert.equal(partial.props['aria-busy'], true)
   assert.equal(partial.props.title, '切换中')
-  assert.equal(partial.props.style.opacity, 1)
-  assert.equal(partial.children[0]?.props.style.width, 14)
+  // Waiting on this toggle's own selection must not grey the chip: only the
+  // unavailable/loading states set the dimming attribute.
+  assert.equal(partial.props['data-dimmed'], 'false')
+  assert.equal(partial.children[0]?.props.className, 'vr-vision-toggle-glyph')
 
   harness.setSnapshot({ current: null, groups: [], status: 'idle', pending: target, error: null })
   const empty = buttonOf(harness.render())
   assert.equal(empty.props['aria-pressed'], true)
   assert.equal(empty.props.disabled, true)
-  assert.equal(empty.props.style.opacity, 1)
+  assert.equal(empty.props['data-dimmed'], 'false')
 
   harness.resolveSelection()
   await new Promise((resolve) => setImmediate(resolve))
@@ -605,13 +609,13 @@ test('issue #284 smooths only the directory reload owned by this Vision toggle',
   assert.equal(externalPartial.props.disabled, true)
   assert.equal(externalPartial.props['aria-busy'], true)
   assert.equal(externalPartial.props.title, '加载中')
-  assert.equal(externalPartial.props.style.opacity, 0.45)
+  assert.equal(externalPartial.props['data-dimmed'], 'true')
 
   harness.setSnapshot({ current: null, groups: [], status: 'loading', pending: null, error: null })
   const resetLoading = buttonOf(harness.render())
   assert.equal(resetLoading.props['aria-pressed'], false)
   assert.equal(resetLoading.props.disabled, true)
-  assert.equal(resetLoading.props.style.opacity, 0.45)
+  assert.equal(resetLoading.props['data-dimmed'], 'true')
 })
 
 test('issue #284 remains explicit and persistent with no send/image auto-reset hook', () => {
