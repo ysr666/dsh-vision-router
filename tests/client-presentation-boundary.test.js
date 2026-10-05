@@ -210,6 +210,15 @@ test('the composer vision chip follows the shipped chip chrome and collapses on 
   assert.match(prelude, /\.vr-vision-toggle-glyph\{[^}]*width:14px/)
   assert.ok(prelude.includes("className: 'vr-vision-toggle-label'"), 'the label carries the collapsing class')
   assert.ok(prelude.includes("className: 'vr-vision-toggle-glyph'"), 'the glyph slot carries its own class')
+  // The check marks the state only while the label is there to explain it; once the label
+  // collapses, the Vision eye stays so an icon-only chip still says what it does. The rule is
+  // assembled from concatenated fragments at runtime, so assert the fragments.
+  assert.ok(prelude.includes("'.vr-vision-toggle-glyph-check{display:none}'"))
+  assert.ok(prelude.includes("'@container (min-width:460.01px){'"))
+  assert.ok(prelude.includes("'.vr-vision-toggle[data-active=\"true\"] .vr-vision-toggle-glyph-eye{display:none}'"))
+  assert.ok(prelude.includes("'.vr-vision-toggle[data-active=\"true\"] .vr-vision-toggle-glyph-check{display:inline-flex}}'"))
+  assert.ok(prelude.includes('vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye'))
+  assert.ok(prelude.includes('vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check'))
   // The plugin stylesheet is installed with the toggle and torn down with its effect.
   assert.ok(prelude.includes("tag.dataset.pluginCss = 'dsh-vision-router/mode-toggle'"))
 })

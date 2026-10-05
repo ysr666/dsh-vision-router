@@ -432,21 +432,21 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     if (next.zh && typeof next.zh === 'object') {
       next.zh = Object.assign({}, next.zh, {
         quickStartTitle: '聊天模型 + 识图模式',
-        quickStartBody: '先选择你平时使用的聊天模型。需要看图时，点击输入框旁的「识图」；出现 ✓ 表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。',
+        quickStartBody: '先选择你平时使用的聊天模型。需要看图时，点击输入框旁的「识图」；它变成选中态（高亮底色）表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。',
         onboardingStep1Title: '1 · 选择聊天模型并开启识图',
-        onboardingStep1Body: '先在聊天页右下角选择你平时使用的模型。需要看图时，点击模型选择器左侧的「识图」；出现 ✓ 表示已开启，不需要时再主动关闭。',
+        onboardingStep1Body: '先在聊天页右下角选择你平时使用的模型。需要看图时，点击模型选择器左侧的「识图」；它变成选中态（高亮底色）表示已开启，不需要时再主动关闭。',
         guideStep1Title: '第 1 步 · 选择聊天模型并认识「识图」',
-        guideStep1Body: '高亮的是聊天模型选择器；它左侧就是「识图」按钮。先选择你平时使用的聊天模型；需要看图时点击「识图」，出现 ✓ 表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。选好后点击「下一步」。'
+        guideStep1Body: '高亮的是聊天模型选择器；它左侧就是「识图」按钮。先选择你平时使用的聊天模型；需要看图时点击「识图」，它变成选中态（高亮底色）表示已开启。开启后会持续生效；在同一模型组内切换到另一个支持识图模式的模型也会保持开启，直到你主动关闭或切到没有对应识图模式的普通模型。选好后点击「下一步」。'
       });
     }
     if (next.en && typeof next.en === 'object') {
       next.en = Object.assign({}, next.en, {
         quickStartTitle: 'Chat model + Vision mode',
-        quickStartBody: 'Choose the chat model you normally use first. When you need image understanding, click “Vision” beside the composer; a ✓ means it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route.',
+        quickStartBody: 'Choose the chat model you normally use first. When you need image understanding, click “Vision” beside the composer; the chip lights up in its selected state to mean it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route.',
         onboardingStep1Title: '1 · Choose your chat model and enable Vision',
-        onboardingStep1Body: 'Choose the model you normally use from the lower-right chat selector. When you need image understanding, click “Vision” immediately to the left of the model selector; a ✓ means it is on. Turn it off again when you no longer need it.',
+        onboardingStep1Body: 'Choose the model you normally use from the lower-right chat selector. When you need image understanding, click “Vision” immediately to the left of the model selector; the chip lights up in its selected state to mean it is on. Turn it off again when you no longer need it.',
         guideStep1Title: 'Step 1 · Choose your chat model and find “Vision”',
-        guideStep1Body: 'The highlighted control is the chat model selector; the “Vision” button is immediately to its left. Choose your normal chat model first, then click “Vision” when you need image understanding. A ✓ means it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route. Click “Next” when done.'
+        guideStep1Body: 'The highlighted control is the chat model selector; the “Vision” button is immediately to its left. Choose your normal chat model first, then click “Vision” when you need image understanding. The chip lights up in its selected state to mean it is on. It stays on when you switch to another Vision-enabled model in the same model group, until you turn it off or choose a normal model with no matching Vision route. Click “Next” when done.'
       });
     }
     return next;
@@ -974,6 +974,16 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     'background:var(--dsw-alias-button-ghost-active-hover)}' +
     '.vr-vision-toggle-glyph{display:inline-flex;align-items:center;justify-content:center;' +
     'flex:0 0 auto;width:14px;height:14px;font-size:13px;line-height:1;color:currentColor}' +
+    '.vr-vision-toggle-glyph-part{display:inline-flex;align-items:center;justify-content:center;' +
+    'width:14px;height:14px}' +
+    // The check carries the state only while the label is there to explain it. Once the label
+    // collapses (the shipped 460px cut below) a bare check means nothing, so the Vision eye —
+    // the only thing that still says what the chip does — stays, and the chip's selected chrome
+    // marks on/off on its own.
+    '.vr-vision-toggle-glyph-check{display:none}' +
+    '@container (min-width:460.01px){' +
+    '.vr-vision-toggle[data-active="true"] .vr-vision-toggle-glyph-eye{display:none}' +
+    '.vr-vision-toggle[data-active="true"] .vr-vision-toggle-glyph-check{display:inline-flex}}' +
     '@container (max-width:460px){.vr-vision-toggle-label{display:none}}';
 
   function installVisionToggleStyles() {
@@ -1203,16 +1213,18 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             });
           }
         },
-          // One fixed 14px leading slot carries the state glyph: the eye when the
-          // route is ordinary, the check when Vision is on. Appending the check
-          // only while active changed the chip width by ~18px and reflowed the
-          // composer row; reserving trailing space kept the width but left the
-          // inactive chip visually off-centre. The slot is styled by the chip's
-          // own stylesheet so the collapse below 460px keeps exactly this glyph.
+          // One fixed 14px leading slot carries both glyphs: the Vision eye and the check that
+          // marks the enabled state. The stylesheet shows the check only while the label is
+          // present (the same 460px container cut that collapses the label), because a bare check
+          // tells a reader nothing — once the label is gone the eye, which still says what the
+          // chip does, stays. The slot is a fixed 14px box either way, so the chip width never
+          // changes with the state.
           React.createElement('span', {
             'aria-hidden': 'true',
             className: 'vr-vision-toggle-glyph'
-          }, active ? '✓' : '👁'),
+          },
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye' }, '👁'),
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check' }, '✓')),
           React.createElement('span', { className: 'vr-vision-toggle-label' }, t('label'))
         );
 

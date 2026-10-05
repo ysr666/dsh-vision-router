@@ -10,44 +10,32 @@ import { installVisionModelVisibilityBoundary } from './vision-model-visibility-
 
 const CLIENT_PRESENTATION_MARK = 'data-vision-router-presentation-boundary'
 
-const VISION_TOGGLE_TEXT_GLYPH = String.raw`          // One fixed 14px leading slot carries the state glyph: the eye when the
-          // route is ordinary, the check when Vision is on. Appending the check
-          // only while active changed the chip width by ~18px and reflowed the
-          // composer row; reserving trailing space kept the width but left the
-          // inactive chip visually off-centre. The slot is styled by the chip's
-          // own stylesheet so the collapse below 460px keeps exactly this glyph.
+const VISION_TOGGLE_TEXT_GLYPH = String.raw`          // One fixed 14px leading slot carries both glyphs: the Vision eye and the check that
+          // marks the enabled state. The stylesheet shows the check only while the label is
+          // present (the same 460px container cut that collapses the label), because a bare check
+          // tells a reader nothing — once the label is gone the eye, which still says what the
+          // chip does, stays. The slot is a fixed 14px box either way, so the chip width never
+          // changes with the state.
           React.createElement('span', {
             'aria-hidden': 'true',
             className: 'vr-vision-toggle-glyph'
-          }, active ? '✓' : '👁'),
+          },
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye' }, '👁'),
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check' }, '✓')),
           React.createElement('span', { className: 'vr-vision-toggle-label' }, t('label'))`
 
-const VISION_TOGGLE_FIXED_SVG = String.raw`          // One fixed 14px leading slot carries the state glyph: the eye when the
-          // route is ordinary, the check when Vision is on. Appending the check
-          // only while active changed the chip width by ~18px and reflowed the
-          // composer row; reserving trailing space kept the width but left the
-          // inactive chip visually off-centre. The slot is styled by the chip's
-          // own stylesheet so the collapse below 460px keeps exactly this glyph.
+const VISION_TOGGLE_FIXED_SVG = String.raw`          // One fixed 14px leading slot carries both glyphs: the Vision eye and the check that
+          // marks the enabled state. The stylesheet shows the check only while the label is
+          // present (the same 460px container cut that collapses the label), because a bare check
+          // tells a reader nothing — once the label is gone the eye, which still says what the
+          // chip does, stays. The slot is a fixed 14px box either way, so the chip width never
+          // changes with the state.
           React.createElement('span', {
             'aria-hidden': 'true',
             className: 'vr-vision-toggle-glyph'
-          }, active
-            ? React.createElement('svg', {
-                width: 14,
-                height: 14,
-                viewBox: '0 0 14 14',
-                fill: 'none',
-                'aria-hidden': 'true',
-                focusable: 'false',
-                style: { display: 'block', flex: '0 0 auto' }
-              }, React.createElement('path', {
-                d: 'M2.75 7.15 5.6 10 11.25 4.35',
-                stroke: 'currentColor',
-                strokeWidth: 1.5,
-                strokeLinecap: 'round',
-                strokeLinejoin: 'round'
-              }))
-            : React.createElement('svg', {
+          },
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-eye' },
+            React.createElement('svg', {
                 width: 14,
                 height: 14,
                 viewBox: '0 0 14 14',
@@ -61,6 +49,22 @@ const VISION_TOGGLE_FIXED_SVG = String.raw`          // One fixed 14px leading s
                 d: 'M7 2.25c-2.84 0-5.04 1.69-6.25 4.25a1.15 1.15 0 0 0 0 1C1.96 10.06 4.16 11.75 7 11.75s5.04-1.69 6.25-4.25a1.15 1.15 0 0 0 0-1C12.04 3.94 9.84 2.25 7 2.25Zm0 1.25c2.16 0 3.96 1.21 5.05 3.5C10.96 9.29 9.16 10.5 7 10.5S3.04 9.29 1.95 7C3.04 4.71 4.84 3.5 7 3.5Zm0 1.25A2.25 2.25 0 1 0 7 9.25a2.25 2.25 0 0 0 0-4.5Zm0 1.25a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z',
                 fill: 'currentColor'
               }))),
+          React.createElement('span', { className: 'vr-vision-toggle-glyph-part vr-vision-toggle-glyph-check' },
+            React.createElement('svg', {
+                width: 14,
+                height: 14,
+                viewBox: '0 0 14 14',
+                fill: 'none',
+                'aria-hidden': 'true',
+                focusable: 'false',
+                style: { display: 'block', flex: '0 0 auto' }
+              }, React.createElement('path', {
+                d: 'M2.75 7.15 5.6 10 11.25 4.35',
+                stroke: 'currentColor',
+                strokeWidth: 1.5,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round'
+              })))),
           React.createElement('span', { className: 'vr-vision-toggle-label' }, t('label'))`
 
 const BITMAP_LIMITS_BASE = String.raw`      var maxBitmapSourceBytes = 64 * 1024 * 1024;
