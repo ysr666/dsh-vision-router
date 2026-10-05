@@ -9,6 +9,7 @@ import {
   callLocalBackend,
   localDescribePrompt,
   localProvidersOf,
+  objectRecord,
   toOpenAIContent,
 } from './core-primitives.js'
 import { loadSharp } from './sharp-runtime.js'
@@ -170,15 +171,16 @@ async function identifyDesktopCapture(data, {
  * this module owns only the platform capture and optional local-recognition
  * implementation behind that existing permission boundary.
  */
-export function createDesktopScreenshotTool({
-  current,
-  timeoutMs,
-  saveArtifact,
-  stringOutput,
-  instantLocalStyle,
-  providerTransport,
-  captureDesktop = captureDesktopPng,
-} = {}) {
+export function createDesktopScreenshotTool(rawOptions) {
+  const {
+    current,
+    timeoutMs,
+    saveArtifact,
+    stringOutput,
+    instantLocalStyle,
+    providerTransport,
+    captureDesktop = captureDesktopPng,
+  } = objectRecord(rawOptions) ?? {}
   if (
     typeof current !== 'function' ||
     typeof timeoutMs !== 'function' ||

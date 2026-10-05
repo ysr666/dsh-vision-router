@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { sameOriginRequest } from './adversarial-hardening.js'
+import { objectRecord } from './core-primitives.js'
 import { normalizeRuntimeVisionConfig } from './runtime-config-normalizer.js'
 import { isOffloadedImageBlock, offloadedImagePlaceholder } from './image-offload-compat.js'
 
@@ -14,12 +15,13 @@ import { isOffloadedImageBlock, offloadedImagePlaceholder } from './image-offloa
  * specific to opt-in local vision, while non-local providers continue through
  * the original adapters byte-for-byte.
  */
-export async function triggerDesktopScreenshotPermission({
-  platform = typeof process !== 'undefined' ? process.platform : '',
-  run = promisify(execFile),
-  remove = unlink,
-  tempDir = tmpdir(),
-} = {}) {
+export async function triggerDesktopScreenshotPermission(rawOptions) {
+  const {
+    platform = typeof process !== 'undefined' ? process.platform : '',
+    run = promisify(execFile),
+    remove = unlink,
+    tempDir = tmpdir(),
+  } = objectRecord(rawOptions) ?? {}
   // Windows has no Screen Recording privacy prompt equivalent and Linux
   // capture permission is compositor-specific. macOS is the platform where
   // enabling this feature must proactively cross an OS privacy boundary.

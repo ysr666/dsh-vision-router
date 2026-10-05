@@ -1,4 +1,5 @@
 import { currentSessionSurfacePolicy } from './session-surface-policy.js'
+import { objectRecord } from './core-primitives.js'
 import {
   CORE_VISION_SURFACE_KEYS,
   projectCoreVisionSurface,
@@ -32,7 +33,8 @@ export function currentCoreVisionSurface(config = {}, options = {}) {
  * The config source stays live, but schema bootstrap is an internal lifecycle
  * bit rather than a fake Settings/config value.
  */
-export function createCoreVisionSurfaceRuntime({ config = {} } = {}) {
+export function createCoreVisionSurfaceRuntime(rawOptions) {
+  const { config = {} } = objectRecord(rawOptions) ?? {}
   let schemaBootstrapping = true
 
   const current = () => {

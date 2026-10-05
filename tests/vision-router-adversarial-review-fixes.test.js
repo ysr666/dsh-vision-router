@@ -193,3 +193,53 @@ test('J2-F1: no credential shape survives either text redactor', async () => {
   assert.equal(sanitizeLogText('vision backend timed out after 60000ms'), 'vision backend timed out after 60000ms')
   assert.equal(redactDiagnosticText('x'.repeat(5000)).length, 400)
 })
+
+test('K6-O4 (same class): an explicit null options bag means "no options", not a crash', async () => {
+  // Class-level follow-up of the review: four entry points took their options via
+  // a default parameter (`= {}`), which covers `undefined` but not an explicit
+  // `null`, so a null argument escaped as a raw TypeError instead of "no options".
+  const { objectRecord } = await import('../lib/core-primitives.js')
+  assert.equal(objectRecord(null), undefined)
+  assert.equal(objectRecord(undefined), undefined)
+  assert.equal(objectRecord(42), undefined)
+  assert.equal(objectRecord('x'), undefined)
+  assert.deepEqual(objectRecord({ a: 1 }), { a: 1 })
+
+  const { createRemoteSettingsRiskClientBoundary } = await import('../lib/remote-settings-risk-client-boundary.js')
+  const { createCoreVisionSurfaceRuntime } = await import('../lib/core-vision-surface.js')
+  const { createDesktopScreenshotTool } = await import('../lib/desktop-screenshot-tool.js')
+
+  for (const bad of [null, undefined, 42, 'x']) {
+    const boundary = createRemoteSettingsRiskClientBoundary(bad)
+    assert.equal(typeof boundary.wrapContext, 'function', `risk boundary must absorb ${String(bad)}`)
+    const runtime = createCoreVisionSurfaceRuntime(bad)
+    assert.deepEqual(Object.keys(runtime), Object.keys(createCoreVisionSurfaceRuntime()))
+  }
+
+  // The tool factory validates its required options and must answer with its own
+  // named contract error, never with a raw destructuring crash.
+  assert.throws(
+    () => createDesktopScreenshotTool(null),
+    (error) => /desktop screenshot tool/i.test(error.message) && !/destructur/i.test(error.message),
+  )
+  assert.throws(
+    () => createDesktopScreenshotTool({ current: 'nope' }),
+    (error) => /desktop screenshot tool/i.test(error.message),
+  )
+
+  // Behaviour with real options is unchanged: every option shape still projects
+  // the same public surface key set (taken from the runtime itself, not guessed).
+  const shapes = [{ config: { localOnlyVision: true } }, { config: {} }, {}, undefined, null]
+  const keySets = shapes.map((options) => Object.keys(createCoreVisionSurfaceRuntime(options).current()).sort())
+  assert.equal(keySets[0].length > 0, true)
+  for (const keys of keySets) assert.deepEqual(keys, keySets[0])
+
+  // The screenshot trigger really runs `screencapture` on macOS, so the null-input
+  // assertion only runs where the platform branch is a no-op; CI is Linux.
+  if (process.platform !== 'darwin') {
+    const { triggerDesktopScreenshotPermission } = await import('../lib/local-vision-stabilizer.js')
+    const result = await triggerDesktopScreenshotPermission(null)
+    assert.equal(result.ok, true)
+    assert.equal(result.requested, false)
+  }
+})

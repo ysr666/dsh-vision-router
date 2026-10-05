@@ -5,7 +5,9 @@
  * PRODUCT CONTRACT (2.3+): acceptedRisk is reminder/friction only. It is not
  * authentication, authorization, local-presence proof, or a credential.
  */
-export function createRemoteSettingsRiskClientBoundary(options = {}) {
+import { objectRecord } from './core-primitives.js'
+export function createRemoteSettingsRiskClientBoundary(rawOptions) {
+  var options = objectRecord(rawOptions) ?? {}
   var confirmImpl = options.confirmImpl
   var alertImpl = options.alertImpl
   var locale = options.locale

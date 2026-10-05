@@ -161,6 +161,18 @@ export function eventHasImage(event) {
   return false
 }
 
+/**
+ * Read one options/argument bag as a record, or `undefined` when the value is not
+ * an object at all. Callers write `objectRecord(options) ?? {}`: an explicit
+ * `null` (or a primitive) then means "no options" instead of throwing from a
+ * parameter destructure or a property read.
+ */
+export function objectRecord(value) {
+  return value !== null && typeof value === 'object'
+    ? value
+    : undefined
+}
+
 export function localOnlyVisionEnabled(config = {}) {
   return !!config && config.localOnlyVision === true
 }
