@@ -8,6 +8,7 @@ import {
   normalizeDshHostCapabilities,
 } from './dsh-host-capabilities.js'
 import { DOCTOR_RESPONSE_MAX_BYTES, readResponseJsonBounded } from './http-body-limit.js'
+import { redactDiagnosticText } from './diagnostic-redaction.js'
 import {
   DSH_SUPPORT_WINDOW,
   DSH_VERIFICATION_EVIDENCE,
@@ -73,10 +74,13 @@ export async function probeDoctorHostCapabilities({ baseUrl, fetchImpl = globalT
       capabilities: normalizeDshHostCapabilities(body?.capabilities),
     }
   } catch (error) {
+    // A fetch failure can echo the request URL, and a proxy failure can echo the
+    // proxy URL with its userinfo; the doctor report is meant to be shareable, so
+    // the message is redacted at the source rather than at each print site.
     return {
       ok: false,
       source: 'runtime-unavailable',
-      error: error instanceof Error ? error.message : String(error),
+      error: redactDiagnosticText(error instanceof Error ? error.message : String(error), 200),
       capabilities: unknownSnapshot(),
     }
   }

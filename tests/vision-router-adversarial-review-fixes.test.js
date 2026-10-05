@@ -294,3 +294,39 @@ test('K8-O1 (same class): a policy row with prototype-carried fields is malforme
   assert.equal(delegated.source, 'delegation')
   assert.equal(delegated.inheritedFrom, 'parent')
 })
+
+test('K22-O1: a failed doctor probe never stores credentials from the error message', async () => {
+  // The doctor report is meant to be shareable. A fetch failure can echo the
+  // request URL and a proxy failure can echo the proxy URL with its userinfo, so
+  // the stored message must be redacted at the source — the current print path
+  // happens not to emit it, which is exactly why a future consumer would leak it.
+  const { probeDoctorHostCapabilities } = await import('../lib/doctor-cli-p0.js')
+  const secret = 'sk-DOCTORSECRET1234567890'
+
+  const failed = await probeDoctorHostCapabilities({
+    baseUrl: 'http://127.0.0.1:3080',
+    fetchImpl: async () => {
+      throw new Error(`fetch failed: request to http://user:${secret}@proxy.example:8080 failed`)
+    },
+  })
+  assert.equal(failed.ok, false)
+  assert.equal(typeof failed.error, 'string')
+  assert.equal(failed.error.includes(secret), false, 'the credential must not survive in the probe result')
+  assert.equal(/user:[^@\s]{6,}@/.test(failed.error), false, 'proxy userinfo must not survive either')
+  assert.match(failed.error, /\[REDACTED\]/)
+
+  // A message without credentials keeps its diagnostic value.
+  const plain = await probeDoctorHostCapabilities({
+    baseUrl: 'http://127.0.0.1:3080',
+    fetchImpl: async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:3080') },
+  })
+  assert.equal(plain.error.includes('ECONNREFUSED'), true)
+
+  // Non-Error throwables and a hostile toString still produce a redacted string.
+  const hostile = await probeDoctorHostCapabilities({
+    baseUrl: 'http://127.0.0.1:3080',
+    fetchImpl: async () => { throw { toString() { return `bad ${secret}` } } },
+  })
+  assert.equal(typeof hostile.error, 'string')
+  assert.equal(hostile.error.includes(secret), false)
+})
