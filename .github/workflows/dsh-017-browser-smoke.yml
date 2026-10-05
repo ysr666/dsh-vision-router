@@ -3,7 +3,6 @@ name: DSH 0.1.7 browser smoke
 on:
   pull_request:
     paths:
-      - 'src/**'
       - 'src/lib/public-entry.js'
       - 'src/lib/dsh-settings-017-compat.js'
       - 'src/lib/settings-client-017-compat.js'
@@ -38,7 +37,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   rc1-browser:
@@ -138,7 +137,6 @@ jobs:
       - name: Install Chromium for DSH Playwright
         working-directory: dsh-preview
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
-
 
       - name: Collect Playwright system packages
         id: playwright-apt-collect
