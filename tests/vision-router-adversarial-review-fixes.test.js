@@ -330,3 +330,37 @@ test('K22-O1: a failed doctor probe never stores credentials from the error mess
   assert.equal(typeof hostile.error, 'string')
   assert.equal(hostile.error.includes(secret), false)
 })
+
+test('K27-O1: a host probe that ignores AbortSignal is still bounded', async () => {
+  // The probe passes AbortSignal.timeout(1500) to the fetch, which only bounds a
+  // cooperative implementation. Before the fence a non-cooperative fetch left the
+  // doctor pending forever; the repository already fences this exact case in
+  // live-model discovery ("dispose fences a late fetch that ignores AbortSignal").
+  const { probeDoctorHostCapabilities } = await import('../lib/doctor-cli-p0.js')
+  const started = Date.now()
+  // Bound the assertion itself so a regression fails instead of hanging the suite.
+  let watchdog
+  const bounded = await Promise.race([
+    probeDoctorHostCapabilities({
+      baseUrl: 'http://127.0.0.1:3080',
+      fetchImpl: async () => new Promise(() => {}),
+    }).then((value) => ({ kind: 'settled', value })),
+    new Promise((resolve) => { watchdog = setTimeout(() => resolve({ kind: 'pending' }), 6000) }),
+  ]).finally(() => clearTimeout(watchdog))
+  const elapsed = Date.now() - started
+  assert.equal(bounded.kind, 'settled', 'the probe must not stay pending on a non-cooperative fetch')
+  assert.ok(elapsed < 5000, `the fence must bound the probe (took ${elapsed}ms)`)
+  assert.equal(bounded.value.ok, false)
+  assert.equal(bounded.value.source, 'runtime-unavailable')
+  assert.match(String(bounded.value.error), /exceeded 1500ms/)
+
+  // A cooperative fetch keeps reporting the signal's own reason: no regression.
+  const cooperative = await probeDoctorHostCapabilities({
+    baseUrl: 'http://127.0.0.1:3080',
+    fetchImpl: (url, init) => new Promise((_, reject) => {
+      init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })
+    }),
+  })
+  assert.equal(cooperative.ok, false)
+  assert.match(String(cooperative.error), /aborted due to timeout/)
+})
