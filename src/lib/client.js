@@ -4770,6 +4770,7 @@ openLogFolder,
         const imageKeySignature = JSON.stringify(imageKeys)
         const imageOwnerToken = React.useRef({}).current
         const ownedImageKeys = React.useRef(new Set())
+        React.useEffect(() => { if (globalThis.__dvrPresentFocus) globalThis.__dvrPresentFocus() }, [imageKeySignature])
         React.useEffect(() => {
           const current = new Set(imageKeys)
           for (const key of ownedImageKeys.current) {
@@ -4809,7 +4810,7 @@ openLogFolder,
         }
         return React.createElement(
           'div',
-          { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '4px 0' } },
+          { 'data-dvr-present': 'true', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '4px 0' } },
           parsed && typeof parsed.label === 'string' && parsed.label !== 'image'
             ? React.createElement(
                 'div',

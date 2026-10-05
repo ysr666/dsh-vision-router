@@ -996,6 +996,41 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return function(){ tag.remove(); };
   }
 
+  // A presented image that mounts below the reader is the same as not being shown: the card
+  // renders next to its tool call, and a reader who is at the end of a long conversation has
+  // that call thousands of pixels above them. The card calls this on mount; it only moves the
+  // reader for content that arrived below the viewport — a card that is already visible is left
+  // alone, and so is history above the reader when a session is opened.
+  function focusPresentedCard(node, viewportHeight) {
+    if (!node || typeof node.getBoundingClientRect !== 'function') return false;
+    var rect = node.getBoundingClientRect();
+    if (rect.top <= viewportHeight) return false;
+    var scroller = node.parentElement;
+    var hops = 0;
+    while (scroller && hops < 20) {
+      var style = typeof getComputedStyle === 'function' ? getComputedStyle(scroller) : undefined;
+      var scrollable = /(auto|scroll)/.test(String(style && style.overflowY)) &&
+        scroller.scrollHeight > scroller.clientHeight + 4;
+      if (scrollable) {
+        var box = scroller.getBoundingClientRect();
+        scroller.scrollTop += (rect.top - box.top) - (box.height / 2 - rect.height / 2);
+        return true;
+      }
+      scroller = scroller.parentElement;
+      hops += 1;
+    }
+    return false;
+  }
+
+  try {
+    globalThis.__dvrPresentFocus = function () {
+      if (typeof document === 'undefined') return false;
+      var cards = document.querySelectorAll('[data-dvr-present]');
+      var last = cards[cards.length - 1];
+      return last ? focusPresentedCard(last, globalThis.innerHeight || 0) : false;
+    };
+  } catch (_) {}
+
   function installVisionModeToggle(ctx, React, primitives) {
     if (!ctx || typeof ctx.inject !== 'function' || !React) return;
     var zh = {

@@ -3860,9 +3860,8 @@ ctx.logger?.info(
         'Present a generated local image directly to the user with the host-native image preview. ' +
         'MANDATORY PRESENTATION RULE: when you generate, edit, screenshot, or export an image and want the user to see it, ' +
         'you MUST call vision_present. read_image is only for model-side inspection; NEVER use read_image to present or send ' +
-        'an image to the user. ALWAYS paste the returned replyImage into your visible reply as well: the image card renders ' +
-        "next to this tool call, which can sit above the reader's scroll position, while the reply body is where they are " +
-        'reading. The image is retained in the session UI but sanitized out of later text-only model requests.',
+        'an image to the user. The image card brings itself into view when it mounts off-screen, so the reader ' +
+        'sees it without scrolling back. The image is retained in the session UI but sanitized out of later text-only model requests.',
       parameters: {
         type: 'object',
         properties: {
@@ -4774,12 +4773,10 @@ ctx.logger?.info(
                 '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`（长页面加 `fullPage: true` 截整页）；\n' +
                 '4. 展示规则（必须遵守）：当你生成、编辑、截图或导出一张图片，并希望用户看到它时，必须调用 `vision_present`。' +
                 '`read_image` 仅用于你自己读取或检查图片内容，绝不能把 `read_image` 当成向用户展示或发送图片的方法。' +
-                '调用后还必须把返回的 `replyImage` 粘进你的可见回复正文：图片卡片渲染在工具调用旁，可能停在用户滚动位置上方，' +
-                '而回复正文才是用户正在读的地方。\n' +
+
                 '   MANDATORY PRESENTATION RULE: when you generate, edit, screenshot, or export an image and want the user to see it, ' +
                 'you MUST call `vision_present`. `read_image` is only for your own model-side inspection; NEVER use `read_image` to present or send an image to the user. ' +
-                'Also paste the returned `replyImage` into your visible reply: the image card renders next to the tool call, which can ' +
-                "sit above the reader's scroll position, while the reply body is where they are reading.\n" +
+
                 '5. 所有坐标都是原图像素（x1/y1/x2/y2）；上传的图片可以直接用其附件 ID（如 `sha256:…`）作为各工具的 image 参数，无需先找磁盘路径。' +
                 'All coordinates are original pixels (x1/y1/x2/y2); uploaded images can be referenced directly by their attachment id (e.g. `sha256:…`) as the image argument. 产物写入工作区 `' +
                 `${artifactsRel}` +

@@ -3102,36 +3102,6 @@ test('vision_present renders a durable image for UI and sanitizer removes it fro
   assert.match(sanitized.messages[0].content[0].content.at(-1).text, /present-1/)
 })
 
-test('vision_present hands back a reply-ready image snippet so the reader sees it where they read', () => {
-  const rendered = renderVisionPresent({
-    path: '/workspace/artifacts/before-after.png',
-    label: 'Chip [before/after]',
-    width: 800,
-    height: 200,
-    bytes: 456,
-    safePresentation: true,
-    attachment: {
-      attachmentId: 'present-2',
-      mediaType: 'image/png',
-      bytes: 456,
-      width: 800,
-      height: 200,
-      name: 'Chip before/after',
-    },
-  })
-  const payload = JSON.parse(rendered[0].text)
-  // The tool card renders the image where the tool call sits; a reader who is at the end of a
-  // long conversation never scrolls back to it. The reply body is where they are actually
-  // reading, and the client rewrites an absolute local image path in Markdown to a displayable
-  // URL, so the result carries a paste-ready snippet plus the rule that says why.
-  assert.equal(payload.replyImage, '![Chip before/after](</workspace/artifacts/before-after.png>)')
-  assert.match(payload.replyImageHint, /visible reply/)
-  // The image block and the attachment metadata stay exactly as before.
-  assert.equal(rendered[1].type, 'image')
-  assert.equal(rendered[1].attachment.attachmentId, 'present-2')
-  assert.equal(payload.attachmentId, 'present-2')
-})
-
 test('sanitizeToolResultImages removes nested read_image-style images but preserves user images', () => {
   const userRef = { attachmentId: 'user-1', name: 'upload.png' }
   const toolRef = { attachmentId: 'tool-1', name: 'generated.png' }

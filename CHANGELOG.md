@@ -12,8 +12,8 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ### 展示给用户的图片会跟随回复正文出现 / A presented image now travels with the reply body
 
-- **`vision_present` 的图不再只躺在工具卡片里**：图片卡片渲染在工具调用旁，读者停在长对话底部时它可能在几千像素之上，等于没看到（真机 DOM 实测：图确实渲染了，但位于视口上方 1500–8000px）。现在工具结果会回带一段可直接粘贴的 `replyImage`（`![label](<绝对路径>)`）并明确要求把它放进可见回复——客户端会把消息正文里的本地图片路径改写成可显示 URL，所以图片出现在读者正在读的地方。工具卡片照旧保留，两条通道并存。
-- **A presented image no longer lives only inside the tool card:** the card renders next to the tool call, so a reader who is at the end of a long conversation can have it thousands of pixels above them (measured on a real host: the images rendered, at 1500–8000px above the viewport). The tool result now carries a paste-ready `replyImage` (`![label](<absolute path>)`) plus the rule to put it in the visible reply — the client rewrites a local image path in the reply body into a displayable URL, so the image lands where the reader is. The tool card stays as it was; both channels coexist.
+- **`vision_present` 的图不再停在读者视野之外**：图片卡片渲染在工具调用旁，读者停在长对话底部时它可能在几千像素之上，等于没看到（真机 DOM 实测：图确实渲染了，但位于视口上方 1500–8000px）。现在卡片挂载时会把自己滚进最近的滚动容器并居中——**只有当它完全不在视口内时**才滚，正在看图的人不会被拽动。工具卡片与附件两条通道都不变。
+- **A presented image no longer stops outside the reader's view:** the card renders next to the tool call, so a reader who is at the end of a long conversation can have it thousands of pixels above them (measured on a real host: the images rendered, at 1500–8000px above the viewport). The card now centres itself in the nearest scrollable ancestor when it mounts — and only when it is not already fully visible, so a reader who is looking at the image is never moved. The tool card and the attachment both stay as they were.
 
 ## v3.0.1
 

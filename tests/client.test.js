@@ -1408,3 +1408,51 @@ test('presented image resource cache disposal rejects late loads without creatin
     disposed: true,
   })
 })
+
+test('a presented image card brings itself into view instead of waiting to be scrolled back to', async () => {
+  const { CLIENT_PRESENTATION_PRELUDE } = await import('../lib/client-presentation-boundary.js')
+  const start = CLIENT_PRESENTATION_PRELUDE.indexOf('function focusPresentedCard(node, viewportHeight) {')
+  const stop = CLIENT_PRESENTATION_PRELUDE.indexOf('function installVisionModeToggle(')
+  assert.ok(start > 0 && stop > start, 'the presented-card focus helper must exist in the prelude')
+  const declaration = CLIENT_PRESENTATION_PRELUDE.slice(start, stop)
+  const focus = new Function('getComputedStyle', `${declaration}\nreturn focusPresentedCard`)((el) => ({ overflowY: (el && el.__overflowY) || 'auto' }))
+
+  const scroller = {
+    __overflowY: 'auto', scrollTop: 0, scrollHeight: 4000, clientHeight: 800,
+    getBoundingClientRect: () => ({ top: 0, height: 800 }),
+  }
+  // Content that arrived below the reader (the normal case for a new image) is centred.
+  const below = {
+    parentElement: scroller,
+    getBoundingClientRect: () => ({ top: 3000, bottom: 3200, height: 200 }),
+  }
+  assert.equal(focus(below, 800), true)
+  assert.equal(scroller.scrollTop, 3000 - (800 / 2 - 200 / 2))
+
+  // A card the reader is already looking at is never moved.
+  const settled = scroller.scrollTop
+  const looking = { parentElement: scroller, getBoundingClientRect: () => ({ top: 100, bottom: 300, height: 200 }) }
+  assert.equal(focus(looking, 800), false)
+  assert.equal(scroller.scrollTop, settled)
+
+  // History above the reader is never yanked back into view (session open mounts every card).
+  const history = { parentElement: scroller, getBoundingClientRect: () => ({ top: -4200, bottom: -4000, height: 200 }) }
+  assert.equal(focus(history, 800), false)
+  assert.equal(scroller.scrollTop, settled)
+
+  // No scrollable ancestor, or no node at all, stays silent instead of throwing.
+  const orphan = {
+    parentElement: {
+      __overflowY: 'visible', scrollHeight: 0, clientHeight: 0, parentElement: null,
+      getBoundingClientRect: () => ({ top: 0, height: 0 }),
+    },
+    getBoundingClientRect: () => ({ top: 900, bottom: 1100, height: 200 }),
+  }
+  assert.equal(focus(orphan, 800), false)
+  assert.equal(focus(null, 800), false)
+
+  // The client bundle stays inside its single-file review bound and only wires the call.
+  const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(bundle.includes("globalThis.__dvrPresentFocus"), true)
+  assert.equal(bundle.includes("'data-dvr-present': 'true'"), true)
+})
