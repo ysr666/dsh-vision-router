@@ -243,3 +243,54 @@ test('K6-O4 (same class): an explicit null options bag means "no options", not a
     assert.equal(result.requested, false)
   }
 })
+
+test('K11-O1: unproven host capabilities must not be reported as capable', async () => {
+  const { supportWindowUpgradeAdvice } = await import('../lib/dsh-support-window.js')
+
+  // Only an explicit `true` proves the support floor. Before the fix every shape
+  // below answered `ok`, so a diagnostic could claim a capable Host without data.
+  for (const [label, capabilities] of [
+    ['empty object', {}],
+    ['null', null],
+    ['no argument', undefined],
+    ['string', 'x'],
+    ['wrong-typed values', { batchAttachments: 0, maxImageDimension: '' }],
+    ['missing one side', { batchAttachments: true }],
+  ]) {
+    assert.equal(
+      supportWindowUpgradeAdvice(capabilities).level,
+      'unknown',
+      `${label} must be reported as unproven`,
+    )
+  }
+
+  // The three proven states keep their exact meaning.
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: true, maxImageDimension: true }).level, 'ok')
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: false, maxImageDimension: true }).level, 'required')
+  assert.equal(
+    supportWindowUpgradeAdvice({ batchAttachments: 'unknown', maxImageDimension: 'unknown' }).level,
+    'unknown',
+  )
+})
+
+test('K8-O1 (same class): a policy row with prototype-carried fields is malformed', async () => {
+  const {
+    parseSessionVisionPolicy,
+    userSessionVisionPolicy,
+    delegatedSessionVisionPolicy,
+  } = await import('../lib/session-vision-policy.js')
+
+  // Before the fix the parser read inherited fields, so a row that simply
+  // inherited a valid shape was accepted as a policy.
+  const inherited = Object.create({ revision: 1, enabled: true, source: 'user' })
+  assert.equal(parseSessionVisionPolicy(inherited), undefined)
+  const inheritedDelegation = Object.create({ revision: 1, enabled: true, source: 'delegation', inheritedFrom: 'p' })
+  assert.equal(parseSessionVisionPolicy(inheritedDelegation), undefined)
+
+  // Own-key rows, including the canonical factories' round-trip, still parse.
+  assert.equal(parseSessionVisionPolicy({ revision: 1, enabled: true, source: 'user' }).enabled, true)
+  assert.equal(parseSessionVisionPolicy(userSessionVisionPolicy(false)).source, 'user')
+  const delegated = parseSessionVisionPolicy(delegatedSessionVisionPolicy(true, 'parent'))
+  assert.equal(delegated.source, 'delegation')
+  assert.equal(delegated.inheritedFrom, 'parent')
+})

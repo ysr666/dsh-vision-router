@@ -45,9 +45,13 @@ function normalizedSessionId(value: unknown): string {
 export function parseSessionVisionPolicy(value: unknown): Readonly<SessionVisionPolicy> | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
   const record = value as Record<PropertyKey, unknown>
-  if (record.revision !== SESSION_VISION_POLICY_REVISION) return undefined
-  if (typeof record.enabled !== 'boolean') return undefined
-  if (record.source !== 'user' && record.source !== 'delegation') return undefined
+  // Own keys only: a policy row is persisted JSON, so a value inherited from a
+  // prototype is evidence of a malformed row rather than of a policy.
+  if (!Object.hasOwn(record, 'revision') || record.revision !== SESSION_VISION_POLICY_REVISION) return undefined
+  if (!Object.hasOwn(record, 'enabled') || typeof record.enabled !== 'boolean') return undefined
+  if (!Object.hasOwn(record, 'source') || (record.source !== 'user' && record.source !== 'delegation')) {
+    return undefined
+  }
 
   if (record.source === 'user') {
     if (record.inheritedFrom !== undefined) return undefined
@@ -58,7 +62,9 @@ export function parseSessionVisionPolicy(value: unknown): Readonly<SessionVision
     })
   }
 
-  const inheritedFrom = nonEmptyString(record.inheritedFrom)
+  const inheritedFrom = Object.hasOwn(record, 'inheritedFrom')
+    ? nonEmptyString(record.inheritedFrom)
+    : undefined
   if (inheritedFrom === undefined) return undefined
   return Object.freeze({
     revision: SESSION_VISION_POLICY_REVISION,
