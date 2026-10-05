@@ -5,15 +5,45 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
-### 输入框「识图」按钮改为官方 chip 形态并在窄屏塌缩 / The composer Vision chip follows the shipped chip chrome and collapses on narrow rows
+## v3.0.2
+
+### 输入框「识图」按钮与 presented 图片的呈现修复 / The composer Vision control, and how a presented image reaches the reader
 
 - **「识图」按钮不再自绘边框、窄屏下塌缩为图标（#654）**：它过去带 1px 边框、12px 字号与选中时的品牌色描边/填充，在窄屏输入框里比同排的官方 chip 更占位且更抢眼。现在它的尺寸、圆角、hover、focus ring 与选中态全部改用官方 chip 的 token（`ui-plan` 的 PlanChip 与官方 access-mode chip 的同一套），并跟随输入框所在的 size container：行宽 ≤460px（官方 access-mode chip 使用的同一个临界点）时只留 14px 状态图标。实测同一窗口下按钮宽 72px → 30px，标签隐藏、图标保留。
 - **The composer Vision chip no longer draws its own chrome and collapses on narrow rows (#654):** it used to carry a 1px border, 12px type and a brand-coloured outline/fill while selected, which took more room and read heavier than its shipped neighbours. Its size, radius, hover, focus ring and selected state now come from the shipped chip tokens (the same ones `ui-plan`'s PlanChip and the access-mode trigger use), and it follows the composer row's size container: below the same 460px cut the shipped access-mode chip uses, only the 14px state glyph remains. Measured in one window: the chip goes from 72px to 30px wide, label hidden, glyph kept.
+- **塌缩后保留眼睛**：标签消失后一个孤零零的勾说明不了任何事，而它正是窄屏下唯一还显示着的东西。14px 槽位现在同时带眼睛与勾，由与标签塌缩同一个容器查询切换：`@container (min-width:460.01px)` 时选中态显示勾，低于该临界点始终显示眼睛；两态都是固定 14px 槽位，宽度不随状态变化。引导文案也不再教「出现 ✓ 表示已开启」。
+- **The eye stays once the label is gone:** a bare check says nothing about what the chip does, and on a narrow row it is the only thing left on screen. The 14px slot now carries both glyphs and the same container query that collapses the label swaps them: the enabled chip shows the check at `@container (min-width:460.01px)`, and the Vision eye stays below that cut. The slot is a fixed 14px box in both states, so the chip width never changes with the state. The guide copy no longer teaches the check as the on-signal.
+
 
 ### 展示给用户的图片会出现在消息正文里 / A presented image now lands in the message body
 
 - **`vision_present` 的图不再只活在工具卡片里**：工具卡片只给 240px 缩略图，且后续消息会把它顶出视野（真机实测：同一张图几分钟内从视口内漂到视口上方 1692px）。工具结果现在回带 `replyImage`（`![label](<绝对路径>)`）并明确要求放进可见回复——宿主会把消息里的绝对路径渲染成 **640px** 的 `api/file` 图，出现在读者正在读的地方（真机 DOM 实测 `api/file?path=…` 640×200）。工具卡片继续保留，并在它挂载于视口下方时自动滚进视野。
 - **A presented image no longer lives only inside the tool card:** the card shows a 240px thumbnail and later messages push it out of view (measured on a real host: the same image drifted from inside the viewport to 1692px above it within minutes). The tool result now returns `replyImage` (`![label](<absolute path>)`) and requires it in the visible reply — the host renders an absolute path inside a message as a full-size **640px** `api/file` image, exactly where the reader is (measured in the DOM: `api/file?path=…` at 640×200). The tool card stays, and it now centres itself when it mounts below the viewport.
+
+### 一轮全仓对抗审查的修复与后续补修 / Fixes from a full-repository adversarial review, plus the follow-up pass
+
+- **instant 本地描述走 Router 的 transport**：instant local describe 现在把 Router 自有的 `providerTransport` 交给它的适配器调用，配置的 `proxy` / `proxyHosts` 与其他 provider 腿一样生效。（#647）
+- **Instant local describe keeps the Router transport:** the instant path hands the Router-owned `providerTransport` to its adapter call, so `proxy` / `proxyHosts` covers it like every other leg. (#647)
+- **凭据脱敏改为一份共享清单**：日志出口与失败诊断过去各带一份不完整的形态清单，互相漏掉对方覆盖的部分；现在共享一份，覆盖任意 scheme 的 `Authorization`（含 `Proxy-Authorization`）、`Cookie` / `Set-Cookie`、URL userinfo、`Bearer`、厂商密钥（`sk-`、`ghp_`/`github_pat_`、`AKIA`/`ASIA`、`xox…`、`AIza…`）、JWT、PEM 块与 `key=value` 赋值（含 `#token=`）；值里含 `;` 时整段脱敏，PEM 块在 END 之前被截断时脱敏到文本末尾。（#653、#655）
+- **One shared credential-shape list:** the log sink and the benchmark-failure diagnostic each carried a partial copy and leaked what the other covered; the shared list now covers any-scheme `Authorization` (including `Proxy-Authorization`), `Cookie` / `Set-Cookie`, URL userinfo, `Bearer`, vendor keys, JWTs, PEM blocks and `key=value` assignments — a value containing `;` is redacted whole, and a PEM block truncated before END redacts to the end of the text. (#653, #655)
+- **适配器归属不再接受基本类型标记**：三个模块各自解读同一个归属符号，其中两个把「标记不是 undefined」当作自有；现在只有「对象标记」才算自有，外部模块往符号上写 `'anything'`、`false`、`null`、`0` 不再被当作本插件自己的适配器。（#653）
+- **Adapter ownership rejects primitive markers:** ownership now means "an object marker is present", so `'anything'`, `false`, `null` or `0` written onto the shared symbol no longer claims an adapter. (#653)
+- **代理主机准入归一**：IPv6 的方括号写法与裸写法归一为同一主机；`*.host` 条目现在命中它所命名的主机及其子域，而不是静默不命中。（#653、#655）
+- **Proxy host admission:** bracketed and bare IPv6 spellings canonicalize to one host, and a `*.host` entry matches its host plus subdomains instead of matching nothing. (#653, #655)
+- **后台停记录缓存既不残留也不消失**：载入时若丢弃了记录（过期、畸形、被取代）就回写文件；清理写失败不再丢弃已读到的记录。（#653、#655）
+- **The background stop cache cannot go stale or vanish:** a load that drops a record rewrites the file, and a failed cleanup write no longer discards what was read. (#653, #655)
+- **失败分类与数值设置只认自有键**：`constructor` / `__proto__` 之类的继承值不再被解析；恶意的 `message` / `toString` / `code` / `status` 取值器不再让分类器抛出。（#653）
+- **Failure classification and numeric settings resolve own keys only:** inherited values are no longer resolved, and hostile accessors cannot make the classifier throw. (#653)
+- **retained-image 遍历加上深度上限**：与 `convertBlocks` 用同一条边界，畸形消息树返回 `false` 而不是栈溢出。（#653）
+- **Retained-image walker is depth-bounded:** it shares `convertBlocks`' bound, so a pathological tree returns `false` instead of overflowing. (#653)
+- **同一批审查的同类加固**：Session Vision 策略行带原型链字段即视为畸形；四个入口把显式 `null` 选项袋当作「无选项」而不是解构报错；Host 能力证据改为三态，只有显式 `true` 才算证明支持下限；doctor 主机探针在 fetch 忽略 `AbortSignal` 时也有界，且它保存的错误文本已脱敏。（#653）
+- **Same-class hardening from the same review:** prototype-carried policy rows are malformed, an explicit `null` options bag means "no options" at four entry points, host capability evidence is tri-state, and the doctor probe is bounded and stores redacted error text. (#653)
+
+### 内部加固（不改变包行为） / Internal hardening (no package behavior change)
+
+- e2e workflow 触发覆盖补齐；alpha Host 构建 gate 与缓存守卫；provider egress 类级守卫（按类而不是单条腿）；DSH 0.2.1-alpha.1 的适配验证与说明文档；CI 风险姿态记录与每个 workflow 写权限收敛到实际需要的 job。
+- Completed e2e workflow trigger coverage; an alpha Host build gate and cache-save guard; a class-level provider-egress guard; DSH 0.2.1-alpha.1 adaptation validation and note; the accepted CI risk posture recorded with each workflow grant narrowed to its job.
+
 
 ## v3.0.1
 
