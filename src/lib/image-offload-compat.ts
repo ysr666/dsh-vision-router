@@ -34,13 +34,21 @@ export function isOffloadedImageBlock(
   return value?.type === 'image' && value.offloaded === true
 }
 
-export function blocksHaveRetainedImage(content: unknown): boolean {
-  if (!Array.isArray(content)) return false
+/**
+ * Deepest content nesting this walker inspects, mirroring the bound
+ * `catalog-corrections.convertBlocks` already applies to the same block tree.
+ * The walker only needs message → content → nested content; an unbounded
+ * recursion would turn a pathological tree into a stack overflow.
+ */
+const MAX_CONTENT_NESTING_DEPTH = 4
+
+export function blocksHaveRetainedImage(content: unknown, depth = 0): boolean {
+  if (!Array.isArray(content) || depth > MAX_CONTENT_NESTING_DEPTH) return false
   for (const block of content) {
     const value = objectRecord(block)
     if (value === undefined) continue
     if (value.type === 'image' && value.offloaded !== true) return true
-    if (Array.isArray(value.content) && blocksHaveRetainedImage(value.content)) return true
+    if (Array.isArray(value.content) && blocksHaveRetainedImage(value.content, depth + 1)) return true
   }
   return false
 }

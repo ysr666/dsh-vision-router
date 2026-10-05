@@ -1,4 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import {
+  VISION_ROUTER_ADAPTER_OWNER,
+  isVisionRouterOwnedAdapter,
+} from './adapter-ownership.js'
+
+export { VISION_ROUTER_ADAPTER_OWNER, isVisionRouterOwnedAdapter }
 
 /**
  * Turn-local image ownership used by the public entry composition.
@@ -21,7 +27,8 @@ export const IMAGE_OWNERSHIP = Object.freeze({
  * an enumerable symbol also survives the rare Object.assign/object-spread
  * adapter wrapper. Normal JSON/Object.keys surfaces still ignore symbols.
  */
-export const VISION_ROUTER_ADAPTER_OWNER = Symbol.for('dsh-vision-router.adapter-owner')
+// The symbol and the ownership rule are owned by ./adapter-ownership.ts and
+// re-exported here so existing importers keep working unchanged.
 
 const imageTurn = new AsyncLocalStorage()
 const markedAdapters = new WeakMap()
@@ -165,6 +172,9 @@ export function visionRouterAdapterOwner(adapter) {
     return undefined
   }
 }
+
+// isVisionRouterOwnedAdapter is owned by ./adapter-ownership.ts (imported and
+// re-exported at the top of this file) so every caller shares one rule.
 
 function routeList(routes) {
   const list = Array.isArray(routes) ? routes : [routes]

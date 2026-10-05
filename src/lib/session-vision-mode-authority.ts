@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { VisionRouteIdentity } from './vision-execution-order.js'
+import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
 import { parseSessionVisionPolicy } from './session-vision-policy.js'
 
-const VISION_ROUTER_ADAPTER_OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 const VISION_ROUTER_OWNERSHIP = 'vision-router-owned'
 const DEFAULT_WRAPPER_ROUTE = 'deepseek-vision'
 const DEFAULT_CHAIN_ROUTE = 'vision-chain'
@@ -165,11 +165,7 @@ function currentAdapter(ctx: unknown, provider: string): unknown {
 
 function adapterOwnedByVisionRouter(adapter: unknown): boolean {
   if (!isWeakKey(adapter)) return false
-  try {
-    return objectRecord(adapter)?.[VISION_ROUTER_ADAPTER_OWNER] !== undefined
-  } catch {
-    return false
-  }
+  return isVisionRouterOwnedAdapter(adapter)
 }
 
 function sameRoute(left: VisionRouteIdentity | undefined, right: unknown): boolean {

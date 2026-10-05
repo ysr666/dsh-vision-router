@@ -10,7 +10,9 @@ export const SETTINGS_NUMBER_META = Object.freeze({
 })
 
 export function parseSettingsNumber(key, raw, { allowClear = false } = {}) {
-  const meta = SETTINGS_NUMBER_META[key]
+  // Own keys only: a bare lookup would resolve inherited names such as
+  // `__proto__` or `constructor` to prototype machinery instead of "unknown key".
+  const meta = Object.hasOwn(SETTINGS_NUMBER_META, key) ? SETTINGS_NUMBER_META[key] : undefined
   if (!meta) return undefined
   if (raw === '' || raw === null || raw === undefined) return allowClear ? { clear: true } : undefined
   const value = Number(raw)

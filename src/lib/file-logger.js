@@ -4,6 +4,7 @@ import process from 'node:process'
 import { execFile } from 'node:child_process'
 import { format as formatArgs, promisify } from 'node:util'
 import { createRequire } from 'node:module'
+import { redactCredentialShapes } from './diagnostic-redaction.js'
 import { resolveDshHome } from './doctor.js'
 import { isLoopbackRequest } from './web-capability-boundary.js'
 
@@ -32,20 +33,19 @@ export function resolveVisionRouterLogPaths(dshHome = resolveDshHome()) {
  * Diagnostics are intended to be shareable in bug reports. Existing runtime
  * messages should not contain secrets, but redact common credential shapes as
  * defense in depth before anything reaches disk.
+ *
+ * The shape list lives in one place now: this module used to carry its own
+ * subset, which leaked `Authorization: token ghp_…`, `Cookie:` headers, bare
+ * platform tokens and `#token=` fragments that the other copy already covered.
  */
 export function sanitizeLogText(value) {
-  let text = String(value ?? '')
-  text = text.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]')
-  text = text.replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_KEY]')
-  text = text.replace(
+  // Query strings here keep the historical `key=`/`auth=` spelling; everything
+  // else (schemes, cookies, vendor keys, JWTs) comes from the shared pass.
+  const text = String(value ?? '').replace(
     /([?&](?:api[_-]?key|access[_-]?token|token|key|auth)=)[^&\s]+/gi,
     '$1[REDACTED]',
   )
-  text = text.replace(
-    /\b(authorization|api[_-]?key|access[_-]?token)\s*[:=]\s*["']?[^\s"',}]+/gi,
-    '$1=[REDACTED]',
-  )
-  return text
+  return redactCredentialShapes(text)
 }
 
 function positiveInteger(value, fallback) {

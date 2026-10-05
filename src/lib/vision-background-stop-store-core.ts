@@ -202,7 +202,13 @@ async function load(
       return new Map()
     }
     const records = retainedStopMap(stops, at)
-    if (version === 2) await save(file, records, fsOps, at)
+    // Rewrite whenever loading changed the persisted set: v2 stored raw entries
+    // that this version must drop, and any later retention rule (category,
+    // expiry, fingerprint shape) has to reach the file the same way instead of
+    // leaving a stale record that only the runtime filter happens to hide.
+    if (version === 2 || records.size !== stops.length) {
+      await save(file, records, fsOps, at)
+    }
     return records
   } catch (error) {
     if (propertyBag(error)?.code === 'ENOENT') return new Map()

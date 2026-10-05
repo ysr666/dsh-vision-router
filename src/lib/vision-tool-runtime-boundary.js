@@ -11,6 +11,7 @@ import {
   LiveDescribeCache,
 } from './runtime-reliability.js'
 import { projectDelegatedCallConfig } from './delegated-call-config.js'
+import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
 import { VISION_RESULT_CODES } from './vision-resilience.js'
 
 const toolRuntime = new AsyncLocalStorage()
@@ -26,7 +27,6 @@ const wrappedLlms = new WeakMap()
 const wrappedAdapters = new WeakMap()
 const wrappedDelegatingAdapters = new WeakMap()
 const wrappedTransparentAdapters = new WeakMap()
-const VISION_ROUTER_ADAPTER_OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 const MAX_TRANSPARENT_REASONING_MEMORY = 512
 const VISION_FAILURE_RESULT_CODES = new Set(Object.values(VISION_RESULT_CODES))
 
@@ -434,12 +434,7 @@ function visionChainAdapter(adapter, routes) {
 }
 
 function visionRouterOwnedAdapter(adapter) {
-  if (!adapter || (typeof adapter !== 'object' && typeof adapter !== 'function')) return false
-  try {
-    return adapter[VISION_ROUTER_ADAPTER_OWNER] !== undefined
-  } catch {
-    return false
-  }
+  return isVisionRouterOwnedAdapter(adapter)
 }
 
 function explicitReasoningEffort(options) {
