@@ -161,13 +161,16 @@ test('J2-F1: no credential shape survives either text redactor', async () => {
   assert.equal(typeof redactCredentialShapes, 'function', 'the shared credential-shape pass must be exported')
 
   const ghp = `ghp_${'A'.repeat(36)}`
-  const aws = 'AKIAIOSFODNN7EXAMPLE'
-  const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'
+  const sk = ['sk', 'abcdefghijklmnop'].join('-')
+  // Built at run time: a literal in this shape trips secret scanners, and the
+  // test only needs the shape, not a real-looking key.
+  const aws = ['AKIA', 'IOSFODNN7EXAMPLE'].join('')
+  const jwt = ['eyJhbGciOiJIUzI1NiJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'].join('.')
   const corpus = [
-    'Authorization: Bearer sk-abcdefghijklmnop',
+    `Authorization: Bearer ${sk}`,
     'Authorization: Basic dXNlcjpwYXNz',
     `Authorization: token ${ghp}`,
-    'x-api-key: AKIAIOSFODNN7EXAMPLE',
+    `x-api-key: ${aws}`,
     `Cookie: session=${jwt}`,
     `upstream rejected ${ghp} for this request`,
     `key ${aws} is invalid`,
@@ -178,7 +181,7 @@ test('J2-F1: no credential shape survives either text redactor', async () => {
     'api_key=supersecret',
     `Set-Cookie: sid=${jwt}; Path=/`,
   ]
-  const secrets = [ghp, aws, jwt, 'sk-abcdefghijklmnop', 'dXNlcjpwYXNz', 'supersecret', 'pass']
+  const secrets = [ghp, aws, jwt, sk, 'dXNlcjpwYXNz', 'supersecret', 'pass']
   for (const line of corpus) {
     for (const [label, redact] of [['diagnostic', redactDiagnosticText], ['log', sanitizeLogText], ['shapes', redactCredentialShapes]]) {
       const out = redact(line)
@@ -301,7 +304,7 @@ test('K22-O1: a failed doctor probe never stores credentials from the error mess
   // the stored message must be redacted at the source — the current print path
   // happens not to emit it, which is exactly why a future consumer would leak it.
   const { probeDoctorHostCapabilities } = await import('../lib/doctor-cli-p0.js')
-  const secret = 'sk-DOCTORSECRET1234567890'
+  const secret = ['sk', 'DOCTORSECRET1234567890'].join('-')
 
   const failed = await probeDoctorHostCapabilities({
     baseUrl: 'http://127.0.0.1:3080',
