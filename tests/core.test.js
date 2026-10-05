@@ -3102,6 +3102,25 @@ test('vision_present renders a durable image for UI and sanitizer removes it fro
   assert.match(sanitized.messages[0].content[0].content.at(-1).text, /present-1/)
 })
 
+test('vision_present hands back a reply-ready image snippet so the reader sees it at full size', () => {
+  const rendered = renderVisionPresent({
+    path: '/workspace/artifacts/before-after.png',
+    label: 'Chip [before/after]',
+    width: 800,
+    height: 200,
+    bytes: 456,
+    safePresentation: true,
+    attachment: { attachmentId: 'present-2', mediaType: 'image/png', bytes: 456, width: 800, height: 200, name: 'Chip before/after' },
+  })
+  const payload = JSON.parse(rendered[0].text)
+  // The tool card renders a 240px thumbnail that later messages push out of view. The host renders
+  // an absolute image path inside a message as a full-size api/file image, so the result hands back
+  // a paste-ready snippet for the visible reply.
+  assert.equal(payload.replyImage, '![Chip before/after](</workspace/artifacts/before-after.png>)')
+  assert.match(payload.replyImageHint, /visible reply/)
+  assert.equal(rendered[1].type, 'image')
+  assert.equal(payload.attachmentId, 'present-2')
+})
 test('sanitizeToolResultImages removes nested read_image-style images but preserves user images', () => {
   const userRef = { attachmentId: 'user-1', name: 'upload.png' }
   const toolRef = { attachmentId: 'tool-1', name: 'generated.png' }
