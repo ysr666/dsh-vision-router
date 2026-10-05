@@ -207,7 +207,13 @@ async function load(
     // expiry, fingerprint shape) has to reach the file the same way instead of
     // leaving a stale record that only the runtime filter happens to hide.
     if (version === 2 || records.size !== stops.length) {
-      await save(file, records, fsOps, at)
+      try {
+        await save(file, records, fsOps, at)
+      } catch {
+        // This rewrite is opportunistic: a read-only or full disk must not discard the records
+        // the load could still read (the catch below returns an empty map). The store's own
+        // persist() retries the write and reports it through the logger.
+      }
     }
     return records
   } catch (error) {

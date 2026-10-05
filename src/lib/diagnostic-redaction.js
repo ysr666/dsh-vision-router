@@ -16,9 +16,10 @@ const REDACTED = '[REDACTED]'
 const CREDENTIAL_SHAPE_PATTERNS = [
   // Any Authorization scheme, not only Bearer/Basic (`token`, `ApiKey`, `AWS4-…`),
   // but only the credential itself: a single line may carry safe diagnostics
-  // after the header and a support report must keep them.
-  [/\b(Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,;]+/gi, `$1${REDACTED}`],
-  [/\b(Proxy-Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,;]+/gi, `$1${REDACTED}`],
+  // after the header and a support report must keep them. `;` stays inside the value
+  // (the log sink has always consumed it) while `,` separates what follows.
+  [/\b(Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,]+/gi, `$1${REDACTED}`],
+  [/\b(Proxy-Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,]+/gi, `$1${REDACTED}`],
   // Cookies are `name=value; name=value` on one line and there is no safe way to
   // guess which pair carries the session, so the whole header value goes.
   [/\b((?:Set-)?Cookie\s*[:=]\s*)[^\r\n]+/gi, `$1${REDACTED}`],
@@ -34,9 +35,12 @@ const CREDENTIAL_SHAPE_PATTERNS = [
   [/\b(AIza)[A-Za-z0-9_-]{16,}/g, `$1${REDACTED}`],
   // Signed JSON Web Tokens, with or without a leading scheme word.
   [/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, REDACTED],
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, REDACTED],
-  // `api_key=…`-style assignments, including `apikey` and `access_token`.
-  [/\b(access[_-]?token|api[_-]?key|apikey|token|secret|password|passwd|signature|sig)\s*[:=]\s*([^\s,;&"']+)/gi, `$1=${REDACTED}`],
+  // An unterminated block (a bounded upstream read truncates before the END marker) must
+  // redact to the end of the text: without the `$` alternative its whole body passes through.
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, REDACTED],
+  // `api_key=…`-style assignments, including `apikey` and `access_token`. `;` stays inside the
+  // value for the same reason as above; `&` separates an unrelated parameter a report must keep.
+  [/\b(access[_-]?token|api[_-]?key|apikey|token|secret|password|passwd|signature|sig)\s*[:=]\s*([^\s,&"']+)/gi, `$1=${REDACTED}`],
 ]
 
 /** Apply only the shared credential-shape passes (no URL parsing, no truncation). */

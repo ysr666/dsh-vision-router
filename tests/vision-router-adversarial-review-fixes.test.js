@@ -367,3 +367,84 @@ test('K27-O1: a host probe that ignores AbortSignal is still bounded', async () 
   assert.equal(cooperative.ok, false)
   assert.match(String(cooperative.error), /aborted due to timeout/)
 })
+
+// ── residuals left open by the first pass ────────────────────────────────────────────────
+
+test('B1-F1 (second clause): a star entry matches its own host and subdomains, not nothing', () => {
+  // Pre-fix a `*.host` entry survived canonicalization verbatim (domainToASCII rejects the
+  // star), so it could never equal or suffix-match a real hostname: the configured entry
+  // silently proxied nothing.
+  assert.equal(proxyHostMatchesAny('a.example.com', ['*.example.com']), true)
+  assert.equal(proxyHostMatchesAny('example.com', ['*.example.com']), true)
+  assert.equal(proxyHostMatchesAny('EXAMPLE.com.', ['*.example.com']), true)
+  for (const host of ['evil.com', 'sub.evil.com', 'example.com.evil.tld', 'evilexample.com', 'notexample.com']) {
+    assert.equal(proxyHostMatchesAny(host, ['*.example.com']), false, `${host} must stay outside`)
+  }
+  assert.equal(canonicalProxyHost('*.example.com'), canonicalProxyHost('example.com'))
+})
+
+test('J2-F1 (same class): a semicolon inside a credential value cannot leave a tail behind', () => {
+  // Built at run time for the same reason as the credential fixtures above.
+  const tail = ['S3cr3t', 'Part2'].join('')
+  const line = ['authorization', `${['S3cr3t', 'Part1'].join('')};${tail}`].join('=')
+  assert.equal(sanitizeLogText(line).includes(tail), false, 'the log sink used to consume this value')
+  assert.equal(redactDiagnosticText(line, 400).includes(tail), false)
+  // Guard the other direction: a parameter after `&` is not part of the credential and a
+  // support report must still read it.
+  const query = 'GET https://h.test/v1?api_key=SECRETVALUE0001&page=2 failed'
+  assert.equal(sanitizeLogText(query).includes('SECRETVALUE0001'), false)
+  assert.equal(sanitizeLogText(query).includes('page=2'), true)
+})
+
+test('J2-F1 (same class): an unterminated private-key block redacts to the end of the text', () => {
+  // Built at run time: a literal in this shape trips secret scanners, and the scanner is a
+  // repository contract (same convention as the credential fixtures above).
+  const body = ['MIIEowIBAAKCAQEA', 'truncatedbody'].join('')
+  const begin = ['-----BEGIN', 'RSA PRIVATE KEY-----'].join(' ')
+  const end = ['-----END', 'RSA PRIVATE KEY-----'].join(' ')
+
+  // Bounded upstream reads truncate before the END marker; the body must still go.
+  const truncated = `read truncated ${begin} ${body}`
+  assert.equal(sanitizeLogText(truncated).includes(body), false)
+  assert.equal(redactDiagnosticText(truncated, 400).includes(body), false)
+  // A terminated block keeps working, and the text after it stays readable.
+  const complete = `x ${begin} ${body} ${end} tail`
+  assert.equal(sanitizeLogText(complete).includes(body), false)
+  assert.equal(sanitizeLogText(complete).includes('tail'), true)
+})
+
+test('E2-F1 (same class): a failed retention rewrite keeps the records it could read', async () => {
+  const now = 1_700_000_000_000
+  const fresh = {
+    suiteRevision: 5,
+    fingerprint: `ep2_${'a'.repeat(32)}`,
+    key: 'k1',
+    provider: 'p',
+    model: 'm',
+    axis: 'ocr',
+    errorClass: 'unavailable',
+    recordedAt: now - 1_000,
+    expiresAt: now + 60_000,
+  }
+  const expired = { ...fresh, key: 'k2', fingerprint: `ep2_${'b'.repeat(32)}`, expiresAt: now - 1 }
+
+  // The expired row makes the file dirty, so the load attempts one cleanup write; that write
+  // fails (read-only disk) and must not discard the row it could still read.
+  const store = createBackgroundBenchmarkStopStoreCore({
+    file: '/virtual/read-only.json',
+    fsOps: {
+      readFile: async () => JSON.stringify({ version: 3, stops: [fresh, expired] }),
+      mkdir: async () => {},
+      writeFile: async () => {
+        const error = new Error('read-only file system')
+        error.code = 'EROFS'
+        throw error
+      },
+      rename: async () => {},
+    },
+    now: () => now,
+  })
+  const list = await store.list()
+  assert.equal(list.length, 1, 'a failed cleanup write must not empty the retrieved cache')
+  assert.equal(list[0].key, 'k1')
+})
