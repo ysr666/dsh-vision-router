@@ -4,7 +4,6 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'src/**'
       - 'src/index.js'
       - 'src/entry.js'
       - 'src/lib/image-resource-governor.ts'
@@ -35,7 +34,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   pr-stress:
