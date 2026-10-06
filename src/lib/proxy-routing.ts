@@ -22,7 +22,7 @@ export function visionProxyOverrideConfigured(config: unknown = {}): boolean {
 function canonicalIpv6Literal(value: string): string | undefined {
   if (!value.includes(':')) return undefined
   try {
-    const serialized = new URL(\`http://[\${value}]/\`).hostname
+    const serialized = new URL(`http://[${value}]/`).hostname
     if (!serialized.startsWith('[') || !serialized.endsWith(']')) return undefined
     return serialized.slice(1, -1).toLowerCase()
   } catch {
