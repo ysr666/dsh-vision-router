@@ -19,6 +19,19 @@ export function visionProxyOverrideConfigured(config: unknown = {}): boolean {
   return typeof value === 'string' && value.trim() !== ''
 }
 
+function canonicalIpv6Literal(value: string): string | undefined {
+  if (!value.includes(':')) return undefined
+  try {
+    const serialized = new URL(`http://[${value}]/`).hostname
+    if (!serialized.startsWith('[') || !serialized.endsWith(']')) return undefined
+    return serialized.slice(1, -1).toLowerCase()
+  } catch {
+    // Invalid or URL-unrepresentable literals (for example zone-id spellings)
+    // keep the existing conservative string semantics instead of broadening admission.
+    return undefined
+  }
+}
+
 /**
  * Canonicalize a configured/request hostname for proxy admission only.
  * Persisted settings stay untouched; this removes DNS presentation differences
@@ -35,17 +48,19 @@ export function canonicalProxyHost(value: unknown): string {
   if (host.startsWith('*.')) host = host.slice(2)
   if (host === '') return ''
 
-  // WHATWG URL.hostname keeps IPv6 literals bracketed. domainToASCII does not
-  // accept an IPv6 literal at all, so case-fold it directly. The brackets are
-  // pure spelling for the same address: stripping them is what lets a configured
-  // `::1` match a URL-derived `[::1]`. A bracketed non-literal (say
-  // `[example.com]`) keeps its spelling, so nothing about DNS is widened.
+  // WHATWG URL.hostname serializes IPv6 literals to one compressed spelling.
+  // Re-serialize configured literals through the same parser before comparing so
+  // equivalent legal spellings (expanded/compressed, case, leading zeroes and
+  // IPv4-mapped forms) cannot silently bypass a proxy override. A bracketed
+  // non-literal keeps its spelling, and invalid/URL-unrepresentable colon forms
+  // retain the previous lowercase-only fallback rather than widening admission.
   if (host.startsWith('[') && host.endsWith(']')) {
     const literal = host.slice(1, -1).trim()
     if (literal === '') return ''
-    return literal.includes(':') ? literal.toLowerCase() : host.toLowerCase()
+    return canonicalIpv6Literal(literal)
+      ?? (literal.includes(':') ? literal.toLowerCase() : host.toLowerCase())
   }
-  if (host.includes(':')) return host.toLowerCase()
+  if (host.includes(':')) return canonicalIpv6Literal(host) ?? host.toLowerCase()
   const ascii = domainToASCII(host)
   return (ascii || host).toLowerCase()
 }
