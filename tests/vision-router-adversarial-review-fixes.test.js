@@ -448,3 +448,63 @@ test('E2-F1 (same class): a failed retention rewrite keeps the records it could 
   assert.equal(list.length, 1, 'a failed cleanup write must not empty the retrieved cache')
   assert.equal(list[0].key, 'k1')
 })
+
+
+test('#659: equivalent IPv6 spellings normalize before proxy matching', () => {
+  assert.equal(canonicalProxyHost('0:0:0:0:0:0:0:1'), '::1')
+  assert.equal(canonicalProxyHost('[0:0:0:0:0:0:0:1]'), '::1')
+  assert.equal(
+    canonicalProxyHost('2001:0DB8:0000:0000:0000:0000:0000:0001'),
+    '2001:db8::1',
+  )
+  assert.equal(canonicalProxyHost('::ffff:192.0.2.128'), '::ffff:c000:280')
+
+  assert.equal(proxyHostMatchesAny('[::1]', ['0:0:0:0:0:0:0:1']), true)
+  assert.equal(
+    proxyHostMatchesAny('[2001:db8::1]', ['2001:0db8:0:0:0:0:0:1']),
+    true,
+  )
+
+  // Invalid/URL-unrepresentable colon forms keep the old conservative fallback.
+  assert.equal(canonicalProxyHost('NOT:AN:IP'), 'not:an:ip')
+})
+
+test('#660: cookie redaction preserves unrelated free-text diagnostics', async () => {
+  const { redactCredentialShapes } = await import('../lib/diagnostic-redaction.js')
+  const redactors = [
+    ['shapes', redactCredentialShapes],
+    ['diagnostic', (value) => redactDiagnosticText(value, 400)],
+    ['log', sanitizeLogText],
+  ]
+
+  const query = 'request to https://h.test/v1?cookie=abc&page=2 failed: ECONNREFUSED'
+  for (const [label, redact] of redactors) {
+    const out = redact(query)
+    assert.equal(out.includes('cookie=abc'), false, `${label} leaked the cookie query value`)
+    assert.equal(out.includes('page=2'), true, `${label} erased an unrelated query parameter`)
+    assert.equal(out.includes('ECONNREFUSED'), true, `${label} erased the actual diagnostic`)
+  }
+
+  const objectFragment = "{ cookie: 'session-secret', retries: 3 }"
+  for (const [label, redact] of redactors) {
+    const out = redact(objectFragment)
+    assert.equal(out.includes('session-secret'), false, `${label} leaked an object cookie value`)
+    assert.equal(out.includes('retries: 3'), true, `${label} erased an unrelated object field`)
+  }
+
+  // A genuine header line still redacts its whole value, including secondary pairs/attributes.
+  for (const header of [
+    'Cookie: sid=secret; theme=dark',
+    'Set-Cookie: sid=secret; Path=/; HttpOnly',
+  ]) {
+    const out = redactCredentialShapes(header)
+    assert.match(out, /^(?:Set-)?Cookie:\s*\[REDACTED\]$/)
+    assert.equal(out.includes('secret'), false)
+  }
+
+  // Header-like text embedded in a diagnostic keeps what follows a clear separator.
+  const embedded = redactCredentialShapes('upstream Cookie: sid=secret; theme=dark, status=500')
+  assert.equal(embedded.includes('sid=secret'), false)
+  assert.equal(embedded.includes('theme=dark'), false)
+  assert.equal(embedded.includes('status=500'), true)
+})
