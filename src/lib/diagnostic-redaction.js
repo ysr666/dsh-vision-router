@@ -23,7 +23,7 @@ const CREDENTIAL_SHAPE_PATTERNS = [
   // A real Cookie/Set-Cookie header owns the remainder of its line, so redact the
   // whole value there. The same words also appear inside arbitrary diagnostics,
   // URL query fragments and object dumps; those contexts must keep unrelated text.
-  [/^(\s*(?:Set-)?Cookie\s*:\s*)[^\r\n]+/gim, `$1${REDACTED}`],
+  [/^([ \t]*(?:Set-)?Cookie\s*:\s*)[^\r\n]+/gim, `$1${REDACTED}`],
   // Inline colon form: redact one scalar or a semicolon-separated cookie-pair run,
   // then stop at an unrelated comma/word so support diagnostics remain readable.
   [/\b((?:Set-)?Cookie\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,&"']+(?:\s*;\s*[^=;\s,&"']+\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,&"']+))*)/gi, `$1${REDACTED}`],
