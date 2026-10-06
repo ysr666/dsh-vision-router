@@ -20,9 +20,15 @@ const CREDENTIAL_SHAPE_PATTERNS = [
   // (the log sink has always consumed it) while `,` separates what follows.
   [/\b(Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,]+/gi, `$1${REDACTED}`],
   [/\b(Proxy-Authorization\s*[:=]\s*)(?:[A-Za-z][A-Za-z0-9._-]*\s+)?[^\s,]+/gi, `$1${REDACTED}`],
-  // Cookies are `name=value; name=value` on one line and there is no safe way to
-  // guess which pair carries the session, so the whole header value goes.
-  [/\b((?:Set-)?Cookie\s*[:=]\s*)[^\r\n]+/gi, `$1${REDACTED}`],
+  // A real Cookie/Set-Cookie header owns the remainder of its line, so redact the
+  // whole value there. The same words also appear inside arbitrary diagnostics,
+  // URL query fragments and object dumps; those contexts must keep unrelated text.
+  [/^(\s*(?:Set-)?Cookie\s*:\s*)[^\r\n]+/gim, `$1${REDACTED}`],
+  // Inline colon form: redact one scalar or a semicolon-separated cookie-pair run,
+  // then stop at an unrelated comma/word so support diagnostics remain readable.
+  [/\b((?:Set-)?Cookie\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,&"']+(?:\s*;\s*[^=;\s,&"']+\s*=\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^;\s,&"']+))*)/gi, `$1${REDACTED}`],
+  // Assignment/query form: bound the value at ordinary diagnostic separators.
+  [/\b((?:Set-)?Cookie\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,&"']+)/gi, `$1${REDACTED}`],
   // URL userinfo (`scheme://user:secret@host`) without needing a URL parser, so
   // the log path — which never parsed URLs — covers it too.
   [/\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, `$1${REDACTED}@`],
