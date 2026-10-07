@@ -1417,9 +1417,10 @@ test('a presented image card brings itself into view instead of waiting to be sc
   assert.ok(start > 0 && stop > start, 'the presented-card focus helper must exist in the prelude')
   const declaration = CLIENT_PRESENTATION_PRELUDE.slice(start, stop)
   // vm (not the Function constructor) keeps the scanner’s 'no eval/Function’ rule satisfied.
-  const focus = vm.runInNewContext(`${declaration}\nfocusPresentedCard`, {
+  const helpers = vm.runInNewContext(`${declaration}\n({ focusPresentedCard, shouldFocusPresentedCard })`, {
     getComputedStyle: (el) => ({ overflowY: (el && el.__overflowY) || 'auto' }),
   })
+  const focus = helpers.focusPresentedCard
 
   const scroller = {
     __overflowY: 'auto', scrollTop: 0, scrollHeight: 4000, clientHeight: 800,
@@ -1455,8 +1456,14 @@ test('a presented image card brings itself into view instead of waiting to be sc
   assert.equal(focus(orphan, 800), false)
   assert.equal(focus(null, 800), false)
 
+  // Only a live call crossing into an image-bearing result is fresh presentation.
+  assert.equal(helpers.shouldFocusPresentedCard('start', 'result', 1), true)
+  assert.equal(helpers.shouldFocusPresentedCard('result', 'result', 1), false)
+  assert.equal(helpers.shouldFocusPresentedCard('start', 'result', 0), false)
+
   // The client bundle stays inside its single-file review bound and only wires the call.
   const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(bundle.includes("globalThis.__dvrPresentFocus"), true)
+  assert.equal(bundle.includes("__dvrPresentFocus?.(presentNode.current, previous, phase, images.length)"), true)
   assert.equal(bundle.includes("'data-dvr-present': 'true'"), true)
 })

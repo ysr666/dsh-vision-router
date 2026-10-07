@@ -42,10 +42,11 @@ export function canonicalProxyHost(value: unknown): string {
   if (host === '') return ''
   if (host.endsWith('.')) host = host.slice(0, -1)
   if (host === '') return ''
-  // A `*.host` entry means "this host and its subdomains", which is exactly what the matcher
-  // already does for a bare hostname. `domainToASCII` rejects the star, so leaving it in place
-  // makes the entry equal no real hostname: the configured host silently proxies nothing.
+  // `*.host` and cookie-domain `.host` entries both mean "this host and its subdomains",
+  // which is exactly what the matcher already does for a bare hostname. Leaving either prefix
+  // in place makes the entry equal no real hostname: the configured host silently proxies nothing.
   if (host.startsWith('*.')) host = host.slice(2)
+  else if (host.startsWith('.')) host = host.slice(1)
   if (host === '') return ''
 
   // WHATWG URL.hostname serializes IPv6 literals to one compressed spelling.

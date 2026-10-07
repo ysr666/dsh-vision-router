@@ -515,6 +515,16 @@ test('DSH release evidence changes always trigger exact source and real browser 
   assert.equal((source.match(/'src\/lib\/dsh-support-window\.js'/g) ?? []).length, 2)
 })
 
+test('DSH 0.1.7 browser smoke follows both presentation-boundary carriers', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-017-browser-smoke.yml', import.meta.url), 'utf8')
+  for (const path of [
+    "'src/lib/client-presentation-boundary-main.js'",
+    "'src/lib/client-presentation-boundary.js'",
+  ]) {
+    assert.equal((source.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
+  }
+})
+
 test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [

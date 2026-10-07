@@ -996,11 +996,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return function(){ tag.remove(); };
   }
 
-  // A presented image that mounts below the reader is the same as not being shown: the card
-  // renders next to its tool call, and a reader who is at the end of a long conversation has
-  // that call thousands of pixels above them. The card calls this on mount; it only moves the
-  // reader for content that arrived below the viewport — a card that is already visible is left
-  // alone, and so is history above the reader when a session is opened.
+  // A fresh presented image below the reader is the same as not being shown. Centre only that
+  // card; visible cards and history on either side of a restored viewport stay untouched.
   function focusPresentedCard(node, viewportHeight) {
     if (!node || typeof node.getBoundingClientRect !== 'function') return false;
     var rect = node.getBoundingClientRect();
@@ -1022,12 +1019,16 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return false;
   }
 
+  // A restored result mounts directly in its settled phase. Only a live call crossing into a
+  // non-empty result is fresh presentation; placeholders and session history never move readers.
+  function shouldFocusPresentedCard(previousPhase, phase, imageCount) {
+    return imageCount > 0 && phase === 'result' && previousPhase !== 'result';
+  }
+
   try {
-    globalThis.__dvrPresentFocus = function () {
-      if (typeof document === 'undefined') return false;
-      var cards = document.querySelectorAll('[data-dvr-present]');
-      var last = cards[cards.length - 1];
-      return last ? focusPresentedCard(last, globalThis.innerHeight || 0) : false;
+    globalThis.__dvrPresentFocus = function (node, previousPhase, phase, imageCount) {
+      return shouldFocusPresentedCard(previousPhase, phase, imageCount) &&
+        focusPresentedCard(node, globalThis.innerHeight || 0);
     };
   } catch (_) {}
 
