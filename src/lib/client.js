@@ -4771,12 +4771,20 @@ openLogFolder,
         const imageOwnerToken = React.useRef({}).current
         const ownedImageKeys = React.useRef(new Set())
         const presentNode = React.useRef()
-        const previousPhase = React.useRef(phase)
+        const blockKind = block && block.kind
+        const previousPresentationState = React.useRef({ phase, blockKind })
         React.useEffect(() => {
-          const previous = previousPhase.current
-          previousPhase.current = phase
-          globalThis.__dvrPresentFocus?.(presentNode.current, previous, phase, images.length)
-        }, [phase, imageKeySignature])
+          const previous = previousPresentationState.current
+          previousPresentationState.current = { phase, blockKind }
+          globalThis.__dvrPresentFocus?.(
+            presentNode.current,
+            previous.phase,
+            phase,
+            previous.blockKind,
+            blockKind,
+            images.length,
+          )
+        }, [phase, blockKind, imageKeySignature])
         React.useEffect(() => {
           const current = new Set(imageKeys)
           for (const key of ownedImageKeys.current) {
