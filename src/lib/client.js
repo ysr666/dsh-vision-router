@@ -4756,12 +4756,11 @@ openLogFolder,
           }
         }, ownerToken)
       }
-      // Follow the app language: register our dictionaries and re-read them
-      // whenever the user switches the locale in Settings → General.
+      // Keep card copy in sync with the app locale.
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'vision-router: card locale')
       const t = ctx.locale.bind(NS)
       const VisionPresentCard = (props) => {
-        const { block, sessionId } = props
+        const { block, sessionId, phase } = props
         const content = block && Array.isArray(block.content) ? block.content : []
         const images = content
           .filter((item) => item && item.type === 'image' && item.attachment)
@@ -4770,7 +4769,13 @@ openLogFolder,
         const imageKeySignature = JSON.stringify(imageKeys)
         const imageOwnerToken = React.useRef({}).current
         const ownedImageKeys = React.useRef(new Set())
-        React.useEffect(() => { if (globalThis.__dvrPresentFocus) globalThis.__dvrPresentFocus() }, [imageKeySignature])
+        const presentNode = React.useRef()
+        const focusState = React.useRef([phase, block?.kind])
+        React.useEffect(() => {
+          const next = [phase, block?.kind]
+          globalThis.__dvrPresentFocus?.(presentNode.current, focusState.current, next, images.length)
+          focusState.current = next
+        }, [phase, block?.kind, imageKeySignature])
         React.useEffect(() => {
           const current = new Set(imageKeys)
           for (const key of ownedImageKeys.current) {
@@ -4810,7 +4815,7 @@ openLogFolder,
         }
         return React.createElement(
           'div',
-          { 'data-dvr-present': 'true', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '4px 0' } },
+          { ref: presentNode, 'data-dvr-present': 'true', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, padding: '4px 0' } },
           parsed && typeof parsed.label === 'string' && parsed.label !== 'image'
             ? React.createElement(
                 'div',

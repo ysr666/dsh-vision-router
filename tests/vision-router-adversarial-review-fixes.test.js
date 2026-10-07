@@ -377,10 +377,14 @@ test('B1-F1 (second clause): a star entry matches its own host and subdomains, n
   assert.equal(proxyHostMatchesAny('a.example.com', ['*.example.com']), true)
   assert.equal(proxyHostMatchesAny('example.com', ['*.example.com']), true)
   assert.equal(proxyHostMatchesAny('EXAMPLE.com.', ['*.example.com']), true)
+  assert.equal(proxyHostMatchesAny('a.example.com', ['.example.com']), true)
+  assert.equal(proxyHostMatchesAny('example.com', ['.Example.com.']), true)
   for (const host of ['evil.com', 'sub.evil.com', 'example.com.evil.tld', 'evilexample.com', 'notexample.com']) {
     assert.equal(proxyHostMatchesAny(host, ['*.example.com']), false, `${host} must stay outside`)
+    assert.equal(proxyHostMatchesAny(host, ['.example.com']), false, `${host} must stay outside`)
   }
   assert.equal(canonicalProxyHost('*.example.com'), canonicalProxyHost('example.com'))
+  assert.equal(canonicalProxyHost('.example.com'), canonicalProxyHost('example.com'))
 })
 
 test('J2-F1 (same class): a semicolon inside a credential value cannot leave a tail behind', () => {

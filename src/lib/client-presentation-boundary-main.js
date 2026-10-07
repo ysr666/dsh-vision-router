@@ -996,11 +996,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return function(){ tag.remove(); };
   }
 
-  // A presented image that mounts below the reader is the same as not being shown: the card
-  // renders next to its tool call, and a reader who is at the end of a long conversation has
-  // that call thousands of pixels above them. The card calls this on mount; it only moves the
-  // reader for content that arrived below the viewport — a card that is already visible is left
-  // alone, and so is history above the reader when a session is opened.
+  // A fresh presented image below the reader is the same as not being shown. Centre only that
+  // card; visible cards and history on either side of a restored viewport stay untouched.
   function focusPresentedCard(node, viewportHeight) {
     if (!node || typeof node.getBoundingClientRect !== 'function') return false;
     var rect = node.getBoundingClientRect();
@@ -1022,12 +1019,25 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return false;
   }
 
+  // New Hosts expose phase; supported DSH 0.1.5 instead marks settled blocks as
+  // 'tool-result'. Normalize the [phase, block kind] tuple without raising the Host floor.
+  function isPresentedResultState(state) {
+    var phase = state && state[0];
+    return phase !== undefined ? phase === 'result' : !!state && state[1] === 'tool-result';
+  }
+
+  // Restored history starts settled on both sides of the comparison. Only a live transition into
+  // an image-bearing result is fresh presentation.
+  function shouldFocusPresentedCard(previousState, state, imageCount) {
+    return imageCount > 0 &&
+      isPresentedResultState(state) &&
+      !isPresentedResultState(previousState);
+  }
+
   try {
-    globalThis.__dvrPresentFocus = function () {
-      if (typeof document === 'undefined') return false;
-      var cards = document.querySelectorAll('[data-dvr-present]');
-      var last = cards[cards.length - 1];
-      return last ? focusPresentedCard(last, globalThis.innerHeight || 0) : false;
+    globalThis.__dvrPresentFocus = function (node, previousState, state, imageCount) {
+      return shouldFocusPresentedCard(previousState, state, imageCount) &&
+        focusPresentedCard(node, globalThis.innerHeight || 0);
     };
   } catch (_) {}
 

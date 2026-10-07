@@ -1417,9 +1417,11 @@ test('a presented image card brings itself into view instead of waiting to be sc
   assert.ok(start > 0 && stop > start, 'the presented-card focus helper must exist in the prelude')
   const declaration = CLIENT_PRESENTATION_PRELUDE.slice(start, stop)
   // vm (not the Function constructor) keeps the scanner’s 'no eval/Function’ rule satisfied.
-  const focus = vm.runInNewContext(`${declaration}\nfocusPresentedCard`, {
-    getComputedStyle: (el) => ({ overflowY: (el && el.__overflowY) || 'auto' }),
-  })
+  const helpers = vm.runInNewContext(
+    `${declaration}\n({ focusPresentedCard, isPresentedResultState, shouldFocusPresentedCard })`,
+    { getComputedStyle: (el) => ({ overflowY: (el && el.__overflowY) || 'auto' }) },
+  )
+  const focus = helpers.focusPresentedCard
 
   const scroller = {
     __overflowY: 'auto', scrollTop: 0, scrollHeight: 4000, clientHeight: 800,
@@ -1455,8 +1457,21 @@ test('a presented image card brings itself into view instead of waiting to be sc
   assert.equal(focus(orphan, 800), false)
   assert.equal(focus(null, 800), false)
 
-  // The client bundle stays inside its single-file review bound and only wires the call.
+  // New Hosts use phase; supported DSH 0.1.5 falls back to the settled block discriminant.
+  assert.equal(helpers.isPresentedResultState(['result']), true)
+  assert.equal(helpers.isPresentedResultState(['start', 'tool-result']), false)
+  assert.equal(helpers.isPresentedResultState([undefined, 'tool-result']), true)
+  assert.equal(helpers.isPresentedResultState([undefined, undefined]), false)
+  assert.equal(helpers.shouldFocusPresentedCard(['start'], ['result'], 1), true)
+  assert.equal(helpers.shouldFocusPresentedCard(['result'], ['result'], 1), false)
+  assert.equal(helpers.shouldFocusPresentedCard([undefined, undefined], [undefined, 'tool-result'], 1), true)
+  assert.equal(helpers.shouldFocusPresentedCard([undefined, 'tool-result'], [undefined, 'tool-result'], 1), false)
+  assert.equal(helpers.shouldFocusPresentedCard([undefined, undefined], [undefined, 'tool-result'], 0), false)
+
+  // The client bundle carries both lifecycle facts without exceeding its review bound.
   const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.equal(bundle.includes("globalThis.__dvrPresentFocus"), true)
+  assert.equal(bundle.includes("React.useRef([phase, block?.kind])"), true)
+  assert.equal(bundle.includes("focusState.current, next, images.length"), true)
   assert.equal(bundle.includes("'data-dvr-present': 'true'"), true)
 })
