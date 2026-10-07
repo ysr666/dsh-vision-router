@@ -42,16 +42,15 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> 📌 **Announcement (v3.0.2)**
+> 📌 **Announcement (v3.0.3)**
 >
-> **v3.0.2: hardening from a full-repository adversarial review.** Instant local describe now
-> follows the same `proxy` / `proxyHosts` decision as every other provider leg; credential
-> redaction is one shared shape list for the logs and the failure diagnostics; adapter ownership
-> no longer accepts a primitive marker; proxy host admission normalizes IPv6 spellings and makes
-> `*.host` entries work; the background stop cache can neither go stale nor vanish; and failure
-> classification, numeric settings and the retained-image walker are hardened against inherited
-> keys, hostile accessors and pathological nesting. Supported Hosts are unchanged: DSH 0.1.x from
-> `0.1.5-rc.1`, DSH 0.2.x from verified `0.2.0-rc.2`. [What’s new →](docs/releases/v3.0.2.md)
+> **v3.0.3: presentation and proxy-boundary corrections.** Restored history and empty
+> `vision_present` results no longer steal the reader’s scroll position, while fresh presented
+> images still focus correctly on both the newer phase-based Host contract and the supported DSH
+> 0.1.5 lifecycle. Cookie-domain-style `.example.com` entries now follow the same proxy-host
+> policy as `*.example.com`, and the exact DSH 0.1.7 browser smoke again follows both
+> presentation-boundary owners. CI action pins were also refreshed; runtime dependencies and
+> supported Hosts are unchanged. [What’s new →](docs/releases/v3.0.3.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
