@@ -1020,7 +1020,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
   }
 
   // DSH 0.1.7+ supplies an explicit lifecycle phase. DVR's supported 0.1.5 Host train does
-  // not, but its settled owner block is already discriminated as `tool-result`. Prefer the
+  // not, but its settled owner block is already discriminated as 'tool-result'. Prefer the
   // explicit phase when it exists and fall back to that durable legacy discriminant otherwise.
   function isPresentedResultState(phase, blockKind) {
     return phase !== undefined ? phase === 'result' : blockKind === 'tool-result';
