@@ -42,14 +42,13 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> 📌 **公告（v3.0.2）**
+> 📌 **公告（v3.0.3）**
 >
-> **v3.0.2：一轮全仓对抗审查带来的加固。** instant 本地描述现在与其他 provider 腿遵守同一套
-> `proxy` / `proxyHosts` 判定；日志与失败诊断的凭据脱敏合并为一份共享清单；适配器归属不再接受
-> 基本类型标记；代理主机准入归一了 IPv6 写法并让 `*.host` 条目真正生效；后台停记录缓存既不残留
-> 也不会消失；失败分类、数值设置与 retained-image 遍历也分别对继承键、恶意取值器和畸形嵌套做了
-> 加固。支持的 Host 不变：DSH 0.1.x 自 `0.1.5-rc.1` 起，DSH 0.2.x 自已验证的 `0.2.0-rc.2` 起。
-> [查看完整更新 →](docs/releases/v3.0.2.md)
+> **v3.0.3：修正图片呈现与代理边界。** 恢复历史会话和空的 `vision_present` 结果不再抢走滚动位置，
+> 新生成的图片仍会在新版 phase 生命周期与受支持的 DSH 0.1.5 旧生命周期上正确聚焦；
+> cookie-domain 风格的 `.example.com` 现在与 `*.example.com` 遵守同一套代理主机规则；
+> DSH 0.1.7 精确浏览器 smoke 也重新跟随两个 presentation-boundary owner。CI Action 固定版本同步更新，
+> 运行时依赖和 Host 支持范围均不变。[查看完整更新 →](docs/releases/v3.0.3.md)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />

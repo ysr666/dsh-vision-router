@@ -5,6 +5,29 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.0.3
+
+### 图片呈现生命周期修正 / Presented-image lifecycle correction
+
+- **恢复历史不再抢滚动位置（#666）**：`vision_present` 只有在同一工具调用从非 result 进入“带图片的 result”时才请求聚焦；直接以 settled result 挂载的历史卡片保持静默，空结果也不会把读者拉到别的图片卡片。
+- **Restored history no longer steals focus (#666):** `vision_present` requests focus only when the same live tool call crosses from a non-result state into an image-bearing result. A restored settled card and an imageless result stay inert.
+- **保留 DSH 0.1.5 支持**：新版 Host 优先使用显式 `phase`；受支持的旧 Host 没有 `phase` 时回退到稳定的 `block.kind === 'tool-result'` 判据，不抬高 Host 支持下限。
+- **DSH 0.1.5 remains supported:** newer Hosts use the explicit `phase`; older supported Hosts fall back to the durable `block.kind === 'tool-result'` discriminant, preserving the same fresh-result edge without raising the Host floor.
+
+### 代理主机与回归门 / Proxy-host and regression gates
+
+- **`.example.com` 不再静默失效（#665）**：cookie-domain / nginx 风格的 leading-dot host 会归一为裸主机，与 `*.example.com` 一样命中 apex 与点边界子域，但不会放宽到 `evilexample.com` 之类的相似主机。
+- **Leading-dot proxy hosts work (#665):** `.example.com` canonicalizes to the same apex/subdomain policy as `*.example.com`, while lookalike hosts remain outside the match.
+- **DSH 0.1.7 browser smoke 恢复所有权覆盖（#664）**：精确 0.1.7 浏览器工作流重新监听两个 presentation-boundary 源文件，并由回归测试固定。
+- **The exact DSH 0.1.7 browser smoke follows its presentation owners again (#664):** both presentation-boundary carriers are back in the workflow path filters and pinned by regression coverage.
+
+### CI 依赖维护 / CI dependency maintenance
+
+- `actions/download-artifact` 固定到 v8.0.1（#663）；HOL scanner Action 更新到 v1.2.763 / plugin-scanner 3.24.2（#662），并校正工作流中的版本审计注释。
+- `actions/download-artifact` is pinned to v8.0.1 (#663); the HOL scanner Action is updated to v1.2.763 / plugin-scanner 3.24.2 (#662), with its audit annotation corrected.
+- **无运行时依赖、设置 schema、Session 格式或公共 API 变化；Host 支持范围不变。**
+- **No runtime dependency, settings-schema, Session-format or public-API change; the Host support window is unchanged.**
+
 ## v3.0.2
 
 ### 输入框「识图」按钮与 presented 图片的呈现修复 / The composer Vision control, and how a presented image reaches the reader

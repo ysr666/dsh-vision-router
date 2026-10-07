@@ -21,7 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Scan plugin source
-        uses: hashgraph-online/ai-plugin-scanner-action@9a85f17293940b730c459e0702d42af9e6e049e1 # v1.2.706 / plugin-scanner 3.6.0
+        uses: hashgraph-online/ai-plugin-scanner-action@9a85f17293940b730c459e0702d42af9e6e049e1 # v1.2.763 / plugin-scanner 3.24.2
         with:
           plugin_dir: "."
           min_score: 90
