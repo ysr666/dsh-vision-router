@@ -4756,8 +4756,7 @@ openLogFolder,
           }
         }, ownerToken)
       }
-      // Follow the app language: register our dictionaries and re-read them
-      // whenever the user switches the locale in Settings → General.
+      // Keep card copy in sync with the app locale.
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'vision-router: card locale')
       const t = ctx.locale.bind(NS)
       const VisionPresentCard = (props) => {
@@ -4771,20 +4770,12 @@ openLogFolder,
         const imageOwnerToken = React.useRef({}).current
         const ownedImageKeys = React.useRef(new Set())
         const presentNode = React.useRef()
-        const blockKind = block && block.kind
-        const previousPresentationState = React.useRef({ phase, blockKind })
+        const focusState = React.useRef([phase, block?.kind])
         React.useEffect(() => {
-          const previous = previousPresentationState.current
-          previousPresentationState.current = { phase, blockKind }
-          globalThis.__dvrPresentFocus?.(
-            presentNode.current,
-            previous.phase,
-            phase,
-            previous.blockKind,
-            blockKind,
-            images.length,
-          )
-        }, [phase, blockKind, imageKeySignature])
+          const next = [phase, block?.kind]
+          globalThis.__dvrPresentFocus?.(presentNode.current, focusState.current, next, images.length)
+          focusState.current = next
+        }, [phase, block?.kind, imageKeySignature])
         React.useEffect(() => {
           const current = new Set(imageKeys)
           for (const key of ownedImageKeys.current) {
