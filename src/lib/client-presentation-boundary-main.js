@@ -1019,16 +1019,37 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return false;
   }
 
-  // A restored result mounts directly in its settled phase. Only a live call crossing into a
-  // non-empty result is fresh presentation; placeholders and session history never move readers.
-  function shouldFocusPresentedCard(previousPhase, phase, imageCount) {
-    return imageCount > 0 && phase === 'result' && previousPhase !== 'result';
+  // DSH 0.1.7+ supplies an explicit lifecycle phase. DVR's supported 0.1.5 Host train does
+  // not, but its settled owner block is already discriminated as `tool-result`. Prefer the
+  // explicit phase when it exists and fall back to that durable legacy discriminant otherwise.
+  function isPresentedResultState(phase, blockKind) {
+    return phase !== undefined ? phase === 'result' : blockKind === 'tool-result';
+  }
+
+  // A restored result mounts already settled, so previous/current both resolve to result and stay
+  // inert. Only a live call crossing into a non-empty result is fresh presentation.
+  function shouldFocusPresentedCard(previousPhase, phase, previousBlockKind, blockKind, imageCount) {
+    return imageCount > 0 &&
+      isPresentedResultState(phase, blockKind) &&
+      !isPresentedResultState(previousPhase, previousBlockKind);
   }
 
   try {
-    globalThis.__dvrPresentFocus = function (node, previousPhase, phase, imageCount) {
-      return shouldFocusPresentedCard(previousPhase, phase, imageCount) &&
-        focusPresentedCard(node, globalThis.innerHeight || 0);
+    globalThis.__dvrPresentFocus = function (
+      node,
+      previousPhase,
+      phase,
+      previousBlockKind,
+      blockKind,
+      imageCount
+    ) {
+      return shouldFocusPresentedCard(
+        previousPhase,
+        phase,
+        previousBlockKind,
+        blockKind,
+        imageCount
+      ) && focusPresentedCard(node, globalThis.innerHeight || 0);
     };
   } catch (_) {}
 
