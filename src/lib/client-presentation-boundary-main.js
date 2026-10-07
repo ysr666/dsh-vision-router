@@ -1019,37 +1019,25 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
     return false;
   }
 
-  // DSH 0.1.7+ supplies an explicit lifecycle phase. DVR's supported 0.1.5 Host train does
-  // not, but its settled owner block is already discriminated as 'tool-result'. Prefer the
-  // explicit phase when it exists and fall back to that durable legacy discriminant otherwise.
-  function isPresentedResultState(phase, blockKind) {
-    return phase !== undefined ? phase === 'result' : blockKind === 'tool-result';
+  // New Hosts expose phase; supported DSH 0.1.5 instead marks settled blocks as
+  // 'tool-result'. Normalize the [phase, block kind] tuple without raising the Host floor.
+  function isPresentedResultState(state) {
+    var phase = state && state[0];
+    return phase !== undefined ? phase === 'result' : !!state && state[1] === 'tool-result';
   }
 
-  // A restored result mounts already settled, so previous/current both resolve to result and stay
-  // inert. Only a live call crossing into a non-empty result is fresh presentation.
-  function shouldFocusPresentedCard(previousPhase, phase, previousBlockKind, blockKind, imageCount) {
+  // Restored history starts settled on both sides of the comparison. Only a live transition into
+  // an image-bearing result is fresh presentation.
+  function shouldFocusPresentedCard(previousState, state, imageCount) {
     return imageCount > 0 &&
-      isPresentedResultState(phase, blockKind) &&
-      !isPresentedResultState(previousPhase, previousBlockKind);
+      isPresentedResultState(state) &&
+      !isPresentedResultState(previousState);
   }
 
   try {
-    globalThis.__dvrPresentFocus = function (
-      node,
-      previousPhase,
-      phase,
-      previousBlockKind,
-      blockKind,
-      imageCount
-    ) {
-      return shouldFocusPresentedCard(
-        previousPhase,
-        phase,
-        previousBlockKind,
-        blockKind,
-        imageCount
-      ) && focusPresentedCard(node, globalThis.innerHeight || 0);
+    globalThis.__dvrPresentFocus = function (node, previousState, state, imageCount) {
+      return shouldFocusPresentedCard(previousState, state, imageCount) &&
+        focusPresentedCard(node, globalThis.innerHeight || 0);
     };
   } catch (_) {}
 
