@@ -367,6 +367,24 @@ test('explicit image rejection becomes a fingerprint-scoped whole-model backgrou
   assert.deepEqual(seen, [['deepseek-official/deepseek-v4-flash', 'ocr']])
 })
 
+test('Host image-input declaration change invalidates an old negative background verdict', async () => {
+  const id = 'deepseek-official/deepseek-v4-flash'
+  const modalities = { [id]: ['text', 'image'] }
+  const config = configFor([['deepseek-official', 'deepseek-v4-flash']])
+  const ctx = fakeCtx(config, { modalities })
+  const verdicts = memoryVerdictStore()
+  let calls = 0
+  const profiler = profilerFor(config, ctx, memoryStore(), async () => { calls += 1 }, { imageVerdictStore: verdicts })
+  await profiler.recordImageUnsupported('deepseek-official', 'deepseek-v4-flash')
+  assert.equal(verdicts.records.size, 1)
+  await profiler.tick()
+  assert.equal(calls, 0, 'same Host declaration preserves a confirmed refusal')
+  modalities[id] = ['text']
+  await profiler.tick()
+  assert.equal(calls, 1, 'changed Host input declaration must not be blocked by prior negative verdict')
+  await profiler.stop()
+})
+
 test('non-retryable unavailable survives ordinary settings and topology refreshes', async () => {
   const config = configFor([['openrouter', 'openai/gpt-5.6-sol']])
   const ctx = fakeCtx(config)

@@ -707,7 +707,13 @@ test('advisory capability diagnostics keep undeclared models selectable and supp
     'visionCapabilityTextOnlyWarning',
   )
 
+  assert.equal(bundle.visionCapabilityWarningKey({
+    image: true, attemptable: true, inputModalities: ['text', 'image'],
+    hostInputModalities: ['text'], inferred: 'name',
+  }, 'ready'), 'visionCapabilityTextOnlyWarning')
+
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('The current DSH Web form does not write this field.'), false)
   assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
   assert.equal(source.includes('loadCatalog(true)'), true)
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
