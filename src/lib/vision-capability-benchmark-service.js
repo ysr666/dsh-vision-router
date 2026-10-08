@@ -14,7 +14,7 @@ import { resolveVisionCredential } from './vision-capability-identity.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { wireSessionAffinityId } from './session-affinity.js'
 import { streamWithVisionSessionAffinity } from './session-affinity-runtime.js'
-import { hostImageDeliveryFromInfo } from './vision-backend-runtime-policy.js'
+import { hostImageDeliveryFromInfo, resolvedHostInfo } from './vision-backend-runtime-policy.js'
 import { streamWithLegacyGlobalProxyScope } from './legacy-global-proxy-boundary.js'
 import {
   hardenCapabilityBenchmarkFixture,
@@ -307,9 +307,7 @@ export function createExactCapabilityInvoker(ctx, core, candidate, config, optio
       const callSignal = mergedSignal(signal, AbortSignal.timeout(fixtureTimeoutMs))
       const exactHttpProvider = directProviderFor(candidate, config, core)
       const hostInfo = candidate.provider === 'vision-http' ? undefined :
-        await (typeof ctx?.llm?.resolveModelInfo === 'function'
-          ? Promise.resolve().then(() => ctx.llm.resolveModelInfo(candidate.provider, candidate.model)).catch(() => undefined)
-          : Promise.resolve(undefined))
+        await resolvedHostInfo(ctx?.llm, { provider: candidate.provider, model: candidate.model, signal: callSignal })
       const imagePlan = candidate.provider === 'vision-http'
         ? { path: 'http-direct' }
         : exactHostImageDeliveryPlan(hostInfo, candidate, core)

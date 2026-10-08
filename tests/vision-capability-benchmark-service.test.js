@@ -315,7 +315,9 @@ test('Host image projection selects verified HTTP bridge before adapter but refu
   assert.equal(exactHostImageDeliveryPlan({ inputModalities: ['text', 'image'] }, candidate, core).path, 'adapter')
 
   let adapters = 0, directs = 0
-  const invoke = createExactCapabilityInvoker(fakeCtx({}, false), core, { ...candidate, key: 'zhipu-glm/glm-4.6v' }, {}, {
+  const projectedCtx = fakeCtx({}, true)
+  projectedCtx.llm.prepareCall = async () => ({ inputModalities: ['text'] })
+  const invoke = createExactCapabilityInvoker(projectedCtx, core, { ...candidate, key: 'zhipu-glm/glm-4.6v' }, {}, {
     renderFixture: async () => Buffer.from('png'),
     streamExact: () => { adapters += 1; return asyncTextStream('must not run') },
     callDirect: async () => { directs += 1; return '[672,672,901,813]' },

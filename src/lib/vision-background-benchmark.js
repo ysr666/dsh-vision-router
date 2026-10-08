@@ -10,7 +10,7 @@ import { resolveVisionRoutingAuthority } from './vision-routing-authority.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { installVisionExactCheckClient } from './vision-exact-check-client.js'
 import { createImageInputVerdictStore } from './vision-image-input-verdict.js'
-import { hostImageDeliveryFromInfo, localOnlyVisionCallAllowed } from './vision-backend-runtime-policy.js'
+import { hostImageDeliveryFromInfo, localOnlyVisionCallAllowed, resolvedHostInfo } from './vision-backend-runtime-policy.js'
 import { createBackgroundBenchmarkStopStore } from './vision-background-stop-store.js'
 import { backgroundFailurePolicy } from './vision-background-failure-policy.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
@@ -291,9 +291,7 @@ function candidateBlockedByFailure(backoff, candidate, at) {
 
 async function currentHostImageDelivery(ctx, provider, model) {
   if (provider === 'vision-http') return 'native-image'
-  if (typeof ctx?.llm?.resolveModelInfo !== 'function') return 'unknown'
-  try { return hostImageDeliveryFromInfo(await ctx.llm.resolveModelInfo(provider, model)) }
-  catch { return 'unknown' }
+  return hostImageDeliveryFromInfo(await resolvedHostInfo(ctx?.llm, { provider, model }))
 }
 
 async function imageVerdictFor(imageVerdictStore, candidate, ctx) {

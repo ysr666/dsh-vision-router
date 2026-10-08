@@ -174,7 +174,7 @@ async function toOpenAIMessages(ctx, messages) {
   return out
 }
 
-async function resolvedHostInfo(llm, call) {
+export async function resolvedHostInfo(llm, call) {
   if (typeof llm?.prepareCall === 'function') {
     try {
       const prepared = await llm.prepareCall(
