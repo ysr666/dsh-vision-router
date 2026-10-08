@@ -711,7 +711,7 @@ test('advisory capability diagnostics keep undeclared models selectable and supp
   assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
   assert.equal(source.includes('loadCatalog(true)'), true)
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
-  assert.equal(source.includes('Capability metadata is advisory, not an admission gate'), true)
+  assert.equal(source.includes('Model capability labels do not restrict selection; a Host text-only label may block image delivery.'), true)
   assert.equal(source.includes('emptyVisionModelsPanel(),'), false)
 })
 
