@@ -142,6 +142,23 @@ test('filterVisionBackendGroups keeps callable generative models and hides only 
   assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
+test('text-only backend warnings explain Host projection, model editor and provider-specific recovery', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const warnings = [...source.matchAll(/visionCapabilityTextOnlyWarning: '([^']+)'/g)].map((match) => match[1])
+  assert.equal(warnings.length, 2, 'both Chinese and English warnings must be present')
+  for (const warning of warnings) {
+    assert.match(warning, /Host/)
+    assert.match(warning, /input: \[text, image\]/)
+    assert.match(warning, /inputModalities: \[text, image\]/)
+    assert.match(warning, /llm-pi-ai/)
+    assert.match(warning, /llm-deepseek/)
+  }
+  assert.match(warnings[0], /adapter 调用前会剥离图片/)
+  assert.match(warnings[0], /设置 → 模型 → 输入类型/)
+  assert.match(warnings[1], /text-only strips images before adapter/)
+  assert.match(warnings[1], /Settings → Models → Input types/)
+})
+
 test('DeepSeek ownership notice exposes only supported Host-owned provider behavior', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(source, /state\.reason !== 'host-owned-official-unavailable'/)
@@ -694,7 +711,7 @@ test('advisory capability diagnostics keep undeclared models selectable and supp
   assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
   assert.equal(source.includes('loadCatalog(true)'), true)
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
-  assert.equal(source.includes('Capability metadata is advisory, not an admission gate'), true)
+  assert.equal(source.includes('Model capability labels do not restrict selection; a Host text-only label may block image delivery.'), true)
   assert.equal(source.includes('emptyVisionModelsPanel(),'), false)
 })
 
