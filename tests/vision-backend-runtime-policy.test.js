@@ -263,6 +263,10 @@ test('known text projection without a safe bridge never sends the SHA-only reque
   const finish = chunks.find((chunk) => chunk.type === 'finish')
   assert.equal(finish?.reason?.kind, 'error')
   assert.equal(finish?.reason?.failure?.code, 'VISION_IMAGE_DELIVERY_UNAVAILABLE')
+  assert.match(finish?.reason?.failure?.message, /strips image pixels before the registered adapter/)
+  assert.match(finish?.reason?.failure?.message, /input: \[text, image\]/)
+  assert.match(finish?.reason?.failure?.message, /HTTP OpenAI Chat Completions/)
+  assert.equal(f.imageReads(), 0, 'must not read image bytes without a safe pixel transport')
 })
 
 test('default cloud attempt reserves the final quarter of a 120s task for fallback', () => {

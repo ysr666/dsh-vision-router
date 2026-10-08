@@ -73,13 +73,20 @@ plan, revoked Auto authority, or planner failure falls back to the current
 configured order. The temporary Auto order is isolated to one visual-tool call
 with `AsyncLocalStorage` and is restored automatically afterward.
 
-Host text-only metadata is advisory for a user-selected generative model. It is
-not treated as proof that the model cannot inspect images. **Test Vision** always
-tries the exact current dropdown selection when its live adapter can be invoked.
-If the user has explicitly enabled `backgroundBenchmarking`, eligible configured
-models are also actually measured within that cost scope even when Host metadata
-currently labels them text-only. The measured result, rather than the Host label,
-is the capability evidence used by Auto.
+Host text-only metadata is advisory for *selection* of a generative backend,
+not proof of the endpoint's real image capability. It is not, however, advisory
+to DSH's request projection: an explicit text-only declaration causes DSH to
+replace image pixels with text placeholders before the adapter is invoked.
+Vision Router bypasses that projection only for positively identified HTTP OpenAI
+Chat Completions bridges. For Responses API, WebSocket, RPC and other native
+protocols, a genuinely image-capable custom model must declare
+`input: [text, image]` in its DSH provider model configuration; otherwise a
+visual request cannot safely reach that adapter. Unknown modalities still use
+the registered adapter first. **Test Vision** targets the exact dropdown model,
+but a text-only Host declaration without a safe bridge may yield an image-input
+failure rather than a valid visual measurement. Explicitly authorized background
+benchmarking has the same delivery constraint; only successful pixel-grounded
+measurements count as capability evidence for Auto.
 
 Structural non-generative exclusions remain hard boundaries: explicit measurement
 authority never turns an endpoint that cannot be invoked as a generative model
@@ -101,8 +108,9 @@ Auto-routing control.
   requests.
 
 A Host text-only label is shown as an advisory, not as a separate product mode.
-Quick/Full Benchmark may still send generated test images to verify the model
-when the user explicitly starts the Benchmark. The implementation may carry an
+Quick/Full Benchmark prepares generated test images when the user explicitly
+starts the Benchmark, but delivery still depends on the Host's model modalities
+or a verified compatible bridge. The implementation may carry an
 internal force flag for compatibility with older service guards, but users do
 not need to reason about a separate “Force Verify” workflow.
 

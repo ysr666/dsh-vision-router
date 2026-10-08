@@ -142,6 +142,13 @@ test('filterVisionBackendGroups keeps callable generative models and hides only 
   assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
+test('text-only backend warning explains Host image projection and actionable model declaration', () => {
+  const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(source, /Host marks this model text-only and strips images before its adapter/)
+  assert.match(source, /Host 将此模型标为仅文本，adapter 调用前会剥离图片/)
+  assert.match(source, /declare input: \[text, image\]/)
+})
+
 test('DeepSeek ownership notice exposes only supported Host-owned provider behavior', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   assert.match(source, /state\.reason !== 'host-owned-official-unavailable'/)
