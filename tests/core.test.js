@@ -3510,13 +3510,14 @@ test('decideVisionBackendCapability treats metadata as advisory but keeps struct
     image: true,
     attemptable: true,
     inputModalities: ['text', 'image'],
+    hostInputModalities: ['text'],
     inferred: 'name',
     reason: undefined,
   })
   // Undeclared plain glm-4.6: forced via the override list (bare model id).
   assert.deepEqual(
     decideVisionBackendCapability({ inputModalities: ['text'] }, 'zhipu-glm', 'glm-4.6', ['glm-4.6']),
-    { image: true, attemptable: true, inputModalities: ['text', 'image'], inferred: 'override', reason: undefined },
+    { image: true, attemptable: true, inputModalities: ['text', 'image'], hostInputModalities: ['text'], inferred: 'override', reason: undefined },
   )
   // "provider/model" override entries match too.
   assert.equal(

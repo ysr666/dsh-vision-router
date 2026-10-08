@@ -80,6 +80,8 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
       VISION_CHECK_BACKEND_STALE:[text('当前模型暂时无法直接调用，请确认供应商/模型仍可用后重试','This model is not currently callable; verify the provider/model and retry')],
       VISION_CHECK_TIMEOUT:[text('测试超时，已自动结束','Test timed out and was stopped')],
       VISION_CHECK_UNSUPPORTED_IMAGE:[text('实测仅文本 · 图片请求被模型拒绝','Measured text-only · the model rejected image input')],
+      VISION_IMAGE_DELIVERY_UNAVAILABLE:[text('Host未声明图片输入，请在DSH模型设置中启用Image再测','Host declares text-only input; enable Image in DSH Models settings and retest')],
+      VISION_CHECK_STALE_CONFIG:[text('测试期间模型配置已变化，请重新测试','Model input settings changed during the test; retest required')],
       VISION_CHECK_INFRASTRUCTURE:[text('识图测试组件暂不可用','Vision check infrastructure is unavailable')],
       CAPABILITY_BENCHMARK_INFRASTRUCTURE:[text('识图测试组件暂不可用','Vision check infrastructure is unavailable')],
       CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED:[text('模型没有正确读出测试图','The model did not correctly inspect the test image')]
@@ -91,8 +93,15 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
   }
   function reset(control){
     if(!control)return;
+    delete control.dataset.lastResult;
     setStatus(control,text('快速自检 · 1次请求 · 只验证当前模型能否识图 · 不写入Auto能力分数','Quick check · 1 request · verifies image input only · does not write Auto capability scores'));
     setButton(control,text('测试识图','Test vision'),false);
+  }
+  function makeRemoteNotice(row){
+    var note=document.createElement('div');note.setAttribute(CONTROL_ATTR,'remote');
+    note.style.cssText='flex:1 0 100%;font-size:12px;opacity:.7;margin-top:4px';
+    note.textContent=text('识图自检仅可在DSH本机界面执行；远程页面不发送测试请求。','Vision testing is local-only. Open the DSH UI on the Host to run the image check.');
+    row.appendChild(note);return note;
   }
   function makeControl(row){
     if(!row||!row.style)return undefined;
@@ -131,15 +140,15 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
       if(!currentRun(control,token,key))return;
       if(!response.ok||!body||body.ok!==true){
         var raw=String(body&&(body.error||body.code)||('HTTP '+response.status));
-        setStatus(control,'✗ '+selection.provider+'/'+selection.model+' · '+failureMessage(body,response.status),raw);notifyChanged();return;
+        setStatus(control,'✗ '+selection.provider+'/'+selection.model+' · '+failureMessage(body,response.status),raw);control.dataset.lastResult=String(Date.now());notifyChanged();return;
       }
       var via=transport(body.transport),latency=seconds(body.latencyMs),output=short(body.output,72);
       var suffix=(via?' · '+via:'')+(latency?' · '+latency:'')+(output?' · '+output:'');
-      setStatus(control,'✓ '+selection.provider+'/'+selection.model+text(' · 图片识别正常',' · image verified')+suffix);notifyChanged();
+      setStatus(control,'✓ '+selection.provider+'/'+selection.model+text(' · 图片识别正常',' · image verified')+suffix+' · '+new Date().toLocaleTimeString());control.dataset.lastResult=String(Date.now());notifyChanged();
     }catch(error){
       if(!currentRun(control,token,key))return;
       var message=error&&error.name==='AbortError'?text('测试超时，已自动结束','Test timed out and was stopped'):text('测试失败','Vision check failed');
-      setStatus(control,'✗ '+selection.provider+'/'+selection.model+' · '+message,String(error&&error.message||error));
+      setStatus(control,'✗ '+selection.provider+'/'+selection.model+' · '+message,String(error&&error.message||error));control.dataset.lastResult=String(Date.now());
     }finally{
       if(timer!==undefined)clearTimeout(timer);
       if(ticker!==undefined)clearInterval(ticker);
@@ -148,12 +157,13 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
     }
   }
   function scan(){
-    if(!localPage())return;
+    var local=localPage();
     var rows=[];try{rows=Array.prototype.slice.call(document.querySelectorAll(ROW_SELECTOR));}catch(_){rows=[];}
     rows.forEach(function(row){
       var selection=rowSelection(row),control=row.querySelector('['+CONTROL_ATTR+']');
       if(!complete(selection)){if(control){abortActive(control);if(control.remove)control.remove();}return;}
-      if(!control)control=makeControl(row);
+      if(!control)control=local?makeControl(row):makeRemoteNotice(row);
+      if(!local)return;
       var key=selectionKey(selection);
       if(control&&control.dataset.selection!==key){abortActive(control);control.dataset.selection=key;reset(control);}
     });
@@ -167,8 +177,15 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
     }catch(_){}
     return false;
   }
-  function start(){
+  function invalidatePreviousResults(){
     if(!localPage())return;
+    var controls=document.querySelectorAll('['+CONTROL_ATTR+'][data-last-result]');
+    controls.forEach(function(control){abortActive(control);reset(control);
+      setStatus(control,text('配置可能已变化，请重新测试','Configuration may have changed; retest required'));
+    });
+  }
+  function start(){
+    window.addEventListener('focus',invalidatePreviousResults);
     document.addEventListener('change',function(event){var row=event&&event.target&&event.target.closest?event.target.closest(ROW_SELECTOR):undefined;if(row)schedule();},true);
     if(typeof MutationObserver==='function'&&document.documentElement){
       var observer=new MutationObserver(function(records){
