@@ -9,7 +9,7 @@
 <p align="center">DeepSeek keeps thinking; the built-in free vision chain and fourteen deep tools do the seeing. When an image matters, enable the composer’s “👁 Vision” control and use image turns like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
 
 <p align="center">
-  <a href="https://atomgit.com/ysr666/dsh-vision-router"><img src="https://atomgit.com/ysr666/dsh-vision-router/star/new_badge.svg" alt="AtomGit G-Star" /></a>
+  <a href="https://atomgit.com/ysr666/dsh-vision-router"><img src="https://atomgit.com/ysr666/dsh-vision-router/star/new_badge.svg" alt="AtomGit G-Star" height="26" /></a>
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
   <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 certified" /></a>
   <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase install-tested" /></a>
