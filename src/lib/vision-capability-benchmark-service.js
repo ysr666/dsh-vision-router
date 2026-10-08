@@ -14,6 +14,7 @@ import { resolveVisionCredential } from './vision-capability-identity.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { wireSessionAffinityId } from './session-affinity.js'
 import { streamWithVisionSessionAffinity } from './session-affinity-runtime.js'
+import { hostImageDeliveryFromInfo } from './vision-backend-runtime-policy.js'
 import { streamWithLegacyGlobalProxyScope } from './legacy-global-proxy-boundary.js'
 import {
   hardenCapabilityBenchmarkFixture,
@@ -225,18 +226,28 @@ function tagInvocationError(value) {
 
 function mayUseExactAdapterBridge(core, error, directProvider) {
   if (directProvider === undefined) return false
+  // Never replay a request after network/provider failures: it might already
+  // have reached the model. Only a proven local image-admission refusal qualifies.
+  const code = String(error?.code ?? error?.failure?.code ?? error?.cause?.code ?? '').toUpperCase()
+  const message = String(error?.message ?? '')
+  if (!['UNSUPPORTED_CONTENT', 'MODEL_DOES_NOT_SUPPORT_IMAGES'].includes(code)) return false
+  if (!/image/i.test(message) && code !== 'MODEL_DOES_NOT_SUPPORT_IMAGES') return false
   try {
-    const classification = core?.classifyVisionFailure?.(error)
-    const kinds = core?.VISION_FAILURE_KINDS
-    const allowed = new Set([
-      kinds?.INVALID_REQUEST,
-      kinds?.NETWORK,
-      kinds?.OTHER,
-    ].filter(Boolean))
-    return classification && allowed.has(classification.kind)
+    return core?.classifyVisionFailure?.(error)?.kind === core?.VISION_FAILURE_KINDS?.INVALID_REQUEST
   } catch {
     return false
   }
+}
+
+export function exactHostImageDeliveryPlan(info, candidate, core) {
+  const delivery = hostImageDeliveryFromInfo(info)
+  if (delivery !== 'text-projected') return { delivery, path: 'adapter' }
+  const verified = candidate?.evidenceScope === 'endpoint'
+    && candidate?.endpointConfig?.api === 'openai-completions'
+    && typeof candidate?.endpoint === 'string'
+    && typeof core?.isOpenAIHttpBridgeTransport === 'function'
+    && core.isOpenAIHttpBridgeTransport({ api: 'openai-completions', baseURL: candidate.endpoint })
+  return { delivery, path: verified ? 'http-direct' : 'refuse' }
 }
 
 function benchmarkMaxTokensForProvider(provider) {
@@ -295,6 +306,24 @@ export function createExactCapabilityInvoker(ctx, core, candidate, config, optio
       )
       const callSignal = mergedSignal(signal, AbortSignal.timeout(fixtureTimeoutMs))
       const exactHttpProvider = directProviderFor(candidate, config, core)
+      const hostInfo = candidate.provider === 'vision-http' ? undefined :
+        await (typeof ctx?.llm?.resolveModelInfo === 'function'
+          ? Promise.resolve().then(() => ctx.llm.resolveModelInfo(candidate.provider, candidate.model)).catch(() => undefined)
+          : Promise.resolve(undefined))
+      const imagePlan = candidate.provider === 'vision-http'
+        ? { path: 'http-direct' }
+        : exactHostImageDeliveryPlan(hostInfo, candidate, core)
+      if (imagePlan.path === 'refuse') {
+        const error = new Error('Host declares this model text-only and removes image pixels before adapter dispatch; enable Image in DSH model input types, then retest')
+        error.code = 'VISION_IMAGE_DELIVERY_UNAVAILABLE'
+        error.benchmarkClass = 'host-configuration'
+        throw error
+      }
+      if (imagePlan.path === 'http-direct' && exactHttpProvider === undefined) {
+        const error = new Error('verified HTTP image bridge unavailable for this model')
+        error.code = 'CAPABILITY_BENCHMARK_PROTOCOL'
+        throw error
+      }
       const callExactHttp = async () => {
         if (exactHttpProvider === undefined) {
           const error = new Error('exact HTTP bridge is unavailable for this benchmark backend')
@@ -323,7 +352,7 @@ export function createExactCapabilityInvoker(ctx, core, candidate, config, optio
       let output
       let transport
       let latencyMs
-      if (candidate.provider === 'vision-http') {
+      if (candidate.provider === 'vision-http' || imagePlan.path === 'http-direct') {
         const direct = await callExactHttp()
         output = direct.output
         latencyMs = direct.latencyMs
@@ -404,8 +433,11 @@ async function declaredImageState(ctx, core, config, candidate) {
       candidate.model,
       config?.extraVisionModels,
     )
-    if (decision?.image === true) return 'declared'
-    if (decision?.image === false) return 'text-only'
+    const hostMode = hostImageDeliveryFromInfo(info)
+    if (hostMode === 'native-image') return 'declared'
+    if (hostMode === 'text-projected') return 'text-only'
+    // Name-based guesses and user labels do not rewrite Host input metadata.
+    if (decision?.image === true) return 'unknown'
   } catch {
     // Metadata is advisory. Exact configured routes remain force-testable.
   }

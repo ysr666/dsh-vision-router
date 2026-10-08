@@ -5,7 +5,7 @@ import process from 'node:process'
 import { resolveDshHome } from './doctor.js'
 import { CAPABILITY_BENCHMARK_SUITE_REVISION } from './vision-capability-benchmark.js'
 
-const CACHE_VERSION = 1
+const CACHE_VERSION = 2
 const MAX_ENTRIES = 128
 
 function cleanText(value, max = 256) {
@@ -14,7 +14,7 @@ function cleanText(value, max = 256) {
 
 function cleanVerdict(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  if (value.state !== 'unsupported') return undefined
+  if (value.state !== 'unsupported' || value.hostMode !== 'native-image') return undefined
   if (Number(value.suiteRevision) !== CAPABILITY_BENCHMARK_SUITE_REVISION) return undefined
   const fingerprint = cleanText(value.fingerprint, 64)
   if (!/^ep2_[0-9a-f]{32}$/.test(fingerprint)) return undefined
@@ -29,6 +29,7 @@ function cleanVerdict(value) {
     provider,
     model,
     state: 'unsupported',
+    hostMode: 'native-image',
     reason: 'provider-rejected-image',
     measuredAt,
     suiteRevision: CAPABILITY_BENCHMARK_SUITE_REVISION,
@@ -103,7 +104,7 @@ export function createImageInputVerdictStore(options = {}) {
       await ready
       return records.get(String(fingerprint ?? ''))
     },
-    async markUnsupported({ fingerprint, key, provider, model, measuredAt = Date.now() } = {}) {
+    async markUnsupported({ fingerprint, key, provider, model, hostMode, measuredAt = Date.now() } = {}) {
       await ready
       const clean = cleanVerdict({
         fingerprint,
@@ -111,6 +112,7 @@ export function createImageInputVerdictStore(options = {}) {
         provider,
         model,
         state: 'unsupported',
+        hostMode,
         measuredAt,
         suiteRevision: CAPABILITY_BENCHMARK_SUITE_REVISION,
       })
