@@ -9,7 +9,6 @@
 <p align="center">DeepSeek 只负责思考，内置免费视觉链 + 14 个深看工具负责“看”；需要看图时开启输入框旁的「👁 识图」，图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
 
 <p align="center">
-  <a href="https://atomgit.com/ysr666/dsh-vision-router"><img src="https://atomgit.com/ysr666/dsh-vision-router/star/new_badge.svg" alt="AtomGit G-Star" /></a>
   <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
   <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 精选认证" /></a>
   <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase 实机安装验证" /></a>
@@ -35,7 +34,7 @@
   <a href="https://dshmarket.com/p/ysr666/dsh-vision-router/">dsh-market</a>
 </p>
 
-<p align="center"><sub>代码仓库：<a href="https://github.com/ysr666/dsh-vision-router">GitHub（开发主仓库、Issue、PR及版本发布）</a> · <a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit（国内镜像）</a></sub></p>
+<p align="center">代码仓库：<a href="https://github.com/ysr666/dsh-vision-router">GitHub（开发主仓库、Issue、PR及版本发布）</a> · 国内 AtomGit 托管：<a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit 镜像</a></p>
 
 <p align="center"><a href="README.md">English</a> · 中文</p>
 
