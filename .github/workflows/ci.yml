@@ -6,10 +6,9 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  # Required test (22)/(24) checks must be emitted for every PR, including docs-only PRs.
+  # Keep push path filtering to avoid redundant post-merge builds.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
 
 permissions:
   contents: read
