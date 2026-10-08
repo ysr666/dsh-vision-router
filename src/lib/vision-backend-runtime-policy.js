@@ -195,7 +195,7 @@ async function resolvedHostInfo(llm, call) {
   return undefined
 }
 
-function localOnlyVisionCallAllowed(core, config, provider, model) {
+export function localOnlyVisionCallAllowed(core, config, provider, model) {
   if (config?.localOnlyVision !== true) return true
   if (provider !== 'vision-http') return false
   const allowed = []

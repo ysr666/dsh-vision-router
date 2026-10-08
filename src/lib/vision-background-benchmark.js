@@ -10,7 +10,7 @@ import { resolveVisionRoutingAuthority } from './vision-routing-authority.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { installVisionExactCheckClient } from './vision-exact-check-client.js'
 import { createImageInputVerdictStore } from './vision-image-input-verdict.js'
-import { hostImageDeliveryFromInfo } from './vision-backend-runtime-policy.js'
+import { hostImageDeliveryFromInfo, localOnlyVisionCallAllowed } from './vision-backend-runtime-policy.js'
 import { createBackgroundBenchmarkStopStore } from './vision-background-stop-store.js'
 import { backgroundFailurePolicy } from './vision-background-failure-policy.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
@@ -482,6 +482,12 @@ export async function runExactVisionCheck({ ctx, config, core, store, provider, 
   const wantedModel = typeof model === 'string' ? model.trim() : ''
   if (!wantedProvider || !wantedModel) throw Object.assign(new Error('provider and model are required'), { code: 'VISION_CHECK_BACKEND_REQUIRED' })
   const current = activeSettings(ctx, config)
+  if (!localOnlyVisionCallAllowed(core, current, wantedProvider, wantedModel)) {
+    const error = new Error('local-only vision policy prevents testing a nonlocal backend')
+    error.code = 'VISION_LOCAL_ONLY_POLICY'
+    error.benchmarkClass = 'host-configuration'
+    throw error
+  }
   const declaredBefore = await currentHostImageDelivery(ctx, wantedProvider, wantedModel)
   const candidates = await collectVisionRoutingCandidates(ctx, current, core, store)
   const candidate = candidates.find((entry) => entry?.provider === wantedProvider && entry?.model === wantedModel)

@@ -82,6 +82,7 @@ export const VISION_EXACT_CHECK_CLIENT = String.raw`(function(){
       VISION_CHECK_UNSUPPORTED_IMAGE:[text('实测仅文本 · 图片请求被模型拒绝','Measured text-only · the model rejected image input')],
       VISION_IMAGE_DELIVERY_UNAVAILABLE:[text('Host未声明图片输入，请在DSH模型设置中启用Image再测','Host declares text-only input; enable Image in DSH Models settings and retest')],
       VISION_CHECK_STALE_CONFIG:[text('测试期间模型配置已变化，请重新测试','Model input settings changed during the test; retest required')],
+      VISION_LOCAL_ONLY_POLICY:[text('本地识图模式下不允许测试非本地后端','Local-only vision policy blocks testing nonlocal backends')],
       VISION_CHECK_INFRASTRUCTURE:[text('识图测试组件暂不可用','Vision check infrastructure is unavailable')],
       CAPABILITY_BENCHMARK_INFRASTRUCTURE:[text('识图测试组件暂不可用','Vision check infrastructure is unavailable')],
       CAPABILITY_BENCHMARK_VISUAL_PROOF_FAILED:[text('模型没有正确读出测试图','The model did not correctly inspect the test image')]
