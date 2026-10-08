@@ -142,11 +142,21 @@ test('filterVisionBackendGroups keeps callable generative models and hides only 
   assert.deepEqual(bundle.filterVisionBackendGroups(groups, {}).map((group) => group.id), ['opencode-go'])
 })
 
-test('text-only backend warning explains Host image projection and actionable model declaration', () => {
+test('text-only backend warnings explain Host projection, model editor and provider-specific recovery', () => {
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-  assert.match(source, /Host marks this model text-only and strips images before its adapter/)
-  assert.match(source, /Host 将此模型标为仅文本，adapter 调用前会剥离图片/)
-  assert.match(source, /declare input: \[text, image\]/)
+  const warnings = [...source.matchAll(/visionCapabilityTextOnlyWarning: '([^']+)'/g)].map((match) => match[1])
+  assert.equal(warnings.length, 2, 'both Chinese and English warnings must be present')
+  for (const warning of warnings) {
+    assert.match(warning, /Host/)
+    assert.match(warning, /input: \[text, image\]/)
+    assert.match(warning, /inputModalities: \[text, image\]/)
+    assert.match(warning, /llm-pi-ai/)
+    assert.match(warning, /llm-deepseek/)
+  }
+  assert.match(warnings[0], /adapter 调用前会剥离图片/)
+  assert.match(warnings[0], /设置 → 模型 → 对应供应商 → 自定义设置 → 模型选项 → 输入类型/)
+  assert.match(warnings[1], /strips images before its adapter/)
+  assert.match(warnings[1], /Settings → Models → provider → Customized settings → Model options → Input types/)
 })
 
 test('DeepSeek ownership notice exposes only supported Host-owned provider behavior', () => {

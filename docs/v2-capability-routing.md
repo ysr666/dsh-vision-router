@@ -78,11 +78,19 @@ not proof of the endpoint's real image capability. It is not, however, advisory
 to DSH's request projection: an explicit text-only declaration causes DSH to
 replace image pixels with text placeholders before the adapter is invoked.
 Vision Router bypasses that projection only for positively identified HTTP OpenAI
-Chat Completions bridges. For Responses API, WebSocket, RPC and other native
-protocols, a genuinely image-capable custom model must declare
-`input: [text, image]` in its DSH provider model configuration; otherwise a
-visual request cannot safely reach that adapter. Unknown modalities still use
-the registered adapter first. **Test Vision** targets the exact dropdown model,
+Chat Completions bridges. For Responses API, WebSocket, RPC and other native protocols, a genuinely
+image-capable model must have Host image input declared; otherwise a visual
+request cannot safely reach its registered adapter. Where available, use
+**Settings → Models → provider editor → Customized settings → Model options →
+Input types → Image**, then save and reload the model configuration. This model
+editor control is documented in DSH
+[0.1.7-rc.1](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.1.7-rc.1/packages/client/ui-settings-models/README.md)
+and [0.2.0-rc.2](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.0-rc.2/packages/client/ui-settings-models/README.md).
+For older Hosts without this control, set the provider-specific model field:
+`llm-pi-ai` uses `input: [text, image]`, while `llm-deepseek` uses
+`inputModalities: [text, image]`. Only declare image input for endpoints that
+actually accept image content. Unknown modalities still use the registered
+adapter first. **Test Vision** targets the exact dropdown model,
 but a text-only Host declaration without a safe bridge may yield an image-input
 failure rather than a valid visual measurement. Explicitly authorized background
 benchmarking has the same delivery constraint; only successful pixel-grounded

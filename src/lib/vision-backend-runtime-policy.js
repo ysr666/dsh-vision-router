@@ -346,7 +346,7 @@ function llmWithRuntimePolicy(ctx, llm, options) {
                   plan.reason,
                 )
                 yield* failureStream(
-                  `vision backend ${provider}/${model} is declared text-only by the Host, which strips image pixels before the registered adapter runs; no safe HTTP image bridge is available. If this model really supports images, declare input: [text, image] on its DSH provider model entry and reload the model configuration. Otherwise choose a declared image-capable backend. Direct bridging is supported only for verified HTTP OpenAI Chat Completions endpoints.`,
+                  `vision backend ${provider}/${model} is declared text-only by the Host, which strips image pixels before the registered adapter runs; no safe HTTP image bridge is available. If this endpoint really supports images, enable Image under DSH Settings > Models > provider > Customized settings > Model options > Input types (when available); on older Hosts set the provider-specific model field (llm-pi-ai: input: [text, image]; llm-deepseek: inputModalities: [text, image]), then reload model configuration. Otherwise choose a declared image-capable backend. Direct bridging is supported only for verified HTTP OpenAI Chat Completions endpoints.`,
                 )
                 return
               }

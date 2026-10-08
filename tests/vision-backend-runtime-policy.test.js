@@ -22,7 +22,7 @@ async function collect(iterable) {
   return chunks
 }
 
-function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyVision = false, providerTransport } = {}) {
+function fixture({ inputModalities, bridgeSupported = true, providerApi = 'openai-completions', messages, localOnlyVision = false, providerTransport } = {}) {
   let adapterCalls = 0
   let directCalls = 0
   let directSessionId
@@ -35,7 +35,7 @@ function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyV
       getModels() {
         return [{
           id: 'glm-4.6v',
-          api: 'openai-completions',
+          api: providerApi,
           baseUrl: 'https://example.invalid/v1',
         }]
       },
@@ -56,7 +56,7 @@ function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyV
         return {
           providers: {
             bg: {
-              api: 'openai-completions',
+              api: providerApi,
               baseURL: 'https://example.invalid/v1',
             },
           },
@@ -113,7 +113,7 @@ function fixture({ inputModalities, bridgeSupported = true, messages, localOnlyV
     },
     resolveChannelBridgeTransport() {
       return bridgeSupported
-        ? { api: 'openai-completions', baseURL: 'https://example.invalid/v1' }
+        ? { api: providerApi, baseURL: 'https://example.invalid/v1' }
         : { api: 'websocket', baseURL: 'wss://example.invalid' }
     },
     isOpenAIHttpBridgeTransport(transport) {
@@ -264,9 +264,26 @@ test('known text projection without a safe bridge never sends the SHA-only reque
   assert.equal(finish?.reason?.kind, 'error')
   assert.equal(finish?.reason?.failure?.code, 'VISION_IMAGE_DELIVERY_UNAVAILABLE')
   assert.match(finish?.reason?.failure?.message, /strips image pixels before the registered adapter/)
+  assert.match(finish?.reason?.failure?.message, /Settings > Models > provider > Customized settings > Model options > Input types/)
   assert.match(finish?.reason?.failure?.message, /input: \[text, image\]/)
+  assert.match(finish?.reason?.failure?.message, /inputModalities: \[text, image\]/)
   assert.match(finish?.reason?.failure?.message, /HTTP OpenAI Chat Completions/)
   assert.equal(f.imageReads(), 0, 'must not read image bytes without a safe pixel transport')
+})
+
+test('Responses API without Host image declaration fails closed, corrected declaration uses registered adapter', async () => {
+  const misdeclared = fixture({ inputModalities: ['text'], providerApi: 'openai-responses' })
+  const blocked = await misdeclared.run()
+  assert.equal(misdeclared.adapterCalls(), 0, 'text-only projected pixels must never be sent as fake image evidence')
+  assert.equal(misdeclared.directCalls(), 0, 'Responses API must not masquerade as Chat Completions bridge')
+  assert.equal(misdeclared.imageReads(), 0)
+  assert.equal(blocked.find((chunk) => chunk.type === 'finish')?.reason?.failure?.code, 'VISION_IMAGE_DELIVERY_UNAVAILABLE')
+
+  const corrected = fixture({ inputModalities: ['text', 'image'], providerApi: 'openai-responses' })
+  const streamed = await corrected.run()
+  assert.equal(corrected.adapterCalls(), 1, 'corrected Host modality must restore native adapter dispatch')
+  assert.equal(corrected.directCalls(), 0)
+  assert.equal(streamed.find((chunk) => chunk.type === 'finish')?.reason?.kind, 'stop')
 })
 
 test('default cloud attempt reserves the final quarter of a 120s task for fallback', () => {
