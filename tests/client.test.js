@@ -154,9 +154,9 @@ test('text-only backend warnings explain Host projection, model editor and provi
     assert.match(warning, /llm-deepseek/)
   }
   assert.match(warnings[0], /adapter 调用前会剥离图片/)
-  assert.match(warnings[0], /设置 → 模型 → 对应供应商 → 自定义设置 → 模型选项 → 输入类型/)
-  assert.match(warnings[1], /strips images before its adapter/)
-  assert.match(warnings[1], /Settings → Models → provider → Customized settings → Model options → Input types/)
+  assert.match(warnings[0], /设置 → 模型 → 输入类型/)
+  assert.match(warnings[1], /text-only strips images before adapter/)
+  assert.match(warnings[1], /Settings → Models → Input types/)
 })
 
 test('DeepSeek ownership notice exposes only supported Host-owned provider behavior', () => {
