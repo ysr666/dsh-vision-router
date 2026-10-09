@@ -607,6 +607,17 @@ test('issue #684 Desktop renderer captures bounded Host selection and button sta
     'diagnostics must not add hidden selection retries or extra toggle clicks')
 })
 
+test('issue #684 real Desktop validates its forensic Host event probe on successful two-way toggles', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /const selectionProbe = await readHostModelSelections\(authenticatedHostUrl\)/)
+  assert.match(source, /const committedBoth = selectionProbe\.sessions\.some/)
+  assert.match(source, /event\?\.provider === expectedProviders\[index\]/)
+  assert.match(source, /event\.model === 'desktop-text'/)
+  assert.match(source, /await waitForSettledVisionState\(initialPressed, 'return transition'\)/)
+  assert.equal((source.match(/await toggle\.click\(\)/g) ?? []).length, 2,
+    'the positive control must not add extra clicks or retries')
+})
+
 test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
