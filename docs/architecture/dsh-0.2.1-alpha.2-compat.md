@@ -27,3 +27,9 @@ The existing `.github/workflows/dsh-alpha-settings-host-gate.yml` performs:
 - real Web + Chromium cold Vision, Settings mount/save/reload/readback, mixed attachments, and bundle recomposition.
 
 The pin is intentionally **not** a blanket support declaration: a PR with pending/failed gates does not authorize saying alpha.2 is validated. No release, tag, dependency bump, production workaround, or merge is part of this audit PR. Only add a runtime workaround after reproducing a genuine interface regression.
+
+## Observed blockers (2026-10-09, exact-source gate)
+
+- **P1 / real compatibility break**: the `connection` row fails to activate under alpha.2 (`missing webRuntime`). Alpha.2 replaces its upstream `inject: [webRuntime]` with `inject: [webStartup]`, while DVR still overlays `inject: [webRuntime, webServer]`. Older supported Hosts still use `webRuntime` and materialize extra LAN trust information there. A global rename does not preserve this old-Host contract. The PR **must remain Draft and unmerged** until a version-aware solution passes both old and new real Host gates.
+- **Desktop CI fixture / independent**: Windows Node 22/24 originally failed required `desktop-product-telemetry` validation because the isolated test runner omitted Host-owned `DSH_CLIENT_VERSION`. Set that environment value to the exact Desktop release version in the fixture, retaining normal required-plugin validation and restoring the previous environment afterward. This change does not repair the Connection incompatibility.
+- The ordinary CI, security, architecture, native cold-resume, and exact old-Host checks passed on the earlier head; they are **not** evidence that alpha.2 real browser/desktop support has passed. The alpha2 end-to-end test must be rerun and fully green before merging.
