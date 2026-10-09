@@ -232,7 +232,7 @@ assert.match(
   /['"]session\/event['"]\(this: Scoped<Session>, session: Session, event: SessionEvent\): void/,
   'supported Hosts must expose the post-commit session/event(session, event) seam',
 )
-const sessionLogCommitAt = sessionCoreSource.indexOf('this.log.push(event as SessionEvent)')
+const sessionLogCommitAt = sessionCoreSource.search(/this\.log\.push\(event(?: as SessionEvent)?\)/)
 const sessionObserverPublishAt = sessionCoreSource.indexOf(
   "invokeContainedSessionObservers(entry.emitCtx, 'session/event'",
 )
