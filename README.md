@@ -358,6 +358,8 @@ The settings card uses provider + model dropdowns; an empty model means every mo
 
 The Web profile registers a first-class **Settings → Vision Router** surface. Its General page keeps model choice and v2 routing authority together; Vision Strategy, Local & Device, Advanced and Diagnostics separate tool behavior, local backends, sensitive/performance controls and troubleshooting.
 
+**Reverse proxy deployments:** Preserve the original browser-facing `Host` when forwarding to DSH, as required by [upstream DSH](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/docs/user/guide/public-deployments.md). A remote request forwarded over loopback must not become a *local-machine-only* request. Proxy-marked loopback requests are denied local-only Vision Router capabilities; proxies that rewrite `Host` to localhost **and strip all forwarding metadata cannot be reliably identified by the current Host API**. See [remote settings security](docs/remote-settings.md) and [Issue #680](https://github.com/ysr666/dsh-vision-router/issues/680).
+
 - **Vision model chain**: the real image-capable models used by `vision_describe` and friends; the built-in free chain remains the final fallback;
 - **Model selection**: keep the configured order, or explicitly enable capability-aware Auto with Balanced / Quality / Speed / Local preference;
 - **Background capability data**: `off`, `local-free`, or `all`; this is separately authorized and never turns on merely because Auto was enabled;
