@@ -601,8 +601,12 @@ test('Desktop renderer E2E waits for each Vision selection transaction to settle
   const firstToggle = source.indexOf("await waitForSettledVisionState(toggledPressed, 'first transition')")
   const secondClick = source.indexOf('await toggle.click()', firstToggle)
   const restored = source.indexOf("await waitForSettledVisionState(initialPressed, 'return transition')", secondClick)
-  assert.match(source, /await page\.waitForTimeout\(200\)/,
+  assert.match(source, /await page\.waitForTimeout\(300\)/,
     'the first toggle must remain stably actionable before the second click')
+  assert.match(source, /const deadline = Date\.now\(\) \+ 30_000/,
+    'continuous ready-state checks must have a single bounded deadline')
+  assert.match(source, /waitForSettledVisionState\(initialPressed, 'initial ready baseline'\)/,
+    'the test must wait for a stable initial model directory before toggling')
   assert.match(source, /observed=\$\{JSON\.stringify\(observed\)\}/,
     'failed transitions must emit bounded button-state evidence')
   assert.ok(firstToggle >= 0 && secondClick > firstToggle && restored > secondClick,
