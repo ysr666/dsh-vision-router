@@ -109,7 +109,10 @@ export async function inspectDshWebConnectionOverlay(dshRoot) {
       effective, effectiveInject, classified.generation)
   }
   const gates = composed.filter((row) => row?.id === READY_ENTRY)
-  if (gates.length !== 1 || gates[0].name !== READY_ENTRY_MODULE) {
+  // loadOverlayPatches anchors relative insert specifiers beside the actual
+  // bundle patch; comparing to the raw YAML string would reject correct Hosts.
+  const expectedGateUrl = pathToFileURL(path.join(dvrRoot, 'presets/web-connection-ready.mjs')).href
+  if (gates.length !== 1 || gates[0].name !== expectedGateUrl) {
     return result('dangerous-drift', 'private readiness bridge missing or duplicated',
       effective, effectiveInject, classified.generation)
   }
