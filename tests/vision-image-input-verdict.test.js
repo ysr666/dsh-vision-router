@@ -31,12 +31,24 @@ function memoryFs(initial = {}) {
   }
 }
 
+test('old and Host-text-only rejection verdicts never poison corrected models', async () => {
+  const fp = 'ep2_0123456789abcdef0123456789abcdef'
+  const file = '/virtual/legacy-verdicts.json'
+  const legacy = [{ fingerprint: fp, key: 'p/m', provider: 'p', model: 'm', state: 'unsupported', measuredAt: 1, suiteRevision: CAPABILITY_BENCHMARK_SUITE_REVISION }]
+  const mem = memoryFs({ [file]: JSON.stringify({ version: 1, verdicts: legacy }) })
+  const store = createImageInputVerdictStore({ cacheFile: file, fsOps: mem.ops })
+  assert.equal(await store.get(fp), undefined)
+  assert.equal(await store.markUnsupported({ fingerprint: fp, key: 'p/m', provider: 'p', model: 'm', hostMode: 'text-projected' }), undefined)
+  assert.equal(await store.get(fp), undefined)
+})
+
 test('measured image rejection persists only a sanitized fingerprint-scoped verdict', async () => {
   const mem = memoryFs()
   const file = '/virtual/image-input-verdicts.json'
   const store = createImageInputVerdictStore({ cacheFile: file, fsOps: mem.ops })
   const fingerprint = 'ep2_0123456789abcdef0123456789abcdef'
   await store.markUnsupported({
+    hostMode: 'native-image',
     fingerprint,
     key: 'deepseek-official/deepseek-v4-flash',
     provider: 'deepseek-official',
@@ -59,6 +71,7 @@ test('successful explicit retest clears the exact fingerprint verdict', async ()
   const store = createImageInputVerdictStore({ cacheFile: '/virtual/image-input-verdicts.json', fsOps: mem.ops })
   const fingerprint = 'ep2_abcdef0123456789abcdef0123456789'
   await store.markUnsupported({
+    hostMode: 'native-image',
     fingerprint,
     key: 'provider/model',
     provider: 'provider',
@@ -78,12 +91,13 @@ test('oversized verdict cache is bounded on load and live survivors match the ne
     provider: 'provider',
     model: `model-${index + 1}`,
     state: 'unsupported',
+    hostMode: 'native-image',
     reason: 'provider-rejected-image',
     measuredAt: index + 1,
     suiteRevision: CAPABILITY_BENCHMARK_SUITE_REVISION,
   }))
   const mem = memoryFs({
-    [file]: JSON.stringify({ version: 1, verdicts }),
+    [file]: JSON.stringify({ version: 2, verdicts }),
   })
   const store = createImageInputVerdictStore({ cacheFile: file, fsOps: mem.ops })
 
@@ -94,6 +108,7 @@ test('oversized verdict cache is bounded on load and live survivors match the ne
 
   const newestFingerprint = `ep2_${'f'.repeat(32)}`
   assert.ok(await store.markUnsupported({
+    hostMode: 'native-image',
     fingerprint: newestFingerprint,
     key: 'provider/newest',
     provider: 'provider',
@@ -108,6 +123,7 @@ test('oversized verdict cache is bounded on load and live survivors match the ne
 
   const tooOldFingerprint = `ep2_${'e'.repeat(32)}`
   assert.equal(await store.markUnsupported({
+    hostMode: 'native-image',
     fingerprint: tooOldFingerprint,
     key: 'provider/too-old',
     provider: 'provider',

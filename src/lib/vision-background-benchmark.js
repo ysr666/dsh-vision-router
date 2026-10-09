@@ -10,6 +10,7 @@ import { resolveVisionRoutingAuthority } from './vision-routing-authority.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { installVisionExactCheckClient } from './vision-exact-check-client.js'
 import { createImageInputVerdictStore } from './vision-image-input-verdict.js'
+import { hostImageDeliveryFromInfo, localOnlyVisionCallAllowed, resolvedHostInfo } from './vision-backend-runtime-policy.js'
 import { createBackgroundBenchmarkStopStore } from './vision-background-stop-store.js'
 import { backgroundFailurePolicy } from './vision-background-failure-policy.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
@@ -288,9 +289,18 @@ function candidateBlockedByFailure(backoff, candidate, at) {
   return false
 }
 
-async function imageVerdictFor(imageVerdictStore, candidate) {
+async function currentHostImageDelivery(ctx, provider, model) {
+  if (provider === 'vision-http') return 'native-image'
+  return hostImageDeliveryFromInfo(await resolvedHostInfo(ctx?.llm, { provider, model }))
+}
+
+async function imageVerdictFor(imageVerdictStore, candidate, ctx) {
   if (!candidate?.endpointFingerprint || typeof imageVerdictStore?.get !== 'function') return undefined
-  try { return await imageVerdictStore.get(candidate.endpointFingerprint) } catch { return undefined }
+  try {
+    const verdict = await imageVerdictStore.get(candidate.endpointFingerprint)
+    if (!verdict || verdict.hostMode !== 'native-image') return undefined
+    return await currentHostImageDelivery(ctx, candidate.provider, candidate.model) === 'native-image' ? verdict : undefined
+  } catch { return undefined }
 }
 
 async function chooseNextWork({ ctx, config, core, store, now, backoff, excluded, imageVerdictStore, backgroundStopStore }) {
@@ -302,7 +312,7 @@ async function chooseNextWork({ ctx, config, core, store, now, backoff, excluded
   await restorePersistentStops(backoff, collected, backgroundStopStore, ctx, now)
   const candidates = []
   for (const candidate of collected) {
-    const verdict = await imageVerdictFor(imageVerdictStore, candidate)
+    const verdict = await imageVerdictFor(imageVerdictStore, candidate, ctx)
     if (verdict?.state === 'unsupported') {
       excluded.set(candidate.key, { key: candidate.key, reason: 'measured-text-only' })
       continue
@@ -470,6 +480,13 @@ export async function runExactVisionCheck({ ctx, config, core, store, provider, 
   const wantedModel = typeof model === 'string' ? model.trim() : ''
   if (!wantedProvider || !wantedModel) throw Object.assign(new Error('provider and model are required'), { code: 'VISION_CHECK_BACKEND_REQUIRED' })
   const current = activeSettings(ctx, config)
+  if (!localOnlyVisionCallAllowed(core, current, wantedProvider, wantedModel)) {
+    const error = new Error('local-only vision policy prevents testing a nonlocal backend')
+    error.code = 'VISION_LOCAL_ONLY_POLICY'
+    error.benchmarkClass = 'host-configuration'
+    throw error
+  }
+  const declaredBefore = await currentHostImageDelivery(ctx, wantedProvider, wantedModel)
   const candidates = await collectVisionRoutingCandidates(ctx, current, core, store)
   const candidate = candidates.find((entry) => entry?.provider === wantedProvider && entry?.model === wantedModel)
     ?? exactAdapterCandidate(ctx, core, wantedProvider, wantedModel)
@@ -513,6 +530,12 @@ export async function runExactVisionCheck({ ctx, config, core, store, provider, 
     remaining(),
     'exact image check timed out',
   )
+  if (declaredBefore !== await currentHostImageDelivery(ctx, wantedProvider, wantedModel)) {
+    const error = new Error('Host image-input declaration changed during the test; retest the model')
+    error.code = 'VISION_CHECK_STALE_CONFIG'
+    error.benchmarkClass = 'host-configuration'
+    throw error
+  }
   return {
     ok: true,
     key: candidate.key,
@@ -602,13 +625,15 @@ export function createBackgroundCapabilityProfiler({
     excluded.set(candidate.key, { key: candidate.key, reason: 'measured-text-only' })
     clearDeferredForCandidate(candidate)
     await clearPersistentStopsForCandidate(candidate)
-    if (candidate.endpointFingerprint && typeof imageVerdictStore?.markUnsupported === 'function') {
+    if (candidate.endpointFingerprint && typeof imageVerdictStore?.markUnsupported === 'function'
+      && await currentHostImageDelivery(ctx, candidate.provider, candidate.model) === 'native-image') {
       try {
         await imageVerdictStore.markUnsupported({
           fingerprint: candidate.endpointFingerprint,
           key: candidate.key,
           provider: candidate.provider,
           model: candidate.model,
+          hostMode: 'native-image',
           measuredAt: Number(now()),
         })
       } catch (error) {
@@ -1140,7 +1165,9 @@ export function installBackgroundCapabilityProfiling(ctx, config, core, store, o
             const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timed out|timeout|deadline/i.test(String(error?.message ?? ''))
             const failureClass = error?.benchmarkClass ?? classifyCapabilityBenchmarkFailure(error)
             const unsupportedImage = !timedOut && failureClass === 'unsupported-image'
-            if (unsupportedImage) await profiler.recordImageUnsupported(body.provider, body.model)
+            if (unsupportedImage && await currentHostImageDelivery(ctx, body.provider, body.model) === 'native-image') {
+              await profiler.recordImageUnsupported(body.provider, body.model)
+            }
             const code = timedOut
               ? 'VISION_CHECK_TIMEOUT'
               : unsupportedImage
@@ -1151,6 +1178,7 @@ export function installBackgroundCapabilityProfiling(ctx, config, core, store, o
               'VISION_CHECK_INVALID_JSON',
               'VISION_CHECK_BACKEND_REQUIRED',
               'VISION_CHECK_BACKEND_STALE',
+              'VISION_CHECK_STALE_CONFIG',
             ]).has(code)
             sendJson(res, unsupportedImage ? 422 : clientError ? 400 : 502, {
               ok: false,
