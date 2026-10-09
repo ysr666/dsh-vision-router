@@ -30,7 +30,7 @@ const pnpmVersion = readJson(join(dshRoot, 'apps/desktop/node_modules/pnpm/packa
 const root = mkdtempSync(join(tmpdir(), 'dvr-017-desktop-host-'))
 const home = join(root, 'home')
 const project = join(root, 'project')
-const previousEnv = new Map(['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DEEPSEEK_API_KEY']
+const previousEnv = new Map(['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DSH_CLIENT_VERSION', 'DEEPSEEK_API_KEY']
   .map((name) => [name, process.env[name]]))
 const REQUEST_DEADLINE_MS = 6000
 let host
@@ -61,6 +61,11 @@ try {
   mkdirSync(home)
   process.env.DSH_HOME = home
   process.env.DSH_TELEMETRY_MODE = 'DISABLED'
+  // The exact alpha Host's required desktop-product-telemetry row validates
+  // serviceVersion from DSH_CLIENT_VERSION even when sending is disabled.
+  // Real Desktop supplies this app-owned value; reproduce it in the isolated
+  // Desktop fixture rather than suppressing the Host's required plugin.
+  process.env.DSH_CLIENT_VERSION = dshVersion
   process.env.DEEPSEEK_API_KEY = ['keyless', 'dvr', 'desktop', 'structured', 'no-call'].join('-')
 
   prepareDevelopmentProject({
