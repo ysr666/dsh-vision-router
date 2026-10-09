@@ -9,7 +9,7 @@ export const WEB_STARTUP_SERVICE = 'webStartup'
 export const WEB_SERVER_SERVICE = 'webServer'
 export const READY_SERVICE = 'visionRouterWebConnectionReady'
 export const READY_ENTRY = 'vision-router-web-connection-ready'
-export const READY_ENTRY_MODULE = './presets/web-connection-ready.mjs'
+export const READY_ENTRY_MODULE = './presets/web-connection-ready/index.mjs'
 
 function result(status, reason, row, inject = [], generation) {
   return Object.freeze({ status, reason, row, inject: Object.freeze([...inject]), generation })
@@ -111,7 +111,7 @@ export async function inspectDshWebConnectionOverlay(dshRoot) {
   const gates = composed.filter((row) => row?.id === READY_ENTRY)
   // loadOverlayPatches anchors relative insert specifiers beside the actual
   // bundle patch; comparing to the raw YAML string would reject correct Hosts.
-  const expectedGateUrl = pathToFileURL(path.join(dvrRoot, 'presets/web-connection-ready.mjs')).href
+  const expectedGateUrl = pathToFileURL(path.join(dvrRoot, 'presets/web-connection-ready/index.mjs')).href
   if (gates.length !== 1 || gates[0].name !== expectedGateUrl) {
     return result('dangerous-drift', 'private readiness bridge missing or duplicated',
       effective, effectiveInject, classified.generation)

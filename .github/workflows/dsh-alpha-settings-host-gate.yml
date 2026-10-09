@@ -14,7 +14,7 @@ on:
       - 'scripts/build-source-artifacts.mjs'
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'presets/web-connection-ready.mjs'
+      - 'presets/web-connection-ready/**'
       - 'cordis.patch.yml'
       - 'scripts/dsh-peer-admission-contract.mjs'
       - 'scripts/dsh-proxy-egress-contract.mjs'

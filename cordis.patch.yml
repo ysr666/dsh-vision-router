@@ -41,7 +41,7 @@
 # composition 补丁中显式把 progressiveTools 改回 true（启动期配置）。
 - insert:
     - id: vision-router-web-connection-ready
-      name: './presets/web-connection-ready.mjs'
+      name: './presets/web-connection-ready/index.mjs'
     - id: vision-router
       name: dsh-vision-router
       config:

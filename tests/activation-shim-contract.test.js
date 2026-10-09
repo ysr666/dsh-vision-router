@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { apply as applyConnectionGate, classifyHostWebGeneration, validatedTrustedHosts } from '../presets/web-connection-ready.mjs'
+import { apply as applyConnectionGate, classifyHostWebGeneration, validatedTrustedHosts } from '../presets/web-connection-ready/index.mjs'
 
 const PATCH_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -234,4 +234,12 @@ test('connection gate refuses unknown Host protocol and malformed trust lists', 
   assert.throws(() => classifyHostWebGeneration({ protocol: 'ws:' }), /unknown Host Web protocol/)
   assert.throws(() => validatedTrustedHosts(['good', 23]), /trust list is invalid/)
   assert.throws(() => validatedTrustedHosts(null), /trust list is invalid/)
+})
+
+test('Connection readiness sidecar has its own private package root and no browser client', () => {
+  const source = JSON.parse(readFileSync(new URL('../presets/web-connection-ready/package.json', import.meta.url), 'utf8'))
+  const plugin = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.notEqual(source.name, plugin.name)
+  assert.equal(source.private, true)
+  assert.equal(source.dsh?.client, undefined)
 })
