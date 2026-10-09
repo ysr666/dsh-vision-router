@@ -105,6 +105,7 @@ function createBrowserHarness({
   rejectSelection = false,
   returnSelectionFailure = false,
   deferSelection = false,
+  deferCompletion = false,
 } = {}) {
   let registered
   const loader = {
@@ -130,8 +131,12 @@ function createBrowserHarness({
 
   const selections = []
   let releaseSelection
+  let releaseCompletion
   const selectionGate = deferSelection
     ? new Promise((resolve) => { releaseSelection = resolve })
+    : undefined
+  const completionGate = deferCompletion
+    ? new Promise((resolve) => { releaseCompletion = resolve })
     : undefined
   let snapshot = {
     current,
@@ -172,6 +177,9 @@ function createBrowserHarness({
         await selectionGate
       }
       snapshot = { ...snapshot, current: selection, status: 'ready', pending: null, error: null }
+      // Reproduce Desktop's real race: the directory advertises ready
+      // before the selection request's promise has resolved.
+      if (completionGate) await completionGate
       return { ok: true, value: undefined }
     },
   }
@@ -277,6 +285,7 @@ function createBrowserHarness({
     setSnapshot(next) { snapshot = next },
     getSnapshot() { return snapshot },
     resolveSelection() { if (releaseSelection) releaseSelection() },
+    resolveCompletion() { if (releaseCompletion) releaseCompletion() },
     setSettings(next) { settingsSnapshot = next },
     render(extra = {}) {
       React.begin()
@@ -444,6 +453,40 @@ test('issue #284 browser toggle follows the live configured DeepSeek wrapper rou
     error: null,
   })
   assert.equal(buttonOf(harness.render()).props.disabled, true)
+})
+
+test('Vision mode serializes a Host RPC that remains pending after the directory reports ready', async () => {
+  const harness = createBrowserHarness({ deferCompletion: true })
+  const off = buttonOf(harness.render())
+  off.props.onClick()
+  assert.equal(harness.selections.length, 1)
+  assert.equal(harness.getSnapshot().status, 'ready')
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
+
+  // A rerender can show the target state before the Host RPC resolves.
+  // The chip must stay busy/disabled and refuse both a stale pre-render
+  // click and a second current button click.
+  const pending = buttonOf(harness.render())
+  assert.equal(pending.props['aria-pressed'], true)
+  assert.equal(pending.props['aria-busy'], true)
+  assert.equal(pending.props.disabled, true)
+  off.props.onClick()
+  pending.props.onClick()
+  assert.equal(harness.selections.length, 1)
+
+  harness.resolveCompletion()
+  await new Promise((resolve) => setImmediate(resolve))
+  const ready = buttonOf(harness.render())
+  assert.equal(ready.props['aria-pressed'], true)
+  assert.equal(ready.props['aria-busy'], false)
+  assert.equal(ready.props.disabled, false)
+  ready.props.onClick()
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  await new Promise((resolve) => setImmediate(resolve))
+  const reverted = buttonOf(harness.render())
+  assert.equal(reverted.props['aria-pressed'], false)
+  assert.equal(reverted.props.disabled, false)
 })
 
 test('issue #284 image-session rejection uses transient toast and keeps the real ON state usable', async () => {
