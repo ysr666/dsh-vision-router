@@ -31,7 +31,7 @@ const HOST_ROWS = [
   {
     id: 'connection',
     name: '@deepseek-ai/dsh-client-connection',
-    inject: ['webRuntime', 'webServer'],
+    inject: ['webStartup', 'webServer', 'visionRouterWebConnectionReady'],
   },
 ]
 const PLUGIN_ROW = { id: 'vision-router', name: 'dsh-vision-router' }
