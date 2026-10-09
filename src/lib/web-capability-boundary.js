@@ -259,7 +259,11 @@ function runWithRemoteReadRedaction(path, handler, req, res) {
   const complete = (body, rejected = false, callback) => {
     if (done) return res
     done = true
-    restore()
+    // On rejection, deliberately retain the buffered wrappers after sending
+    // the safe error. A drifting async handler may continue calling write()
+    // or end(); restoring the raw methods here would expose those later bytes.
+    // The response is already ended and these wrappers swallow late writes.
+    if (!rejected) restore()
     stripBodyHeaders()
     if (rejected) {
       // An invalid or oversized response is an internal gateway failure. Do
@@ -304,6 +308,7 @@ function runWithRemoteReadRedaction(path, handler, req, res) {
   }
   const failed = () => complete(undefined, true)
   function redactedWriteHead(status, maybeMessage, maybeHeaders) {
+    if (done) return this
     const message = typeof maybeMessage === 'string' ? maybeMessage : undefined
     const headers = message === undefined ? maybeMessage : maybeHeaders
     if (head || !Number.isInteger(status) || status < 100 || status > 599 ||
