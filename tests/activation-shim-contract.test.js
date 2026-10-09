@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { apply as applyConnectionGate, classifyHostWebGeneration, validatedTrustedHosts } from '../presets/web-connection-ready.mjs'
 
 const PATCH_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -191,4 +192,46 @@ test('the contract fails when the identity assertion drifts from the official pa
     ),
   )
   assert.ok(findings.some((finding) => /identity assertion changed/.test(finding)))
+})
+
+test('alpha.2 gate preserves exactly Host Web Startup authorities', () => {
+  const issued = []
+  const ctx = {
+    webServer: { protocol: 'https:' },
+    webStartup: { trustedHosts: ['app.example', '127.0.0.1'] },
+    provide(name, value) { issued.push([name, value]) },
+    inject() { throw new Error('new Host must not request removed webRuntime') },
+  }
+  assert.equal(classifyHostWebGeneration(ctx.webServer), 'startup')
+  applyConnectionGate(ctx)
+  assert.equal(issued.length, 1)
+  assert.equal(issued[0][0], 'visionRouterWebConnectionReady')
+  assert.deepEqual(issued[0][1].trustedHosts, ['app.example', '127.0.0.1'])
+  assert.ok(Object.isFrozen(issued[0][1].trustedHosts))
+})
+
+test('old Host gate waits for real webRuntime LAN authorities, never startup-only fallback', () => {
+  let callback
+  let provided
+  const ctx = {
+    webServer: {},
+    webStartup: { trustedHosts: ['declared.example'] },
+    provide() { throw new Error('legacy gate must wait for native webRuntime') },
+    inject(deps, cb) { assert.deepEqual(deps, ['webRuntime']); callback = cb },
+  }
+  assert.equal(classifyHostWebGeneration(ctx.webServer), 'legacy-runtime')
+  applyConnectionGate(ctx)
+  assert.equal(provided, undefined)
+  callback({
+    webRuntime: { trustedHosts: ['192.0.2.5', 'declared.example'] },
+    provide(name, value) { assert.equal(name, 'visionRouterWebConnectionReady'); provided = value },
+  })
+  assert.deepEqual(provided.trustedHosts, ['192.0.2.5', 'declared.example'])
+  assert.notStrictEqual(provided.trustedHosts, ctx.webStartup.trustedHosts)
+})
+
+test('connection gate refuses unknown Host protocol and malformed trust lists', () => {
+  assert.throws(() => classifyHostWebGeneration({ protocol: 'ws:' }), /unknown Host Web protocol/)
+  assert.throws(() => validatedTrustedHosts(['good', 23]), /trust list is invalid/)
+  assert.throws(() => validatedTrustedHosts(null), /trust list is invalid/)
 })
