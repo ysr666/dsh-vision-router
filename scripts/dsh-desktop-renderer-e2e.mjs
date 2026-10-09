@@ -774,19 +774,50 @@ try {
   await exerciseVisionOnboardingSettingsPath(page)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
+  if (initialPressed !== 'true' && initialPressed !== 'false') {
+    throw new Error(`Vision toggle began without an authoritative pressed state: ${String(initialPressed)}`)
+  }
   const toggledPressed = initialPressed === 'true' ? 'false' : 'true'
-  const waitForSettledVisionState = async (expected) => {
-    await page.waitForFunction((pressed) => {
-      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
-      return node?.getAttribute('aria-pressed') === pressed
-        && node.getAttribute('aria-busy') !== 'true'
-        && node.disabled === false
-    }, expected)
+  const inspectToggleState = async () => await page.evaluate(() => {
+    const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    if (!node) return { present: false }
+    return {
+      present: true,
+      pressed: node.getAttribute('aria-pressed'),
+      busy: node.getAttribute('aria-busy'),
+      disabled: node.disabled === true,
+      label: node.getAttribute('aria-label'),
+      title: node.title,
+    }
+  })
+  const waitForSettledVisionState = async (expected, direction) => {
+    try {
+      await page.waitForFunction((pressed) => {
+        const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+        return node?.getAttribute('aria-pressed') === pressed
+          && node.getAttribute('aria-busy') !== 'true'
+          && node.disabled === false
+      }, expected, { timeout: 30_000 })
+      // A ready directory projection alone is not a completed selection RPC.
+      // Require the accessible state to stay settled; never click again or
+      // silently accept the wrong model when this verification fails.
+      await page.waitForTimeout(200)
+      const stable = await inspectToggleState()
+      if (stable.pressed !== expected || stable.busy === 'true' || stable.disabled) {
+        throw new Error(`Vision toggle state was transient: ${JSON.stringify(stable)}`)
+      }
+    } catch (error) {
+      const observed = await inspectToggleState().catch(() => ({ unavailable: true }))
+      throw new Error(
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)})`,
+        { cause: error },
+      )
+    }
   }
   await toggle.click()
-  await waitForSettledVisionState(toggledPressed)
+  await waitForSettledVisionState(toggledPressed, 'first transition')
   await toggle.click()
-  await waitForSettledVisionState(initialPressed)
+  await waitForSettledVisionState(initialPressed, 'return transition')
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()
