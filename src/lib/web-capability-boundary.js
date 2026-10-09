@@ -204,40 +204,148 @@ function redactRemoteBody(path, body) {
   return body
 }
 
-/** Intercept one JSON end() so local capability material is never issued remotely. */
+// Remote metadata is small. Never buffer an unbounded response from a future
+// handler revision: local-only diagnostics should not turn into remote memory DoS.
+const MAX_REMOTE_REDACTION_BYTES = 1024 * 1024
+
+/**
+ * A remote response requiring redaction must be completely validated *before*
+ * emitting headers or bytes. Unlike intercepting end() alone, this also covers
+ * write()+end(), malformed JSON, oversize bodies and async stream completion.
+ * No handler may transmit its raw token, path or other local fields while the
+ * remote body remains unvalidated.
+ */
 function runWithRemoteReadRedaction(path, handler, req, res) {
   const originalEnd = res?.end
-  if (typeof originalEnd !== 'function') return handler(req, res)
-  let active = true
-  res.end = function redactedEnd(chunk, ...args) {
-    if (!active) return originalEnd.call(this, chunk, ...args)
-    let next = chunk
-    try {
-      if (typeof chunk === 'string' || Buffer.isBuffer(chunk) || chunk instanceof Uint8Array) {
-        const parsed = JSON.parse(Buffer.isBuffer(chunk) || chunk instanceof Uint8Array ? Buffer.from(chunk).toString('utf8') : chunk)
-        next = JSON.stringify(redactRemoteBody(path, parsed))
-        try { this.removeHeader?.('content-length') } catch { /* best effort */ }
-      }
-    } catch {
-      // If a future handler stops returning JSON, do not corrupt its response.
-    }
-    return originalEnd.call(this, next, ...args)
+  const originalWrite = res?.write
+  const originalWriteHead = res?.writeHead
+  const originalFlushHeaders = res?.flushHeaders
+  if (typeof originalEnd !== 'function' || typeof originalWriteHead !== 'function') {
+    throw new TypeError('vision-router: remote redaction requires a buffered HTTP response')
   }
-  const redactedEndReference = res.end
+
+  const chunks = []
+  let bytes = 0
+  let done = false
+  let head
   const restore = () => {
-    active = false
-    if (res.end === redactedEndReference) res.end = originalEnd
+    if (res.end === redactedEnd) res.end = originalEnd
+    if (res.write === redactedWrite) {
+      if (originalWrite === undefined) delete res.write
+      else res.write = originalWrite
+    }
+    if (res.writeHead === redactedWriteHead) res.writeHead = originalWriteHead
+    if (res.flushHeaders === redactedFlushHeaders) {
+      if (originalFlushHeaders === undefined) delete res.flushHeaders
+      else res.flushHeaders = originalFlushHeaders
+    }
   }
-  let result
+  const stripStagedHeaders = () => {
+    // Route handlers own the pre-redaction response. Even header values may
+    // contain future local-only tokens, paths or Set-Cookie material.
+    // Never forward any unreviewed staged header to a remote client.
+    try {
+      for (const key of res.getHeaderNames?.() ?? []) res.removeHeader?.(key)
+    } catch { /* a test double may not expose the header table */ }
+    for (const key of ['content-length', 'content-encoding', 'transfer-encoding']) {
+      try { res.removeHeader?.(key) } catch {}
+    }
+  }
+  const safeHeaders = () => ({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
+  const complete = (body, rejected = false, callback) => {
+    if (done) return res
+    done = true
+    // On rejection, deliberately retain the buffered wrappers after sending
+    // the safe error. A drifting async handler may continue calling write()
+    // or end(); restoring the raw methods here would expose those later bytes.
+    // The response is already ended and these wrappers swallow late writes.
+    if (!rejected) restore()
+    stripStagedHeaders()
+    if (rejected) {
+      // An invalid or oversized response is an internal gateway failure. Do
+      // not repeat the untrusted data or send previously staged headers.
+      originalWriteHead.call(res, 502, safeHeaders())
+      return originalEnd.call(res, JSON.stringify({
+        ok: false,
+        error: 'remote response could not be safely redacted',
+      }), callback)
+    }
+    if (head) {
+      originalWriteHead.call(res, head.status, safeHeaders())
+    } else {
+      originalWriteHead.call(res, Number.isInteger(res.statusCode) ? res.statusCode : 200, safeHeaders())
+    }
+    return originalEnd.call(res, body, callback)
+  }
+  const append = (chunk, encoding) => {
+    if (chunk === undefined || chunk === null) return true
+    let value
+    try {
+      if (Buffer.isBuffer(chunk)) value = chunk
+      else if (typeof chunk === 'string') value = Buffer.from(chunk, typeof encoding === 'string' ? encoding : 'utf8')
+      else if (chunk instanceof Uint8Array) value = Buffer.from(chunk)
+      else return false
+    } catch { return false }
+    if (value.length > MAX_REMOTE_REDACTION_BYTES - bytes) return false
+    bytes += value.length
+    chunks.push(value)
+    return true
+  }
+  const failed = () => complete(undefined, true)
+  function redactedWriteHead(status, maybeMessage, maybeHeaders) {
+    if (done) return this
+    const message = typeof maybeMessage === 'string' ? maybeMessage : undefined
+    const headers = message === undefined ? maybeMessage : maybeHeaders
+    if (head || !Number.isInteger(status) || status < 100 || status > 599 ||
+      (headers !== undefined && (!headers || typeof headers !== 'object' || Array.isArray(headers)))) {
+      failed()
+      return this
+    }
+    head = { status, message, headers }
+    return this
+  }
+  function redactedFlushHeaders() {
+    // Deferring the header is essential: once sent, an invalid JSON body
+    // cannot be replaced by a safe 502.
+  }
+  function redactedWrite(chunk, encoding, callback) {
+    const completeWrite = typeof encoding === 'function' ? encoding : callback
+    if (!done && !append(chunk, encoding)) failed()
+    if (typeof completeWrite === 'function') queueMicrotask(completeWrite)
+    return !done
+  }
+  function redactedEnd(chunk, encoding, callback) {
+    if (done) return res
+    const completeEnd = typeof encoding === 'function' ? encoding : callback
+    if (!append(chunk, encoding)) return failed()
+    try {
+      const body = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8'))
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return failed()
+      const redacted = JSON.stringify(redactRemoteBody(path, body))
+      if (Buffer.byteLength(redacted, 'utf8') > MAX_REMOTE_REDACTION_BYTES) return failed()
+      return complete(redacted, false, completeEnd)
+    } catch {
+      return failed()
+    }
+  }
+
+  res.writeHead = redactedWriteHead
+  res.write = redactedWrite
+  res.end = redactedEnd
+  res.flushHeaders = redactedFlushHeaders
   try {
-    result = handler(req, res)
-  } catch (error) {
-    restore()
-    throw error
+    const result = handler(req, res)
+    if (result && typeof result.then === 'function') {
+      return Promise.resolve(result).catch(() => { if (!done) failed() })
+    }
+    return result
+  } catch {
+    if (!done) failed()
+    return undefined
   }
-  if (result && typeof result.then === 'function') return result.finally(restore)
-  restore()
-  return result
 }
 
 function guardedRoute(route, getConnection) {

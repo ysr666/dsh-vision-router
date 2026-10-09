@@ -789,6 +789,129 @@ test('remote update-check keeps version metadata but never receives the one-clic
   assert.equal(local.autoUpdate.token, 'secret-token')
 })
 
+test('issue #679 remote redaction buffers split JSON and fails closed on invalid, oversized or delayed output', async () => {
+  const streamedMarker = ['streamed', 'canary', 'token'].join('-')
+  const headerMarker = ['header', 'canary', 'token'].join('-')
+  const invalidMarker = ['non-json', 'canary', 'payload'].join('-')
+  const remoteRequest = {
+    method: 'GET',
+    socket: { remoteAddress: '192.0.2.44' },
+    headers: { host: 'dsh.example.test' },
+  }
+  async function probe(path, handler, request = remoteRequest) {
+    let registered
+    const child = {
+      webServer: {
+        register(route) {
+          registered = route
+          return () => {}
+        },
+      },
+      effect(factory) { return factory() },
+    }
+    installLocalMutationRouteBoundary({
+      inject(_dependencies, callback) { return callback(child) },
+    }).inject(['webServer'], (scope) => scope.webServer.register({
+      kind: 'exact',
+      path,
+      handler,
+    }))
+    const res = responseRecorder()
+    res.rawWrites = []
+    res.write = function write(chunk) {
+      this.rawWrites.push(String(chunk))
+      this.body += String(chunk)
+      return true
+    }
+    await registered.handler(request, res)
+    return res
+  }
+
+  const updateBody = JSON.stringify({
+    ok: true, updateAvailable: true,
+    autoUpdate: { supported: true, token: streamedMarker },
+  })
+  const split = await probe('/_dsh/vision-router/update-check', async (_req, res) => {
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': '999',
+      'set-cookie': headerMarker,
+      'x-local-path': '/private/path',
+    })
+    res.write(updateBody.slice(0, 33))
+    await Promise.resolve()
+    res.write(Buffer.from(updateBody.slice(33, -1)))
+    res.end(updateBody.slice(-1))
+  })
+  assert.equal(split.status, 200)
+  assert.deepEqual(split.rawWrites, [], 'raw chunks must not reach the socket before redaction')
+  assert.equal(JSON.parse(split.body).autoUpdate.token, undefined)
+  assert.equal(split.headers['content-length'], undefined)
+  assert.equal(split.headers['set-cookie'], undefined, 'sensitive staged headers must never reach remote clients')
+  assert.equal(split.headers['x-local-path'], undefined)
+  assert.doesNotMatch(split.body, new RegExp(streamedMarker))
+
+  const log = await probe('/_dsh/vision-router/logs', (_req, res) => {
+    const text = JSON.stringify({ ok: true, directory: '/private/path', file: 'secrets.log', local: true, canOpen: true })
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.write(text.slice(0, 15))
+    res.end(text.slice(15))
+  })
+  const logBody = JSON.parse(log.body)
+  assert.equal(logBody.directory, undefined)
+  assert.equal(logBody.file, undefined)
+  assert.equal(logBody.local, false)
+  assert.equal(logBody.canOpen, false)
+
+  const invalid = await probe('/_dsh/vision-router/update-check', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '29' })
+    res.end(invalidMarker)
+  })
+  assert.equal(invalid.status, 502)
+  assert.match(invalid.headers['content-type'], /application\/json/)
+  assert.equal(invalid.headers['cache-control'], 'no-store')
+  assert.doesNotMatch(invalid.body, new RegExp(invalidMarker))
+
+  const huge = await probe('/_dsh/vision-router/update-check', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.write('{"token":"')
+    res.write('X'.repeat(1024 * 1024 + 1))
+    res.end('"}')
+  })
+  assert.equal(huge.status, 502)
+  assert.ok(huge.body.length < 200)
+  assert.deepEqual(huge.rawWrites, [])
+
+  // A synchronous handler that schedules a later write and returns without a
+  // promise must remain under the guard until its eventual end().
+  let delayedEnd
+  const deferred = new Promise((resolve) => { delayedEnd = resolve })
+  const delayed = await probe('/_dsh/vision-router/update-check', (_req, res) => {
+    void deferred.then(() => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(updateBody)
+    })
+  })
+  // The handler returned before its deferred end; no bytes should have leaked.
+  assert.equal(delayed.body, '')
+  delayedEnd()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(JSON.parse(delayed.body).autoUpdate.token, undefined)
+
+  // The genuine local path is intentionally not forced through remote
+  // redaction: the local update token is necessary for self-update replay
+  // protection and must remain available to the local UI.
+  const local = await probe('/_dsh/vision-router/update-check', (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(updateBody)
+  }, {
+    method: 'GET',
+    socket: { remoteAddress: '127.0.0.1' },
+    headers: { host: 'localhost:3080' },
+  })
+  assert.equal(JSON.parse(local.body).autoUpdate.token, streamedMarker)
+})
+
 test('remote log metadata is redacted even when a reverse proxy makes the TCP peer loopback', async () => {
   let route
   const child = {
