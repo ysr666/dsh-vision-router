@@ -19,25 +19,29 @@
   name: '@deepseek-ai/dsh-client-modules'
   inject: [webServer]
 
-# DSH rc.6 至 0.1.5-rc.2 的 Web bundle 里，Connection provider row 只声明
-# webRuntime，但 HostConnectionService.rpc/fetch 的 accessor 会把调用 owner
-# 追踪回这个 provider fiber；rpc.handle() 最终又通过 owner.webServer.register()
-# 挂载路由。因此仅在 DVR 的调用 child fiber 注入 webServer 仍不足以覆盖
-# Cordis Service shadow 语义（issue #478 / Desktop 2.0.9 可稳定复现）。
+# DSH 0.1.x / 0.2.0-rc.2 Connection 的 Host owner 必须注入 webServer
+# （issue #478），但 0.2.1-alpha.2 已移除 webRuntime、改为 webStartup。
+# 不要静态引用任一代独有的 webRuntime：它会使新 Host 必需服务永远待定。
 #
-# 保留官方既有 webRuntime 依赖，并让 Connection provider 本身同时等待
-# webServer。这样不改 connection config / trustedHosts，不复制 RPC 协议或鉴权，
-# 也不改变非 Web surface。exact-source contract 会监控上游 row；官方一旦
-# 自己拥有 webServer，此 shim 必须随支持窗口审计退休，避免覆盖未来新增依赖。
+# 本层统一让 Connection 在 webServer、webStartup 及 DVR 私有 ready gate
+# 均就绪后启动；ready gate 在旧 Host 等官方 webRuntime（含 bind-derived
+# LAN authorities），在新 Host 直接读取官方 webStartup.trustedHosts。
+# trustedHosts 只转交 Host 授权列表，不自行扩大、合并或猜测网络信任；
+# Cookie、/api 和 RPC 仍归官方 Connection 所有。Host 新增配置项时，
+# exact-source contract 必须拒绝未经审查的整段 config 覆盖。
 - id: connection
   name: '@deepseek-ai/dsh-client-connection'
-  inject: [webRuntime, webServer]
+  inject: [webStartup, webServer, visionRouterWebConnectionReady]
+  config:
+    trustedHosts: !!js ctx.visionRouterWebConnectionReady.trustedHosts
 
 # 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
 # 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
 # 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在 profile /
 # composition 补丁中显式把 progressiveTools 改回 true（启动期配置）。
 - insert:
+    - id: vision-router-web-connection-ready
+      name: './presets/web-connection-ready.mjs'
     - id: vision-router
       name: dsh-vision-router
       config:
