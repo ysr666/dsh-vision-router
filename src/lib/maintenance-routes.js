@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { createCachedUpdateChecker } from './update-check.js'
+import { isLocalUiRequest } from './web-capability-boundary.js'
 import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './self-update.js'
 
 function json(res, status, body, headers = {}) {
@@ -66,7 +67,12 @@ export function installVisionMaintenanceRoutes(ctx, options = {}) {
             res.end()
             return
           }
-          const force = /(?:[?&])force=1(?:&|$)/.test(String(req.url ?? ''))
+          // Forced refresh causes outbound Host network traffic. Remote Web may
+          // read already-cached update status, but must never bypass the cache
+          // with ?force=1. Reuse the existing local-UI provenance boundary;
+          // do not trust the query string or caller-supplied proxy headers.
+          const requestedForce = /(?:[?&])force=1(?:&|$)/.test(String(req.url ?? ''))
+          const force = requestedForce && isLocalUiRequest(req)
           const result = await updateChecker.check(force)
           json(res, 200, updateResultForClient(result), { 'cache-control': 'no-store' })
         },
