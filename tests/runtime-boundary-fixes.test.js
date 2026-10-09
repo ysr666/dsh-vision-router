@@ -909,7 +909,7 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
     socket: { remoteAddress: '127.0.0.1' },
     headers: { host: 'localhost:3080' },
   })
-  assert.equal(JSON.parse(local.body).autoUpdate.token, 'SECRET_STREAMED_TOKEN')
+  assert.equal(JSON.parse(local.body).autoUpdate.token, streamedMarker)
 })
 
 test('remote log metadata is redacted even when a reverse proxy makes the TCP peer loopback', async () => {
