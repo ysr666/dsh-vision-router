@@ -33,6 +33,12 @@ export function classifyWebConnectionRows(rows) {
   }
   const inject = [...new Set(row.inject)]
   if (inject.includes(WEB_SERVER_SERVICE)) {
+    // webServer alone does not preserve the Host's trust-generation owner.
+    // Retire only when the official row also names a recognized source.
+    if (!inject.includes(WEB_RUNTIME_SERVICE) && !inject.includes(WEB_STARTUP_SERVICE)) {
+      return result('dangerous-drift', 'official Connection declares webServer without native trust source',
+        row, inject)
+    }
     return result('retire-ready', 'official Connection now injects webServer; review removal of DVR bridge',
       row, inject)
   }
