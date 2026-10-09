@@ -334,6 +334,27 @@ export function apply(ctx) {
         response.end(JSON.stringify({ sessions: payload }))
       },
     }), 'desktop-e2e: Session source diagnostics')
+    // Separate test-only Host event probe: snapshots the accepted model
+    // selection events without session IDs, prompts, tokens or credentials.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-model-selections',
+      handler(_request, response) {
+        const sessions = scope.sessions.list().map((session) => {
+          const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
+          const selections = events.filter((event) => event?.type === 'model/selection')
+            .map((event) => ({
+              provider: typeof event.data?.provider === 'string' ? event.data.provider.slice(0, 120) : null,
+              model: typeof event.data?.model === 'string' ? event.data.model.slice(0, 120) : null,
+              reasoningEffort: typeof event.data?.reasoningEffort === 'string'
+                ? event.data.reasoningEffort.slice(0, 80) : null,
+            }))
+          return { count: selections.length, latest: selections.slice(-8) }
+        }).filter((session) => session.count > 0)
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ sessions }))
+      },
+    }), 'desktop-e2e: accepted model selection evidence')
   })
 }
 `)
@@ -442,6 +463,18 @@ async function readHostSessionSources(authenticatedUrl) {
       { cause: error },
     )
   }
+}
+
+async function readHostModelSelections(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-model-selections'
+  target.search = ''
+  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  if (!response.ok) throw new Error(`model selection probe returned HTTP ${response.status}`)
+  const payload = await response.json()
+  if (!Array.isArray(payload?.sessions)) throw new Error('model selection probe returned an invalid shape')
+  return payload.sessions.slice(0, 8)
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
@@ -790,6 +823,34 @@ try {
       title: node.title,
     }
   })
+  // Test-only state timeline. Observe real React button mutations; never
+  // infer success from a click, retry a click, or collect arbitrary page text.
+  await page.evaluate(() => {
+    const history = []
+    const record = (phase) => {
+      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+      history.push({
+        phase,
+        ms: Math.round(performance.now()),
+        pressed: node?.getAttribute('aria-pressed') ?? null,
+        busy: node?.getAttribute('aria-busy') ?? null,
+        disabled: node?.disabled === true,
+      })
+      if (history.length > 48) history.shift()
+    }
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) =>
+        mutation.target?.getAttribute?.('data-vision-router-mode-toggle') === 'true')) {
+        record('mutation')
+      }
+    })
+    observer.observe(document.body, {
+      subtree: true, attributes: true,
+      attributeFilter: ['aria-pressed', 'aria-busy', 'disabled'],
+    })
+    window.__dvrDesktopToggleAudit = { history, record }
+    record('initial')
+  })
   const waitForSettledVisionState = async (expected, direction) => {
     const deadline = Date.now() + 30_000
     let lastObserved
@@ -813,8 +874,17 @@ try {
       throw new Error('continuous stability window was not reached')
     } catch (error) {
       const observed = await inspectToggleState().catch(() => lastObserved ?? ({ unavailable: true }))
+      const buttonHistory = await page.evaluate(() =>
+        window.__dvrDesktopToggleAudit?.history?.slice(-48) ?? [],
+      ).catch(() => [])
+      // A missing second model/selection event means that the OFF click was
+      // not accepted by the Host. Two accepted events with the UI still ON
+      // point to a client projection or later Host reset instead. Keep the
+      // probe read-only and protect the original timeout as the root error.
+      const hostSelections = await readHostModelSelections(authenticatedHostUrl)
+        .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, hostSelections=${JSON.stringify(hostSelections)})`,
         { cause: error },
       )
     }
@@ -822,8 +892,10 @@ try {
   // Do not start an adversarial double-toggle during the Host's initial
   // model-catalog hydration. The initial state must be stably actionable too.
   await waitForSettledVisionState(initialPressed, 'initial ready baseline')
+  await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
   await toggle.click()
   await waitForSettledVisionState(toggledPressed, 'first transition')
+  await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
 
