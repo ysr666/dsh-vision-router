@@ -378,6 +378,31 @@ test('local UI capability requires loopback transport and a local Host on real H
     'a reverse proxy must not turn an external Host into a local-machine capability',
   )
   assert.equal(isLocalUiRequest({ socket: { remoteAddress: '192.168.1.8' }, headers: { host: '127.0.0.1:3000' } }), false)
+  const proxyMarkers = {
+    forwarded: 'for=198.51.100.4',
+    'x-forwarded-for': '198.51.100.4',
+    'x-forwarded-host': 'public.example',
+    'x-forwarded-proto': 'https',
+    'x-real-ip': '198.51.100.4',
+    'x-client-ip': '198.51.100.4',
+    'true-client-ip': '198.51.100.4',
+    'cf-connecting-ip': '198.51.100.4',
+    via: '1.1 proxy',
+  }
+  for (const [name, value] of Object.entries(proxyMarkers)) {
+    for (const remoteAddress of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) {
+      assert.equal(isLocalUiRequest({
+        socket: { remoteAddress },
+        headers: { host: 'localhost:3000', [name]: value },
+      }), false, `proxy marker ${name} must not grant local-only actions over ${remoteAddress}`)
+    }
+  }
+  assert.equal(isLocalUiRequest({
+    socket: { remoteAddress: '127.0.0.1' },
+    headers: { host: '127.0.0.1:3000', FORWARDED: 'for=198.51.100.4' },
+  }), false, 'normalize header case defensively')
+  assert.equal(isLocalUiRequest({ socket: { remoteAddress: '127.0.0.1' }, headers: { host: 'localhost:3000' } }), true,
+    'ordinary local UI without proxy evidence stays fully usable')
   assert.equal(isLocalUiRequest({ headers: {} }), true, 'internal direct handler calls remain supported')
 })
 

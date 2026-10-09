@@ -126,17 +126,42 @@ function isLocalHostName(value) {
   return host === 'localhost' || host.endsWith('.localhost') || isLoopbackAddress(host)
 }
 
+// Forwarding metadata can only *deny* a local-machine capability. Never
+// interpret X-Forwarded-For or similar caller-controlled headers as proof
+// that a request really originated at the local browser.
+const PROXY_PROVENANCE_HEADERS = new Set([
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+  'x-client-ip',
+  'true-client-ip',
+  'cf-connecting-ip',
+  'via',
+])
+
+function hasProxyProvenance(req) {
+  const headers = req?.headers
+  return !!headers && typeof headers === 'object' &&
+    Object.keys(headers).some((name) => PROXY_PROVENANCE_HEADERS.has(name.toLowerCase()))
+}
+
 /**
  * Browser-facing local capability check. A real network request needs BOTH a
- * loopback TCP peer and a loopback/localhost Host header. This prevents the
- * common reverse-proxy shape (proxy -> 127.0.0.1, external Host preserved)
- * from silently acquiring local-machine capabilities. Internal direct handler
- * calls have no transport and remain compatible for tests/host composition.
+ * loopback TCP peer and a loopback/localhost Host header, with no forwarding
+ * metadata. This protects supported proxy deployments preserving external Host
+ * and fails closed when a proxy rewrites Host but keeps standard hop markers.
+ * A proxy that erases every originating fact is indistinguishable from a
+ * genuine loopback browser request; these headers are not an attestation.
+ * Internal direct handler calls have no socket and remain supported.
  */
 export function isLocalUiRequest(req) {
   const transport = req?.socket ?? req?.connection
   if (!transport) return true
-  return isLoopbackAddress(transport.remoteAddress) && isLocalHostName(requestHostName(req))
+  return isLoopbackAddress(transport.remoteAddress) &&
+    isLocalHostName(requestHostName(req)) &&
+    !hasProxyProvenance(req)
 }
 
 export function isLocalMutationRoute(path, method) {

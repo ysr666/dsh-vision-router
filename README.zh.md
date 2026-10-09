@@ -354,6 +354,8 @@ vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 
 Web profile 现在提供一级 **设置 → Vision Router** 页面。常规页把识图模型与 v2 路由授权放在一起；「识图策略 / 本地与设备 / 高级 / 诊断」分别承载工具行为、本地后端、敏感/性能设置和排障。
 
+**反向代理部署须知：**遵循[DSH上游部署要求](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/docs/user/guide/public-deployments.md)，代理转发时必须保留浏览器原始 `Host`，不能把远程访问改写成 `localhost` 后冒充“本机专属操作”。带常见代理转发标记的回环请求将失去Vision Router本机操作权限；但代理如果同时改写 `Host` 且抹掉全部来源信息，现有Host接口仍无法可靠辨别。参见[远程设置安全说明](docs/remote-settings.md)及[Issue #680](https://github.com/ysr666/dsh-vision-router/issues/680)。
+
 - **识图模型链**：`vision_describe` 等视觉工具真正调用的图片模型，内置免费链固定作为最终兜底；
 - **模型选择方式**：继续按配置顺序，或显式开启能力感知 Auto，并选择「综合 / 质量 / 速度 / 本地」偏好；
 - **后台补充能力数据**：`关闭 / 仅本地与免费 / 所有模型`，独立授权，不会因开启 Auto 自动开启；
