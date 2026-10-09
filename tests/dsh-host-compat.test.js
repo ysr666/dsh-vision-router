@@ -478,8 +478,11 @@ test('web client modules wait for the official webServer carrier across supporte
 })
 
 test('connection/webServer overlay lifecycle classifies required, retire-ready, and dangerous Host drift', () => {
-  const base = { id: 'connection', name: '@deepseek-ai/dsh-client-connection', inject: ['webRuntime'] }
+  const base = { id: 'connection', name: '@deepseek-ai/dsh-client-connection', inject: ['webRuntime'], config: { trustedHosts: { __jsExpr: 'ctx.webRuntime.trustedHosts' } } }
   assert.equal(classifyWebConnectionRows([base]).status, 'shim-required')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup'], config: { trustedHosts: { __jsExpr: 'ctx.webStartup.trustedHosts' } } }]).status, 'shim-required')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup'] }]).status, 'dangerous-drift')
+  assert.equal(classifyWebConnectionRows([{ ...base, config: { trustedHosts: { __jsExpr: 'ctx.webRuntime.trustedHosts' }, cookieMaxAgeDays: 30 } }]).status, 'dangerous-drift')
   assert.equal(
     classifyWebConnectionRows([{ ...base, inject: ['webRuntime', 'webServer'] }]).status,
     'retire-ready',
@@ -507,7 +510,7 @@ test('web connection provider waits for both runtime trust and the Web route car
   const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
   assert.match(
     patch,
-    /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webRuntime, webServer\]/,
+    /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer, visionRouterWebConnectionReady\]\s+config:\s*\n\s+trustedHosts: !!js ctx\.visionRouterWebConnectionReady\.trustedHosts/,
   )
 })
 

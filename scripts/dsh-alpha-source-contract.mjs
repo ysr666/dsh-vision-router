@@ -43,7 +43,9 @@ assert.equal(actualCommit, expectedCommit, `expected DSH source commit ${expecte
 
 const rootManifest = JSON.parse(await readFile(path.join(dshRoot, 'package.json'), 'utf8'))
 assert.equal(rootManifest.version, expectedVersion, `expected DSH ${expectedVersion}`)
-assert.equal(rootManifest.packageManager, 'pnpm@11.7.0')
+const expectedPnpm = String(process.env.DSH_EXPECTED_PNPM || '11.7.0').trim()
+assert.match(expectedPnpm, /^\d+\.\d+\.\d+$/, 'DSH_EXPECTED_PNPM must be an exact semver release')
+assert.equal(rootManifest.packageManager, `pnpm@${expectedPnpm}`)
 
 // 1. The exact canary Host schema must retain every bundle field. This also
 // protects the field names from drifting under us in a later source canary.
@@ -230,7 +232,7 @@ assert.match(
   /['"]session\/event['"]\(this: Scoped<Session>, session: Session, event: SessionEvent\): void/,
   'supported Hosts must expose the post-commit session/event(session, event) seam',
 )
-const sessionLogCommitAt = sessionCoreSource.indexOf('this.log.push(event as SessionEvent)')
+const sessionLogCommitAt = sessionCoreSource.search(/this\.log\.push\(event(?: as SessionEvent)?\)/)
 const sessionObserverPublishAt = sessionCoreSource.indexOf(
   "invokeContainedSessionObservers(entry.emitCtx, 'session/event'",
 )
