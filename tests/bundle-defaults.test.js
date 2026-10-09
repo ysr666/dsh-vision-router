@@ -598,9 +598,13 @@ test('Desktop renderer E2E waits for each Vision selection transaction to settle
     'the real Host check must exercise the opposite state regardless of its persisted initial mode')
   assert.match(source, /node\.getAttribute\('aria-busy'\) !== 'true'/)
   assert.match(source, /node\.disabled === false/)
-  const firstToggle = source.indexOf('await waitForSettledVisionState(toggledPressed)')
+  const firstToggle = source.indexOf("await waitForSettledVisionState(toggledPressed, 'first transition')")
   const secondClick = source.indexOf('await toggle.click()', firstToggle)
-  const restored = source.indexOf('await waitForSettledVisionState(initialPressed)', secondClick)
+  const restored = source.indexOf("await waitForSettledVisionState(initialPressed, 'return transition')", secondClick)
+  assert.match(source, /await page\.waitForTimeout\(200\)/,
+    'the first toggle must remain stably actionable before the second click')
+  assert.match(source, /observed=\$\{JSON\.stringify\(observed\)\}/,
+    'failed transitions must emit bounded button-state evidence')
   assert.ok(firstToggle >= 0 && secondClick > firstToggle && restored > secondClick,
     'the second click must wait for the first Host-owned selection to become interactive')
 })
