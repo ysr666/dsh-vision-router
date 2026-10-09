@@ -219,6 +219,16 @@ function fiberError(fiber) {
   return String(error?.stack || error).slice(0, 12000)
 }
 
+function modelSelectionSummary(value) {
+  if (!value || typeof value !== 'object') return null
+  return {
+    provider: typeof value.provider === 'string' ? value.provider.slice(0, 120) : null,
+    model: typeof value.model === 'string' ? value.model.slice(0, 120) : null,
+    reasoningEffort: typeof value.reasoningEffort === 'string'
+      ? value.reasoningEffort.slice(0, 80) : null,
+  }
+}
+
 function collectDvrSources(value, out = []) {
   if (Array.isArray(value)) {
     for (const item of value) collectDvrSources(item, out)
@@ -340,19 +350,26 @@ export function apply(ctx) {
       kind: 'exact',
       path: '/dvr-e2e-model-selections',
       handler(_request, response) {
+        let projections
+        let defaultSelection
+        try { projections = scope.get('sessionProjections') } catch {}
+        try { defaultSelection = modelSelectionSummary(scope.get('agentDefaultModel')?.currentSelection()) } catch {}
         const sessions = scope.sessions.list().map((session) => {
           const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
           const selections = events.filter((event) => event?.type === 'model/selection')
-            .map((event) => ({
-              provider: typeof event.data?.provider === 'string' ? event.data.provider.slice(0, 120) : null,
-              model: typeof event.data?.model === 'string' ? event.data.model.slice(0, 120) : null,
-              reasoningEffort: typeof event.data?.reasoningEffort === 'string'
-                ? event.data.reasoningEffort.slice(0, 80) : null,
-            }))
-          return { count: selections.length, latest: selections.slice(-8) }
+            .map((event) => modelSelectionSummary(event.data))
+          let projected
+          try {
+            const state = projections?.stateOf(session, 'modelSelection')
+            if (state) projected = {
+              pending: modelSelectionSummary(state.pending),
+              lastUsed: modelSelectionSummary(state.lastUsed),
+            }
+          } catch {}
+          return { count: selections.length, latest: selections.slice(-8), projected: projected ?? null }
         }).filter((session) => session.count > 0)
         response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-        response.end(JSON.stringify({ sessions }))
+        response.end(JSON.stringify({ sessions, defaultSelection: defaultSelection ?? null }))
       },
     }), 'desktop-e2e: accepted model selection evidence')
   })
