@@ -829,7 +829,12 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
     autoUpdate: { supported: true, token: 'SECRET_STREAMED_TOKEN' },
   })
   const split = await probe('/_dsh/vision-router/update-check', async (_req, res) => {
-    res.writeHead(200, { 'content-type': 'application/json', 'content-length': '999' })
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      'content-length': '999',
+      'set-cookie': 'SECRET_HEADER_TOKEN',
+      'x-local-path': '/private/path',
+    })
     res.write(updateBody.slice(0, 33))
     await Promise.resolve()
     res.write(Buffer.from(updateBody.slice(33, -1)))
@@ -839,6 +844,8 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
   assert.deepEqual(split.rawWrites, [], 'raw chunks must not reach the socket before redaction')
   assert.equal(JSON.parse(split.body).autoUpdate.token, undefined)
   assert.equal(split.headers['content-length'], undefined)
+  assert.equal(split.headers['set-cookie'], undefined, 'sensitive staged headers must never reach remote clients')
+  assert.equal(split.headers['x-local-path'], undefined)
   assert.doesNotMatch(split.body, /SECRET_STREAMED_TOKEN/)
 
   const log = await probe('/_dsh/vision-router/logs', (_req, res) => {
