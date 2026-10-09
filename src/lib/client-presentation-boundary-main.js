@@ -1170,6 +1170,13 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var complete = usable && livePair.mode !== 'unavailable';
         var settledMode = React.useRef(null);
         var toggleTransition = React.useRef(null);
+        // The Host may render a ready directory while the RPC that selected
+        // it is still in flight. Keep only an in-flight transaction fence here,
+        // never a second source of truth for Vision ON/OFF.
+        var selectionTransaction = React.useRef(null);
+        var refreshSelection = React.useState(0)[1];
+        var selectionInFlight = !!(selectionTransaction.current &&
+          selectionTransaction.current.directory === directory);
         if (settledMode.current && settledMode.current.directory !== directory) settledMode.current = null;
         if (toggleTransition.current && toggleTransition.current.directory !== directory) toggleTransition.current = null;
         if (complete) settledMode.current = { directory: directory, mode: livePair.mode };
@@ -1194,7 +1201,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var toastState = React.useState(null);
         var toast = toastState[0];
         var setToast = toastState[1];
-        var busy = state.status === 'selecting';
+        var busy = state.status === 'selecting' || selectionInFlight;
         var loading = settling;
         var removed = props.session && props.session.removed === true;
         var disabled = props.available !== true || removed || busy || loading || livePair.mode === 'unavailable';
@@ -1236,15 +1243,23 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           'data-active': active ? 'true' : 'false',
           'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 'true' : 'false',
           onClick: function() {
-            if (disabled || !pair.target || typeof props.select !== 'function') return;
+            if (disabled || !pair.target || typeof props.select !== 'function' ||
+              (selectionTransaction.current && selectionTransaction.current.directory === directory)) return;
             var target = pair.target;
+            var ticket = { directory: directory, target: target };
+            selectionTransaction.current = ticket;
+            refreshSelection(function(revision){ return revision + 1; });
             toggleTransition.current = {
               directory: directory,
               target: target,
               seenSelecting: false
             };
             setToast(null);
-            void props.select(target).then(function(accepted){
+            var pending;
+            try { pending = props.select(target); }
+            catch (error) { pending = Promise.reject(error); }
+            void Promise.resolve(pending).then(function(accepted){
+              if (selectionTransaction.current !== ticket) return;
               if (!accepted) {
                 toggleTransition.current = null;
                 announceRejectedSelection();
@@ -1255,6 +1270,14 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               if (!latest || (latest.status !== 'selecting' && latest.status !== 'idle' && latest.status !== 'loading')) {
                 toggleTransition.current = null;
               }
+            }, function(error){
+              if (selectionTransaction.current !== ticket) return;
+              toggleTransition.current = null;
+              announceRejectedSelection();
+            }).finally(function(){
+              if (selectionTransaction.current !== ticket) return;
+              selectionTransaction.current = null;
+              refreshSelection(function(revision){ return revision + 1; });
             });
           }
         },
