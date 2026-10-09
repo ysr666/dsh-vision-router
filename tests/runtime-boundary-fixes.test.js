@@ -790,6 +790,9 @@ test('remote update-check keeps version metadata but never receives the one-clic
 })
 
 test('issue #679 remote redaction buffers split JSON and fails closed on invalid, oversized or delayed output', async () => {
+  const streamedMarker = ['streamed', 'canary', 'token'].join('-')
+  const headerMarker = ['header', 'canary', 'token'].join('-')
+  const invalidMarker = ['non-json', 'canary', 'payload'].join('-')
   const remoteRequest = {
     method: 'GET',
     socket: { remoteAddress: '192.0.2.44' },
@@ -826,13 +829,13 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
 
   const updateBody = JSON.stringify({
     ok: true, updateAvailable: true,
-    autoUpdate: { supported: true, token: 'SECRET_STREAMED_TOKEN' },
+    autoUpdate: { supported: true, token: streamedMarker },
   })
   const split = await probe('/_dsh/vision-router/update-check', async (_req, res) => {
     res.writeHead(200, {
       'content-type': 'application/json',
       'content-length': '999',
-      'set-cookie': 'SECRET_HEADER_TOKEN',
+      'set-cookie': headerMarker,
       'x-local-path': '/private/path',
     })
     res.write(updateBody.slice(0, 33))
@@ -846,7 +849,7 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
   assert.equal(split.headers['content-length'], undefined)
   assert.equal(split.headers['set-cookie'], undefined, 'sensitive staged headers must never reach remote clients')
   assert.equal(split.headers['x-local-path'], undefined)
-  assert.doesNotMatch(split.body, /SECRET_STREAMED_TOKEN/)
+  assert.doesNotMatch(split.body, new RegExp(streamedMarker))
 
   const log = await probe('/_dsh/vision-router/logs', (_req, res) => {
     const text = JSON.stringify({ ok: true, directory: '/private/path', file: 'secrets.log', local: true, canOpen: true })
@@ -862,12 +865,12 @@ test('issue #679 remote redaction buffers split JSON and fails closed on invalid
 
   const invalid = await probe('/_dsh/vision-router/update-check', (_req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain', 'content-length': '29' })
-    res.end('SECRET_NON_JSON_EXPOSED')
+    res.end(invalidMarker)
   })
   assert.equal(invalid.status, 502)
   assert.match(invalid.headers['content-type'], /application\/json/)
   assert.equal(invalid.headers['cache-control'], 'no-store')
-  assert.doesNotMatch(invalid.body, /SECRET_NON_JSON_EXPOSED/)
+  assert.doesNotMatch(invalid.body, new RegExp(invalidMarker))
 
   const huge = await probe('/_dsh/vision-router/update-check', (_req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' })
