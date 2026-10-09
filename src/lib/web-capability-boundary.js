@@ -240,22 +240,21 @@ function runWithRemoteReadRedaction(path, handler, req, res) {
       else res.flushHeaders = originalFlushHeaders
     }
   }
-  const stripBodyHeaders = () => {
+  const stripStagedHeaders = () => {
+    // Route handlers own the pre-redaction response. Even header values may
+    // contain future local-only tokens, paths or Set-Cookie material.
+    // Never forward any unreviewed staged header to a remote client.
+    try {
+      for (const key of res.getHeaderNames?.() ?? []) res.removeHeader?.(key)
+    } catch { /* a test double may not expose the header table */ }
     for (const key of ['content-length', 'content-encoding', 'transfer-encoding']) {
-      try { res.removeHeader?.(key) } catch { /* response may be a test double */ }
+      try { res.removeHeader?.(key) } catch {}
     }
   }
-  const safeHeaders = (headers) => {
-    const next = {}
-    if (headers && typeof headers === 'object' && !Array.isArray(headers)) {
-      for (const [key, value] of Object.entries(headers)) {
-        if (!['content-length', 'content-encoding', 'transfer-encoding'].includes(key.toLowerCase())) {
-          next[key] = value
-        }
-      }
-    }
-    return { ...next, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
-  }
+  const safeHeaders = () => ({
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+  })
   const complete = (body, rejected = false, callback) => {
     if (done) return res
     done = true
@@ -264,29 +263,18 @@ function runWithRemoteReadRedaction(path, handler, req, res) {
     // or end(); restoring the raw methods here would expose those later bytes.
     // The response is already ended and these wrappers swallow late writes.
     if (!rejected) restore()
-    stripBodyHeaders()
+    stripStagedHeaders()
     if (rejected) {
       // An invalid or oversized response is an internal gateway failure. Do
       // not repeat the untrusted data or send previously staged headers.
-      try {
-        for (const key of res.getHeaderNames?.() ?? []) res.removeHeader?.(key)
-      } catch {}
-      originalWriteHead.call(res, 502, {
-        'content-type': 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-      })
+      originalWriteHead.call(res, 502, safeHeaders())
       return originalEnd.call(res, JSON.stringify({
         ok: false,
         error: 'remote response could not be safely redacted',
       }), callback)
     }
     if (head) {
-      const { status, message, headers } = head
-      if (message !== undefined) {
-        originalWriteHead.call(res, status, message, safeHeaders(headers))
-      } else {
-        originalWriteHead.call(res, status, safeHeaders(headers))
-      }
+      originalWriteHead.call(res, head.status, safeHeaders())
     } else {
       originalWriteHead.call(res, Number.isInteger(res.statusCode) ? res.statusCode : 200, safeHeaders())
     }
