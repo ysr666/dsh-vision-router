@@ -918,6 +918,23 @@ try {
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
+  // Positive control for the diagnostic itself: this real Desktop session
+  // must have committed both opposite selections to the Host event log.
+  // Otherwise the timeout-only forensic probe could silently report no events
+  // even when the UI transitions, making a later failure uninterpretable.
+  const selectionProbe = await readHostModelSelections(authenticatedHostUrl)
+  const expectedProviders = initialPressed === 'true'
+    ? ['desktop-e2e', 'desktop-e2e-vision']
+    : ['desktop-e2e-vision', 'desktop-e2e']
+  const committedBoth = selectionProbe.sessions.some((session) => {
+    const latest = session.latest
+    if (!Array.isArray(latest) || latest.length < 2) return false
+    const lastTwo = latest.slice(-2)
+    return lastTwo.every((event, index) =>
+      event?.provider === expectedProviders[index] && event.model === 'desktop-text')
+  })
+  assert.ok(committedBoth,
+    `Desktop Host selection forensic probe missed the accepted two-way toggle: ${JSON.stringify(selectionProbe)}`)
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()
