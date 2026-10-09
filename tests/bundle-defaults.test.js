@@ -592,6 +592,21 @@ test('Desktop renderer E2E drives the Vision onboarding through the account-owne
     'real Desktop coverage must exercise the onboarding path instead of skipping it')
 })
 
+test('issue #684 Desktop renderer captures bounded Host selection and button state evidence on timeout', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /path: '\/dvr-e2e-model-selections'/)
+  assert.match(source, /event\?\.type === 'model\/selection'/)
+  assert.match(source, /latest: selections\.slice\(-8\)/)
+  assert.match(source, /history\.length > 48/)
+  assert.match(source, /window\.__dvrDesktopToggleAudit/)
+  assert.match(source, /readHostModelSelections\(authenticatedHostUrl\)/)
+  assert.match(source, /hostSelections=\$\{JSON\.stringify\(hostSelections\)\}/)
+  assert.match(source, /buttonHistory=\$\{JSON\.stringify\(buttonHistory\)\}/)
+  assert.match(source, /const deadline = Date\.now\(\) \+ 30_000/)
+  assert.equal((source.match(/await toggle\.click\(\)/g) ?? []).length, 2,
+    'diagnostics must not add hidden selection retries or extra toggle clicks')
+})
+
 test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
