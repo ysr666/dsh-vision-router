@@ -477,6 +477,66 @@ test('maintenance route owner preserves update token lifecycle and explicit targ
   for (const cleanup of cleanups.toReversed()) cleanup()
 })
 
+test('issue #678 remote update status remains cache-only even with force=1', async () => {
+  let updateRoute
+  const checks = []
+  const ctx = {
+    inject(_dependencies, callback) {
+      return callback({
+        webServer: {
+          register(route) {
+            if (route.path === '/_dsh/vision-router/update-check') updateRoute = route
+            return () => {}
+          },
+        },
+        effect(factory) { return factory() },
+      })
+    },
+  }
+  installVisionMaintenanceRoutes(ctx, {
+    updateChecker: {
+      async check(force) {
+        checks.push(force)
+        return { ok: true, currentVersion: '2.4.0', latestVersion: '2.4.0', updateAvailable: false }
+      },
+    },
+    selfUpdatePlan: { available: false },
+  })
+  await Promise.resolve()
+  assert.deepEqual(checks, [false], 'startup remains read-only and cached')
+  assert.ok(updateRoute)
+
+  async function get(request) {
+    const res = responseRecorder()
+    await updateRoute.handler({
+      method: 'GET',
+      url: '/_dsh/vision-router/update-check?force=1',
+      ...request,
+    }, res)
+    assert.equal(res.status, 200)
+    assert.equal(JSON.parse(res.body).ok, true)
+  }
+
+  // Remote direct TCP requests, including spoofed Host, cannot force an
+  // additional outbound refresh; a same-machine reverse proxy that retains
+  // the public Host is also treated as remote.
+  for (let index = 0; index < 3; index += 1) {
+    await get({ socket: { remoteAddress: '192.0.2.42' }, headers: { host: 'public.example' } })
+  }
+  await get({ socket: { remoteAddress: '192.0.2.42' }, headers: { host: '127.0.0.1:3080' } })
+  await get({ socket: { remoteAddress: '127.0.0.1' }, headers: { host: 'public.example' } })
+  assert.deepEqual(checks, [false, false, false, false, false, false])
+
+  // Local DSH UI keeps the explicit manual refresh ability.
+  await get({ socket: { remoteAddress: '::1' }, headers: { host: '[::1]:3080' } })
+  await get({ socket: { remoteAddress: '127.0.0.1' }, headers: { host: 'localhost:3080' } })
+  assert.deepEqual(checks, [false, false, false, false, false, false, true, true])
+  // Internal Host invocations with no network transport preserve their
+  // existing test/composition behavior.
+  await get({ headers: {} })
+  assert.equal(checks.at(-1), true)
+})
+
 test('maintenance Web ownership is extracted from Core and composed after Core apply', async () => {
   const [core, composition, maintenance] = await Promise.all([
     readFile(new URL('../index.js', import.meta.url), 'utf8'),
