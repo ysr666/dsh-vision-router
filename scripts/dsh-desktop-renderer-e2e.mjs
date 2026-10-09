@@ -491,7 +491,10 @@ async function readHostModelSelections(authenticatedUrl) {
   if (!response.ok) throw new Error(`model selection probe returned HTTP ${response.status}`)
   const payload = await response.json()
   if (!Array.isArray(payload?.sessions)) throw new Error('model selection probe returned an invalid shape')
-  return payload.sessions.slice(0, 8)
+  return {
+    sessions: payload.sessions.slice(0, 8),
+    defaultSelection: payload.defaultSelection ?? null,
+  }
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
