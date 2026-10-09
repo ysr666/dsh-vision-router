@@ -273,7 +273,7 @@ test('DSH provider uses exact HTTP bridge only after a v1-compatible adapter fai
     evidenceScope: 'endpoint',
   }, {}, {
     renderFixture: async () => Buffer.from('png'),
-    streamExact: async () => { throw Object.assign(new Error('invalid image request from adapter'), { code: 'UNSUPPORTED_CONTENT' }) },
+    streamExact: async () => { throw Object.assign(new Error('pi-ai model "glm-4.6v" does not support image input'), { code: 'UNSUPPORTED_CONTENT' }) },
     callDirect: async (provider) => {
       directCalls.push(provider)
       return '[672,672,901,813]'
@@ -297,6 +297,61 @@ test('DSH provider uses exact HTTP bridge only after a v1-compatible adapter fai
   assert.equal(directCalls[0].model, 'glm-4.6v')
   assert.equal(directCalls[0].apiKeyEnv, 'ZHIPU_API_KEY')
   assert.equal(result.transport, 'adapter-bridge')
+})
+
+test('exact adapter bridge rejects provider errors, ambiguous failures and any prior output', async () => {
+  const localAdmission = () => ({
+    message: 'pi-ai model "glm-4.6v" does not support image input',
+    code: 'UNSUPPORTED_CONTENT',
+  })
+  const cases = [
+    { label: 'provider model error', failure: { code: 'MODEL_DOES_NOT_SUPPORT_IMAGES', status: 400, message: 'invalid image request' } },
+    { label: 'provider unsupported content', failure: { code: 'UNSUPPORTED_CONTENT', status: 400, message: 'invalid image content' } },
+    { label: 'ambiguous image rejection', failure: { code: 'UNSUPPORTED_CONTENT', message: 'invalid image request from adapter' } },
+    { label: 'local-looking HTTP response', failure: { ...localAdmission(), status: 400 } },
+    { label: 'network failure', failure: { code: 'NETWORK', message: 'network error while sending image' } },
+    { label: 'partial text then local-looking finish error', failure: localAdmission(), partial: 'finish' },
+    { label: 'partial text then local-looking thrown error', failure: localAdmission(), partial: 'throw' },
+  ]
+  for (const scenario of cases) {
+    let adapterCalls = 0
+    let directCalls = 0
+    const candidate = {
+      key: 'zhipu-glm/glm-4.6v',
+      provider: 'zhipu-glm',
+      model: 'glm-4.6v',
+      endpoint: 'https://example.invalid/v1',
+      endpointConfig: { api: 'openai-completions' },
+      evidenceScope: 'endpoint',
+    }
+    const invoke = createExactCapabilityInvoker(fakeCtx(), runtimeBridgeCore(), candidate, {}, {
+      renderFixture: async () => Buffer.from('png'),
+      streamExact: () => {
+        adapterCalls += 1
+        const failure = Object.assign(new Error(scenario.failure.message), scenario.failure)
+        return (async function* () {
+          if (scenario.partial) yield { text: 'already emitted by adapter' }
+          if (scenario.partial === 'finish') {
+            yield { type: 'finish', reason: { kind: 'error', failure: scenario.failure } }
+          } else {
+            throw failure
+          }
+        })()
+      },
+      callDirect: async () => {
+        directCalls += 1
+        throw new Error('duplicate HTTP request must not run')
+      },
+    })
+    const backend = { provider: candidate.provider, model: candidate.model, fingerprint: 'no-replay' }
+    await assert.rejects(
+      invoke({ backend, fixture: { id: 'no-replay', prompt: 'read image' }, exactBackend: true, allowFallback: false }),
+      (error) => error?.code === scenario.failure.code,
+      scenario.label,
+    )
+    assert.equal(adapterCalls, 1, scenario.label)
+    assert.equal(directCalls, 0, scenario.label)
+  }
 })
 
 test('Host image projection selects verified HTTP bridge before adapter but refuses Responses API', async () => {

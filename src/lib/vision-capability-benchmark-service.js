@@ -15,6 +15,7 @@ import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { wireSessionAffinityId } from './session-affinity.js'
 import { streamWithVisionSessionAffinity } from './session-affinity-runtime.js'
 import { hostImageDeliveryFromInfo, resolvedHostInfo } from './vision-backend-runtime-policy.js'
+import { isLocalImageCapabilityAdmissionFailure } from './vision-execution-policy.js'
 import { streamWithLegacyGlobalProxyScope } from './legacy-global-proxy-boundary.js'
 import {
   hardenCapabilityBenchmarkFixture,
@@ -206,13 +207,28 @@ function failureError(failure, fallback) {
 async function collectStreamText(streamLike) {
   const stream = await streamLike
   let text = ''
-  for await (const chunk of stream) {
-    if (chunk && typeof chunk.text === 'string') text += chunk.text
-    if (chunk?.type === 'finish') {
-      const kind = chunk.reason?.kind
-      if (kind === 'error' || kind === 'aborted') throw failureError(chunk.reason?.failure, kind)
+  let observedOutput = false
+  try {
+    for await (const chunk of stream) {
+      // Any non-terminal output proves that the adapter began responding.
+      // Retrying through a second transport could duplicate a billed call.
+      if (chunk && chunk.type !== 'finish' && chunk.type !== 'error' && chunk.type !== 'aborted') {
+        observedOutput = true
+      }
+      if (chunk && typeof chunk.text === 'string') text += chunk.text
+      if (chunk?.type === 'finish') {
+        const kind = chunk.reason?.kind
+        if (kind === 'error' || kind === 'aborted') throw failureError(chunk.reason?.failure, kind)
+      }
+      if (chunk?.type === 'error' || chunk?.type === 'aborted') throw failureError(chunk.failure, chunk.type)
     }
-    if (chunk?.type === 'error' || chunk?.type === 'aborted') throw failureError(chunk.failure, chunk.type)
+  } catch (error) {
+    if (observedOutput) {
+      const failure = failureError(error)
+      failure.visionAdapterProducedOutput = true
+      throw failure
+    }
+    throw error
   }
   return text
 }
@@ -224,19 +240,11 @@ function tagInvocationError(value) {
   return error
 }
 
-function mayUseExactAdapterBridge(core, error, directProvider) {
-  if (directProvider === undefined) return false
-  // Never replay a request after network/provider failures: it might already
-  // have reached the model. Only a proven local image-admission refusal qualifies.
-  const code = String(error?.code ?? error?.failure?.code ?? error?.cause?.code ?? '').toUpperCase()
-  const message = String(error?.message ?? '')
-  if (!['UNSUPPORTED_CONTENT', 'MODEL_DOES_NOT_SUPPORT_IMAGES'].includes(code)) return false
-  if (!/image/i.test(message) && code !== 'MODEL_DOES_NOT_SUPPORT_IMAGES') return false
-  try {
-    return core?.classifyVisionFailure?.(error)?.kind === core?.VISION_FAILURE_KINDS?.INVALID_REQUEST
-  } catch {
-    return false
-  }
+function mayUseExactAdapterBridge(_core, error, directProvider) {
+  if (directProvider === undefined || error?.visionAdapterProducedOutput === true) return false
+  // Share the runtime's exact pre-wire pi-ai admission predicate. Provider
+  // HTTP 400s, ambiguous image errors and network failures must never replay.
+  return isLocalImageCapabilityAdmissionFailure(error)
 }
 
 export function exactHostImageDeliveryPlan(info, candidate, core) {
