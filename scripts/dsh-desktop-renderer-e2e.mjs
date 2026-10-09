@@ -774,19 +774,58 @@ try {
   await exerciseVisionOnboardingSettingsPath(page)
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
-  const toggledPressed = initialPressed === 'true' ? 'false' : 'true'
-  const waitForSettledVisionState = async (expected) => {
-    await page.waitForFunction((pressed) => {
-      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
-      return node?.getAttribute('aria-pressed') === pressed
-        && node.getAttribute('aria-busy') !== 'true'
-        && node.disabled === false
-    }, expected)
+  if (initialPressed !== 'true' && initialPressed !== 'false') {
+    throw new Error(`Vision toggle began without an authoritative pressed state: ${String(initialPressed)}`)
   }
+  const toggledPressed = initialPressed === 'true' ? 'false' : 'true'
+  const inspectToggleState = async () => await page.evaluate(() => {
+    const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    if (!node) return { present: false }
+    return {
+      present: true,
+      pressed: node.getAttribute('aria-pressed'),
+      busy: node.getAttribute('aria-busy'),
+      disabled: node.disabled === true,
+      label: node.getAttribute('aria-label'),
+      title: node.title,
+    }
+  })
+  const waitForSettledVisionState = async (expected, direction) => {
+    const deadline = Date.now() + 30_000
+    let lastObserved
+    try {
+      while (Date.now() < deadline) {
+        await page.waitForFunction((pressed) => {
+          const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+          return node?.getAttribute('aria-pressed') === pressed
+            && node.getAttribute('aria-busy') !== 'true'
+            && node.disabled === false
+        }, expected, { timeout: Math.max(1, deadline - Date.now()) })
+        // An initialized Host can transiently repopulate the model directory.
+        // Require one continuous actionable interval before the next click;
+        // a transient loss restarts observation, never the user's selection.
+        await page.waitForTimeout(300)
+        lastObserved = await inspectToggleState()
+        if (lastObserved.pressed === expected && lastObserved.busy !== 'true' && !lastObserved.disabled) {
+          return
+        }
+      }
+      throw new Error('continuous stability window was not reached')
+    } catch (error) {
+      const observed = await inspectToggleState().catch(() => lastObserved ?? ({ unavailable: true }))
+      throw new Error(
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)})`,
+        { cause: error },
+      )
+    }
+  }
+  // Do not start an adversarial double-toggle during the Host's initial
+  // model-catalog hydration. The initial state must be stably actionable too.
+  await waitForSettledVisionState(initialPressed, 'initial ready baseline')
   await toggle.click()
-  await waitForSettledVisionState(toggledPressed)
+  await waitForSettledVisionState(toggledPressed, 'first transition')
   await toggle.click()
-  await waitForSettledVisionState(initialPressed)
+  await waitForSettledVisionState(initialPressed, 'return transition')
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()
