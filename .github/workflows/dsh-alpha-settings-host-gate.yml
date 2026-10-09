@@ -121,6 +121,12 @@ jobs:
           DSH_EXPECTED_COMMIT: d743267388641bc76f17c45ce8b4c231aed1d32c
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify old/new Web Connection trust-generation overlay
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
       - name: Verify public 0.2 train peer admission
         working-directory: dsh-alpha
         env:
