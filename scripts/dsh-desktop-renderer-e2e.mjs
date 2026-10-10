@@ -273,6 +273,74 @@ function collectDvrMessages(value, out = []) {
 }
 
 export function apply(ctx) {
+  // Issue #684: experiment-only Host pre-commit scheduling gate. Never
+  // register this endpoint or wrap llm outside an ephemeral test process.
+  if (process.env.DVR_E2E_684_RACE === '1') {
+    ctx.inject(['webServer', 'llm'], (scope) => {
+      const llm = scope.llm
+      const previousOwnMethod = Object.getOwnPropertyDescriptor(llm, 'resolveCallConfig')
+      const original = llm.resolveCallConfig
+      if (typeof original !== 'function') throw new Error('Host race: resolveCallConfig unavailable')
+      const race = { armed: false, entered: false, enteredCount: 0, release: null }
+      llm.resolveCallConfig = function(...args) {
+        const selection = args[0]
+        if (race.armed && selection?.provider === 'desktop-e2e' && selection?.model === 'desktop-text') {
+          race.armed = false
+          race.entered = true
+          race.enteredCount += 1
+          return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              race.release = null
+              race.entered = false
+              reject(new Error('issue-684 experimental Host gate timed out'))
+            }, 20000)
+            race.release = () => {
+              clearTimeout(timeout)
+              race.release = null
+              race.entered = false
+              resolve()
+            }
+          }).then(() => original.apply(this, args))
+        }
+        return original.apply(this, args)
+      }
+      scope.effect(() => () => {
+        if (race.release) race.release()
+        if (previousOwnMethod) Object.defineProperty(llm, 'resolveCallConfig', previousOwnMethod)
+        else delete llm.resolveCallConfig
+      }, 'issue-684: restore Host model resolver')
+      scope.effect(() => scope.webServer.register({
+        kind: 'exact',
+        path: '/dvr-e2e-684-race',
+        handler(request, response) {
+          const correctToken = process.env.DVR_E2E_684_RACE_TOKEN
+          if (request.method !== 'POST' ||
+              !correctToken ||
+              request.headers['x-dvr-e2e-684-token'] !== correctToken) {
+            response.writeHead(404)
+            response.end()
+            return
+          }
+          const action = new URL(request.url || '/', 'http://127.0.0.1').searchParams.get('action')
+          let status = 200
+          if (action === 'arm') {
+            if (race.armed || race.release) status = 409
+            else { race.armed = true; race.entered = false }
+          } else if (action === 'release') {
+            if (!race.release) status = 409
+            else race.release()
+          } else if (action !== 'state') status = 400
+          response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+          response.end(JSON.stringify({
+            armed: race.armed,
+            entered: race.entered,
+            enteredCount: race.enteredCount,
+            canRelease: typeof race.release === 'function',
+          }))
+        },
+      }), 'issue-684: authenticated Host-only experimental gate')
+    })
+  }
   ctx.inject(['webServer'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
@@ -501,6 +569,67 @@ async function readHostModelSelections(authenticatedUrl) {
   }
 }
 
+
+async function control684HostRace(authenticatedUrl, token, action) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-684-race'
+  target.search = '?action=' + encodeURIComponent(action)
+  const response = await fetch(target, {
+    method: 'POST',
+    headers: { cookie, 'x-dvr-e2e-684-token': token },
+  })
+  const body = await response.json().catch(() => null)
+  if (!response.ok || body === null) {
+    throw new Error('Host race control ' + action + ' failed: HTTP ' + response.status)
+  }
+  return body
+}
+
+async function waitFor684HostGate(authenticatedUrl, token) {
+  const deadline = Date.now() + 15000
+  let last
+  while (Date.now() < deadline) {
+    last = await control684HostRace(authenticatedUrl, token, 'state')
+    if (last.entered && last.canRelease) return last
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error('Second OFF request never reached real Host resolveCallConfig gate: ' + JSON.stringify(last))
+}
+
+async function experiment684DirectoryAction(page, mode) {
+  return await page.evaluate(async (mode) => {
+    const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    const key = button && Object.getOwnPropertyNames(button).find((name) => name.startsWith('__reactFiber$'))
+    let fiber = key && button[key]
+    let directory
+    for (let i = 0; fiber && i < 64; i++, fiber = fiber.return) {
+      if (fiber.memoizedProps?.directory?.store?.getSnapshot && fiber.memoizedProps.directory.catalog) {
+        directory = fiber.memoizedProps.directory
+        break
+      }
+    }
+    if (!directory) throw new Error('Experiment requires a real Host-owned ModelDirectory')
+    if (mode === 'catalog') directory.catalog.refresh()
+    else if (mode === 'reset') {
+      directory.catalog.resetGeneration()
+      directory.resetConnected()
+    } else throw new Error('Unknown experiment mode')
+    // This resolves through the genuine DSH remote.session.modelCatalog() path.
+    const deadline = performance.now() + 12000
+    while (performance.now() < deadline) {
+      const snapshot = directory.catalog.store.getSnapshot()
+      if (snapshot.status === 'ready') return {
+        catalog: snapshot.status,
+        directoryStatus: directory.store.getSnapshot().status,
+        directoryProvider: directory.store.getSnapshot().current?.provider ?? null,
+      }
+      await new Promise((accept) => setTimeout(accept, 80))
+    }
+    throw new Error('Host modelCatalog hydration did not settle after ' + mode)
+  }, mode)
+}
+
 // Test-only, read-only snapshot of the directory attached to this React toggle.
 // The React DOM fiber is not a Host API. If unavailable, report an explicit
 // diagnostic gap; never make a model selection or infer success from this probe.
@@ -608,6 +737,11 @@ async function stopProcess(child) {
   if (child.exitCode === null) try { child.kill('SIGKILL') } catch {}
 }
 
+const raceMode = process.env.DVR_684_RACE_MODE ?? ''
+if (raceMode && !['catalog', 'reset'].includes(raceMode)) {
+  throw new Error('Unknown #684 real Host race mode: ' + raceMode)
+}
+const raceToken = raceMode ? randomUUID() : ''
 const root = mkdtempSync(join(tmpdir(), 'dvr-017-desktop-renderer-'))
 const home = join(root, 'home')
 const project = join(root, 'project')
@@ -799,6 +933,8 @@ try {
     // The public pi-ai custom-provider contract requires a credential. Generate
     // an ephemeral per-run value instead of storing any test secret in source.
     DVR_DESKTOP_E2E_API_KEY: randomUUID(),
+    DVR_E2E_684_RACE: raceMode ? '1' : '0',
+    DVR_E2E_684_RACE_TOKEN: raceToken,
     ELECTRON_ENABLE_LOGGING: '1',
   }
 
@@ -928,10 +1064,49 @@ try {
   assert.equal(traceReady, true, 'Desktop selection transition trace was not attached to Host ModelDirectory')
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
   await toggle.click()
-  await waitForSettledVisionState(toggledPressed, 'first transition')
-  await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
-  await toggle.click()
-  await waitForSettledVisionState(initialPressed, 'return transition')
+  if (raceMode) {
+    // Only this isolated lab changes the click cadence. The production gate
+    // above continues to require 300ms uninterrupted ready-state.
+    await page.waitForFunction((pressed) => {
+      const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+      return button?.getAttribute('aria-pressed') === pressed
+        && button.getAttribute('aria-busy') !== 'true' && !button.disabled
+    }, toggledPressed, { timeout: 30000 })
+    assert.equal(initialPressed, 'false', 'The OFF-return lab requires a fresh OFF baseline')
+    const first = await readHostModelSelections(authenticatedHostUrl)
+    assert.ok(first.sessions.some((session) => session.latest.some(
+      (event) => event?.provider === 'desktop-e2e-vision')),
+      'Initial ON must be durably committed before arming the real Host race')
+    await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
+    await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
+    await toggle.click()
+    const gate = await waitFor684HostGate(authenticatedHostUrl, raceToken)
+    const blocked = await readHostModelSelections(authenticatedHostUrl)
+    assert.ok(blocked.sessions.every((session) =>
+      !session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
+      'The return selection committed BEFORE its controlled Host pre-commit gate')
+    console.log('[issue-684-host-race] ' + JSON.stringify({
+      mode: raceMode, stage: 'blocked', gate, directory: await readClientModelDirectory(page),
+      hostSelections: blocked,
+    }))
+    try {
+      const injected = await experiment684DirectoryAction(page, raceMode)
+      console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
+    } finally {
+      await control684HostRace(authenticatedHostUrl, raceToken, 'release')
+    }
+    await waitForSettledVisionState(initialPressed, 'return transition')
+    console.log('[issue-684-host-race] ' + JSON.stringify({
+      mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
+      hostSelections: await readHostModelSelections(authenticatedHostUrl),
+      transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
+    }))
+  } else {
+    await waitForSettledVisionState(toggledPressed, 'first transition')
+    await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
+    await toggle.click()
+    await waitForSettledVisionState(initialPressed, 'return transition')
+  }
   // Positive control for the diagnostic itself: this real Desktop session
   // must have committed both opposite selections to the Host event log.
   // Otherwise the timeout-only forensic probe could silently report no events
