@@ -108,6 +108,7 @@ function createBrowserHarness({
   returnSelectionFailureAt = null,
   staleProjectionAt = null,
   deferSelection = false,
+  deferSelectionAt = null,
   deferCompletion = false,
 } = {}) {
   let registered
@@ -134,6 +135,7 @@ function createBrowserHarness({
 
   const selections = []
   let releaseSelection
+  let releaseInjectedSelection
   let releaseCompletion
   const selectionGate = deferSelection
     ? new Promise((resolve) => { releaseSelection = resolve })
@@ -176,9 +178,10 @@ function createBrowserHarness({
           },
         }
       }
-      if (selectionGate) {
+      if (selectionGate || selections.length === deferSelectionAt) {
         snapshot = { ...snapshot, status: 'selecting', pending: selection, error: null }
-        await selectionGate
+        if (selectionGate) await selectionGate
+        else await new Promise((resolve) => { releaseInjectedSelection = resolve })
       }
       // A successful Host RPC may settle before its projected model selection
       // reaches the client. The visible mode must not anticipate the projection.
@@ -294,7 +297,10 @@ function createBrowserHarness({
     localeRegistrations,
     setSnapshot(next) { snapshot = next },
     getSnapshot() { return snapshot },
-    resolveSelection() { if (releaseSelection) releaseSelection() },
+    resolveSelection() {
+      if (releaseSelection) releaseSelection()
+      if (releaseInjectedSelection) releaseInjectedSelection()
+    },
     resolveCompletion() { if (releaseCompletion) releaseCompletion() },
     setSettings(next) { settingsSnapshot = next },
     render(extra = {}) {
@@ -531,6 +537,93 @@ test('issue #684 successful return RPC with stale projection never invents OFF',
   assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
   assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
   assert.equal(buttonOf(harness.render()).props.disabled, false)
+})
+
+
+
+test('issue #684 fault matrix: rejected OFF selection can look ON/actionable after Host error clears', async () => {
+  const harness = createBrowserHarness({ returnSelectionFailureAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  assert.equal(harness.getSnapshot().status, 'error')
+  assert.match(firstChildOfType(harness.render(), harness.primitives.Toast)?.props.text ?? '', /session\/writer-held/)
+
+  // An independent Host directory refresh clears the error after rejection.
+  // The final toggle matches #684's observed ON/ready/actionable state, but
+  // the preserved failure toast distinguishes this from lost projection.
+  harness.setSnapshot({ ...harness.getSnapshot(), status: 'ready', error: null, pending: null })
+  const recovered = harness.render()
+  assert.equal(buttonOf(recovered).props['aria-pressed'], true)
+  assert.equal(buttonOf(recovered).props['aria-busy'], false)
+  assert.equal(buttonOf(recovered).props.disabled, false)
+  assert.match(firstChildOfType(recovered, harness.primitives.Toast)?.props.text ?? '', /session\/writer-held/)
+  assert.equal(harness.selections.length, 2)
+})
+
+test('issue #684 fault matrix: reset while OFF RPC pending can leave ON/actionable after accepted RPC', async () => {
+  const harness = createBrowserHarness({ deferSelectionAt: 2, staleProjectionAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  assert.equal(harness.getSnapshot().status, 'selecting')
+  assert.equal(buttonOf(harness.render()).props['aria-busy'], true)
+
+  // Mirror upstream ModelDirectory.resetConnected(): clear pending, briefly
+  // enter loading and restore the earlier authoritative ON projection.
+  const before = harness.getSnapshot()
+  harness.setSnapshot({ ...before, status: 'loading', pending: null, error: null })
+  assert.equal(buttonOf(harness.render()).props.disabled, true)
+  harness.setSnapshot({ ...before, status: 'ready', pending: null, error: null })
+  harness.resolveSelection()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const after = harness.render()
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
+  assert.equal(buttonOf(after).props['aria-pressed'], true)
+  assert.equal(buttonOf(after).props['aria-busy'], false)
+  assert.equal(buttonOf(after).props.disabled, false)
+  assert.equal(firstChildOfType(after, harness.primitives.Toast), undefined)
+  assert.equal(harness.selections.length, 2)
+
+  // Delayed authoritative projection does recover the button without any
+  // additional RPC, which argues against a separately cached plugin boolean.
+  harness.setSnapshot({ ...harness.getSnapshot(), current: harness.selections[1] })
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], false)
+  assert.equal(harness.selections.length, 2)
+})
+
+test('issue #684 fault matrix: catalog hydration during second RPC cannot invent OFF', async () => {
+  const harness = createBrowserHarness({ deferSelectionAt: 2, staleProjectionAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  buttonOf(harness.render()).props.onClick()
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+
+  const previous = harness.getSnapshot()
+  harness.setSnapshot({ ...previous, status: 'loading', pending: null, error: null })
+  assert.equal(buttonOf(harness.render()).props['aria-busy'], true)
+  harness.setSnapshot({ ...previous, status: 'ready', pending: null, error: null })
+  harness.resolveSelection()
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const stalled = harness.render()
+  assert.equal(buttonOf(stalled).props['aria-pressed'], true)
+  assert.equal(buttonOf(stalled).props['aria-busy'], false)
+  assert.equal(buttonOf(stalled).props.disabled, false)
+
+  // If the catalog reload is followed by the correct Session projection,
+  // the toggle follows it; no local optimistic mode is present.
+  harness.setSnapshot({ ...harness.getSnapshot(), current: harness.selections[1] })
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], false)
 })
 
 test('issue #284 image-session rejection uses transient toast and keeps the real ON state usable', async () => {
