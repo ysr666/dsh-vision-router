@@ -898,6 +898,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
   rejectAuthenticatedHostUrl = reject
 })
 let desktopOutputBuffer = ''
+let reactUpdateDepthError = false
 let lastCoreProbe
 let runtimePackageEvidence
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
@@ -1098,6 +1099,7 @@ try {
     const text = String(chunk)
     target.write(`[desktop] ${text}`)
     desktopOutputBuffer = (desktopOutputBuffer + text).slice(-16_384)
+    if (desktopOutputBuffer.includes('Minified React error #185')) reactUpdateDepthError = true
     const match = /dsh web:\s*(https?:\/\/[^\s]+)/i.exec(desktopOutputBuffer)
     if (match) resolveAuthenticatedHostUrl(match[1])
   }
@@ -1309,6 +1311,10 @@ try {
         'The rejected OFF must remain unapplied after Toast expiration')
       assert.equal(rendererErrors.length, 0,
         'An ordinary Host rejection must never create an unhandled renderer exception')
+      if (raceMode === 'reject') {
+        assert.equal(reactUpdateDepthError, false,
+          'Catalog refresh after Host rejection must not cause React update-depth overflow')
+      }
       console.log('[issue-684-host-race] ' + JSON.stringify({
         mode: raceMode, stage: 'rejected-toast-expired',
         refresh, button: finalButton, expiredAlerts,
