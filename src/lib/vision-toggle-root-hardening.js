@@ -403,7 +403,7 @@ export function hardenVisionClientSource(source) {
   next = replaceAll(
     next,
     `          var message = latest && typeof latest.error === 'string' && latest.error !== ''\n            ? latest.error\n            : t('failedUnknown');`,
-    `          var recovered = recovery && typeof recovery.getSnapshot === 'function' ? recovery.getSnapshot() : recoveryError;\n          var message = latest && typeof latest.error === 'string' && latest.error !== ''\n            ? latest.error\n            : recovered && recovered.message ? recovered.message : t('failedUnknown');`,
+    `          var recoveryStore = typeof recovery === 'undefined' ? null : recovery;\n          if (!recoveryStore && typeof window !== 'undefined') {\n            var hardening = window.__dshVisionRouterRootHardening;\n            if (hardening && typeof hardening.recoveryFor === 'function') recoveryStore = hardening.recoveryFor(directory);\n          }\n          var recovered = recoveryStore && typeof recoveryStore.getSnapshot === 'function' ? recoveryStore.getSnapshot() : null;\n          var message = latest && typeof latest.error === 'string' && latest.error !== ''\n            ? latest.error\n            : recovered && recovered.message ? recovered.message : t('failedUnknown');`,
   )
 
   next = replaceAll(
