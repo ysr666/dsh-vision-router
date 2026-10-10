@@ -618,6 +618,23 @@ test('issue #684 real Desktop validates its forensic Host event probe on success
     'the positive control must not add extra clicks or retries')
 })
 
+test('issue #684 forensics observes Host next and a bounded browser directory snapshot', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /next: modelSelectionSummary\(state\.next\)/,
+    'Host projected.next drives the client selection authority')
+  assert.match(source, /scope\.sessions\.list\(\)\.slice\(-8\)/)
+  assert.match(source, /function readClientModelDirectory\(page\)/)
+  assert.match(source, /depth < 64/, 'browser directory lookup must be bounded')
+  assert.match(source, /groupCount: Array\.isArray\(state\?\.groups\)/)
+  assert.match(source, /hasError: typeof state\?\.error === 'string'/)
+  assert.ok(source.includes('clientDirectory=${JSON.stringify(clientDirectory)}'),
+    'a failure must carry the sanitized client snapshot alongside Host evidence')
+  assert.match(source, /assert\.equal\(clientDirectory\.available, true/,
+    'a successful Desktop toggle must positive-control the browser probe')
+  assert.doesNotMatch(source, /error: state\?\.error|groups: state\?\.groups|sessionId: directory\.sessionId/,
+    'never serialize raw error or directory internals')
+})
+
 test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,

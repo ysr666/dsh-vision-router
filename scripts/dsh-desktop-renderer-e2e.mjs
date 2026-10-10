@@ -354,7 +354,8 @@ export function apply(ctx) {
         let defaultSelection
         try { projections = scope.get('sessionProjections') } catch {}
         try { defaultSelection = modelSelectionSummary(scope.get('agentDefaultModel')?.currentSelection()) } catch {}
-        const sessions = scope.sessions.list().map((session) => {
+        // Keep even the Host response bounded before transferring it to the browser.
+        const sessions = scope.sessions.list().slice(-8).map((session) => {
           const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
           const selections = events.filter((event) => event?.type === 'model/selection')
             .map((event) => modelSelectionSummary(event.data))
@@ -362,6 +363,8 @@ export function apply(ctx) {
           try {
             const state = projections?.stateOf(session, 'modelSelection')
             if (state) projected = {
+              // This is the authoritative selection consumed by ModelDirectory.syncInputs().
+              next: modelSelectionSummary(state.next),
               pending: modelSelectionSummary(state.pending),
               lastUsed: modelSelectionSummary(state.lastUsed),
             }
@@ -495,6 +498,40 @@ async function readHostModelSelections(authenticatedUrl) {
     sessions: payload.sessions.slice(0, 8),
     defaultSelection: payload.defaultSelection ?? null,
   }
+}
+
+// Test-only, read-only snapshot of the directory attached to this React toggle.
+// The React DOM fiber is not a Host API. If unavailable, report an explicit
+// diagnostic gap; never make a model selection or infer success from this probe.
+async function readClientModelDirectory(page) {
+  return await page.evaluate(() => {
+    const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    if (!button) return { available: false, reason: 'toggle-missing' }
+    const fiberKey = Object.getOwnPropertyNames(button).find((key) => key.startsWith('__reactFiber$'))
+    if (!fiberKey) return { available: false, reason: 'react-fiber-unavailable' }
+    const selection = (value) => !value || typeof value !== 'object' ? null : {
+      provider: typeof value.provider === 'string' ? value.provider.slice(0, 120) : null,
+      model: typeof value.model === 'string' ? value.model.slice(0, 120) : null,
+      reasoningEffort: typeof value.reasoningEffort === 'string' ? value.reasoningEffort.slice(0, 80) : null,
+    }
+    let fiber = button[fiberKey]
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const directory = fiber.memoizedProps?.directory
+      if (typeof directory?.store?.getSnapshot !== 'function') continue
+      const state = directory.store.getSnapshot()
+      return {
+        available: true,
+        status: ['idle', 'loading', 'ready', 'selecting', 'error'].includes(state?.status)
+          ? state.status : 'unknown',
+        current: selection(state?.current),
+        pending: selection(state?.pending),
+        routable: typeof state?.routable === 'boolean' ? state.routable : null,
+        groupCount: Array.isArray(state?.groups) ? Math.min(state.groups.length, 256) : null,
+        hasError: typeof state?.error === 'string' && state.error.length > 0,
+      }
+    }
+    return { available: false, reason: 'directory-fiber-unavailable' }
+  })
 }
 
 async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
@@ -903,8 +940,10 @@ try {
       // probe read-only and protect the original timeout as the root error.
       const hostSelections = await readHostModelSelections(authenticatedHostUrl)
         .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
+      const clientDirectory = await readClientModelDirectory(page)
+        .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, hostSelections=${JSON.stringify(hostSelections)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)})`,
         { cause: error },
       )
     }
@@ -935,6 +974,14 @@ try {
   })
   assert.ok(committedBoth,
     `Desktop Host selection forensic probe missed the accepted two-way toggle: ${JSON.stringify(selectionProbe)}`)
+  // Verify that the optional browser probe actually resolves a successful
+  // authoritative directory; a fiber-shaped but wrong component is not proof.
+  const clientDirectory = await readClientModelDirectory(page)
+  assert.equal(clientDirectory.available, true,
+    `Desktop browser directory probe unavailable: ${JSON.stringify(clientDirectory)}`)
+  assert.equal(clientDirectory.current?.provider, initialPressed === 'true'
+    ? 'desktop-e2e-vision' : 'desktop-e2e')
+  assert.equal(clientDirectory.current?.model, 'desktop-text')
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()

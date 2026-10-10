@@ -104,6 +104,8 @@ function createBrowserHarness({
   wrapperRoute = 'deepseek-vision',
   rejectSelection = false,
   returnSelectionFailure = false,
+  returnSelectionFailureAt = null,
+  staleProjectionAt = null,
   deferSelection = false,
   deferCompletion = false,
 } = {}) {
@@ -156,8 +158,9 @@ function createBrowserHarness({
     store,
     async select(selection) {
       selections.push(selection)
-      if (rejectSelection || returnSelectionFailure) {
+      if (rejectSelection || returnSelectionFailure || selections.length === returnSelectionFailureAt) {
         const failure = rejectSelection || returnSelectionFailure
+          || 'session/writer-held: Another writer temporarily owns this session.'
         const message = typeof failure === 'string'
           ? failure
           : 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
@@ -175,6 +178,12 @@ function createBrowserHarness({
       if (selectionGate) {
         snapshot = { ...snapshot, status: 'selecting', pending: selection, error: null }
         await selectionGate
+      }
+      // A successful Host RPC may settle before its projected model selection
+      // reaches the client. The visible mode must not anticipate the projection.
+      if (selections.length === staleProjectionAt) {
+        snapshot = { ...snapshot, status: 'ready', pending: null, error: null }
+        return { ok: true, value: undefined }
       }
       snapshot = { ...snapshot, current: selection, status: 'ready', pending: null, error: null }
       // Reproduce Desktop's real race: the directory advertises ready
@@ -489,6 +498,38 @@ test('Vision mode serializes a Host RPC that remains pending after the directory
   const reverted = buttonOf(harness.render())
   assert.equal(reverted.props['aria-pressed'], false)
   assert.equal(reverted.props.disabled, false)
+})
+
+test('issue #684 rejected return selection retains authoritative ON and shows failure', async () => {
+  const harness = createBrowserHarness({ returnSelectionFailureAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  const rendered = harness.render()
+  assert.equal(buttonOf(rendered).props['aria-pressed'], true)
+  assert.equal(buttonOf(rendered).props.disabled, false)
+  assert.match(firstChildOfType(rendered, harness.primitives.Toast)?.props.text ?? '', /session\/writer-held/)
+})
+
+test('issue #684 successful return RPC with stale projection never invents OFF', async () => {
+  const harness = createBrowserHarness({ staleProjectionAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  assert.equal(harness.getSnapshot().status, 'ready')
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+  assert.equal(buttonOf(harness.render()).props.disabled, false)
 })
 
 test('issue #284 image-session rejection uses transient toast and keeps the real ON state usable', async () => {
