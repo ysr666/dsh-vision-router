@@ -1260,6 +1260,8 @@ try {
       assert.ok(finalHost.sessions.some((session) =>
         session.count === 1 && session.projected?.next?.provider === 'desktop-e2e-vision'),
         'The rejected OFF must remain unapplied after Toast expiration')
+      assert.equal(rendererErrors.length, 0,
+        'An ordinary Host rejection must never create an unhandled renderer exception')
       console.log('[issue-684-host-race] ' + JSON.stringify({
         mode: raceMode, stage: 'rejected-toast-expired',
         refresh, button: finalButton, expiredAlerts,
@@ -1308,11 +1310,11 @@ try {
         await control684HostRace(authenticatedHostUrl, raceToken, 'release')
       }
     }
-    if (raceMode !== 'rapid-click') await waitForSettledVisionState(initialPressed, 'return transition')
+    if (raceMode !== 'rapid-click' && raceMode !== 'reject') await waitForSettledVisionState(initialPressed, 'return transition')
     if (raceMode === 'postcommit-reset') {
       await page.evaluate(() => window.__dvr684PostCommitAckGate?.restore?.())
     }
-    if (raceMode !== 'rapid-click') console.log('[issue-684-host-race] ' + JSON.stringify({
+    if (raceMode !== 'rapid-click' && raceMode !== 'reject') console.log('[issue-684-host-race] ' + JSON.stringify({
       mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
       hostSelections: await readHostModelSelections(authenticatedHostUrl),
       transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
