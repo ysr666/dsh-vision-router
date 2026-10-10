@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
-import { installDesktopVisionToggleAudit } from '../scripts/dsh-desktop-toggle-stability.mjs'
+import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from '../scripts/dsh-desktop-toggle-stability.mjs'
 import {
   CLIENT_PRESENTATION_PRELUDE,
   resolveVisionModePair,
@@ -844,4 +844,48 @@ test('issue #684 refuses absent or disabled buttons, keeping history bounded', (
   tick(500)
   missing()
   assert.equal(audit.stableFor('false', 300), false)
+})
+
+
+test('issue #684 records every client directory transition and never logs raw errors', () => {
+  let state = { current: { provider: 'desktop-e2e', model: 'desktop-text' }, pending: null, status: 'ready', error: null }
+  const listeners = []
+  const store = {
+    getSnapshot: () => state,
+    subscribe: (listener) => { listeners.push(listener); return () => {} },
+  }
+  const directory = { store }
+  const button = { '__reactFiber$probe': { memoizedProps: { directory }, return: null } }
+  const sandbox = {
+    window: {},
+    document: { querySelector: () => button },
+    performance: { now: () => 123 },
+  }
+  vm.runInNewContext('(' + installDesktopModelSelectionTrace.toString() + ')()', sandbox)
+  const trace = sandbox.window.__dvrDesktopModelTrace
+  assert.equal(trace.available, true)
+  assert.equal(trace.history.length, 1)
+
+  state = { ...state, status: 'selecting', pending: { provider: 'desktop-e2e-vision', model: 'desktop-text' } }
+  listeners.forEach((fn) => fn())
+  state = { ...state, status: 'error', pending: null, error: 'session/model-unavailable: secret payload should never be logged' }
+  listeners.forEach((fn) => fn())
+  assert.equal(trace.history[2].errorCode, 'session/model-unavailable')
+  assert.equal(trace.history[2].hasError, true)
+  assert.equal(JSON.stringify(trace.history).includes('secret payload'), false)
+  assert.equal(trace.history[1].pending.provider, 'desktop-e2e-vision')
+  assert.equal(trace.directoryChanged(), false)
+
+  for (let i = 0; i < 80; i++) listeners.forEach((fn) => fn())
+  assert.equal(trace.history.length, 64)
+})
+
+test('issue #684 client directory transition trace is explicit when React internals are absent', () => {
+  const sandbox = {
+    window: {},
+    document: { querySelector: () => ({}) },
+  }
+  vm.runInNewContext('(' + installDesktopModelSelectionTrace.toString() + ')()', sandbox)
+  assert.equal(sandbox.window.__dvrDesktopModelTrace.available, false)
+  assert.equal(sandbox.window.__dvrDesktopModelTrace.reason, 'react-fiber-unavailable')
 })

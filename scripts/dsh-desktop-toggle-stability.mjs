@@ -93,3 +93,78 @@ export function installDesktopVisionToggleAudit() {
   }
   record('initial')
 }
+
+
+/**
+ * Browser E2E-only ModelDirectory state timeline for issue #684. Subscribe to
+ * the same Host-owned store as the Vision button; never wrap selectModel or
+ * issue an RPC. If private React fields change, report unavailable explicitly.
+ * All recorded values are bounded identifiers/enums, never raw errors or data.
+ */
+export function installDesktopModelSelectionTrace() {
+  const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+  const unavailable = (reason) => {
+    window.__dvrDesktopModelTrace = { available: false, reason, history: [] }
+  }
+  if (!button) return unavailable('toggle-missing')
+  const key = Object.getOwnPropertyNames(button).find((name) => name.startsWith('__reactFiber$'))
+  if (!key) return unavailable('react-fiber-unavailable')
+  let fiber = button[key]
+  let directory
+  for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+    if (typeof fiber.memoizedProps?.directory?.store?.subscribe === 'function' &&
+        typeof fiber.memoizedProps.directory.store.getSnapshot === 'function') {
+      directory = fiber.memoizedProps.directory
+      break
+    }
+  }
+  if (!directory) return unavailable('directory-fiber-unavailable')
+
+  const identifier = (value, max) =>
+    typeof value === 'string' ? value.slice(0, max) : null
+  const selection = (value) => !value || typeof value !== 'object' ? null : {
+    provider: identifier(value.provider, 120),
+    model: identifier(value.model, 120),
+    reasoningEffort: identifier(value.reasoningEffort, 80),
+  }
+  const safeStatus = new Set(['idle', 'loading', 'ready', 'selecting', 'error'])
+  const history = []
+  const record = (phase) => {
+    try {
+      const current = directory.store.getSnapshot()
+      const message = typeof current?.error === 'string' ? current.error : ''
+      const errorCode = /^([a-z][a-z0-9-]{0,48}\/[a-z][a-z0-9-]{0,48}):/.exec(message)?.[1] ?? null
+      history.push({
+        phase,
+        ms: Math.round(performance.now()),
+        status: safeStatus.has(current?.status) ? current.status : 'unknown',
+        current: selection(current?.current),
+        pending: selection(current?.pending),
+        hasError: message.length > 0,
+        errorCode,
+      })
+      if (history.length > 64) history.shift()
+    } catch (_) {
+      history.push({ phase: 'snapshot-unavailable' })
+      if (history.length > 64) history.shift()
+    }
+  }
+  const unsubscribe = directory.store.subscribe(() => record('store-update'))
+  window.__dvrDesktopModelTrace = {
+    available: true,
+    history,
+    record,
+    // Same identity check is read-only and detects a replaced directory.
+    directoryChanged() {
+      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+      const nextKey = node && Object.getOwnPropertyNames(node).find((name) => name.startsWith('__reactFiber$'))
+      let next = nextKey && node[nextKey]
+      for (let depth = 0; next && depth < 64; depth++, next = next.return) {
+        if (next.memoizedProps?.directory === directory) return false
+      }
+      return true
+    },
+    unsubscribe,
+  }
+  record('initial')
+}
