@@ -431,10 +431,19 @@ export function hardenVisionClientSource(source) {
   )
 
   next = replaceAll(next, `function wrapStore(store, settings) {`, `function wrapStore(store, settings, recovery) {`)
+  // A synthetic recovery snapshot must retain referential identity until
+  // its Host source snapshot or recovery error actually changes. Otherwise
+  // React's useSyncExternalStore sees a new snapshot on every read and can
+  // enter a maximum-update-depth loop after a failed select + catalog refresh.
+  next = replaceAll(
+    next,
+    `    var lastProjected;\n    function getSnapshot() {`,
+    `    var lastProjected;\n    var lastRecoverySource;\n    var lastRecoveryError;\n    var lastRecoveryRaw;\n    function getSnapshot() {`,
+  )
   next = replaceAll(
     next,
     `      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var config = currentVisionConfig(settings);`,
-    `      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var recovered = recovery && typeof recovery.getSnapshot === 'function' ? recovery.getSnapshot() : null;\n      if (recovered && raw && (raw.status === 'selecting' || raw.status === 'loading')) {\n        raw = Object.assign({}, raw, { status: 'error', error: recovered.message || String(recovered) });\n      }\n      var config = currentVisionConfig(settings);`,
+    `      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var recovered = recovery && typeof recovery.getSnapshot === 'function' ? recovery.getSnapshot() : null;\n      if (recovered && raw && (raw.status === 'selecting' || raw.status === 'loading')) {\n        if (raw !== lastRecoverySource || recovered !== lastRecoveryError) {\n          lastRecoverySource = raw;\n          lastRecoveryError = recovered;\n          lastRecoveryRaw = Object.assign({}, raw, { status: 'error', error: recovered.message || String(recovered) });\n        }\n        raw = lastRecoveryRaw;\n      }\n      var config = currentVisionConfig(settings);`,
   )
   next = replaceAll(
     next,
