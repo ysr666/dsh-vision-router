@@ -288,6 +288,11 @@ export function apply(ctx) {
           race.armed = false
           race.entered = true
           race.enteredCount += 1
+          // One E2E-only Host rejection before Session selection commit.
+          // Real Typert RPC maps this to session/model-unavailable.
+          if (process.env.DVR_E2E_684_REJECT === '1') {
+            return Promise.reject(new Error('issue-684 injected model admission failure'))
+          }
           return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
               race.release = null
@@ -850,7 +855,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1046,6 +1051,7 @@ try {
     // an ephemeral per-run value instead of storing any test secret in source.
     DVR_DESKTOP_E2E_API_KEY: randomUUID(),
     DVR_E2E_684_RACE: raceMode ? '1' : '0',
+    DVR_E2E_684_REJECT: raceMode === 'reject' ? '1' : '0',
     DVR_E2E_684_RACE_TOKEN: raceToken,
     ELECTRON_ENABLE_LOGGING: '1',
   }
@@ -1212,7 +1218,55 @@ try {
   // Exactly two click sites in the file: this shared return and initial ON.
   if (raceMode !== 'rapid-click') await toggle.click()
   if (raceMode) {
-    if (raceMode === 'rapid-click') {
+    if (raceMode === 'reject') {
+      await page.waitForFunction(() =>
+        window.__dvrDesktopModelTrace?.history?.some((row) =>
+          row.status === 'error' && row.errorCode === 'session/model-unavailable'),
+        null, { timeout: 15000 })
+      // The actual DSH Host rejected selection, not the mock UI harness:
+      // neither a second model/selection event nor a projected OFF is allowed.
+      const selectionEvidence = await readHostModelSelections(authenticatedHostUrl)
+      assert.ok(selectionEvidence.sessions.some((session) =>
+        session.count === 1 && session.latest[0]?.provider === 'desktop-e2e-vision'
+          && session.projected?.next?.provider === 'desktop-e2e-vision'),
+        'Injected rejection must leave exactly the original ON event in Host Session')
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('[role="alert"]')].some((node) =>
+          (node.textContent ?? '').includes('session/model-unavailable')),
+        null, { timeout: 5000 })
+      const immediately = {
+        button: await inspectToggleState(),
+        directory: await readClientModelDirectory(page),
+        alerts: await page.evaluate(() => [...document.querySelectorAll('[role="alert"]')]
+          .map((node) => (node.textContent ?? '').slice(0, 150))),
+      }
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'rejected-toast-visible',
+        immediately, hostSelections: selectionEvidence,
+      }))
+      // An unrelated, real Host-backed catalog refresh runs while the
+      // transient error is showing; neither event nor selected mode changed.
+      const refresh = await experiment684DirectoryAction(page, 'catalog')
+      await page.waitForTimeout(4500)
+      const finalButton = await inspectToggleState()
+      const expiredAlerts = await page.evaluate(() => [...document.querySelectorAll('[role="alert"]')]
+        .map((node) => (node.textContent ?? '').slice(0, 150)))
+      const finalHost = await readHostModelSelections(authenticatedHostUrl)
+      assert.equal(finalButton.pressed, 'true')
+      assert.equal(finalButton.busy, 'false')
+      assert.equal(finalButton.disabled, false)
+      assert.ok(!expiredAlerts.some((value) => value.includes('session/model-unavailable')),
+        'Transient error toast should expire without changing Host-selected ON mode')
+      assert.ok(finalHost.sessions.some((session) =>
+        session.count === 1 && session.projected?.next?.provider === 'desktop-e2e-vision'),
+        'The rejected OFF must remain unapplied after Toast expiration')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'rejected-toast-expired',
+        refresh, button: finalButton, expiredAlerts,
+        directory: await readClientModelDirectory(page), hostSelections: finalHost,
+        transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-24) ?? []),
+      }))
+    } else if (raceMode === 'rapid-click') {
       await waitForSettledVisionState(initialPressed, 'rapid return transition')
       console.log('[issue-684-host-race] ' + JSON.stringify({
         mode: raceMode, stage: 'settled', clickTrace: await page.evaluate(() => window.__dvr684RapidClick),
@@ -1266,6 +1320,7 @@ try {
   } else {
     await waitForSettledVisionState(initialPressed, 'return transition')
   }
+  if (raceMode !== 'reject') {
   // Positive control for the diagnostic itself: this real Desktop session
   // must have committed both opposite selections to the Host event log.
   // Otherwise the timeout-only forensic probe could silently report no events
@@ -1450,6 +1505,7 @@ try {
       functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
     }
     writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
+  }
   }
 } catch (error) {
   if (page && screenshotPath) {
