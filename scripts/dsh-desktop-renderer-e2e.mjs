@@ -855,7 +855,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject', 'reject-no-refresh'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject', 'reject-no-refresh', 'success-refresh'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1208,7 +1208,7 @@ try {
       (event) => event?.provider === 'desktop-e2e-vision')),
       'Initial ON must be durably committed before arming the real Host race')
     if (raceMode === 'postcommit-reset') await install684PostCommitAckGate(page)
-    else await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
+    else if (raceMode !== 'success-refresh') await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
     }
   } else {
@@ -1267,6 +1267,27 @@ try {
         refresh, button: finalButton, expiredAlerts,
         directory: await readClientModelDirectory(page), hostSelections: finalHost,
         transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-24) ?? []),
+      }))
+    } else if (raceMode === 'success-refresh') {
+      await waitForSettledVisionState(initialPressed, 'accepted OFF before catalog refresh')
+      const acceptedHost = await readHostModelSelections(authenticatedHostUrl)
+      assert.ok(acceptedHost.sessions.some((session) =>
+        session.count === 2 && session.latest.at(-1)?.provider === 'desktop-e2e'
+          && session.projected?.next?.provider === 'desktop-e2e'),
+        'Success+refresh case must have real accepted OFF event before refreshing catalog')
+      const before = await readClientModelDirectory(page)
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'accepted-before-catalog-refresh',
+        hostSelections: acceptedHost, clientDirectory: before,
+      }))
+      const refresh = await experiment684DirectoryAction(page, 'catalog')
+      await waitForSettledVisionState(initialPressed, 'accepted OFF after catalog refresh')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'accepted-after-catalog-refresh',
+        refresh, clientDirectory: await readClientModelDirectory(page),
+        hostSelections: await readHostModelSelections(authenticatedHostUrl),
+        transitions: await page.evaluate(() =>
+          window.__dvrDesktopModelTrace?.history?.slice(-24) ?? []),
       }))
     } else if (raceMode === 'rapid-click') {
       await waitForSettledVisionState(initialPressed, 'rapid return transition')
