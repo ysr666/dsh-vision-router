@@ -620,8 +620,10 @@ test('issue #684 real Desktop validates its forensic Host event probe on success
 
 test('issue #684 forensics observes Host next and a bounded browser directory snapshot', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
-  assert.match(source, /next: modelSelectionSummary\(state\.next\)/,
-    'Host projected.next drives the client selection authority')
+  assert.match(source, /next: modelSelectionSummary\(state\.pending \?\? state\.lastUsed\)/,
+    'Host stateOf returns raw pending/lastUsed; derive the wire next instead of reading nonexistent state.next')
+  assert.match(source, /assert\.equal\(committedSession\.projected\?\.next\?\.provider/,
+    'real alpha.2 Desktop must positive-control the reconstructed wire next')
   assert.match(source, /scope\.sessions\.list\(\)\.slice\(-8\)/)
   assert.match(source, /function readClientModelDirectory\(page\)/)
   assert.match(source, /depth < 64/, 'browser directory lookup must be bounded')

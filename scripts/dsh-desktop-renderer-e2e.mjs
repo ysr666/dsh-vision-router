@@ -364,7 +364,7 @@ export function apply(ctx) {
             const state = projections?.stateOf(session, 'modelSelection')
             if (state) projected = {
               // This is the authoritative selection consumed by ModelDirectory.syncInputs().
-              next: modelSelectionSummary(state.next),
+              next: modelSelectionSummary(state.pending ?? state.lastUsed),
               pending: modelSelectionSummary(state.pending),
               lastUsed: modelSelectionSummary(state.lastUsed),
             }
@@ -965,15 +965,23 @@ try {
   const expectedProviders = initialPressed === 'true'
     ? ['desktop-e2e', 'desktop-e2e-vision']
     : ['desktop-e2e-vision', 'desktop-e2e']
-  const committedBoth = selectionProbe.sessions.some((session) => {
+  const committedSession = selectionProbe.sessions.find((session) => {
     const latest = session.latest
     if (!Array.isArray(latest) || latest.length < 2) return false
     const lastTwo = latest.slice(-2)
     return lastTwo.every((event, index) =>
       event?.provider === expectedProviders[index] && event.model === 'desktop-text')
   })
-  assert.ok(committedBoth,
+  assert.ok(committedSession,
     `Desktop Host selection forensic probe missed the accepted two-way toggle: ${JSON.stringify(selectionProbe)}`)
+  // alpha.2 exposes the raw state (pending/lastUsed) here, not the wire's
+  // computed next. Positive-control our derived next against the settled mode.
+  if (dshVersion === '0.2.1-alpha.2') {
+    assert.equal(committedSession.projected?.next?.provider,
+      initialPressed === 'true' ? 'desktop-e2e-vision' : 'desktop-e2e',
+      `Host model-selection projection next disagrees with settled toggle: ${JSON.stringify(committedSession.projected)}`)
+    assert.equal(committedSession.projected?.next?.model, 'desktop-text')
+  }
   // Verify that the optional browser probe actually resolves a successful
   // authoritative directory; a fiber-shaped but wrong component is not proof.
   const clientDirectory = await readClientModelDirectory(page)
