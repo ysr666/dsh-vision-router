@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [native-valid-reject-refresh]
+        mode: [reject-no-recovery-wrapper]
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

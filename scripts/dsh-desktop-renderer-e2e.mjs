@@ -872,7 +872,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject', 'reject-no-refresh', 'success-refresh', 'native-reject-refresh', 'native-valid-reject-refresh'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject', 'reject-no-refresh', 'success-refresh', 'native-reject-refresh', 'native-valid-reject-refresh', 'reject-no-recovery-wrapper'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1226,6 +1226,17 @@ try {
       'Initial ON must be durably committed before arming the real Host race')
     if (raceMode === 'postcommit-reset') await install684PostCommitAckGate(page)
     else if (!['success-refresh', 'native-reject-refresh'].includes(raceMode)) await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
+    if (raceMode === 'reject-no-recovery-wrapper') {
+      await page.evaluate(() => {
+        const hardening = window.__dshVisionRouterRootHardening
+        if (!hardening || typeof hardening.select !== 'function') {
+          throw new Error('No Vision Router root selection wrapper')
+        }
+        hardening.select = (directory, selection) => directory.select(selection)
+        window.__dvr684BypassedRecovery = true
+      })
+      assert.equal(await page.evaluate(() => window.__dvr684BypassedRecovery), true)
+    }
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
     }
   } else {
@@ -1254,7 +1265,7 @@ try {
         mode: raceMode, stage: 'native-valid-rejected-refreshed',
         rejected, refresh, directory, button, hostSelections: accepted,
       }))
-    } else if (raceMode === 'reject' || raceMode === 'reject-no-refresh') {
+    } else if (['reject', 'reject-no-refresh', 'reject-no-recovery-wrapper'].includes(raceMode)) {
       await page.waitForFunction(() =>
         window.__dvrDesktopModelTrace?.history?.some((row) =>
           row.status === 'error' && row.errorCode === 'session/model-unavailable'),
@@ -1282,7 +1293,7 @@ try {
       }))
       // An unrelated, real Host-backed catalog refresh runs while the
       // transient error is showing; neither event nor selected mode changed.
-      const refresh = raceMode === 'reject' ? await experiment684DirectoryAction(page, 'catalog') : { skipped: true }
+      const refresh = raceMode === 'reject-no-refresh' ? { skipped: true } : await experiment684DirectoryAction(page, 'catalog')
       await page.waitForTimeout(4500)
       const finalButton = await inspectToggleState()
       const expiredAlerts = await page.evaluate(() => [...document.querySelectorAll('[role="alert"]')]
