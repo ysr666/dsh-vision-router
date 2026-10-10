@@ -1,0 +1,103 @@
+name: Issue 684 Real Host Race Lab
+
+# PR-only adversarial reproduction. Exact alpha2 Host, no production changes.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/issue-684-real-host-race.yml'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - 'scripts/build-source-artifacts.mjs'
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-684-race-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-host-race:
+    name: Host postcommit RPC Windows24 ${{ matrix.mode }}
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: windows-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [postcommit-rpc-reconnect]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout original alpha2 Host
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: d743267388641bc76f17c45ce8b4c231aed1d32c
+          persist-credentials: false
+          path: dsh-alpha
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+      - name: Build Vision Router
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install pinned Host workspace
+        working-directory: dsh-alpha
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Compute pinned Host build key
+        id: host-cache-key
+        working-directory: dsh-alpha
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          LOCK="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          echo "key=dsh-alpha-host-v1-Windows-node24.21.0-pnpm11.28.5-$SHA-$LOCK-$TREE" >> "$GITHUB_OUTPUT"
+      - name: Restore Host build
+        id: host-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-alpha/lib
+            dsh-alpha/packages/*/*/lib
+            dsh-alpha/vendor/*/lib
+            dsh-alpha/apps/*/lib
+            dsh-alpha/apps/*/dist
+            dsh-alpha/native/system/packages/*/lib
+            dsh-alpha/native/system/packages/*/bin
+            dsh-alpha/.dsh-build
+          key: ${{ steps.host-cache-key.outputs.key }}
+      - name: Build Host on cache miss
+        if: steps.host-cache.outputs.cache-hit != 'true'
+        working-directory: dsh-alpha
+        run: pnpm run build
+      - name: Run real Electron and Host race
+        working-directory: dsh-alpha
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-alpha.2
+          DVR_684_RACE_MODE: ${{ matrix.mode }}
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/issue-684-${{ matrix.mode }}.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/issue-684-${{ matrix.mode }}.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue-684-${{ matrix.mode }}-failure
+          path: ${{ runner.temp }}/issue-684-${{ matrix.mode }}.*
+          if-no-files-found: ignore
