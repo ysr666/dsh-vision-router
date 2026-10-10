@@ -597,7 +597,8 @@ test('issue #684 Desktop renderer captures bounded Host selection and button sta
   assert.match(source, /path: '\/dvr-e2e-model-selections'/)
   assert.match(source, /event\?\.type === 'model\/selection'/)
   assert.match(source, /latest: selections\.slice\(-8\)/)
-  assert.match(source, /history\.length > 48/)
+  const auditSource = await readFile(new URL('../scripts/dsh-desktop-toggle-stability.mjs', import.meta.url), 'utf8')
+  assert.match(auditSource, /history\.length > 48/)
   assert.match(source, /window\.__dvrDesktopToggleAudit/)
   assert.match(source, /readHostModelSelections\(authenticatedHostUrl\)/)
   assert.match(source, /hostSelections=\$\{JSON\.stringify\(hostSelections\)\}/)
@@ -610,7 +611,7 @@ test('issue #684 Desktop renderer captures bounded Host selection and button sta
 test('issue #684 real Desktop validates its forensic Host event probe on successful two-way toggles', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const selectionProbe = await readHostModelSelections\(authenticatedHostUrl\)/)
-  assert.match(source, /const committedBoth = selectionProbe\.sessions\.some/)
+  assert.match(source, /const committedSession = selectionProbe\.sessions\.find/)
   assert.match(source, /event\?\.provider === expectedProviders\[index\]/)
   assert.match(source, /event\.model === 'desktop-text'/)
   assert.match(source, /await waitForSettledVisionState\(initialPressed, 'return transition'\)/)
@@ -618,17 +619,41 @@ test('issue #684 real Desktop validates its forensic Host event probe on success
     'the positive control must not add extra clicks or retries')
 })
 
+test('issue #684 forensics observes Host next and a bounded browser directory snapshot', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.match(source, /next: modelSelectionSummary\(state\.pending \?\? state\.lastUsed\)/,
+    'Host stateOf returns raw pending/lastUsed; derive the wire next instead of reading nonexistent state.next')
+  assert.match(source, /assert\.equal\(committedSession\.projected\?\.next\?\.provider/,
+    'real alpha.2 Desktop must positive-control the reconstructed wire next')
+  assert.match(source, /scope\.sessions\.list\(\)\.slice\(-8\)/)
+  assert.match(source, /function readClientModelDirectory\(page\)/)
+  assert.match(source, /depth < 64/, 'browser directory lookup must be bounded')
+  assert.match(source, /groupCount: Array\.isArray\(state\?\.groups\)/)
+  assert.match(source, /hasError: typeof state\?\.error === 'string'/)
+  assert.ok(source.includes('clientDirectory=${JSON.stringify(clientDirectory)}'),
+    'a failure must carry the sanitized client snapshot alongside Host evidence')
+  assert.match(source, /assert\.equal\(clientDirectory\.available, true/,
+    'a successful Desktop toggle must positive-control the browser probe')
+  assert.doesNotMatch(source, /error: state\?\.error|groups: state\?\.groups|sessionId: directory\.sessionId/,
+    'never serialize raw error or directory internals')
+})
+
 test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
     'the real Host check must exercise the opposite state regardless of its persisted initial mode')
-  assert.match(source, /node\.getAttribute\('aria-busy'\) !== 'true'/)
-  assert.match(source, /node\.disabled === false/)
+  const stabilitySource = await readFile(new URL('../scripts/dsh-desktop-toggle-stability.mjs', import.meta.url), 'utf8')
+  assert.match(source, /page\.evaluate\(installDesktopVisionToggleAudit\)/)
+  assert.match(source, /__dvrDesktopToggleAudit\?\.stableFor\(target, 300\)/)
+  assert.match(stabilitySource, /new MutationObserver/)
+  assert.match(stabilitySource, /attributeFilter: \['aria-pressed', 'aria-busy', 'disabled'\]/)
+  assert.match(stabilitySource, /childList: true/)
+  assert.doesNotMatch(source, /page\.waitForTimeout\(300\)/, 'two endpoint samples cannot establish uninterrupted readiness')
   const firstToggle = source.indexOf("await waitForSettledVisionState(toggledPressed, 'first transition')")
   const secondClick = source.indexOf('await toggle.click()', firstToggle)
   const restored = source.indexOf("await waitForSettledVisionState(initialPressed, 'return transition')", secondClick)
-  assert.match(source, /await page\.waitForTimeout\(300\)/,
-    'the first toggle must remain stably actionable before the second click')
+  assert.match(source, /window\.__dvrDesktopToggleAudit\?\.stableFor\(target, 300\)/,
+    'the first toggle must remain continuously actionable before the second click')
   assert.match(source, /const deadline = Date\.now\(\) \+ 30_000/,
     'continuous ready-state checks must have a single bounded deadline')
   assert.match(source, /waitForSettledVisionState\(initialPressed, 'initial ready baseline'\)/,

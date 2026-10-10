@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { installDesktopVisionToggleAudit } from '../scripts/dsh-desktop-toggle-stability.mjs'
 import {
   CLIENT_PRESENTATION_PRELUDE,
   resolveVisionModePair,
@@ -104,6 +105,8 @@ function createBrowserHarness({
   wrapperRoute = 'deepseek-vision',
   rejectSelection = false,
   returnSelectionFailure = false,
+  returnSelectionFailureAt = null,
+  staleProjectionAt = null,
   deferSelection = false,
   deferCompletion = false,
 } = {}) {
@@ -156,8 +159,9 @@ function createBrowserHarness({
     store,
     async select(selection) {
       selections.push(selection)
-      if (rejectSelection || returnSelectionFailure) {
+      if (rejectSelection || returnSelectionFailure || selections.length === returnSelectionFailureAt) {
         const failure = rejectSelection || returnSelectionFailure
+          || 'session/writer-held: Another writer temporarily owns this session.'
         const message = typeof failure === 'string'
           ? failure
           : 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
@@ -175,6 +179,12 @@ function createBrowserHarness({
       if (selectionGate) {
         snapshot = { ...snapshot, status: 'selecting', pending: selection, error: null }
         await selectionGate
+      }
+      // A successful Host RPC may settle before its projected model selection
+      // reaches the client. The visible mode must not anticipate the projection.
+      if (selections.length === staleProjectionAt) {
+        snapshot = { ...snapshot, status: 'ready', pending: null, error: null }
+        return { ok: true, value: undefined }
       }
       snapshot = { ...snapshot, current: selection, status: 'ready', pending: null, error: null }
       // Reproduce Desktop's real race: the directory advertises ready
@@ -491,6 +501,38 @@ test('Vision mode serializes a Host RPC that remains pending after the directory
   assert.equal(reverted.props.disabled, false)
 })
 
+test('issue #684 rejected return selection retains authoritative ON and shows failure', async () => {
+  const harness = createBrowserHarness({ returnSelectionFailureAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  const rendered = harness.render()
+  assert.equal(buttonOf(rendered).props['aria-pressed'], true)
+  assert.equal(buttonOf(rendered).props.disabled, false)
+  assert.match(firstChildOfType(rendered, harness.primitives.Toast)?.props.text ?? '', /session\/writer-held/)
+})
+
+test('issue #684 successful return RPC with stale projection never invents OFF', async () => {
+  const harness = createBrowserHarness({ staleProjectionAt: 2 })
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+
+  buttonOf(harness.render()).props.onClick()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(harness.selections.length, 2)
+  assert.equal(harness.selections[1].provider, 'opencode-go')
+  assert.equal(harness.getSnapshot().status, 'ready')
+  assert.equal(harness.getSnapshot().current.provider, 'opencode-go-vision')
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+  assert.equal(buttonOf(harness.render()).props.disabled, false)
+})
+
 test('issue #284 image-session rejection uses transient toast and keeps the real ON state usable', async () => {
   const error = 'model-unavailable: Model "qwen3.6-plus" does not accept image input, but this session already contains images; select an image-capable model.'
   const harness = createBrowserHarness({
@@ -695,4 +737,111 @@ test('issue #284 remains explicit and persistent with no send/image auto-reset h
   assert.equal(source.includes('send-committed'), false)
   assert.equal(source.includes('conversation.input.attachments'), false)
   assert.equal(source.includes('imageIds'), false)
+})
+
+
+function create684Harness() {
+  let ms = 0
+  let button = make684Button()
+  let deliver
+  const globals = {
+    window: {},
+    document: {
+      body: {},
+      querySelector: () => button,
+    },
+    performance: { now: () => ms },
+    MutationObserver: class {
+      constructor(callback) { deliver = callback }
+      observe() {}
+    },
+  }
+  vm.runInNewContext('(' + installDesktopVisionToggleAudit.toString() + ')()', globals)
+  const audit = globals.window.__dvrDesktopToggleAudit
+  return {
+    audit,
+    tick(value) { ms = value },
+    mutate(patch) {
+      Object.assign(button, patch)
+      deliver([{ type: 'attributes', target: button, attributeName: 'aria-busy' }])
+    },
+    replace() {
+      button = make684Button()
+      deliver([{ type: 'childList', addedNodes: [button], removedNodes: [] }])
+    },
+    missing() {
+      button = null
+      deliver([{ type: 'childList', addedNodes: [], removedNodes: [] }])
+    },
+  }
+}
+
+function make684Button() {
+  return {
+    pressed: 'false',
+    busy: 'false',
+    disabled: false,
+    getAttribute(key) {
+      if (key === 'aria-pressed') return this.pressed
+      if (key === 'aria-busy') return this.busy
+      return null
+    },
+    matches: (selector) => selector === '[data-vision-router-mode-toggle="true"]',
+    querySelector: () => null,
+  }
+}
+
+test('issue #684 requires an uninterrupted 300ms ready interval, not two matching samples', () => {
+  const { audit, tick, mutate } = create684Harness()
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(299)
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(300)
+  assert.equal(audit.stableFor('false', 300), true)
+
+  // Old gate would see ready at t=300 and t=600, missing this busy pulse.
+  tick(350)
+  mutate({ busy: 'true' })
+  tick(351)
+  mutate({ busy: 'false' })
+  tick(600)
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(899)
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(900)
+  assert.equal(audit.stableFor('false', 300), true)
+  assert.ok(audit.stabilitySummary().observedMutations >= 2)
+})
+
+test('issue #684 restarts the ready window on button replacement and target reversal', () => {
+  const { audit, tick, replace, mutate } = create684Harness()
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(300)
+  assert.equal(audit.stableFor('false', 300), true)
+  tick(320)
+  replace()
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(620)
+  assert.equal(audit.stableFor('false', 300), true)
+
+  tick(621)
+  assert.equal(audit.stableFor('true', 300), false)
+  mutate({ pressed: 'true' })
+  tick(921)
+  assert.equal(audit.stableFor('true', 300), false)
+  tick(1221)
+  assert.equal(audit.stableFor('true', 300), true)
+})
+
+test('issue #684 refuses absent or disabled buttons, keeping history bounded', () => {
+  const { audit, tick, mutate, missing } = create684Harness()
+  for (let i = 0; i < 70; i++) {
+    tick(i)
+    mutate({ disabled: i % 2 === 0 })
+  }
+  assert.ok(audit.history.length <= 48)
+  assert.equal(audit.stableFor('false', 300), false)
+  tick(500)
+  missing()
+  assert.equal(audit.stableFor('false', 300), false)
 })
