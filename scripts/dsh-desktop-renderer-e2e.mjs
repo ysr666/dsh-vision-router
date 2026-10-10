@@ -602,6 +602,23 @@ async function waitFor684HostGate(authenticatedUrl, token) {
   throw new Error('Second OFF request never reached real Host resolveCallConfig gate: ' + JSON.stringify(last))
 }
 
+async function experiment684NativeRejectedSelect(page) {
+  return await page.evaluate(async () => {
+    const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    const key = node && Object.getOwnPropertyNames(node).find(k => k.startsWith('__reactFiber$'))
+    let fiber = key && node[key]
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const directory = fiber.memoizedProps?.directory
+      if (typeof directory?.select !== 'function' || !directory.catalog) continue
+      const outcome = await directory.select({
+        provider: 'desktop-e2e', model: '__dvr_684_nonexistent_model__',
+      })
+      return { ok: outcome?.ok, code: outcome?.error?.code ?? null }
+    }
+    throw new Error('Real Host ModelDirectory missing')
+  })
+}
+
 async function experiment684DirectoryAction(page, mode) {
   return await page.evaluate(async (mode) => {
     const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
@@ -1281,340 +1298,16 @@ try {
         hostSelections: acceptedHost, clientDirectory: before,
       }))
       if (raceMode === 'native-reject-refresh') {
-        // Bypass Vision click, its root-hardening wrapper and the custom
-        // E2E-only Host rejection interceptor. Only the original DSH
-        // ModelDirectory.select() causes a genuine rejected RPC.
-        const nativeFailure = await page.evaluate(async () => {
-          const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
-          const key = button && Object.getOwnPropertyNames(button).find((name) => name.startsWith('__reactFiber
-      console.log('[issue-684-host-race] ' + JSON.stringify({
-        mode: raceMode, stage: 'accepted-after-catalog-refresh',
-        refresh, clientDirectory: await readClientModelDirectory(page),
-        hostSelections: await readHostModelSelections(authenticatedHostUrl),
-        transitions: await page.evaluate(() =>
-          window.__dvrDesktopModelTrace?.history?.slice(-24) ?? []),
-      }))
-    } else if (raceMode === 'rapid-click') {
-      await waitForSettledVisionState(initialPressed, 'rapid return transition')
-      console.log('[issue-684-host-race] ' + JSON.stringify({
-        mode: raceMode, stage: 'settled', clickTrace: await page.evaluate(() => window.__dvr684RapidClick),
-        hostSelections: await readHostModelSelections(authenticatedHostUrl),
-      }))
-    } else if (raceMode === 'postcommit-reset') {
-      await page.waitForFunction(() =>
-        window.__dvr684PostCommitAckGate?.entered === true, null, { timeout: 15000 })
-      const accepted = await page.evaluate(() => window.__dvr684PostCommitAckGate?.accepted === true)
-      assert.equal(accepted, true, 'Real Host OFF selection was rejected before client acknowledgement gate')
-      const hostCommitted = await readHostModelSelections(authenticatedHostUrl)
-      assert.ok(hostCommitted.sessions.some((session) =>
-        session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
-        'The Host must have durably accepted OFF before client acknowledgement is held')
-      console.log('[issue-684-host-race] ' + JSON.stringify({
-        mode: raceMode, stage: 'host-committed-client-ack-held',
-        directory: await readClientModelDirectory(page), hostSelections: hostCommitted,
-      }))
-      try {
-        const injected = await experiment684DirectoryAction(page, 'reset')
-        console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
-      } finally {
-        await page.evaluate(() => window.__dvr684PostCommitAckGate?.release?.())
-      }
-    } else {
-      const gate = await waitFor684HostGate(authenticatedHostUrl, raceToken)
-      const blocked = await readHostModelSelections(authenticatedHostUrl)
-      assert.ok(blocked.sessions.every((session) =>
-        !session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
-        'The return selection committed BEFORE its controlled Host pre-commit gate')
-      console.log('[issue-684-host-race] ' + JSON.stringify({
-        mode: raceMode, stage: 'blocked', gate, directory: await readClientModelDirectory(page),
-        hostSelections: blocked,
-      }))
-      try {
-        const injected = await experiment684DirectoryAction(page, raceMode)
-        console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
-      } finally {
-        await control684HostRace(authenticatedHostUrl, raceToken, 'release')
-      }
-    }
-    if (raceMode !== 'rapid-click' && !raceMode.startsWith('reject')) await waitForSettledVisionState(initialPressed, 'return transition')
-    if (raceMode === 'postcommit-reset') {
-      await page.evaluate(() => window.__dvr684PostCommitAckGate?.restore?.())
-    }
-    if (raceMode !== 'rapid-click' && !raceMode.startsWith('reject')) console.log('[issue-684-host-race] ' + JSON.stringify({
-      mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
-      hostSelections: await readHostModelSelections(authenticatedHostUrl),
-      transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
-    }))
-  } else {
-    await waitForSettledVisionState(initialPressed, 'return transition')
-  }
-  if (!raceMode.startsWith('reject')) {
-  // Positive control for the diagnostic itself: this real Desktop session
-  // must have committed both opposite selections to the Host event log.
-  // Otherwise the timeout-only forensic probe could silently report no events
-  // even when the UI transitions, making a later failure uninterpretable.
-  const selectionProbe = await readHostModelSelections(authenticatedHostUrl)
-  const expectedProviders = initialPressed === 'true'
-    ? ['desktop-e2e', 'desktop-e2e-vision']
-    : ['desktop-e2e-vision', 'desktop-e2e']
-  const committedSession = selectionProbe.sessions.find((session) => {
-    const latest = session.latest
-    if (!Array.isArray(latest) || latest.length < 2) return false
-    const lastTwo = latest.slice(-2)
-    return lastTwo.every((event, index) =>
-      event?.provider === expectedProviders[index] && event.model === 'desktop-text')
-  })
-  assert.ok(committedSession,
-    `Desktop Host selection forensic probe missed the accepted two-way toggle: ${JSON.stringify(selectionProbe)}`)
-  // alpha.2 exposes the raw state (pending/lastUsed) here, not the wire's
-  // computed next. Positive-control our derived next against the settled mode.
-  if (dshVersion === '0.2.1-alpha.2') {
-    assert.equal(committedSession.projected?.next?.provider,
-      initialPressed === 'true' ? 'desktop-e2e-vision' : 'desktop-e2e',
-      `Host model-selection projection next disagrees with settled toggle: ${JSON.stringify(committedSession.projected)}`)
-    assert.equal(committedSession.projected?.next?.model, 'desktop-text')
-  }
-  // Verify that the optional browser probe actually resolves a successful
-  // authoritative directory; a fiber-shaped but wrong component is not proof.
-  const clientDirectory = await readClientModelDirectory(page)
-  assert.equal(clientDirectory.available, true,
-    `Desktop browser directory probe unavailable: ${JSON.stringify(clientDirectory)}`)
-  assert.equal(clientDirectory.current?.provider, initialPressed === 'true'
-    ? 'desktop-e2e-vision' : 'desktop-e2e')
-  assert.equal(clientDirectory.current?.model, 'desktop-text')
-  // Positive-control the trace against the real two-way Desktop transition.
-  const clientTransitions = await page.evaluate(() =>
-    window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [])
-  assert.ok(expectedProviders.every((provider) => clientTransitions.some((row) =>
-    row.current?.provider === provider && row.current.model === 'desktop-text')),
-    `Desktop selection transition trace did not observe both models: ${JSON.stringify(clientTransitions)}`)
-
-  const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
-  await accountMenu.click()
-  await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
-  await page.getByText('Vision Router', { exact: true }).last().click()
-  await page.waitForTimeout(250)
-  let settingsText = await page.locator('body').innerText()
-  if (/远程设置未启用|Remote settings (?:are )?disabled/i.test(settingsText)) {
-    throw new Error('official dsh-app://app entered the remote-settings permission gate')
-  }
-
-  const strategyCard = page.locator('.vr-ia-plugin-card').filter({ hasText: /识图策略|Vision strategy/i })
-  await strategyCard.locator('.vr-ia-plugin-card-header').click()
-  const depthToggle = strategyCard.locator('[data-vr-depth-cap-toggle="1"]')
-  await depthToggle.waitFor({ state: 'visible', timeout: 5000 })
-  const originalChecked = await depthToggle.isChecked()
-  await depthToggle.click()
-  const expectedChecked = !originalChecked
-  const save = strategyCard.locator('.vr-ia-save')
-  await save.click()
-  await strategyCard.locator('.vr-ia-plugin-card-header').waitFor({ state: 'visible' })
-  await page.waitForFunction(() => {
-    const card = [...document.querySelectorAll('.vr-ia-plugin-card')]
-      .find((node) => /识图策略|Vision strategy/i.test(node.textContent || ''))
-    return card?.querySelector('.vr-ia-plugin-card-header')?.getAttribute('aria-expanded') === 'false'
-  })
-
-  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
-  await accountMenu.click()
-  await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
-  await page.getByText('Vision Router', { exact: true }).last().click()
-  await page.waitForTimeout(250)
-  settingsText = await page.locator('body').innerText()
-  if (/远程设置未启用|Remote settings (?:are )?disabled/i.test(settingsText)) {
-    throw new Error('Desktop Settings regressed to remote permission warning after reopen')
-  }
-  const reopenedCard = page.locator('.vr-ia-plugin-card').filter({ hasText: /识图策略|Vision strategy/i })
-  await reopenedCard.locator('.vr-ia-plugin-card-header').click()
-  const reopenedToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
-  await reopenedToggle.waitFor({ state: 'visible', timeout: 5000 })
-  if (await reopenedToggle.isChecked() !== expectedChecked) throw new Error('Desktop Settings save did not survive reopen')
-
-  // Restore the fixture's original value and require the same durable save path.
-  await reopenedToggle.click()
-  await reopenedCard.locator('.vr-ia-save').click()
-  await page.waitForFunction(() => {
-    const card = [...document.querySelectorAll('.vr-ia-plugin-card')]
-      .find((node) => /识图策略|Vision strategy/i.test(node.textContent || ''))
-    return card?.querySelector('.vr-ia-plugin-card-header')?.getAttribute('aria-expanded') === 'false'
-  })
-  // Re-open once more to verify the restoration survived the same save path.
-  await reopenedCard.locator('.vr-ia-plugin-card-header').click()
-  const restoredToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
-  await restoredToggle.waitFor({ state: 'visible', timeout: 5000 })
-  if (await restoredToggle.isChecked() !== originalChecked) throw new Error('Desktop Settings restore did not survive save readback')
-  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
-
-  // A true product smoke ends at the rendered answer, not at an injected DOM node.
-  // Reuse the exact live Session whose composer and Vision slot were exercised
-  // above. Do not couple the smoke to a version-specific “new session” chrome.
-  const composer = page.locator('[data-composer-input][contenteditable="true"]').first()
-  await composer.waitFor({ state: 'visible', timeout: 30_000 })
-  const fileInput = page.locator('[data-composer-card] input[type="file"]').first()
-  await fileInput.setInputFiles({
-    name: 'desktop-e2e.png', mimeType: 'image/png',
-    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
-  })
-  await page.locator('img[alt="desktop-e2e.png"]').waitFor({ state: 'visible', timeout: 30_000 })
-  await composer.fill('Inspect the attached image with the vision tool, then answer with the observed result.')
-  const functionalToggle = page.locator('[data-vision-router-mode-toggle="true"]')
-  await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
-  if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
-  await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
-  // The primary action changes its accessible name when a running turn can be
-  // queued or steered. Waiting for actionability also waits out attachment upload.
-  const send = page.getByRole('button', {
-    name: /^(?:Send message|Queue message|Steer message|发送消息|排队发送|插话发送)$/i,
-  }).last()
-  await send.waitFor({ state: 'visible', timeout: 30_000 })
-  await send.click({ timeout: 30_000 })
-  await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
-  if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
-    throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
-  }
-  if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
-    throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
-  }
-
-  const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
-  const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
-  assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
-  const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
-  assert.ok(
-    dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
-    `real Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
-  assert.equal(
-    dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
-    false,
-    `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
-  const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
-  assert.ok(
-    dvrMessages.length > 0,
-    `real Session v4 log must expose at least one DVR-authored durable message by id: ${JSON.stringify(sessionSourceProbe)}`,
-  )
-  for (const message of dvrMessages) {
-    assert.equal(
-      message.source?.kind,
-      'plugin:dsh-vision-router',
-      `every DVR-authored Session v4 message must carry the producer-owned source: ${JSON.stringify(message)}`,
-    )
-    assert.equal(
-      message.source?.plugin,
-      undefined,
-      `DVR-authored Session v4 messages must not retain the legacy plugin field: ${JSON.stringify(message)}`,
-    )
-  }
-
-  if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
-  const result = {
-    ok: true,
-    dsh: dshVersion,
-    platform: process.platform,
-    arch: process.arch,
-    electronNode,
-    structuredMarkers: markers.length,
-    toggle: { initial: initialPressed, exercised: true, restored: true },
-    onboarding: { settingsPath: true },
-    settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
-    functionalVisionTurn: { textEvidence, visionEvidence, rendered: 'DESKTOP_VISION_E2E_OK' },
-  }
-  console.log(JSON.stringify(result))
-  if (diagnosticPath) {
-    const fileResult = {
-      ok: true,
-      dsh: dshVersion,
-      platform: process.platform,
-      arch: process.arch,
-      structuredMarkers: markers.length,
-      toggle: result.toggle,
-      settings: result.settings,
-      functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
-    }
-    writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
-  }
-  }
-} catch (error) {
-  if (page && screenshotPath) {
-    try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
-  }
-  const failureState = page ? await page.evaluate(() => ({
-    bodyText: (document.body?.innerText || '').slice(-12000),
-    composer: document.querySelector('[data-composer-card]')?.textContent || '',
-    composerButtons: [...document.querySelectorAll('[data-composer-card] button')].map((button) => ({
-      label: button.getAttribute('aria-label') || '', disabled: Boolean(button.disabled), hidden: Boolean(button.hidden),
-    })),
-    url: location.href,
-  })).catch(() => undefined) : undefined
-  const failure = {
-    ok: false,
-    error: String(error?.stack || error),
-    rendererErrors,
-    textEvidence,
-    visionEvidence,
-    coreProbe: lastCoreProbe,
-    runtimePackageEvidence,
-    failureState,
-  }
-  console.error(JSON.stringify(failure, undefined, 2))
-  if (diagnosticPath) {
-    const fileFailure = {
-      ok: false,
-      failureKind: lastCoreProbe !== undefined
-        && (lastCoreProbe?.services?.workspaceController?.active !== true
-          || lastCoreProbe?.services?.sessionController?.active !== true)
-        ? 'host-control-plane-unavailable'
-        : 'desktop-e2e-failed',
-      rendererErrorCount: rendererErrors.length,
-      functionalVisionTurn: fileSafeTurnEvidence(textEvidence, visionEvidence),
-      coreProbe: fileSafeCoreProbe(lastCoreProbe),
-      runtimePackageEvidence: fileSafeRuntimePackageEvidence(runtimePackageEvidence),
-      failureState: fileSafeFailureState(failureState),
-    }
-    try { writeFileSync(diagnosticPath, `${JSON.stringify(fileFailure, undefined, 2)}\n`) } catch {}
-  }
-  throw error
-} finally {
-  try { await browser?.close() } catch {}
-  await stopProcess(child)
-  await closeServer(textServer?.server)
-  await closeServer(visionServer?.server)
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try { rmSync(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); break }
-    catch { await new Promise((accept) => setTimeout(accept, 250)) }
-  }
-}
-))
-          let fiber = key && button[key]
-          let directory
-          for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
-            if (typeof fiber.memoizedProps?.directory?.select === 'function') {
-              directory = fiber.memoizedProps.directory
-              break
-            }
-          }
-          if (!directory) throw new Error('Native ModelDirectory unavailable')
-          const result = await directory.select({
-            provider: 'desktop-e2e', model: '__dvr_684_nonexistent_model__',
-          })
-          if (!result || result.ok !== false) {
-            throw new Error('Native invalid-model call unexpectedly succeeded')
-          }
-          return {
-            code: result.error?.code ?? null,
-            currentProvider: directory.store.getSnapshot().current?.provider ?? null,
-            status: directory.store.getSnapshot().status,
-          }
-        })
-        assert.equal(nativeFailure.code, 'session/model-unavailable')
-        const hostAfterNativeRejection = await readHostModelSelections(authenticatedHostUrl)
-        assert.ok(hostAfterNativeRejection.sessions.some((session) =>
-          session.count === 2 && session.projected?.next?.provider === 'desktop-e2e'),
-          'Native rejected selection must not emit another Session model/selection event')
+        const rejection = await experiment684NativeRejectedSelect(page)
+        assert.equal(rejection.ok, false)
+        assert.equal(rejection.code, 'session/model-unavailable')
+        const afterRejection = await readHostModelSelections(authenticatedHostUrl)
+        assert.ok(afterRejection.sessions.some(row =>
+          row.count === 2 && row.projected?.next?.provider === 'desktop-e2e'),
+          'Native rejected RPC must not append an event')
         console.log('[issue-684-host-race] ' + JSON.stringify({
-          mode: raceMode, stage: 'native-directory-rpc-rejected',
-          nativeFailure, hostSelections: hostAfterNativeRejection,
+          mode: raceMode, stage: 'native-rejected', rejection,
+          hostSelections: afterRejection,
         }))
       }
       const refresh = await experiment684DirectoryAction(page, 'catalog')
