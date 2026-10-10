@@ -396,3 +396,57 @@ test('issue #684 rejected selection reporter survives current Client source with
   assert.match(run({ inheritedRecovery: 'existing older Host recovery' }),
     /existing older Host recovery/)
 })
+
+
+test('issue #684 recovered selecting/loading snapshot is referentially stable for native React model seat', () => {
+  const html = hardenVisionToggleHtml(
+    injectVisionModelVisibilityBoundary(
+      injectClientPresentationBoundary('<html><head></head><body></body></html>'),
+    ),
+  )
+  const source = scriptsOfInjectedFixture(html).find(script => script.includes('function wrapStore('))
+  assert.ok(source, 'exercise the generated visibility wrapper, not an independent mock')
+  const start = source.indexOf('  function wrapStore(')
+  const end = source.indexOf('\n  function wrapDirectory(', start)
+  assert.ok(start >= 0 && end > start, 'extract the actual post-hardening wrapper function')
+  const context = {
+    currentVisionConfig: () => ({}),
+    configKey: () => '{}',
+    projectVisionModeDirectoryState: (state) => state,
+    window: {},
+  }
+  const wrapStore = vm.runInNewContext(source.slice(start, end) + '\nwrapStore', context)
+  let raw = { status: 'loading', current: { provider: 'vendor-vision' } }
+  let recoveryError = new Error('session/model-unavailable: rejected')
+  const wrapped = wrapStore(
+    { getSnapshot: () => raw, subscribe: () => () => {} },
+    { getSnapshot: () => ({}) },
+    { getSnapshot: () => recoveryError, subscribe: () => () => {} },
+  )
+  const first = wrapped.getSnapshot()
+  assert.equal(first.status, 'error')
+  assert.match(first.error, /session\/model-unavailable/)
+  assert.notStrictEqual(first, raw, 'never overwrite the Host-owned source snapshot')
+  assert.strictEqual(wrapped.getSnapshot(), first,
+    'React useSyncExternalStore must see the same object across unchanged reads')
+
+  raw = { ...raw, status: 'selecting' }
+  const selecting = wrapped.getSnapshot()
+  assert.notStrictEqual(selecting, first)
+  assert.strictEqual(wrapped.getSnapshot(), selecting)
+
+  recoveryError = new Error('session/model-unavailable: another rejection')
+  const changedError = wrapped.getSnapshot()
+  assert.notStrictEqual(changedError, selecting)
+  assert.match(changedError.error, /another rejection/)
+  assert.strictEqual(wrapped.getSnapshot(), changedError)
+
+  recoveryError = null
+  const recovered = wrapped.getSnapshot()
+  assert.strictEqual(recovered, raw)
+  assert.strictEqual(wrapped.getSnapshot(), recovered)
+
+  raw = { ...raw, status: 'ready' }
+  assert.strictEqual(wrapped.getSnapshot(), raw)
+  assert.strictEqual(wrapped.getSnapshot(), raw)
+})

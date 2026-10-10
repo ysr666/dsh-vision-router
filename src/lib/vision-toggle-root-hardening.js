@@ -433,8 +433,8 @@ export function hardenVisionClientSource(source) {
   next = replaceAll(next, `function wrapStore(store, settings) {`, `function wrapStore(store, settings, recovery) {`)
   next = replaceAll(
     next,
-    `      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var config = currentVisionConfig(settings);`,
-    `      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var recovered = recovery && typeof recovery.getSnapshot === 'function' ? recovery.getSnapshot() : null;\n      if (recovered && raw && (raw.status === 'selecting' || raw.status === 'loading')) {\n        raw = Object.assign({}, raw, { status: 'error', error: recovered.message || String(recovered) });\n      }\n      var config = currentVisionConfig(settings);`,
+    `    var lastProjected;\n    function getSnapshot() {\n      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var config = currentVisionConfig(settings);`,
+    `    var lastProjected;\n    var lastRecoverySource;\n    var lastRecoveryError;\n    var lastRecoverySnapshot;\n    function getSnapshot() {\n      var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;\n      var recovered = recovery && typeof recovery.getSnapshot === 'function' ? recovery.getSnapshot() : null;\n      if (recovered && raw && (raw.status === 'selecting' || raw.status === 'loading')) {\n        if (raw !== lastRecoverySource || recovered !== lastRecoveryError) {\n          lastRecoverySource = raw;\n          lastRecoveryError = recovered;\n          lastRecoverySnapshot = Object.assign({}, raw, { status: 'error', error: recovered.message || String(recovered) });\n        }\n        raw = lastRecoverySnapshot;\n      }\n      var config = currentVisionConfig(settings);`,
   )
   next = replaceAll(
     next,
