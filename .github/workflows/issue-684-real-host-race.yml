@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/issue-684-real-host-race.yml'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - 'scripts/build-source-artifacts.mjs'
 permissions:
   contents: read
 
@@ -22,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [catalog, reset]
+        mode: [catalog, reset, postcommit-reset]
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

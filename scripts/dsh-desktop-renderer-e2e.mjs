@@ -630,6 +630,44 @@ async function experiment684DirectoryAction(page, mode) {
   }, mode)
 }
 
+
+async function install684PostCommitAckGate(page) {
+  await page.evaluate(() => {
+    const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    const key = button && Object.getOwnPropertyNames(button).find((k) => k.startsWith('__reactFiber$'))
+    let fiber = key && button[key]
+    let directory
+    for (let i = 0; fiber && i < 64; i++, fiber = fiber.return) {
+      if (typeof fiber.memoizedProps?.directory?.select === 'function') {
+        directory = fiber.memoizedProps.directory
+        break
+      }
+    }
+    if (!directory) throw new Error('Client postcommit experiment: ModelDirectory unavailable')
+    const owned = Object.getOwnPropertyDescriptor(directory, 'select')
+    const original = directory.select
+    const gate = { entered: false, accepted: false, release: null }
+    directory.select = async function(...args) {
+      const result = await original.apply(this, args)
+      if (args[0]?.provider === 'desktop-e2e' && args[0]?.model === 'desktop-text') {
+        gate.entered = true
+        gate.accepted = result?.ok === true
+        if (gate.accepted) {
+          await new Promise((resolve) => { gate.release = resolve })
+          gate.release = null
+        }
+      }
+      return result
+    }
+    gate.restore = () => {
+      if (gate.release) gate.release()
+      if (owned) Object.defineProperty(directory, 'select', owned)
+      else delete directory.select
+    }
+    window.__dvr684PostCommitAckGate = gate
+  })
+}
+
 // Test-only, read-only snapshot of the directory attached to this React toggle.
 // The React DOM fiber is not a Host API. If unavailable, report an explicit
 // diagnostic gap; never make a model selection or infer success from this probe.
@@ -738,7 +776,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1077,7 +1115,8 @@ try {
     assert.ok(first.sessions.some((session) => session.latest.some(
       (event) => event?.provider === 'desktop-e2e-vision')),
       'Initial ON must be durably committed before arming the real Host race')
-    await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
+    if (raceMode === 'postcommit-reset') await install684PostCommitAckGate(page)
+    else await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
   } else {
     await waitForSettledVisionState(toggledPressed, 'first transition')
@@ -1086,22 +1125,46 @@ try {
   // Exactly two click sites in the file: this shared return and initial ON.
   await toggle.click()
   if (raceMode) {
-    const gate = await waitFor684HostGate(authenticatedHostUrl, raceToken)
-    const blocked = await readHostModelSelections(authenticatedHostUrl)
-    assert.ok(blocked.sessions.every((session) =>
-      !session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
-      'The return selection committed BEFORE its controlled Host pre-commit gate')
-    console.log('[issue-684-host-race] ' + JSON.stringify({
-      mode: raceMode, stage: 'blocked', gate, directory: await readClientModelDirectory(page),
-      hostSelections: blocked,
-    }))
-    try {
-      const injected = await experiment684DirectoryAction(page, raceMode)
-      console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
-    } finally {
-      await control684HostRace(authenticatedHostUrl, raceToken, 'release')
+    if (raceMode === 'postcommit-reset') {
+      await page.waitForFunction(() =>
+        window.__dvr684PostCommitAckGate?.entered === true, null, { timeout: 15000 })
+      const accepted = await page.evaluate(() => window.__dvr684PostCommitAckGate?.accepted === true)
+      assert.equal(accepted, true, 'Real Host OFF selection was rejected before client acknowledgement gate')
+      const hostCommitted = await readHostModelSelections(authenticatedHostUrl)
+      assert.ok(hostCommitted.sessions.some((session) =>
+        session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
+        'The Host must have durably accepted OFF before client acknowledgement is held')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'host-committed-client-ack-held',
+        directory: await readClientModelDirectory(page), hostSelections: hostCommitted,
+      }))
+      try {
+        const injected = await experiment684DirectoryAction(page, 'reset')
+        console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
+      } finally {
+        await page.evaluate(() => window.__dvr684PostCommitAckGate?.release?.())
+      }
+    } else {
+      const gate = await waitFor684HostGate(authenticatedHostUrl, raceToken)
+      const blocked = await readHostModelSelections(authenticatedHostUrl)
+      assert.ok(blocked.sessions.every((session) =>
+        !session.latest.slice(-1).some((event) => event?.provider === 'desktop-e2e')),
+        'The return selection committed BEFORE its controlled Host pre-commit gate')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'blocked', gate, directory: await readClientModelDirectory(page),
+        hostSelections: blocked,
+      }))
+      try {
+        const injected = await experiment684DirectoryAction(page, raceMode)
+        console.log('[issue-684-host-race] ' + JSON.stringify({ mode: raceMode, stage: 'injected', injected }))
+      } finally {
+        await control684HostRace(authenticatedHostUrl, raceToken, 'release')
+      }
     }
     await waitForSettledVisionState(initialPressed, 'return transition')
+    if (raceMode === 'postcommit-reset') {
+      await page.evaluate(() => window.__dvr684PostCommitAckGate?.restore?.())
+    }
     console.log('[issue-684-host-race] ' + JSON.stringify({
       mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
       hostSelections: await readHostModelSelections(authenticatedHostUrl),
