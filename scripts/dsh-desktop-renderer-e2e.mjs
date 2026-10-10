@@ -663,6 +663,48 @@ async function experiment684DirectoryAction(page, mode) {
 }
 
 
+
+async function install684RapidClickObserver(page) {
+  return await page.evaluate(() => {
+    const selector = '[data-vision-router-mode-toggle="true"]'
+    const trace = { installed: true, dispatched: false, domClicks: 0, before: null, clickStates: [] }
+    document.addEventListener('click', (event) => {
+      const node = event.target?.closest?.(selector)
+      if (!node) return
+      trace.domClicks++
+      trace.clickStates.push({
+        pressed: node.getAttribute('aria-pressed'),
+        busy: node.getAttribute('aria-busy'),
+        disabled: node.disabled === true,
+      })
+      if (trace.clickStates.length > 4) trace.clickStates.shift()
+    }, true)
+    const observer = new MutationObserver(() => {
+      if (trace.dispatched) return
+      const node = document.querySelector(selector)
+      if (!node || node.getAttribute('aria-pressed') !== 'true' ||
+          node.getAttribute('aria-busy') === 'true' || node.disabled) return
+      // Fire precisely once at the earliest DOM-actionable ON state, rather
+      // than introducing a new artificial timer or clicking through disabled.
+      trace.dispatched = true
+      trace.before = {
+        pressed: node.getAttribute('aria-pressed'),
+        busy: node.getAttribute('aria-busy'),
+        disabled: node.disabled === true,
+        atMs: Math.round(performance.now()),
+      }
+      observer.disconnect()
+      node.click()
+    })
+    observer.observe(document.body, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['aria-pressed', 'aria-busy', 'disabled'],
+    })
+    window.__dvr684RapidClick = trace
+    return { installed: true }
+  })
+}
+
 async function install684PostCommitAckGate(page) {
   await page.evaluate(() => {
     const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
@@ -808,7 +850,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1115,13 +1157,14 @@ try {
         .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
       const clientDirectory = await readClientModelDirectory(page)
         .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
+      const rapidClick = await page.evaluate(() => window.__dvr684RapidClick ?? null).catch(() => null)
       const clientTransitions = await page.evaluate(() => ({
         available: window.__dvrDesktopModelTrace?.available === true,
         changed: window.__dvrDesktopModelTrace?.directoryChanged?.() ?? null,
         history: window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [],
       })).catch(() => ({ available: false, history: [] }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)}, rapidClick=${JSON.stringify(rapidClick)})`,
         { cause: error },
       )
     }
@@ -1133,10 +1176,21 @@ try {
   const traceReady = await page.evaluate(() => window.__dvrDesktopModelTrace?.available === true)
   assert.equal(traceReady, true, 'Desktop selection transition trace was not attached to Host ModelDirectory')
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
+  if (raceMode === 'rapid-click') await install684RapidClickObserver(page)
   await toggle.click()
   if (raceMode) {
     // Only the isolated lab restores the original fast click cadence.
     // No additional user clicks or retries occur in either execution path.
+    if (raceMode === 'rapid-click') {
+      await page.waitForFunction(() => window.__dvr684RapidClick?.dispatched === true,
+        null, { timeout: 15000 })
+      const clickTrace = await page.evaluate(() => window.__dvr684RapidClick)
+      assert.equal(clickTrace.domClicks, 2,
+        'Rapid click must be delivered twice to the real DOM, never retried')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'rapid-second-click-dispatched', clickTrace,
+      }))
+    } else {
     await page.waitForFunction((pressed) => {
       const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
       return button?.getAttribute('aria-pressed') === pressed
@@ -1150,14 +1204,21 @@ try {
     if (raceMode === 'postcommit-reset') await install684PostCommitAckGate(page)
     else await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
+    }
   } else {
     await waitForSettledVisionState(toggledPressed, 'first transition')
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   }
   // Exactly two click sites in the file: this shared return and initial ON.
-  await toggle.click()
+  if (raceMode !== 'rapid-click') await toggle.click()
   if (raceMode) {
-    if (raceMode === 'postcommit-reset') {
+    if (raceMode === 'rapid-click') {
+      await waitForSettledVisionState(initialPressed, 'rapid return transition')
+      console.log('[issue-684-host-race] ' + JSON.stringify({
+        mode: raceMode, stage: 'settled', clickTrace: await page.evaluate(() => window.__dvr684RapidClick),
+        hostSelections: await readHostModelSelections(authenticatedHostUrl),
+      }))
+    } else if (raceMode === 'postcommit-reset') {
       await page.waitForFunction(() =>
         window.__dvr684PostCommitAckGate?.entered === true, null, { timeout: 15000 })
       const accepted = await page.evaluate(() => window.__dvr684PostCommitAckGate?.accepted === true)
@@ -1193,11 +1254,11 @@ try {
         await control684HostRace(authenticatedHostUrl, raceToken, 'release')
       }
     }
-    await waitForSettledVisionState(initialPressed, 'return transition')
+    if (raceMode !== 'rapid-click') await waitForSettledVisionState(initialPressed, 'return transition')
     if (raceMode === 'postcommit-reset') {
       await page.evaluate(() => window.__dvr684PostCommitAckGate?.restore?.())
     }
-    console.log('[issue-684-host-race] ' + JSON.stringify({
+    if (raceMode !== 'rapid-click') console.log('[issue-684-host-race] ' + JSON.stringify({
       mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
       hostSelections: await readHostModelSelections(authenticatedHostUrl),
       transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
