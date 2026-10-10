@@ -641,13 +641,18 @@ test('Desktop renderer E2E waits for each Vision selection transaction to settle
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
     'the real Host check must exercise the opposite state regardless of its persisted initial mode')
-  assert.match(source, /node\.getAttribute\('aria-busy'\) !== 'true'/)
-  assert.match(source, /node\.disabled === false/)
+  const stabilitySource = await readFile(new URL('../scripts/dsh-desktop-toggle-stability.mjs', import.meta.url), 'utf8')
+  assert.match(source, /page\.evaluate\(installDesktopVisionToggleAudit\)/)
+  assert.match(source, /__dvrDesktopToggleAudit\?\.stableFor\(target, 300\)/)
+  assert.match(stabilitySource, /new MutationObserver/)
+  assert.match(stabilitySource, /attributeFilter: \['aria-pressed', 'aria-busy', 'disabled'\]/)
+  assert.match(stabilitySource, /childList: true/)
+  assert.doesNotMatch(source, /page\.waitForTimeout\(300\)/, 'two endpoint samples cannot establish uninterrupted readiness')
   const firstToggle = source.indexOf("await waitForSettledVisionState(toggledPressed, 'first transition')")
   const secondClick = source.indexOf('await toggle.click()', firstToggle)
   const restored = source.indexOf("await waitForSettledVisionState(initialPressed, 'return transition')", secondClick)
-  assert.match(source, /await page\.waitForTimeout\(300\)/,
-    'the first toggle must remain stably actionable before the second click')
+  assert.match(source, /window\.__dvrDesktopToggleAudit\?\.stableFor\(target, 300\)/,
+    'the first toggle must remain continuously actionable before the second click')
   assert.match(source, /const deadline = Date\.now\(\) \+ 30_000/,
     'continuous ready-state checks must have a single bounded deadline')
   assert.match(source, /waitForSettledVisionState\(initialPressed, 'initial ready baseline'\)/,

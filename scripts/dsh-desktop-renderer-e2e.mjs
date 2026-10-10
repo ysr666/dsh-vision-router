@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { installDesktopVisionToggleAudit } from './dsh-desktop-toggle-stability.mjs'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -880,60 +881,26 @@ try {
       title: node.title,
     }
   })
-  // Test-only state timeline. Observe real React button mutations; never
-  // infer success from a click, retry a click, or collect arbitrary page text.
-  await page.evaluate(() => {
-    const history = []
-    const record = (phase) => {
-      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
-      history.push({
-        phase,
-        ms: Math.round(performance.now()),
-        pressed: node?.getAttribute('aria-pressed') ?? null,
-        busy: node?.getAttribute('aria-busy') ?? null,
-        disabled: node?.disabled === true,
-      })
-      if (history.length > 48) history.shift()
-    }
-    const observer = new MutationObserver((mutations) => {
-      if (mutations.some((mutation) =>
-        mutation.target?.getAttribute?.('data-vision-router-mode-toggle') === 'true')) {
-        record('mutation')
-      }
-    })
-    observer.observe(document.body, {
-      subtree: true, attributes: true,
-      attributeFilter: ['aria-pressed', 'aria-busy', 'disabled'],
-    })
-    window.__dvrDesktopToggleAudit = { history, record }
-    record('initial')
-  })
+  // Observe every relevant mutation, not only the state at two timestamps.
+  await page.evaluate(installDesktopVisionToggleAudit)
   const waitForSettledVisionState = async (expected, direction) => {
     const deadline = Date.now() + 30_000
-    let lastObserved
     try {
-      while (Date.now() < deadline) {
-        await page.waitForFunction((pressed) => {
-          const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
-          return node?.getAttribute('aria-pressed') === pressed
-            && node.getAttribute('aria-busy') !== 'true'
-            && node.disabled === false
-        }, expected, { timeout: Math.max(1, deadline - Date.now()) })
-        // An initialized Host can transiently repopulate the model directory.
-        // Require one continuous actionable interval before the next click;
-        // a transient loss restarts observation, never the user's selection.
-        await page.waitForTimeout(300)
-        lastObserved = await inspectToggleState()
-        if (lastObserved.pressed === expected && lastObserved.busy !== 'true' && !lastObserved.disabled) {
-          return
-        }
-      }
-      throw new Error('continuous stability window was not reached')
+      // A real continuous UI-ready window: MutationObserver invalidates any
+      // interval interrupted by busy/loading, disabling or node replacement.
+      // Preserve the one original 30s deadline and exactly two user clicks.
+      await page.waitForFunction((target) =>
+        window.__dvrDesktopToggleAudit?.stableFor(target, 300) === true,
+        expected,
+        { timeout: Math.max(1, deadline - Date.now()) })
     } catch (error) {
-      const observed = await inspectToggleState().catch(() => lastObserved ?? ({ unavailable: true }))
+      const observed = await inspectToggleState().catch(() => ({ unavailable: true }))
       const buttonHistory = await page.evaluate(() =>
         window.__dvrDesktopToggleAudit?.history?.slice(-48) ?? [],
       ).catch(() => [])
+      const stability = await page.evaluate(() =>
+        window.__dvrDesktopToggleAudit?.stabilitySummary() ?? null,
+      ).catch(() => null)
       // A missing second model/selection event means that the OFF click was
       // not accepted by the Host. Two accepted events with the UI still ON
       // point to a client projection or later Host reset instead. Keep the
@@ -943,7 +910,7 @@ try {
       const clientDirectory = await readClientModelDirectory(page)
         .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)})`,
         { cause: error },
       )
     }
