@@ -5,6 +5,10 @@
 export function installDesktopVisionToggleAudit() {
   const selector = '[data-vision-router-mode-toggle="true"]'
   const history = []
+  // Identifiers only; no provider error bodies or credentials in evidence.
+  const domClicks = []
+  const alertHistory = []
+  let observedAlerts = new Map()
   let observedNode = document.querySelector(selector)
   let revision = 0
   let expectedState = null
@@ -23,6 +27,33 @@ export function installDesktopVisionToggleAudit() {
     history.push({ phase, ms: Math.round(performance.now()), ...inspect() })
     if (history.length > 48) history.shift()
   }
+  const alertEvent = (phase, errorCode) => {
+    alertHistory.push({ phase, ms: Math.round(performance.now()), errorCode })
+    if (alertHistory.length > 32) alertHistory.shift()
+  }
+  const captureAlerts = () => {
+    if (typeof document.querySelectorAll !== 'function') return
+    const next = new Map()
+    for (const node of [...document.querySelectorAll('[role="alert"]')].slice(0, 32)) {
+      const value = typeof node?.textContent === 'string' ? node.textContent : ''
+      const errorCode = /\b([a-z][a-z0-9-]{0,47}\/[a-z][a-z0-9-]{0,47})\b/.exec(value)?.[1] ?? null
+      next.set(node, errorCode)
+      if (!observedAlerts.has(node) || observedAlerts.get(node) !== errorCode) {
+        alertEvent('visible', errorCode)
+      }
+    }
+    for (const [node, code] of observedAlerts) {
+      if (!next.has(node)) alertEvent('removed', code)
+    }
+    observedAlerts = next
+  }
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('click', (event) => {
+      if (!event.target?.closest?.(selector)) return
+      domClicks.push({ ms: Math.round(performance.now()), ...inspect() })
+      if (domClicks.length > 8) domClicks.shift()
+    }, true)
+  }
   const containsToggle = (node) =>
     node === observedNode || node?.matches?.(selector) === true
       || node?.querySelector?.(selector) != null
@@ -30,6 +61,7 @@ export function installDesktopVisionToggleAudit() {
   // Even if busy goes true then false between Playwright polls, attribute
   // mutation records restart the interval. Replacing the button also resets it.
   const observer = new MutationObserver((mutations) => {
+    captureAlerts()
     const current = document.querySelector(selector)
     const changed = current !== observedNode || mutations.some((mutation) => {
       if (mutation.type === 'attributes') {
@@ -49,11 +81,14 @@ export function installDesktopVisionToggleAudit() {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ['aria-pressed', 'aria-busy', 'disabled'],
+    attributeFilter: ['aria-pressed', 'aria-busy', 'disabled', 'role'],
+    characterData: true,
   })
 
   window.__dvrDesktopToggleAudit = {
     history,
+    domClicks,
+    alertHistory,
     record,
     stableFor(expected, minimumMs) {
       const button = document.querySelector(selector)
@@ -92,6 +127,7 @@ export function installDesktopVisionToggleAudit() {
     },
   }
   record('initial')
+  captureAlerts()
 }
 
 
