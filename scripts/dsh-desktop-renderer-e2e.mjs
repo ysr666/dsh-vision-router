@@ -744,33 +744,38 @@ async function install684PostCommitRpcGate(page) {
     if (!sessions || typeof sessions.selectModel !== 'function') {
       throw new Error('Client postcommit RPC experiment: Session Remote selectModel unavailable')
     }
+    // The Host Remote method may be a read-only Proxy member. Interpose the
+    // injectable Session dependency of this SINGLE ModelDirectory instead of
+    // mutating the shared Remote object used by other Client consumers.
     const original = sessions.selectModel
-    const owned = Object.getOwnPropertyDescriptor(sessions, 'selectModel')
+    const owned = Object.getOwnPropertyDescriptor(directory, 'sessions')
     const gate = { entered: false, accepted: false, release: null, requestCount: 0 }
-    const interceptor = async function (...args) {
-      const result = await original.apply(this, args)
-      if (args[0]?.provider === 'desktop-e2e' && args[0]?.model === 'desktop-text') {
-        gate.requestCount++
-        gate.entered = true
-        gate.accepted = result?.ok === true
-        if (gate.accepted) {
-          // Crucial difference from old postcommit-reset: Host RPC returned
-          // here but ModelDirectory.select() is still awaiting this Promise,
-          // so it has NOT processed the successful result.
-          await new Promise((resolve) => { gate.release = resolve })
-          gate.release = null
+    const wrappedSessions = {
+      selectModel: async function (...args) {
+        const result = await original.apply(sessions, args)
+        if (args[0]?.provider === 'desktop-e2e' && args[0]?.model === 'desktop-text') {
+          gate.requestCount++
+          gate.entered = true
+          gate.accepted = result?.ok === true
+          if (gate.accepted) {
+            // Real Host RPC has settled, but this ModelDirectory is still
+            // awaiting the returned Promise. Never pretend it already
+            // consumed the result or that the projected mode is local state.
+            await new Promise((resolve) => { gate.release = resolve })
+            gate.release = null
+          }
         }
-      }
-      return result
+        return result
+      },
     }
-    sessions.selectModel = interceptor
-    if (sessions.selectModel !== interceptor) {
-      throw new Error('Cannot instrument actual Client Session Remote result')
+    directory.sessions = wrappedSessions
+    if (directory.sessions !== wrappedSessions) {
+      throw new Error('Cannot isolate the current ModelDirectory Session dependency')
     }
     gate.restore = () => {
       if (gate.release) gate.release()
-      if (owned) Object.defineProperty(sessions, 'selectModel', owned)
-      else delete sessions.selectModel
+      if (owned) Object.defineProperty(directory, 'sessions', owned)
+      else delete directory.sessions
     }
     window.__dvr684PostCommitRpcGate = gate
   })
