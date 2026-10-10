@@ -982,3 +982,63 @@ test('issue #684 client directory transition trace is explicit when React intern
   assert.equal(sandbox.window.__dvrDesktopModelTrace.available, false)
   assert.equal(sandbox.window.__dvrDesktopModelTrace.reason, 'react-fiber-unavailable')
 })
+
+
+test('issue #684 preserves two DOM clicks and the expiring rejection alert without storing message bodies', () => {
+  let now = 100
+  let mutation
+  let onClick
+  let alerts = []
+  const button = make684Button()
+  const globals = {
+    window: {},
+    document: {
+      body: {},
+      querySelector: () => button,
+      querySelectorAll: (selector) => selector === '[role="alert"]' ? alerts : [],
+      addEventListener(type, callback, capture) {
+        assert.equal(type, 'click')
+        assert.equal(capture, true)
+        onClick = callback
+      },
+    },
+    performance: { now: () => now },
+    MutationObserver: class {
+      constructor(callback) { mutation = callback }
+      observe() {}
+    },
+  }
+  vm.runInNewContext('(' + installDesktopVisionToggleAudit.toString() + ')()', globals)
+  const audit = globals.window.__dvrDesktopToggleAudit
+  const deliverClick = () => onClick({ target: { closest: () => button } })
+  const flush = () => mutation([{ type: 'childList', addedNodes: [], removedNodes: [] }])
+  deliverClick()
+  assert.equal(audit.domClicks.length, 1)
+  assert.equal(audit.domClicks[0].pressed, 'false')
+  assert.equal(audit.domClicks[0].disabled, false)
+
+  now = 140
+  const node = { textContent: 'Model action failed: session/model-unavailable: secret API TOKEN DO NOT LOG' }
+  alerts = [node]
+  flush()
+  assert.equal(audit.alertHistory.at(-1).phase, 'visible')
+  assert.equal(audit.alertHistory.at(-1).errorCode, 'session/model-unavailable')
+  assert.equal(JSON.stringify(audit.alertHistory).includes('secret API TOKEN'), false)
+
+  now = 4200
+  alerts = []
+  flush()
+  assert.equal(audit.alertHistory.at(-1).phase, 'removed')
+  assert.equal(audit.alertHistory.at(-1).errorCode, 'session/model-unavailable')
+  for (let i = 0; i < 75; i++) {
+    now++
+    deliverClick()
+    alerts = [{ textContent: 'session/model-unavailable: SECRET VALUE '+i }]
+    flush()
+    alerts = []
+    flush()
+  }
+  assert.ok(audit.domClicks.length <= 8)
+  assert.ok(audit.alertHistory.length <= 32)
+  assert.equal(JSON.stringify(audit.alertHistory).includes('SECRET VALUE'), false)
+})

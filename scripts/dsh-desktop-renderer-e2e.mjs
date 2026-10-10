@@ -898,6 +898,10 @@ try {
       const buttonHistory = await page.evaluate(() =>
         window.__dvrDesktopToggleAudit?.history?.slice(-48) ?? [],
       ).catch(() => [])
+      const interactionEvidence = await page.evaluate(() => ({
+        domClicks: window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [],
+        alertEvents: window.__dvrDesktopToggleAudit?.alertHistory?.slice(-32) ?? [],
+      })).catch(() => ({ unavailable: true }))
       const stability = await page.evaluate(() =>
         window.__dvrDesktopToggleAudit?.stabilitySummary() ?? null,
       ).catch(() => null)
@@ -915,7 +919,7 @@ try {
         history: window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [],
       })).catch(() => ({ available: false, history: [] }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, interactionEvidence=${JSON.stringify(interactionEvidence)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)})`,
         { cause: error },
       )
     }
@@ -932,6 +936,10 @@ try {
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
+  const domClickEvidence = await page.evaluate(() =>
+    window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [])
+  assert.equal(domClickEvidence.length, 2,
+    'Real Desktop positive control must receive exactly two Vision DOM clicks')
   // Positive control for the diagnostic itself: this real Desktop session
   // must have committed both opposite selections to the Host event log.
   // Otherwise the timeout-only forensic probe could silently report no events
