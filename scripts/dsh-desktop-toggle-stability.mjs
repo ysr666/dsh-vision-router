@@ -81,8 +81,7 @@ export function installDesktopVisionToggleAudit() {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ['aria-pressed', 'aria-busy', 'disabled', 'role'],
-    characterData: true,
+    attributeFilter: ['aria-pressed', 'aria-busy', 'disabled'],
   })
 
   window.__dvrDesktopToggleAudit = {
