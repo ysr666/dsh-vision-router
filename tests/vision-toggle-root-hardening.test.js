@@ -4,6 +4,8 @@ import vm from 'node:vm'
 
 import { injectClientPresentationBoundary } from '../lib/client-presentation-boundary.js'
 import { injectVisionModelVisibilityBoundary } from '../lib/vision-model-visibility-boundary.js'
+import { VISION_MODEL_VISIBILITY_PRELUDE } from '../lib/vision-model-visibility-boundary-main.js'
+import { hardenVisionClientSource } from '../lib/vision-toggle-root-hardening.js'
 import {
   createVisionToggleRootHardening,
   hardenVisionToggleHtml,
@@ -395,4 +397,81 @@ test('issue #684 rejected selection reporter survives current Client source with
   assert.match(run({}), /Unknown failure/)
   assert.match(run({ inheritedRecovery: 'existing older Host recovery' }),
     /existing older Host recovery/)
+})
+
+
+test('issue #684 recovery wrapper returns stable snapshots through Host rejection and catalog refresh', () => {
+  // Evaluate the actual generated wrapStore function, not an independently
+  // reimplemented mock. The original bug created a new Object.assign() every
+  // time React useSyncExternalStore called getSnapshot while loading/selecting.
+  const source = hardenVisionClientSource(VISION_MODEL_VISIBILITY_PRELUDE)
+  const start = source.indexOf('  function wrapStore(store, settings, recovery) {')
+  const end = source.indexOf('\n  function wrapDirectory(', start)
+  assert.ok(start >= 0 && end > start, 'must extract the production transformed wrapStore')
+  const wrapStore = vm.runInNewContext(source.slice(start, end) + '\nwrapStore', {
+    currentVisionConfig: (settings) => settings.getSnapshot().value,
+    configKey: (config) => JSON.stringify(config),
+    // Force a fresh projected object for each real input change, exactly as
+    // projectVisionModeDirectoryState is allowed to do.
+    projectVisionModeDirectoryState: (state, config) => ({ ...state, settings: config }),
+    Object, String,
+  })
+
+  let raw = { status: 'loading', error: null, current: { provider: 'vision' } }
+  let fault = new Error('session/model-unavailable: original rejection')
+  let config = { wrappedProviders: ['vision'] }
+  const origin = {
+    getSnapshot: () => raw,
+    subscribe: () => () => {},
+  }
+  const recovery = {
+    getSnapshot: () => fault,
+    subscribe: () => () => {},
+  }
+  const settings = {
+    getSnapshot: () => ({ value: config }),
+    subscribe: () => () => {},
+  }
+  const wrapped = wrapStore(origin, settings, recovery)
+  const first = wrapped.getSnapshot()
+  assert.equal(first.status, 'error')
+  assert.match(first.error, /session\/model-unavailable/)
+  assert.equal(raw.status, 'loading', 'must never mutate Host-owned directory state')
+  for (let i = 0; i < 25; i++) {
+    assert.equal(wrapped.getSnapshot(), first, 'no snapshot identity change without a real input change')
+  }
+
+  raw = { ...raw, status: 'selecting' }
+  const second = wrapped.getSnapshot()
+  assert.notEqual(second, first)
+  assert.equal(second, wrapped.getSnapshot())
+  assert.equal(second.status, 'error')
+
+  fault = new Error('session/writer-held: newer rejection')
+  const third = wrapped.getSnapshot()
+  assert.notEqual(third, second, 'new recovery failure must invalidate the cached synthetic snapshot')
+  assert.match(third.error, /session\/writer-held/)
+  assert.equal(third, wrapped.getSnapshot())
+
+  // Catalog/reconnect changes can yield a new Host snapshot with equal data:
+  // that real update must be reflected exactly once, not on every read.
+  raw = { ...raw }
+  const fourth = wrapped.getSnapshot()
+  assert.notEqual(fourth, third)
+  assert.equal(fourth, wrapped.getSnapshot())
+
+  config = { wrappedProviders: ['vision'], autoWrapProviders: true }
+  const fifth = wrapped.getSnapshot()
+  assert.notEqual(fifth, fourth)
+  assert.equal(fifth, wrapped.getSnapshot())
+
+  fault = null
+  const cleared = wrapped.getSnapshot()
+  assert.notEqual(cleared, fifth)
+  assert.equal(cleared.status, 'selecting')
+  assert.equal(cleared, wrapped.getSnapshot())
+  raw = { ...raw, status: 'ready' }
+  const ready = wrapped.getSnapshot()
+  assert.equal(ready.status, 'ready')
+  assert.equal(ready, wrapped.getSnapshot())
 })
