@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { installDesktopVisionToggleAudit } from './dsh-desktop-toggle-stability.mjs'
+import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from './dsh-desktop-toggle-stability.mjs'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -909,8 +909,13 @@ try {
         .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
       const clientDirectory = await readClientModelDirectory(page)
         .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
+      const clientTransitions = await page.evaluate(() => ({
+        available: window.__dvrDesktopModelTrace?.available === true,
+        changed: window.__dvrDesktopModelTrace?.directoryChanged?.() ?? null,
+        history: window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [],
+      })).catch(() => ({ available: false, history: [] }))
       throw new Error(
-        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)})`,
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)})`,
         { cause: error },
       )
     }
@@ -918,6 +923,9 @@ try {
   // Do not start an adversarial double-toggle during the Host's initial
   // model-catalog hydration. The initial state must be stably actionable too.
   await waitForSettledVisionState(initialPressed, 'initial ready baseline')
+  await page.evaluate(installDesktopModelSelectionTrace)
+  const traceReady = await page.evaluate(() => window.__dvrDesktopModelTrace?.available === true)
+  assert.equal(traceReady, true, 'Desktop selection transition trace was not attached to Host ModelDirectory')
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
   await toggle.click()
   await waitForSettledVisionState(toggledPressed, 'first transition')
@@ -957,6 +965,12 @@ try {
   assert.equal(clientDirectory.current?.provider, initialPressed === 'true'
     ? 'desktop-e2e-vision' : 'desktop-e2e')
   assert.equal(clientDirectory.current?.model, 'desktop-text')
+  // Positive-control the trace against the real two-way Desktop transition.
+  const clientTransitions = await page.evaluate(() =>
+    window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [])
+  assert.ok(expectedProviders.every((provider) => clientTransitions.some((row) =>
+    row.current?.provider === provider && row.current.model === 'desktop-text')),
+    `Desktop selection transition trace did not observe both models: ${JSON.stringify(clientTransitions)}`)
 
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()

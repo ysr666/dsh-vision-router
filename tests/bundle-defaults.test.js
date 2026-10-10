@@ -638,6 +638,20 @@ test('issue #684 forensics observes Host next and a bounded browser directory sn
     'never serialize raw error or directory internals')
 })
 
+test('issue #684 Desktop logs bounded client directory transitions without raw errors', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  const tracer = await readFile(new URL('../scripts/dsh-desktop-toggle-stability.mjs', import.meta.url), 'utf8')
+  assert.match(source, /page\.evaluate\(installDesktopModelSelectionTrace\)/)
+  assert.match(source, /clientTransitions=\$\{JSON\.stringify\(clientTransitions\)\}/)
+  assert.match(source, /clientTransitions\.some/)
+  assert.match(tracer, /directory\.store\.subscribe\(\(\) => record\('store-update'\)\)/)
+  assert.match(tracer, /history\.length > 64/)
+  assert.match(tracer, /errorCode/)
+  assert.doesNotMatch(tracer, /error: current\?\.error|message: current\?\.error/,
+    'model selection trace may retain error code, never full Host error string')
+  assert.equal((source.match(/await toggle\.click\(\)/g) ?? []).length, 2)
+})
+
 test('Desktop renderer E2E waits for each Vision selection transaction to settle', async () => {
   const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
   assert.match(source, /const toggledPressed = initialPressed === 'true' \? 'false' : 'true'/,
