@@ -610,6 +610,38 @@ async function experiment684DirectoryAction(page, mode) {
       }
     }
     if (!directory) throw new Error('Experiment requires a real Host-owned ModelDirectory')
+    if (mode === 'reconnect') {
+      // Exercise the *real Client ConnectionController*, unlike a synthetic
+      // model-directory reset; this creates a new generation and restarts
+      // the Host session control baseline via connection/reset.
+      const conn = directory.catalog.ctx?.get?.('connection')
+      if (!conn?.reconnect || !conn?.generation?.getSnapshot) {
+        throw new Error('Real DSH Client connection unavailable')
+      }
+      const before = conn.generation.getSnapshot()?.id
+      if (!Number.isSafeInteger(before)) throw new Error('No initial connected generation')
+      const history = [before]
+      const stop = conn.generation.subscribe(() => {
+        const id = conn.generation.getSnapshot()?.id ?? null
+        history.push(id)
+        if (history.length > 32) history.shift()
+      })
+      window.__dvr684ReconnectTrace = { before, history }
+      conn.reconnect()
+      const deadline = performance.now() + 15000
+      try {
+        while (performance.now() < deadline) {
+          const current = conn.generation.getSnapshot()?.id
+          if (Number.isSafeInteger(current) && current > before) {
+            return { before, after: current, history: history.slice(-32) }
+          }
+          await new Promise((resolve) => setTimeout(resolve, 75))
+        }
+        throw new Error('Connection.reconnect did not establish a new generation: ' + JSON.stringify(history))
+      } finally {
+        stop()
+      }
+    }
     if (mode === 'catalog') directory.catalog.refresh()
     else if (mode === 'reset') {
       directory.catalog.resetGeneration()
@@ -776,7 +808,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
