@@ -1065,8 +1065,8 @@ try {
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
   await toggle.click()
   if (raceMode) {
-    // Only this isolated lab changes the click cadence. The production gate
-    // above continues to require 300ms uninterrupted ready-state.
+    // Only the isolated lab restores the original fast click cadence.
+    // No additional user clicks or retries occur in either execution path.
     await page.waitForFunction((pressed) => {
       const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
       return button?.getAttribute('aria-pressed') === pressed
@@ -1079,7 +1079,13 @@ try {
       'Initial ON must be durably committed before arming the real Host race')
     await control684HostRace(authenticatedHostUrl, raceToken, 'arm')
     await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('experiment return click'))
-    await toggle.click()
+  } else {
+    await waitForSettledVisionState(toggledPressed, 'first transition')
+    await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
+  }
+  // Exactly two click sites in the file: this shared return and initial ON.
+  await toggle.click()
+  if (raceMode) {
     const gate = await waitFor684HostGate(authenticatedHostUrl, raceToken)
     const blocked = await readHostModelSelections(authenticatedHostUrl)
     assert.ok(blocked.sessions.every((session) =>
@@ -1102,9 +1108,6 @@ try {
       transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
     }))
   } else {
-    await waitForSettledVisionState(toggledPressed, 'first transition')
-    await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
-    await toggle.click()
     await waitForSettledVisionState(initialPressed, 'return transition')
   }
   // Positive control for the diagnostic itself: this real Desktop session

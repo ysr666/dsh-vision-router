@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: issue-684-race-${{ github.event.pull_request.number }}
+  group: issue-684-race-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
