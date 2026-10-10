@@ -342,3 +342,57 @@ test('selection transport rejection is recoverable without mutating the Host dir
   assert.equal(calls, 2)
   assert.equal(api.recoveryFor(directory).getSnapshot(), null)
 })
+
+
+test('issue #684 rejected selection reporter survives current Client source without bound recovery variables', () => {
+  // Real alpha.2 Desktop rejection on Windows Node24 used to reach this exact
+  // source-rewritten function and throw ReferenceError: recovery is not defined.
+  // Other unit fixtures only exercised the independent recovery store API.
+  const html = hardenVisionToggleHtml(
+    injectClientPresentationBoundary('<html><head></head><body></body></html>'),
+  )
+  const client = scriptsOfInjectedFixture(html)
+    .find((source) => source.includes('function announceRejectedSelection()'))
+  assert.ok(client, 'must exercise the actual composed Client script')
+  const start = client.indexOf('        function announceRejectedSelection() {')
+  const end = client.indexOf('\n\n        var button = React.createElement', start)
+  assert.ok(start >= 0 && end > start, 'failed selection reporter must have a parseable boundary')
+  const functionSource = client.slice(start, end)
+  assert.match(functionSource, /typeof recovery === 'undefined'/)
+  assert.doesNotMatch(functionSource, /recoveryError\s*;/)
+
+  const directory = { store: { getSnapshot: () => ({ error: null }) } }
+  const captured = []
+  const translations = (key, params) =>
+    key === 'failedUnknown' ? 'Unknown failure'
+      : key === 'failed' ? 'Switch failed: ' + params.message : key
+  function run({ hostError, recoveredError, inheritedRecovery } = {}) {
+    const store = { getSnapshot: () => ({ error: hostError ?? null }) }
+    const window = {
+      __dshVisionRouterRootHardening: recoveredError === undefined ? undefined : {
+        recoveryFor(candidate) {
+          assert.equal(candidate, directory, 'recovery must belong to the same Host ModelDirectory')
+          return { getSnapshot: () => new Error(recoveredError) }
+        },
+      },
+    }
+    const context = {
+      store, window, directory, Number,
+      t: translations,
+      setToast(update) { captured.push(update(null)) },
+      ...(inheritedRecovery ? {
+        recovery: { getSnapshot: () => new Error(inheritedRecovery) },
+      } : {}),
+    }
+    assert.doesNotThrow(() => vm.runInNewContext(functionSource + '\nannounceRejectedSelection()', context))
+    return captured.at(-1).text
+  }
+
+  assert.match(run({ recoveredError: 'session/model-unavailable: injected Host rejection' }),
+    /session\/model-unavailable: injected Host rejection/)
+  assert.match(run({ hostError: 'session/model-unavailable: real Host error', recoveredError: 'stale' }),
+    /session\/model-unavailable: real Host error/)
+  assert.match(run({}), /Unknown failure/)
+  assert.match(run({ inheritedRecovery: 'existing older Host recovery' }),
+    /existing older Host recovery/)
+})
