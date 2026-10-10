@@ -855,7 +855,7 @@ async function stopProcess(child) {
 }
 
 const raceMode = process.env.DVR_684_RACE_MODE ?? ''
-if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject'].includes(raceMode)) {
+if (raceMode && !['catalog', 'reset', 'postcommit-reset', 'reconnect', 'rapid-click', 'reject', 'reject-no-refresh'].includes(raceMode)) {
   throw new Error('Unknown #684 real Host race mode: ' + raceMode)
 }
 const raceToken = raceMode ? randomUUID() : ''
@@ -1051,7 +1051,7 @@ try {
     // an ephemeral per-run value instead of storing any test secret in source.
     DVR_DESKTOP_E2E_API_KEY: randomUUID(),
     DVR_E2E_684_RACE: raceMode ? '1' : '0',
-    DVR_E2E_684_REJECT: raceMode === 'reject' ? '1' : '0',
+    DVR_E2E_684_REJECT: raceMode.startsWith('reject') ? '1' : '0',
     DVR_E2E_684_RACE_TOKEN: raceToken,
     ELECTRON_ENABLE_LOGGING: '1',
   }
@@ -1218,7 +1218,7 @@ try {
   // Exactly two click sites in the file: this shared return and initial ON.
   if (raceMode !== 'rapid-click') await toggle.click()
   if (raceMode) {
-    if (raceMode === 'reject') {
+    if (raceMode === 'reject' || raceMode === 'reject-no-refresh') {
       await page.waitForFunction(() =>
         window.__dvrDesktopModelTrace?.history?.some((row) =>
           row.status === 'error' && row.errorCode === 'session/model-unavailable'),
@@ -1246,7 +1246,7 @@ try {
       }))
       // An unrelated, real Host-backed catalog refresh runs while the
       // transient error is showing; neither event nor selected mode changed.
-      const refresh = await experiment684DirectoryAction(page, 'catalog')
+      const refresh = raceMode === 'reject' ? await experiment684DirectoryAction(page, 'catalog') : { skipped: true }
       await page.waitForTimeout(4500)
       const finalButton = await inspectToggleState()
       const expiredAlerts = await page.evaluate(() => [...document.querySelectorAll('[role="alert"]')]
@@ -1310,11 +1310,11 @@ try {
         await control684HostRace(authenticatedHostUrl, raceToken, 'release')
       }
     }
-    if (raceMode !== 'rapid-click' && raceMode !== 'reject') await waitForSettledVisionState(initialPressed, 'return transition')
+    if (raceMode !== 'rapid-click' && !raceMode.startsWith('reject')) await waitForSettledVisionState(initialPressed, 'return transition')
     if (raceMode === 'postcommit-reset') {
       await page.evaluate(() => window.__dvr684PostCommitAckGate?.restore?.())
     }
-    if (raceMode !== 'rapid-click' && raceMode !== 'reject') console.log('[issue-684-host-race] ' + JSON.stringify({
+    if (raceMode !== 'rapid-click' && !raceMode.startsWith('reject')) console.log('[issue-684-host-race] ' + JSON.stringify({
       mode: raceMode, stage: 'settled', directory: await readClientModelDirectory(page),
       hostSelections: await readHostModelSelections(authenticatedHostUrl),
       transitions: await page.evaluate(() => window.__dvrDesktopModelTrace?.history?.slice(-32) ?? []),
@@ -1322,7 +1322,7 @@ try {
   } else {
     await waitForSettledVisionState(initialPressed, 'return transition')
   }
-  if (raceMode !== 'reject') {
+  if (!raceMode.startsWith('reject')) {
   // Positive control for the diagnostic itself: this real Desktop session
   // must have committed both opposite selections to the Host event log.
   // Otherwise the timeout-only forensic probe could silently report no events
