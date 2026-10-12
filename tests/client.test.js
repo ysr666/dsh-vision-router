@@ -707,7 +707,13 @@ test('advisory capability diagnostics keep undeclared models selectable and supp
     'visionCapabilityTextOnlyWarning',
   )
 
+  assert.equal(bundle.visionCapabilityWarningKey({
+    image: true, attemptable: true, inputModalities: ['text', 'image'],
+    hostInputModalities: ['text'], inferred: 'name',
+  }, 'ready'), 'visionCapabilityTextOnlyWarning')
+
   const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.equal(source.includes('The current DSH Web form does not write this field.'), false)
   assert.equal(source.includes("visionCapsRetry: '重新检测模型'"), true)
   assert.equal(source.includes('loadCatalog(true)'), true)
   assert.equal(source.includes('loadVisionCapabilities(true)'), true)
@@ -766,7 +772,7 @@ test('the vision-backend override editor mirrors the chain rows with two selects
   // The override is now only a capability label; it no longer unlocks admission.
   assert.equal(source.includes('This setting no longer unlocks the picker or admission'), true)
   // Transport-specific HTTP bridging stays behind an explicit http(s) guard.
-  assert.equal(source.includes('only a confirmed http(s) OpenAI Chat Completions channel'), true)
+  assert.equal(source.includes('Verified HTTP Chat Completions can bridge; other explicit text-only routes fail safely.'), true)
   // The hidden-models list is memoized so per-render catalog walks cannot
   // regress the settings card's scroll smoothness.
   assert.equal(source.includes('collectFilteredVisionBackends(catalog.groups, visionCaps.capabilities)'), true)

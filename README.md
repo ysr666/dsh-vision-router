@@ -464,6 +464,8 @@ ollama pull qwen2.5vl
 
 ## Install and lifecycle
 
+**Source developers:** use [Web development watch, Live Reload and native HMR](docs/development/web-live-reload.md) with an isolated DSH profile. This workflow is separate from packaged installation and does not enable Desktop HMR.
+
 ### Install
 
 Normal npm/npx install — one command:

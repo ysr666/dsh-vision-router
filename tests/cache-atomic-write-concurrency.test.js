@@ -26,17 +26,17 @@ test('independent cache writers cannot collide on a same-millisecond atomic temp
       await Promise.all([
         first.markUnsupported({
           fingerprint: `ep2_${'a'.repeat(32)}`,
-          key: 'first', provider: 'provider-a', model: 'model-a',
+          key: 'first', provider: 'provider-a', model: 'model-a', hostMode: 'native-image',
         }),
         second.markUnsupported({
           fingerprint: `ep2_${'b'.repeat(32)}`,
-          key: 'second', provider: 'provider-b', model: 'model-b',
+          key: 'second', provider: 'provider-b', model: 'model-b', hostMode: 'native-image',
         }),
       ])
       await Promise.all([first.flush(), second.flush()])
       assert.equal(warnings.length, 0)
       const body = JSON.parse(await readFile(file, 'utf8'))
-      assert.equal(body.version, 1)
+      assert.equal(body.version, 2)
       assert.equal(Array.isArray(body.verdicts), true)
       assert.equal(body.verdicts.length, 1, 'independent snapshots may remain last-writer-wins, but publication must stay atomic')
     } finally {

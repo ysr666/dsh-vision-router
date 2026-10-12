@@ -2768,6 +2768,8 @@ export function decideVisionBackendCapability(info, provider, model, extraVision
       image: true,
       attemptable: true,
       inputModalities: [...new Set([...inputModalities, 'image'])],
+      ...(inputModalities.length > 0 && !inputModalities.includes('image')
+        ? { hostInputModalities: [...inputModalities] } : {}),
       inferred: 'override',
       reason: undefined,
     }
@@ -2789,6 +2791,8 @@ export function decideVisionBackendCapability(info, provider, model, extraVision
       image: true,
       attemptable: true,
       inputModalities: [...new Set([...inputModalities, 'image'])],
+      ...(inputModalities.length > 0 && !inputModalities.includes('image')
+        ? { hostInputModalities: [...inputModalities] } : {}),
       inferred: 'name',
       reason: undefined,
     }

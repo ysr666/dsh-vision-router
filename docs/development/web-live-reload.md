@@ -1,4 +1,9 @@
-# Web Client development reload (Issue #697)
+# Web Client development: staged builds, Live Reload and native HMR
+
+> **Status (2026-10-12):** The developer-only `pnpm dev:web` workflow,
+> upstream native Web HMR and the fail-closed staged build publisher are
+> merged in `main` (Issues/PRs #697–#700). The production `pnpm build`,
+> released plugin behavior, Host authority and Desktop entry are unchanged.
 
 `pnpm dev:web` is an **opt-in developer tool**. It watches the canonical
 `src/` tree and relevant build scripts, checks the generated maintenance
@@ -17,7 +22,7 @@ pnpm install --frozen-lockfile
 pnpm dev:web
 ```
 
-### Optional automatic Web refresh
+### Optional automatic full-page Web reload
 
 Start a **throwaway DSH Web profile** using the plugin entry from the *same*
 checkout (`entry.js` or the appropriate compiled package entry), not a stale
@@ -39,13 +44,16 @@ web pages, remote debugging ports, and external browser requests are blocked.
 Chrome is controlled through its private CDP stdio pipe, not via a WebSocket
 listener exposed to other users. Stop the watcher with Ctrl+C to close Chrome.
 
-This is **full-page Live Reload, not module-level HMR**: the page, React
-component state and Client loader initialize from scratch. This is intentional
-because Vision Router has both structured `webserver/index-inject` and
-`tapIndex()` script carriers protected by a per-page one-shot registry. In-place
-factory reinjection could bypass lifecycle ownership and duplicate Host/UI
-effects. No carrier registry changes, no production runtime dependency, no
-changes to package exports or Host authority are part of this feature.
+In the default **`page` mode** this is full-page Live Reload, not module-level
+HMR: the page and React component state initialize from scratch. The opt-in
+`native-hmr` mode described below instead uses DSH's own Client Modules
+fiber replacement without page navigation; plugin-local React state can still
+reset. Vision Router also has structured `webserver/index-inject` and
+`tapIndex()` script carriers protected by a per-page one-shot registry.
+Native HMR does **not** hot-replace those injected carrier scripts. Do not
+manually re-inject them; restart the isolated Host/fresh page for those
+changes. No production carrier registry, package export, or Host authority
+changes are part of this feature.
 
 If `src/lib/client-maintenance-actions.js` changes, the embedded generated
 section in `src/lib/client.js` must be synchronized deliberately by running
@@ -58,6 +66,19 @@ must not be treated as HMR. Source changes that affect Host runtime services
 or settings require an isolated Host restart; reloading Chrome alone does not
 reload Host modules. Run established Settings and Issue #684 ON→OFF real-Host
 regression gates separately before claiming all-round compatibility.
+
+## Choose the development mode
+
+| Mode | How to run | Behavior |
+| --- | --- | --- |
+| Build only | `pnpm dev:web` | Rebuild and verify artifacts without launching Chrome |
+| Full-page Web reload | Set `DVR_DEV_WEB_URL` and `DVR_DEV_CHROME` | Refresh private Chrome after successful build (default `page` mode) |
+| Native DSH Web HMR | Same settings plus `DVR_DEV_RELOAD_MODE=native-hmr` | DSH replaces the Client factory without navigating the page |
+
+Native mode requires DSH's Web boot HMR plugin and the
+`/plugins/events` SSE endpoint. If unavailable, use
+`DVR_DEV_RELOAD_MODE=page`; the helper will not silently claim native HMR.
+Only HTTP loopback URLs are permitted. Never commit token-bearing URLs.
 
 ## Upstream native Web HMR (opt-in)
 
@@ -111,3 +132,26 @@ A real DSH 0.2.0-rc.2/Chrome/Node24 acceptance test covered:
 `src/lib/client.js` A→B through the dev watcher, invalid TypeScript compile
 with old B artifact unchanged, then repair B→C, without any browser navigation
 or unexpected JavaScript exceptions.
+
+
+## Acceptance summary and deliberate non-goals
+
+- Real isolated **DSH 0.2.0-rc.2 / macOS / Chrome / Node 24**: 30
+  consecutive plugin Client swaps, one initial page navigation, no
+  unexpected JavaScript exceptions during valid swaps, and no growing CSS
+  style count in the observed run. A deliberately malformed bundle was
+  rejected and later replaced by a working one.
+- Full watcher-to-Host path: source A→B triggered native HMR in about 2.03s;
+  a deliberate TypeScript compilation failure left the B artifact and live
+  UI unchanged; restoring the source then built and hot-swapped C in about
+  2.16s without page navigation.
+- GitHub PR #700: all 16 compatibility/CI workflows passed, including
+  Node 22/24 and real DSH Host matrices. These checks do not certify
+  Desktop HMR, all future DSH releases, or long-running heap memory safety.
+- **Issue #684 remains a separate runtime problem.** HMR does not
+  fix or validate Desktop Vision ON→OFF recovery; its real-Host evidence
+  and implementation remain independent. Host-injected scripts and Settings
+  bridges are not Client-fiber hot-swapped.
+
+No new HMR loader architecture or public plugin release is required for this
+development workflow.

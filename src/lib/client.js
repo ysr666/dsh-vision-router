@@ -279,7 +279,7 @@ openLogFolder,
       visionCapsReasonMissingImage: '未声明 image',
       visionCapsReasonUnverified: '无法验证图片能力',
       visionCapsHiddenMore: '另有 {count} 个模型未显示',
-      visionCapsMissingImageHint: '如果这里有你刚在「设置 → 模型 → 添加自定义提供方」中添加的视觉模型：可以在高级设置「额外视觉模型」的下拉里选中它直接启用；或按 DSH 的方式在 $DSH_HOME/settings.yaml 为该模型补上 input: [text, image]（或为整个提供方补 defaultInput: [text, image]）。DSH 当前 Web 表单不会写入这个字段。',
+      visionCapsMissingImageHint: '若模型确实支持图片，请到 DSH「设置 → 模型 → 输入类型」启用图片并保存；旧 Host 可在 profile 的 cordis.patch.yml 中声明正确的模型输入类型。仅添加额外视觉模型标记不能改变 Host 图片投递。',
       visionCapsRetry: '重新检测模型',
       chainInvalidCurrent: '当前保存的后端已不在可调用模型目录中，或属于非生成式/递归路由，运行时会跳过：',
       retryCatalog: '重试加载目录',
@@ -301,7 +301,7 @@ openLogFolder,
       extraVisionModelsHint:
         '这个设置不再用于“解锁”下拉或允许调用；所有可调用生成式模型本来就能被选择。' +
         '只有当你希望把某个未声明图片能力的模型明确标记为视觉模型时才需要填写。' +
-        '实际调用仍优先走 DSH adapter；只有明确的 http(s) OpenAI Chat Completions 渠道才可能使用直连兼容兜底。',
+        '此标记不会更改 Host 输入声明。仅经验证的 HTTP Chat Completions 渠道可直接桥接；其他纯文本声明会被安全拒绝。',
       groupRoutes: '路由名称',
       groupProxy: '网络',
       networkAuthorityHint: '默认不接管网络出口：Vision Router 沿用 DSH/Host 当前网络路径。下方代理只用于需要给视觉请求单独指定出口的高级覆盖。',
@@ -565,7 +565,7 @@ openLogFolder,
       visionCapsReasonMissingImage: 'image input not declared',
       visionCapsReasonUnverified: 'image capability could not be verified',
       visionCapsHiddenMore: '{count} more models not shown',
-      visionCapsMissingImageHint: 'If one of these is a vision model you just added through Settings → Models → Add custom provider: select it in the “Extra vision models” dropdown under Advanced to enable it directly; or follow the DSH way and add input: [text, image] to that model in $DSH_HOME/settings.yaml (or defaultInput: [text, image] to the provider). The current DSH Web form does not write this field.',
+      visionCapsMissingImageHint: 'For a model that truly accepts images, enable Image in DSH Settings → Models → Input types. Older Hosts: set the correct input field in your profile cordis.patch.yml. Extra vision labels cannot change Host pixel delivery.',
       visionCapsRetry: 'Re-detect models',
       chainInvalidCurrent: 'This saved backend is no longer callable, or is a non-generative/recursive route, so runtime will skip it: ',
       retryCatalog: 'Retry catalog',
@@ -587,7 +587,7 @@ openLogFolder,
       extraVisionModelsHint:
         'This setting no longer unlocks the picker or admission: every callable generative model is selectable already. ' +
         'Use it only when you want to explicitly label an undeclared model as visual. ' +
-        'Runtime still tries the DSH adapter first; only a confirmed http(s) OpenAI Chat Completions channel may use the direct compatibility bridge.',
+        'This label does not change Host input declarations. Verified HTTP Chat Completions can bridge; other explicit text-only routes fail safely.',
       groupRoutes: 'Route names',
       groupProxy: 'Network',
       networkAuthorityHint: 'Vision Router does not own egress by default: it follows the current DSH/Host network path. The proxy below is only an advanced vision-request override.',
@@ -845,11 +845,12 @@ openLogFolder,
     function visionCapabilityWarningKey(capability, status) {
       if (status === 'loading' || status === 'idle') return undefined
       if (status === 'error' || !capability) return 'visionCapabilityUnknownWarning'
-      if (capability.attemptable === false || capability.image === true) return undefined
-      const modalities = Array.isArray(capability.inputModalities) ? capability.inputModalities : []
-      return modalities.length > 0 && !modalities.includes('image')
-        ? 'visionCapabilityTextOnlyWarning'
-        : 'visionCapabilityUndeclaredWarning'
+      if (capability.attemptable === false) return undefined
+      const declared = Array.isArray(capability.hostInputModalities)
+        ? capability.hostInputModalities : capability.inputModalities
+      const modalities = Array.isArray(declared) ? declared : []
+      if (modalities.length > 0 && !modalities.includes('image')) return 'visionCapabilityTextOnlyWarning'
+      return capability.image === true ? undefined : 'visionCapabilityUndeclaredWarning'
     }
 
     // ── field specs ──────────────────────────────────────────────────────────

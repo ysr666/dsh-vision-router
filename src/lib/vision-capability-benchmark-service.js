@@ -14,6 +14,8 @@ import { resolveVisionCredential } from './vision-capability-identity.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 import { wireSessionAffinityId } from './session-affinity.js'
 import { streamWithVisionSessionAffinity } from './session-affinity-runtime.js'
+import { hostImageDeliveryFromInfo, resolvedHostInfo } from './vision-backend-runtime-policy.js'
+import { isLocalImageCapabilityAdmissionFailure } from './vision-execution-policy.js'
 import { streamWithLegacyGlobalProxyScope } from './legacy-global-proxy-boundary.js'
 import {
   hardenCapabilityBenchmarkFixture,
@@ -205,13 +207,28 @@ function failureError(failure, fallback) {
 async function collectStreamText(streamLike) {
   const stream = await streamLike
   let text = ''
-  for await (const chunk of stream) {
-    if (chunk && typeof chunk.text === 'string') text += chunk.text
-    if (chunk?.type === 'finish') {
-      const kind = chunk.reason?.kind
-      if (kind === 'error' || kind === 'aborted') throw failureError(chunk.reason?.failure, kind)
+  let observedOutput = false
+  try {
+    for await (const chunk of stream) {
+      // Any non-terminal output proves that the adapter began responding.
+      // Retrying through a second transport could duplicate a billed call.
+      if (chunk && chunk.type !== 'finish' && chunk.type !== 'error' && chunk.type !== 'aborted') {
+        observedOutput = true
+      }
+      if (chunk && typeof chunk.text === 'string') text += chunk.text
+      if (chunk?.type === 'finish') {
+        const kind = chunk.reason?.kind
+        if (kind === 'error' || kind === 'aborted') throw failureError(chunk.reason?.failure, kind)
+      }
+      if (chunk?.type === 'error' || chunk?.type === 'aborted') throw failureError(chunk.failure, chunk.type)
     }
-    if (chunk?.type === 'error' || chunk?.type === 'aborted') throw failureError(chunk.failure, chunk.type)
+  } catch (error) {
+    if (observedOutput) {
+      const failure = failureError(error)
+      failure.visionAdapterProducedOutput = true
+      throw failure
+    }
+    throw error
   }
   return text
 }
@@ -223,20 +240,22 @@ function tagInvocationError(value) {
   return error
 }
 
-function mayUseExactAdapterBridge(core, error, directProvider) {
-  if (directProvider === undefined) return false
-  try {
-    const classification = core?.classifyVisionFailure?.(error)
-    const kinds = core?.VISION_FAILURE_KINDS
-    const allowed = new Set([
-      kinds?.INVALID_REQUEST,
-      kinds?.NETWORK,
-      kinds?.OTHER,
-    ].filter(Boolean))
-    return classification && allowed.has(classification.kind)
-  } catch {
-    return false
-  }
+function mayUseExactAdapterBridge(_core, error, directProvider) {
+  if (directProvider === undefined || error?.visionAdapterProducedOutput === true) return false
+  // Share the runtime's exact pre-wire pi-ai admission predicate. Provider
+  // HTTP 400s, ambiguous image errors and network failures must never replay.
+  return isLocalImageCapabilityAdmissionFailure(error)
+}
+
+export function exactHostImageDeliveryPlan(info, candidate, core) {
+  const delivery = hostImageDeliveryFromInfo(info)
+  if (delivery !== 'text-projected') return { delivery, path: 'adapter' }
+  const verified = candidate?.evidenceScope === 'endpoint'
+    && candidate?.endpointConfig?.api === 'openai-completions'
+    && typeof candidate?.endpoint === 'string'
+    && typeof core?.isOpenAIHttpBridgeTransport === 'function'
+    && core.isOpenAIHttpBridgeTransport({ api: 'openai-completions', baseURL: candidate.endpoint })
+  return { delivery, path: verified ? 'http-direct' : 'refuse' }
 }
 
 function benchmarkMaxTokensForProvider(provider) {
@@ -295,6 +314,22 @@ export function createExactCapabilityInvoker(ctx, core, candidate, config, optio
       )
       const callSignal = mergedSignal(signal, AbortSignal.timeout(fixtureTimeoutMs))
       const exactHttpProvider = directProviderFor(candidate, config, core)
+      const hostInfo = candidate.provider === 'vision-http' ? undefined :
+        await resolvedHostInfo(ctx?.llm, { provider: candidate.provider, model: candidate.model, signal: callSignal })
+      const imagePlan = candidate.provider === 'vision-http'
+        ? { path: 'http-direct' }
+        : exactHostImageDeliveryPlan(hostInfo, candidate, core)
+      if (imagePlan.path === 'refuse') {
+        const error = new Error('Host declares this model text-only and removes image pixels before adapter dispatch; enable Image in DSH model input types, then retest')
+        error.code = 'VISION_IMAGE_DELIVERY_UNAVAILABLE'
+        error.benchmarkClass = 'host-configuration'
+        throw error
+      }
+      if (imagePlan.path === 'http-direct' && exactHttpProvider === undefined) {
+        const error = new Error('verified HTTP image bridge unavailable for this model')
+        error.code = 'CAPABILITY_BENCHMARK_PROTOCOL'
+        throw error
+      }
       const callExactHttp = async () => {
         if (exactHttpProvider === undefined) {
           const error = new Error('exact HTTP bridge is unavailable for this benchmark backend')
@@ -323,7 +358,7 @@ export function createExactCapabilityInvoker(ctx, core, candidate, config, optio
       let output
       let transport
       let latencyMs
-      if (candidate.provider === 'vision-http') {
+      if (candidate.provider === 'vision-http' || imagePlan.path === 'http-direct') {
         const direct = await callExactHttp()
         output = direct.output
         latencyMs = direct.latencyMs
@@ -404,8 +439,11 @@ async function declaredImageState(ctx, core, config, candidate) {
       candidate.model,
       config?.extraVisionModels,
     )
-    if (decision?.image === true) return 'declared'
-    if (decision?.image === false) return 'text-only'
+    const hostMode = hostImageDeliveryFromInfo(info)
+    if (hostMode === 'native-image') return 'declared'
+    if (hostMode === 'text-projected') return 'text-only'
+    // Name-based guesses and user labels do not rewrite Host input metadata.
+    if (decision?.image === true) return 'unknown'
   } catch {
     // Metadata is advisory. Exact configured routes remain force-testable.
   }

@@ -16,3 +16,10 @@ test('exact image check exposes measured text-only and refreshes capability stat
   assert.match(VISION_EXACT_CHECK_CLIENT, /不写入Auto能力分数/)
   assert.match(VISION_EXACT_CHECK_CLIENT, /vision-router:capability-updated/)
 })
+
+test('exact image check marks results stale and explains local-only diagnostics remotely', () => {
+  assert.match(VISION_EXACT_CHECK_CLIENT, /Configuration may have changed; retest required/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /data-last-result/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /Host to run the image check/)
+  assert.match(VISION_EXACT_CHECK_CLIENT, /window\.addEventListener\('focus',invalidatePreviousResults\)/)
+})
