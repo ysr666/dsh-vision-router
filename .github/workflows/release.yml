@@ -219,7 +219,7 @@ jobs:
           echo "sha256=$LOCAL_SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Persist exact pre-tag package candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-package-candidate
           path: ${{ steps.prepack.outputs.tarball }}
@@ -477,7 +477,7 @@ jobs:
           echo "sha256=$PROVENANCE_SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Persist verified provenance for the release phase
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-provenance
           path: ${{ steps.provenance.outputs.name }}

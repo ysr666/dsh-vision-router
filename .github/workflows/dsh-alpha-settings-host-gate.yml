@@ -172,7 +172,7 @@ jobs:
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
       - name: Upload macOS Desktop diagnostics on failure
         if: matrix.os == 'macos-latest' && failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dsh-alpha-macos-desktop-diagnostics
           path: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.*
@@ -335,7 +335,7 @@ jobs:
 
       - name: Upload diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dsh-alpha-settings-host-diagnostics
           path: |
@@ -468,7 +468,7 @@ jobs:
           done
       - name: Upload Windows Desktop diagnostics on failure
         if: matrix.node == '24.21.0' && failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dsh-alpha-windows-desktop-diagnostics
           path: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.*
