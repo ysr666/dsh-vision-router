@@ -36,6 +36,12 @@ export function visionDescribeSuccessContext(exec, result) {
     role: 'user',
     id: `vision-router-evidence-success-${String(exec.callId)}`,
     content: [{ type: 'text', text: VISION_SUCCESS_GUIDANCE }],
-    source: visionRouterMessageSource(exec.agent.session),
+    source: {
+      ...visionRouterMessageSource(exec.agent.session),
+      // DSH 通过 ContextFormed 的 form:'notice' 区分「注入的上下文」与「真实用户发言」。
+      // 缺少该字段时，这条注入消息会被当成用户插话，当前助手回合就此结束。
+      form: 'notice',
+      summary: 'vision_describe succeeded',
+    },
   }
 }
