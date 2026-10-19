@@ -74,7 +74,15 @@ const SystemPrompt = systemPromptModule.default
 const ToolRuntime = toolsModule.default
 const AgentRegistry = agentModule.default
 const AgentLoop = agentLoopModule.default
-const JsonlSessionPersistence = persistenceModule.default
+// JSONL persistence is a Service/default plugin in older DSH and an ESM
+// namespace plugin with apply()/Config in newer previews. Cordis accepts both.
+// Prefer an explicit default when present, otherwise pass the namespace itself.
+const JsonlSessionPersistence = persistenceModule.default ?? persistenceModule
+assert.ok(
+  typeof JsonlSessionPersistence === 'function'
+    || (JsonlSessionPersistence && typeof JsonlSessionPersistence.apply === 'function'),
+  'DSH JSONL persistence must expose a Cordis plugin (default or module.apply)',
+)
 
 const dshHome = path.join(root, 'dsh-home')
 const sessionsRoot = path.join(dshHome, 'sessions')
