@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { visionDescribeSuccessContext } from '../lib/vision-evidence-guidance.js'
 import assert from 'node:assert/strict'
 
 import {
@@ -375,4 +376,41 @@ test('Session source boundary preserves only valid DVR notice metadata through t
   assert.deepEqual(malformed.additionalContexts[0].source, {
     kind: 'plugin:dsh-vision-router',
   })
+})
+
+test('issue #727: actual successful vision_describe producer survives the Session V3/V4 hook publication seam', async () => {
+  for (const version of [3, 4]) {
+    const handlers = new Map()
+    const wrapped = installVisionRouterMessageSourceBoundary({
+      on(event, handler) { handlers.set(event, handler); return () => {} },
+    })
+    wrapped.on('tools/post-execute', async (exec, result, next) => {
+      const downstream = await next()
+      const additional = visionDescribeSuccessContext(exec, result)
+      return additional
+        ? { ...downstream, additionalContexts: [additional, ...(downstream.additionalContexts ?? [])] }
+        : downstream
+    })
+    const exec = { name: 'vision_describe', callId: 'successful-call', agent: { session: { header: { version } } } }
+    const result = await handlers.get('tools/post-execute')(exec, {
+      isError: false, value: 'visible text',
+    }, async () => ({ kind: 'accept' }))
+    assert.equal(result.kind, 'accept')
+    assert.equal(result.additionalContexts.length, 1)
+    assert.equal(result.additionalContexts[0].role, 'user')
+    assert.deepEqual(result.additionalContexts[0].source, {
+      ...visionRouterMessageSource(exec.agent.session),
+      form: 'notice',
+      summary: 'vision_describe succeeded',
+    })
+
+    for (const failing of [
+      { isError: true, value: 'unavailable' },
+      { isError: false, value: '' },
+      { isError: false, value: '{"ok":false,"code":"VISION_TIMEOUT"}' },
+    ]) {
+      const rejected = await handlers.get('tools/post-execute')(exec, failing, async () => ({ kind: 'accept' }))
+      assert.equal(rejected.additionalContexts, undefined, 'failure must not inject a fabricated success notice')
+    }
+  }
 })
