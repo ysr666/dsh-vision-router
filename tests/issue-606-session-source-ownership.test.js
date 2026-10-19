@@ -44,7 +44,11 @@ test('#606 durable DVR producers own the Session-format source instead of relyin
 
   const evidence = read('lib/vision-evidence-guidance.js')
   assert.equal(evidence.includes(LEGACY_DVR_SOURCE), false)
-  assert.match(evidence, /source: visionRouterMessageSource\(exec\.agent\.session\)/)
+  assert.match(
+    evidence,
+    /visionRouterMessageSource\(exec\.agent\.session\)/,
+    'the evidence producer must derive source ownership from its Session, even when wrapping metadata',
+  )
 
   const localized = read('lib/runtime-i18n-boundary.js')
   assert.equal(localized.includes("source: { kind: 'plugin', plugin: PLUGIN_NAME }"), false)
