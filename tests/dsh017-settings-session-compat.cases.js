@@ -331,3 +331,48 @@ test('Session source boundary normalizes final pre-step and post-execute DVR con
   assert.deepEqual(postV4.additionalContexts[0].source, { kind: 'plugin:dsh-vision-router' })
   assert.equal(postV4.additionalContexts[1], foreign)
 })
+
+test('Session source boundary preserves only valid DVR notice metadata through the post-execute hook', async () => {
+  const handlers = new Map()
+  const wrapped = installVisionRouterMessageSourceBoundary({
+    on(event, handler) { handlers.set(event, handler); return () => {} },
+  })
+  const noticeSource = {
+    kind: 'plugin:dsh-vision-router',
+    form: 'notice',
+    summary: 'vision_describe succeeded',
+    unexpected: 'discard me',
+  }
+  wrapped.on('tools/post-execute', () => ({
+    kind: 'accept',
+    additionalContexts: [{
+      role: 'user', content: [{ type: 'text', text: 'guidance' }], source: noticeSource,
+    }],
+  }))
+  for (const version of [3, 4]) {
+    const result = await handlers.get('tools/post-execute')({
+      agent: { session: { header: { version } } },
+    }, {})
+    assert.equal(result.kind, 'accept')
+    assert.deepEqual(result.additionalContexts[0].source, {
+      ...visionRouterMessageSource({ header: { version } }),
+      form: 'notice',
+      summary: 'vision_describe succeeded',
+    })
+    assert.equal(Object.hasOwn(result.additionalContexts[0].source, 'unexpected'), false)
+  }
+
+  // A missing/empty summary cannot survive as an invalid ContextFormed notice.
+  wrapped.on('tools/post-execute', () => ({
+    kind: 'accept',
+    additionalContexts: [{
+      role: 'user', content: [], source: { ...noticeSource, summary: '  ' },
+    }],
+  }))
+  const malformed = await handlers.get('tools/post-execute')({
+    agent: { session: { header: { version: 4 } } },
+  }, {})
+  assert.deepEqual(malformed.additionalContexts[0].source, {
+    kind: 'plugin:dsh-vision-router',
+  })
+})

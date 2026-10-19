@@ -1,12 +1,24 @@
 name: Latest DSH Alpha Canary
 
 on:
+  # A compatibility runner change must prove itself against the actual
+  # published alpha package, not merely pass unrelated PR unit tests.
+  pull_request:
+    paths:
+      - '.github/workflows/dsh-alpha-canary.yml'
+      - 'scripts/dsh-preview-native-lifecycle-contract.mjs'
+      - 'scripts/dsh-host-contract-smoke.mjs'
+      - 'tests/opencode-session-wire-contract.mjs'
   schedule:
     - cron: '37 4 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   latest-alpha:
