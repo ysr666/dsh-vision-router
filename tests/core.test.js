@@ -1543,7 +1543,15 @@ test('vision describe success context is agent-scoped trusted metadata and prese
   const result = { isError: false, value: '{"x":1}', content: [{ type: 'text', text: '{"x":1}' }] }
   const context = visionDescribeSuccessContext(exec, result)
   assert.equal(context.id, 'vision-router-evidence-success-call-42')
-  assert.deepEqual(context.source, { kind: 'plugin:dsh-vision-router' })
+  // #727 lands in two independent PRs: normalize source first (#731),
+  // then stamp ContextFormed notice at its producer (#728). Enforce the exact
+  // notice pair whenever present without rejecting the prior canonical source.
+  assert.deepEqual(context.source, {
+    kind: 'plugin:dsh-vision-router',
+    ...(context.source.form === 'notice'
+      ? { form: 'notice', summary: 'vision_describe succeeded' }
+      : {}),
+  })
   assert.match(context.content[0].text, /trusted execution metadata/)
   assert.match(VISION_SUCCESS_GUIDANCE, /continue the remaining user task/)
   assert.match(VISION_SUCCESS_GUIDANCE, /exactly the format the user requested/)
@@ -1591,7 +1599,12 @@ test('vision describe post-execute guidance preserves canonical tool result and 
   assert.equal(Object.hasOwn(accepted, 'content'), false)
   assert.equal(accepted.additionalContexts.length, 2)
   assert.equal(accepted.additionalContexts[0].id, 'vision-router-evidence-success-call-99')
-  assert.deepEqual(accepted.additionalContexts[0].source, { kind: 'plugin:dsh-vision-router' })
+  assert.deepEqual(accepted.additionalContexts[0].source, {
+    kind: 'plugin:dsh-vision-router',
+    ...(accepted.additionalContexts[0].source.form === 'notice'
+      ? { form: 'notice', summary: 'vision_describe succeeded' }
+      : {}),
+  })
   assert.equal(accepted.additionalContexts[1], prior)
   assert.equal(result.value, '{"x":1}', 'canonical tool value must remain byte-exact')
 
