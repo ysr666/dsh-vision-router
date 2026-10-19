@@ -46,7 +46,7 @@ test('#606 durable DVR producers own the Session-format source instead of relyin
   assert.equal(evidence.includes(LEGACY_DVR_SOURCE), false)
   assert.match(
     evidence,
-    /visionRouterMessageSource\\(exec\\.agent\\.session\\)/,
+    /visionRouterMessageSource\(exec\.agent\.session\)/,
     'the evidence producer must derive source ownership from its Session, even when wrapping metadata',
   )
 
