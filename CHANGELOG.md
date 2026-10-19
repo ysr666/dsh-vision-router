@@ -7,6 +7,17 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## v3.0.5
 
+### Successful vision continuation / 修复识图成功后助手空输出
+
+- Fix #727: after a successful `vision_describe`, the model now continues to its visible answer rather than treating the injected guidance as a new real user turn. Original producer fix contributed by @kevindawn11-hash (#728; exact authored commit `14c67c7` preserved via #733); #731 preserves the valid `notice` form and `summary` through Session V3/V4 attribution normalization without passing through arbitrary source metadata.
+- 修复 #727：`vision_describe` 成功后，注入的纪律提示不再被当成真实用户插话而中断当前回合，助手可以继续生成可见正文。生产者补丁来自 @kevindawn11-hash（原始 #728 提交 `14c67c7` 经 #733 保留并合并）；#731 同时保障 Session V3/V4 消息归属归一化不会丢失合法的 `notice/summary`，其他来源字段仍严格过滤。
+- Verification / 验证：#731 final-head 23/23 and #733 final-head 22/22 workflows passed; trusted combined #732 23/23 also exercised a real Desktop PNG → `vision_describe` → rendered assistant reply. These validate the source change, **not a published npm 3.0.5 installation** / 以上是源码及真实 Host 自动化验收，**不是已发布的 npm 3.0.5 实装证明**。
+
+### Latest alpha canary contract / 最新 Alpha Canary 合同
+
+- #730 fixes the canary's DSH JSONL persistence plugin namespace/default import mismatch; the published-alpha lifecycle passes on Node 22/24. Only the CI test harness and workflow triggering changed, not the installed DVR runtime.
+- #730 修复最新 DSH Alpha 的 JSONL 持久化插件命名空间/default 导出装载不匹配问题，Node 22/24 Alpha 生命周期验证通过；仅影响兼容测试脚本与触发器，不改 DVR 产品运行时。
+
 ### Critical clean-profile activation fix / 修复可选依赖导致的启动故障
 
 - Fix #719: remove two unused eager imports of optional DSH peers that could make DVR 3.0.4 fail with `ERR_MODULE_NOT_FOUND` during module load, preventing Desktop activation. Original contribution from @m4ku1337 (#720), integrated through #722 with isolated activation-entry, missing-peer and negative-control tests.

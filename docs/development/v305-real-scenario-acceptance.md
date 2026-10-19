@@ -4,6 +4,9 @@ Release candidate must be tested on the final PR head, then on the exact main SH
 
 | Scenario | Evidence | Scope and verdict |
 | --- | --- | --- |
+| `vision_describe` succeeds and assistant visibly answers (#727) | #731 23/23, #733 22/22, trusted combined #732 23/23 | Actual Desktop automated PNG upload → vision tool execution → final visible assistant reply; canonical tool-result and Session V3/V4 notice attribution preserved. **NOT** a separately installed/published 3.0.5 artifact |
+| Contributor attribution of #728 | Main merge `0fc51c3` / #733; original commit `14c67c7` | Git ancestor/merge-base verified; original GitHub #728 recognized as merged, no squashed/copied authorship |
+| Latest DSH Alpha JSONL CI loader | #730 (Node 22/24 real published-alpha lifecycle) | Canary runner/export compatibility only; no production transport, minimum Host or settings change |
 | Optional peers missing at activation | #722, CI run 39019198833 | Passed isolated actual Node ESM entry-load probe and negative control; not a manual end-user Desktop install |
 | DSH 0.2.1-rc.1 real Host/Web+Chromium | #721, run 39017893115; #723, run 39020741495 | Pinned source, Vision cold toggle, image+text, Settings save/reload/readback, bundle recomposes |
 | DSH 0.2.0-rc.2 compatibility | #723, run 39020741454 | Pinned original Host and Desktop/Chromium cross-platform gates |
