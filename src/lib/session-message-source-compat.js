@@ -23,12 +23,21 @@ export function normalizeVisionRouterMessageSource(message, session) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) return message
   if (!isVisionRouterSource(message.source)) return message
   const source = sourceKindForSession(session)
-  if (message.source.kind === source.kind
-      && (source.kind !== 'plugin' || message.source.plugin === source.plugin)
-      && Object.keys(message.source).length === Object.keys(source).length) {
+  // A DSH ContextFormed notice needs both form and summary. Keep those two
+  // protocol fields across Session V3/V4 attribution normalization, but do
+  // not forward arbitrary source properties from a malformed DVR message.
+  const notice = message.source.form === 'notice'
+    && typeof message.source.summary === 'string'
+    && message.source.summary.trim().length > 0
+  const normalized = {
+    ...source,
+    ...(notice ? { form: 'notice', summary: message.source.summary } : {}),
+  }
+  if (Object.keys(message.source).length === Object.keys(normalized).length
+      && Object.entries(normalized).every(([key, value]) => message.source[key] === value)) {
     return message
   }
-  return { ...message, source: { ...source } }
+  return { ...message, source: normalized }
 }
 
 function normalizeMessageList(list, session) {
