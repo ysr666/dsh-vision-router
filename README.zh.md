@@ -9,9 +9,6 @@
 <p align="center">DeepSeek 只负责思考，内置免费视觉链 + 14 个深看工具负责“看”；需要看图时开启输入框旁的「👁 识图」，图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
 
 <p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/latest"><img src="https://img.shields.io/github/v/release/ysr666/dsh-vision-router?label=release&color=5B4CF0&style=flat-square" alt="Latest stable release" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
   <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 精选认证" /></a>
 </p>
 
@@ -622,17 +619,7 @@ npx dsh-vision-router doctor --profile web
 > 范围不变；#684/#704/#716 仍在跟进中。
 > [查看完整更新 →](docs/releases/v3.0.5.md)
 
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase 实机安装验证" /></a>
-  <a href="https://github.com/SoberReport-AI/DeepGuard/blob/main/reports/dsh-vision-router/2.0.1/39c8f2b2d69aa398418fd6c8ab40b691a92a1a3d.json"><img src="https://img.shields.io/badge/DeepGuard-audit%20clean-2EA44F?style=flat-square" alt="DeepGuard 审计 clean" /></a>
-  <a href="https://whyihaveyou.github.io/dsh-suite/"><img src="https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe?style=flat-square" alt="dsh-suite 精选收录" /></a>
-</p>
 
-<p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
-  <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="无需 Python" />
-</p>
 
 <p align="center">
   <sub>生态收录：</sub>
