@@ -33,83 +33,22 @@ Using Desktop? Change `--profile web` to `--profile desktop` and reload the app.
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
 </p>
 
-## Quick start
+## Try it on real images
 
-### 1. Install the plugin
+- **Understand a screenshot:** “What does this error dialog mean? Read the exact message.”
+- **Find a UI element:** “Where is the Save button in this screenshot? Give me its position.”
+- **Compare two designs:** “Compare my page to this reference. What should I fix next?” Use `vision_pixel_diff` to measure changes after each iteration.
+- **Read and inspect a long image:** “Extract the relevant text, then crop the unclear part to double-check it.”
 
-For normal npm/npx installs, installation is a single command:
-
-```sh
-npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
-```
-
-> [!IMPORTANT]
-> **Which profile?** Install into an **existing profile that already serves the Web UI**:
->
-> - Web DSH: `--profile web` (default data directory `~/.dsh`);
-> - the official DeepSeek Harness desktop app: `--profile desktop` (same `~/.dsh` data directory; reload the plugin or restart the app afterwards);
-> - Oh-DSH Desktop: its data directory is `~/.ohdsh`, see [Oh-DSH Desktop](#oh-dsh-desktop) below.
->
-> `dsh plugin add` only adds the plugin to the profile you name. A **brand-new** profile contains just `@deepseek-ai/dsh-base`, and `dsh web` never binds a port in that state (no Web surface). Install into an existing profile, or give the new profile a Web surface first.
-
-> [!WARNING]
-> If this profile already loads community plugins manually through `cordis.patch.yml`, do **not** mix that legacy setup with `dsh plugin add` / `dsh plugin list`: current DSH CLI behavior can also append bundle-patch dependencies to `dsh.profile.bundles`, causing those plugins to register twice. Migrate the existing manual plugin rows to bundle-managed loading first, or keep using the manual installation path. See [deepseek-harness discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889).
-
-> [!NOTE]
-> Third-party `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** is also compatible: its quality gate now correctly allows `@deepseek-ai/schemastery` as a runtime dependency. The official DSH CLI above remains the recommended install path.
-
-If you run DeepSeek Harness from a source checkout with pnpm, use the workspace script instead — `dsh` is not necessarily on your shell `PATH`:
-
-```sh
-cd deepseek-harness
-pnpm dsh plugin --profile web add dsh-vision-router
-```
-
-If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorter `dsh ...` form works too. After installation, start or reload DSH Web as you normally do.
-
-> [!NOTE]
-> If you install the plugin **into a Web process that was already running long-term**, let that DSH Web process reload once so the plugin bundle itself is discovered. After the plugin is loaded, adding/removing models or changing wrapper scope **hot-updates without further DSH restarts**.
-
-### 2. Pick your normal model, then enable “👁 Vision” when needed
-
-The stock model selector in the lower-right corner still chooses your **brain/conversation model** — DeepSeek, Qwen, or any other ordinary route. Vision Router’s generated “+ Auto Vision” wrappers remain real Host routes for image admission, but are hidden from the stock picker and `/model` when ownership can be established safely.
-
-When you need image input, explicitly click **“👁 Vision”** beside the composer:
-
-- `👁 Vision`: the ordinary model is active and Vision is off;
-- `👁 Vision ✓`: Vision Router has switched the session to that model’s internal vision wrapper;
-- the mode persists across sends and **does not auto-reset**;
-- turning it off switches back to the same ordinary model; choosing a different ordinary model turns Vision off;
-- changing only reasoning effort keeps Vision on.
-
-> [!IMPORTANT]
-> **Pasting or uploading an image does not enable Vision automatically. Before sending an image, make sure the control shows `👁 Vision ✓`.**
->
-> The real wrapper route is still present underneath to satisfy DSH image admission. Hiding is presentation-only and fails open: if the browser cannot confidently prove a route belongs to Vision Router, that route remains visible rather than risking hiding a third-party provider.
-
-### 3. Paste or upload the image
-
-With “👁 Vision” enabled, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
-
-If the session already contains images, DSH may reject switching from a vision wrapper back to a text-only route. Vision Router does not bypass that Host rule: it shows a transient error using the same interaction style as the stock model selector, keeps the real current model unchanged, and leaves `👁 Vision ✓` reflecting the actual state so the session stays usable.
-
-The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Vision Router**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory for backend selection, but an explicit text-only declaration makes the Host replace image pixels with text placeholders before adapter dispatch. Vision Router uses a direct pixel bridge only for verified http(s) OpenAI Chat Completions endpoints; otherwise that backend fails safely and the chain continues. WebSocket, RPC, Responses API and other native protocols use their registered adapters when image input is declared or modalities are unknown. If a custom model genuinely supports images, first enable **Image** under **Settings → Models → provider editor → Customized settings → Model options → Input types** when that Host control is available. On older Hosts without the control, set the provider-specific model field (`llm-pi-ai`: `input: [text, image]`; `llm-deepseek`: `inputModalities: [text, image]`) and reload the model configuration. Never claim image input for an endpoint that cannot accept images. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
-
-### See it in action
-
-*Left: an image turn — the user sends a picture, the agent calls `vision_describe` through the free chain and answers. Right: the finished structured answer.*
-
-<p align="center">
-  <img src="assets/dsh-conversation-image-qa.png" width="49%" alt="A conversation turn in which the agent looks at an uploaded image through vision_describe." />
-  <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="The agent's structured answer describing the image content." />
-</p>
+These are ordinary chat requests: your normal model reasons through the task and calls vision tools as needed. [See the tool list](#tools) or [configure your own/local vision backend](#configuration).
 
 ## Contents
 
-- [Quick start](#quick-start)
+- [Try it on real images](#try-it-on-real-images)
 - [Highlights](#highlights)
 - [How it works](#how-it-works)
 - [Tools](#tools)
+- [Quick start](#quick-start)
 - [Data flow and strict local-only use](#data-flow-and-strict-local-only-use)
 - [Free vision key channels](#free-vision-key-channels)
 - [Why this exists](#why-this-exists)
@@ -195,6 +134,77 @@ vision_html_screenshot source="page.html" width=1200 height=720
 vision_html_screenshot source="page.html" width=1200 height=720 fullPage=true
 vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
+
+## Quick start
+
+### 1. Install the plugin
+
+For normal npm/npx installs, installation is a single command:
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+```
+
+> [!IMPORTANT]
+> **Which profile?** Install into an **existing profile that already serves the Web UI**:
+>
+> - Web DSH: `--profile web` (default data directory `~/.dsh`);
+> - the official DeepSeek Harness desktop app: `--profile desktop` (same `~/.dsh` data directory; reload the plugin or restart the app afterwards);
+> - Oh-DSH Desktop: its data directory is `~/.ohdsh`, see [Oh-DSH Desktop](#oh-dsh-desktop) below.
+>
+> `dsh plugin add` only adds the plugin to the profile you name. A **brand-new** profile contains just `@deepseek-ai/dsh-base`, and `dsh web` never binds a port in that state (no Web surface). Install into an existing profile, or give the new profile a Web surface first.
+
+> [!WARNING]
+> If this profile already loads community plugins manually through `cordis.patch.yml`, do **not** mix that legacy setup with `dsh plugin add` / `dsh plugin list`: current DSH CLI behavior can also append bundle-patch dependencies to `dsh.profile.bundles`, causing those plugins to register twice. Migrate the existing manual plugin rows to bundle-managed loading first, or keep using the manual installation path. See [deepseek-harness discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889).
+
+> [!NOTE]
+> Third-party `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** is also compatible: its quality gate now correctly allows `@deepseek-ai/schemastery` as a runtime dependency. The official DSH CLI above remains the recommended install path.
+
+If you run DeepSeek Harness from a source checkout with pnpm, use the workspace script instead — `dsh` is not necessarily on your shell `PATH`:
+
+```sh
+cd deepseek-harness
+pnpm dsh plugin --profile web add dsh-vision-router
+```
+
+If you already installed the DSH CLI globally and `dsh` is on `PATH`, the shorter `dsh ...` form works too. After installation, start or reload DSH Web as you normally do.
+
+> [!NOTE]
+> If you install the plugin **into a Web process that was already running long-term**, let that DSH Web process reload once so the plugin bundle itself is discovered. After the plugin is loaded, adding/removing models or changing wrapper scope **hot-updates without further DSH restarts**.
+
+### 2. Pick your normal model, then enable “👁 Vision” when needed
+
+The stock model selector in the lower-right corner still chooses your **brain/conversation model** — DeepSeek, Qwen, or any other ordinary route. Vision Router’s generated “+ Auto Vision” wrappers remain real Host routes for image admission, but are hidden from the stock picker and `/model` when ownership can be established safely.
+
+When you need image input, explicitly click **“👁 Vision”** beside the composer:
+
+- `👁 Vision`: the ordinary model is active and Vision is off;
+- `👁 Vision ✓`: Vision Router has switched the session to that model’s internal vision wrapper;
+- the mode persists across sends and **does not auto-reset**;
+- turning it off switches back to the same ordinary model; choosing a different ordinary model turns Vision off;
+- changing only reasoning effort keeps Vision on.
+
+> [!IMPORTANT]
+> **Pasting or uploading an image does not enable Vision automatically. Before sending an image, make sure the control shows `👁 Vision ✓`.**
+>
+> The real wrapper route is still present underneath to satisfy DSH image admission. Hiding is presentation-only and fails open: if the browser cannot confidently prove a route belongs to Vision Router, that route remains visible rather than risking hiding a third-party provider.
+
+### 3. Paste or upload the image
+
+With “👁 Vision” enabled, paste or upload an image normally. By default the complete vision tool schema is stable from session start, so the agent can immediately use `vision_describe`, `vision_ground`, `vision_crop`, and the rest across multiple steps when needed.
+
+If the session already contains images, DSH may reject switching from a vision wrapper back to a text-only route. Vision Router does not bypass that Host rule: it shows a transient error using the same interaction style as the stock model selector, keeps the real current model unchanged, and leaves `👁 Vision ✓` reflecting the actual state so the session stays usable.
+
+The built-in anonymous OVH vision fallback is already configured, so normal image use needs no signup or API key. **The lower-right chat picker selects only the brain/conversation model**; vision backends do not belong there. Advanced options live under **Settings → Vision Router**: each vision-backend row may select any callable generative user model already configured under **Settings → Models**. DSH image-capability metadata is advisory for backend selection, but an explicit text-only declaration makes the Host replace image pixels with text placeholders before adapter dispatch. Vision Router uses a direct pixel bridge only for verified http(s) OpenAI Chat Completions endpoints; otherwise that backend fails safely and the chain continues. WebSocket, RPC, Responses API and other native protocols use their registered adapters when image input is declared or modalities are unknown. If a custom model genuinely supports images, first enable **Image** under **Settings → Models → provider editor → Customized settings → Model options → Input types** when that Host control is available. On older Hosts without the control, set the provider-specific model field (`llm-pi-ai`: `input: [text, image]`; `llm-deepseek`: `inputModalities: [text, image]`) and reload the model configuration. Never claim image input for an endpoint that cannot accept images. Leaving every user row empty is valid; the OVH chain remains the final fallback. `Vision HTTP` is an internal transport route, not a model group users should select.
+
+### See it in action
+
+*Left: an image turn — the user sends a picture, the agent calls `vision_describe` through the free chain and answers. Right: the finished structured answer.*
+
+<p align="center">
+  <img src="assets/dsh-conversation-image-qa.png" width="49%" alt="A conversation turn in which the agent looks at an uploaded image through vision_describe." />
+  <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="The agent's structured answer describing the image content." />
+</p>
 
 ## Data flow and strict local-only use
 
