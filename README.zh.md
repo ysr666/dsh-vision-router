@@ -33,83 +33,22 @@ npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
 </p>
 
-## 快速开始
+## 试试这些图片任务
 
-### 1. 安装插件
+- **看懂截图：**“这个报错弹窗是什么意思？把具体报错内容读出来。”
+- **定位界面元素：**“截图里的保存按钮在哪里？告诉我它的位置。”
+- **对照设计稿修改页面：**“我的页面和参考图还有哪些区别？下一步该改哪？”修改后还能用 `vision_pixel_diff` 量化差异。
+- **阅读长截图：**“提取这张长截图里的关键信息，不清楚的局部再裁剪确认。”
 
-普通 npm / npx 安装只需要一条命令：
-
-```sh
-npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
-```
-
-> [!IMPORTANT]
-> **装到哪个 profile？** 请装进**已经存在、并且自带 Web 界面**的 profile：
->
-> - 网页版 DSH：`--profile web`（默认数据目录 `~/.dsh`）；
-> - 官方 DeepSeek Harness 桌面应用：`--profile desktop`（同一个 `~/.dsh` 数据目录，装完在应用里重新加载插件或重启一次应用）；
-> - Oh-DSH Desktop：数据目录是 `~/.ohdsh`，见下方 [Oh-DSH Desktop](#oh-dsh-desktop)。
->
-> `dsh plugin add` 只是把插件加进**指定** profile。**全新创建**的 profile 只含 `@deepseek-ai/dsh-base`，此时 `dsh web` 不会绑定端口（没有 Web 面）。请装进已有的 profile，或先让新 profile 具备 Web 面。
-
-> [!WARNING]
-> 如果这个 profile 里已经有通过 `cordis.patch.yml` **手动挂载**的社区插件，不要再把这种旧式加载方式与 `dsh plugin add` / `dsh plugin list` 混用：当前 DSH CLI 可能同时把带 bundle patch 的依赖追加到 `dsh.profile.bundles`，导致这些插件被重复注册。请先把原有手动插件迁移到 bundle 管理方式，或继续沿用手动安装路径。详见 [deepseek-harness Discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889)。
-
-> [!NOTE]
-> 第三方 `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** 现已兼容：其质量门已正确放行作为运行时依赖的 `@deepseek-ai/schemastery`。上面的官方 DSH CLI 仍是推荐安装方式。
-
-如果你是从 DeepSeek Harness 源码仓库通过 pnpm 运行，`dsh` 不一定在系统 `PATH` 里，请改用工作区脚本：
-
-```sh
-cd deepseek-harness
-pnpm dsh plugin --profile web add dsh-vision-router
-```
-
-如果你已经全局安装 DSH CLI，并且终端里能直接执行 `dsh`，也可以继续使用较短的 `dsh ...` 写法。安装完成后，按你平时的方式启动或重新加载 DSH Web 即可。
-
-> [!NOTE]
-> 如果你是把插件**首次安装进一个已经长期运行的 Web 进程**，需要让 DSH Web 进程重新加载一次插件本体。插件加载完成后，新增/删除模型、修改自动识图包装范围都会**热更新，无需再重启 DSH**。
-
-### 2. 选择日常模型，按需开启「👁 识图」
-
-聊天页右下角的原生模型选择器只负责选择你的**脑子/会话模型**，例如 DeepSeek、Qwen 或其他普通模型。Vision Router 生成的内部「+ 自动识图」wrapper 默认不会出现在原生模型列表和 `/model` 中。
-
-需要看图时，在输入框旁主动点击 **「👁 识图」**：
-
-- `👁 识图`：当前普通模型，识图关闭；
-- `👁 识图 ✓`：已切到该模型对应的 Vision Router 内部识图 route；
-- 开启后会持续生效，发送消息后**不会自动复位**；
-- 主动关闭会切回同一个普通模型；手动选择另一个普通模型会关闭识图；
-- 只修改当前模型的 reasoning effort 不会关闭识图。
-
-> [!IMPORTANT]
-> **上传 / 粘贴图片不会替你自动开启识图。发图前请先确认按钮处于 `👁 识图 ✓`。**
->
-> Vision Router 仍保留真实 wrapper route 来通过 DSH 的图片准入，只是把它们作为内部实现隐藏起来。若浏览器端无法安全确认某个 route 属于 Vision Router，隐藏逻辑会 fail-open：宁可显示该 route，也不会误藏第三方模型。
-
-### 3. 粘贴或上传图片
-
-开启「👁 识图」后，直接往对话里贴图即可。默认情况下完整视觉工具表从会话开始就保持稳定，Agent 可直接调用 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
-
-如果当前 session 已经包含图片，DSH 可能拒绝从识图 route 切回不接受图片的纯文本 route。此时 Vision Router 不绕过 Host 约束：会显示与原生模型选择器一致的临时错误提示，真实模型保持不变，`👁 识图 ✓` 也继续反映真实状态，可继续使用或稍后重试。
-
-默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → Vision Router**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明对**后端选择**只作提示：未声明图片能力或被标为仅文本的模型仍可选择，并会显示警告。但实际分发时，DSH 会把明确声明为仅文本模型的图片转换为文本占位符。此时 Vision Router 只有在确认渠道为 http(s) OpenAI Chat Completions 时才会通过直连兼容桥传送图片；否则会安全地判定该后端失败并尝试下一后端，避免把只收到 SHA 文本的回复误判为识图成功。WebSocket、RPC、Responses API、Anthropic 等协议在 Host 声明支持图片（或未声明输入模态）时仍走注册的原生 adapter。如果自定义模型确实支持图片但被 Host 标为仅文本，请优先在 DSH **设置 → 模型 → 对应供应商 → 自定义设置 → 模型选项 → 输入类型** 中勾选**图片**（Host 提供该选项时）。旧版 Host 没有此选项时，请在相应模型配置中声明正确字段：`llm-pi-ai` 使用 `input: [text, image]`，`llm-deepseek` 使用 `inputModalities: [text, image]`，然后重新加载配置；不支持图片的模型不要添加该声明。一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
-
-### 实际效果
-
-*左：一次图片轮——用户发图，Agent 通过免费链路调用 `vision_describe` 并作答。右：最终的结构化解读。*
-
-<p align="center">
-  <img src="assets/dsh-conversation-image-qa.png" width="49%" alt="Agent 通过 vision_describe 查看上传图片的对话轮次。" />
-  <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="Agent 对图片内容的结构化解读。" />
-</p>
+直接在平常的对话里提问即可：日常模型负责推理，按需调用视觉工具。[查看工具列表](#工具)或[配置自定义／本地视觉后端](#配置项)。
 
 ## 目录
 
-- [快速开始](#快速开始)
+- [试试这些图片任务](#试试这些图片任务)
 - [亮点](#亮点)
 - [工作原理](#工作原理)
 - [工具](#工具)
+- [快速开始](#快速开始)
 - [数据流向与严格纯本地配置](#数据流向与严格纯本地配置)
 - [免费视觉 Key 渠道](#免费视觉-key-渠道)
 - [为什么做这个](#为什么做这个)
@@ -195,6 +134,77 @@ vision_html_screenshot source="page.html" width=1200 height=720
 vision_html_screenshot source="page.html" width=1200 height=720 fullPage=true
 vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
+
+## 快速开始
+
+### 1. 安装插件
+
+普通 npm / npx 安装只需要一条命令：
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+```
+
+> [!IMPORTANT]
+> **装到哪个 profile？** 请装进**已经存在、并且自带 Web 界面**的 profile：
+>
+> - 网页版 DSH：`--profile web`（默认数据目录 `~/.dsh`）；
+> - 官方 DeepSeek Harness 桌面应用：`--profile desktop`（同一个 `~/.dsh` 数据目录，装完在应用里重新加载插件或重启一次应用）；
+> - Oh-DSH Desktop：数据目录是 `~/.ohdsh`，见下方 [Oh-DSH Desktop](#oh-dsh-desktop)。
+>
+> `dsh plugin add` 只是把插件加进**指定** profile。**全新创建**的 profile 只含 `@deepseek-ai/dsh-base`，此时 `dsh web` 不会绑定端口（没有 Web 面）。请装进已有的 profile，或先让新 profile 具备 Web 面。
+
+> [!WARNING]
+> 如果这个 profile 里已经有通过 `cordis.patch.yml` **手动挂载**的社区插件，不要再把这种旧式加载方式与 `dsh plugin add` / `dsh plugin list` 混用：当前 DSH CLI 可能同时把带 bundle patch 的依赖追加到 `dsh.profile.bundles`，导致这些插件被重复注册。请先把原有手动插件迁移到 bundle 管理方式，或继续沿用手动安装路径。详见 [deepseek-harness Discussion #2889](https://github.com/deepseek-ai/deepseek-harness/discussions/2889)。
+
+> [!NOTE]
+> 第三方 `dsh-web-plugin-manager` / `dshpm` **v0.4.2+** 现已兼容：其质量门已正确放行作为运行时依赖的 `@deepseek-ai/schemastery`。上面的官方 DSH CLI 仍是推荐安装方式。
+
+如果你是从 DeepSeek Harness 源码仓库通过 pnpm 运行，`dsh` 不一定在系统 `PATH` 里，请改用工作区脚本：
+
+```sh
+cd deepseek-harness
+pnpm dsh plugin --profile web add dsh-vision-router
+```
+
+如果你已经全局安装 DSH CLI，并且终端里能直接执行 `dsh`，也可以继续使用较短的 `dsh ...` 写法。安装完成后，按你平时的方式启动或重新加载 DSH Web 即可。
+
+> [!NOTE]
+> 如果你是把插件**首次安装进一个已经长期运行的 Web 进程**，需要让 DSH Web 进程重新加载一次插件本体。插件加载完成后，新增/删除模型、修改自动识图包装范围都会**热更新，无需再重启 DSH**。
+
+### 2. 选择日常模型，按需开启「👁 识图」
+
+聊天页右下角的原生模型选择器只负责选择你的**脑子/会话模型**，例如 DeepSeek、Qwen 或其他普通模型。Vision Router 生成的内部「+ 自动识图」wrapper 默认不会出现在原生模型列表和 `/model` 中。
+
+需要看图时，在输入框旁主动点击 **「👁 识图」**：
+
+- `👁 识图`：当前普通模型，识图关闭；
+- `👁 识图 ✓`：已切到该模型对应的 Vision Router 内部识图 route；
+- 开启后会持续生效，发送消息后**不会自动复位**；
+- 主动关闭会切回同一个普通模型；手动选择另一个普通模型会关闭识图；
+- 只修改当前模型的 reasoning effort 不会关闭识图。
+
+> [!IMPORTANT]
+> **上传 / 粘贴图片不会替你自动开启识图。发图前请先确认按钮处于 `👁 识图 ✓`。**
+>
+> Vision Router 仍保留真实 wrapper route 来通过 DSH 的图片准入，只是把它们作为内部实现隐藏起来。若浏览器端无法安全确认某个 route 属于 Vision Router，隐藏逻辑会 fail-open：宁可显示该 route，也不会误藏第三方模型。
+
+### 3. 粘贴或上传图片
+
+开启「👁 识图」后，直接往对话里贴图即可。默认情况下完整视觉工具表从会话开始就保持稳定，Agent 可直接调用 `vision_describe`、`vision_ground`、`vision_crop` 等工具看图，需要时连续多步操作。
+
+如果当前 session 已经包含图片，DSH 可能拒绝从识图 route 切回不接受图片的纯文本 route。此时 Vision Router 不绕过 Host 约束：会显示与原生模型选择器一致的临时错误提示，真实模型保持不变，`👁 识图 ✓` 也继续反映真实状态，可继续使用或稍后重试。
+
+默认已经有内置 OVH 匿名视觉兜底，无需注册、无需 Key。**聊天页右下角只选择“脑子/会话模型”**；视觉模型不要在那里选。高级配置在 **设置 → Vision Router**：视觉后端链每一行都可以选择 **设置 → 模型** 中任意可调用的生成式用户模型。DSH 的图片能力声明对**后端选择**只作提示：未声明图片能力或被标为仅文本的模型仍可选择，并会显示警告。但实际分发时，DSH 会把明确声明为仅文本模型的图片转换为文本占位符。此时 Vision Router 只有在确认渠道为 http(s) OpenAI Chat Completions 时才会通过直连兼容桥传送图片；否则会安全地判定该后端失败并尝试下一后端，避免把只收到 SHA 文本的回复误判为识图成功。WebSocket、RPC、Responses API、Anthropic 等协议在 Host 声明支持图片（或未声明输入模态）时仍走注册的原生 adapter。如果自定义模型确实支持图片但被 Host 标为仅文本，请优先在 DSH **设置 → 模型 → 对应供应商 → 自定义设置 → 模型选项 → 输入类型** 中勾选**图片**（Host 提供该选项时）。旧版 Host 没有此选项时，请在相应模型配置中声明正确字段：`llm-pi-ai` 使用 `input: [text, image]`，`llm-deepseek` 使用 `inputModalities: [text, image]`，然后重新加载配置；不支持图片的模型不要添加该声明。一行都不填也可以，OVH 免费链会固定在最后兜底。插件内部的 `Vision HTTP` 只是传输实现，不是用户需要选择的模型组。
+
+### 实际效果
+
+*左：一次图片轮——用户发图，Agent 通过免费链路调用 `vision_describe` 并作答。右：最终的结构化解读。*
+
+<p align="center">
+  <img src="assets/dsh-conversation-image-qa.png" width="49%" alt="Agent 通过 vision_describe 查看上传图片的对话轮次。" />
+  <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="Agent 对图片内容的结构化解读。" />
+</p>
 
 ## 数据流向与严格纯本地配置
 
