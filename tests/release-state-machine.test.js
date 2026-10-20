@@ -119,7 +119,7 @@ test('current release READMEs both retain the announcement bar required by the p
     const contiguousBlock = lines.slice(start + 1).findIndex(line => !line.startsWith('>'))
     const block = lines.slice(start + 1, contiguousBlock < 0 ? undefined : start + 1 + contiguousBlock).join('\n')
     assert.match(block, new RegExp(expected.replaceAll('.', '\\.'), 'i'), `${name}: first warning block must mention candidate version`)
-    assert.match(block, new RegExp(`docs/releases/${expected.replaceAll('.', '\\.')}\.md`), `${name}: announcement must link to versioned notes`)
+    assert.ok(block.includes(`docs/releases/${expected}.md`), `${name}: announcement must link to versioned notes`)
   }
 })
 
