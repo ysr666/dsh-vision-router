@@ -8,143 +8,30 @@
 
 <p align="center">DeepSeek 只负责思考，内置免费视觉链 + 14 个深看工具负责“看”；需要看图时开启输入框旁的「👁 识图」，图片轮次就像普通工具调用一样自然、可定位、可验证。</p>
 
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 精选认证" /></a>
-  <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase 实机安装验证" /></a>
-  <a href="https://github.com/SoberReport-AI/DeepGuard/blob/main/reports/dsh-vision-router/2.0.1/39c8f2b2d69aa398418fd6c8ab40b691a92a1a3d.json"><img src="https://img.shields.io/badge/DeepGuard-audit%20clean-2EA44F?style=flat-square" alt="DeepGuard 审计 clean" /></a>
-  <a href="https://whyihaveyou.github.io/dsh-suite/"><img src="https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe?style=flat-square" alt="dsh-suite 精选收录" /></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/latest"><img src="https://img.shields.io/github/v/release/ysr666/dsh-vision-router?label=release&color=5B4CF0&style=flat-square" alt="Latest stable release" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
-  <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="无需 Python" />
-</p>
-
-<p align="center">
-  <sub>生态收录：</sub>
-  <a href="https://dshplugin.app/plugins/dsh-vision-router">DSHPlugin.app</a> ·
-  <a href="https://github.com/diegosouzapw/awesome-omni-dsh-plugins">Awesome Omni DSH Plugins</a> ·
-  <a href="https://dshpluginhub.ai/plugins/dsh-vision-router">dshpluginhub.ai</a> ·
-  <a href="https://www.dsh.plus/zh/plugins/dsh-vision-router/">dsh.plus</a> ·
-  <a href="https://dshplugins.ai/">dshplugins.ai</a> ·
-  <a href="https://dshmarket.com/p/ysr666/dsh-vision-router/">dsh-market</a>
-</p>
-
-<p align="center">代码仓库：<a href="https://github.com/ysr666/dsh-vision-router">GitHub（开发主仓库、Issue、PR及版本发布）</a> · 国内 AtomGit 托管：<a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit 镜像</a></p>
-
 <p align="center"><a href="README.md">English</a> · 中文</p>
-
-<p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 > [!CAUTION]
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
-> [!WARNING]
-> 📌 **公告（v3.0.5）**
->
-> **v3.0.5 修正补丁：** 未安装可选 DSH 依赖不再导致 Desktop 加载失败
-> （#719/#722，感谢 @m4ku1337）。官方 OVHcloud 视觉请求发送前会校验
-> 10 MB 的完整 JSON 请求体上限（#723）；DSH `0.2.1-rc.1` 已通过
-> 精确源码、真实 Host 和 Chromium 兼容验收（#721）。最低 Host 支持
-> 范围不变；#684/#704/#716 仍在跟进中。
-> [查看完整更新 →](docs/releases/v3.0.5.md)
+## 先用起来
+
+**1. 装进已有的 DSH Web profile：**
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+```
+
+**2. 聊天模型照常选，**需要看图时点击输入框旁的 **「👁 识图」**，确认按钮变为 **「👁 识图 ✓」**。
+
+**3. 粘贴或上传图片，**直接告诉 Agent 要看什么。内置免 Key 视觉兜底开箱可用，但默认走云端，不是离线识图。
+
+官方 Desktop 应用把 `--profile web` 换成 `--profile desktop`，装完重新加载插件；Oh-DSH 和手动配置请看[完整安装说明](#快速开始)。
+
+[详细上手](#快速开始) · [功能亮点](#亮点) · [数据流向与纯本地配置](#数据流向与严格纯本地配置)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="演示：粘贴图片，Agent 用 vision_ground / vision_crop / vision_pixel_diff 定位发送按钮并给出坐标" />
 </p>
-
-## 目录
-
-- [数据流向与严格纯本地配置](#数据流向与严格纯本地配置)
-- [为什么做这个](#为什么做这个)
-- [对比同类插件](#对比同类插件)
-- [设计来源](#设计来源)
-- [致谢](#致谢)
-- [快速开始](#快速开始)
-- [免费视觉 Key 渠道](#免费视觉-key-渠道)
-- [亮点](#亮点)
-- [工作原理](#工作原理)
-- [工具](#工具)
-- [配置项](#配置项)
-- [安装与生命周期](#安装与生命周期)
-- [故障排查](#故障排查)
-
-## 数据流向与严格纯本地配置
-
-Vision Router 在默认配置下不是完全离线工具。具体边界取决于操作和当前选择的模型：
-
-| 操作 | 数据去向 |
-|---|---|
-| 裁剪、像素对比、取色、SVG 矢量化、抠图、文件实体化、HTML 截图等本地像素工具 | 在 DSH 所在机器处理，这些操作不调用视觉模型。 |
-| 使用 Tesseract 的 `vision_ocr` | 在 DSH 所在机器处理。默认 `auto` 引擎在本地 OCR 不可用或结果为空时，可能回退到视觉模型。 |
-| 图片轮路由及 describe、detect、ground、视觉 OCR 等模型工具 | 图片或局部裁剪、提示词和相关上下文会发送给当前视觉供应商。 |
-| 内置免费兜底 | 以匿名方式（无 API Key）发往 OVHcloud AI Endpoints `oai.endpoints.kepler.ai.cloud.ovh.net`；服务仍会收到请求内容和源 IP 等网络元数据。 |
-| 用户配置的云模型 / HTTP 供应商 | 发送到对应配置端点，并受该供应商的保留与隐私条款约束。 |
-| 本地 Ollama / LM Studio | 图像像素发送到配置的本地端点；识图结果文本仍会回到当前聊天模型，而聊天模型自身可能仍在云端。 |
-
-若要阻止 **Vision Router 本身**把图片发送给远程视觉端点，请开启 **设置 → Vision Router → 常规 → 仅本地视觉**。这是运行时策略，不会破坏性修改配置：已保存的云端识图行和 `freeFallback` 会保留，但开关开启期间无法执行；只有回环地址（`localhost`、`127.0.0.0/8`、`::1`）上的视觉端点可以运行，包括 Ollama、LM Studio 和自定义本机 HTTP 后端。若要求**整个工作流严格纯本地**，还必须同时使用本地聊天模型，因为识图结果文本仍会交给当前聊天模型。请在自己的环境中验证最终网络边界；Vision Router 无法把远程聊天模型、代理或 Host 集成变成本地服务。
-
-## 为什么做这个
-
-大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**Host 规范化后的图像像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
-
-- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
-- **默认免费。** 视觉工具最终兜底为 4 个 OVHcloud 匿名视觉模型：免注册、免 Key，每 IP、每模型 2 次/分钟，独立限额理论合计约 8 次/分钟；用户自备视觉模型会优先调用。
-- **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
-- **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
-- **DeepSeek 始终是大脑。** 文字轮在模型、成本、上下文上完全不动；视觉模型只当“眼睛”、按需调用，答案按图片内容缓存。
-- **界面无感。** 上传的图片在会话界面里照常显示为图片；指向视觉工具的改写只发生在模型输入层，从不写入会话日志。
-
-## 对比同类插件
-
-**一句话讲清区别**：其他 dsh 视觉插件大多"把图片转成文字描述再喂给 DeepSeek"（描述桥，有信息损耗）；
-本插件主打"**图片轮直接交给视觉模型看图像像素**"（路由桥，像素级），同时内置免 Key 免费模型兜底。
-
-> [!NOTE]
-> 在 DSH 0.1.2-alpha.1+ 上，附件仍由 Host 单一持有。Vision Router 消费的是 Host 持久化后的 canonical image：落在规范化限制内的单帧 8-bit sRGB/sRGBA 图片可以逐字节直通；需要旋转、色彩空间、元数据、动画或尺寸规范化的图片可能会被重新编码。因此像素工具承诺的是 Host canonical raster，而不是上传源文件编码字节逐字节不变。
-
-| | 手动切换模型 | MCP 视觉桥 | 本插件 |
-|---|---|---|---|
-| 图像像素 | ✅ 可用（切换后） | ❌ 只有文字描述 | ✅ Host 规范化栅格，图片轮内 |
-| 自动化 | ❌ | ✅ | ✅ |
-| 日常模型不受影响 | ❌（整会话被换） | ✅ | ✅ |
-| 供应商失败恢复 | ❌ | ❌ | ✅ 降级链 |
-| 可复用的结构化查询 | — | 部分 | ✅ JSON 模式 + 缓存 |
-| 免费开箱即用 | ❌ | ❌ | ✅ 内置免 Key 免费端点 |
-| 贴合 dsh 组合体系 | — | 外部服务器 | ✅ 一行插件行 |
-
-**与现有 dsh 社区方案的差异**（均为优秀项目，各有侧重；描述以各家 README 2026-08 状态为准）：
-
-| 项目 | 思路 | 本插件的差异 |
-|---|---|---|
-| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | 图片先经外部 VLM 做 OCR/描述，描述作为会话消息交给 DeepSeek；默认 LLM7.io 匿名端点（OVHcloud 为无 Key 备选） | 描述桥方案；本插件提供"图像直看"路由，描述能力由 `vision_describe` 按需替代 |
-| [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | 包装 provider 路由，请求流里把图片转译成文本再交给 DeepSeek | 转译桥方案；本插件不包装 provider，通过 `agent/request` 瀑布改写路由 |
-| [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | 注册 `DeepSeek + Vision` 组合路由：图片先经所选视觉模型转成描述，再交给 DeepSeek | 双模型桥思路；本插件在此基础上增加自动路由、降级链与工具 |
-| [modlens](https://github.com/liustack/modlens) | 最早的 dsh 视觉插件；复用本机 Claude Code/Codex/OpenCode/Pi 等登录态作为视觉引擎 | 引擎复用思路；本插件自带供应商链，不依赖本机其他 CLI |
-| [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | 10 个意图化视觉工具（Q&A/OCR/像素校验/UI 还原），按需显式调用 | 工具集更全；本插件多出整轮自动路由与免 Key 免费兜底 |
-| [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | `inspect_image` 工具 + `agent/pre-step` 瀑布图片桥（粘贴图入日志前转成工具提示） | 瀑布桥思路相近；本插件多出轮次路由、降级链、缓存与免费端点 |
-
-## 设计来源
-
-本项目的深度视觉工具层与 UI restoration 工作流参考并受到 [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) 及其 DSH 原生实现 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) 的设计影响。具体包括意图驱动的工具选择、渐进式工具暴露、pixel-diff 验证闭环，以及部分视觉工具的职责划分与命名，包括长截图 OCR、前景提取和 HTML screenshot 等设计。
-
-`dsh-vision-router` 中相关代码均为独立实现。在这些设计参考基础上，本项目独立发展了 turn-level/tools-first vision routing、DSH 准入/包装集成、多视觉后端与故障 fallback chain、内置免费视觉模型链、附件/图片记忆、缓存与相关运行时容错机制。
-
-感谢 Anionex 的先行工作以及整个 DSH 社区的探索。清晰的设计归因与独立迭代并不冲突；二者都有助于维护开放、协作、健康的 DSH 生态。
-
-## 致谢
-
-本插件借鉴了以上全部社区项目的思路，特别是 [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar)
-对免注册免 Key 视觉端点的探索（LLM7.io 与 OVHcloud 匿名层）。感谢
-[dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy)、
-[dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider)、
-[modlens](https://github.com/liustack/modlens)、
-[dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)、
-[dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) 作者们的探索。
 
 ## 快速开始
 
@@ -217,26 +104,22 @@ pnpm dsh plugin --profile web add dsh-vision-router
   <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="Agent 对图片内容的结构化解读。" />
 </p>
 
-## 免费视觉 Key 渠道
+## 目录
 
-内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，下面这些渠道都有**免费且额度大得多的视觉模型**——全部免费注册，无需为免费档付费。免费政策轮换频繁，下表是 2026 年 8 月快照，依赖前请以各家控制台为准。
-
-| 渠道 | 免费视觉模型 | 免费额度 | 大陆直连 | Key 领取 |
-|---|---|---|---|---|
-| OVHcloud AI Endpoints（access key） | `Qwen2.5-VL-72B-Instruct`——与内置兜底同一个端点 | **400 次/分钟**/项目/模型（对比匿名 2 次/分钟） | ✅ | 注册 OVH 账号 → Public Cloud 项目（需挂支付方式；免费模型不扣费）→ AI Endpoints access key |
-| 智谱（bigmodel.cn） | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash`——三个永久免费模型，串起来容量 ×3 | token 不限量 | ✅ | open.bigmodel.cn → API keys |
-| 阿里云百炼 | `qwen3-vl-flash`（限免）与 Qwen-VL 系列 | 新用户每模型系列 100 万 token / 90 天 | ✅ | bailian.console.aliyun.com |
-| Intern AI（上海AI实验室） | `internvl-latest` · `internvl3.5-latest` | 30 RPM，**9000 万 token/月** | ✅ | chat.intern-ai.org.cn |
-| Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
-| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
-| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
-| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
-
-以上渠道都能以 `httpProviders` 条目加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`），链路会先尝试你的条目、再落到匿名兜底。
-
-> [!NOTE]
-> 免费政策随时可能调整——Cerebras 已在 2026 年 7 月取消免费档（改为一次性 $5 赠金），SambaNova 免费档收紧到 20 次/天，Hugging Face 只剩 $0.10/月。第三方“`:free` 中转”聚合站刻意不列入：轮换频繁、无 SLA，部分还存在违反上游条款的转售行为。
+- [快速开始](#快速开始)
+- [亮点](#亮点)
+- [工作原理](#工作原理)
+- [工具](#工具)
+- [数据流向与严格纯本地配置](#数据流向与严格纯本地配置)
+- [免费视觉 Key 渠道](#免费视觉-key-渠道)
+- [为什么做这个](#为什么做这个)
+- [对比同类插件](#对比同类插件)
+- [配置项](#配置项)
+- [安装与生命周期](#安装与生命周期)
+- [故障排查](#故障排查)
+- [设计来源](#设计来源)
+- [致谢](#致谢)
+- [版本公告与社区链接](#版本公告与社区链接)
 
 ## 亮点
 
@@ -312,6 +195,82 @@ vision_html_screenshot source="page.html" width=1200 height=720
 vision_html_screenshot source="page.html" width=1200 height=720 fullPage=true
 vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
+
+## 数据流向与严格纯本地配置
+
+Vision Router 在默认配置下不是完全离线工具。具体边界取决于操作和当前选择的模型：
+
+| 操作 | 数据去向 |
+|---|---|
+| 裁剪、像素对比、取色、SVG 矢量化、抠图、文件实体化、HTML 截图等本地像素工具 | 在 DSH 所在机器处理，这些操作不调用视觉模型。 |
+| 使用 Tesseract 的 `vision_ocr` | 在 DSH 所在机器处理。默认 `auto` 引擎在本地 OCR 不可用或结果为空时，可能回退到视觉模型。 |
+| 图片轮路由及 describe、detect、ground、视觉 OCR 等模型工具 | 图片或局部裁剪、提示词和相关上下文会发送给当前视觉供应商。 |
+| 内置免费兜底 | 以匿名方式（无 API Key）发往 OVHcloud AI Endpoints `oai.endpoints.kepler.ai.cloud.ovh.net`；服务仍会收到请求内容和源 IP 等网络元数据。 |
+| 用户配置的云模型 / HTTP 供应商 | 发送到对应配置端点，并受该供应商的保留与隐私条款约束。 |
+| 本地 Ollama / LM Studio | 图像像素发送到配置的本地端点；识图结果文本仍会回到当前聊天模型，而聊天模型自身可能仍在云端。 |
+
+若要阻止 **Vision Router 本身**把图片发送给远程视觉端点，请开启 **设置 → Vision Router → 常规 → 仅本地视觉**。这是运行时策略，不会破坏性修改配置：已保存的云端识图行和 `freeFallback` 会保留，但开关开启期间无法执行；只有回环地址（`localhost`、`127.0.0.0/8`、`::1`）上的视觉端点可以运行，包括 Ollama、LM Studio 和自定义本机 HTTP 后端。若要求**整个工作流严格纯本地**，还必须同时使用本地聊天模型，因为识图结果文本仍会交给当前聊天模型。请在自己的环境中验证最终网络边界；Vision Router 无法把远程聊天模型、代理或 Host 集成变成本地服务。
+
+## 免费视觉 Key 渠道
+
+内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，下面这些渠道都有**免费且额度大得多的视觉模型**——全部免费注册，无需为免费档付费。免费政策轮换频繁，下表是 2026 年 8 月快照，依赖前请以各家控制台为准。
+
+| 渠道 | 免费视觉模型 | 免费额度 | 大陆直连 | Key 领取 |
+|---|---|---|---|---|
+| OVHcloud AI Endpoints（access key） | `Qwen2.5-VL-72B-Instruct`——与内置兜底同一个端点 | **400 次/分钟**/项目/模型（对比匿名 2 次/分钟） | ✅ | 注册 OVH 账号 → Public Cloud 项目（需挂支付方式；免费模型不扣费）→ AI Endpoints access key |
+| 智谱（bigmodel.cn） | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash`——三个永久免费模型，串起来容量 ×3 | token 不限量 | ✅ | open.bigmodel.cn → API keys |
+| 阿里云百炼 | `qwen3-vl-flash`（限免）与 Qwen-VL 系列 | 新用户每模型系列 100 万 token / 90 天 | ✅ | bailian.console.aliyun.com |
+| Intern AI（上海AI实验室） | `internvl-latest` · `internvl3.5-latest` | 30 RPM，**9000 万 token/月** | ✅ | chat.intern-ai.org.cn |
+| Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
+| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
+| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
+| OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
+| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
+
+以上渠道都能以 `httpProviders` 条目加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`），链路会先尝试你的条目、再落到匿名兜底。
+
+> [!NOTE]
+> 免费政策随时可能调整——Cerebras 已在 2026 年 7 月取消免费档（改为一次性 $5 赠金），SambaNova 免费档收紧到 20 次/天，Hugging Face 只剩 $0.10/月。第三方“`:free` 中转”聚合站刻意不列入：轮换频繁、无 SLA，部分还存在违反上游条款的转售行为。
+
+## 为什么做这个
+
+大多数 DSH 视觉插件把图片“翻译”成一段文字描述再喂给 DeepSeek——有损、一次性、看不见像素。本插件把**Host 规范化后的图像像素留在视觉模型侧**、把推理留在 DeepSeek 侧，并把“看图”变成一次**普通的工具调用**：
+
+- **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
+- **默认免费。** 视觉工具最终兜底为 4 个 OVHcloud 匿名视觉模型：免注册、免 Key，每 IP、每模型 2 次/分钟，独立限额理论合计约 8 次/分钟；用户自备视觉模型会优先调用。
+- **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
+- **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
+- **DeepSeek 始终是大脑。** 文字轮在模型、成本、上下文上完全不动；视觉模型只当“眼睛”、按需调用，答案按图片内容缓存。
+- **界面无感。** 上传的图片在会话界面里照常显示为图片；指向视觉工具的改写只发生在模型输入层，从不写入会话日志。
+
+## 对比同类插件
+
+**一句话讲清区别**：其他 dsh 视觉插件大多"把图片转成文字描述再喂给 DeepSeek"（描述桥，有信息损耗）；
+本插件主打"**图片轮直接交给视觉模型看图像像素**"（路由桥，像素级），同时内置免 Key 免费模型兜底。
+
+> [!NOTE]
+> 在 DSH 0.1.2-alpha.1+ 上，附件仍由 Host 单一持有。Vision Router 消费的是 Host 持久化后的 canonical image：落在规范化限制内的单帧 8-bit sRGB/sRGBA 图片可以逐字节直通；需要旋转、色彩空间、元数据、动画或尺寸规范化的图片可能会被重新编码。因此像素工具承诺的是 Host canonical raster，而不是上传源文件编码字节逐字节不变。
+
+| | 手动切换模型 | MCP 视觉桥 | 本插件 |
+|---|---|---|---|
+| 图像像素 | ✅ 可用（切换后） | ❌ 只有文字描述 | ✅ Host 规范化栅格，图片轮内 |
+| 自动化 | ❌ | ✅ | ✅ |
+| 日常模型不受影响 | ❌（整会话被换） | ✅ | ✅ |
+| 供应商失败恢复 | ❌ | ❌ | ✅ 降级链 |
+| 可复用的结构化查询 | — | 部分 | ✅ JSON 模式 + 缓存 |
+| 免费开箱即用 | ❌ | ❌ | ✅ 内置免 Key 免费端点 |
+| 贴合 dsh 组合体系 | — | 外部服务器 | ✅ 一行插件行 |
+
+**与现有 dsh 社区方案的差异**（均为优秀项目，各有侧重；描述以各家 README 2026-08 状态为准）：
+
+| 项目 | 思路 | 本插件的差异 |
+|---|---|---|
+| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | 图片先经外部 VLM 做 OCR/描述，描述作为会话消息交给 DeepSeek；默认 LLM7.io 匿名端点（OVHcloud 为无 Key 备选） | 描述桥方案；本插件提供"图像直看"路由，描述能力由 `vision_describe` 按需替代 |
+| [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | 包装 provider 路由，请求流里把图片转译成文本再交给 DeepSeek | 转译桥方案；本插件不包装 provider，通过 `agent/request` 瀑布改写路由 |
+| [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | 注册 `DeepSeek + Vision` 组合路由：图片先经所选视觉模型转成描述，再交给 DeepSeek | 双模型桥思路；本插件在此基础上增加自动路由、降级链与工具 |
+| [modlens](https://github.com/liustack/modlens) | 最早的 dsh 视觉插件；复用本机 Claude Code/Codex/OpenCode/Pi 等登录态作为视觉引擎 | 引擎复用思路；本插件自带供应商链，不依赖本机其他 CLI |
+| [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | 10 个意图化视觉工具（Q&A/OCR/像素校验/UI 还原），按需显式调用 | 工具集更全；本插件多出整轮自动路由与免 Key 免费兜底 |
+| [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | `inspect_image` 工具 + `agent/pre-step` 瀑布图片桥（粘贴图入日志前转成工具提示） | 瀑布桥思路相近；本插件多出轮次路由、降级链、缓存与免费端点 |
 
 ## 供应商降级链
 
@@ -615,6 +574,66 @@ npx dsh-vision-router doctor --profile web
 - 产物只写入 `<workspace>/.dsh-vision-router/artifacts`；结果返回绝对路径与字节数。
 - 密钥不上线：`apiKeyEnv` 只指向 DSH 凭据引用，值按调用解析、永不写入日志。
 - 设置写入走设置服务（schema 校验 + 修订号检查）——过期或非法的保存会被拒绝，不会半截生效。
+
+## 设计来源
+
+本项目的深度视觉工具层与 UI restoration 工作流参考并受到 [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) 及其 DSH 原生实现 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) 的设计影响。具体包括意图驱动的工具选择、渐进式工具暴露、pixel-diff 验证闭环，以及部分视觉工具的职责划分与命名，包括长截图 OCR、前景提取和 HTML screenshot 等设计。
+
+`dsh-vision-router` 中相关代码均为独立实现。在这些设计参考基础上，本项目独立发展了 turn-level/tools-first vision routing、DSH 准入/包装集成、多视觉后端与故障 fallback chain、内置免费视觉模型链、附件/图片记忆、缓存与相关运行时容错机制。
+
+感谢 Anionex 的先行工作以及整个 DSH 社区的探索。清晰的设计归因与独立迭代并不冲突；二者都有助于维护开放、协作、健康的 DSH 生态。
+
+## 致谢
+
+本插件借鉴了以上全部社区项目的思路，特别是 [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar)
+对免注册免 Key 视觉端点的探索（LLM7.io 与 OVHcloud 匿名层）。感谢
+[dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy)、
+[dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider)、
+[modlens](https://github.com/liustack/modlens)、
+[dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit)、
+[dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) 作者们的探索。
+
+## 版本公告与社区链接
+
+> [!WARNING]
+> 📌 **公告（v3.0.5）**
+>
+> **v3.0.5 修正补丁：** 未安装可选 DSH 依赖不再导致 Desktop 加载失败
+> （#719/#722，感谢 @m4ku1337）。官方 OVHcloud 视觉请求发送前会校验
+> 10 MB 的完整 JSON 请求体上限（#723）；DSH `0.2.1-rc.1` 已通过
+> 精确源码、真实 Host 和 Chromium 兼容验收（#721）。最低 Host 支持
+> 范围不变；#684/#704/#716 仍在跟进中。
+> [查看完整更新 →](docs/releases/v3.0.5.md)
+
+<p align="center">
+  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
+  <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 精选认证" /></a>
+  <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase 实机安装验证" /></a>
+  <a href="https://github.com/SoberReport-AI/DeepGuard/blob/main/reports/dsh-vision-router/2.0.1/39c8f2b2d69aa398418fd6c8ab40b691a92a1a3d.json"><img src="https://img.shields.io/badge/DeepGuard-audit%20clean-2EA44F?style=flat-square" alt="DeepGuard 审计 clean" /></a>
+  <a href="https://whyihaveyou.github.io/dsh-suite/"><img src="https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe?style=flat-square" alt="dsh-suite 精选收录" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/latest"><img src="https://img.shields.io/github/v/release/ysr666/dsh-vision-router?label=release&color=5B4CF0&style=flat-square" alt="Latest stable release" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="已验证 Node 22 + 24" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="MIT 许可证" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
+  <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="无需 Python" />
+</p>
+
+<p align="center">
+  <sub>生态收录：</sub>
+  <a href="https://dshplugin.app/plugins/dsh-vision-router">DSHPlugin.app</a> ·
+  <a href="https://github.com/diegosouzapw/awesome-omni-dsh-plugins">Awesome Omni DSH Plugins</a> ·
+  <a href="https://dshpluginhub.ai/plugins/dsh-vision-router">dshpluginhub.ai</a> ·
+  <a href="https://www.dsh.plus/zh/plugins/dsh-vision-router/">dsh.plus</a> ·
+  <a href="https://dshplugins.ai/">dshplugins.ai</a> ·
+  <a href="https://dshmarket.com/p/ysr666/dsh-vision-router/">dsh-market</a>
+</p>
+
+<p align="center">代码仓库：<a href="https://github.com/ysr666/dsh-vision-router">GitHub（开发主仓库、Issue、PR及版本发布）</a> · 国内 AtomGit 托管：<a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit 镜像</a></p>
+
+<p align="center">💬 <strong>QQ 用户交流群：1105463028</strong></p>
 
 ## License
 
