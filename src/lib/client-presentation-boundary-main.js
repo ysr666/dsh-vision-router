@@ -1203,12 +1203,23 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var setToast = toastState[1];
         var busy = state.status === 'selecting' || selectionInFlight;
         var loading = settling;
+        // Host's model-catalog refresh retains the last good current/groups,
+        // but briefly reports 'loading'. When that *complete* pair is still
+        // present, its selection may be sent to Host for fresh validation;
+        // don't flip the native HTML disabled bit in the middle of a user's
+        // pointer gesture (Chromium drops the click even after re-enabling).
+        // A cold load, reconnect, unavailable pair, or selection in flight
+        // remains blocked. We never infer a new mode or optimistically commit.
+        var refreshWithPair = state.status === 'loading' && complete &&
+          !!livePair.target && state.pending == null && state.error == null &&
+          state.routable !== false;
+        var blockingLoad = loading && !refreshWithPair;
         var removed = props.session && props.session.removed === true;
-        var disabled = props.available !== true || removed || busy || loading || livePair.mode === 'unavailable';
+        var disabled = props.available !== true || removed || busy || blockingLoad || livePair.mode === 'unavailable';
         var t = typeof props.t === 'function' ? props.t : fallbackTranslate(active);
         var title = busy || ownSettling
           ? t('switching')
-          : loading
+          : blockingLoad
             ? t('loading')
             : livePair.mode === 'unavailable'
               ? t('unavailable')
@@ -1236,12 +1247,12 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           'data-vision-router-mode-toggle': 'true',
           'aria-pressed': active,
           'aria-label': title,
-          'aria-busy': busy || loading,
+          'aria-busy': busy || blockingLoad,
           title: title,
           disabled: disabled,
           className: 'vr-vision-toggle',
           'data-active': active ? 'true' : 'false',
-          'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || loading) ? 'true' : 'false',
+          'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || blockingLoad) ? 'true' : 'false',
           onClick: function() {
             if (disabled || !pair.target || typeof props.select !== 'function' ||
               (selectionTransaction.current && selectionTransaction.current.directory === directory)) return;

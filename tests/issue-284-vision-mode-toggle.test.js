@@ -684,6 +684,46 @@ test('issue #284 treats resolved Host RemoteResult failures as rejected selectio
   assert.equal(toast.props.text, `模型操作失败：${error}`)
 })
 
+test('issue #684 retains an actionable cached complete pair through Host catalog refresh', async () => {
+  const harness = createBrowserHarness()
+  const initial = buttonOf(harness.render())
+  assert.equal(initial.props.disabled, false)
+  // The real Host keeps last-good groups/current while reloading after a
+  // settings document or adapter event. Its selection RPC is still authoritative.
+  harness.setSnapshot({ ...harness.getSnapshot(), status: 'loading', pending: null, routable: null })
+  const refreshing = buttonOf(harness.render())
+  assert.equal(refreshing.props['aria-pressed'], false)
+  assert.equal(refreshing.props.disabled, false)
+  assert.equal(refreshing.props['aria-busy'], false)
+  assert.equal(refreshing.props['data-dimmed'], 'false')
+  refreshing.props.onClick()
+  assert.equal(harness.selections.length, 1)
+  assert.equal(harness.selections[0].provider, 'opencode-go-vision')
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(buttonOf(harness.render()).props['aria-pressed'], true)
+})
+
+test('issue #684 never bypasses cold/reset, incomplete, rejected, or pending Host catalogs', () => {
+  const harness = createBrowserHarness()
+  const base = harness.getSnapshot()
+  const cases = [
+    { status: 'idle', current: base.current, groups, pending: null },
+    { status: 'loading', current: null, groups: [], pending: null },
+    { status: 'loading', current: base.current, groups: [groups[0]], pending: null },
+    { status: 'loading', current: base.current, groups, pending: { provider: 'opencode-go-vision', model: 'qwen3.6-plus' } },
+    { status: 'loading', current: base.current, groups, pending: null, routable: false },
+    { status: 'loading', current: base.current, groups, pending: null, error: 'catalog unavailable' },
+  ]
+  for (const variant of cases) {
+    harness.setSnapshot({ ...base, ...variant })
+    const button = buttonOf(harness.render())
+    assert.equal(button.props.disabled, true, JSON.stringify(variant))
+    assert.equal(button.props['aria-busy'], true, JSON.stringify(variant))
+    button.props.onClick()
+    assert.equal(harness.selections.length, 0, 'no RPC may bypass an incomplete Host catalog')
+  }
+})
+
 test('issue #284 distinguishes initial model loading from a genuinely unavailable pair', () => {
   const harness = createBrowserHarness()
   harness.setSnapshot({ current: null, groups: [], status: 'loading', error: null })
