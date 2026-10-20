@@ -1004,8 +1004,26 @@ test('issue #684 records every client directory transition and never logs raw er
   state = { ...state, status: 'error', pending: null, error: 'session/model-unavailable: secret payload should never be logged' }
   listeners.forEach((fn) => fn())
   assert.equal(trace.history[2].errorCode, 'session/model-unavailable')
+  assert.equal(trace.history[2].errorOrigin, null)
   assert.equal(trace.history[2].hasError, true)
   assert.equal(JSON.stringify(trace.history).includes('secret payload'), false)
+
+  // Same gateway/internal code, three distinct source classes and a safe
+  // unknown fallback. Only fixed enums go into the bounded trace.
+  for (const [message, expectedOrigin] of [
+    ['gateway/internal: client api: session/selectModel failed: socket secret=abc', 'client-carrier'],
+    ['gateway/internal: client api: Remote method session/selectModel is no longer mounted', 'client-withdrawn'],
+    ['gateway/internal: resume failed for session "private-id": token xyz', 'host-resume'],
+    ['gateway/internal: unknown Host implementation error with user data', 'undetermined'],
+  ]) {
+    state = { ...state, status: 'error', error: message }
+    listeners.forEach((fn) => fn())
+    assert.equal(trace.history.at(-1).errorCode, 'gateway/internal')
+    assert.equal(trace.history.at(-1).errorOrigin, expectedOrigin)
+    assert.equal(JSON.stringify(trace.history).includes(message), false)
+  }
+  assert.equal(JSON.stringify(trace.history).includes('private-id'), false)
+  assert.equal(JSON.stringify(trace.history).includes('secret=abc'), false)
   assert.equal(trace.history[1].pending.provider, 'desktop-e2e-vision')
   assert.equal(trace.directoryChanged(), false)
 
