@@ -21,6 +21,9 @@
 > [!CAUTION]
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
+> [!WARNING]
+> **v3.0.5 修正版更新说明：** 修复识图后回复中断、可选依赖加载以及 OVH 请求体限制，并缓解模型目录刷新期间识图开关短暂失效的问题。参见[v3.0.5 更新说明](docs/releases/v3.0.5.md)。更新说明不代表已发布；实际可安装版本请以[GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest)或 npm 为准。
+
 ## 先用起来
 
 **1. 装进已有的 DSH Web profile：**
@@ -231,7 +234,7 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 
 ## 免费视觉 Key 渠道
 
-内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，下面这些渠道都有**免费且额度大得多的视觉模型**——全部免费注册，无需为免费档付费。免费政策轮换频繁，下表是 2026 年 8 月快照，依赖前请以各家控制台为准。
+内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，可以考虑下面这些视觉模型渠道及免费／试用方案。但**免费额度、Key 要求、第三方客户端调用权限及图片输入能力因渠道而异**；模型出现在列表中不代表能直接接入 DVR。此表为 2026 年 10 月的资料参考，具体以供应商当前接口及实测为准。
 
 | 渠道 | 免费视觉模型 | 免费额度 | 大陆直连 | Key 领取 |
 |---|---|---|---|---|
@@ -242,10 +245,10 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
 | Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
 | NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
+| OpenCode Zen | `mimo-v2.6-flash-free`（已列入 Zen，尚未独立验证第三方识图请求） | OpenCode 内限期免费；外部 API 固定额度未核实 | ⚠️ | [OpenCode Zen](https://opencode.ai/zen) |
 | OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
 
-以上渠道都能以 `httpProviders` 条目加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`），链路会先尝试你的条目、再落到匿名兜底。
+仅当渠道**允许第三方 API 调用且实际接受图片输入**时，才能作为 `httpProviders` 加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`）；插件会先尝试这些后端，再回退到匿名兜底。**OpenCode Zen 特别说明：**其文档目前同时列出 `mimo-v2.5-free` 和 `mimo-v2.6-flash-free`。小米 10 月 21 日下线公告针对的是**小米直连模型 ID**，不能据此认定 Zen 旧别名同日失效。Zen 免费档可能限制非 OpenCode 客户端使用，不能保证接入 DVR，也不应绕过其客户端限制；OpenCode 还提示免费 MiMo 的使用数据可能用于改进模型。[OpenCode Zen 文档](https://docs.opencode.ai/docs/zen/) · [小米下线公告](https://mimo.mi.com/docs/zh-CN/updates/deprecate)。
 
 > [!NOTE]
 > 免费政策随时可能调整——Cerebras 已在 2026 年 7 月取消免费档（改为一次性 $5 赠金），SambaNova 免费档收紧到 20 次/天，Hugging Face 只剩 $0.10/月。第三方“`:free` 中转”聚合站刻意不列入：轮换频繁、无 SLA，部分还存在违反上游条款的转售行为。
@@ -613,17 +616,7 @@ npx dsh-vision-router doctor --profile web
 
 ## 版本公告与社区链接
 
-> [!WARNING]
-> 📌 **公告（v3.0.5）**
->
-> **v3.0.5 修正补丁：** 未安装可选 DSH 依赖不再导致 Desktop 加载失败
-> （#719/#722，感谢 @m4ku1337）。官方 OVHcloud 视觉请求发送前会校验
-> 10 MB 的完整 JSON 请求体上限（#723）；DSH `0.2.1-rc.1` 已通过
-> 精确源码、真实 Host 和 Chromium 兼容验收（#721）。最低 Host 支持
-> 范围不变；#684/#704/#716 仍在跟进中。
-> [查看完整更新 →](docs/releases/v3.0.5.md)
-
-
+版本更新详情：[v3.0.5 更新说明](docs/releases/v3.0.5.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
 
 <p align="center">
   <sub>生态收录：</sub>
