@@ -237,6 +237,17 @@ export function installDesktopModelSelectionTrace() {
       const current = directory.store.getSnapshot()
       const message = typeof current?.error === 'string' ? current.error : ''
       const errorCode = /^([a-z][a-z0-9-]{0,48}\/[a-z][a-z0-9-]{0,48}):/.exec(message)?.[1] ?? null
+      // The gateway wraps both client carrier throws and Host exceptions as
+      // gateway/internal. Distinguish *only* known exact selectModel prefixes;
+      // never retain arbitrary error messages, session ids or exception stacks.
+      const errorOrigin = errorCode !== 'gateway/internal' ? null
+        : message.startsWith('gateway/internal: client api: session/selectModel failed: ')
+          ? 'client-carrier'
+          : message.startsWith('gateway/internal: client api: Remote method session/selectModel is no longer mounted')
+            ? 'client-withdrawn'
+            : message.startsWith('gateway/internal: resume failed for session ')
+              ? 'host-resume'
+              : 'undetermined'
       history.push({
         phase,
         ms: Math.round(performance.now()),
@@ -245,6 +256,7 @@ export function installDesktopModelSelectionTrace() {
         pending: selection(current?.pending),
         hasError: message.length > 0,
         errorCode,
+        errorOrigin,
       })
       if (history.length > 64) history.shift()
     } catch (_) {
