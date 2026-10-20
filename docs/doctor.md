@@ -112,6 +112,18 @@ npx dsh-vision-router doctor --profile web --sessions --json
 
 The JSON report is schema-versioned and includes the running Doctor/Vision Router version. It is intentionally minimized for issue reports: it does not contain the raw profile manifest, raw log lines, API keys, raw dependency specs, local dependency paths, URL credentials/query strings/fragments, session ids, or raw runtime error text. It keeps only structured diagnostic facts such as install mode, installed version, route status, failure counts, optional capability versions and known session-repair kinds.
 
+### Paste-ready GitHub Issue template
+
+For a short, **read-only** troubleshooting report you can paste into a GitHub Issue without exporting raw logs or your DSH profile, run:
+
+```sh
+npx dsh-vision-router doctor --profile web --issue-template
+```
+
+Add `--no-runtime` for offline checks and `--sessions` only if historical session corruption is relevant. The template contains a whitelist of structural facts (Doctor version, OS, Node, installation-mode counts, coarse runtime status and failure counts) and blank fields for the exact provider/model, HTTP status and reproduction steps. It **does not send anything** or include local paths, profile names, raw runtime URLs, settings values, credentials, raw logs or images. Always review your filled-in answers before sharing.
+
+`--issue-template` is intentionally incompatible with `--fix` and `--json`; use normal `repair` separately if needed.
+
 ## Repair the UTF-8 BOM startup failure
 
 If DSH fails before plugins can load with an error such as:
