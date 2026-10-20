@@ -14,7 +14,8 @@ Release candidate must be tested on the final PR head, then on the exact main SH
 | Node 22 and 24, packed API | #723, CI run 39020741423 | Passed both Node versions, packed public API and Ubuntu/macOS/Windows Host-Sharp |
 | Official OVH 10 MB JSON request boundary | #723, tests/http-compat.test.js | Passed mocked negative and positive wires; **not** an online request to OVH |
 | billion-context coexistence | Issue #704 | **NOT VERIFIED** in a pinned dual-real-plugin runtime; reporter must identify which package/version |
-| Windows intermittent Vision OFF loss | Issue #684 | **NOT RESOLVED** by passing one CI matrix; passive pointer instrumentation remains required |
+| Windows native-disabled click suppression | #735 / Issue #684 closed | **MITIGATED:** bounded cached-pair actionability during catalog loading, with Host authority intact; not a blanket guarantee against all intermittent failures |
+| Windows delivered-click Host RPC failure | Issue #738 / diagnostics #737 | **UNRESOLVED:** a real 0.1.7 Windows Node24 run recorded `gateway/internal` after both clicks arrived. #737 adds only safe error-origin telemetry, with independent exact real-Host CI 6/6 alpha, 5/5 legacy, 7/7 rc.2 |
 | Multi-provider HTTP 400 | Issue #716 | **NOT REPRODUCED**, needs redacted response body; do not claim success |
 
 ## Acceptance matrix for a final install / upgrade
@@ -30,4 +31,4 @@ For the final v3.0.5 candidate, record exact OS, Node, DSH, DVR package and git 
 
 ## Release decision
 
-Do not label any unexecuted row green. GitHub Actions real Host + Chromium gates are automated integration tests, **not** a manually observed installation on the user's computer. Release notes must explicitly keep #684, #704 and #716 open. The manual trusted release workflow remains an independent action after this candidate PR is accepted.
+Do not label any unexecuted row green. GitHub Actions real Host + Chromium gates are automated integration tests, **not** a manually observed installation on the user's computer. Release notes must explicitly state that #738 and #716 remain open, and must not turn #684's bounded mitigation or #704's closed disposition into a claim of fully reproduced root-cause repair. The manual trusted release workflow remains an independent action after this candidate PR is accepted.

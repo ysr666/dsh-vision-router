@@ -106,6 +106,23 @@ test('release state: post-publish wait times out deterministically when the vers
   assert.match(run.stderr, /did not expose/)
 })
 
+test('current release READMEs both retain the announcement bar required by the publishing workflow', () => {
+  const version = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version
+  const expected = `v${version}`
+  const notes = path.join(ROOT, 'docs', 'releases', `${expected}.md`)
+  assert.ok(existsSync(notes), 'curated release notes must exist for the candidate version')
+  for (const name of ['README.md', 'README.zh.md']) {
+    const readme = readFileSync(path.join(ROOT, name), 'utf8')
+    const lines = readme.split(/\r?\n/)
+    const start = lines.findIndex(line => /^>\s*\[!WARNING\]/.test(line))
+    assert.ok(start >= 0, `${name} must have a visible release announcement`)
+    const contiguousBlock = lines.slice(start + 1).findIndex(line => !line.startsWith('>'))
+    const block = lines.slice(start + 1, contiguousBlock < 0 ? undefined : start + 1 + contiguousBlock).join('\n')
+    assert.match(block, new RegExp(expected.replaceAll('.', '\\.'), 'i'), `${name}: first warning block must mention candidate version`)
+    assert.ok(block.includes(`docs/releases/${expected}.md`), `${name}: announcement must link to versioned notes`)
+  }
+})
+
 test('release workflow keeps the draft -> attach -> verify -> publish ordering', () => {
   const workflow = readFileSync(WORKFLOW, 'utf8')
   const createIndex = workflow.indexOf('gh release create')
