@@ -234,7 +234,7 @@ To stop **Vision Router itself** from sending image data to remote vision endpoi
 
 ## Free vision key channels
 
-The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at **2 requests/minute per IP per model**. If that feels tight, every channel below offers **free vision models with much higher quotas** — all of them are free to register, and none charges for the free tier. Free policies rotate often; treat this table as an August 2026 snapshot and double-check each provider's console before relying on it.
+The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at **2 requests/minute per IP per model**. If that feels tight, the channels below list other vision-model options and free or trial offers. **Free quotas, authentication, third-party client access and image-input support vary**; a model listed in a provider's catalog is not a guarantee it can be called from DVR. This is an October 2026 reference, not a live quota guarantee; verify your specific API route and model before relying on it.
 
 | Channel | Free vision model(s) | Free quota | CN direct? | Where to get the key |
 |---|---|---|---|---|
@@ -245,10 +245,10 @@ The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at 
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct` (native multimodal, up to 5 images) | 30 RPM / 14,400 req/day, no card | ❌ proxy | console.groq.com |
 | Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 req/day | ❌ proxy | aistudio.google.com |
 | NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM, no card | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.5-free` (vision + code) | 30 RPM / 500 req/day | ⚠️ | opencode.ai/zen |
+| OpenCode Zen | `mimo-v2.6-flash-free` (listed in Zen; third-party image requests not independently verified) | Limited-time free in OpenCode; no verified fixed external-API quota | ⚠️ | [OpenCode Zen](https://opencode.ai/zen) |
 | OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 50 req/day on unpaid accounts | ❌ proxy | openrouter.ai |
 
-Any of these channels can join the vision chain as an `httpProviders` entry (key in the matching environment variable or `~/.dsh/.credentials.yaml`), and the chain tries your entries before the anonymous fallback.
+Channels that **permit third-party API access and accept image content** can join the vision chain as an `httpProviders` entry (key in the matching environment variable or `~/.dsh/.credentials.yaml`); the chain tries those entries before the anonymous fallback. **OpenCode Zen caveat:** its docs currently list both `mimo-v2.5-free` and `mimo-v2.6-flash-free`. Xiaomi's October 21 deprecation concerns the **direct Xiaomi model IDs**, not a confirmed Zen alias shutdown. Free Zen access may be restricted to OpenCode clients; do not assume the model works in DVR or try to bypass such restrictions. Zen warns that usage of its free MiMo model may be collected to improve the model. [OpenCode Zen documentation](https://docs.opencode.ai/docs/zen/) · [Xiaomi deprecation notice](https://mimo.mi.com/docs/zh-CN/updates/deprecate).
 
 > [!NOTE]
 > Free-tier policies change without notice — Cerebras retired its free tier in July 2026 (now a one-time $5 credit), SambaNova's free tier is down to 20 requests/day, and Hugging Face's is $0.10/month. Third-party “`:free` relay” aggregators are deliberately not listed: they rotate quickly, lack SLAs, and some resell quota in ways that violate upstream terms.
