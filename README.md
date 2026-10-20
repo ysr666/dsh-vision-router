@@ -8,145 +8,30 @@
 
 <p align="center">DeepSeek keeps thinking; the built-in free vision chain and fourteen deep tools do the seeing. When an image matters, enable the composer’s “👁 Vision” control and use image turns like ordinary tool-calling turns — grounded, measurable, repeatable.</p>
 
-<p align="center">
-  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
-  <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 certified" /></a>
-  <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase install-tested" /></a>
-  <a href="https://github.com/SoberReport-AI/DeepGuard/blob/main/reports/dsh-vision-router/2.0.1/39c8f2b2d69aa398418fd6c8ab40b691a92a1a3d.json"><img src="https://img.shields.io/badge/DeepGuard-audit%20clean-2EA44F?style=flat-square" alt="DeepGuard audit clean" /></a>
-  <a href="https://whyihaveyou.github.io/dsh-suite/"><img src="https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe?style=flat-square" alt="featured on dsh-suite" /></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/ysr666/dsh-vision-router/releases/latest"><img src="https://img.shields.io/github/v/release/ysr666/dsh-vision-router?label=release&color=5B4CF0&style=flat-square" alt="Latest stable release" /></a>
-  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
-  <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
-</p>
-
-<p align="center">
-  <sub>Ecosystem:</sub>
-  <a href="https://dshplugin.app/plugins/dsh-vision-router">DSHPlugin.app</a> ·
-  <a href="https://github.com/diegosouzapw/awesome-omni-dsh-plugins">Awesome Omni DSH Plugins</a> ·
-  <a href="https://dshpluginhub.ai/plugins/dsh-vision-router">dshpluginhub.ai</a> ·
-  <a href="https://www.dsh.plus/en/plugins/dsh-vision-router/">dsh.plus</a> ·
-  <a href="https://dshplugins.ai/">dshplugins.ai</a> ·
-  <a href="https://dshmarket.com/p/ysr666/dsh-vision-router/">dsh-market</a>
-</p>
-
-<p align="center">Repository: <a href="https://github.com/ysr666/dsh-vision-router">GitHub (primary · issues, PRs and releases)</a> · <a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit (China mirror)</a></p>
-
 <p align="center">English · <a href="README.zh.md">中文</a></p>
-
-<p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 > [!CAUTION]
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
-> [!WARNING]
-> 📌 **Announcement (v3.0.5)**
->
-> **v3.0.5 corrective patch:** optional DSH peers no longer block clean Desktop
-> activation (#719/#722, thanks @m4ku1337). The official OVHcloud VLM wire
-> now checks its 10 MB JSON body limit before sending (#723); DSH
-> `0.2.1-rc.1` has passed pinned real Host and Chromium qualification (#721).
-> Host support range is unchanged. Historical #684/#704/#716 remain tracked.
-> [Release details →](docs/releases/v3.0.5.md)
+## Start here
+
+**1. Install in an existing DSH Web profile:**
+
+```sh
+npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
+```
+
+**2. Keep your usual chat model** and click **👁 Vision** beside the composer; check for **👁 Vision ✓**.
+
+**3. Paste or upload an image** and ask the agent what to inspect. The built-in keyless cloud fallback is available out of the box.
+
+Using Desktop? Change `--profile web` to `--profile desktop` and reload the app. For Oh-DSH and manual setups, follow the [complete installation guide](#quick-start).
+
+[Full quick start](#quick-start) · [What it can do](#highlights) · [Data flow and local-only use](#data-flow-and-strict-local-only-use)
 
 <p align="center">
   <img src="assets/vision-demo.gif" width="640" alt="Demo: paste an image, the agent locates the send button with vision_ground / vision_crop / vision_pixel_diff and answers with coordinates" />
 </p>
-
-## Contents
-
-- [Data flow and strict local-only use](#data-flow-and-strict-local-only-use)
-- [Why this exists](#why-this-exists)
-- [How it compares](#how-it-compares)
-- [Design lineage](#design-lineage)
-- [Acknowledgements](#acknowledgements)
-- [Quick start](#quick-start)
-- [Free vision key channels](#free-vision-key-channels)
-- [Highlights](#highlights)
-- [How it works](#how-it-works)
-- [Tools](#tools)
-- [Configuration](#configuration)
-- [Install and lifecycle](#install-and-lifecycle)
-- [Troubleshooting](#troubleshooting)
-
-## Data flow and strict local-only use
-
-Vision Router does not operate fully offline in its default configuration. The exact boundary depends on the operation and the selected models:
-
-| Operation | Where data goes |
-|---|---|
-| Local pixel tools such as crop, pixel diff, palette, SVG trace, cutout, materialize and HTML screenshot | Processed on the DSH machine; these operations do not call a vision model. |
-| `vision_ocr` with Tesseract | Processed on the DSH machine. With the default `auto` engine, an unavailable or empty local OCR result may fall back to a vision model. |
-| Image-turn routing and vision-model tools such as describe, detect, ground or vision OCR | The image or derived crop, prompt and relevant context are sent to the selected vision provider. |
-| Built-in free fallback | Sent anonymously (no API key) to OVHcloud AI Endpoints at `oai.endpoints.kepler.ai.cloud.ovh.net`; the service still receives the request payload and network metadata such as the source IP. |
-| User-configured cloud model / HTTP provider | Sent to that provider's configured endpoint under its own retention and privacy terms. |
-| Local Ollama / LM Studio | Image pixels are sent to the configured local endpoint. The resulting text still returns to the current chat model, which may itself be remote. |
-
-To stop **Vision Router itself** from sending image data to remote vision endpoints, enable **Settings → Vision Router → General → Local-only vision**. This is a runtime policy, not a destructive rewrite: saved cloud rows and `freeFallback` stay configured but cannot execute while the switch is on. Only loopback visual endpoints (`localhost`, `127.0.0.0/8`, `::1`) are eligible, including Ollama, LM Studio, and custom local HTTP backends. For a **strict local-only workflow**, also use a local chat model because vision result text still returns to the current chat model. Test the final network boundary in your own environment; Vision Router cannot make a remote chat model, proxy or Host integration local.
-
-## Why this exists
-
-Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — lossy, one-shot, and blind to pixels. This plugin keeps the **Host-canonical image pixels on the vision model's side** and DeepSeek on the reasoning side, and makes looking at an image an **ordinary tool call**:
-
-- **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper and the attachment limits automatically — zero manual file edits. Taking over the official DeepSeek route is an optional setting (stealth mode, off by default).
-- **Free by default.** Vision tools end with a four-model OVHcloud anonymous fallback: no account, no key, 2 requests/minute per IP per model, roughly 8 RPM in theory across independent buckets. User-provided vision models run first.
-- **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
-- **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
-- **DeepSeek stays the brain.** Text turns are untouched in model, cost and context. The vision model is only the eyes, called on demand; answers are cached by image content.
-- **Transparent to the user.** Uploaded images keep rendering as images in the conversation UI; the rewrite that points the model at the vision tools happens only inside the model call, never in the session log.
-
-## How it compares
-
-**One-line take**: most dsh vision plugins turn images into *text descriptions* for DeepSeek
-(description bridge — lossy); this plugin hands the image turn *straight to a vision model*
-(routing bridge — pixel-level), with a built-in keyless free fallback.
-
-> [!NOTE]
-> On DSH 0.1.2-alpha.1+, attachments remain Host-owned. Vision Router consumes the Host-persisted canonical image: clean single-frame 8-bit sRGB/sRGBA images inside the configured normalization limits can pass through byte-identically, while images that need orientation, color-space, metadata, animation, or size normalization may be re-encoded. Pixel tools therefore promise the Host-canonical raster, not preservation of the uploader's original encoded bytes.
-
-| | Manual model switching | MCP vision bridge | dsh-vision-router |
-|---|---|---|---|
-| Image pixels | ✅ available (when switched) | ❌ text description only | ✅ Host-canonical raster, on the image turn |
-| Automatic | ❌ | ✅ | ✅ |
-| Daily model untouched | ❌ (whole session swapped) | ✅ | ✅ |
-| Provider failure recovery | ❌ | ❌ | ✅ fallback chains |
-| Reusable structured queries | — | partial | ✅ JSON mode + caching |
-| Free out-of-the-box | ❌ | ❌ | ✅ built-in keyless endpoint |
-| Fits dsh composition | — | external server | ✅ one plugin row |
-
-**Difference from existing dsh community projects** (all excellent, each with its own focus; descriptions reflect their READMEs as of 2026-08):
-
-| Project | Approach | What this plugin adds |
-|---|---|---|
-| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | Pre-describes images with an external VLM; the description joins the session as a message to DeepSeek; LLM7.io anonymous endpoint by default (OVHcloud listed as a no-key alternative) | Description bridge; this plugin adds image routing, with `vision_describe` covering descriptions on demand |
-| [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | Wraps a provider route and transcribes images into text in the request stream | Transcription bridge; this plugin wraps no provider — it rewrites routing through `agent/request` waterfalls |
-| [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | Registers `DeepSeek + Vision` combined routes: images are described by the chosen vision model before reaching DeepSeek | Two-model bridge idea; this plugin adds automatic routing, fallback chains and tools on top |
-| [modlens](https://github.com/liustack/modlens) | The first dsh vision plugin; reuses local Claude Code/Codex/OpenCode/Pi logins as vision engines | Engine-reuse idea; this plugin ships its own provider chain and depends on no other local CLI |
-| [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | Ten intent-aware visual tools (Q&A/OCR/pixel verification/UI restoration), called explicitly on demand | Broader tool set; this plugin adds whole-turn auto-routing and a keyless free fallback |
-| [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | An `inspect_image` tool plus an `agent/pre-step` waterfall bridge (pasted images become tool hints before entering the log) | Similar waterfall bridge; this plugin adds turn routing, fallback chains, caching and the free endpoint |
-
-## Design lineage
-
-The deep-vision tool layer and UI-restoration workflow in this project were informed by [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) and its native DSH implementation [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit). In particular, this project drew on their intent-driven tool selection, progressive tool exposure, pixel-diff verification loop, and parts of the visual-tool decomposition and naming, including long-screenshot OCR, foreground extraction, and HTML screenshot tooling.
-
-All code in `dsh-vision-router` is independently implemented. On top of those referenced design ideas, this project independently developed its turn-level/tools-first vision routing, DSH admission/wrapper integration, multi-backend provider and failure fallback chains, built-in free vision chain, attachment/image-memory handling, caching, and related runtime resilience mechanisms.
-
-We appreciate Anionex's prior work and the broader DSH community. Clear attribution and independent iteration can coexist; both help keep the DSH ecosystem open, collaborative, and healthy.
-
-## Acknowledgements
-
-This project borrows ideas from all of the above — especially the keyless free-endpoint
-exploration (LLM7.io and OVHcloud anonymous tiers) by
-[dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar). Thanks to the authors of
-[dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy),
-[dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider),
-[modlens](https://github.com/liustack/modlens),
-[dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit), and
-[dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision).
 
 ## Quick start
 
@@ -219,26 +104,22 @@ The built-in anonymous OVH vision fallback is already configured, so normal imag
   <img src="assets/dsh-conversation-image-qa-result.png" width="49%" alt="The agent's structured answer describing the image content." />
 </p>
 
-## Free vision key channels
+## Contents
 
-The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at **2 requests/minute per IP per model**. If that feels tight, every channel below offers **free vision models with much higher quotas** — all of them are free to register, and none charges for the free tier. Free policies rotate often; treat this table as an August 2026 snapshot and double-check each provider's console before relying on it.
-
-| Channel | Free vision model(s) | Free quota | CN direct? | Where to get the key |
-|---|---|---|---|---|
-| OVHcloud AI Endpoints (access key) | `Qwen2.5-VL-72B-Instruct` — the same endpoint the built-in fallback uses | **400 req/min** per project per model (vs 2 anonymous) | ✅ | OVH account → Public Cloud project (attach a payment method; free models are not charged) → AI Endpoints access key |
-| Zhipu (bigmodel.cn) | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash` — three permanently free models; chaining them triples capacity | uncapped tokens | ✅ | open.bigmodel.cn → API keys |
-| DashScope (Aliyun) | `qwen3-vl-flash` (limited-time free) and the Qwen-VL series | new users: 1M tokens per model series / 90 days | ✅ | bailian.console.aliyun.com |
-| Intern AI (Shanghai AI Lab) | `internvl-latest` · `internvl3.5-latest` | 30 RPM, **90M tokens/month** | ✅ | chat.intern-ai.org.cn |
-| Groq | `meta-llama/llama-4-scout-17b-16e-instruct` (native multimodal, up to 5 images) | 30 RPM / 14,400 req/day, no card | ❌ proxy | console.groq.com |
-| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 req/day | ❌ proxy | aistudio.google.com |
-| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM, no card | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.5-free` (vision + code) | 30 RPM / 500 req/day | ⚠️ | opencode.ai/zen |
-| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 50 req/day on unpaid accounts | ❌ proxy | openrouter.ai |
-
-Any of these channels can join the vision chain as an `httpProviders` entry (key in the matching environment variable or `~/.dsh/.credentials.yaml`), and the chain tries your entries before the anonymous fallback.
-
-> [!NOTE]
-> Free-tier policies change without notice — Cerebras retired its free tier in July 2026 (now a one-time $5 credit), SambaNova's free tier is down to 20 requests/day, and Hugging Face's is $0.10/month. Third-party “`:free` relay” aggregators are deliberately not listed: they rotate quickly, lack SLAs, and some resell quota in ways that violate upstream terms.
+- [Quick start](#quick-start)
+- [Highlights](#highlights)
+- [How it works](#how-it-works)
+- [Tools](#tools)
+- [Data flow and strict local-only use](#data-flow-and-strict-local-only-use)
+- [Free vision key channels](#free-vision-key-channels)
+- [Why this exists](#why-this-exists)
+- [How it compares](#how-it-compares)
+- [Configuration](#configuration)
+- [Install and lifecycle](#install-and-lifecycle)
+- [Troubleshooting](#troubleshooting)
+- [Design lineage](#design-lineage)
+- [Acknowledgements](#acknowledgements)
+- [Release notes and community](#release-notes-and-community)
 
 ## Highlights
 
@@ -314,6 +195,83 @@ vision_html_screenshot source="page.html" width=1200 height=720
 vision_html_screenshot source="page.html" width=1200 height=720 fullPage=true
 vision_long_screenshot_ocr image="chat-log.png" chunkHeight=1200 overlap=120
 ```
+
+## Data flow and strict local-only use
+
+Vision Router does not operate fully offline in its default configuration. The exact boundary depends on the operation and the selected models:
+
+| Operation | Where data goes |
+|---|---|
+| Local pixel tools such as crop, pixel diff, palette, SVG trace, cutout, materialize and HTML screenshot | Processed on the DSH machine; these operations do not call a vision model. |
+| `vision_ocr` with Tesseract | Processed on the DSH machine. With the default `auto` engine, an unavailable or empty local OCR result may fall back to a vision model. |
+| Image-turn routing and vision-model tools such as describe, detect, ground or vision OCR | The image or derived crop, prompt and relevant context are sent to the selected vision provider. |
+| Built-in free fallback | Sent anonymously (no API key) to OVHcloud AI Endpoints at `oai.endpoints.kepler.ai.cloud.ovh.net`; the service still receives the request payload and network metadata such as the source IP. |
+| User-configured cloud model / HTTP provider | Sent to that provider's configured endpoint under its own retention and privacy terms. |
+| Local Ollama / LM Studio | Image pixels are sent to the configured local endpoint. The resulting text still returns to the current chat model, which may itself be remote. |
+
+To stop **Vision Router itself** from sending image data to remote vision endpoints, enable **Settings → Vision Router → General → Local-only vision**. This is a runtime policy, not a destructive rewrite: saved cloud rows and `freeFallback` stay configured but cannot execute while the switch is on. Only loopback visual endpoints (`localhost`, `127.0.0.0/8`, `::1`) are eligible, including Ollama, LM Studio, and custom local HTTP backends. For a **strict local-only workflow**, also use a local chat model because vision result text still returns to the current chat model. Test the final network boundary in your own environment; Vision Router cannot make a remote chat model, proxy or Host integration local.
+
+## Free vision key channels
+
+The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at **2 requests/minute per IP per model**. If that feels tight, every channel below offers **free vision models with much higher quotas** — all of them are free to register, and none charges for the free tier. Free policies rotate often; treat this table as an August 2026 snapshot and double-check each provider's console before relying on it.
+
+| Channel | Free vision model(s) | Free quota | CN direct? | Where to get the key |
+|---|---|---|---|---|
+| OVHcloud AI Endpoints (access key) | `Qwen2.5-VL-72B-Instruct` — the same endpoint the built-in fallback uses | **400 req/min** per project per model (vs 2 anonymous) | ✅ | OVH account → Public Cloud project (attach a payment method; free models are not charged) → AI Endpoints access key |
+| Zhipu (bigmodel.cn) | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash` — three permanently free models; chaining them triples capacity | uncapped tokens | ✅ | open.bigmodel.cn → API keys |
+| DashScope (Aliyun) | `qwen3-vl-flash` (limited-time free) and the Qwen-VL series | new users: 1M tokens per model series / 90 days | ✅ | bailian.console.aliyun.com |
+| Intern AI (Shanghai AI Lab) | `internvl-latest` · `internvl3.5-latest` | 30 RPM, **90M tokens/month** | ✅ | chat.intern-ai.org.cn |
+| Groq | `meta-llama/llama-4-scout-17b-16e-instruct` (native multimodal, up to 5 images) | 30 RPM / 14,400 req/day, no card | ❌ proxy | console.groq.com |
+| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 req/day | ❌ proxy | aistudio.google.com |
+| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM, no card | ⚠️ | build.nvidia.com |
+| OpenCode Zen | `mimo-v2.5-free` (vision + code) | 30 RPM / 500 req/day | ⚠️ | opencode.ai/zen |
+| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 50 req/day on unpaid accounts | ❌ proxy | openrouter.ai |
+
+Any of these channels can join the vision chain as an `httpProviders` entry (key in the matching environment variable or `~/.dsh/.credentials.yaml`), and the chain tries your entries before the anonymous fallback.
+
+> [!NOTE]
+> Free-tier policies change without notice — Cerebras retired its free tier in July 2026 (now a one-time $5 credit), SambaNova's free tier is down to 20 requests/day, and Hugging Face's is $0.10/month. Third-party “`:free` relay” aggregators are deliberately not listed: they rotate quickly, lack SLAs, and some resell quota in ways that violate upstream terms.
+
+## Why this exists
+
+Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — lossy, one-shot, and blind to pixels. This plugin keeps the **Host-canonical image pixels on the vision model's side** and DeepSeek on the reasoning side, and makes looking at an image an **ordinary tool call**:
+
+- **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper and the attachment limits automatically — zero manual file edits. Taking over the official DeepSeek route is an optional setting (stealth mode, off by default).
+- **Free by default.** Vision tools end with a four-model OVHcloud anonymous fallback: no account, no key, 2 requests/minute per IP per model, roughly 8 RPM in theory across independent buckets. User-provided vision models run first.
+- **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
+- **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
+- **DeepSeek stays the brain.** Text turns are untouched in model, cost and context. The vision model is only the eyes, called on demand; answers are cached by image content.
+- **Transparent to the user.** Uploaded images keep rendering as images in the conversation UI; the rewrite that points the model at the vision tools happens only inside the model call, never in the session log.
+
+## How it compares
+
+**One-line take**: most dsh vision plugins turn images into *text descriptions* for DeepSeek
+(description bridge — lossy); this plugin hands the image turn *straight to a vision model*
+(routing bridge — pixel-level), with a built-in keyless free fallback.
+
+> [!NOTE]
+> On DSH 0.1.2-alpha.1+, attachments remain Host-owned. Vision Router consumes the Host-persisted canonical image: clean single-frame 8-bit sRGB/sRGBA images inside the configured normalization limits can pass through byte-identically, while images that need orientation, color-space, metadata, animation, or size normalization may be re-encoded. Pixel tools therefore promise the Host-canonical raster, not preservation of the uploader's original encoded bytes.
+
+| | Manual model switching | MCP vision bridge | dsh-vision-router |
+|---|---|---|---|
+| Image pixels | ✅ available (when switched) | ❌ text description only | ✅ Host-canonical raster, on the image turn |
+| Automatic | ❌ | ✅ | ✅ |
+| Daily model untouched | ❌ (whole session swapped) | ✅ | ✅ |
+| Provider failure recovery | ❌ | ❌ | ✅ fallback chains |
+| Reusable structured queries | — | partial | ✅ JSON mode + caching |
+| Free out-of-the-box | ❌ | ❌ | ✅ built-in keyless endpoint |
+| Fits dsh composition | — | external server | ✅ one plugin row |
+
+**Difference from existing dsh community projects** (all excellent, each with its own focus; descriptions reflect their READMEs as of 2026-08):
+
+| Project | Approach | What this plugin adds |
+|---|---|---|
+| [dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar) | Pre-describes images with an external VLM; the description joins the session as a message to DeepSeek; LLM7.io anonymous endpoint by default (OVHcloud listed as a no-key alternative) | Description bridge; this plugin adds image routing, with `vision_describe` covering descriptions on demand |
+| [dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy) | Wraps a provider route and transcribes images into text in the request stream | Transcription bridge; this plugin wraps no provider — it rewrites routing through `agent/request` waterfalls |
+| [dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider) | Registers `DeepSeek + Vision` combined routes: images are described by the chosen vision model before reaching DeepSeek | Two-model bridge idea; this plugin adds automatic routing, fallback chains and tools on top |
+| [modlens](https://github.com/liustack/modlens) | The first dsh vision plugin; reuses local Claude Code/Codex/OpenCode/Pi logins as vision engines | Engine-reuse idea; this plugin ships its own provider chain and depends on no other local CLI |
+| [dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) | Ten intent-aware visual tools (Q&A/OCR/pixel verification/UI restoration), called explicitly on demand | Broader tool set; this plugin adds whole-turn auto-routing and a keyless free fallback |
+| [dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision) | An `inspect_image` tool plus an `agent/pre-step` waterfall bridge (pasted images become tool hints before entering the log) | Similar waterfall bridge; this plugin adds turn routing, fallback chains, caching and the free endpoint |
 
 ## Provider fallback chain
 
@@ -621,6 +579,67 @@ Manual fallback: in VS Code, use “Save with Encoding” → `UTF-8` (without B
 - Artifacts write only under `<workspace>/.dsh-vision-router/artifacts`; results return absolute paths and byte counts.
 - Secrets never travel: `apiKeyEnv` names a DSH credential reference; the value is resolved per call and never logged.
 - The settings write path goes through the settings service (schema-validated, revision-checked) — a stale or invalid save is rejected, not partially applied.
+
+## Design lineage
+
+The deep-vision tool layer and UI-restoration workflow in this project were informed by [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) and its native DSH implementation [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit). In particular, this project drew on their intent-driven tool selection, progressive tool exposure, pixel-diff verification loop, and parts of the visual-tool decomposition and naming, including long-screenshot OCR, foreground extraction, and HTML screenshot tooling.
+
+All code in `dsh-vision-router` is independently implemented. On top of those referenced design ideas, this project independently developed its turn-level/tools-first vision routing, DSH admission/wrapper integration, multi-backend provider and failure fallback chains, built-in free vision chain, attachment/image-memory handling, caching, and related runtime resilience mechanisms.
+
+We appreciate Anionex's prior work and the broader DSH community. Clear attribution and independent iteration can coexist; both help keep the DSH ecosystem open, collaborative, and healthy.
+
+## Acknowledgements
+
+This project borrows ideas from all of the above — especially the keyless free-endpoint
+exploration (LLM7.io and OVHcloud anonymous tiers) by
+[dsh-vision-sidecar](https://github.com/121103qwq/dsh-vision-sidecar). Thanks to the authors of
+[dsh-vision-proxy](https://github.com/Flyvhidbwo/dsh-vision-proxy),
+[dsh-vision-provider](https://github.com/libinyam/dsh-vision-provider),
+[modlens](https://github.com/liustack/modlens),
+[dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit), and
+[dsh-tool-vision](https://github.com/Scorp1o117/dsh-tool-vision).
+
+## Release notes and community
+
+> [!WARNING]
+> 📌 **Announcement (v3.0.5)**
+>
+> **v3.0.5 corrective patch:** optional DSH peers no longer block clean Desktop
+> activation (#719/#722, thanks @m4ku1337). The official OVHcloud VLM wire
+> now checks its 10 MB JSON body limit before sending (#723); DSH
+> `0.2.1-rc.1` has passed pinned real Host and Chromium qualification (#721).
+> Host support range is unchanged. Historical #684/#704/#716 remain tracked.
+> [Release details →](docs/releases/v3.0.5.md)
+
+<p align="center">
+  <a href="https://awesome-dsh-plugin.com"><img src="https://awesome-dsh-plugin.com/badge.svg" alt="awesome · DSH plugin" /></a>
+  <a href="https://github.com/zp-home/dsh-recommend"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fzp-home%2Fdsh-recommend%2Fmain%2Fdata%2Fbadges%2Fysr666__dsh-vision-router.certified.json&amp;style=flat-square" alt="dsh-recommend 🏅 certified" /></a>
+  <a href="https://www.dshbase.com/plugins/dsh-vision-router/"><img src="https://img.shields.io/badge/dshbase-install--tested-2EA44F?style=flat-square" alt="dshbase install-tested" /></a>
+  <a href="https://github.com/SoberReport-AI/DeepGuard/blob/main/reports/dsh-vision-router/2.0.1/39c8f2b2d69aa398418fd6c8ab40b691a92a1a3d.json"><img src="https://img.shields.io/badge/DeepGuard-audit%20clean-2EA44F?style=flat-square" alt="DeepGuard audit clean" /></a>
+  <a href="https://whyihaveyou.github.io/dsh-suite/"><img src="https://img.shields.io/badge/featured%20on-dsh--suite-4d6bfe?style=flat-square" alt="featured on dsh-suite" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/ysr666/dsh-vision-router/releases/latest"><img src="https://img.shields.io/github/v/release/ysr666/dsh-vision-router?label=release&color=5B4CF0&style=flat-square" alt="Latest stable release" /></a>
+  <a href="tests"><img src="https://img.shields.io/badge/verified-Node%2022%20%2B%2024-2EA44F?style=flat-square" alt="Verified: Node 22 + 24" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square" alt="License: MIT" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/Node.js-%3E%3D22-339933?style=flat-square&amp;logo=nodedotjs&amp;logoColor=white" alt="Node.js >=22" /></a>
+  <img src="https://img.shields.io/badge/runtime-no%20Python-8A2BE2?style=flat-square" alt="No Python" />
+</p>
+
+<p align="center">
+  <sub>Ecosystem:</sub>
+  <a href="https://dshplugin.app/plugins/dsh-vision-router">DSHPlugin.app</a> ·
+  <a href="https://github.com/diegosouzapw/awesome-omni-dsh-plugins">Awesome Omni DSH Plugins</a> ·
+  <a href="https://dshpluginhub.ai/plugins/dsh-vision-router">dshpluginhub.ai</a> ·
+  <a href="https://www.dsh.plus/en/plugins/dsh-vision-router/">dsh.plus</a> ·
+  <a href="https://dshplugins.ai/">dshplugins.ai</a> ·
+  <a href="https://dshmarket.com/p/ysr666/dsh-vision-router/">dsh-market</a>
+</p>
+
+<p align="center">Repository: <a href="https://github.com/ysr666/dsh-vision-router">GitHub (primary · issues, PRs and releases)</a> · <a href="https://atomgit.com/ysr666/dsh-vision-router">AtomGit (China mirror)</a></p>
+
+<p align="center">💬 <strong>QQ community group: 1105463028</strong></p>
 
 ## License
 
