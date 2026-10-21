@@ -61,7 +61,7 @@ These are ordinary chat requests: your normal model reasons through the task and
 - [Tools](#tools)
 - [Quick start](#quick-start)
 - [Data flow and strict local-only use](#data-flow-and-strict-local-only-use)
-- [Free vision key channels](#free-vision-key-channels)
+- [Configure your own vision models](#configure-your-own-vision-models)
 - [Why this exists](#why-this-exists)
 - [How it compares](#how-it-compares)
 - [Configuration](#configuration)
@@ -232,26 +232,13 @@ Vision Router does not operate fully offline in its default configuration. The e
 
 To stop **Vision Router itself** from sending image data to remote vision endpoints, enable **Settings → Vision Router → General → Local-only vision**. This is a runtime policy, not a destructive rewrite: saved cloud rows and `freeFallback` stay configured but cannot execute while the switch is on. Only loopback visual endpoints (`localhost`, `127.0.0.0/8`, `::1`) are eligible, including Ollama, LM Studio, and custom local HTTP backends. For a **strict local-only workflow**, also use a local chat model because vision result text still returns to the current chat model. Test the final network boundary in your own environment; Vision Router cannot make a remote chat model, proxy or Host integration local.
 
-## Free vision key channels
+## Configure your own vision models
 
-The built-in OVH fallback is anonymous by design, and OVH caps anonymous use at **2 requests/minute per IP per model**. If that feels tight, the channels below list other vision-model options and free or trial offers. **Free quotas, authentication, third-party client access and image-input support vary**; a model listed in a provider's catalog is not a guarantee it can be called from DVR. This is an October 2026 reference, not a live quota guarantee; verify your specific API route and model before relying on it.
+**DSH owns providers, credentials and the model catalog; Vision Router consumes configured Host models for visual orchestration, execution, testing and diagnostics.** No plugin-specific commercial vendor YAML is required.
 
-| Channel | Free vision model(s) | Free quota | CN direct? | Where to get the key |
-|---|---|---|---|---|
-| OVHcloud AI Endpoints (access key) | `Qwen2.5-VL-72B-Instruct` — the same endpoint the built-in fallback uses | **400 req/min** per project per model (vs 2 anonymous) | ✅ | OVH account → Public Cloud project (attach a payment method; free models are not charged) → AI Endpoints access key |
-| Zhipu (bigmodel.cn) | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash` — three permanently free models; chaining them triples capacity | uncapped tokens | ✅ | open.bigmodel.cn → API keys |
-| DashScope (Aliyun) | `qwen3-vl-flash` (limited-time free) and the Qwen-VL series | new users: 1M tokens per model series / 90 days | ✅ | bailian.console.aliyun.com |
-| Intern AI (Shanghai AI Lab) | `internvl-latest` · `internvl3.5-latest` | 30 RPM, **90M tokens/month** | ✅ | chat.intern-ai.org.cn |
-| Groq | `meta-llama/llama-4-scout-17b-16e-instruct` (native multimodal, up to 5 images) | 30 RPM / 14,400 req/day, no card | ❌ proxy | console.groq.com |
-| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 req/day | ❌ proxy | aistudio.google.com |
-| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM, no card | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.6-flash-free` (listed in Zen; third-party image requests not independently verified) | Limited-time free in OpenCode; no verified fixed external-API quota | ⚠️ | [OpenCode Zen](https://opencode.ai/zen) |
-| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 50 req/day on unpaid accounts | ❌ proxy | openrouter.ai |
+Manage provider credentials and models in **DSH Settings → Models**, then pick those models from the same Host catalog in **Settings → Vision Router**. Use **Test Vision** to verify that the exact model actually reads image content. If Host metadata incorrectly marks a real vision model text-only, prefer DSH **Model input types → Image**; on older Hosts, declare `input: [text, image]` on a **verified image-capable** `llm-pi-ai` model and reload configuration. Never fabricate image support for text-only models.
 
-Channels that **permit third-party API access and accept image content** can join the vision chain as an `httpProviders` entry (key in the matching environment variable or `~/.dsh/.credentials.yaml`); the chain tries those entries before the anonymous fallback. **OpenCode Zen caveat:** its docs currently list both `mimo-v2.5-free` and `mimo-v2.6-flash-free`. Xiaomi's October 21 deprecation concerns the **direct Xiaomi model IDs**, not a confirmed Zen alias shutdown. Free Zen access may be restricted to OpenCode clients; do not assume the model works in DVR or try to bypass such restrictions. Zen warns that usage of its free MiMo model may be collected to improve the model. [OpenCode Zen documentation](https://docs.opencode.ai/docs/zen/) · [Xiaomi deprecation notice](https://mimo.mi.com/docs/zh-CN/updates/deprecate).
-
-> [!NOTE]
-> Free-tier policies change without notice — Cerebras retired its free tier in July 2026 (now a one-time $5 credit), SambaNova's free tier is down to 20 requests/day, and Hugging Face's is $0.10/month. Third-party “`:free` relay” aggregators are deliberately not listed: they rotate quickly, lack SLAs, and some resell quota in ways that violate upstream terms.
+The built-in anonymous OVH fallback is a separate Vision Router `httpProviders` runtime and not a DSH provider preset. Strictly local workflows also require a local chat model and the Local-only vision setting. Vendor price, quota and model IDs change; this project does not keep an ongoing marketing or free-tier list. The [August 2026 survey](docs/free-models.zh-CN.md) remains available solely as historical research.
 
 ## Why this exists
 
@@ -302,7 +289,7 @@ The vision tools try backends in order and surface an error only after all of th
 2. **Local Ollama (optional, off by default)**: `localOllama.enabled` adds keyless, offline recognition through your local Ollama (for example qwen2.5vl);
 3. **Local LM Studio (optional, off by default)**: `localLmStudio.enabled` follows Ollama and requires the real model identifier shown in LM Studio Developer or returned by `/v1/models`;
 4. **Advanced custom HTTP vision endpoints**: legacy/advanced `httpProviders`, when present, run after the local backends;
-5. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The four models have independent buckets, so spreading requests across them is about **8 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required. OVH has scheduled the previously bundled Mistral Small 3.2 model for decommission on November 4, 2026; it is no longer part of the automatic fallback, but user-managed rows are not changed. Want more headroom? See [Free vision key channels](#free-vision-key-channels) — a free OVH access key lifts this same endpoint to 400 requests/minute.
+5. **Built-in anonymous OVH fallback**: always last and never exposed in a model picker. The current quality-first chain is `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Qwen3.5-9B`. OVH anonymous limits are **2 requests/minute per IP per model**. The four models have independent buckets, so spreading requests across them is about **8 RPM in theory**, subject to OVH's actual rate limiting. No signup or API key is required. OVH has scheduled the previously bundled Mistral Small 3.2 model for decommission on November 4, 2026; it is no longer part of the automatic fallback, but user-managed rows are not changed. For more capacity, configure your own model in DSH; see [Configure your own vision models](#configure-your-own-vision-models).
 
 > [!IMPORTANT]
 > This “vision chain” is the **eyes** used by Vision Router: each settings row selects one user vision model, while the lower-right chat picker selects the **brain/conversation model**. The two are deliberately separate. Text-only DeepSeek/opencode models are filtered out of the vision-backend dropdown, and the internal `Vision HTTP` transport route is no longer exposed to users.
