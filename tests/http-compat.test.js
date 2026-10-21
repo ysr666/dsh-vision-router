@@ -283,6 +283,61 @@ test('compat fetch retries at a Chinese advertised ceiling over the echoed rejec
   assert.deepEqual(bodies.map((body) => body.max_tokens), [4096, 1536])
 })
 
+test('max-token limit parser ignores image-count and pixel-dimension numbers (synthetic, not #716 evidence)', () => {
+  // These 400 bodies describe a limit on the *input images* (count or pixel
+  // dimension), not the output-token ceiling. Reading that number as a token cap
+  // would shrink max_tokens to a nonsense value. Every ceiling word here binds to
+  // a non-token unit, so the parser must not return that unit's number.
+  assert.notEqual(parseMaxTokensLimit('max_tokens=4096; request body contains at most 4 images'), 4)
+  assert.notEqual(parseMaxTokensLimit('max_tokens=4096，最多支持 2 张图片'), 2)
+  assert.notEqual(parseMaxTokensLimit('max_tokens=4096; invalid image dimensions, maximum 2048 pixels'), 2048)
+  // The generic field-name fallback must also not grab an image count that sits
+  // right after the field name with no other number in range.
+  assert.notEqual(parseMaxTokensLimit('max_tokens with 5 images'), 5)
+  // A genuine token ceiling stated alongside image-count wording must still win,
+  // resolved to the token number rather than the image/pixel number.
+  assert.equal(
+    parseMaxTokensLimit('max_tokens too large; supports at most 1536 tokens; the model accepts at most 30 images'),
+    1536,
+  )
+  assert.equal(
+    parseMaxTokensLimit('max_tokens invalid; 请求最多包含 4 张图片；输出 token 上限为 2048'),
+    2048,
+  )
+})
+
+test('compat fetch must not downshift max_tokens to an image-count or pixel limit', async () => {
+  const bodies = []
+  const fakeFetch = async (_input, init) => {
+    bodies.push(JSON.parse(init.body))
+    return new Response(
+      JSON.stringify({ error: { message: 'max_tokens=4096; request body contains at most 4 images' } }),
+      { status: 400, headers: { 'content-type': 'application/json' } },
+    )
+  }
+
+  const response = await fetchWithOpenAICompatibility(
+    fakeFetch,
+    'https://example.test/v1/chat/completions',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'unknown-new-vl',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'describe' }] }],
+        max_tokens: 4096,
+        stream: false,
+      }),
+    },
+    { active: true },
+  )
+
+  // The advertised "4 images" is not a token cap, so no corrective downshift may
+  // fire; the request must stay at 4096 and the 400 must be surfaced unchanged.
+  assert.equal(response.status, 400)
+  assert.equal(bodies.length, 1, 'a non-token image limit must not trigger a retry')
+  assert.deepEqual(bodies.map((body) => body.max_tokens), [4096])
+})
+
 test('compat fetch applies the GLM preset before the first network attempt', async () => {
   const bodies = []
   const fakeFetch = async (_input, init) => {
