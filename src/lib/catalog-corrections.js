@@ -33,7 +33,7 @@ export const CATALOG_ROUTING_CORRECTIONS = [
     // The exact broken configuration this correction recognizes. A route the
     // user pointed elsewhere (or a catalog fixed upstream) never engages it.
     wrongApi: 'openai-completions',
-    wrongBaseURLPrefix: 'opencode.ai/zen/go',
+    wrongBaseURLRoot: 'https://opencode.ai/zen/go',
   },
   {
     provider: 'opencode-go',
@@ -44,9 +44,31 @@ export const CATALOG_ROUTING_CORRECTIONS = [
     api: 'anthropic-messages',
     baseURL: 'https://opencode.ai/zen/go',
     wrongApi: 'openai-completions',
-    wrongBaseURLPrefix: 'opencode.ai/zen/go',
+    wrongBaseURLRoot: 'https://opencode.ai/zen/go',
   },
 ]
+
+/**
+ * Reject lookalike/cross-origin or altered path catalog URLs. The correction
+ * owns only the official OpenCode Go gateway and its two documented *base*
+ * shapes (/zen/go and /zen/go/v1), never arbitrary custom provider gateways.
+ * A substring check would incorrectly match e.g. notopencode.ai/zen/go.
+ */
+function matchesDocumentedCatalogBaseURL(actual, expectedRoot) {
+  try {
+    const url = new URL(String(actual))
+    const expected = new URL(String(expectedRoot))
+    if (url.protocol !== 'https:' || url.origin !== expected.origin) return false
+    if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
+      return false
+    }
+    const actualPath = url.pathname.replace(/\/+$/, '')
+    const basePath = expected.pathname.replace(/\/+$/, '')
+    return actualPath === basePath || actualPath === `${basePath}/v1`
+  } catch {
+    return false
+  }
+}
 
 /**
  * Decide whether a routing correction engages for one resolved backend.
@@ -72,12 +94,12 @@ export function routingCorrectionFor(facts, provider, model, enabled = true) {
   // The resolved route is broken in some OTHER way (or speaks yet another
   // protocol); not the configuration this correction was written for.
   if (entry.wrongApi !== undefined && entry.wrongApi !== facts.api) return undefined
-  // A user route pointed at their own gateway keeps its own routing: only the
-  // exact catalog baseURL this correction documents gets intercepted.
-  if (entry.wrongBaseURLPrefix !== undefined) {
-    const baseUrl = String(facts.baseUrl ?? '')
-    if (!baseUrl.includes(entry.wrongBaseURLPrefix)) return undefined
-  }
+  // Never override a custom DSH gateway merely because its URL happens to
+  // *contain* the official domain and path as text.
+  if (
+    entry.wrongBaseURLRoot !== undefined &&
+    !matchesDocumentedCatalogBaseURL(facts.baseUrl, entry.wrongBaseURLRoot)
+  ) return undefined
   return entry
 }
 

@@ -63,6 +63,46 @@ test('a correction engages only for the exact broken catalog configuration', () 
   assert.equal(routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus', false), undefined)
 })
 
+test('catalog correction never hijacks a custom or lookalike Host gateway', () => {
+  // The previous baseUrl.includes('opencode.ai/zen/go') matched arbitrary
+  // hostnames, embedded URL fragments, queries and unsupported nested paths.
+  // A corrected route uses the credential resolved for the *original* pair,
+  // so overriding a custom gateway also changes the credential destination.
+  const maliciousOrCustom = [
+    'https://notopencode.ai/zen/go/v1',
+    'https://example.test/redirect/opencode.ai/zen/go/v1',
+    'https://example.test/?next=opencode.ai/zen/go/v1',
+    'http://opencode.ai/zen/go/v1',
+    'https://opencode.ai/zen/go/v1/chat/completions',
+    'https://opencode.ai/zen/go.evil/v1',
+    'https://opencode.ai/zen/go/v1?shadow=1',
+    'https://user@opencode.ai/zen/go/v1',
+    'not a URL opencode.ai/zen/go',
+  ]
+  for (const baseUrl of maliciousOrCustom) {
+    assert.equal(
+      routingCorrectionFor({ api: 'openai-completions', baseUrl },
+        'opencode-go', 'qwen3.6-plus'),
+      undefined,
+      `must not intercept ${baseUrl}`,
+    )
+  }
+
+  for (const baseUrl of [
+    'https://opencode.ai/zen/go',
+    'https://opencode.ai/zen/go/',
+    'https://opencode.ai/zen/go/v1',
+    'https://OPENCODE.AI/zen/go/v1/',
+  ]) {
+    assert.equal(
+      routingCorrectionFor({ api: 'openai-completions', baseUrl },
+        'opencode-go', 'qwen3.6-plus')?.api,
+      'anthropic-messages',
+      `official route must stay supported: ${baseUrl}`,
+    )
+  }
+})
+
 test('anthropicMediaType normalizes jpg to jpeg and passes others through', () => {
   assert.equal(anthropicMediaType('image/jpg'), 'image/jpeg')
   assert.equal(anthropicMediaType('image/png'), 'image/png')
