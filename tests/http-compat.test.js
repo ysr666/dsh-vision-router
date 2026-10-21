@@ -228,6 +228,61 @@ test('compat fetch retries at the advertised ceiling when a 400 also echoes the 
   assert.deepEqual(bodies.map((body) => body.max_tokens), [4096, 1536])
 })
 
+test('max-token limit parser reads a Chinese stated ceiling, not the echoed rejected value', () => {
+  // Synthetic representative Chinese wording (NOT the #716 reporter's body).
+  // The Chinese upper-bound pattern only recognized 上限/最大, so 最多支持/至多
+  // fell through to the generic field-name heuristic and returned the value the
+  // request had already been told was too large.
+  assert.equal(
+    parseMaxTokensLimit('max_tokens=4096 超过限制；当前模型最多支持 1536 个输出 token'),
+    1536,
+  )
+  assert.equal(
+    parseMaxTokensLimit('max_completion_tokens 传入 4096，模型最多支持 1536 个输出 token'),
+    1536,
+  )
+  assert.equal(parseMaxTokensLimit('max_tokens 当前 4096 超过限制，请设置至多 1024'), 1024)
+  // Existing Chinese ceiling words keep working unchanged.
+  assert.equal(parseMaxTokensLimit('max_tokens 上限 4096'), 4096)
+  assert.equal(parseMaxTokensLimit('最大输出 token 为 2048'), 2048)
+})
+
+test('compat fetch retries at a Chinese advertised ceiling over the echoed rejected value', async () => {
+  const bodies = []
+  const fakeFetch = async (_input, init) => {
+    bodies.push(JSON.parse(init.body))
+    if (bodies.length === 1) {
+      return new Response(
+        JSON.stringify({
+          error: { message: 'max_tokens=4096 超过限制；当前模型最多支持 1536 个输出 token' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const response = await fetchWithOpenAICompatibility(
+    fakeFetch,
+    'https://example.test/v1/chat/completions',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'unknown-new-vl',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'describe' }] }],
+        max_tokens: 4096,
+        stream: false,
+      }),
+    },
+    { active: true },
+  )
+  assert.equal(response.status, 200)
+  assert.equal(bodies.length, 2, 'Chinese ceiling must trigger one corrective retry')
+  assert.deepEqual(bodies.map((body) => body.max_tokens), [4096, 1536])
+})
+
 test('compat fetch applies the GLM preset before the first network attempt', async () => {
   const bodies = []
   const fakeFetch = async (_input, init) => {

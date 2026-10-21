@@ -123,7 +123,9 @@ export function parseMaxTokensLimit(detail) {
     // be captured instead of the advertised cap, defeating the corrective retry
     // for messages like "max_tokens is too large: 4096 ... supports at most 1536".
     /(?:less than or equal to|at most|maximum|max value|max output|max limit|allowed (?:value|output|limit)|<=)\D{0,24}(\d+)/i,
-    /(?:上限|最大(?:值|输出)?)[^\d]{0,16}(\d+)/i,
+    // Chinese ceiling words. 上限/最大 alone missed 最多支持/至多, letting the
+    // generic field-name fallback below return the already-rejected value.
+    /(?:上限|最大(?:值|输出)?|最多|至多)[^\d]{0,16}(\d+)/i,
     /(?:max(?:_completion)?[_ -]?tokens?)[^\d]{0,40}(\d+)/i,
   ]
   for (const pattern of patterns) {
