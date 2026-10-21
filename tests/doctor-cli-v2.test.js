@@ -79,3 +79,57 @@ test('doctor --sessions still fails on a committed hard session corruption', asy
   assert.equal(code, 1)
   assert.match(cap.stderr.join('\n'), /could not be inspected safely/)
 })
+
+test('doctor --issue-template emits a pasteable summary without profile paths or dependency secrets', async () => {
+  const home = fixture({ good: true })
+  const manifestPath = path.join(home, 'profiles', 'web', 'package.json')
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  manifest.dependencies['secret-sensitive-package'] = 'file:/private/TOKEN-123'
+  writeFileSync(manifestPath, JSON.stringify(manifest))
+  const cap = capture()
+  const code = await run(['doctor', '--profile', 'web', '--no-runtime', '--issue-template'], cap.io, { DSH_HOME: home })
+  assert.equal(code, 0)
+  const text = cap.stdout.join('\n')
+  assert.match(text, /^## DSH Vision Router diagnostic summary/)
+  assert.ok(text.includes(`Doctor version: ${packageVersion}`))
+  assert.match(text, /Install modes: bundle: 1/)
+  assert.match(text, /Provider and exact model ID/)
+  assert.match(text, /Runtime: not checked/)
+  assert.doesNotMatch(text, /TOKEN-123|secret-sensitive-package|file:\/|private\//)
+  assert.equal(text.includes(home), false)
+  assert.equal(cap.stderr.length, 0)
+})
+
+test('doctor --issue-template reflects a real unhealthy status without exposing profile details', async () => {
+  const home = fixture({ good: false })
+  const cap = capture()
+  const code = await run(['doctor', '--profile', 'web', '--no-runtime', '--issue-template'], cap.io, { DSH_HOME: home })
+  assert.equal(code, 1)
+  assert.match(cap.stdout.join('\n'), /Status: \*\*NEEDS ATTENTION\*\*/)
+})
+
+test('doctor issue template cannot combine with mutation or machine-readable JSON', async () => {
+  const home = fixture({ good: true })
+  for (const argv of [
+    ['doctor', '--issue-template', '--json'],
+    ['doctor', '--fix', '--issue-template'],
+    ['repair', '--issue-template'],
+  ]) {
+    const cap = capture()
+    assert.equal(await run(argv, cap.io, { DSH_HOME: home }), 2)
+    assert.match(cap.stderr.join('\n'), /issue-template/)
+  }
+})
+
+test('issue template never prints a runtime URL, including its query token', async () => {
+  const home = fixture({ good: true })
+  const cap = capture()
+  const code = await run([
+    'doctor', '--profile', 'web', '--issue-template',
+    '--runtime-url', 'http://127.0.0.1:1/?token=DO-NOT-LOG-ME',
+  ], cap.io, { DSH_HOME: home })
+  assert.equal(code, 0, 'unreachable runtime is advisory for offline profile health')
+  const text = cap.stdout.join('\n')
+  assert.match(text, /Runtime: unreachable/)
+  assert.doesNotMatch(text, /DO-NOT-LOG-ME|127\.0\.0\.1|token=/)
+})

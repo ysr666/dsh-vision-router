@@ -8,7 +8,7 @@ import { inspectDoctorVisionLimits, formatDoctorVisionLimits } from './doctor-vi
 import { repairLegacySessionLogs } from './legacy-session-repair.js'
 
 function usage() {
-  return `dsh-vision-router doctor [--profile <name>] [--json] [--sessions] [--runtime-url <url>] [--no-runtime] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
+  return `dsh-vision-router doctor [--profile <name>] [--json | --issue-template] [--sessions] [--runtime-url <url>] [--no-runtime] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --issue-template      Print a safe, Markdown issue template with diagnostics and fill-in reproduction fields. Read-only.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
 }
 
 function parseArgs(argv) {
@@ -18,6 +18,7 @@ function parseArgs(argv) {
   let profile
   let fix = command === 'repair'
   let json = false
+  let issueTemplate = false
   let sessions = false
   let runtime = command === 'doctor'
   let runtimeUrl
@@ -33,6 +34,11 @@ function parseArgs(argv) {
     if (value === '--json') {
       if (command !== 'doctor') throw new Error('--json is only used with doctor')
       json = true
+      continue
+    }
+    if (value === '--issue-template') {
+      if (command !== 'doctor') throw new Error('--issue-template is only used with doctor')
+      issueTemplate = true
       continue
     }
     if (value === '--sessions') {
@@ -75,6 +81,8 @@ function parseArgs(argv) {
   }
 
   if (!['doctor', 'repair', 'repair-sessions'].includes(command)) throw new Error(`unknown command: ${command}`)
+  if (issueTemplate && json) throw new Error('--issue-template and --json cannot be combined')
+  if (issueTemplate && fix) throw new Error('--issue-template is read-only and cannot be combined with --fix')
   if (profile && (!/^[A-Za-z0-9._-]+$/.test(profile) || profile === '.' || profile === '..')) {
     throw new Error(`invalid profile name: ${profile}`)
   }
@@ -83,7 +91,61 @@ function parseArgs(argv) {
     try { parsed = new URL(runtimeUrl) } catch { throw new Error(`invalid runtime URL: ${runtimeUrl}`) }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(`invalid runtime URL protocol: ${parsed.protocol}`)
   }
-  return { command, profile, fix, json, sessions, runtime, runtimeUrl }
+  return { command, profile, fix, json, issueTemplate, sessions, runtime, runtimeUrl }
+}
+
+/**
+ * Doctor's pasteable issue report is a *strict allowlist*. It must never turn
+ * DSH profile names, endpoint URLs, raw log/error content, dependency specs
+ * or local filesystem paths into a user-shared issue body.
+ */
+function formatIssueTemplate(report) {
+  const number = (value) => Number.isSafeInteger(value) && value >= 0 ? value : 0
+  const version = (value) => typeof value === 'string' && /^v?\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]{1,32})?$/.test(value)
+    ? value : 'unknown'
+  const allowed = (value, values) => values.includes(value) ? value : 'unknown'
+  const profiles = Array.isArray(report.profiles) ? report.profiles : []
+  const applicable = profiles.filter((profile) => profile.installation?.applicable)
+  const failed = applicable.filter((profile) => !profile.validJson || profile.installation?.ok === false)
+  const modes = ['bundle', 'manual', 'none', 'unknown'].map((mode) =>
+    `${mode}: ${applicable.filter((profile) => profile.installation?.mode === mode).length}`).join(', ')
+  const platform = report.platform ?? {}
+  const runtime = report.runtime
+  const runtimeState = !runtime ? 'not checked'
+    : runtime.authenticationRequired ? 'reachable; authentication required (route health unknown)'
+      : !runtime.reachable ? 'unreachable (offline checks completed)'
+        : runtime.ok ? 'reachable; reported routes OK' : 'reachable; route issues detected'
+  const sessionState = !report.sessions ? 'not scanned (opt in with --sessions)'
+    : `${number(report.sessions.scanned)} scanned, ${number(report.sessions.affected)} known issue(s), ${number(report.sessions.errorCount)} unreadable`
+  const lines = [
+    '## DSH Vision Router diagnostic summary',
+    '',
+    '> Generated locally by `doctor --issue-template`; no report is sent automatically.',
+    '> Review before posting. Never include API keys, tokens, cookies, private images, raw prompts, profile paths, or unredacted error bodies.',
+    '',
+    `- Status: **${report.ok ? 'PASS' : 'NEEDS ATTENTION'}**`,
+    `- Doctor version: ${version(report.doctorVersion)}`,
+    `- OS / architecture: ${allowed(platform.platform, ['win32', 'darwin', 'linux'])} / ${allowed(platform.arch, ['x64', 'arm64', 'ia32', 'arm', 'ppc64', 's390x'])}`,
+    `- Node: ${version(platform.node)} (${platform.nodeSupported ? 'supported' : 'outside or unverified support window'})`,
+    `- Vision Router profiles: ${applicable.length} applicable; ${failed.length} installation/problem profile(s)`,
+    `- Install modes: ${modes}`,
+    `- Runtime: ${runtimeState}`,
+    `- Settings save failures: ${number(report.log?.currentSettingsFailureCount)} current / ${number(report.log?.historicalSettingsFailureCount)} historical`,
+    `- Known session issues: ${sessionState}`,
+    `- Local optional tools: Tesseract ${typeof platform.tesseract?.version === 'string' ? 'detected' : 'not confirmed'}, Chromium ${typeof platform.chromium?.version === 'string' ? 'detected' : 'not confirmed'}`,
+    '',
+    '## Reproduction details (fill in)',
+    '',
+    '- DSH version and installation type:',
+    '- Provider and exact model ID (if applicable):',
+    '- Operation, steps to reproduce, and expected behavior:',
+    '- Actual HTTP status / sanitized error code (do not paste raw secrets):',
+    '- Result with one small, non-sensitive test PNG:',
+    '- Is this intermittent? Frequency / OS if reproducible:',
+    '',
+    'Note: The summary deliberately omits profile names, runtime URLs, paths, raw logs and all credentials.',
+  ]
+  return lines.join('\n')
 }
 
 function visionPluginLabel(plugin) {
@@ -215,11 +277,11 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
     && (runtime?.ok ?? true)
     && (!sessions || (sessions.affected === 0 && sessions.errors.length === 0))
 
-  if (options.json) {
+  if (options.json || options.issueTemplate) {
     const report = supportReport({ profileReport, runtime, platform, sessions })
     report.visionLimits = visionLimits
     report.ok = overallOk
-    io.log(JSON.stringify(report, null, 2))
+    io.log(options.issueTemplate ? formatIssueTemplate(report) : JSON.stringify(report, null, 2))
     return overallOk ? 0 : 1
   }
 
