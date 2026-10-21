@@ -234,7 +234,7 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 
 ## 免费视觉 Key 渠道
 
-内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，下面这些渠道都有**免费且额度大得多的视觉模型**——全部免费注册，无需为免费档付费。免费政策轮换频繁，下表是 2026 年 8 月快照，依赖前请以各家控制台为准。
+内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，可以考虑下面这些视觉模型渠道及免费／试用方案。但**免费额度、Key 要求、第三方客户端调用权限及图片输入能力因渠道而异**；模型出现在列表中不代表能直接接入 DVR。此表为 2026 年 10 月的资料参考，具体以供应商当前接口及实测为准。
 
 | 渠道 | 免费视觉模型 | 免费额度 | 大陆直连 | Key 领取 |
 |---|---|---|---|---|
@@ -245,10 +245,10 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 | Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
 | Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
 | NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.5-free`（视觉 + 代码） | 30 RPM / 500 次/天 | ⚠️ | opencode.ai/zen |
+| OpenCode Zen | `mimo-v2.6-flash-free`（已列入 Zen，尚未独立验证第三方识图请求） | OpenCode 内限期免费；外部 API 固定额度未核实 | ⚠️ | [OpenCode Zen](https://opencode.ai/zen) |
 | OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
 
-以上渠道都能以 `httpProviders` 条目加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`），链路会先尝试你的条目、再落到匿名兜底。
+仅当渠道**允许第三方 API 调用且实际接受图片输入**时，才能作为 `httpProviders` 加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`）；插件会先尝试这些后端，再回退到匿名兜底。**OpenCode Zen 特别说明：**其文档目前同时列出 `mimo-v2.5-free` 和 `mimo-v2.6-flash-free`。小米 10 月 21 日下线公告针对的是**小米直连模型 ID**，不能据此认定 Zen 旧别名同日失效。Zen 免费档可能限制非 OpenCode 客户端使用，不能保证接入 DVR，也不应绕过其客户端限制；OpenCode 还提示免费 MiMo 的使用数据可能用于改进模型。[OpenCode Zen 文档](https://docs.opencode.ai/docs/zen/) · [小米下线公告](https://mimo.mi.com/docs/zh-CN/updates/deprecate)。
 
 > [!NOTE]
 > 免费政策随时可能调整——Cerebras 已在 2026 年 7 月取消免费档（改为一次性 $5 赠金），SambaNova 免费档收紧到 20 次/天，Hugging Face 只剩 $0.10/月。第三方“`:free` 中转”聚合站刻意不列入：轮换频繁、无 SLA，部分还存在违反上游条款的转售行为。
