@@ -103,6 +103,17 @@ function positiveInteger(value) {
   return Number.isInteger(n) && n > 0 ? n : undefined
 }
 
+// A ceiling word or a bare field name can precede a number that measures the
+// INPUT images (how many, or their pixel/resolution dimension) rather than the
+// output-token cap. Treating that number as a token limit makes the corrective
+// retry shrink max_tokens to a nonsense value ("at most 4 images" -> 4), which
+// leaves the real 400 uncorrected. Guard the three number-capturing patterns so
+// a candidate ceiling is rejected when the captured digit run is immediately
+// followed by a non-token measure unit. `(?!\d)` forces a maximal digit run so
+// backtracking cannot smuggle a truncated prefix (e.g. 204 of 2048) past the
+// unit lookahead. Two-sided range patterns are intentionally left untouched.
+const NON_TOKEN_MEASURE = String.raw`(?!\d)(?!\s*(?:images?|pixels?|px|mp|张图片|张图|幅图|图像|像素|分辨率|尺寸))`
+
 /** Parse a server-advertised max-token upper bound from common error wording. */
 export function parseMaxTokensLimit(detail) {
   const text = String(detail ?? '')
@@ -117,9 +128,18 @@ export function parseMaxTokensLimit(detail) {
     // The generic max_tokens fallback below would otherwise parse the lower bound.
     /(?:max(?:_completion)?[_ -]?tokens?)[^\d\n]{0,48}(?:between|from|(?:in|within)(?:\s+the)?(?:\s+(?:valid|allowed))?(?:\s+range)?)[^\d\n]{0,12}\d+\s*(?:,|and|to|[-–—])\s*(\d+)/i,
     /(?:限制数值范围|range)\s*[\[(]\s*\d+\s*,\s*(\d+)\s*[\])]/i,
-    /(?:less than or equal to|at most|maximum(?: allowed)?|max(?:imum)?(?: value)?|<=)\D{0,24}(\d+)/i,
-    /(?:上限|最大(?:值|输出)?)[^\d]{0,16}(\d+)/i,
-    /(?:max(?:_completion)?[_ -]?tokens?)[^\d]{0,40}(\d+)/i,
+    // Explicit single-sided ceiling words only. Never match the bare "max"
+    // inside `max_tokens`/`max_completion_tokens`, or the request's own
+    // rejected value (which usually appears right after the field name) would
+    // be captured instead of the advertised cap, defeating the corrective retry
+    // for messages like "max_tokens is too large: 4096 ... supports at most 1536".
+    new RegExp(`(?:less than or equal to|at most|maximum|max value|max output|max limit|allowed (?:value|output|limit)|<=)\\D{0,24}(\\d+)${NON_TOKEN_MEASURE}`, 'i'),
+    // Chinese ceiling words. 上限/最大 alone missed 最多支持/至多, letting the
+    // generic field-name fallback below return the already-rejected value.
+    new RegExp(`(?:上限|最大(?:值|输出)?|最多|至多)[^\\d]{0,16}(\\d+)${NON_TOKEN_MEASURE}`, 'i'),
+    // Generic field-name fallback. Also guarded: an image count that sits right
+    // after `max_tokens` with no other number in range must not become the cap.
+    new RegExp(`(?:max(?:_completion)?[_ -]?tokens?)[^\\d]{0,40}(\\d+)${NON_TOKEN_MEASURE}`, 'i'),
   ]
   for (const pattern of patterns) {
     const match = text.match(pattern)
