@@ -15,8 +15,9 @@ function normalizeEndpoint(value) {
   try {
     const url = new URL(value)
     if (url.protocol !== 'https:') return undefined
-    url.hash = ''
-    url.search = ''
+    // A trusted official model hint is allowed only for the verified bare
+    // endpoint; don't erase caller-supplied URL modifiers before admission.
+    if (url.username || url.password || url.search || url.hash) return undefined
     return stripTrailingSlashes(url.toString())
   } catch {
     return undefined

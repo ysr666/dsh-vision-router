@@ -245,6 +245,11 @@ test('trusted hints do not authorize a proxy, subdomain, or lookalike endpoint',
     'https://evil.open.bigmodel.cn/api/paas/v4',
     'http://open.bigmodel.cn/api/paas/v4',
     'https://open.bigmodel.cn/api/coding/paas/v4',
+    'https://open.bigmodel.cn/api/paas/v4?model=other',
+    'https://open.bigmodel.cn/api/paas/v4#model-override',
+    'https://user@open.bigmodel.cn/api/paas/v4',
+    'https://open.bigmodel.cn:8443/api/paas/v4',
+    'https://open.bigmodel.cn/api/paas/v4.evil',
   ]) {
     const { ctx } = fakeContext({
       active: ['zhipu-glm'],
@@ -258,6 +263,26 @@ test('trusted hints do not authorize a proxy, subdomain, or lookalike endpoint',
     }
     installVisionModelRegistry(ctx, manager)
     assert.equal(manager.hasModel('zhipu-glm', 'glm-4.6v-flash'), false, baseURL)
+  }
+})
+
+test('trusted hints preserve the original official BigModel route with trailing slashes', () => {
+  for (const baseURL of [
+    'https://open.bigmodel.cn/api/paas/v4',
+    'https://open.bigmodel.cn/api/paas/v4/',
+  ]) {
+    const { ctx } = fakeContext({
+      active: ['zhipu-glm'],
+      piProviders: {
+        'zhipu-glm': { baseURL, api: 'openai-completions' },
+      },
+    })
+    const manager = {
+      async snapshot() { return { ok: true, version: 1, refreshing: false, providers: [] } },
+      hasModel() { return false },
+    }
+    installVisionModelRegistry(ctx, manager)
+    assert.equal(manager.hasModel('zhipu-glm', 'glm-4.6v-flash'), true, baseURL)
   }
 })
 
