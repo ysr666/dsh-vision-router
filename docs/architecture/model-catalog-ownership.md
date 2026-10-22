@@ -4,6 +4,19 @@
 
 DSH管理用户供应商、模型、凭据、Host目录及输入模态权限；Vision Router的设置页经`connection.api.llm.models({})`读取相同目录，视觉模式用`modelDirectories.directoryFor(sessionId)`读取Host权威选择状态。Router继续管理视觉工具、像素处理、能力评估、执行、回退和诊断；不另造商用供应商注册表。Host声明的输入模态不能取代真实图片投递验证。
 
+## 私有视觉模型发现不是第二套供应商目录（#223、#225、#227、#230）
+
+原则中的“DSH负责目录”，指**DSH拥有供应商注册、已配置路由、全局模型目录及其最终权限**；不等于Vision Router只能展示静态DSH目录里当下已有的ID。历史需求已有真实证据：
+
+- [PR #223](https://github.com/ysr666/dsh-vision-router/pull/223)把被误标仅文本的模型直连桥限制到DSH/pi-ai的**精确本地预线拒绝**，不会用网络、认证或其他失败当作绕过Host的理由。
+- [PR #225](https://github.com/ysr666/dsh-vision-router/pull/225)针对DSH/pi-ai静态目录遗漏动态新型号，为**DSH已配置**的供应商端点增加独立的`/models`查询。结果只进入Vision Router自己的选择器，不写入DSH全局目录；单凭模型ID在`/models`出现不代表支持图片。
+- [PR #227](https://github.com/ysr666/dsh-vision-router/pull/227)让用户已经保存的模型ID继续可见、可编辑；**仅保存历史不授权UNKNOWN_MODEL直连**。
+- [PR #230](https://github.com/ysr666/dsh-vision-router/pull/230)来自官方BigModel端点`/models`漏列能真实调用的视觉型号。只对端点与协议完全匹配的官方路由添加少数视觉能力提示；缓存重启后仅可展示，必须重新验证当前路由才可授权执行。
+
+现有实现位于`src/lib/live-model-discovery.js`、`src/lib/vision-model-registry.js`、`src/lib/trusted-vision-hints.js`及相关Browser私有预加载层。它们承担的是**对用户已配置模型进行补充发现、显示来源并核验能力**，不是在DVR注册新供应商或替代DSH的全局模型目录。属于用户可用性与兼容层的有条件例外，**不能与静态商业厂商YAML一起删除**。
+
+未来如DSH原生提供同等的活模型发现，应逐条核对：当前支持的每个Host是否覆盖静态目录缺项、模型身份和图片输入真实性、缓存失效、已保存项显示、凭据权限、未知型号失败闭合及浏览器只在插件私域展示。所有这些条件满足后，再独立讨论退役此例外。
+
 ## 逐项来源核查（清理前）
 
 | 来源 | 当初的目的 | 本轮结论 |

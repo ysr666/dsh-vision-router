@@ -234,7 +234,7 @@ To stop **Vision Router itself** from sending image data to remote vision endpoi
 
 ## Configure your own vision models
 
-**DSH owns providers, credentials and the model catalog; Vision Router consumes configured Host models for visual orchestration, execution, testing and diagnostics.** No plugin-specific commercial vendor YAML is required.
+**DSH owns providers, credentials and the global model catalog; Vision Router uses configured Host models for visual orchestration, execution, testing and diagnostics.** No plugin-specific commercial vendor YAML is required. Vision Router can privately supplement its own backend picker with live `/models` evidence for **already configured** Host providers and endpoint-scoped image-capability hints; these never register a new provider or mutate DSH's global model directory. Cached/saved-only IDs do not themselves authorize a direct model bridge. See [architecture provenance](docs/architecture/model-catalog-ownership.md).
 
 Manage provider credentials and models in **DSH Settings → Models**, then pick those models from the same Host catalog in **Settings → Vision Router**. Use **Test Vision** to verify that the exact model actually reads image content. If Host metadata incorrectly marks a real vision model text-only, prefer DSH **Model input types → Image**; on older Hosts, declare `input: [text, image]` on a **verified image-capable** `llm-pi-ai` model and reload configuration. Never fabricate image support for text-only models.
 
