@@ -30,7 +30,7 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
-function normalizeBaseURL(value) {
+function normalizeBaseURL(value, { strictBaseURL = false } = {}) {
   const text = nonEmpty(value)
   if (text === undefined) return undefined
   let parsed
@@ -40,6 +40,9 @@ function normalizeBaseURL(value) {
     return undefined
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  // Only callers asserting official endpoint provenance require this mode.
+  // Ordinary private discovery retains its established loose normalization.
+  if (strictBaseURL && (parsed.search || parsed.hash || parsed.username || parsed.password)) return undefined
   parsed.hash = ''
   parsed.search = ''
   return stripTrailingSlashes(parsed.toString())
@@ -284,24 +287,24 @@ function firstString(...values) {
   return values.find((value) => typeof value === 'string' && value.trim() !== '')?.trim()
 }
 
-function transportForProvider(ctx, provider, rawProfile) {
+function transportForProvider(ctx, provider, rawProfile, options = {}) {
   const resolved = resolvedPiProfile(ctx, provider)
   const baseURL = normalizeBaseURL(firstString(
     rawProfile?.baseURL,
     resolved?.baseURL,
     resolved?.piProvider?.baseUrl,
-  ))
+  ), options)
   const api = firstString(rawProfile?.api, resolved?.api)
   const apiKeyEnv = firstString(rawProfile?.apiKeyEnv, resolved?.apiKeyEnv)
   return { baseURL, api, apiKeyEnv }
 }
 
-export function providerTransportFor(ctx, provider) {
+export function providerTransportFor(ctx, provider, options = {}) {
   const id = nonEmpty(provider)
   if (id === undefined) return undefined
   const raw = rawPiProfiles(ctx)[id]
   if (!raw || typeof raw !== 'object') return undefined
-  const transport = transportForProvider(ctx, id, raw)
+  const transport = transportForProvider(ctx, id, raw, options)
   if (transport.baseURL === undefined) return undefined
   return {
     provider: id,
@@ -311,9 +314,9 @@ export function providerTransportFor(ctx, provider) {
   }
 }
 
-export function configuredProviderTransports(ctx) {
+export function configuredProviderTransports(ctx, options = {}) {
   return Object.keys(rawPiProfiles(ctx))
-    .map((provider) => providerTransportFor(ctx, provider))
+    .map((provider) => providerTransportFor(ctx, provider, options))
     .filter(Boolean)
 }
 

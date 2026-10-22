@@ -43,12 +43,12 @@ export function trustedVisionHintsForTransport(transport) {
 }
 
 export function trustedVisionHintsForProvider(ctx, provider) {
-  const transport = providerTransportFor(ctx, provider)
+  const transport = providerTransportFor(ctx, provider, { strictBaseURL: true })
   return trustedVisionHintsForTransport(transport)
 }
 
 export function trustedVisionHintEntries(ctx) {
-  return configuredProviderTransports(ctx).flatMap((transport) => {
+  return configuredProviderTransports(ctx, { strictBaseURL: true }).flatMap((transport) => {
     const models = trustedVisionHintsForTransport(transport)
     if (models.length === 0) return []
     return [{

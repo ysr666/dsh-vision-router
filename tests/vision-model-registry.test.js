@@ -270,6 +270,7 @@ test('trusted hints preserve the original official BigModel route with trailing 
   for (const baseURL of [
     'https://open.bigmodel.cn/api/paas/v4',
     'https://open.bigmodel.cn/api/paas/v4/',
+    'https://OPEN.BIGMODEL.CN/api/paas/v4/',
   ]) {
     const { ctx } = fakeContext({
       active: ['zhipu-glm'],
