@@ -12,9 +12,11 @@ This means a newly released Qwen/GLM/Gemini/OpenAI-compatible model normally nee
 
 ## Current preset
 
-### `glm-4v-flash*`
+### `glm-4v-flash*` on Zhipu's official endpoint
 
-`glm-4v-flash` rejects output limits above 1024 tokens. The compatibility layer therefore caps the outgoing value at 1024 before the first request.
+[Issue #53](https://github.com/ysr666/dsh-vision-router/issues/53) reproduced error 1210 (output token limit `[1,1024]`) when calling `glm-4v-flash` on `https://open.bigmodel.cn/api/paas/v4/chat/completions`. For that **exact HTTPS origin and path**, the compatibility layer proactively caps requests at 1024, preserving stricter user values.
+
+A self-hosted or third-party gateway may use the same model ID but a different output limit. Vision Router does **not** impose the official endpoint's 1024 cap on such a DSH-configured gateway. Instead, a clear HTTP 400/422 token-limit response can still trigger the existing bounded, error-driven correction. This narrows the earlier model-name-only rule; deployments that depended on automatic 1024 capping at a custom endpoint should specify `maxTokens: 1024` explicitly or return a parseable limit error.
 
 A stricter user setting is preserved:
 
@@ -27,7 +29,7 @@ httpProviders:
     maxTokens: 768
 ```
 
-The request remains at 768. If `maxTokens` is 4096 (including the generic default), the GLM preset sends 1024.
+On the official endpoint, the request remains at 768. If `maxTokens` is 4096 (including the generic default), the GLM preset sends 1024; it does not rewrite an unrelated endpoint.
 
 ## Image prompt compatibility
 

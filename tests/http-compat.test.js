@@ -13,10 +13,11 @@ import {
 } from '../lib/http-compat.js'
 import { callOpenAICompatible, visionDescribePrompt } from '../index.js'
 
-test('GLM-4V-Flash family preset caps output tokens without overriding stricter user values', () => {
-  assert.ok(HTTP_PROVIDER_COMPAT_PRESETS.some((preset) => preset.id === 'glm-4v-flash-max-output'))
+test('GLM-4V-Flash proactive cap belongs to the evidence-backed official endpoint (#53)', () => {
+  assert.ok(HTTP_PROVIDER_COMPAT_PRESETS.some((rule) => rule.id === 'glm-4v-flash-max-output'))
+  const official = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
   assert.deepEqual(
-    resolveHttpProviderCompatibility({ model: 'glm-4v-flash' }),
+    resolveHttpProviderCompatibility({ model: 'glm-4v-flash', url: official }),
     {
       presetIds: ['glm-4v-flash-max-output'],
       maxTokensCap: 1024,
@@ -24,20 +25,70 @@ test('GLM-4V-Flash family preset caps output tokens without overriding stricter 
     },
   )
   assert.equal(
-    resolveHttpProviderCompatibility({ model: 'glm-4v-flash-202608' }).maxTokensCap,
+    resolveHttpProviderCompatibility({ model: 'glm-4v-flash-202608', url: official }).maxTokensCap,
     1024,
   )
-
-  const capped = prepareOpenAICompatibleBody({ model: 'glm-4v-flash', max_tokens: 4096 })
+  const capped = prepareOpenAICompatibleBody(
+    { model: 'glm-4v-flash', max_tokens: 4096 },
+    { url: official },
+  )
   assert.equal(capped.body.max_tokens, 1024)
   assert.equal(capped.changed, true)
+  const stricter = prepareOpenAICompatibleBody(
+    { model: 'glm-4v-flash', max_tokens: 768 },
+    { url: official },
+  )
+  assert.equal(stricter.body.max_tokens, 768)
 
-  const userStricter = prepareOpenAICompatibleBody({ model: 'glm-4v-flash', max_tokens: 768 })
-  assert.equal(userStricter.body.max_tokens, 768)
+  // An unscoped model name alone cannot grant authority to rewrite a user's
+  // arbitrary Host-configured endpoint; HTTP error evidence remains available.
+  const arbitrary = [
+    undefined,
+    'https://custom.example/v1/chat/completions',
+    'https://notopen.bigmodel.cn/api/paas/v4/chat/completions',
+    'https://open.bigmodel.cn.evil.test/api/paas/v4/chat/completions',
+    'http://open.bigmodel.cn/api/paas/v4/chat/completions',
+    'https://open.bigmodel.cn:444/api/paas/v4/chat/completions',
+    'https://open.bigmodel.cn/api/paas/v3/chat/completions',
+    'https://open.bigmodel.cn/api/paas/v4/chat/completions?switch=on',
+    'https://user@open.bigmodel.cn/api/paas/v4/chat/completions',
+  ]
+  for (const url of arbitrary) {
+    const actual = prepareOpenAICompatibleBody(
+      { model: 'glm-4v-flash', max_tokens: 4096 }, { url },
+    )
+    assert.equal(actual.body.max_tokens, 4096, `unexpected cap at ${String(url)}`)
+    assert.equal(actual.changed, false)
+    assert.deepEqual(actual.presetIds, [])
+  }
 
-  const unknown = prepareOpenAICompatibleBody({ model: 'future-vl-9000', max_tokens: 4096 })
+  const unknown = prepareOpenAICompatibleBody(
+    { model: 'future-vl-9000', max_tokens: 4096 }, { url: official },
+  )
   assert.equal(unknown.body.max_tokens, 4096)
   assert.equal(unknown.changed, false)
+})
+
+test('custom GLM-named HTTP endpoint keeps its own token authority and can report a bounded cap', async () => {
+  const requests = []
+  const endpoint = 'https://relay.example/v1/chat/completions'
+  const result = await fetchWithOpenAICompatibility(async (_url, init) => {
+    const body = JSON.parse(init.body)
+    requests.push(body)
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({
+        error: { message: 'max_tokens must be at most 1536 tokens' },
+      }), { status: 400, headers: { 'content-type': 'application/json' } })
+    }
+    return new Response('{}', { status: 200 })
+  }, endpoint, {
+    method: 'POST',
+    body: JSON.stringify({ model: 'glm-4v-flash', messages: [
+      { role: 'user', content: [{ type: 'text', text: 'Describe' }] },
+    ], max_tokens: 4096 }),
+  }, { active: true })
+  assert.equal(result.status, 200)
+  assert.deepEqual(requests.map((body) => body.max_tokens), [4096, 1536])
 })
 
 test('image-only OpenAI content receives the vision_describe question', () => {
