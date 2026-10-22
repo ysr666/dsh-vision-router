@@ -7,6 +7,7 @@ import {
   toAnthropicMessages,
   callAnthropicCompatible,
   correctionPreservesConfiguredTransport,
+  correctionPreservesRuntimeTransport,
 } from '../lib/catalog-corrections.js'
 import { stripTrailingSlashes } from '../lib/string-normalization.js'
 import { providerTransportFor } from '../lib/live-model-discovery.js'
@@ -201,6 +202,50 @@ test('Host ConfigEditor overrides official catalog route without overriding nati
     { baseUrl: piProfile.piProvider.baseUrl },
     { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' },
   ), true, 'provider API handler map must not be mistaken for configured protocol')
+})
+
+test('modified DSH ConfigEditor URL cannot authorize an OpenCode catalog reroute', () => {
+  for (const baseURL of [
+    'https://opencode.ai/zen/go/v1?route=custom',
+    'https://opencode.ai/zen/go/v1#custom',
+    'https://user@opencode.ai/zen/go/v1',
+  ]) {
+    const ctx = {
+      get(id) {
+        if (id === 'settings') return { get() { return undefined } }
+        if (id === 'configEditor') return {
+          configuration() {
+            return [{
+              entry: { options: { id: 'llm-pi-ai' } },
+              inherited: { providers: {} },
+              override: { providers: { 'opencode-go': { baseURL, api: 'openai-completions' } } },
+            }]
+          },
+        }
+        return undefined
+      },
+      llm: {
+        registration() {
+          return { adapter: { config: {
+            profiles() { return new Map() },
+          } } }
+        },
+      },
+    }
+    const relaxed = providerTransportFor(ctx, 'opencode-go')
+    const strict = providerTransportFor(ctx, 'opencode-go', { strictBaseURL: true })
+    assert.equal(relaxed?.baseURL, 'https://opencode.ai/zen/go/v1',
+      'default private discovery normalization must remain compatible')
+    assert.equal(strict, undefined, 'the modified raw URL is not official wire proof')
+    const correction = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+    assert.equal(correctionPreservesRuntimeTransport(correction, relaxed, strict),
+      false, 'modified Host route must stay with DSH instead of redirecting its key')
+  }
+  const correction = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+  const official = { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' }
+  assert.equal(correctionPreservesRuntimeTransport(correction, official, official), true)
+  assert.equal(correctionPreservesRuntimeTransport(correction, undefined, undefined), true,
+    'built-in catalog providers without user override preserve historical fix')
 })
 
 test('anthropicMediaType normalizes jpg to jpeg and passes others through', () => {

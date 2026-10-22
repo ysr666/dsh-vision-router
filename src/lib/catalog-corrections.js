@@ -97,6 +97,17 @@ export function correctionPreservesConfiguredTransport(correction, ...profiles) 
 }
 
 /**
+ * A Host-configured URL with query, fragment or userinfo is allowed to remain
+ * a normal DSH route, but must not inherit a catalog correction that hardcodes
+ * a different destination. Generic model discovery historically strips those
+ * modifiers, so require a second, strict reading of the *same* configuration.
+ */
+export function correctionPreservesRuntimeTransport(correction, loose, strict, ...profiles) {
+  if (loose !== undefined && strict === undefined) return false
+  return correctionPreservesConfiguredTransport(correction, ...profiles, strict)
+}
+
+/**
  * Decide whether a routing correction engages for one resolved backend.
  *
  * @param facts - the harness-resolved catalog facts for the pair:
