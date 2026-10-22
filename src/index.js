@@ -58,9 +58,11 @@ import {
 import { streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
 import {
   routingCorrectionFor,
+  correctionPreservesConfiguredTransport,
   toAnthropicMessages,
   callAnthropicCompatible,
 } from './lib/catalog-corrections.js'
+import { providerTransportFor } from './lib/live-model-discovery.js'
 import { getOfficialDeepSeekCatalog } from './lib/official-deepseek-catalog.js'
 import {
   classifyVisionFailure,
@@ -1644,6 +1646,20 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (correction === undefined) return undefined
     const rawProfile = rawChannelProfileOf(pair.provider)
     const resolvedProfile = resolvedPiAiProfileOf(pair.provider)
+    // A built-in pi-ai catalog fact is not proof that the user's actual
+    // DSH provider config still uses the official gateway. Refuse to reroute
+    // another gateway's credentials into the hard-coded official endpoint.
+    let activeHostTransport
+    try { activeHostTransport = providerTransportFor(ctx, pair.provider) } catch { return undefined }
+    if (!correctionPreservesConfiguredTransport(
+      correction,
+      rawProfile,
+      resolvedProfile,
+      // piProvider.api is a registry of wire handlers, not a resolved
+      // protocol string. Only use its baseUrl as optional transport evidence.
+      { baseUrl: resolvedProfile?.piProvider?.baseUrl },
+      activeHostTransport,
+    )) return undefined
     const apiKeyEnv = [rawProfile, resolvedProfile]
       .map((profile) => (profile && typeof profile.apiKeyEnv === 'string' ? profile.apiKeyEnv : ''))
       .find((ref) => ref !== '')

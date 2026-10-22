@@ -6,8 +6,10 @@ import {
   routingCorrectionFor,
   toAnthropicMessages,
   callAnthropicCompatible,
+  correctionPreservesConfiguredTransport,
 } from '../lib/catalog-corrections.js'
 import { stripTrailingSlashes } from '../lib/string-normalization.js'
+import { providerTransportFor } from '../lib/live-model-discovery.js'
 import { VISION_FAILURE_KINDS } from '../lib/vision-resilience.js'
 
 const brokenFacts = { api: 'openai-completions', baseUrl: 'https://opencode.ai/zen/go/v1' }
@@ -61,6 +63,144 @@ test('a correction engages only for the exact broken catalog configuration', () 
   assert.equal(routingCorrectionFor({ api: '' }, 'opencode-go', 'qwen3.6-plus'), undefined)
   // The settings switch disables every correction.
   assert.equal(routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus', false), undefined)
+})
+
+test('catalog correction never hijacks a custom or lookalike Host gateway', () => {
+  // The previous baseUrl.includes('opencode.ai/zen/go') matched arbitrary
+  // hostnames, embedded URL fragments, queries and unsupported nested paths.
+  // A corrected route uses the credential resolved for the *original* pair,
+  // so overriding a custom gateway also changes the credential destination.
+  const maliciousOrCustom = [
+    'https://notopencode.ai/zen/go/v1',
+    'https://example.test/redirect/opencode.ai/zen/go/v1',
+    'https://example.test/?next=opencode.ai/zen/go/v1',
+    'http://opencode.ai/zen/go/v1',
+    'https://opencode.ai/zen/go/v1/chat/completions',
+    'https://opencode.ai/zen/go.evil/v1',
+    'https://opencode.ai/zen/go/v1?shadow=1',
+    'https://user@opencode.ai/zen/go/v1',
+    'not a URL opencode.ai/zen/go',
+  ]
+  for (const baseUrl of maliciousOrCustom) {
+    assert.equal(
+      routingCorrectionFor({ api: 'openai-completions', baseUrl },
+        'opencode-go', 'qwen3.6-plus'),
+      undefined,
+      `must not intercept ${baseUrl}`,
+    )
+  }
+
+  for (const baseUrl of [
+    'https://opencode.ai/zen/go',
+    'https://opencode.ai/zen/go/',
+    'https://opencode.ai/zen/go/v1',
+    'https://OPENCODE.AI/zen/go/v1/',
+  ]) {
+    assert.equal(
+      routingCorrectionFor({ api: 'openai-completions', baseUrl },
+        'opencode-go', 'qwen3.6-plus')?.api,
+      'anthropic-messages',
+      `official route must stay supported: ${baseUrl}`,
+    )
+  }
+})
+
+test('catalog correction must also respect current Host transport overrides', () => {
+  const entry = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+  assert.ok(entry)
+  for (const profile of [
+    { baseURL: 'https://custom.example/v1' },
+    { baseUrl: 'https://notopencode.ai/zen/go/v1' },
+    { baseURL: 'https://opencode.ai/zen/go/v1?relay=1' },
+    { baseURL: 'https://opencode.ai/zen/go/v1#fragment' },
+    { api: 'anthropic-messages' },
+    { api: 'openai-responses' },
+    { baseURL: 123 },
+  ]) {
+    assert.equal(
+      correctionPreservesConfiguredTransport(entry, profile),
+      false,
+      JSON.stringify(profile),
+    )
+  }
+  for (const profile of [
+    { baseURL: 'https://opencode.ai/zen/go', api: 'openai-completions' },
+    { baseUrl: 'https://opencode.ai/zen/go/v1/' },
+    { baseURL: 'https://OPENCODE.AI/zen/go/v1', apiKeyEnv: 'OPENCODE_API_KEY' },
+  ]) {
+    assert.equal(correctionPreservesConfiguredTransport(entry, profile), true)
+  }
+  assert.equal(
+    correctionPreservesConfiguredTransport(
+      entry,
+      { baseURL: 'https://opencode.ai/zen/go/v1' },
+      { baseURL: 'https://custom.example/v1' },
+    ),
+    false,
+    'a custom Host setting overrides official catalog evidence',
+  )
+  assert.equal(correctionPreservesConfiguredTransport(entry), true,
+    'unconfigured official catalog still follows existing compatibility behavior')
+  assert.equal(correctionPreservesConfiguredTransport(undefined), false)
+})
+
+test('Host ConfigEditor overrides official catalog route without overriding native provider ownership', () => {
+  const ctx = {
+    get(name) {
+      if (name === 'settings') return { get() { return undefined } }
+      if (name === 'configEditor') return {
+        configuration() {
+          return [{
+            entry: { options: { id: 'llm-pi-ai' } },
+            inherited: {
+              providers: {
+                'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' },
+              },
+            },
+            override: {
+              providers: {
+                'opencode-go': { baseURL: 'https://custom-relay.example/v1', api: 'openai-completions' },
+              },
+            },
+          }]
+        },
+      }
+      return undefined
+    },
+    llm: {
+      registration() {
+        return {
+          adapter: {
+            config: {
+              profiles() {
+                return new Map([['opencode-go', {
+                  baseURL: 'https://opencode.ai/zen/go/v1',
+                  // The pi provider owns a map of API implementation handlers,
+                  // NOT one chosen wire-protocol string.
+                  piProvider: {
+                    baseUrl: 'https://opencode.ai/zen/go/v1',
+                    api: { 'openai-completions': {}, 'anthropic-messages': {} },
+                    getModels() { return [{ id: 'qwen3.6-plus', ...brokenFacts }] },
+                  },
+                }]])
+              },
+            },
+          },
+        }
+      },
+    },
+  }
+  const correction = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+  const host = providerTransportFor(ctx, 'opencode-go')
+  assert.equal(host?.baseURL, 'https://custom-relay.example/v1')
+  assert.equal(correctionPreservesConfiguredTransport(correction, host), false)
+
+  const piProfile = ctx.llm.registration().adapter.config.profiles().get('opencode-go')
+  assert.equal(correctionPreservesConfiguredTransport(
+    correction,
+    { baseUrl: piProfile.piProvider.baseUrl },
+    { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' },
+  ), true, 'provider API handler map must not be mistaken for configured protocol')
 })
 
 test('anthropicMediaType normalizes jpg to jpeg and passes others through', () => {
