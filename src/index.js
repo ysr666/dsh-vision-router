@@ -1655,7 +1655,9 @@ export function apply(ctx, config = {}, runtime = {}) {
       correction,
       rawProfile,
       resolvedProfile,
-      resolvedProfile?.piProvider,
+      // piProvider.api is a registry of wire handlers, not a resolved
+      // protocol string. Only use its baseUrl as optional transport evidence.
+      { baseUrl: resolvedProfile?.piProvider?.baseUrl },
       activeHostTransport,
     )) return undefined
     const apiKeyEnv = [rawProfile, resolvedProfile]

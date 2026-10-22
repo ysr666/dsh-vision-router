@@ -9,6 +9,7 @@ import {
   correctionPreservesConfiguredTransport,
 } from '../lib/catalog-corrections.js'
 import { stripTrailingSlashes } from '../lib/string-normalization.js'
+import { providerTransportFor } from '../lib/live-model-discovery.js'
 import { VISION_FAILURE_KINDS } from '../lib/vision-resilience.js'
 
 const brokenFacts = { api: 'openai-completions', baseUrl: 'https://opencode.ai/zen/go/v1' }
@@ -141,6 +142,65 @@ test('catalog correction must also respect current Host transport overrides', ()
   assert.equal(correctionPreservesConfiguredTransport(entry), true,
     'unconfigured official catalog still follows existing compatibility behavior')
   assert.equal(correctionPreservesConfiguredTransport(undefined), false)
+})
+
+test('Host ConfigEditor overrides official catalog route without overriding native provider ownership', () => {
+  const ctx = {
+    get(name) {
+      if (name === 'settings') return { get() { return undefined } }
+      if (name === 'configEditor') return {
+        configuration() {
+          return [{
+            entry: { options: { id: 'llm-pi-ai' } },
+            inherited: {
+              providers: {
+                'opencode-go': { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' },
+              },
+            },
+            override: {
+              providers: {
+                'opencode-go': { baseURL: 'https://custom-relay.example/v1', api: 'openai-completions' },
+              },
+            },
+          }]
+        },
+      }
+      return undefined
+    },
+    llm: {
+      registration() {
+        return {
+          adapter: {
+            config: {
+              profiles() {
+                return new Map([['opencode-go', {
+                  baseURL: 'https://opencode.ai/zen/go/v1',
+                  // The pi provider owns a map of API implementation handlers,
+                  // NOT one chosen wire-protocol string.
+                  piProvider: {
+                    baseUrl: 'https://opencode.ai/zen/go/v1',
+                    api: { 'openai-completions': {}, 'anthropic-messages': {} },
+                    getModels() { return [{ id: 'qwen3.6-plus', ...brokenFacts }] },
+                  },
+                }]])
+              },
+            },
+          },
+        }
+      },
+    },
+  }
+  const correction = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+  const host = providerTransportFor(ctx, 'opencode-go')
+  assert.equal(host?.baseURL, 'https://custom-relay.example/v1')
+  assert.equal(correctionPreservesConfiguredTransport(correction, host), false)
+
+  const piProfile = ctx.llm.registration().adapter.config.profiles().get('opencode-go')
+  assert.equal(correctionPreservesConfiguredTransport(
+    correction,
+    { baseUrl: piProfile.piProvider.baseUrl },
+    { baseURL: 'https://opencode.ai/zen/go/v1', api: 'openai-completions' },
+  ), true, 'provider API handler map must not be mistaken for configured protocol')
 })
 
 test('anthropicMediaType normalizes jpg to jpeg and passes others through', () => {
