@@ -6,6 +6,7 @@ import {
   routingCorrectionFor,
   toAnthropicMessages,
   callAnthropicCompatible,
+  correctionPreservesConfiguredTransport,
 } from '../lib/catalog-corrections.js'
 import { stripTrailingSlashes } from '../lib/string-normalization.js'
 import { VISION_FAILURE_KINDS } from '../lib/vision-resilience.js'
@@ -101,6 +102,45 @@ test('catalog correction never hijacks a custom or lookalike Host gateway', () =
       `official route must stay supported: ${baseUrl}`,
     )
   }
+})
+
+test('catalog correction must also respect current Host transport overrides', () => {
+  const entry = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
+  assert.ok(entry)
+  for (const profile of [
+    { baseURL: 'https://custom.example/v1' },
+    { baseUrl: 'https://notopencode.ai/zen/go/v1' },
+    { baseURL: 'https://opencode.ai/zen/go/v1?relay=1' },
+    { baseURL: 'https://opencode.ai/zen/go/v1#fragment' },
+    { api: 'anthropic-messages' },
+    { api: 'openai-responses' },
+    { baseURL: 123 },
+  ]) {
+    assert.equal(
+      correctionPreservesConfiguredTransport(entry, profile),
+      false,
+      JSON.stringify(profile),
+    )
+  }
+  for (const profile of [
+    { baseURL: 'https://opencode.ai/zen/go', api: 'openai-completions' },
+    { baseUrl: 'https://opencode.ai/zen/go/v1/' },
+    { baseURL: 'https://OPENCODE.AI/zen/go/v1', apiKeyEnv: 'OPENCODE_API_KEY' },
+  ]) {
+    assert.equal(correctionPreservesConfiguredTransport(entry, profile), true)
+  }
+  assert.equal(
+    correctionPreservesConfiguredTransport(
+      entry,
+      { baseURL: 'https://opencode.ai/zen/go/v1' },
+      { baseURL: 'https://custom.example/v1' },
+    ),
+    false,
+    'a custom Host setting overrides official catalog evidence',
+  )
+  assert.equal(correctionPreservesConfiguredTransport(entry), true,
+    'unconfigured official catalog still follows existing compatibility behavior')
+  assert.equal(correctionPreservesConfiguredTransport(undefined), false)
 })
 
 test('anthropicMediaType normalizes jpg to jpeg and passes others through', () => {

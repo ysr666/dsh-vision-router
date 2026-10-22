@@ -71,6 +71,32 @@ function matchesDocumentedCatalogBaseURL(actual, expectedRoot) {
 }
 
 /**
+ * The pi-ai *catalog entry* may still be official even if a Host profile
+ * overrides its actual transport. Do not send that profile's credential to
+ * a hard-coded corrected endpoint unless every explicit Host transport fact
+ * we can observe agrees with the documented original route.
+ *
+ * Undefined/unconfigured profiles are not positive evidence; the caller must
+ * first have proven the precise broken catalog entry via routingCorrectionFor.
+ */
+export function correctionPreservesConfiguredTransport(correction, ...profiles) {
+  if (!correction?.wrongBaseURLRoot || !correction?.wrongApi) return false
+  for (const profile of profiles) {
+    if (!profile || typeof profile !== 'object') continue
+    for (const actual of [profile.baseURL, profile.baseUrl]) {
+      if (actual === undefined || actual === null || actual === '') continue
+      if (typeof actual !== 'string' || !matchesDocumentedCatalogBaseURL(actual, correction.wrongBaseURLRoot)) {
+        return false
+      }
+    }
+    if (profile.api !== undefined && profile.api !== null && profile.api !== '') {
+      if (profile.api !== correction.wrongApi) return false
+    }
+  }
+  return true
+}
+
+/**
  * Decide whether a routing correction engages for one resolved backend.
  *
  * @param facts - the harness-resolved catalog facts for the pair:
