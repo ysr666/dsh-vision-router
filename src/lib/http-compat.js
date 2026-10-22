@@ -17,7 +17,11 @@ export const HTTP_PROVIDER_COMPAT_PRESETS = [
   {
     id: 'glm-4v-flash-max-output',
     model: GLM_4V_FLASH,
-    // Zhipu GLM-4V-Flash rejects larger values with error 1210.
+    // Issue #53 measured error 1210 on Zhipu's official endpoint only.
+    // A different DSH-configured gateway may support the same model ID with
+    // a different limit: let its explicit HTTP 400/422 response set the cap.
+    origin: 'https://open.bigmodel.cn',
+    pathname: '/api/paas/v4/chat/completions',
     maxTokensCap: 1024,
   },
 ]
@@ -33,6 +37,15 @@ function asUrl(value) {
 function ruleMatches(rule, { model, url, providerName }) {
   if (rule.model && !rule.model.test(String(model ?? ''))) return false
   if (rule.provider && !rule.provider.test(String(providerName ?? ''))) return false
+  // Provider/model IDs are DSH-owned strings, not proof of endpoint identity.
+  // Only a verified vendor endpoint can activate a vendor-specific eager cap.
+  if (rule.origin || rule.pathname) {
+    const endpoint = asUrl(url)
+    if (!endpoint) return false
+    if (rule.origin && endpoint.origin !== rule.origin) return false
+    if (rule.pathname && endpoint.pathname.replace(/\/+$/, '') !== rule.pathname) return false
+    if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash) return false
+  }
   if (rule.host) {
     const host = asUrl(url)?.hostname ?? ''
     if (!rule.host.test(host)) return false
