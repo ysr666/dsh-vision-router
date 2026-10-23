@@ -61,7 +61,7 @@ npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 - [工具](#工具)
 - [快速开始](#快速开始)
 - [数据流向与严格纯本地配置](#数据流向与严格纯本地配置)
-- [免费视觉 Key 渠道](#免费视觉-key-渠道)
+- [配置自己的视觉模型](#配置自己的视觉模型)
 - [为什么做这个](#为什么做这个)
 - [对比同类插件](#对比同类插件)
 - [配置项](#配置项)
@@ -232,26 +232,13 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 
 若要阻止 **Vision Router 本身**把图片发送给远程视觉端点，请开启 **设置 → Vision Router → 常规 → 仅本地视觉**。这是运行时策略，不会破坏性修改配置：已保存的云端识图行和 `freeFallback` 会保留，但开关开启期间无法执行；只有回环地址（`localhost`、`127.0.0.0/8`、`::1`）上的视觉端点可以运行，包括 Ollama、LM Studio 和自定义本机 HTTP 后端。若要求**整个工作流严格纯本地**，还必须同时使用本地聊天模型，因为识图结果文本仍会交给当前聊天模型。请在自己的环境中验证最终网络边界；Vision Router 无法把远程聊天模型、代理或 Host 集成变成本地服务。
 
-## 免费视觉 Key 渠道
+## 配置自己的视觉模型
 
-内置 OVH 兜底是匿名设计，OVH 对匿名访问的限制是**每 IP、每模型 2 次/分钟**。觉得不够用时，可以考虑下面这些视觉模型渠道及免费／试用方案。但**免费额度、Key 要求、第三方客户端调用权限及图片输入能力因渠道而异**；模型出现在列表中不代表能直接接入 DVR。此表为 2026 年 10 月的资料参考，具体以供应商当前接口及实测为准。
+**供应商、凭据和全局模型目录由DSH负责；Vision Router使用DSH已配置模型，负责视觉编排、执行、测试与诊断。** 无需安装插件专属的厂商YAML。对**已在DSH配置**的供应商，插件可在自己的视觉后端选择器内补充实时`/models`发现结果及严格限定端点的视觉能力提示；这些内容不会新增供应商或修改DSH全局目录，过期缓存或仅保存的模型ID也不能单独授权直连。参见[历史架构依据](docs/architecture/model-catalog-ownership.md)。
 
-| 渠道 | 免费视觉模型 | 免费额度 | 大陆直连 | Key 领取 |
-|---|---|---|---|---|
-| OVHcloud AI Endpoints（access key） | `Qwen2.5-VL-72B-Instruct`——与内置兜底同一个端点 | **400 次/分钟**/项目/模型（对比匿名 2 次/分钟） | ✅ | 注册 OVH 账号 → Public Cloud 项目（需挂支付方式；免费模型不扣费）→ AI Endpoints access key |
-| 智谱（bigmodel.cn） | `glm-4.6v-flash` · `glm-4.1v-thinking-flash` · `glm-4v-flash`——三个永久免费模型，串起来容量 ×3 | token 不限量 | ✅ | open.bigmodel.cn → API keys |
-| 阿里云百炼 | `qwen3-vl-flash`（限免）与 Qwen-VL 系列 | 新用户每模型系列 100 万 token / 90 天 | ✅ | bailian.console.aliyun.com |
-| Intern AI（上海AI实验室） | `internvl-latest` · `internvl3.5-latest` | 30 RPM，**9000 万 token/月** | ✅ | chat.intern-ai.org.cn |
-| Groq | `meta-llama/llama-4-scout-17b-16e-instruct`（原生多模态，最多 5 张图） | 30 RPM / 14,400 次/天，免卡 | ❌ 需代理 | console.groq.com |
-| Google AI Studio | `gemini-2.5-flash` · `gemini-2.5-flash-lite` | 10–30 RPM / 500–1,500 次/天 | ❌ 需代理 | aistudio.google.com |
-| NVIDIA NIM | `meta/llama-3.2-11b-vision-instruct` · `nvidia/nemotron-nano-12b-v2-vl` | 40 RPM，免卡 | ⚠️ | build.nvidia.com |
-| OpenCode Zen | `mimo-v2.6-flash-free`（已列入 Zen，尚未独立验证第三方识图请求） | OpenCode 内限期免费；外部 API 固定额度未核实 | ⚠️ | [OpenCode Zen](https://opencode.ai/zen) |
-| OpenRouter | `google/gemma-4-26b-a4b-it:free` · `google/gemma-4-31b-it:free` | 未充值账户 50 次/天 | ❌ 需代理 | openrouter.ai |
+在DSH「设置 → 模型」维护供应商、模型与密钥，在Vision Router视觉后端列表中选择同一Host目录里的模型，并用「测试识图」核实精确模型确实读取图片。若Host把真正的视觉模型误报为仅文本，优先使用DSH模型设置的「输入类型 → 图片」；旧Host可在**确认模型确实接受图片**后配置`llm-pi-ai`的`input: [text, image]`，再重载配置，不得对纯文本模型伪造能力。
 
-仅当渠道**允许第三方 API 调用且实际接受图片输入**时，才能作为 `httpProviders` 加入视觉链（Key 放对应环境变量或 `~/.dsh/.credentials.yaml`）；插件会先尝试这些后端，再回退到匿名兜底。**OpenCode Zen 特别说明：**其文档目前同时列出 `mimo-v2.5-free` 和 `mimo-v2.6-flash-free`。小米 10 月 21 日下线公告针对的是**小米直连模型 ID**，不能据此认定 Zen 旧别名同日失效。Zen 免费档可能限制非 OpenCode 客户端使用，不能保证接入 DVR，也不应绕过其客户端限制；OpenCode 还提示免费 MiMo 的使用数据可能用于改进模型。[OpenCode Zen 文档](https://docs.opencode.ai/docs/zen/) · [小米下线公告](https://mimo.mi.com/docs/zh-CN/updates/deprecate)。
-
-> [!NOTE]
-> 免费政策随时可能调整——Cerebras 已在 2026 年 7 月取消免费档（改为一次性 $5 赠金），SambaNova 免费档收紧到 20 次/天，Hugging Face 只剩 $0.10/月。第三方“`:free` 中转”聚合站刻意不列入：轮换频繁、无 SLA，部分还存在违反上游条款的转售行为。
+内置OVH匿名兜底属于Vision Router工具的`httpProviders`运行时，不是DSH厂商目录条目。严格纯本地使用需要同时使用本地聊天模型并开启「仅本地视觉」。商用API的价格、免费额度及模型ID动态变化，本项目不再维护推荐表。[2026年8月历史调研](docs/free-models.zh-CN.md)仅供追溯。
 
 ## 为什么做这个
 
@@ -301,7 +288,7 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 2. **本地 Ollama（可选，默认关）**：`localOllama.enabled` 开启后，通过本机 Ollama 做免 Key、离线识别（例如 qwen2.5vl）；
 3. **本地 LM Studio（可选，默认关）**：`localLmStudio.enabled` 排在 Ollama 之后，模型名必须填写 LM Studio Developer 页或 `/v1/models` 返回的真实标识；
 4. **高级自定义 HTTP 视觉端点**：旧配置/高级配置中的 `httpProviders` 排在本地后端之后；
-5. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；4 个模型是独立限额，因此理论上分散请求可到约 **8 次/分钟**，实际仍以 OVH 当时的限流为准。OVH 已公告原有 Mistral Small 3.2 模型将在 2026 年 11 月 4 日下线，因此已从自动兜底移除，但不会修改用户手动保存的配置。免注册、免 Key。想提额度？详见[免费视觉 Key 渠道](#免费视觉-key-渠道)——同一个端点挂免费 access key 后是 400 次/分钟。
+5. **内置 OVH 匿名免费兜底**：固定最后尝试，不需要出现在任何模型选择器里。当前内置链按质量优先为 `Qwen3.5-397B-A17B` → `Qwen2.5-VL-72B-Instruct` → `Qwen3.6-27B` → `Qwen3.5-9B`。OVH 匿名限额为 **每 IP、每模型 2 次/分钟**；4 个模型是独立限额，因此理论上分散请求可到约 **8 次/分钟**，实际仍以 OVH 当时的限流为准。OVH 已公告原有 Mistral Small 3.2 模型将在 2026 年 11 月 4 日下线，因此已从自动兜底移除，但不会修改用户手动保存的配置。免注册、免 Key。如需额外容量，请通过DSH配置自备模型；参见[配置自己的视觉模型](#配置自己的视觉模型)。
 
 > [!IMPORTANT]
 > 这里的“视觉链”是 Vision Router 调用的**眼睛**：设置页里每一行只选一个用户视觉模型；聊天页右下角选择的是**脑子/会话模型**，两者完全分开。纯文本 DeepSeek / opencode 不会出现在视觉后端下拉里；内部 `Vision HTTP` 也不会再暴露给用户。
