@@ -15,8 +15,9 @@ function normalizeEndpoint(value) {
   try {
     const url = new URL(value)
     if (url.protocol !== 'https:') return undefined
-    url.hash = ''
-    url.search = ''
+    // A trusted official model hint is allowed only for the verified bare
+    // endpoint; don't erase caller-supplied URL modifiers before admission.
+    if (url.username || url.password || url.search || url.hash) return undefined
     return stripTrailingSlashes(url.toString())
   } catch {
     return undefined
@@ -42,12 +43,12 @@ export function trustedVisionHintsForTransport(transport) {
 }
 
 export function trustedVisionHintsForProvider(ctx, provider) {
-  const transport = providerTransportFor(ctx, provider)
+  const transport = providerTransportFor(ctx, provider, { strictBaseURL: true })
   return trustedVisionHintsForTransport(transport)
 }
 
 export function trustedVisionHintEntries(ctx) {
-  return configuredProviderTransports(ctx).flatMap((transport) => {
+  return configuredProviderTransports(ctx, { strictBaseURL: true }).flatMap((transport) => {
     const models = trustedVisionHintsForTransport(transport)
     if (models.length === 0) return []
     return [{
