@@ -298,6 +298,43 @@ try {
     return ready('mixed.pdf', 'PDF') && ready('mystery.fixture', 'FIXTURE')
   }, undefined, { timeout: 30_000 })
 
+  // DSH 0.2.1-rc.3 changes the default New session action to reuse an
+  // unstarted Workspace blank. RC2 created a fresh blank and stranded its
+  // localStorage draft. Verify this with the *real* Vision Router mixed-file
+  // draft; do not impose this newer behavior on older supported Host lanes.
+  let rc3BlankDraftReuseVerified = false
+  let rc3BlankDraftReloadVerified = false
+  if (process.env.DSH_EXPECTED_VERSION === '0.2.1-rc.3') {
+    const assertRetainedMixedDraft = async (phase) => {
+      await page.waitForFunction(() => {
+        const input = document.querySelector('[data-composer-input]')
+        return input?.textContent?.includes('mixed paste text survives') === true
+          && document.querySelectorAll('img[alt="mixed.png"]').length === 1
+          && document.querySelectorAll('[title="mixed.pdf"]').length === 1
+          && document.querySelectorAll('[title="mystery.fixture"]').length === 1
+      }, undefined, { timeout: 30_000 })
+      assert.equal(await image.count(), 1, `${phase}: exactly one canonical image draft`)
+      assert.equal(await pdf.count(), 1, `${phase}: exactly one PDF draft`)
+      assert.equal(await unknown.count(), 1, `${phase}: exactly one generic file draft`)
+      await page.locator('[data-vision-router-mode-toggle="true"]').first()
+        .waitFor({ state: 'visible', timeout: 30_000 })
+    }
+
+    const newSessionAction = () => page.getByRole('button', { name: 'New session', exact: true }).first()
+    await newSessionAction().click()
+    await assertRetainedMixedDraft('New session reuses the unstarted blank')
+    rc3BlankDraftReuseVerified = true
+
+    // Repeat after a real browser reload: Session/draft ownership must survive
+    // hydration, not merely stay present in the same DOM tree.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await dismissFirstRunOverlays(page)
+    await newSessionAction().waitFor({ state: 'visible', timeout: 30_000 })
+    await newSessionAction().click()
+    await assertRetainedMixedDraft('reloaded New session restores original blank')
+    rc3BlankDraftReloadVerified = true
+  }
+
   assert.deepEqual(pageErrors, [], `mixed attachment paste emitted browser pageerrors: ${pageErrors.join(' | ')}`)
   console.log(JSON.stringify({
     ok: true,
@@ -307,6 +344,8 @@ try {
     textPreserved: true,
     duplicateDrafts: false,
     genericUploadsReachedReady: true,
+    rc3BlankDraftReuseVerified,
+    rc3BlankDraftReloadVerified,
   }))
 } catch (error) {
   const state = await capturePageState(page)
