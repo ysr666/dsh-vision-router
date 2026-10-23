@@ -16,7 +16,7 @@
 // full desktop install. This contract fails in `pnpm test`, and it ships its own
 // negative controls so the checks cannot silently stop checking.
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -242,4 +242,13 @@ test('Connection readiness sidecar has its own private package root and no brows
   assert.notEqual(source.name, plugin.name)
   assert.equal(source.private, true)
   assert.equal(source.dsh?.client, undefined)
+})
+
+test('vendor YAML retirement keeps real Web Host startup bridge packaged', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  const entries = readdirSync(new URL('../presets/', import.meta.url))
+  assert.ok(pkg.files.includes('presets'))
+  assert.ok(entries.includes('web-connection-ready'))
+  assert.deepEqual(entries.filter((name) => /\.ya?ml$/i.test(name)), [])
+  assert.match(readFileSync(PATCH_PATH, 'utf8'), /presets\/web-connection-ready\/index\.mjs/)
 })
