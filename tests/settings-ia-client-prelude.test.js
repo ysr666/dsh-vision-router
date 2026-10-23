@@ -173,6 +173,90 @@ test('settings IA publishes both script and stylesheet on the Desktop structured
   assert.equal(rows.filter((row) => row.kind === 'style' && row.text.includes('data-vision-router-settings-ia:style')).length, 1)
 })
 
+test('v3.1: Host text-only evidence takes priority over image inference and offers a concrete fix', () => {
+  const React = reactStub([
+    'general', {}, undefined, undefined, undefined, { status: 'idle' },
+    { status: 'ready', groups: [{ id: 'openrouter', models: [{ id: 'qwen-vl' }] }] },
+    { ollama: false, lmstudio: false, developer: false },
+    { status: 'ready', capabilities: { openrouter: { 'qwen-vl': {
+      image: true,
+      hostInputModalities: ['text'],
+      inputModalities: ['text', 'image'],
+    } } } },
+  ])
+  const { registeredComponent, scope } = createHarness(React, {
+    value: baseSettings({ providers: [{ provider: 'openrouter', model: 'qwen-vl', fallbacks: [] }] }),
+  })
+  const tree = registeredComponent({ scope })
+  const text = textOf(tree)
+  assert.match(text, /有模型可能看不了图片/)
+  assert.match(text, /设置 → 模型/)
+  assert.match(text, /旧版 DSH 怎么设置？/)
+  assert.match(text, /重新检测/)
+  const readiness = []
+  walk(tree, (node) => { if (node?.props?.['data-vr-model-readiness']) readiness.push(node.props['data-vr-model-readiness']) })
+  assert.deepEqual(readiness, ['text-only'])
+  assert.doesNotMatch(text, /识图已就绪/)
+})
+
+test('v3.1: normal users see no premature alert while capability metadata loads', () => {
+  const React = reactStub([
+    'general', {}, undefined, undefined, undefined, { status: 'idle' },
+    { status: 'ready', groups: [{ id: 'openrouter', models: [{ id: 'qwen-vl' }] }] },
+    { ollama: false, lmstudio: false, developer: false },
+    { status: 'loading', capabilities: {} },
+  ])
+  const { registeredComponent, scope } = createHarness(React, {
+    value: baseSettings({ providers: [{ provider: 'openrouter', model: 'qwen-vl', fallbacks: [] }] }),
+  })
+  const tree = registeredComponent({ scope })
+  const text = textOf(tree)
+  assert.match(text, /已添加识图模型/)
+  assert.doesNotMatch(text, /还不能确认这个模型是否能识图/)
+  const readiness = []
+  walk(tree, (node) => { if (node?.props?.['data-vr-model-readiness']) readiness.push(node.props['data-vr-model-readiness']) })
+  assert.deepEqual(readiness, [])
+})
+
+test('v3.1: image declaration is evidence only, not a claimed successful image delivery', () => {
+  const React = reactStub([
+    'general', {}, undefined, undefined, undefined, { status: 'idle' },
+    { status: 'ready', groups: [{ id: 'openrouter', models: [{ id: 'qwen-vl' }] }] },
+    { ollama: false, lmstudio: false, developer: false },
+    { status: 'ready', capabilities: { openrouter: { 'qwen-vl': {
+      image: true, hostInputModalities: ['text', 'image'],
+    } } } },
+  ])
+  const { registeredComponent, scope } = createHarness(React, {
+    value: baseSettings({ providers: [{ provider: 'openrouter', model: 'qwen-vl', fallbacks: [] }] }),
+  })
+  const tree = registeredComponent({ scope })
+  const text = textOf(tree)
+  assert.match(text, /已添加识图模型/)
+  assert.doesNotMatch(text, /图片能力有声明或可信证据/)
+  assert.doesNotMatch(text, /有模型可能看不了图片/)
+  const readiness = []
+  walk(tree, (node) => { if (node?.props?.['data-vr-model-readiness']) readiness.push(node.props['data-vr-model-readiness']) })
+  assert.deepEqual(readiness, [])
+})
+
+test('v3.1: capability unknown, missing metadata and structurally blocked models remain fail-closed in readiness copy', () => {
+  const states = (capabilities, status = 'ready') => [
+    'general', {}, undefined, undefined, undefined, { status: 'idle' },
+    { status: 'ready', groups: [{ id: 'openrouter', models: [{ id: 'qwen-vl' }] }] },
+    { ollama: false, lmstudio: false, developer: false },
+    { status, capabilities },
+  ]
+  const value = baseSettings({ providers: [{ provider: 'openrouter', model: 'qwen-vl', fallbacks: [] }] })
+  const render = (capabilities, status) => {
+    const { registeredComponent, scope } = createHarness(reactStub(states(capabilities, status)), { value })
+    return textOf(registeredComponent({ scope }))
+  }
+  assert.match(render({}, 'ready'), /还不能确认这个模型是否能识图/)
+  assert.match(render({}, 'error'), /还不能确认这个模型是否能识图/)
+  assert.match(render({ openrouter: { 'qwen-vl': { attemptable: false, image: true } } }), /有模型暂时不可用/)
+})
+
 test('settings IA prelude injects once', () => {
   const html = '<html><head></head><body></body></html>'
   const once = injectSettingsIaClientPrelude(html)
@@ -203,7 +287,7 @@ test('general page keeps the happy path focused on model chain and free fallback
   })
   const tree = registeredComponent({ scope })
   const text = textOf(tree)
-  assert.match(text, /识图已就绪/)
+  assert.match(text, /已添加识图模型/)
   assert.match(text, /识图模型/)
   assert.match(text, /内置免费兜底/)
   assert.match(text, /数据流向/)
