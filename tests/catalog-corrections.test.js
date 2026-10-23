@@ -205,10 +205,12 @@ test('Host ConfigEditor overrides official catalog route without overriding nati
 })
 
 test('modified DSH ConfigEditor URL cannot authorize an OpenCode catalog reroute', () => {
-  for (const baseURL of [
-    'https://opencode.ai/zen/go/v1?route=custom',
-    'https://opencode.ai/zen/go/v1#custom',
-    'https://user@opencode.ai/zen/go/v1',
+  // Ordinary private /models discovery historically drops query/fragment
+  // but retains URL userinfo. Only strict admission proves official origin.
+  for (const [baseURL, expectedPrivateURL] of [
+    ['https://opencode.ai/zen/go/v1?route=custom', 'https://opencode.ai/zen/go/v1'],
+    ['https://opencode.ai/zen/go/v1#custom', 'https://opencode.ai/zen/go/v1'],
+    ['https://user@opencode.ai/zen/go/v1', 'https://user@opencode.ai/zen/go/v1'],
   ]) {
     const ctx = {
       get(id) {
@@ -234,8 +236,8 @@ test('modified DSH ConfigEditor URL cannot authorize an OpenCode catalog reroute
     }
     const relaxed = providerTransportFor(ctx, 'opencode-go')
     const strict = providerTransportFor(ctx, 'opencode-go', { strictBaseURL: true })
-    assert.equal(relaxed?.baseURL, 'https://opencode.ai/zen/go/v1',
-      'default private discovery normalization must remain compatible')
+    assert.equal(relaxed?.baseURL, expectedPrivateURL,
+      'default private discovery normalization must preserve its existing contract')
     assert.equal(strict, undefined, 'the modified raw URL is not official wire proof')
     const correction = routingCorrectionFor(brokenFacts, 'opencode-go', 'qwen3.6-plus')
     assert.equal(correctionPreservesRuntimeTransport(correction, relaxed, strict),
