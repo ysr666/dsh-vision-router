@@ -173,6 +173,26 @@ test('settings IA publishes both script and stylesheet on the Desktop structured
   assert.equal(rows.filter((row) => row.kind === 'style' && row.text.includes('data-vision-router-settings-ia:style')).length, 1)
 })
 
+test('v3.1: ordinary settings retain short visible cloud disclosure without overwhelming detail', () => {
+  const { registeredComponent, scope } = createHarness(reactStub())
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /数据流向：云端识图/)
+  assert.match(text, /免费或免 Key 不等于离线/)
+  assert.match(text, /识图结果文字仍可能发给云端聊天模型/)
+  assert.doesNotMatch(text, /严格纯本地还需同时选择本地聊天模型/)
+})
+
+test('v3.1: local-only explanation still discloses cloud chat text egress', () => {
+  const { registeredComponent, scope } = createHarness(reactStub(), {
+    value: baseSettings({ localOnlyVision: true }),
+  })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /图片只发给本机视觉模型/)
+  assert.match(text, /识图结果仍交给当前聊天模型/)
+  assert.match(text, /结果文字可能出网/)
+  assert.doesNotMatch(text, /数据流向：云端识图/)
+})
+
 test('v3.1: Host text-only evidence takes priority over image inference and offers a concrete fix', () => {
   const React = reactStub([
     'general', {}, undefined, undefined, undefined, { status: 'idle' },
@@ -303,10 +323,10 @@ test('active local-only vision discloses the derived-text boundary in context', 
     value: baseSettings({ localOnlyVision: true }),
   })
   const text = textOf(registeredComponent({ scope }))
-  assert.match(text, /Vision Router 不会把图片和裁剪发送到云端视觉服务/)
-  assert.match(text, /描述、OCR、坐标等识图结果文本仍会交给当前聊天模型/)
-  assert.match(text, /若聊天模型在云端，图片语义仍可能离开本机/)
-  assert.match(text, /严格纯本地还需同时选择本地聊天模型/)
+  assert.match(text, /图片只发给本机视觉模型/)
+  assert.match(text, /识图结果仍交给当前聊天模型/)
+  assert.match(text, /结果文字可能出网/)
+  assert.match(text, /识图结果文字仍可能发给云端聊天模型/)
 
   const remoteReact = reactStub()
   const remote = createHarness(remoteReact, {
@@ -314,8 +334,8 @@ test('active local-only vision discloses the derived-text boundary in context', 
     value: baseSettings({ localOnlyVision: true }),
   })
   const remoteText = textOf(remote.registeredComponent({ scope: remote.scope }))
-  assert.match(remoteText, /识图结果文本仍会交给当前聊天模型/)
-  assert.match(remoteText, /图片语义仍可能离开本机/)
+  assert.match(remoteText, /识图结果仍交给当前聊天模型/)
+  assert.match(remoteText, /结果文字可能出网/)
 })
 
 test('strategy page groups tool usage, 1+x depth, independent call cap, and custom guidance together', () => {
