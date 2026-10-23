@@ -58,7 +58,7 @@ import {
 import { streamWithVisionSessionAffinity } from './lib/session-affinity-runtime.js'
 import {
   routingCorrectionFor,
-  correctionPreservesConfiguredTransport,
+  correctionPreservesRuntimeTransport,
   toAnthropicMessages,
   callAnthropicCompatible,
 } from './lib/catalog-corrections.js'
@@ -1650,15 +1650,20 @@ export function apply(ctx, config = {}, runtime = {}) {
     // DSH provider config still uses the official gateway. Refuse to reroute
     // another gateway's credentials into the hard-coded official endpoint.
     let activeHostTransport
-    try { activeHostTransport = providerTransportFor(ctx, pair.provider) } catch { return undefined }
-    if (!correctionPreservesConfiguredTransport(
+    let strictHostTransport
+    try {
+      activeHostTransport = providerTransportFor(ctx, pair.provider)
+      strictHostTransport = providerTransportFor(ctx, pair.provider, { strictBaseURL: true })
+    } catch { return undefined }
+    if (!correctionPreservesRuntimeTransport(
       correction,
+      activeHostTransport,
+      strictHostTransport,
       rawProfile,
       resolvedProfile,
       // piProvider.api is a registry of wire handlers, not a resolved
       // protocol string. Only use its baseUrl as optional transport evidence.
       { baseUrl: resolvedProfile?.piProvider?.baseUrl },
-      activeHostTransport,
     )) return undefined
     const apiKeyEnv = [rawProfile, resolvedProfile]
       .map((profile) => (profile && typeof profile.apiKeyEnv === 'string' ? profile.apiKeyEnv : ''))
