@@ -298,6 +298,56 @@ try {
     return ready('mixed.pdf', 'PDF') && ready('mystery.fixture', 'FIXTURE')
   }, undefined, { timeout: 30_000 })
 
+  // RC3 New session reuses an unstarted blank and must recover its unsent
+  // text without destroying the Vision Router plugin's session controls.
+  // Upstream ui-conversation currently stores browser File objects in a
+  // SessionBinding-owned shell and disposes them on scope retirement; the
+  // persisted draft readback only restores text. Do not claim attachment
+  // restoration, or fake it by persisting raw files in client localStorage.
+  // Keep the full mixed-attachment intake assertions BEFORE New session.
+  let rc3BlankTextDraftReuseVerified = false
+  let rc3BlankTextDraftReloadVerified = false
+  const rc3AttachmentRetentions = []
+  if (process.env.DSH_EXPECTED_VERSION === '0.2.1-rc.3') {
+    const assertRc3ReusedDraft = async (phase) => {
+      await page.waitForFunction(() =>
+        document.querySelector('[data-composer-input]')?.textContent?.includes('mixed paste text survives') === true,
+      undefined, { timeout: 30_000 })
+      await page.locator('[data-vision-router-mode-toggle="true"]').first()
+        .waitFor({ state: 'visible', timeout: 30_000 })
+
+      const counts = {
+        image: await image.count(),
+        pdf: await pdf.count(),
+        generic: await unknown.count(),
+      }
+      for (const [name, count] of Object.entries(counts)) {
+        assert.ok(count <= 1, `${phase}: duplicate ${name} draft (${count})`)
+      }
+      // Mixed file loss on RC3 is upstream-owned, not a DVR capability.
+      // Make its actual state explicit in CI evidence instead of asserting
+      // the inaccurate guarantee that binary drafts survive blank reuse.
+      const states = Object.values(counts)
+      assert.ok(states.every(n => n === 0) || states.every(n => n === 1),
+        `${phase}: incomplete mixed-file draft preservation: ${JSON.stringify(counts)}`)
+      rc3AttachmentRetentions.push({ phase, ...counts, retained: states.every(n => n === 1) })
+    }
+
+    const newSessionAction = () => page.getByRole('button', { name: 'New session', exact: true }).first()
+    await newSessionAction().click()
+    await assertRc3ReusedDraft('New session reuses the unstarted blank')
+    rc3BlankTextDraftReuseVerified = true
+
+    // Ensure the text draft also survives a browser reload: the browser
+    // cannot safely recreate arbitrary File objects from persisted text.
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await dismissFirstRunOverlays(page)
+    await newSessionAction().waitFor({ state: 'visible', timeout: 30_000 })
+    await newSessionAction().click()
+    await assertRc3ReusedDraft('reloaded New session restores unsent text')
+    rc3BlankTextDraftReloadVerified = true
+  }
+
   assert.deepEqual(pageErrors, [], `mixed attachment paste emitted browser pageerrors: ${pageErrors.join(' | ')}`)
   console.log(JSON.stringify({
     ok: true,
@@ -307,6 +357,9 @@ try {
     textPreserved: true,
     duplicateDrafts: false,
     genericUploadsReachedReady: true,
+    rc3BlankTextDraftReuseVerified,
+    rc3BlankTextDraftReloadVerified,
+    rc3AttachmentRetentions,
   }))
 } catch (error) {
   const state = await capturePageState(page)
