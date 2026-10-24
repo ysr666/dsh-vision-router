@@ -5,6 +5,23 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.0
+
+### Easier vision setup and understandable cloud privacy / 简化识图配置与云端隐私提醒
+
+- #754: detect explicit text-only Host declarations; guide the user to DSH image-input settings and Recheck, without automatically editing Host metadata. / 在 DSH 明确声明纯文本时提示到模型设置开启图片输入并重新检测，不自动改写 Host 设置。
+- #756: show clear Local-only vision → Save steps to prevent Vision Router image uploads, and offer a reversible browser-local “Do not remind again” display preference. Unsaved privacy toggles never claim protection is active. / 明确说明本地视觉开关及保存操作，新增可随时恢复的浏览器「不再提醒」，未保存开关不误报隐私状态。
+- Local vision does not guarantee derived text stays offline if the chat model is cloud-based; use a local chat model for fully local handling. / 本地识图不意味着云端聊天模型拿不到识图结果文字；完全本地需同时选本地聊天模型。
+
+### Compatibility, transport and supply chain / 兼容、传输与供应链
+
+- #751 qualifies DSH 0.2.1-rc.3 with exact-source and real-Host checks. / 通过精确源码与真实 Host 门禁验收 DSH 0.2.1-rc.3。
+- #745, #747, #748, #750 tighten HTTP/token-ceiling handling, official routes and trusted capability hints. #746 returns vendor catalog ownership to DSH while keeping the Web sidecar. / 修正部分 HTTP 限额解析、官方路由、模型可信提示，供应商目录归还 DSH，保留 Web sidecar。
+- #740 improves the safe doctor issue template; #752 and #753 lock patched `follow-redirects@1.16.1` and `zod@4.6.6`. / 优化 doctor Issue 模板，锁定修复后的两个依赖版本。
+- #758 updates undici and puppeteer-core within supported majors, removes vulnerable transitive Zod 3, raises the direct Zod minimum to 4.6.6, and passes a production audit against the official npm registry on the combined release candidate. / 更新 Undici 和 Puppeteer 的同大版本安全修复，清除旧 Zod 3 传递依赖，提高直接 Zod 最低版本；合并预演版本的官方 npm 生产审计未发现已知漏洞。
+- No planned minimum Node/DSH increase, settings migration, Host privilege increase or public API breaking change. Publication is verified separately through the protected release workflow. / 不抬高最低兼容窗口，不新增配置迁移或 Host 权限。正式可安装版本以发布工作流与 npm 核验为准。
+
+
 ## v3.0.5
 
 ### Successful vision continuation / 修复识图成功后助手空输出

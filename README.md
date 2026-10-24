@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.0.5 release notes:** fixes Vision reply continuation, optional-peer activation and OVH request-size handling; improves the Vision toggle's transient catalog-refresh behavior. See [v3.0.5 notes](docs/releases/v3.0.5.md). For the version actually available to install, check [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm; release notes are not proof that the version has been published.
+> **v3.1.0 release notes:** simpler image-input setup and clear cloud-upload privacy controls, plus DSH compatibility, HTTP and dependency fixes. See [v3.1.0 release notes](docs/releases/v3.1.0.md). For the installable version, check [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm for the installable version.
 
 ## Start here
 
@@ -609,7 +609,7 @@ exploration (LLM7.io and OVHcloud anonymous tiers) by
 
 ## Release notes and community
 
-Release details: [v3.0.5 release notes](docs/releases/v3.0.5.md). Check GitHub Releases or npm for the published version.
+Release details: [v3.1.0 release notes](docs/releases/v3.1.0.md). Check GitHub Releases or npm for the published version.
 
 <p align="center">
   <sub>Ecosystem:</sub>

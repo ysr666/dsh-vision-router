@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **v3.0.5 修正版更新说明：** 修复识图后回复中断、可选依赖加载以及 OVH 请求体限制，并缓解模型目录刷新期间识图开关短暂失效的问题。参见[v3.0.5 更新说明](docs/releases/v3.0.5.md)。更新说明不代表已发布；实际可安装版本请以[GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest)或 npm 为准。
+> **v3.1.0 更新说明：** 简化识图模型设置，增加云端出网关闭指引与「不再提醒」，并修正 DSH 兼容、HTTP 和依赖安全问题。参见[v3.1.0 更新说明](docs/releases/v3.1.0.md)。实际可安装版本请以 [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest)或 npm 为准。
 
 ## 先用起来
 
@@ -603,7 +603,7 @@ npx dsh-vision-router doctor --profile web
 
 ## 版本公告与社区链接
 
-版本更新详情：[v3.0.5 更新说明](docs/releases/v3.0.5.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
+版本更新详情：[v3.1.0 更新说明](docs/releases/v3.1.0.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
 
 <p align="center">
   <sub>生态收录：</sub>
