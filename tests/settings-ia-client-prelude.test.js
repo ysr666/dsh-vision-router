@@ -91,13 +91,14 @@ function baseSettings(overrides = {}) {
   }
 }
 
-function createHarness(React, { value = baseSettings(), local = true, location } = {}) {
+function createHarness(React, { value = baseSettings(), local = true, location, storage } = {}) {
   let captured
   const loader = { load(spec) { captured = spec } }
   const sandbox = {
     window: {
       __ModuleLoader__: loader,
       location: location ?? { protocol: 'http:', hostname: local ? '127.0.0.1' : '10.0.0.20' },
+      localStorage: storage,
     },
     document: { documentElement: { lang: 'zh-CN' } },
     Object,
@@ -171,6 +172,70 @@ test('settings IA publishes both script and stylesheet on the Desktop structured
   }
   assert.equal(rows.filter((row) => row.kind === 'script' && row.text.includes('data-vision-router-settings-ia')).length, 1)
   assert.equal(rows.filter((row) => row.kind === 'style' && row.text.includes('data-vision-router-settings-ia:style')).length, 1)
+})
+
+test('v3.1: cloud upload guidance points to the actual save action and supports persistent dismissal', () => {
+  const data = new Map()
+  const storage = {
+    getItem(key) { return data.get(key) ?? null },
+    setItem(key, value) { data.set(key, String(value)) },
+    removeItem(key) { data.delete(key) },
+  }
+  const render = () => {
+    const { registeredComponent, scope } = createHarness(reactStub(), { storage })
+    return registeredComponent({ scope })
+  }
+  const findButton = (tree, label) => {
+    let found
+    walk(tree, (node) => {
+      if (node?.type === 'button' && node.children?.includes(label)) found = node
+    })
+    return found
+  }
+  const first = render()
+  assert.match(textOf(first), /要停止上传，请在本页开启「仅本地视觉」，然后点击「保存」/)
+  assert.match(textOf(first), /云端聊天模型仍可能收到识图结果文字/)
+  const dismiss = findButton(first, '不再提醒')
+  assert.ok(dismiss)
+  dismiss.props.onClick()
+  assert.equal(data.size, 1)
+
+  const next = render()
+  assert.doesNotMatch(textOf(next), /数据流向：云端识图/)
+  assert.match(textOf(next), /云端识图可能上传图片/)
+  const reopen = findButton(next, '查看如何关闭出网')
+  assert.ok(reopen)
+  reopen.props.onClick()
+  assert.equal(data.size, 0)
+  assert.match(textOf(render()), /要停止上传，请在本页开启「仅本地视觉」/)
+})
+
+test('v3.1: remote view explains where to disable uploads and hidden notice never changes local-only policy', () => {
+  const { registeredComponent, scope } = createHarness(reactStub(), { local: false })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」/)
+  assert.match(text, /开启「仅本地视觉」并保存/)
+  assert.doesNotMatch(text, /在本页开启「仅本地视觉」，然后点击「保存」/)
+
+  const store = { getItem() { return '1' }, setItem() {}, removeItem() {} }
+  const local = createHarness(reactStub(), {
+    value: baseSettings({ localOnlyVision: true }),
+    storage: store,
+  })
+  const localText = textOf(local.registeredComponent({ scope: local.scope }))
+  assert.match(localText, /图片只发给本机视觉模型/)
+  assert.doesNotMatch(localText, /不再提醒/)
+})
+
+test('v3.1: storage failure cannot prevent a visible default privacy warning', () => {
+  const storage = { getItem() { throw Error('blocked') }, setItem() { throw Error('blocked') } }
+  const { registeredComponent, scope } = createHarness(reactStub(), { storage })
+  const tree = registeredComponent({ scope })
+  assert.match(textOf(tree), /数据流向：云端识图/)
+  let button
+  walk(tree, (node) => { if (node?.type === 'button' && node.children?.includes('不再提醒')) button = node })
+  assert.ok(button)
+  assert.doesNotThrow(() => button.props.onClick())
 })
 
 test('v3.1: ordinary settings retain short visible cloud disclosure without overwhelming detail', () => {
