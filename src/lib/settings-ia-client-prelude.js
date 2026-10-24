@@ -29,6 +29,12 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
   function modelName(group,model){if(!model)return '';var hit=arr(group&&group.models).find(function(item){return item&&item.id===model;});return hit&&hit.name&&hit.name!==model?hit.name+' ('+model+')':model;}
   // Host capability metadata is advisory, not a successful image-delivery test.
   // An explicit text-only Host input declaration takes precedence over inference.
+  // Browser-only display preference; never changes network behavior.
+  var EGRESS_NOTICE_KEY='dsh-vision-router:cloud-vision-notice-hidden:v1';
+  function readEgressNoticeDismissed(){
+    try{return window.localStorage&&window.localStorage.getItem(EGRESS_NOTICE_KEY)==='1';}
+    catch(_){return false;}
+  }
   function visionInputReadiness(capability,status){
     if(status!=='ready'||!capability||typeof capability!=='object')return 'unknown';
     if(capability.attemptable===false)return 'blocked';
@@ -102,9 +108,17 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
       var updatePair=React.useState({status:'idle'}),updateState=updatePair[0],setUpdateState=updatePair[1];
       var selfUpdatePair=React.useState({status:'idle'}),selfUpdateState=selfUpdatePair[0],setSelfUpdateState=selfUpdatePair[1];
       var actionPair=React.useState({status:'idle'}),actionState=actionPair[0],setActionState=actionPair[1];
+      var egressStatePair=React.useState(readEgressNoticeDismissed()),egressDismissed=egressStatePair[0],setEgressDismissed=egressStatePair[1];
       var catalogGen=React.useRef?React.useRef(0):{current:0};
       var capsGen=React.useRef?React.useRef(0):{current:0};
       var h=React.createElement;
+      function saveNoticeDisplay(hide){
+        setEgressDismissed(hide);
+        try{
+          var store=window.localStorage;
+          if(store){if(hide)store.setItem(EGRESS_NOTICE_KEY,'1');else store.removeItem(EGRESS_NOTICE_KEY);}
+        }catch(_){}
+      }
 
       function loadCatalog(){
         var generation=++catalogGen.current;
@@ -190,6 +204,25 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
       function modelOptions(provider,current,allowAll){var group=groupById.get(provider),models=arr(group&&group.models),listed=new Set(models.map(function(model){return model&&model.id;}).filter(Boolean)),nodes=[h('option',{value:'',key:'__empty'},allowAll?tx('全部模型','All models'):(provider?tx('选择模型…','Choose model…'):tx('先选供应商','Choose provider first')))];if(current&&!listed.has(current))nodes.push(h('option',{value:current,key:'__stale-'+current},current+' '+tx('（已保存）','(saved)')));models.forEach(function(model){if(model&&typeof model.id==='string'&&model.id)nodes.push(h('option',{value:model.id,key:model.id},modelName(group,model.id)));});return nodes;}
       function modelRow(row,index,rows,setRows,allowAll){var ready=groups.length>0;function update(next){var copy=rows.map(function(item){return Object.assign({},item);});copy[index]=next;setRows(copy);setSaveState({status:'idle'});}function providerChanged(provider){var next=Object.assign({},row,{provider:provider,model:''});if(!allowAll)next.fallbacks=[];update(next);}function remove(){var copy=rows.filter(function(_,i){return i!==index;});setRows(copy.length?copy:[{provider:'',model:'',fallbacks:[]}]);setSaveState({status:'idle'});}return h('div',{className:'vr-chain-row',key:index},ready?h('select',{className:'vr-input vr-select',value:row.provider||'',disabled:!writable||saving,onChange:function(event){providerChanged(event.target.value);}},providerOptions(row.provider||'')):h('input',{className:'vr-input',placeholder:'provider',value:row.provider||'',disabled:!writable||saving,onChange:function(event){providerChanged(event.target.value);}}),ready?h('select',{className:'vr-input vr-select',value:row.model||'',disabled:!writable||saving||!row.provider,onChange:function(event){update(Object.assign({},row,{model:event.target.value}));}},modelOptions(row.provider||'',row.model||'',allowAll)):h('input',{className:'vr-input',placeholder:allowAll?tx('model（留空=全部）','model (empty = all)'):'model',value:row.model||'',disabled:!writable||saving,onChange:function(event){update(Object.assign({},row,{model:event.target.value}));}}),h('button',{type:'button',className:'vr-reset',disabled:!writable||saving,onClick:remove},tx('移除','Remove')));}
 
+      function egressInstructions(local){
+        if(local)return tx(
+          '数据流向：云端识图（含免费兜底）会上传图片、裁剪和提示词。免费或免 Key 不等于离线。要停止上传，请在本页开启「仅本地视觉」，然后点击「保存」。云端聊天模型仍可能收到识图结果文字。',
+          'Data flow: Cloud vision, including the free fallback, uploads images, crops and prompts. Free or keyless is not offline. To stop uploads, enable Local-only vision here and select Save. A cloud chat model may still receive result text.');
+        return tx(
+          '云端识图可能上传图片。要停止上传，请在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」，开启「仅本地视觉」并保存。云端聊天模型仍可能收到识图结果文字。',
+          'Cloud vision may upload images. To stop uploads, open Settings → Vision Router → General on the DSH computer, enable Local-only vision and save. A cloud chat model may still receive result text.');
+      }
+      function egressNotice(localOnly,local){
+        if(localOnly)return h('p',{className:'vr-hint',key:'egress'},tx(
+          '图片只发给本机视觉模型；识图结果仍交给当前聊天模型，若它在云端，结果文字可能出网。',
+          'Images stay with local vision models. Results still go to the selected chat model and may leave the machine if it is cloud-based.'));
+        var expanded=egressDismissed!==true;
+        return h('div',{className:'vr-field',key:'egress','data-vr-egress-notice':expanded?'visible':'dismissed'},
+          h('p',{className:expanded?'vr-failed':'vr-hint'},expanded?egressInstructions(local):
+            tx('云端识图可能上传图片。','Cloud vision may upload images.')),
+          h('button',{type:'button',className:'vr-btn',onClick:function(){saveNoticeDisplay(expanded);}},
+            expanded?tx('不再提醒','Do not remind again'):tx('查看如何关闭出网','How to stop uploads')));
+      }
       function generalPage(){
         var rows=chainRows(),configured=rows.filter(function(row){return row&&row.provider&&row.model;});
         var localOnly=toggleValue('localOnlyVision',false),fallback=!localOnly&&toggleValue('freeFallback',true);
@@ -228,7 +261,7 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
               '旧版 DSH：llm-pi-ai 使用 input: [text, image]；llm-deepseek 使用 inputModalities: [text, image]。只有模型本身支持图片时才这样配置。经验证的 HTTP Chat Completions 通道也可能直接桥接；单独添加视觉能力标记不能开启图片传输。',
               'Older DSH: llm-pi-ai uses input: [text, image]; llm-deepseek uses inputModalities: [text, image]. Only declare image input if the model supports it. Verified HTTP Chat Completions may bridge; a capability label alone cannot enable image delivery.')));
         }
-        return h(React.Fragment,null,title(tx('常规','General'),tx('这里只设置“谁负责看图”。聊天模型仍在聊天页选择。','This page only decides who reads images; the chat model is still chosen in chat.')),card([toggle('localOnlyVision',tx('仅本地视觉','Local-only vision'),tx('只使用本机识图模型；云端识图和免费兜底暂停，原配置保留。识图结果文字仍可能发给云端聊天模型。只能在本机修改。','Use only local vision models; cloud vision and the free fallback are paused without deleting settings. Result text may still go to a cloud chat model. Change this only on the local DSH machine.'),!local),h('div',{className:'vr-ia-status',key:'status'},h('strong',null,(localOnly?'🔒 ':configured.length||fallback?'● ':'⚠ ')+status),h('p',{className:'vr-hint'},tx('需要看图时，在聊天框旁点击「👁 识图」。','Use “👁 Vision” beside the chat box when an image needs inspection.')),h('p',{className:localOnly?'vr-hint':'vr-failed',key:'egress'},localOnly?tx('图片只发给本机视觉模型；识图结果仍交给当前聊天模型，若它在云端，结果文字可能出网。','Image bytes stay with local vision models. Results still go to the selected chat model and may leave the machine if it is cloud-based.'):tx('数据流向：云端识图（含免费兜底）会发送图片、裁剪和提示词。免费或免 Key 不等于离线。若不想上传图片，请开启「仅本地视觉」。','Data flow: Cloud vision, including the free fallback, sends images, crops and prompts to providers. Free or keyless does not mean offline. To stop image uploads, enable Local-only vision.')),ordered.length?h('p',{className:'vr-ia-chain-summary'},ordered.join(' → ')):null,stale.length?h('p',{className:'vr-failed'},tx('有已保存的识图模型当前不在可调用目录中；请到“诊断”重新检测。','A saved vision model is not currently in the callable catalog; re-detect it in Diagnostics.')):null)]),card([h('div',{className:'vr-field',id:'vr-vision-backend-chain','data-vr-guide-target':'vision-backend',key:'chain'},fieldHead('providers',tx('识图模型','Vision models')),h('p',{className:'vr-hint'},tx('从上到下依次尝试；前一个失败时自动切换到下一个。','Models are tried from top to bottom and fall through automatically on failure.')),rows.map(function(row,index){return modelRow(row,index,rows,setChainDraft,false);}),
+        return h(React.Fragment,null,title(tx('常规','General'),tx('这里只设置“谁负责看图”。聊天模型仍在聊天页选择。','This page only decides who reads images; the chat model is still chosen in chat.')),card([toggle('localOnlyVision',tx('仅本地视觉','Local-only vision'),tx('只使用本机识图模型；云端识图和免费兜底暂停，原配置保留。识图结果文字仍可能发给云端聊天模型。只能在本机修改。','Use only local vision models; cloud vision and the free fallback are paused without deleting settings. Result text may still go to a cloud chat model. Change this only on the local DSH machine.'),!local),h('div',{className:'vr-ia-status',key:'status'},h('strong',null,(localOnly?'🔒 ':configured.length||fallback?'● ':'⚠ ')+status),h('p',{className:'vr-hint'},tx('需要看图时，在聊天框旁点击「👁 识图」。','Use “👁 Vision” beside the chat box when an image needs inspection.')),egressNotice(localOnly,local),ordered.length?h('p',{className:'vr-ia-chain-summary'},ordered.join(' → ')):null,stale.length?h('p',{className:'vr-failed'},tx('有已保存的识图模型当前不在可调用目录中；请到“诊断”重新检测。','A saved vision model is not currently in the callable catalog; re-detect it in Diagnostics.')):null)]),card([h('div',{className:'vr-field',id:'vr-vision-backend-chain','data-vr-guide-target':'vision-backend',key:'chain'},fieldHead('providers',tx('识图模型','Vision models')),h('p',{className:'vr-hint'},tx('从上到下依次尝试；前一个失败时自动切换到下一个。','Models are tried from top to bottom and fall through automatically on failure.')),rows.map(function(row,index){return modelRow(row,index,rows,setChainDraft,false);}),
         readiness.filter(function(entry){return !localOnly&&(caps.status==='ready'||caps.status==='error')&&entry.state!=='evidence';}).map(function(entry,index){return h('div',{
           className:'vr-field',key:'readiness-'+index,'data-vr-model-readiness':entry.state
         },h('p',{className:entry.state==='text-only'||entry.state==='blocked'?'vr-failed':'vr-hint'},
