@@ -206,16 +206,16 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
 
       function egressInstructions(local){
         if(local)return tx(
-          '数据流向：云端识图（含免费兜底）会上传图片、裁剪和提示词。免费或免 Key 不等于离线。要停止上传，请在本页开启「仅本地视觉」，然后点击「保存」。云端聊天模型仍可能收到识图结果文字。',
-          'Data flow: Cloud vision, including the free fallback, uploads images, crops and prompts. Free or keyless is not offline. To stop uploads, enable Local-only vision here and select Save. A cloud chat model may still receive result text.');
+          '数据流向：云端识图（含免费兜底）会上传图片、裁剪和提示词。免费或免 Key 不等于离线。要停止上传，请在本页开启「仅本地视觉」，然后点击「保存」。云端聊天模型仍可能收到识图结果文字；要完全不出网，还需在聊天页选择本地聊天模型。',
+          'Data flow: Cloud vision, including the free fallback, uploads images, crops and prompts. Free or keyless is not offline. To stop uploads, enable Local-only vision here and select Save. A cloud chat model may still receive result text; choose a local chat model in the composer to keep the whole workflow local.');
         return tx(
-          '云端识图可能上传图片。要停止上传，请在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」，开启「仅本地视觉」并保存。云端聊天模型仍可能收到识图结果文字。',
-          'Cloud vision may upload images. To stop uploads, open Settings → Vision Router → General on the DSH computer, enable Local-only vision and save. A cloud chat model may still receive result text.');
+          '云端识图可能上传图片。要停止上传，请在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」，开启「仅本地视觉」并保存。云端聊天模型仍可能收到识图结果文字；要完全不出网，还需在聊天页选择本地聊天模型。',
+          'Cloud vision may upload images. To stop uploads, open Settings → Vision Router → General on the DSH computer, enable Local-only vision and save. A cloud chat model may still receive result text; choose a local chat model in the composer to keep the whole workflow local.');
       }
       function egressNotice(localOnly,local){
         if(localOnly)return h('p',{className:'vr-hint',key:'egress'},tx(
-          '图片只发给本机视觉模型；识图结果仍交给当前聊天模型，若它在云端，结果文字可能出网。',
-          'Images stay with local vision models. Results still go to the selected chat model and may leave the machine if it is cloud-based.'));
+          '图片只发给本机视觉模型；识图结果仍交给当前聊天模型，若它在云端，结果文字可能出网。要完全本地，请在聊天页选本地聊天模型。',
+          'Images stay with local vision models. Results may still go to a cloud chat model; choose a local chat model in the composer to keep both local.'));
         var expanded=egressDismissed!==true;
         return h('div',{className:'vr-field',key:'egress','data-vr-egress-notice':expanded?'visible':'dismissed'},
           h('p',{className:expanded?'vr-failed':'vr-hint'},expanded?egressInstructions(local):

@@ -184,7 +184,7 @@ test('public surfaces disclose remote image egress and strict local-only require
   assert.match(settings, /数据流向/)
   assert.match(settings, /remote OVHcloud service/)
   assert.match(settings, /Result text may still go to a cloud chat model/)
-  assert.match(settings, /Results still go to the selected chat model and may leave the machine/)
+  assert.match(settings, /Results may still go to a cloud chat model/)
   assert.match(settings, /Vision result destination/)
   assert.match(legacySettings, /Derived result text/)
   assert.match(legacySettings, /严格纯本地还需同时选择本地聊天模型/)

@@ -195,6 +195,7 @@ test('v3.1: cloud upload guidance points to the actual save action and supports 
   const first = render()
   assert.match(textOf(first), /要停止上传，请在本页开启「仅本地视觉」，然后点击「保存」/)
   assert.match(textOf(first), /云端聊天模型仍可能收到识图结果文字/)
+  assert.match(textOf(first), /要完全不出网，还需在聊天页选择本地聊天模型/)
   const dismiss = findButton(first, '不再提醒')
   assert.ok(dismiss)
   dismiss.props.onClick()
@@ -224,6 +225,7 @@ test('v3.1: remote view explains where to disable uploads and hidden notice neve
   })
   const localText = textOf(local.registeredComponent({ scope: local.scope }))
   assert.match(localText, /图片只发给本机视觉模型/)
+  assert.match(localText, /要完全本地，请在聊天页选本地聊天模型/)
   assert.doesNotMatch(localText, /不再提醒/)
 })
 

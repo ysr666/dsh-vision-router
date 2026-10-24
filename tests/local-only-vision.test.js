@@ -84,7 +84,7 @@ test('Settings UI exposes the productized local-only control and disables OVH wh
   assert.match(source, /runtime-blocked while Local-only vision is enabled/)
   assert.match(source, /Change this only on the local DSH machine/)
   assert.match(source, /Result text may still go to a cloud chat model/)
-  assert.match(source, /Results still go to the selected chat model and may leave the machine/)
+  assert.match(source, /Results may still go to a cloud chat model/)
   assert.match(source, /Vision result destination/)
 })
 
