@@ -229,6 +229,26 @@ test('v3.1: remote view explains where to disable uploads and hidden notice neve
   assert.doesNotMatch(localText, /不再提醒/)
 })
 
+test('v3.1: unsaved local-only change never claims uploads are already blocked', () => {
+  const { registeredComponent, scope } = createHarness(reactStub(['general', { localOnlyVision: true }]))
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /仅本地视觉待保存/)
+  assert.match(text, /保存前图片仍可能上传/)
+  assert.match(text, /数据流向：云端识图/)
+  assert.doesNotMatch(text, /仅本地视觉策略已启用/)
+})
+
+test('v3.1: disabling local-only does not claim cloud vision is active before Save', () => {
+  const { registeredComponent, scope } = createHarness(reactStub(['general', { localOnlyVision: false }]), {
+    value: baseSettings({ localOnlyVision: true }),
+  })
+  const text = textOf(registeredComponent({ scope }))
+  assert.match(text, /关闭仅本地视觉待保存/)
+  assert.match(text, /当前仍在仅本地视觉模式/)
+  assert.match(text, /图片只发给本机视觉模型/)
+  assert.doesNotMatch(text, /数据流向：云端识图/)
+})
+
 test('v3.1: storage failure cannot prevent a visible default privacy warning', () => {
   const storage = { getItem() { throw Error('blocked') }, setItem() { throw Error('blocked') } }
   const { registeredComponent, scope } = createHarness(reactStub(), { storage })
