@@ -590,9 +590,14 @@ Manual fallback: in VS Code, use “Save with Encoding” → `UTF-8` (without B
 
 ## Design lineage
 
-The deep-vision tool layer and UI-restoration workflow in this project were informed by [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) and its native DSH implementation [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit). In particular, this project drew on their intent-driven tool selection, progressive tool exposure, pixel-diff verification loop, and parts of the visual-tool decomposition and naming, including long-screenshot OCR, foreground extraction, and HTML screenshot tooling.
+The deep-vision tool layer and UI-restoration workflow in this project were informed by [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) and its native DSH implementation [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit). In particular, this project drew on:
 
-All code in `dsh-vision-router` is independently implemented. On top of those referenced design ideas, this project independently developed its turn-level/tools-first vision routing, DSH admission/wrapper integration, multi-backend provider and failure fallback chains, built-in free vision chain, attachment/image-memory handling, caching, and related runtime resilience mechanisms.
+- **Intent-driven tool selection** — a viewing request carries the current intent as a focus hint, so the answer targets the question at hand instead of a generic image description.
+- **Progressive tool exposure** — visual tools mount on demand per agent scope rather than all at once.
+- **Pixel-diff verification loop** — reference → `vision_html_screenshot` → `vision_pixel_diff` (difference ratio plus worst regions) → fix → repeat until it converges.
+- **Parts of the visual-tool decomposition and naming** — long-screenshot OCR, foreground extraction, and HTML screenshot tooling.
+
+All code in `dsh-vision-router` is independently implemented. Note that this project still registers all deep-vision tools under a stable tool schema by default; progressive exposure is an opt-in, boot-time switch. On top of those referenced design ideas, this project independently developed its turn-level/tools-first vision routing, DSH admission/wrapper integration, multi-backend provider and failure fallback chains, built-in free vision chain, attachment/image-memory handling, caching, and related runtime resilience mechanisms.
 
 We appreciate Anionex's prior work and the broader DSH community. Clear attribution and independent iteration can coexist; both help keep the DSH ecosystem open, collaborative, and healthy.
 

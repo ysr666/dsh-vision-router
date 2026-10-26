@@ -585,9 +585,14 @@ npx dsh-vision-router doctor --profile web
 
 ## 设计来源
 
-本项目的深度视觉工具层与 UI restoration 工作流参考并受到 [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) 及其 DSH 原生实现 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) 的设计影响。具体包括意图驱动的工具选择、渐进式工具暴露、pixel-diff 验证闭环，以及部分视觉工具的职责划分与命名，包括长截图 OCR、前景提取和 HTML screenshot 等设计。
+本项目的深度视觉工具层与 UI restoration 工作流，参考了 [Anionex/agent-vision-toolkit](https://github.com/Anionex/agent-vision-toolkit) 及其 DSH 原生实现 [Anionex/dsh-vision-toolkit](https://github.com/Anionex/dsh-vision-toolkit) 的设计，具体包括：
 
-`dsh-vision-router` 中相关代码均为独立实现。在这些设计参考基础上，本项目独立发展了 turn-level/tools-first vision routing、DSH 准入/包装集成、多视觉后端与故障 fallback chain、内置免费视觉模型链、附件/图片记忆、缓存与相关运行时容错机制。
+- **意图驱动的工具选择**：看图请求携带当前意图作为 focus hint，回答的是这一轮真正关心的问题，而不是一段泛化的图像描述；
+- **渐进式工具暴露**：视觉工具按 agent 作用域按需挂载，不必一次性铺满工具列表；
+- **pixel-diff 验证闭环**：参考图 → `vision_html_screenshot` → `vision_pixel_diff`（差异比例 + 最差区域）→ 修正 → 复测，直到收敛；
+- **部分工具的职责划分与命名**：长截图 OCR、前景提取、HTML screenshot 等。
+
+`dsh-vision-router` 中相关代码均为独立实现。需要说明的是，本项目默认仍以稳定的工具 schema 注册全部深度视觉工具，渐进式暴露仅作为启动期可选开关。在这些设计参考基础上，本项目独立发展了 turn-level/tools-first vision routing、DSH 准入/包装集成、多视觉后端与故障 fallback chain、内置免费视觉模型链、附件/图片记忆、缓存与相关运行时容错机制。
 
 感谢 Anionex 的先行工作以及整个 DSH 社区的探索。清晰的设计归因与独立迭代并不冲突；二者都有助于维护开放、协作、健康的 DSH 生态。
 
