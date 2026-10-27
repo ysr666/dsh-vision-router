@@ -79,7 +79,7 @@ npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 - **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。遇到 429 会立即尝试下一后端，并按 Retry-After 开启冷却，不会在单次请求内睡眠等待。
 - **图片记忆。** 视觉答案按附件内容哈希缓存；后续文字轮用记录的描述替换历史图片（标注为不可信证据），DeepSeek 真正“记得”之前发过的图，且不重复消耗视觉调用。
 - **可验证的像素闭环。** 参照图 → `vision_html_screenshot` → `vision_pixel_diff`（差异率 + 红色热力图 + 最差区域排行）→ 修复 → 再对比，直到差异收敛。UI 还原从“目测”变成“实测”。
-- **稳定工具 schema。** 默认从会话开始就注册完整 14 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效。仍保留 `progressiveTools: true` 作为高级启动期 opt-in；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
+- **稳定工具 schema。** 默认在插件启动时全局注册完整 14 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效；但只有当前会话开启 Vision，Agent 才能看到这些工具。仍保留 `progressiveTools: true` 作为高级启动期选项；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
 - **选择性代理。** 只有配置的视觉供应商域名走本地代理；DeepSeek 保持直连。
 
 ### 像素闭环实测
