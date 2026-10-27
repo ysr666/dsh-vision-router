@@ -30,6 +30,17 @@ const { installSessionVisionModeBoundary } = await import(
 const host = new Context()
 await host.plugin(SystemPrompt)
 await host.plugin(Tools)
+// Official RC3 accepts adapter identity via llm.registration(provider). This
+// synthetic adapter registry proves route-derived Session authority independently
+// from the separate explicit Session policy test below.
+const adapterOwner = Symbol.for('dsh-vision-router.adapter-owner')
+host.provide('llm', {
+  registration(provider) {
+    return { adapter: provider === 'native-mm-vision'
+      ? { [adapterOwner]: { route: 'native-mm-vision' } }
+      : {} }
+  },
+})
 
 // This is a synthetic session-policy fixture on the official Host runtime,
 // not a reproduction of the reporter's unknown active Desktop Session.
@@ -58,8 +69,17 @@ boundary.ctx.tools.register(definition('vision_ocr', 'dvr'))
 host.tools.register(definition('office_status', 'foreign global'))
 
 const scopes = []
-async function makeAgent(id) {
-  const agent = { id, session: { id } }
+async function makeAgent(id, provider) {
+  const agent = {
+    id,
+    session: {
+      id,
+      provider,
+      requestHeader() {
+        return this.provider ? { config: { provider: this.provider, model: 'fixture-model' } } : undefined
+      },
+    },
+  }
   // This is the same scope key/creation contract used by RC3 AgentLoop.
   const scope = createScope(host, agent)
   const fiber = scope.ctx.inject(['tools'], (ctx) => {
@@ -75,6 +95,16 @@ async function makeAgent(id) {
 try {
   const on = await makeAgent('on')
   const off = await makeAgent('off')
+  const routeOn = await makeAgent('route-on', 'native-mm-vision')
+  const routeOff = await makeAgent('route-off', 'native-mm')
+  assert.ok(host.tools.get('vision_colors', routeOn), 'owned route => Vision ON')
+  assert.equal(host.tools.get('vision_colors', routeOff), undefined, 'ordinary route => Vision OFF')
+  routeOn.session.provider = 'native-mm'
+  host.emit('agent/status', { agent: routeOn, status: 'running' })
+  assert.equal(host.tools.get('vision_colors', routeOn), undefined, 'route ON -> OFF masked')
+  routeOff.session.provider = 'native-mm-vision'
+  host.emit('agent/status', { agent: routeOff, status: 'running' })
+  assert.ok(host.tools.get('vision_colors', routeOff), 'route OFF -> ON restored')
   assert.ok(host.tools.get('vision_colors'), 'DVR globally registered')
   assert.ok(host.tools.get('vision_colors', on), 'Vision ON Agent sees registered tool')
   assert.equal(host.tools.get('vision_colors', off), undefined, 'Vision OFF Agent must not see DVR tool')
@@ -115,6 +145,7 @@ try {
     visionOnVisible: true,
     visionOffMasked: true,
     onOffTransitions: true,
+    routeDerivedOnOffTransitions: true,
     foreignToolPreserved: true,
     foreignShadowPreserved: true,
     foreignPresetIsolated: true,
