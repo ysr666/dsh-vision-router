@@ -100,7 +100,9 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 
 ## Tools
 
-Default `progressiveTools: false`: all fourteen deep tools stay registered from plugin startup, so text and image turns can call them immediately. If you explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`, progressive mode is restored: only `vision_activate` is exposed initially, the full tool set mounts on first use, and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / potrace / tesseract / system Chrome — no Python:
+Default `progressiveTools: false`: all fourteen deep tools are registered at startup. **Registration does not grant access in every conversation**: turn **Vision ON** in the current chat to make them visible and callable by its Agent. While Vision is OFF, that Agent cannot use `vision_colors`, `vision_ocr`, or the other Vision Router tools, even with `tool: true` in Settings. Under this default mode, `vision_activate` is **not registered**.
+
+To opt into progressive mounting, explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`. Only then is `vision_activate` initially exposed to Vision-enabled Sessions; the full tool set mounts upon activation and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / potrace / tesseract / system Chrome — no Python:
 
 <p align="center">
   <img src="assets/vision-tools.svg" width="100%" alt="Eleven image-processing tools available in DSH Vision Router." />
