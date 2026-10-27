@@ -85,7 +85,7 @@ function restrictableOwnedVisionToolNames(tools, owned) {
   return active
 }
 
-function assemblyOwnedVisionToolNames(registryTools, scopedTools, owned) {
+function assemblyOwnedVisionToolNames(registryTools, scopedTools, owned, agent) {
   const active = restrictableOwnedVisionToolNames(registryTools, owned)
   const scopedGet = scopedTools?.get
   if (typeof scopedGet !== 'function') return new Set(active)
@@ -93,7 +93,10 @@ function assemblyOwnedVisionToolNames(registryTools, scopedTools, owned) {
   const projected = new Set()
   for (const name of active) {
     try {
-      const visible = scopedGet.call(scopedTools, name)
+      // DSH RC3 get(name, scope) defaults to the *global* view, even when
+      // accessed through agent.ctx.tools. Supply the actual Agent to preserve
+      // foreign Agent-scoped shadows of DVR global tool names.
+      const visible = scopedGet.call(scopedTools, name, agent)
       // A foreign Agent-scoped definition is allowed to shadow DVR's global
       // name. DSH restrictions deliberately leave scoped registrations visible,
       // so the final assembly projection must preserve the same boundary.
@@ -439,7 +442,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       const transformed = typeof next === 'function' ? await next() : assembly
       const projectedOwned =
         ctx?.tools
-          ? assemblyOwnedVisionToolNames(ctx.tools, agent?.ctx?.tools, ownedVisionTools)
+          ? assemblyOwnedVisionToolNames(ctx.tools, agent?.ctx?.tools, ownedVisionTools, agent)
           : ownedVisionTools
       return projectAssemblyTools(
         transformed,
