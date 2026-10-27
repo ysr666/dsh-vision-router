@@ -430,3 +430,20 @@ test('Issue #759: HMR restoration preserves existing Vision ON Agent access and 
   })
   assert.doesNotThrow(() => noRegistry.reconcileExistingAgents())
 })
+
+test('HMR restoration respects pending durable model selections instead of initial Agent constructor routes', () => {
+  const harness = makeHarness()
+  harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const initiallyOn = harness.makeAgent('deepseek-vision', 'initially-on')
+  const initiallyOff = harness.makeAgent('deepseek-official', 'initially-off')
+
+  // Real DSH session-controller modelSelection projection returns pending
+  // composer intent ahead of the last-used/constructor route.
+  initiallyOn.session.selectionState.pending = { provider: 'deepseek-official', model: 'model' }
+  initiallyOff.session.selectionState.pending = { provider: 'deepseek-vision', model: 'model' }
+
+  harness.mode.reconcileExistingAgents()
+  assert.equal(initiallyOn.ctx.tools.get('vision_describe'), undefined, 'ON->OFF selection stays denied after remount')
+  assert.ok(initiallyOff.ctx.tools.get('vision_describe'), 'OFF->ON selection stays accessible after remount')
+  assert.deepEqual(harness.restrictCalls, [['vision_describe']])
+})
