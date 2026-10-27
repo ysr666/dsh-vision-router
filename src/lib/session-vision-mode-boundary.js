@@ -559,5 +559,28 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     },
   })
 
-  return { ctx: wrapped, config }
+  // After HMR the old plugin generation releases its Agent-scoped masks.
+  // Reconcile agents that were already alive before this generation mounted:
+  // otherwise their OFF scopes see newly registered global DVR schemas until
+  // the next agent/status or prompt-assembly event.
+  const reconcileExistingAgents = () => {
+    let agents
+    try {
+      const registry = ctx.get?.('agents')
+      agents = typeof registry?.list === 'function' ? registry.list() : undefined
+    } catch {
+      return
+    }
+    if (!Array.isArray(agents)) return
+    for (const agent of agents) {
+      try {
+        syncForAgent(agent)
+      } catch {
+        // Older Hosts may not expose the same Agent registry seams. Keep the
+        // execution guard and ordinary per-step synchronization authoritative.
+      }
+    }
+  }
+
+  return { ctx: wrapped, config, reconcileExistingAgents }
 }

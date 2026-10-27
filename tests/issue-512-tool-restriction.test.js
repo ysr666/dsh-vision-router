@@ -12,6 +12,7 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {})
   const warnings = []
   const effects = []
   const scopedByAgent = new WeakMap()
+  const liveAgents = []
   let screenshotCandidate
 
   const config = {
@@ -62,6 +63,7 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {})
     tools,
     sessionProjections,
     get(name) {
+      if (name === 'agents') return { list: () => [...liveAgents] }
       if (name === 'settings') return settings
       if (name === 'sessionProjections') return sessionProjections
       return undefined
@@ -91,6 +93,7 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {})
     }
     const scopedDefinitions = new Map()
     scopedByAgent.set(agent, scopedDefinitions)
+    liveAgents.push(agent)
     agent.ctx = {
       logger: {
         warn(...args) {
@@ -397,4 +400,50 @@ test('Session Vision boundary establishes lifecycle ownership before admitting l
 
   assert.equal(result.ctx, ctx)
   assert.equal(onCalls, 0, 'an unowned generation must not register hooks that can create Agent-scoped masks')
+})
+
+test('Issue #759: HMR restoration immediately reinstates OFF Agent tool restrictions without waiting for an agent/status event', () => {
+  const harness = makeHarness()
+  harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = harness.makeAgent()
+  assert.ok(agent.ctx.tools.get('vision_describe'), 'without reconciliation an existing OFF Agent sees remounted schemas')
+
+  harness.mode.reconcileExistingAgents()
+  assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
+  assert.deepEqual(harness.restrictCalls, [['vision_describe']])
+  harness.mode.reconcileExistingAgents()
+  assert.deepEqual(harness.restrictCalls, [['vision_describe']], 'reconciliation must be idempotent')
+})
+
+test('Issue #759: HMR restoration preserves existing Vision ON Agent access and ignores Hosts without Agent listing', () => {
+  const harness = makeHarness()
+  harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = harness.makeAgent('deepseek-vision')
+  harness.mode.reconcileExistingAgents()
+  assert.ok(agent.ctx.tools.get('vision_describe'))
+  assert.deepEqual(harness.restrictCalls, [])
+
+  const noRegistry = installSessionVisionModeBoundary({
+    get() { return undefined },
+    effect(setup) { return setup() },
+    on() { return () => {} },
+  })
+  assert.doesNotThrow(() => noRegistry.reconcileExistingAgents())
+})
+
+test('HMR restoration respects pending durable model selections instead of initial Agent constructor routes', () => {
+  const harness = makeHarness()
+  harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const initiallyOn = harness.makeAgent('deepseek-vision', 'initially-on')
+  const initiallyOff = harness.makeAgent('deepseek-official', 'initially-off')
+
+  // Real DSH session-controller modelSelection projection returns pending
+  // composer intent ahead of the last-used/constructor route.
+  initiallyOn.session.selectionState.pending = { provider: 'deepseek-official', model: 'model' }
+  initiallyOff.session.selectionState.pending = { provider: 'deepseek-vision', model: 'model' }
+
+  harness.mode.reconcileExistingAgents()
+  assert.equal(initiallyOn.ctx.tools.get('vision_describe'), undefined, 'ON->OFF selection stays denied after remount')
+  assert.ok(initiallyOff.ctx.tools.get('vision_describe'), 'OFF->ON selection stays accessible after remount')
+  assert.deepEqual(harness.restrictCalls, [['vision_describe']])
 })
