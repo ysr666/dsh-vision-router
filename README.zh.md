@@ -100,7 +100,9 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 
 ## 工具
 
-默认 `progressiveTools: false`：14 个深看工具从插件启动时就保持常驻，文本轮和图片轮都可直接调用。若你在 profile / composition 的 `cordis.patch.yml` 中显式开启 `progressiveTools: true`，才会恢复渐进模式：初始只暴露 `vision_activate`，首次需要时再挂载完整工具，并注册 `vision-tools` 技能。该开关是启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
+默认 `progressiveTools: false`：14 个深看工具在插件启动时即注册。但**注册成功不等于所有会话都能调用**：须在当前聊天中打开 **Vision（视觉）**，该会话的 Agent 才能看到和调用视觉工具。Vision 关闭时，即使设置里 `tool: true`，也无法调用 `vision_colors`、`vision_ocr` 等工具。默认模式下**不会注册 `vision_activate`**。
+
+需要渐进式挂载时，可在 profile / composition 的 `cordis.patch.yml` 中显式设置 `progressiveTools: true`。这时已开启 Vision 的会话初始可使用 `vision_activate`，激活后再挂载完整工具并注册 `vision-tools` 技能。该开关属于启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
   <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
