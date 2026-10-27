@@ -444,6 +444,9 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
   const installPostCoreRuntime = () => {
     installVisionMaintenanceRoutes(coreRequestAuthorityCtx, { logger: logging.logger })
     finishSchemaBootstrapOnce()
+    // Core has now registered its tools. Restore masks for existing Agents
+    // before any new presentation can observe this HMR generation.
+    sessionVisionModeCompat.reconcileExistingAgents()
     installWrapperDirectoryAlias(attachmentCompatCtx, runtimeConfig, logging.logger)
   }
   const failCoreApply = (error) => {
