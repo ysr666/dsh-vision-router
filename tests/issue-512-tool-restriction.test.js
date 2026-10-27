@@ -5,7 +5,7 @@ import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-bou
 
 const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
-function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {}) {
+function makeHarness({ failRestriction = false, sessionVisionPolicyStore, hostGetRequiresExplicitScope = false } = {}) {
   const handlers = new Map()
   const definitions = new Map()
   const restrictCalls = []
@@ -101,7 +101,10 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore } = {})
         },
       },
       tools: {
-        get(name) {
+        get(name, scope) {
+          // DSH 0.2.1-rc.3 defaults an omitted scope to the global view,
+          // even when called via agent.ctx.tools. Older test Hosts did not.
+          if (hostGetRequiresExplicitScope && scope !== agent) return definitions.get(name)
           if (scopedDefinitions.has(name)) return scopedDefinitions.get(name)
           if (activeRestrictions.some((deny) => deny.has(name))) return undefined
           return definitions.get(name)
@@ -287,6 +290,34 @@ test('issue #512: a foreign Agent-scoped shadow survives DVR global restriction 
     'vision_describe',
     'foreign_tool',
   ])
+})
+
+test('DSH RC3: explicit Agent scope preserves foreign same-name schemas when global get is misleading', async () => {
+  const harness = makeHarness({ hostGetRequiresExplicitScope: true })
+  harness.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = harness.makeAgent()
+  const foreign = { name: 'vision_describe', description: 'Agent-local foreign tool' }
+  harness.shadowForAgent(agent, 'vision_describe', foreign)
+
+  // Exact official RC3 ToolRuntime semantics: get(name) is unscoped.
+  assert.notEqual(agent.ctx.tools.get('vision_describe'), foreign)
+  assert.equal(agent.ctx.tools.get('vision_describe', agent), foreign)
+  harness.handlers.get('agent/created')?.({ agent })
+
+  const assembly = { tools: [{ name: 'vision_describe' }, { name: 'foreign_tool' }] }
+  const assemble = harness.handlers.get('system-prompt/assemble')
+  assert.ok(assemble)
+  const projected = await assemble(assembly, { agent }, async () => assembly)
+  assert.deepEqual(projected.tools.map((tool) => tool.name), [
+    'vision_describe',
+    'foreign_tool',
+  ])
+
+  // Without an Agent-local shadow, only the actual DVR-owned global tool is removed.
+  const plain = harness.makeAgent('deepseek-official', 'plain')
+  harness.handlers.get('agent/created')?.({ agent: plain })
+  const plainProjection = await assemble(assembly, { agent: plain }, async () => assembly)
+  assert.deepEqual(plainProjection.tools.map((tool) => tool.name), ['foreign_tool'])
 })
 
 test('issue #512: a foreign tool that reuses an unmounted DVR name is not restricted or filtered', async () => {
