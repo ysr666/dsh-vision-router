@@ -120,6 +120,9 @@ jobs:
               '@deepseek-ai/dsh-settings': v,
               '@deepseek-ai/dsh-tools': v,
               '@deepseek-ai/dsh-system-prompt': v,
+              ...process.env.DSH_CHANNEL === 'preview'
+                ? { '@deepseek-ai/dsh-tool-executor-native': v }
+                : {},
               sharp: '0.35.3'
             }
           }, null, 2))
