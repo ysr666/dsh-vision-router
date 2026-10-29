@@ -79,7 +79,7 @@ These are ordinary chat requests: your normal model reasons through the task and
 - **Automatic failover with classified errors.** Region blocks, ToS filtering, 402 quota, 429 rate limits, context overflow, network failures — the chain walks providers one by one and only reports after all of them failed, with actionable advice. A 429 immediately advances to the next backend and opens a Retry-After-aware cooldown instead of sleeping inside the request.
 - **Image memory.** Vision answers are cached by attachment content hash; later text turns substitute the recorded description (marked as untrusted evidence), so DeepSeek genuinely remembers earlier images without re-spending vision calls.
 - **A verifiable pixel loop.** Reference → `vision_html_screenshot` → `vision_pixel_diff` (ratio + worst 8×8-grid regions) → fix → repeat until the mismatch converges. UI restoration becomes measurable instead of eyeballed.
-- **Stable tool schema.** All fourteen deep tools are registered from session start by default, avoiding a mid-conversation tool-list expansion that can invalidate long-context KV/prefix caches. `progressiveTools: true` remains an advanced boot-time opt-in; only then does `vision_activate` mount the tools on demand. See [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md).
+- **Stable tool schema.** All fourteen deep tools register globally at startup by default, avoiding a mid-conversation tool-list expansion that can invalidate long-context KV/prefix caches. Individual Agents see them only while their conversation has Vision enabled. `progressiveTools: true` remains an advanced boot-time opt-in; only then does `vision_activate` mount the tools on demand. See [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md).
 - **Selective proxy.** Only the configured vision provider hosts go through your local proxy; DeepSeek stays direct.
 
 ### Pixel loop in practice
@@ -100,7 +100,9 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 
 ## Tools
 
-Default `progressiveTools: false`: all fourteen deep tools stay registered from plugin startup, so text and image turns can call them immediately. If you explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`, progressive mode is restored: only `vision_activate` is exposed initially, the full tool set mounts on first use, and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / potrace / tesseract / system Chrome — no Python:
+Default `progressiveTools: false`: all fourteen deep tools are registered at startup. **Registration does not grant access in every conversation**: turn **Vision ON** in the current chat to make them visible and callable by its Agent. While Vision is OFF, that Agent cannot use `vision_colors`, `vision_ocr`, or the other Vision Router tools, even with `tool: true` in Settings. Under this default mode, `vision_activate` is **not registered**.
+
+To opt into progressive mounting, explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`. Only then is `vision_activate` initially exposed to Vision-enabled Sessions; the full tool set mounts upon activation and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / potrace / tesseract / system Chrome — no Python:
 
 <p align="center">
   <img src="assets/vision-tools.svg" width="100%" alt="Eleven image-processing tools available in DSH Vision Router." />

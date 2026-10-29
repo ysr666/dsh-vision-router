@@ -79,7 +79,7 @@ npx @deepseek-ai/dsh plugin --profile web add dsh-vision-router
 - **自动降级 + 分类报错。** 地区限制、ToS 风控、402 额度、429 限流、上下文超长、网络故障——链路逐供应商尝试，全部失败才报错并给出可操作的建议。遇到 429 会立即尝试下一后端，并按 Retry-After 开启冷却，不会在单次请求内睡眠等待。
 - **图片记忆。** 视觉答案按附件内容哈希缓存；后续文字轮用记录的描述替换历史图片（标注为不可信证据），DeepSeek 真正“记得”之前发过的图，且不重复消耗视觉调用。
 - **可验证的像素闭环。** 参照图 → `vision_html_screenshot` → `vision_pixel_diff`（差异率 + 红色热力图 + 最差区域排行）→ 修复 → 再对比，直到差异收敛。UI 还原从“目测”变成“实测”。
-- **稳定工具 schema。** 默认从会话开始就注册完整 14 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效。仍保留 `progressiveTools: true` 作为高级启动期 opt-in；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
+- **稳定工具 schema。** 默认在插件启动时全局注册完整 14 个深看工具，避免图片轮中途扩展工具列表导致长上下文的 KV / prefix cache 失效；但只有当前会话开启 Vision，Agent 才能看到这些工具。仍保留 `progressiveTools: true` 作为高级启动期选项；开启后才使用 `vision_activate` 按需挂载。详见 [`docs/progressive-tools-cache.md`](docs/progressive-tools-cache.md)。
 - **选择性代理。** 只有配置的视觉供应商域名走本地代理；DeepSeek 保持直连。
 
 ### 像素闭环实测
@@ -100,7 +100,9 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 
 ## 工具
 
-默认 `progressiveTools: false`：14 个深看工具从插件启动时就保持常驻，文本轮和图片轮都可直接调用。若你在 profile / composition 的 `cordis.patch.yml` 中显式开启 `progressiveTools: true`，才会恢复渐进模式：初始只暴露 `vision_activate`，首次需要时再挂载完整工具，并注册 `vision-tools` 技能。该开关是启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
+默认 `progressiveTools: false`：14 个深看工具在插件启动时即注册。但**注册成功不等于所有会话都能调用**：须在当前聊天中打开 **Vision（视觉）**，该会话的 Agent 才能看到和调用视觉工具。Vision 关闭时，即使设置里 `tool: true`，也无法调用 `vision_colors`、`vision_ocr` 等工具。默认模式下**不会注册 `vision_activate`**。
+
+需要渐进式挂载时，可在 profile / composition 的 `cordis.patch.yml` 中显式设置 `progressiveTools: true`。这时已开启 Vision 的会话初始可使用 `vision_activate`，激活后再挂载完整工具并注册 `vision-tools` 技能。该开关属于启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
   <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
