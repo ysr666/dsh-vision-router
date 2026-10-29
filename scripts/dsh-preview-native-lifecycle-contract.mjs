@@ -56,6 +56,12 @@ const sessionProjectionModule = await importResolved('@deepseek-ai/dsh-session-p
 const attachmentModule = await importResolved('@deepseek-ai/dsh-attachment-local')
 const systemPromptModule = await importResolved('@deepseek-ai/dsh-system-prompt')
 const toolsModule = await importResolved('@deepseek-ai/dsh-tools')
+let nativeExecutorModule
+try {
+  nativeExecutorModule = await importResolved('@deepseek-ai/dsh-tool-executor-native')
+} catch (error) {
+  if (error?.code !== 'MODULE_NOT_FOUND') throw error
+}
 const agentModule = await importResolved('@deepseek-ai/dsh-agent')
 const agentLoopModule = await importResolved('@deepseek-ai/dsh-agent-loop')
 const persistenceModule = await importResolved('@deepseek-ai/dsh-session-persistence-jsonl')
@@ -178,6 +184,10 @@ async function mount(label) {
   await ctx.plugin(LocalAttachmentStore, { dshHome })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  if (typeof ToolRuntime.prototype.setExecutor === 'function') {
+    assert.ok(nativeExecutorModule, 'alpha Host requires its official native executor package')
+    await ctx.plugin(nativeExecutorModule)
+  }
   await ctx.plugin(AgentRegistry)
   if (imageOffloadModule !== undefined) await ctx.plugin(imageOffloadModule)
   // Persistence must outlive AgentLoop teardown so owned write handles can
