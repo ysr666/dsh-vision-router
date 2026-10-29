@@ -79,6 +79,7 @@ jobs:
               '@deepseek-ai/dsh-settings': v,
               '@deepseek-ai/dsh-system-prompt': v,
               '@deepseek-ai/dsh-tools': v,
+              '@deepseek-ai/dsh-tool-executor-native': v,
               '@deepseek-ai/dsh-session': v,
               '@deepseek-ai/dsh-session-projection': v,
               '@deepseek-ai/dsh-session-persistence-jsonl': v,

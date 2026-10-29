@@ -77,6 +77,10 @@ export function isImageInputUnsupportedFailure(failure) {
       'i',
     ),
     new RegExp(`cannot (?:accept|process|handle) (?:images?|image inputs?)${terminal}`, 'i'),
+    // Explicit text-only model/endpoint rejections can omit the word "image".
+    // Keep these end-bounded so unrelated modality or size errors do not retry.
+    new RegExp(`(?:model|endpoint)\\s+is\\s+not\\s+(?:a\\s+)?multimodal(?:\\s+model)?${terminal}`, 'i'),
+    new RegExp(`not\\s+(?:a\\s+)?multimodal\\s+(?:model|endpoint)${terminal}`, 'i'),
     new RegExp(`(?:model|adapter).*text[- ]only.*(?:images?|image inputs?)${terminal}`, 'i'),
     new RegExp(`(?:模型|适配器).*不支持(?:图片|图像)(?:输入)?${terminal}`),
     new RegExp(`(?:图片|图像)输入(?:不被支持|暂不支持|不支持)${terminal}`),

@@ -233,6 +233,15 @@ if (expectCurrent) {
   const toolsCtx = new Context()
   await toolsCtx.plugin(systemPrompt.default)
   await toolsCtx.plugin(tools.default)
+  // The alpha.2 Host separates tool registration from the Agent-scoped
+  // executor. Mount the official native executor in this isolated Host fixture;
+  // DVR must never supply an executor or bypass the Host's dispatch policy.
+  const scopedExecutorHost = typeof tools.default.prototype.setExecutor === 'function'
+  if (scopedExecutorHost) {
+    const nativeExecutorEntry = requireFromHost.resolve('@deepseek-ai/dsh-tool-executor-native')
+    const nativeExecutor = await import(pathToFileURL(nativeExecutorEntry).href)
+    await toolsCtx.plugin(nativeExecutor)
+  }
   const toolCapabilities = inspectDshHostCapabilities(toolsCtx)
   assert.equal(toolCapabilities.toolRegistration, true, 'Doctor must recognize current DSH tool registration')
   assert.equal(toolCapabilities.toolExecution, true, 'Doctor must recognize current DSH tool execution')
@@ -249,17 +258,38 @@ if (expectCurrent) {
   const disposeTool = toolsCtx.tools.register(probeTool)
   assert.equal(typeof disposeTool, 'function', 'tool registration must return a disposer')
   assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), true)
-  const toolResult = await toolsCtx.tools.execute({
-    callId: 'vision-router-p0-call',
-    name: probeTool.name,
-    arguments: { text: 'ok' },
-    signal: new AbortController().signal,
-  })
-  assert.deepEqual(toolResult, {
-    content: [{ type: 'text', text: 'ok' }],
-    isError: false,
-    value: 'ok',
-  })
+  if (scopedExecutorHost) {
+    // alpha.2 delegates complete batches through the Host-owned executor.
+    // A one-call batch verifies actual dispatch, not just global registration.
+    const batch = await toolsCtx.tools.execute({
+      calls: [{
+        type: 'tool-call',
+        id: llm.ToolCallId('vision-router-p0-call'),
+        name: probeTool.name,
+        arguments: JSON.stringify({ text: 'ok' }),
+      }],
+      signal: new AbortController().signal,
+    })
+    assert.equal(batch.results.length, 1)
+    assert.deepEqual(batch.results[0].result, {
+      content: [{ type: 'text', text: 'ok' }],
+      isError: false,
+      value: 'ok',
+    })
+  } else {
+    // Keep the public rc/stable Host contract and its original call shape.
+    const toolResult = await toolsCtx.tools.execute({
+      callId: 'vision-router-p0-call',
+      name: probeTool.name,
+      arguments: { text: 'ok' },
+      signal: new AbortController().signal,
+    })
+    assert.deepEqual(toolResult, {
+      content: [{ type: 'text', text: 'ok' }],
+      isError: false,
+      value: 'ok',
+    })
+  }
   disposeTool()
   assert.equal(toolsCtx.tools.schemas().some((item) => item.name === probeTool.name), false, 'tool disposer must clean up registration')
 }

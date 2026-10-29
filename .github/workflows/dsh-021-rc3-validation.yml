@@ -17,6 +17,7 @@ on:
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh021-rc3-agent-visibility-smoke.mjs'
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
@@ -165,6 +166,14 @@ jobs:
         if: matrix.os == 'macos-latest'
         working-directory: dsh-021-rc3
         run: pnpm run build
+      - name: Verify actual RC3 Agent-scoped Vision tool visibility
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-021-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-021-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-rc.3
+        run: node ../dvr/scripts/dsh021-rc3-agent-visibility-smoke.mjs
       - name: Run real macOS Desktop renderer lifecycle
         if: matrix.os == 'macos-latest'
         working-directory: dsh-021-rc3
@@ -311,6 +320,13 @@ jobs:
         with:
           path: ~/playwright-apt-archives
           key: playwright-apt-${{ runner.os }}-${{ runner.arch }}
+      - name: Verify actual RC3 Agent-scoped Vision tool visibility
+        working-directory: dsh-021-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-021-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-rc.3
+        run: node ../dvr/scripts/dsh021-rc3-agent-visibility-smoke.mjs
       - name: Run bundle recompose stability
         working-directory: dsh-021-rc3
         env:
@@ -455,6 +471,13 @@ jobs:
             dsh-021-rc3/native/system/packages/*/bin
             dsh-021-rc3/.dsh-build
           key: ${{ steps.dsh-build-key.outputs.key }}
+      - name: Verify actual RC3 Agent-scoped Vision tool visibility
+        working-directory: dsh-021-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-021-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.1-rc.3
+        run: node ../dvr/scripts/dsh021-rc3-agent-visibility-smoke.mjs
       - name: Run authenticated Desktop Host contract
         if: matrix.node != '24.21.0'
         working-directory: dsh-021-rc3
