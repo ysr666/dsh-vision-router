@@ -73,6 +73,22 @@ test('classifier matches explicit image-capability rejection only', () => {
     ),
     true,
   )
+  for (const message of [
+    'The request model is not multimodal',
+    'The request model is not a multimodal model',
+    'request endpoint is not multimodal.',
+    'not a multimodal model',
+  ]) {
+    assert.equal(isImageInputUnsupportedFailure(new Error(message)), true, message)
+  }
+  assert.equal(
+    isImageInputUnsupportedFailure({ error: { message: 'The request model is not multimodal' } }),
+    true,
+  )
+  assert.equal(isImageInputUnsupportedFailure(new Error('model is not multimodal for video')), false)
+  assert.equal(isImageInputUnsupportedFailure(new Error('model is not multimodal due to image size')), false)
+  assert.equal(isImageInputUnsupportedFailure(new Error('does not support image inputs larger than 4MB')), false)
+  assert.equal(isImageInputUnsupportedFailure(new Error('image format is not supported')), false)
   assert.equal(isImageInputUnsupportedFailure({ code: 'MODEL_DOES_NOT_SUPPORT_IMAGES' }), true)
   assert.equal(isImageInputUnsupportedFailure({ code: 'UNSUPPORTED_IMAGE_INPUT' }), true)
   assert.equal(
@@ -186,6 +202,37 @@ test('Core-facing authority boundary retries false-positive image metadata throu
   assert.equal(logs.length, 1)
 })
 
+test('CodeArts-style not-multimodal rejection retries once through the canonical text bridge', async () => {
+  const seenImages = []
+  const warnings = []
+  const source = {
+    async resolveModel() {
+      return { id: 'deepseek-v4.1-flash-1017', inputModalities: ['text', 'image'] }
+    },
+    async *stream(options) {
+      const hasImage = twinRequestHasImage(options.messages)
+      seenImages.push(hasImage)
+      if (hasImage) {
+        yield { type: 'finish', reason: { kind: 'error', failure: { message: 'The request model is not multimodal' } } }
+        return
+      }
+      yield { type: 'text-delta', index: 0, text: 'bridge ok' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  }
+  const harness = makeHarness(source)
+  harness.ctx.logger = { warn: (...args) => warnings.push(args) }
+  const privateCtx = contextWithTwinImageCapabilityFallback(harness.ctx)
+  privateCtx.llm.registerAdapter(['src-vision'], makeGeneratedTwin(privateCtx))
+  const twin = harness.registrations.get('src-vision').adapter
+  const first = await collect(twin.stream({ model: 'deepseek-v4.1-flash-1017', messages: imageMessages('first') }))
+  const second = await collect(twin.stream({ model: 'deepseek-v4.1-flash-1017', messages: imageMessages('second') }))
+  assert.deepEqual(seenImages, [true, false, false], 'second request uses scoped negative proof')
+  assert.equal(first.some((chunk) => chunk.text === 'bridge ok'), true)
+  assert.equal(second.some((chunk) => chunk.text === 'bridge ok'), true)
+  assert.equal(first.some((chunk) => chunk.reason?.kind === 'error'), false)
+  assert.equal(warnings.length, 1, 'only the initial rejection emits a fallback warning')
+})
 test('negative runtime proof skips known-bad raw image until source adapter changes', async () => {
   const seenImages = []
   const badSource = {
