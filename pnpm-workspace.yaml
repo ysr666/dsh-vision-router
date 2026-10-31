@@ -11,3 +11,4 @@ minimumReleaseAgeExclude:
 # Jimp cannot retain the vulnerable redirect/header implementation (GHSA-x565-32qp-m3vf).
 overrides:
   phin: 3.7.1
+  follow-redirects: 1.16.2
