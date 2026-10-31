@@ -12,6 +12,15 @@ import {
   type SessionVisionPolicyStore,
 } from './session-vision-policy.js'
 
+/**
+ * DSH types `DomainSpec` against the Host's own zod copy. A source checkout
+ * linked to a DSH Host may resolve a different zod release, and zod embeds its
+ * version in the type, so the two `ZodType`s are nominally incompatible even
+ * though the schema validates the same records. Name that Host-side type once
+ * so the only conversion is the schema's nominal type, not the spec shape.
+ */
+type HostDomainValueSchema = DomainSpec['tables'][string]['valueSchema']
+
 const policySchema = z.discriminatedUnion('source', [
   z.object({
     revision: z.literal(SESSION_VISION_POLICY_REVISION),
@@ -38,7 +47,7 @@ export const sessionVisionPolicyDomainSpec = {
   invalidRecords: 'backup-and-skip',
   tables: {
     policies: {
-      valueSchema: policySchema,
+      valueSchema: policySchema as unknown as HostDomainValueSchema,
     },
   },
 } as const satisfies DomainSpec
