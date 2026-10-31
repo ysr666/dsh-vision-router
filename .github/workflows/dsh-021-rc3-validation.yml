@@ -22,6 +22,7 @@ on:
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - 'scripts/build-source-artifacts.mjs'
+      - 'tests/session-vision-policy-domain.test.js'
       - '.github/workflows/dsh-021-rc3-validation.yml'
   push:
     branches: [main]
@@ -31,6 +32,7 @@ on:
       - 'src/lib/**'
       - 'scripts/**'
       - 'scripts/build-source-artifacts.mjs'
+      - 'tests/session-vision-policy-domain.test.js'
       - '.github/workflows/dsh-021-rc3-validation.yml'
 
 permissions:
@@ -161,6 +163,34 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-021-rc3
           DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
+
+      # The pinned RC3 Host's Zod 4.4.3 and DVR's own Zod 4.6+ are distinct
+      # type identities. Source builds must compile across this nominal seam
+      # without weakening actual per-record schema validation. Only the Linux
+      # lane needs to run this compiler-level negative-control regression.
+      - name: Build DVR against RC3 storage-domain's older Zod copy
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dvr
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The override is confined to this CI checkout, never committed or published.
+          pnpm add --save-dev --ignore-scripts @deepseek-ai/dsh-storage-domain@0.2.1-rc.3
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { createRequire } from 'node:module'
+          const pluginRequire = createRequire(import.meta.url)
+          const hostRequire = createRequire(pluginRequire.resolve('@deepseek-ai/dsh-storage-domain/package.json'))
+          const pluginZod = pluginRequire('zod/package.json').version
+          const hostZod = hostRequire('zod/package.json').version
+          assert.equal(hostRequire('@deepseek-ai/dsh-storage-domain/package.json').version, '0.2.1-rc.3')
+          assert.equal(hostZod, '4.4.3')
+          assert.equal(Number(pluginZod.split('.')[0]), 4)
+          assert.ok(Number(pluginZod.split('.')[1]) > 4, 'plugin must resolve a distinct later Zod minor')
+          NODE
+          node scripts/build-source-artifacts.mjs
+          node scripts/build-source-artifacts.mjs --check
+          node --test tests/session-vision-policy-domain.test.js
 
       - name: Build exact macOS Desktop runtime
         if: matrix.os == 'macos-latest'
