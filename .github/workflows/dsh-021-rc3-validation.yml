@@ -22,6 +22,7 @@ on:
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - 'scripts/build-source-artifacts.mjs'
+      - 'tests/session-vision-policy-domain.test.js'
       - '.github/workflows/dsh-021-rc3-validation.yml'
   push:
     branches: [main]
@@ -31,6 +32,7 @@ on:
       - 'src/lib/**'
       - 'scripts/**'
       - 'scripts/build-source-artifacts.mjs'
+      - 'tests/session-vision-policy-domain.test.js'
       - '.github/workflows/dsh-021-rc3-validation.yml'
 
 permissions:
