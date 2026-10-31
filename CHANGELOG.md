@@ -5,6 +5,26 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.1
+
+### Session tools and explicit image rejection / 会话工具与上游拒图
+
+- #761 re-applies retained Agent Vision-OFF tool masks immediately after HMR/recompose; ON Agents remain ON. / 热重载后恢复已有 Agent 的识图关闭遮罩，不影响开启状态的会话。
+- #762 resolves same-name tool shadows within the actual Agent scope, preserving unrelated Agent-local tools. / 按 Agent 作用域解析同名工具，避免误删其他插件提供的同名工具。
+- #769 (fixes #768) recognizes explicit `not multimodal` image rejection and retries exactly once through the existing text bridge, without conflating image-size/format failures. / 识别明确的非多模态拒图错误，经现有文本桥重试一次，不将图片尺寸或格式错误误判为纯文本模型。
+
+### Build and upstream compatibility / 构建与上游兼容
+
+- #772 (fixes #771) resolves cross-copy Zod type incompatibility at the Storage Domain boundary; runtime validation and storage format remain unchanged. #773 adds a pinned RC3 mixed-Zod source-build gate. / 修复 Host 与插件 Zod 次版本不同引起的编译错误，不改变运行时持久化；新增精确 RC3 回归门禁。
+- #763 adds true Agent-scoped Vision tool visibility regression coverage; #770 qualifies DSH 0.2.1-rc.5 exact source, Windows Node 22/24, macOS/Linux, Chromium and upstream reasoning display. / 补充 Agent 实际工具可见性回归测试，并验收 RC5 精确源码、三端真实 Host 和推理展示。
+- #764 clarifies Vision tool access; #767 hardens alpha tool-executor acceptance; #765 and #766 update pinned CI security actions. / 澄清识图工具访问条件，增强 Alpha 执行器验收并更新安全 CI Action。
+
+### Known limits and publication / 已知边界与发布
+
+- No new Node/DSH support floor, API breaking change, Host permission, Session migration or global tool-access bypass. / 不抬高 Node/DSH 最低支持版本、不破坏公共 API、不增加 Host 权限、不迁移 Session，也不绕过工具作用域。
+- #768 is fixed in source but the original account's live CodeArts gateway was not re-tested. #759 was closed as not-planned, NOT fixed: the original 34-bundle Windows Vision-ON failure was not established. / #768 的代码已修，但未使用报告用户的账号复测 CodeArts 网关；#759 是证据不足后归档，不是已修复。
+- The v3.1.1 candidate is not a published package until full candidate CI, reproducible pack, OIDC provenance and immutable release tag verification pass the protected workflow. / 候选版只有通过正常 CI、可复现包体、OIDC 来源证明和受保护标签流程后才能宣称正式发布。
+
 ## v3.1.0
 
 ### Easier vision setup and understandable cloud privacy / 简化识图配置与云端隐私提醒
