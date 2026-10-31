@@ -4,9 +4,10 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'presets/**'
       - 'package.json'
+      - 'pnpm-lock.yaml'
       - 'cordis.patch.yml'
-      - 'src/lib/**'
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-peer-admission-contract.mjs'
       - 'scripts/dsh-proxy-egress-contract.mjs'
@@ -26,9 +27,13 @@ on:
   push:
     branches: [main]
     paths:
+      # Host-impacting changes can enter through src/index.js, presets, and lockfile,
+      # not only src/lib. Keep main qualification aligned with those inputs.
       - 'package.json'
+      - 'pnpm-lock.yaml'
       - 'cordis.patch.yml'
-      - 'src/lib/**'
+      - 'src/**'
+      - 'presets/**'
       - 'scripts/**'
       - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-021-rc5-validation.yml'
