@@ -43,3 +43,24 @@ If the write tokens ever need to shrink, the order is: attach the publishing job
 environment, then drop `pull-requests: write` from the pin refresh by opening the bump as an
 issue instead of a pull request. Both trade automation for score, which is why they are not the
 default.
+
+
+## Reviewed Alpha Settings pin: least-privilege update lane
+
+The Alpha Settings Host Gate uses a reviewed version / immutable SHA pair
+from config/dsh-alpha-settings-pin.json. Its three job families load that pair
+and reject an invalid or incomplete pin. The gate runs on pull requests that
+touch the config or loader and on the merge to main. The updater stages only
+the JSON config, never workflow YAML; do not grant the bot workflow-edit
+permission. Merging a pin PR is the upstream execution review boundary.
+
+The pin step writes both current and changed through GITHUB_OUTPUT. The bot
+updates its dedicated branch using an explicit lease against the remote SHA,
+not an unsafe force push.
+
+Repository settings may separately prohibit GitHub Actions from creating PRs,
+even with pull-requests: write. Under that policy the refresh action pushes
+the config-only branch but fails with an actionable compare/PR URL, not a
+misleading success. Opening the PR requires an authorized person or a
+separately scoped PR-writing app token. Changing that security setting is
+outside this code fix.
