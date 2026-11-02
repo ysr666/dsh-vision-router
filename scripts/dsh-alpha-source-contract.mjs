@@ -157,7 +157,9 @@ assert.ok(directoryRegisterAt >= 0, 'Host LLM must expose registerConfigurablePr
 const directoryRegisterEnd = llmSource.indexOf('\n  /**', directoryRegisterAt + 1)
 const directoryRegisterBlock = llmSource.slice(directoryRegisterAt, directoryRegisterEnd)
 assert.match(directoryRegisterBlock, /this\.ctx\.effect/, 'LLM directory registration must remain self-fiber-owned')
-const webRegisterAt = webServerSource.indexOf('register(route: WebRoute)')
+// Alpha.2 adds resource routes to the same caller-owned register() seam.
+// Accept the additive type union without weakening the ownership assertions below.
+const webRegisterAt = webServerSource.search(/register\(route: WebRoute(?: \| WebResourceRoute)?\)/)
 assert.ok(webRegisterAt >= 0, 'Host WebServer must expose register()')
 const webRegisterEnd = webServerSource.indexOf('\n  /**', webRegisterAt + 1)
 const webRegisterBlock = webServerSource.slice(webRegisterAt, webRegisterEnd)
