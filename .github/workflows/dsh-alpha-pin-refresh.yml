@@ -93,16 +93,8 @@ jobs:
           SHA: ${{ steps.alpha.outputs.sha }}
         run: |
           set -euo pipefail
-          GATE=".github/workflows/dsh-alpha-settings-host-gate.yml"
-          CURRENT="$(grep -oE 'ref: [0-9a-f]{40}' "$GATE" | head -1 | awk '{print $2}')"
-          test -n "$CURRENT"
-          echo "current=$CURRENT"
-          if [ "$CURRENT" = "$SHA" ]; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "The gate already pins $SHA."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+          # This emits both current and changed through GITHUB_OUTPUT.
+          node scripts/dsh-alpha-pin.mjs compare "$SHA"
 
       - name: Rewrite the pin
         if: steps.pin.outputs.changed == 'true'
@@ -114,25 +106,8 @@ jobs:
           CURRENT: ${{ steps.pin.outputs.current }}
         run: |
           set -euo pipefail
-          GATE=".github/workflows/dsh-alpha-settings-host-gate.yml"
-          python3 - "$GATE" "$CURRENT" "$SHA" "$VERSION" <<'PY'
-          import pathlib, re, sys
-          path, current, sha, version = sys.argv[1:5]
-          p = pathlib.Path(path)
-          text = p.read_text()
-          assert f'ref: {current}' in text, 'current pin not found'
-          # The trailing comment names the release the commit belongs to, so it moves with it.
-          updated, count = re.subn(
-            r'ref: [0-9a-f]{40} # dsh-v[\w.-]+',
-            f'ref: {sha} # dsh-v{version}',
-            text,
-            count=1,
-          )
-          assert count == 1, 'pin line not rewritten'
-          p.write_text(updated)
-          print(f'pinned {current} -> {sha} (dsh-v{version})')
-          PY
-          grep -nE 'ref: [0-9a-f]{40} # dsh-v' "$GATE"
+          node scripts/dsh-alpha-pin.mjs update "$CURRENT" "$VERSION" "$SHA"
+          cat config/dsh-alpha-settings-pin.json
 
       - name: Open or update the bump pull request
         if: steps.pin.outputs.changed == 'true'
@@ -184,14 +159,24 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -B "$BRANCH"
-          git add .github/workflows/dsh-alpha-settings-host-gate.yml
+          git add config/dsh-alpha-settings-pin.json
+          # Only an ordinary config file can enter the bot-authored PR.
+          test "$(git diff --cached --name-only)" = "config/dsh-alpha-settings-pin.json"
           git commit -m "ci: bump the alpha settings gate pin to dsh-v${VERSION}"
-          git push --force-with-lease origin "$BRANCH"
+          # actions/checkout fetches only main; use an explicit remote lease.
+          REMOTE_SHA="$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')"
+          if [ -n "$REMOTE_SHA" ]; then
+            git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_SHA" origin "HEAD:refs/heads/$BRANCH"
+          else
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
           if gh pr view "$BRANCH" --json number >/dev/null 2>&1; then
             gh pr comment "$BRANCH" --body-file /tmp/bump-body.md
             echo "updated the existing pull request"
+          elif gh pr create --base main --head "$BRANCH" --title "ci: bump the alpha settings gate pin to dsh-v${VERSION}" --body-file /tmp/bump-body.md; then
+            echo "opened the reviewed alpha pin pull request"
           else
-            gh pr create --base main --head "$BRANCH" \
-              --title "ci: bump the alpha settings gate pin to dsh-v${VERSION}" \
-              --body-file /tmp/bump-body.md
+            echo "::error::Pin branch pushed, but Actions cannot create a PR under the current repository policy."
+            echo "::error::Do not grant workflow editing authority. Open https://github.com/${GITHUB_REPOSITORY}/compare/main...${BRANCH}?expand=1 manually, or configure a separately scoped PR-writing GitHub App."
+            exit 1
           fi

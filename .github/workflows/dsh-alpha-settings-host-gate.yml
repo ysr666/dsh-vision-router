@@ -11,6 +11,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/dsh-alpha-settings-host-gate.yml'
+      - '.github/workflows/dsh-alpha-pin-refresh.yml'
+      - 'config/dsh-alpha-settings-pin.json'
+      - 'scripts/dsh-alpha-pin.mjs'
       - 'scripts/build-source-artifacts.mjs'
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
@@ -34,6 +37,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/dsh-alpha-settings-host-gate.yml'
+      - '.github/workflows/dsh-alpha-pin-refresh.yml'
+      - 'config/dsh-alpha-settings-pin.json'
+      - 'scripts/dsh-alpha-pin.mjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -57,11 +63,14 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout immutable DSH 0.2.1-alpha.5 source
+      - name: Resolve reviewed alpha pin
+        id: pin
+        run: node dvr/scripts/dsh-alpha-pin.mjs read
+      - name: Checkout immutable reviewed DSH alpha source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 1517a4dbca0a2789ff1d41ba439600f8547d23fa
+          ref: ${{ steps.pin.outputs.sha }}
           persist-credentials: false
           path: dsh-alpha
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -120,8 +129,8 @@ jobs:
         working-directory: dsh-alpha
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
-          DSH_EXPECTED_VERSION: 0.2.1-alpha.5
-          DSH_EXPECTED_COMMIT: 1517a4dbca0a2789ff1d41ba439600f8547d23fa
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
       - name: Verify old/new Web Connection trust-generation overlay
@@ -166,7 +175,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.1-alpha.5
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
@@ -188,11 +197,14 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout the resolved alpha source
+      - name: Resolve reviewed alpha pin
+        id: pin
+        run: node dvr/scripts/dsh-alpha-pin.mjs read
+      - name: Checkout immutable reviewed DSH alpha source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 1517a4dbca0a2789ff1d41ba439600f8547d23fa # dsh-v0.2.1-alpha.5
+          ref: ${{ steps.pin.outputs.sha }}
           persist-credentials: false
           path: dsh-alpha
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -357,11 +369,14 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Checkout immutable DSH 0.2.1-alpha.5 source
+      - name: Resolve reviewed alpha pin
+        id: pin
+        run: node dvr/scripts/dsh-alpha-pin.mjs read
+      - name: Checkout immutable reviewed DSH alpha source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 1517a4dbca0a2789ff1d41ba439600f8547d23fa
+          ref: ${{ steps.pin.outputs.sha }}
           persist-credentials: false
           path: dsh-alpha
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -437,7 +452,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.1-alpha.5
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_BASE_PORT: '19410'
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
       - name: Run Node 24 Desktop renderer lifecycle
@@ -446,7 +461,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.1-alpha.5
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_BASE_PORT: '19510'
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-windows-desktop-renderer.png
@@ -458,7 +473,7 @@ jobs:
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-          DSH_EXPECTED_VERSION: 0.2.1-alpha.5
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_MULTIPLUGIN_BASE_PORT: '19600'
         run: |
           set -euo pipefail
