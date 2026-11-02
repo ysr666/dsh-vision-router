@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { execFile as esmExecFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { installTesseractExecFileCompat } from '../lib/tesseract-exec-compat.js'
+import { createTesseractPromisifyCompat, installTesseractExecFileCompat } from '../lib/tesseract-exec-compat.js'
 
 const require = createRequire(import.meta.url)
 const childProcess = require('node:child_process')
@@ -12,6 +12,33 @@ const pngBytes = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
   0x00, 0x00, 0x00, 0x00,
 ])
+
+test('non-Tesseract promisify passthrough preserves native Promise identity and child handle', async () => {
+  const child = { once() {} }
+  const nativePending = Promise.resolve({ stdout: 'ok', stderr: '' })
+  nativePending.child = child
+  const wrapped = createTesseractPromisifyCompat(
+    () => { throw new Error('native custom hook must be used') },
+    () => nativePending,
+  )
+  const pending = wrapped('git', ['rev-parse', '--show-toplevel'], {})
+  assert.equal(pending, nativePending)
+  assert.equal(pending.child, child)
+  assert.deepEqual(await pending, { stdout: 'ok', stderr: '' })
+})
+
+test('fallback promisify preserves child handle when no custom hook exists', async () => {
+  const child = { once() {} }
+  const wrapped = createTesseractPromisifyCompat(
+    (_file, _args, _options, callback) => {
+      queueMicrotask(() => callback(null, 'ok', ''))
+      return child
+    },
+  )
+  const pending = wrapped('git', ['status'], {})
+  assert.equal(pending.child, child)
+  assert.deepEqual(await pending, { stdout: 'ok', stderr: '' })
+})
 
 test('locked promisify.custom uses a callback-safe module wrapper instead of throwing at boot', async () => {
   const originalCustom = async (_file, args, options) => {
@@ -145,7 +172,9 @@ test('real Node child_process locked descriptor installs without crashing and sy
       assert.equal(esmExecFile, childProcess.execFile, 'syncBuiltinESMExports must update existing named-import binding')
     }
 
-    const { stdout } = await promisify(esmExecFile)(process.execPath, ['--version'], { timeout: 5000 })
+    const pending = promisify(esmExecFile)(process.execPath, ['--version'], { timeout: 5000 })
+    assert.equal(typeof pending.child?.once, 'function', 'non-OCR execFile must preserve native promise.child')
+    const { stdout } = await pending
     assert.match(String(stdout), /^v\d+\./)
   } finally {
     dispose()

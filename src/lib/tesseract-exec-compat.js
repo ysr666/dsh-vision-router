@@ -48,23 +48,29 @@ function isTesseractCompatCall(file, args, options) {
 
 function nativePromisified(execFileImpl, originalCustom) {
   if (typeof originalCustom === 'function') return originalCustom
-  return (file, args, options) => new Promise((resolve, reject) => {
-    execFileImpl(file, args, options, (error, stdout, stderr) => {
-      if (error) {
-        if (error && typeof error === 'object') {
-          try {
-            error.stdout = stdout
-            error.stderr = stderr
-          } catch {
-            /* preserve the original error */
+  return (file, args, options) => {
+    let child
+    const pending = new Promise((resolve, reject) => {
+      child = execFileImpl(file, args, options, (error, stdout, stderr) => {
+        if (error) {
+          if (error && typeof error === 'object') {
+            try {
+              error.stdout = stdout
+              error.stderr = stderr
+            } catch {
+              /* preserve the original error */
+            }
           }
+          reject(error)
+          return
         }
-        reject(error)
-        return
-      }
-      resolve({ stdout, stderr })
+        resolve({ stdout, stderr })
+      })
     })
-  })
+    // Match Node's promisified execFile contract even without a custom hook.
+    pending.child = child
+    return pending
+  }
 }
 
 /**
@@ -97,11 +103,16 @@ export function createTesseractPromisifyCompat(execFileImpl, originalCustom, opt
     return resolvedTempDir
   }
 
-  async function tesseractPromisifyCompat(file, args, execOptions) {
+  function tesseractPromisifyCompat(file, args, execOptions) {
     if (!active || !isTesseractCompatCall(file, args, execOptions)) {
+      // Return the native Promise itself: async wrappers discard .child.
       return delegate(file, args, execOptions)
     }
+    return runTesseractCompat(file, args, execOptions)
+  }
 
+  // Staging stdin bytes is asynchronous; only this OCR-specific path is async.
+  async function runTesseractCompat(file, args, execOptions) {
     const bytes = bytesView(execOptions.input)
     let dir
     try {
