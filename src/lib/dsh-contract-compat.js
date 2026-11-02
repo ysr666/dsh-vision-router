@@ -21,6 +21,9 @@ const LEGACY_VISION_ATTACHMENT_BYTES = 20 * 1024 * 1024
 const LEGACY_VISION_ATTACHMENT_PIXELS = 100_000_000
 const DSH_RC8_DEFAULT_IMAGE_DIMENSION = 2000
 const DSH_ALPHA_DEFAULT_IMAGE_DIMENSION = 8192
+// DSH 0.2.2-alpha.2 expands the Host admission default, while retaining the
+// 4.2MP/8192px/4MiB normalization tuple of earlier alphas.
+const DSH_ALPHA_022_DEFAULT_IMAGE_DIMENSION = 65_535
 const VISION_ROUTER_IMAGE_DIMENSION = 10_000
 const DSH_ALPHA_DEFAULT_NORMALIZED_PIXELS = 2048 * 2048
 const DSH_ALPHA_DEFAULT_NORMALIZED_DIMENSION = 8192
@@ -135,6 +138,11 @@ function exactAlphaNormalizationDefaults(policy) {
     policy.maxBytes === DSH_ALPHA_DEFAULT_NORMALIZED_BYTES
 }
 
+function knownAlphaDefaultImageDimension(dimension) {
+  return dimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION ||
+    dimension === DSH_ALPHA_022_DEFAULT_IMAGE_DIMENSION
+}
+
 function knownVisionRouterAdmissionShape(limits) {
   if (!limits || typeof limits !== 'object') return false
   if (
@@ -142,7 +150,7 @@ function knownVisionRouterAdmissionShape(limits) {
     limits.maxImagePixels !== LEGACY_VISION_ATTACHMENT_PIXELS
   ) return false
   return limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||
-    limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION
+    knownAlphaDefaultImageDimension(limits.maxImageDimension)
 }
 
 function replaceFrozenPolicy(store, property, next) {
@@ -163,8 +171,8 @@ function replaceFrozenPolicy(store, property, next) {
  * containing only the released 20MiB / 100MP admission pair. On rc.8 that
  * shadowed the later 10000px bundle value and rematerialized the Host's 2000px
  * default. On 0.1.2-alpha.1 the same stale row additionally omits the new
- * normalization fields, rematerializing 8192px admission plus the Host's
- * 4.2MP / 4MiB canonical-image defaults.
+ * normalization fields, rematerializing 8192px admission (or 65535px on
+ * 0.2.2-alpha.2) plus the Host's 4.2MP / 4MiB canonical-image defaults.
  *
  * This migration never edits a user's profile file and never creates another
  * attachment owner. LocalAttachmentStore exposes the resolved immutable
@@ -173,7 +181,8 @@ function replaceFrozenPolicy(store, property, next) {
  * objects on one exact historical fingerprint:
  *
  * - admission bytes === 20MiB and pixels === 100MP; and
- * - dimension is rc.8's 2000px default or alpha's 8192px default; and
+ * - dimension is rc.8's 2000px or one of the known alpha Host defaults
+ *   (8192px or 65535px); and
  * - normalization, when repaired, is EXACTLY alpha.1's 4.2MP/8192px/4MiB
  *   default tuple.
  *
@@ -206,7 +215,7 @@ export function ensureVisionAttachmentAdmissionPolicy(ctx, logger, options = {})
   }
 
   const repairNormalization =
-    limits.maxImageDimension === DSH_ALPHA_DEFAULT_IMAGE_DIMENSION &&
+    knownAlphaDefaultImageDimension(limits.maxImageDimension) &&
     exactAlphaNormalizationDefaults(store.normalizationPolicy)
   const repairDimension =
     limits.maxImageDimension === DSH_RC8_DEFAULT_IMAGE_DIMENSION ||
