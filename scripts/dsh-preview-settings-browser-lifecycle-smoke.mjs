@@ -94,6 +94,15 @@ async function openVisionRouterSettings(page) {
   const nav = dialog.getByRole('button', { name: 'Vision Router', exact: true })
   await nav.waitFor({ state: 'visible', timeout: 15_000 })
   assert.equal(await nav.count(), 1, 'Settings must expose exactly one first-class Vision Router section')
+  // On alpha.3+ the Settings shell renders a native icon slot.
+  if (process.env.DVR_EXPECT_NATIVE_SETTINGS_ICON === '1') {
+    const icon = nav.locator('[data-slot="settings.section.icon"] img')
+    await icon.waitFor({ state: 'visible', timeout: 15_000 })
+    assert.equal(await icon.count(), 1, 'Vision Router must register its native navigation icon exactly once')
+    assert.match(await icon.getAttribute('src'), /^data:image\/svg\+xml,/)
+    const decoded = await icon.evaluate((image) => image.complete && image.naturalWidth > 0)
+    assert.equal(decoded, true, 'Vision Router icon must decode in the real browser')
+  }
   await nav.click()
 
   const root = dialog.locator('[data-vr-settings-ia="1"]')

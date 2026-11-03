@@ -334,6 +334,7 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_EXPECT_NATIVE_SETTINGS_ICON: '1'
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-settings.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-settings.png
         run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs

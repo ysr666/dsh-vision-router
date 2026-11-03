@@ -12,6 +12,10 @@ window.__ModuleLoader__.load({
     const { useState, useMemo } = React
     const { ImageGallery } = require('@deepseek-ai/dsh-client-ui-attachment')
 
+    // Same packaged artwork used by DSH Plugin Manager; a data URL works in Desktop and remote Web.
+    const VISION_ROUTER_ICON_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"vr-brand\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#6E58F7\"/><stop offset=\"1\" stop-color=\"#179ED6\"/></linearGradient></defs><rect width=\"64\" height=\"64\" rx=\"15\" fill=\"url(#vr-brand)\"/><path d=\"M10 32C17 22 24 17 32 17S47 22 54 32C47 42 40 47 32 47S17 42 10 32Z\" fill=\"none\" stroke=\"#FFFFFF\" stroke-width=\"4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"32\" cy=\"32\" r=\"10\" fill=\"#FFFFFF\"/><circle cx=\"32\" cy=\"32\" r=\"5.5\" fill=\"#283C89\"/><circle cx=\"35\" cy=\"29\" r=\"2.2\" fill=\"#A8F2FF\"/></svg>"
+    const VISION_ROUTER_ICON_SRC = 'data:image/svg+xml,' + encodeURIComponent(VISION_ROUTER_ICON_SVG)
+
     // <generated:client-maintenance-actions>
 function createClientMaintenanceActions({
 fetchImpl,
@@ -1932,18 +1936,7 @@ openLogFolder,
       }
     }
 
-    // ── walkthrough spotlight: highlight the real UI targets ────────────────
-    // The walkthrough overlays are plain DOM: a dimmed backdrop with a "hole"
-    // over the current target (classic box-shadow spotlight), a pulsing ring
-    // around it, and the prompt card anchored beside the target with an arrow
-    // pointing at it. Everything is pointer-events:none except the prompt, so
-    // the real controls stay clickable the whole time.
-    //
-    // DSH web hashes its CSS-module class names (unstable across builds), so
-    // the targets are addressed through the stable surface instead: slot
-    // wrappers (data-slot), data-composer-card and aria-haspopup/aria-label
-    // attributes. Each step keeps a fallback chain, and when nothing matches
-    // the prompt degrades to a corner card with a directional arrow.
+    // Details: docs/architecture/client-ui-lifecycle-notes.md (Walkthrough spotlight geometry).
     const GUIDE_SELECTOR_TARGETS = [
       '[data-slot="conversation.input.model"] button[aria-haspopup="menu"]',
       '[aria-label^="选择模型"], [aria-label^="Select model"]',
@@ -2163,12 +2156,7 @@ openLogFolder,
         finishVisionSettingsGuide({ remember: true })
       })
       actions.append(cancel)
-      // Every step that is not the last one gets a Next button, so the two
-      // floating prompts stay symmetric. Step 1's Next advances the stored
-      // step; step 2's Next performs the current phase's action for the
-      // user — opening the settings panel, then entering the Vision Router
-      // section — so the walkthrough can be driven entirely from the prompt
-      // without touching the real controls.
+      // Details: docs/architecture/client-ui-lifecycle-notes.md (Onboarding step controls).
       const next = document.createElement('button')
       next.type = 'button'
       next.className = 'vr-btn vr-btn-save'
@@ -3820,11 +3808,7 @@ openLogFolder,
         const raw = 'extraVisionModels' in drafts
           ? drafts['extraVisionModels']
           : readValue(snapshot, 'extraVisionModels')
-        // Rows persist as { provider, model } objects while editing — an
-        // incomplete row (provider picked, model pending) stays visible
-        // instead of collapsing, which is what made the provider dropdown
-        // feel unselectable before. Like the vision backend chain above, an
-        // empty configuration still renders one blank row ready to fill.
+        // Details: docs/architecture/client-ui-lifecycle-notes.md (Provider-model draft rows).
         const rows = (Array.isArray(raw) && raw.length > 0 ? raw : [{ provider: '', model: '' }]).map(
           (entry) => {
             if (entry && typeof entry === 'object') {
@@ -3840,12 +3824,7 @@ openLogFolder,
               : { provider: text.slice(0, slash), model: text.slice(slash + 1) }
           },
         )
-        // Same two-select row shape as the vision backend chain above: a
-        // provider dropdown (providers that have excluded models) and a model
-        // dropdown (that provider's excluded models). A row the user already
-        // selected elsewhere stays disabled in the other rows. Option sets
-        // come from the memoized top-level hooks (this function is plain
-        // render code and must stay hook-free).
+        // Details: docs/architecture/client-ui-lifecycle-notes.md (Two-select routing row).
         const hiddenProviders = hiddenVisionProviders
         const hiddenModelsOf = hiddenVisionModelsOf
         const used = new Set(
@@ -4021,12 +4000,7 @@ openLogFolder,
         )
       }
 
-      // Render-phase kick: whenever the body is open and the catalog was never
-      // fetched (including after a remount that reset the state), start the
-      // fetch. React supports setState during render for the same component,
-      // and the status flips to 'loading' so this cannot loop. The same kick
-      // runs the cheap test-connection probe once so the Host-owned official
-      // provider availability notice can render without a button click.
+      // Details: docs/architecture/client-ui-lifecycle-notes.md (Catalog render-phase bootstrap).
       if (open && catalog.status === 'idle') {
         loadCatalog()
       }
@@ -4232,11 +4206,7 @@ openLogFolder,
                 h('div', { className: 'vr-quickstart-actions' },
                   h('button', {
                     type: 'button', className: 'vr-btn',
-                    // Re-viewing the guide replays it from the beginning:
-                    // leave the settings modal first (its panel closes on
-                    // Escape), show the overview (steps 1-3), and then walk
-                    // through step 1 on the chat page — starting in place
-                    // would skip the session/text-model step entirely.
+                    // Details: docs/architecture/client-ui-lifecycle-notes.md (Onboarding replay).
                     onClick: () => {
               guideHostUi.closeSettings()
               const reveal = () => showOnboarding(t, { auto: false, focus: true })
@@ -4885,6 +4855,16 @@ openLogFolder,
       // Vision Router owns one canonical settings surface. The section switches
       // to the opt-in remote scope on a non-loopback client.
       const sectionCardInject = Object.freeze({ ...cardInject, scope: primaryScope, surface: 'section' })
+      const VisionRouterSettingsIcon = ({ size }) =>
+        React.createElement('img', {
+          src: VISION_ROUTER_ICON_SRC,
+          alt: '',
+          'aria-hidden': 'true',
+          draggable: false,
+          width: size,
+          height: size,
+          style: { display: 'block', width: size, height: size },
+        })
       const VisionRouterSettingsSection = (sectionProps) =>
         React.createElement(
           'ul',
@@ -4906,6 +4886,18 @@ openLogFolder,
             )
           }),
         'vision-router: primary settings section',
+      )
+      // Native Settings navigation icon (newer Hosts); old Hosts simply do not render this slot.
+      // The effect owns the registration, so DSH restores the default icon on plugin unload.
+      ctx.effect(
+        () =>
+          ctx.slots.inject('settings.section.icon', function* () {
+            yield ctx.slots.register(
+              { name: 'settings.section.icon', id: 'vision-router' },
+              VisionRouterSettingsIcon,
+            )
+          }),
+        'vision-router: settings navigation icon',
       )
       ctx.effect(
         () =>
