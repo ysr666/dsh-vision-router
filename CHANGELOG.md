@@ -5,6 +5,27 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.2
+
+### Native plugin identity / 原生插件图标
+
+- #783 ships the Vision Router icon for DSH Plugin Manager and newer Settings navigation with the native icon slot; Alpha.3 Chromium verifies its visible, decoded rendering. / 插件管理页及支持新插槽的设置导航显示专属 SVG；Alpha.3 浏览器核实显示与解码正常。
+- DSH 0.2.1-rc.5 supports the Plugin Manager icon but retains the default Settings navigation glyph; Settings icon customization is verified on 0.2.2-alpha.3. / RC.5 只能显示新的插件管理图标，设置导航仍为默认图标；Alpha.3 已支持新导航图标。
+
+### Upstream compatibility / 上游兼容
+
+- #780 adjusts inherited image size normalization to Alpha.2 defaults without overriding customized constraints. #781 updates additive WebServer resource-route source assertions. / 适配 Alpha.2 的默认图片尺寸，保留自定义限制；更新 WebServer 资源路由源码契约。
+- #779 and #782 pin reviewed Alpha.2 and Alpha.3 exact sources; Alpha.3 passed six real Host jobs across Linux/macOS/Windows, Windows Node22/24 and Chromium. / 固定 Alpha.2 与 Alpha.3 的不可变测试源码；Alpha.3 真实 Host 六项跨平台验证通过。
+
+### Security, process, update automation / 安全、进程与自动更新
+
+- #775 resolves the follow-redirects credential redirect advisory. #777 preserves promisified execFile.child for other Host plugins. / 修复依赖凭据重定向告警及其他 Host 插件进程句柄兼容问题。
+- #778 fixes Alpha pin updater output and keeps changes in a non-workflow JSON file, without broadening Bot workflow permissions; automated PR creation still needs live validation. / 修复 Alpha Pin 自动更新脚本且不扩大 Bot 权限；自动建 PR 路径仍待真实验证。
+
+### Publication and boundaries / 发布与支持边界
+
+- Node/DSH minimum support, Session format, permissions and public API are unchanged. Candidate release status is not npm publication; only protected release checks establish publication. / Node、DSH 支持范围、会话格式、权限与公共 API 不变，只有受保护发布成功才算正式发布。
+
 ## v3.1.1
 
 ### Session tools and explicit image rejection / 会话工具与上游拒图
