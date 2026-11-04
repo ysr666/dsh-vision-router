@@ -115,6 +115,7 @@ import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
+import { installPreStepModelRouting } from './lib/agent-prestep-model-routing.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
 import {
@@ -2306,6 +2307,26 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
   })
 
+  // DSH >= 0.2.2 fixes the step model before pre-step and tools.resolve.
+  // The Agent inbox/status event boundary runs after Session append finishes,
+  // while selection can still be changed for the next step without reentrancy.
+  // Older Hosts without Agent.model continue to use the late request hook.
+  const preStepRouting = installPreStepModelRouting(ctx, {
+    routingEnabled,
+    reverseRoutingEnabled,
+    routingPairs,
+    chainRoute,
+    wrapperRoute,
+    wrapperRegistered: () => wrapperRegistered,
+    textProvider,
+    hasAdapter: (provider) => adapterAvailable(ctx.llm, provider),
+    hasImage: blocksHaveRetainedImage,
+    toolEnabled,
+    autoActivateOnImageEnabled,
+    structuredBootstrapEnabled,
+    activateDeepTools: () => activateDeepTools(),
+  })
+
   ctx.on('agent/pre-step', async (payload, next) => {
     let decision = await next()
     if (sessionVisionRuntime?.index === undefined) {
@@ -2570,6 +2591,9 @@ export function apply(ctx, config = {}, runtime = {}) {
   // adapters the same way).
   ctx.on('agent/request', async (payload, next) => {
     const config0 = await next()
+    // The modern Host rejects any route change here. Its Agent.model already
+    // selected the image/text route BEFORE tool and prompt admission.
+    if (preStepRouting.nativeModel(payload.agent)) return config0
     if (!routingEnabled()) return config0
     const session = payload.agent && payload.agent.session
     if (!session) return config0

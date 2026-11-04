@@ -15,6 +15,7 @@ on:
       - 'scripts/dsh-rc1-pin.mjs'
       - 'scripts/build-source-artifacts.mjs'
       - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-rc1-agent-order-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
       - 'presets/web-connection-ready/**'
       - 'cordis.patch.yml'
@@ -129,6 +130,12 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify RC1 Agent model/inbox notification ordering
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+        run: node ../dvr/scripts/dsh-rc1-agent-order-contract.mjs
       - name: Verify old/new Web Connection trust-generation overlay
         working-directory: dsh-rc1
         env:
@@ -172,6 +179,7 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-macos-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-macos-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
@@ -457,6 +465,7 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
           DVR_DESKTOP_BASE_PORT: '19510'
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.png

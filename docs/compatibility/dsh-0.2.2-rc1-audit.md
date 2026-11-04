@@ -19,3 +19,28 @@ The fixed RC1 gate validates exact checkout SHA and package identity, cross-plat
 The RC1 Agent Loop reads the selected model *before* prompt/tool assembly and pre-step. At request preparation, RC1 packages/core/agent-loop/src/agent.ts rejects provider/model/effort modifications returned by agent/request (lines 630-639). DVR src/index.js still changes provider/model from agent/request when optional dynamic routing is enabled. The same upstream source existed at Alpha.3, meaning the earlier browser gate did not prove this active routing flow. A real Host regression must demonstrate a routed image turn, a following text-only turn, actual selected adapter, and no model-selection or permission drift. The documented modern mechanism, agent.model.select(), must be invoked before step preparation, not merely during agent/pre-step after selection was fixed.
 
 Additional runtime scrutiny covers tools.resolve/executable, session-projection async registration, settings persistence, plugin disposal, source authentication and model/attachment decisions. A green generic Settings smoke alone does not close these risks.
+
+## Fix under verification (not yet merged)
+
+DVR now uses post-append, pre-preStep Agent inbox notifications and
+running/turn-stopping boundaries to call the official Agent.model.select()
+synchronously before tools.resolve fixes the step model and permissions.
+It reads the true Session inbox projection rather than guessing from the
+newest message. Modern agent/request handlers never mutate provider/model.
+Legacy Hosts without Agent.model.select keep the previous routing path.
+
+A text followup restores the user-selected base model only if the current
+selection still matches DVR-owned image routing. Explicit manual changes
+take priority. Absent projection and adapters fail closed. Tool-only mode
+mounts progressive image tools before the tool-admission snapshot.
+Session event is intentionally NOT used for selecting a model: Session.append
+prohibits synchronous reentrant model/selection appends.
+
+CI now verifies pinned source event ordering and runs real Desktop requests:
+image to vision-chain, text followup to original provider, visible answers,
+actual network requests and durable model-selection projection. Synthetic
+adversarial tests cover queue, steer, offload, disable, missing adapter,
+unload, and legacy nonintervention.
+
+Still a candidate. Real Host CI and adversarial review must pass before a
+public compatibility claim or release.

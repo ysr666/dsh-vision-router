@@ -632,6 +632,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 let desktopOutputBuffer = ''
 let lastCoreProbe
 let runtimePackageEvidence
+const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -647,6 +648,13 @@ try {
     const body = await readJsonBody(req)
     textEvidence.requests += 1
     const serialized = JSON.stringify(body)
+    if (checkWholeTurnRouting && serialized.includes('TEXT_FOLLOWUP_AFTER_IMAGE')) {
+      sendSse(res, [
+        { choices: [{ delta: { content: 'DESKTOP_TEXT_REVERSE_E2E_OK' } }] },
+        { choices: [{ finish_reason: 'stop', delta: {} }] },
+      ])
+      return
+    }
     if (serialized.includes('DESKTOP_VISUAL_E2E_OK')) {
       textEvidence.sawVisionResult = true
       sendSse(res, [
@@ -685,7 +693,7 @@ try {
     const serialized = JSON.stringify(body)
     visionEvidence.sawImage = /data:image\//i.test(serialized) || /image_url/i.test(serialized)
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ choices: [{ message: { content: 'DESKTOP_VISUAL_E2E_OK' } }] }))
+    res.end(JSON.stringify({ choices: [{ message: { content: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK' : 'DESKTOP_VISUAL_E2E_OK' } }] }))
   })
 
   const pnpmVersion = readJson(join(dshRoot, 'apps/desktop/node_modules/pnpm/package.json')).version
@@ -766,6 +774,16 @@ try {
     '    model: desktop-text',
     '- id: vision-router',
     '  config:',
+    ...checkWholeTurnRouting
+      ? [
+          '    routing: true',
+          '    reverseRouting: true',
+          '    providers:',
+          '      - provider: vision-http',
+          '        model: desktop-e2e/desktop-vision',
+          '        fallbacks: []',
+        ]
+      : [],
     '    provider: vision-http',
     '    model: desktop-vision',
     '    httpProviders:',
@@ -1055,6 +1073,12 @@ try {
   await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
   if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
   await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
+  const beforeDynamicImage = checkWholeTurnRouting
+    ? await readHostModelSelections(authenticatedHostUrl) : undefined
+  const originalModelSelection = beforeDynamicImage?.sessions.find((session) => session.latest?.length)?.latest?.at(-1)
+  if (checkWholeTurnRouting && (!originalModelSelection?.provider || !originalModelSelection?.model)) {
+    throw new Error('RC1 dynamic routing test could not witness the original selected model')
+  }
   // The primary action changes its accessible name when a running turn can be
   // queued or steered. Waiting for actionability also waits out attachment upload.
   const send = page.getByRole('button', {
@@ -1062,12 +1086,44 @@ try {
   }).last()
   await send.waitFor({ state: 'visible', timeout: 30_000 })
   await send.click({ timeout: 30_000 })
-  await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
-  if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
-    throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
-  }
-  if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
-    throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
+  if (checkWholeTurnRouting) {
+    // RC1 route authority must be decided before the step's tools/prompt.
+    // The first image goes directly through DVR's chain adapter, and a later
+    // text-only turn returns to the original text model. A fake Settings
+    // mount cannot satisfy either real HTTP backend or rendered response.
+    await page.getByText('DESKTOP_DYNAMIC_IMAGE_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error('RC1 dynamic route did not deliver canonical image to the vision adapter: ' + JSON.stringify(visionEvidence))
+    }
+    const imageModels = await readHostModelSelections(authenticatedHostUrl)
+    if (!imageModels.sessions.some((session) => session.projected?.lastUsed?.provider === 'vision-chain'
+      || session.projected?.pending?.provider === 'vision-chain'
+      || session.latest?.some((item) => item.provider === 'vision-chain'))) {
+      throw new Error('RC1 image request did not commit an Agent-owned vision-chain selection: ' + JSON.stringify(imageModels))
+    }
+
+    await composer.fill('TEXT_FOLLOWUP_AFTER_IMAGE')
+    await send.waitFor({ state: 'visible', timeout: 30_000 })
+    await send.click({ timeout: 30_000 })
+    await page.getByText('DESKTOP_TEXT_REVERSE_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    if (textEvidence.requests < 1) {
+      throw new Error('RC1 text followup never reached the original text adapter')
+    }
+    const textModels = await readHostModelSelections(authenticatedHostUrl)
+    if (!textModels.sessions.some((session) => session.latest?.some((item) => item.provider === 'vision-chain')
+      && session.projected?.lastUsed?.provider === originalModelSelection.provider
+      && session.projected?.lastUsed?.model === originalModelSelection.model)) {
+      throw new Error('RC1 text followup did not restore its original Session route: '
+        + JSON.stringify({originalModelSelection, textModels}))
+    }
+  } else {
+    await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
+      throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
+    }
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
+    }
   }
 
   const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
