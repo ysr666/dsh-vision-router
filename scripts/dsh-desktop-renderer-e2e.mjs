@@ -1077,15 +1077,22 @@ try {
   await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
   if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
   await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
-  // Use the exact Session that positively proved two accepted toggle events
-  // earlier in this run. Taking the first Session in a global probe can select
-  // another conversation and accidentally validate an unrelated model.
-  const originalModelSelection = checkWholeTurnRouting
-    ? committedSession.projected?.next ?? committedSession.latest?.at(-1)
-    : undefined
-  if (checkWholeTurnRouting && (!originalModelSelection?.provider || !originalModelSelection?.model)) {
-    throw new Error('RC1 dynamic routing test lost the original selected Session model')
+  // The earlier two-way toggle probe precedes the functional Vision-ON
+  // action above. Read the accepted Host selection AFTER Vision is ON, not
+  // the now-obsolete pre-toggle text route. Correlate this live Session with
+  // the accepted two-way toggle trace; never use the first arbitrary Session.
+  const beforeDynamicImage = checkWholeTurnRouting
+    ? await readHostModelSelections(authenticatedHostUrl) : undefined
+  const originals = (beforeDynamicImage?.sessions ?? []).filter((session) =>
+    session.projected?.next?.provider === 'desktop-e2e-vision'
+    && session.projected?.next?.model === 'desktop-text'
+    && session.latest?.some((event) => event.provider === 'desktop-e2e'
+      && event.model === 'desktop-text'))
+  if (checkWholeTurnRouting && originals.length !== 1) {
+    throw new Error('RC1 pre-image Host selection must reflect settled Vision ON in one Session: '
+      + JSON.stringify(beforeDynamicImage))
   }
+  const originalModelSelection = originals[0]?.projected?.next
   // The primary action changes its accessible name when a running turn can be
   // queued or steered. Waiting for actionability also waits out attachment upload.
   const send = page.getByRole('button', {
@@ -1137,7 +1144,8 @@ try {
         + JSON.stringify({originalModelSelection, textModels}))
     }
   } else {
-    await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_VISION_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 15_000 })
     if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
       throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
     }

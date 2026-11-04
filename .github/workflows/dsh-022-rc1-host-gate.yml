@@ -67,7 +67,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ steps.pin.outputs.sha }}
+          ref: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db # dsh-v0.2.2-rc.1 immutable reviewed release
           persist-credentials: false
           path: dsh-rc1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -208,7 +208,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ steps.pin.outputs.sha }}
+          ref: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db # dsh-v0.2.2-rc.1 immutable reviewed release
           persist-credentials: false
           path: dsh-rc1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -379,7 +379,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ${{ steps.pin.outputs.sha }}
+          ref: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db # dsh-v0.2.2-rc.1 immutable reviewed release
           persist-credentials: false
           path: dsh-rc1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -470,6 +470,17 @@ jobs:
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Run default tool-only image conversation on RC1
+        if: matrix.node == '24.9.0'
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
       - name: Run Node 24 multi-plugin ordering adversary
         if: matrix.node == '24.21.0'
         working-directory: dsh-rc1
@@ -486,9 +497,9 @@ jobs:
               node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
           done
       - name: Upload Windows Desktop diagnostics on failure
-        if: matrix.node == '24.21.0' && failure()
+        if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-rc1-windows-desktop-diagnostics
+          name: dsh-rc1-windows-desktop-diagnostics-${{ matrix.node }}
           path: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.*
           if-no-files-found: ignore

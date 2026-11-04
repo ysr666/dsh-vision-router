@@ -201,7 +201,15 @@ export function installPreStepModelRouting(ctx, options) {
       manualOverride.add(agent)
     }
   })
-  ctx.on('agent/inbox/inserted', ({ agent, message } = {}) => {
+  const containEarlyHook = (agent, action) => {
+    try { action() }
+    catch (error) {
+      // agent.send() calls inbox listeners synchronously BEFORE wakeDriver().
+      // A plugin failure here must not strand a durably queued user message.
+      if (agent && typeof agent === 'object') warnOnce(agent, String(error?.message ?? error).slice(0, 180))
+    }
+  }
+  ctx.on('agent/inbox/inserted', ({ agent, message } = {}) => containEarlyHook(agent, () => {
     if (!nativeModel(agent)) return
     rememberAgent(agent)
     const inbox = readInbox(agent)
@@ -231,11 +239,11 @@ export function installPreStepModelRouting(ctx, options) {
       // miss the pre-step model selection in that window.
       nextTurn(agent, inbox)
     }
-  })
-  ctx.on('agent/status', ({ agent, status } = {}) => {
+  }))
+  ctx.on('agent/status', ({ agent, status } = {}) => containEarlyHook(agent, () => {
     rememberAgent(agent)
     if (status === 'running') nextTurn(agent, readInbox(agent))
-  })
+  }))
   ctx.on('agent/turn-stopping', ({ agent } = {}) => {
     try {
       rememberAgent(agent)

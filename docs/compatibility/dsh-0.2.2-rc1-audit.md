@@ -1,6 +1,9 @@
 # DSH 0.2.2-rc.1 exact-source adaptation review
 
-Status: **DRAFT / NOT YET VERIFIED**. Do not claim DVR supports RC1 until all real Host checks, including dynamic image routing, pass.
+Status: RC1 source audit and evidence checklist. The authoritative acceptance
+status is the latest commit's Host jobs at
+https://github.com/ysr666/dsh-vision-router/pull/786; this document alone
+does not establish production compatibility.
 
 ## Provenance and source delta
 
@@ -14,13 +17,13 @@ Status: **DRAFT / NOT YET VERIFIED**. Do not claim DVR supports RC1 until all re
 
 The fixed RC1 gate validates exact checkout SHA and package identity, cross-platform source/Sharp and peer/security contracts, real Host with Chromium Settings save/reload/readback, cold Vision toggle, mixed attachment and bundle recompose, macOS Desktop renderer, Windows Node24.9/24.21 Desktop, and multi-plugin ordering. Alpha surveillance and earlier Host/Node22 lanes stay separate.
 
-## P1 candidate: dynamic image routing
+## Confirmed source incompatibility: late dynamic model routing
 
-The RC1 Agent Loop reads the selected model *before* prompt/tool assembly and pre-step. At request preparation, RC1 packages/core/agent-loop/src/agent.ts rejects provider/model/effort modifications returned by agent/request (lines 630-639). DVR src/index.js still changes provider/model from agent/request when optional dynamic routing is enabled. The same upstream source existed at Alpha.3, meaning the earlier browser gate did not prove this active routing flow. A real Host regression must demonstrate a routed image turn, a following text-only turn, actual selected adapter, and no model-selection or permission drift. The documented modern mechanism, agent.model.select(), must be invoked before step preparation, not merely during agent/pre-step after selection was fixed.
+The RC1 Agent Loop reads the selected model *before* prompt/tool assembly and pre-step. At request preparation, RC1 packages/core/agent-loop/src/agent.ts rejects provider/model/effort modifications returned by agent/request (lines 630-639). DVR previously changed provider/model at agent/request when optional dynamic routing was enabled; the RC1 code now uses the earlier Agent model-selection boundary. The same upstream source existed at Alpha.3, meaning the earlier browser gate did not prove this active routing flow. A real Host regression must demonstrate a routed image turn, a following text-only turn, actual selected adapter, and no model-selection or permission drift. The documented modern mechanism, agent.model.select(), must be invoked before step preparation, not merely during agent/pre-step after selection was fixed.
 
 Additional runtime scrutiny covers tools.resolve/executable, session-projection async registration, settings persistence, plugin disposal, source authentication and model/attachment decisions. A green generic Settings smoke alone does not close these risks.
 
-## Fix under verification (not yet merged)
+## Implementation and required acceptance
 
 DVR now uses post-append, pre-preStep Agent inbox notifications and
 running/turn-stopping boundaries to call the official Agent.model.select()
@@ -42,8 +45,8 @@ actual network requests and durable model-selection projection. Synthetic
 adversarial tests cover queue, steer, offload, disable, missing adapter,
 unload, and legacy nonintervention.
 
-Still a candidate. Real Host CI and adversarial review must pass before a
-public compatibility claim or release.
+A published compatibility claim requires current-head real Host CI and
+adversarial review, not just these unit-level assertions.
 
 ## Real RC1 Desktop evidence from first audit run
 
@@ -55,7 +58,8 @@ places (session title, breadcrumb, assistant paragraph), NOT because the
 runtime request failed. E2E now selects the assistant paragraph and accepts
 either verified chain or direct vision-http source route, and continues to
 require a text followup and accepted model-selection projection evidence.
-A completed end-to-end pass is still pending and mandatory.
+This first audit run was not complete E2E acceptance. Subsequent current-head
+results must be evaluated in the linked PR.
 
 ## RC1 model-switch compaction: actual failure and scoped workaround
 
@@ -71,3 +75,13 @@ must configure DSH compaction-basic.modelPolicies, e.g. headroomTokens=4096
 and maxTokens=4096 for a 32768 window, or retain DVR's default tool-only
 routing. Never silently inflate actual model metadata, mutate global Host
 compaction settings or swallow a Host model-switch error.
+
+## Two independent live Desktop routes
+
+The Windows Node24.21 and macOS Desktop E2E lanes exercise optional
+whole-turn image routing, visual backend HTTP and next-text restoration.
+Windows Node24.9 additionally runs the default tool-only image flow:
+text Agent must discover and call the vision_describe tool on the very
+first image step, consume a real mock vision response, and render a
+correct answer without changing the session's text model. The two
+modes must not be treated as interchangeable verification.

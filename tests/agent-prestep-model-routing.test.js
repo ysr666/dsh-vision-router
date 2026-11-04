@@ -38,7 +38,7 @@ function harness(config = {}) {
   const options = {
     routingEnabled: () => routing,
     reverseRoutingEnabled: () => reverse,
-    routingPairs: () => [{ provider: 'vision-http', model: 'visual-model' }],
+    routingPairs: () => { if (config.throwPairs) throw new Error('synthetic route config fault'); return [{ provider: 'vision-http', model: 'visual-model' }] },
     chainRoute: () => 'vision-chain',
     wrapperRoute: () => 'deepseek-vision',
     wrapperRegistered: () => true,
@@ -48,7 +48,7 @@ function harness(config = {}) {
     toolEnabled: () => tool,
     autoActivateOnImageEnabled: () => true,
     structuredBootstrapEnabled: () => false,
-    activateDeepTools: () => { log.deepToolActivations++ },
+    activateDeepTools: () => { log.deepToolActivations++; if (config.throwActivation) throw new Error('synthetic tool mount fault') },
   }
   const coordinator = installPreStepModelRouting(ctx, options)
   const emit = (event, ...args) => {
@@ -326,4 +326,25 @@ test('turning off whole-turn routing restores user model even when reverseRoutin
   t.insert(agent,text())
   t.done(agent)
   assert.equal(t.claim(agent).model.provider,'deepseek-official')
+})
+
+test('early tool mount failure does not strand an accepted inbox message before Host wake', () => {
+  const t=harness({throwActivation:true})
+  const agent=t.agent()
+  assert.doesNotThrow(() => t.insert(agent,image()))
+  assert.doesNotThrow(() => t.run(agent))
+  const step=t.claim(agent)
+  assert.equal(step.messages.length,1)
+  assert.equal(step.model.provider,'deepseek-official','failed mounting must not pretend visual routing succeeded')
+  assert.equal(t.log.warnings.length,1)
+  assert.match(String(t.log.warnings[0][1]),/tool mount fault/)
+})
+test('malformed dynamic route config never vetoes Host wake or drops a queued image', () => {
+  const t=harness({throwPairs:true})
+  const agent=t.agent()
+  assert.doesNotThrow(() => t.insert(agent,image()))
+  assert.doesNotThrow(() => t.run(agent))
+  assert.equal(t.claim(agent).messages.length,1)
+  assert.equal(agent.model.current().provider,'deepseek-official')
+  assert.equal(t.log.warnings.length,1)
 })
