@@ -1091,26 +1091,39 @@ try {
     // The first image goes directly through DVR's chain adapter, and a later
     // text-only turn returns to the original text model. A fake Settings
     // mount cannot satisfy either real HTTP backend or rendered response.
-    await page.getByText('DESKTOP_DYNAMIC_IMAGE_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_DYNAMIC_IMAGE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
     if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
       throw new Error('RC1 dynamic route did not deliver canonical image to the vision adapter: ' + JSON.stringify(visionEvidence))
     }
     const imageModels = await readHostModelSelections(authenticatedHostUrl)
-    if (!imageModels.sessions.some((session) => session.projected?.lastUsed?.provider === 'vision-chain'
-      || session.projected?.pending?.provider === 'vision-chain'
-      || session.latest?.some((item) => item.provider === 'vision-chain'))) {
-      throw new Error('RC1 image request did not commit an Agent-owned vision-chain selection: ' + JSON.stringify(imageModels))
+    // The Host may route through the configured chain or directly to the
+    // first vision-http adapter when chain registration is unavailable. Both
+    // are real visual providers; the test proves the accepted route and image
+    // bytes, not a hard-coded internal implementation detail.
+    const visualSelection = imageModels.sessions
+      .flatMap((session) => session.latest ?? [])
+      .findLast((item) => (item?.provider === 'vision-http'
+        && item.model === 'desktop-e2e/desktop-vision')
+        || (item?.provider === 'vision-chain'
+          && item.model === 'vision-http/desktop-e2e/desktop-vision'))
+    if (!visualSelection || (visualSelection.provider === originalModelSelection.provider
+        && visualSelection.model === originalModelSelection.model)) {
+      throw new Error('RC1 image turn did not commit an independent visual adapter route: '
+        + JSON.stringify({ originalModelSelection, imageModels }))
     }
 
     await composer.fill('TEXT_FOLLOWUP_AFTER_IMAGE')
     await send.waitFor({ state: 'visible', timeout: 30_000 })
     await send.click({ timeout: 30_000 })
-    await page.getByText('DESKTOP_TEXT_REVERSE_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_TEXT_REVERSE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
     if (textEvidence.requests < 1) {
       throw new Error('RC1 text followup never reached the original text adapter')
     }
     const textModels = await readHostModelSelections(authenticatedHostUrl)
-    if (!textModels.sessions.some((session) => session.latest?.some((item) => item.provider === 'vision-chain')
+    if (!textModels.sessions.some((session) => session.latest?.some((item) => item.provider === visualSelection.provider
+        && item.model === visualSelection.model)
       && session.projected?.lastUsed?.provider === originalModelSelection.provider
       && session.projected?.lastUsed?.model === originalModelSelection.model)) {
       throw new Error('RC1 text followup did not restore its original Session route: '

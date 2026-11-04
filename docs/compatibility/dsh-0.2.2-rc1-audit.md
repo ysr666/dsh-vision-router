@@ -44,3 +44,15 @@ unload, and legacy nonintervention.
 
 Still a candidate. Real Host CI and adversarial review must pass before a
 public compatibility claim or release.
+
+## Real RC1 Desktop evidence from first audit run
+
+On Windows Node24.21 with RC1 exact Host, the real Desktop completed the
+image turn with its visible answer (DESKTOP_DYNAMIC_IMAGE_E2E_OK) and the
+model picker showed vision-http/desktop-e2e/desktop-vision. The initial
+Playwright selector then failed because the same answer occurred in three
+places (session title, breadcrumb, assistant paragraph), NOT because the
+runtime request failed. E2E now selects the assistant paragraph and accepts
+either verified chain or direct vision-http source route, and continues to
+require a text followup and accepted model-selection projection evidence.
+A completed end-to-end pass is still pending and mandatory.

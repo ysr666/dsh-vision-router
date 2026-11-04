@@ -51,22 +51,27 @@ function harness(config = {}) {
     activateDeepTools: () => { log.deepToolActivations++ },
   }
   const coordinator = installPreStepModelRouting(ctx, options)
-  const emit = (event, payload) => {
-    for (const cb of handlers.get(event) ?? []) cb(payload)
+  const emit = (event, ...args) => {
+    for (const cb of handlers.get(event) ?? []) cb(...args)
   }
   let activeAppend = false
   function agent(initial = {provider:'deepseek-official',model:'deepseek-v4-pro',reasoningEffort:'high'}) {
     const session = {}
     const selected = {...initial}
-    const record = {value: selected}
+    const record = {value: selected, committed: undefined}
     const result = {
       session, status: 'idle',
       model: {
         current() { return {...record.value} },
         select(next) {
           assert.equal(activeAppend, false, 'model.select must never reenter a Session append')
+          // Match real RC1 AgentModel.select: an already recorded identical
+          // provider/model is a no-op, not a new accepted user intent.
+          if (record.committed?.provider === next.provider && record.committed?.model === next.model) return
           log.select.push(next)
           record.value = {...next}
+          record.committed = {...next}
+          emit('session/event', session, {type:'model/selection',data:next})
         },
       },
     }
@@ -244,4 +249,56 @@ test('default tool-only mode activates deep tools before RC1 tool admission with
   assert.equal(request.model.provider,'deepseek-official')
   assert.equal(t.log.deepToolActivations>=1,true)
   assert.equal(t.log.select.length,0)
+})
+
+test('explicit manual selection of a different vision adapter is never treated as auto reverse routing', () => {
+  const t=harness()
+  const agent=t.agent()
+  t.insert(agent,image())
+  t.run(agent)
+  t.claim(agent)
+  agent.model.select({provider:'vision-http',model:'visual-model'})
+  t.insert(agent,text())
+  t.done(agent)
+  assert.deepEqual(t.claim(agent).model,{provider:'vision-http',model:'visual-model'})
+})
+
+test('RC1 same-route no-op emits no manual intent and preserves DVR-owned restoration', () => {
+  const t=harness()
+  const agent=t.agent()
+  t.insert(agent,image())
+  t.run(agent)
+  t.claim(agent)
+  const chosen=agent.model.current()
+  const before=t.log.select.length
+  agent.model.select(chosen)
+  assert.equal(t.log.select.length,before,'identical Host model selection does not append')
+  t.insert(agent,text())
+  t.done(agent)
+  assert.deepEqual(t.claim(agent).model,{provider:'deepseek-official',model:'deepseek-v4-pro',reasoningEffort:'high'})
+})
+
+test('next-turn arriving just after turn-stopping is selected before the next preStep', () => {
+  const t=harness()
+  const agent=t.agent()
+  t.insert(agent,image())
+  t.run(agent)
+  t.claim(agent)
+  t.done(agent)
+  t.insert(agent,text())
+  assert.equal(t.claim(agent).model.provider,'deepseek-official')
+})
+test('late next-step steer after selecting next-turn restores active turn authority', () => {
+  const t=harness()
+  const agent=t.agent()
+  t.insert(agent,image())
+  t.run(agent)
+  t.claim(agent)
+  t.insert(agent,text(),'next-turn')
+  t.done(agent)
+  assert.equal(agent.model.current().provider,'deepseek-official')
+  t.insert(agent,text(),'next-step')
+  assert.equal(t.claim(agent,'next-step').model.provider,'vision-chain')
+  t.done(agent)
+  assert.equal(t.claim(agent).model.provider,'deepseek-official')
 })
