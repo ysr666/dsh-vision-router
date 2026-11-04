@@ -766,7 +766,11 @@ try {
     '        models:',
     '          - id: desktop-text',
     '            input: [text]',
-    '            contextWindow: 32768',
+    // RC1 default model-switch compaction reserves 65,536 headroom tokens.
+    // This synthetic dynamic-routing fixture must declare enough capacity.
+    // Real small-window deployments should use the Host's per-model policy,
+    // never a fabricated context-window size in their adapter manifest.
+    checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
     '            maxTokens: 2048',
     '- id: agent-default-model',
     '  config:',
@@ -1073,11 +1077,14 @@ try {
   await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
   if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
   await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
-  const beforeDynamicImage = checkWholeTurnRouting
-    ? await readHostModelSelections(authenticatedHostUrl) : undefined
-  const originalModelSelection = beforeDynamicImage?.sessions.find((session) => session.latest?.length)?.latest?.at(-1)
+  // Use the exact Session that positively proved two accepted toggle events
+  // earlier in this run. Taking the first Session in a global probe can select
+  // another conversation and accidentally validate an unrelated model.
+  const originalModelSelection = checkWholeTurnRouting
+    ? committedSession.projected?.next ?? committedSession.latest?.at(-1)
+    : undefined
   if (checkWholeTurnRouting && (!originalModelSelection?.provider || !originalModelSelection?.model)) {
-    throw new Error('RC1 dynamic routing test could not witness the original selected model')
+    throw new Error('RC1 dynamic routing test lost the original selected Session model')
   }
   // The primary action changes its accessible name when a running turn can be
   // queued or steered. Waiting for actionability also waits out attachment upload.

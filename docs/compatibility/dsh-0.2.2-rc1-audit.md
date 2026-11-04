@@ -56,3 +56,18 @@ runtime request failed. E2E now selects the assistant paragraph and accepts
 either verified chain or direct vision-http source route, and continues to
 require a text followup and accepted model-selection projection evidence.
 A completed end-to-end pass is still pending and mandatory.
+
+## RC1 model-switch compaction: actual failure and scoped workaround
+
+A real RC1 Windows Desktop image request passed, but its next text request
+failed with MODEL_SWITCH_COMPACTION_FAILED: the synthetic adapter declared
+contextWindow=32768 and maxTokens=2048, while upstream compaction-basic
+defaults to headroomTokens=65536. The destination lacks a valid budget
+even for a tiny history. This is an upstream documented restriction.
+
+For the normal return-to-text E2E use a synthetic adapter whose capacity
+is 131072. This changes no actual user models. Real small-window models
+must configure DSH compaction-basic.modelPolicies, e.g. headroomTokens=4096
+and maxTokens=4096 for a 32768 window, or retain DVR's default tool-only
+routing. Never silently inflate actual model metadata, mutate global Host
+compaction settings or swallow a Host model-switch error.

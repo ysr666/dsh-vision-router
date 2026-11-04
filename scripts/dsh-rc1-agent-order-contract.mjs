@@ -13,6 +13,7 @@ const inbox = host('packages/core/agent-loop/src/inbox.ts')
 const model = host('packages/core/agent/src/model-selection.ts')
 const projection = host('packages/session/session-projection/src/index.ts')
 const session = host('packages/core/session/src/index.ts')
+const compactionConfig = host('packages/compaction/compaction-basic/src/config.ts')
 
 const strictlyOrdered = (source, markers, label) => {
   let cursor = -1
@@ -54,5 +55,15 @@ assert.match(model, /select\(selection: Readonly<ModelSelection>\): void/)
 assert.match(model, /this\.session\.append\('model\/selection'/)
 assert.match(projection, /stateOf\(session: Session/)
 assert.match(session, /session append cannot reenter while another append is being published/)
+// RC1 rejects switching even with an empty history when 32k windows cannot
+// fit the Host's default 65,536-token headroom. Pin that documented premise;
+// the ordinary dynamic E2E uses an appropriately sized synthetic adapter.
+const headroom = /config\.headroomTokens\s*\?\?\s*([0-9_]+)/.exec(compactionConfig)
+assert.ok(headroom, 'RC1 compaction default headroom contract missing')
+const tokens = Number(headroom[1].replaceAll('_', ''))
+assert.equal(tokens, 65_536)
+assert.ok(32_768 - 2048 - tokens <= 0, 'default 32k destination must be rejected')
+assert.ok(32_768 - 2048 - 4096 > 0, 'small model can be supported by an explicit Host per-model headroom policy')
+
 assert.match(session, /invokeContainedSessionObservers\(entry\.emitCtx, 'session\/event'/)
 console.log(JSON.stringify({ok:true,hostSha:expected, modelFixedBeforeTools:true,inboxNotificationAfterCommit:true,nonreentrantSelection:true}))

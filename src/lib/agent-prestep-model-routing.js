@@ -134,6 +134,10 @@ export function installPreStepModelRouting(ctx, options) {
       // is running. That explicit choice must not be reinterpreted as a
       // request for automatic reverse routing on the next text input.
       if (!sameRoute(current, record.target)) return
+      // reverseRouting=false explicitly keeps the visual route for later text
+      // turns. Only a disabled whole-turn routing switch must restore DVR's
+      // temporary image selection to the user's original model.
+      if (options.routingEnabled() && !options.reverseRoutingEnabled()) return
       // Restore the actual Session model chosen before DVR routed its image.
       // Never overwrite a different model explicitly selected by the user.
       const origin = routeOf(record.origin)
