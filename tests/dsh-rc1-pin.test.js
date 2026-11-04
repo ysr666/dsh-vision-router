@@ -41,6 +41,8 @@ test('RC1 Host Gate validates exactly pinned source across all supported platfor
   assert.equal(count(gate, 'ref: '+ '$'+'{{ steps.pin.outputs.sha }}'),0)
   assert.match(gate,/permissions:\n  contents: read/)
   assert.equal(count(gate,'persist-credentials: false'),6)
+  assert.doesNotMatch(gate, /actions\/cache\/|dsh-build-cache|hashFiles\(/,
+    'RC1 checkout and build must not restore or seed privileged Actions caches')
   assert.match(gate,/node: \[24\.9\.0, 24\.21\.0\]/)
   assert.equal(count(gate,'node-version: 24.9.0'),2)
   assert.match(gate,/DSH_EXPECTED_COMMIT: /)

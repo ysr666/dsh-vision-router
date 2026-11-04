@@ -48,7 +48,7 @@ function harness(config = {}) {
     toolEnabled: () => tool,
     autoActivateOnImageEnabled: () => true,
     structuredBootstrapEnabled: () => false,
-    activateDeepTools: () => { log.deepToolActivations++; if (config.throwActivation) throw new Error('synthetic tool mount fault') },
+    activateDeepTools: () => { log.deepToolActivations++; if (config.throwActivation) throw new Error(config.activationError || 'synthetic tool mount fault') },
   }
   const coordinator = installPreStepModelRouting(ctx, options)
   const emit = (event, ...args) => {
@@ -347,4 +347,17 @@ test('malformed dynamic route config never vetoes Host wake or drops a queued im
   assert.equal(t.claim(agent).messages.length,1)
   assert.equal(agent.model.current().provider,'deepseek-official')
   assert.equal(t.log.warnings.length,1)
+})
+
+test('early Hook logs redact provider credentials without changing queued message delivery', () => {
+  const secret='sk-proj-secret-credential-123456789'
+  const t=harness({throwActivation:true,activationError:'upstream error Authorization: Bearer '+secret})
+  const agent=t.agent()
+  assert.doesNotThrow(()=>t.insert(agent,image()))
+  assert.doesNotThrow(()=>t.run(agent))
+  assert.equal(t.claim(agent).messages.length,1)
+  assert.equal(t.log.warnings.length,1)
+  const warning=JSON.stringify(t.log.warnings)
+  assert.ok(warning.includes('[REDACTED]'),warning)
+  assert.ok(!warning.includes(secret),'credential must not reach logs')
 })

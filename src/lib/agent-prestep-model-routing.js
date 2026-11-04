@@ -1,4 +1,5 @@
 import { reverseRouteTarget } from './core-primitives.js'
+import { redactDiagnosticText } from './diagnostic-redaction.js'
 
 function routeOf(value) {
   if (!value || typeof value !== 'object') return undefined
@@ -34,7 +35,7 @@ export function installPreStepModelRouting(ctx, options) {
   const warnOnce = (agent, message) => {
     if (warning.has(agent)) return
     warning.add(agent)
-    ctx.logger?.warn?.('vision-router: modern pre-step routing unavailable: %s', message)
+    ctx.logger?.warn?.('vision-router: modern pre-step routing unavailable: %s', redactDiagnosticText(message, 180))
   }
   const nativeModel = (agent) => {
     try {

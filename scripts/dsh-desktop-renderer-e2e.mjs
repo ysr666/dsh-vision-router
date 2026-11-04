@@ -1158,20 +1158,29 @@ try {
   const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
   assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
   const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
-  assert.ok(
-    dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
-    `real Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
+  // Tool-driven vision produces DVR-authored notices/tool evidence. In the
+  // optional whole-turn route, the vision adapter handles the image directly
+  // and does not need to author a synthetic DVR message. Both paths already
+  // proved their real model requests above; require producer attribution only
+  // when DVR actually authored a durable Session message.
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
+      `real tool-only Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
   assert.equal(
     dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
     false,
     `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
   )
   const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
-  assert.ok(
-    dvrMessages.length > 0,
-    `real Session v4 log must expose at least one DVR-authored durable message by id: ${JSON.stringify(sessionSourceProbe)}`,
-  )
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrMessages.length > 0,
+      `real tool-only Session v4 log must expose a DVR-authored durable message: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
   for (const message of dvrMessages) {
     assert.equal(
       message.source?.kind,
@@ -1196,7 +1205,12 @@ try {
     toggle: { initial: initialPressed, exercised: true, restored: true },
     onboarding: { settingsPath: true },
     settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
-    functionalVisionTurn: { textEvidence, visionEvidence, rendered: 'DESKTOP_VISION_E2E_OK' },
+    functionalVisionTurn: {
+      mode: checkWholeTurnRouting ? 'whole-turn' : 'tool-only',
+      textEvidence, visionEvidence,
+      rendered: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK + DESKTOP_TEXT_REVERSE_E2E_OK' : 'DESKTOP_VISION_E2E_OK',
+      durableDvrMessages: dvrMessages.length,
+    },
   }
   console.log(JSON.stringify(result))
   if (diagnosticPath) {

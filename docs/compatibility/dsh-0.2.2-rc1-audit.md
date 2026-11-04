@@ -85,3 +85,26 @@ text Agent must discover and call the vision_describe tool on the very
 first image step, consume a real mock vision response, and render a
 correct answer without changing the session's text model. The two
 modes must not be treated as interchangeable verification.
+
+## Workflow trust and cache policy
+
+Static SHA checkout is deliberately duplicated in the fixed RC1 workflow
+and checked against the reviewed JSON pin. All checkouts use
+persist-credentials=false; GitHub job permissions remain contents:read.
+Because CI executes upstream dependencies, the RC1 lane does not restore or
+save any shared Actions build cache, even on main. This removes the only
+potential persistent cache-poisoning path rather than relying on a dynamic
+cache key and workflow_dispatch branch heuristics. Ordinary untrusted PR
+checkout is only executed in the same non-privileged test jobs.
+
+## Durable message attribution during both image execution modes
+
+Real RC1 Windows Node24.21 image→text E2E completed both turns but the
+shared harness then incorrectly required a DVR-authored durable message.
+Whole-turn mode routes images directly to the vision adapter and may emit
+zero DVR-authored synthetic messages. The E2E now checks producer-owned V4
+source integrity for any such messages, while retaining the strict
+*nonempty* DVR-source and DVR-message check for default tool-only mode.
+Actual backend calls, rendered answers and accepted model-selection
+projections are mandatory in both modes. No synthetic message is created
+solely to satisfy test attribution.
