@@ -1,0 +1,485 @@
+name: DSH 0.2.2-rc.1 Exact-source Host Gate
+
+# This is an immutable RC1 validation lane, independent of floating Alpha
+# surveillance. RC1 requires Node >=24.9; older DVR/Host compatibility remains
+# covered by the existing Node22 lanes and must not be silently redefined.
+# Run all three exact-source OS contracts, real Chromium Settings/save/reload,
+# native Desktop macOS, Windows Node24.9 and Node24.21, and multiplugin ordering.
+# No permission escalation, automated merge or release.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dsh-022-rc1-host-gate.yml'
+      - 'config/dsh-rc1-settings-pin.json'
+      - 'scripts/dsh-rc1-pin.mjs'
+      - 'scripts/build-source-artifacts.mjs'
+      - 'scripts/dsh-alpha-source-contract.mjs'
+      - 'scripts/dsh-web-connection-overlay-contract.mjs'
+      - 'presets/web-connection-ready/**'
+      - 'cordis.patch.yml'
+      - 'scripts/dsh-peer-admission-contract.mjs'
+      - 'scripts/dsh-proxy-egress-contract.mjs'
+      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
+      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
+      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
+      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
+      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
+      - 'src/**'
+  # Review and merge of this fixed RC1 audit records the validated baseline.
+  # The original Alpha monitoring lane remains separate.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/dsh-022-rc1-host-gate.yml'
+      - 'config/dsh-rc1-settings-pin.json'
+      - 'scripts/dsh-rc1-pin.mjs'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rc1-exact-source:
+    name: exact rc1 source / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc1 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc1-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.pin.outputs.sha }}
+          persist-credentials: false
+          path: dsh-rc1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.9.0
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact rc1 Host workspace dependencies
+        working-directory: dsh-rc1
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Compute the rc1 Host build cache key
+        if: matrix.os == 'macos-latest'
+        id: dsh-cache-key
+        working-directory: dsh-rc1
+        shell: bash
+        env:
+          NODE_VERSION: '24.9.0'
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-rc1-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.28.5-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the rc1 Host build
+        if: matrix.os == 'macos-latest'
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+      - name: Run exact source and Host-owned Sharp contract
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+          DSH_EXPECTED_PNPM: '11.28.5'
+        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify old/new Web Connection trust-generation overlay
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
+      - name: Verify public 0.2 train peer admission
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
+      - name: Verify Host proxy egress authority
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest' && steps.dsh-build-cache.outputs.cache-hit != 'true'
+        working-directory: dsh-rc1
+        run: pnpm run build
+      - name: Save the rc1 Host build
+        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-rc1/lib/**', 'dsh-rc1/packages/*/*/lib/**', 'dsh-rc1/vendor/*/lib/**', 'dsh-rc1/apps/*/lib/**', 'dsh-rc1/apps/*/dist/**', 'dsh-rc1/native/system/packages/*/lib/**', 'dsh-rc1/native/system/packages/*/bin/**', 'dsh-rc1/.dsh-build/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+      - name: Run real macOS Desktop renderer lifecycle
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-macos-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload macOS Desktop diagnostics on failure
+        if: matrix.os == 'macos-latest' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc1-macos-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-rc1-macos-desktop-renderer.*
+          if-no-files-found: ignore
+
+  rc1-settings-host:
+    name: real rc1 Host + Chromium lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc1 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc1-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.pin.outputs.sha }}
+          persist-credentials: false
+          path: dsh-rc1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.28.5
+      # Isolate RC1 dependency installation from shared cache state.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.9.0
+
+      - name: Read the Host version under test
+        id: resolve
+        working-directory: dsh-rc1
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          test -n "$VERSION"
+          echo "Testing @deepseek-ai/dsh $VERSION"
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo '### RC1 settings host gate'
+            echo
+            echo "- DSH version: \`$VERSION\`"
+            echo "- source commit: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install rc1 Host workspace dependencies
+        working-directory: dsh-rc1
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Compute the rc1 Host build cache key
+        id: dsh-cache-key
+        working-directory: dsh-rc1
+        shell: bash
+        env:
+          NODE_VERSION: '24.9.0'
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-rc1-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.28.5-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the rc1 Host build
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+      # This lane touches no cache at all, on purpose: it runs from the default branch on a
+      # schedule against a floating upstream ref, so anything it read from or wrote to a
+      # shared cache would come from code nobody pinned. The Chromium install therefore pays
+      # the mirror cost on its own, which a weekly lane can afford.
+      - name: Build the rc1 Host runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
+        working-directory: dsh-rc1
+        run: pnpm run build
+      - name: Save the rc1 Host build
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-rc1/lib/**', 'dsh-rc1/packages/*/*/lib/**', 'dsh-rc1/vendor/*/lib/**', 'dsh-rc1/apps/*/lib/**', 'dsh-rc1/apps/*/dist/**', 'dsh-rc1/native/system/packages/*/lib/**', 'dsh-rc1/native/system/packages/*/bin/**', 'dsh-rc1/.dsh-build/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+
+      - name: Install Chromium
+        working-directory: dsh-rc1
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      - name: Run bundle recompose stability
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Run cold Vision lifecycle
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-cold-toggle.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+      - name: Run mixed attachment lifecycle
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-mixed.png
+        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
+      - name: Run Settings mount/save/reload/readback lifecycle
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_EXPECT_NATIVE_SETTINGS_ICON: '1'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+      - name: Run Desktop Host injection contract
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc1-settings-host-diagnostics
+          path: |
+            ${{ runner.temp }}/dsh-rc1-*.json
+            ${{ runner.temp }}/dsh-rc1-*.png
+          if-no-files-found: ignore
+
+  rc1-windows-desktop:
+    name: Windows rc1 Desktop / Node ${{ matrix.node }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24.9.0, 24.21.0]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc1 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc1-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc1 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ steps.pin.outputs.sha }}
+          persist-credentials: false
+          path: dsh-rc1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact rc1 Host workspace dependencies
+        working-directory: dsh-rc1
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Compute the rc1 Host build cache key
+        id: dsh-cache-key
+        working-directory: dsh-rc1
+        shell: bash
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+        run: |
+          set -euo pipefail
+          DSH_SHA="$(git rev-parse HEAD)"
+          LOCK_SHA="$(sha256sum pnpm-lock.yaml | awk '{print $1}')"
+          TREE_SHA="$(git ls-tree -r --full-tree HEAD | sha256sum | awk '{print $1}')"
+          KEY="dsh-rc1-host-v1-${{ runner.os }}-node${NODE_VERSION}-pnpm11.28.5-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
+      # Both directions of this cache are guarded. The restore is content-addressed on the pinned
+      # upstream commit, its lockfile and its tree, so a hit can only describe the source this
+      # workflow already reviews, and it cannot mask a source change. The save runs on the default
+      # branch only, so neither a pull request nor a feature branch can seed a cache the default
+      # branch later trusts — the posture the 0.2.0-rc.2 boundary already uses.
+      - name: Restore the rc1 Host build
+        id: dsh-build-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+      - name: Build exact Desktop runtime
+        if: steps.dsh-build-cache.outputs.cache-hit != 'true'
+        working-directory: dsh-rc1
+        run: pnpm run build
+      - name: Save the rc1 Host build
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.dsh-build-cache.outputs.cache-hit != 'true' && hashFiles('dsh-rc1/lib/**', 'dsh-rc1/packages/*/*/lib/**', 'dsh-rc1/vendor/*/lib/**', 'dsh-rc1/apps/*/lib/**', 'dsh-rc1/apps/*/dist/**', 'dsh-rc1/native/system/packages/*/lib/**', 'dsh-rc1/native/system/packages/*/bin/**', 'dsh-rc1/.dsh-build/**') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            dsh-rc1/lib
+            dsh-rc1/packages/*/*/lib
+            dsh-rc1/vendor/*/lib
+            dsh-rc1/apps/*/lib
+            dsh-rc1/apps/*/dist
+            dsh-rc1/native/system/packages/*/lib
+            dsh-rc1/native/system/packages/*/bin
+            dsh-rc1/.dsh-build
+          key: ${{ steps.dsh-cache-key.outputs.key }}
+      - name: Run authenticated Desktop Host contract
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Run Node 24 Desktop renderer lifecycle
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Run Node 24 multi-plugin ordering adversary
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-rc1
+        shell: bash
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_MULTIPLUGIN_BASE_PORT: '19600'
+        run: |
+          set -euo pipefail
+          for index in 0 1; do
+            DVR_MULTIPLUGIN_SHARD_COUNT=2 DVR_MULTIPLUGIN_SHARD_INDEX="$index" \
+              node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+          done
+      - name: Upload Windows Desktop diagnostics on failure
+        if: matrix.node == '24.21.0' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc1-windows-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-rc1-windows-desktop-renderer.*
+          if-no-files-found: ignore

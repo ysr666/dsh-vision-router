@@ -1,0 +1,21 @@
+# DSH 0.2.2-rc.1 exact-source adaptation review
+
+Status: **DRAFT / NOT YET VERIFIED**. Do not claim DVR supports RC1 until all real Host checks, including dynamic image routing, pass.
+
+## Provenance and source delta
+
+- Release tag: dsh-v0.2.2-rc.1; published 2026-11-04T13:07:14Z.
+- Immutable RC1 commit: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db.
+- Prior Alpha.3 exact source: 05b1cae8db6e674c5685101494d4eec24652424a.
+- Git diff from Alpha.3 to RC1 changes 387 package.json versions only; no ordinary source file changed. This is a source-content comparison, not a passing runtime test.
+- Cordis Core 4.1.0, Loader 1.1.0, Include 1.1.0 and Node >=24.9 are declared on RC1. Older DVR Node22 host support is preserved.
+
+## Validation plan
+
+The fixed RC1 gate validates exact checkout SHA and package identity, cross-platform source/Sharp and peer/security contracts, real Host with Chromium Settings save/reload/readback, cold Vision toggle, mixed attachment and bundle recompose, macOS Desktop renderer, Windows Node24.9/24.21 Desktop, and multi-plugin ordering. Alpha surveillance and earlier Host/Node22 lanes stay separate.
+
+## P1 candidate: dynamic image routing
+
+The RC1 Agent Loop reads the selected model *before* prompt/tool assembly and pre-step. At request preparation, RC1 packages/core/agent-loop/src/agent.ts rejects provider/model/effort modifications returned by agent/request (lines 630-639). DVR src/index.js still changes provider/model from agent/request when optional dynamic routing is enabled. The same upstream source existed at Alpha.3, meaning the earlier browser gate did not prove this active routing flow. A real Host regression must demonstrate a routed image turn, a following text-only turn, actual selected adapter, and no model-selection or permission drift. The documented modern mechanism, agent.model.select(), must be invoked before step preparation, not merely during agent/pre-step after selection was fixed.
+
+Additional runtime scrutiny covers tools.resolve/executable, session-projection async registration, settings persistence, plugin disposal, source authentication and model/attachment decisions. A green generic Settings smoke alone does not close these risks.
