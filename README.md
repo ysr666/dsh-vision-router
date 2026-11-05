@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.1.2 release candidate notes:** New Vision Router icons in DSH Plugin Manager and the native Settings navigation where available; reviewed Alpha.2/Alpha.3 Cordis compatibility, dependency security, and Host process fixes. Older DSH Settings shells keep their default icon. See [v3.1.2 notes](docs/releases/v3.1.2.md). Check [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) and npm for actual publication.
+> **v3.1.3 release candidate:** Fix optional dynamic image→text model routing on DSH 0.2.2-rc.1 by selecting models before Agent pre-step; preserve the default tool-only mode and legacy Host behavior. RC1 requires Node >=24.9; small-context models may need Host compaction headroom configuration for model switching. Update the CI-only HOL scanner pin without changing security thresholds. See [v3.1.3 notes](docs/releases/v3.1.3.md). Verify publication through [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm.
 
 ## Start here
 
@@ -611,7 +611,7 @@ exploration (LLM7.io and OVHcloud anonymous tiers) by
 
 ## Release notes and community
 
-Release details: [v3.1.2 release candidate notes](docs/releases/v3.1.2.md). Check GitHub Releases or npm for the published version.
+Release details: [v3.1.3 release candidate notes](docs/releases/v3.1.3.md). Check GitHub Releases or npm for the published version.
 
 <p align="center">
   <sub>Ecosystem:</sub>

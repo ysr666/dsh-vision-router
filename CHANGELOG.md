@@ -5,6 +5,23 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.3
+
+### DSH 0.2.2-rc.1 model routing / RC1 模型路由兼容
+
+- #786 (fixes #787) moves optional image-turn model selection from the now-rejected late `agent/request` mutation to the supported, pre-step `agent.model.select()` boundary, while preserving legacy Host routing. / #786（修复 #787）把可选图片整轮分流提前到 RC1 支持的 `agent.model.select()` 时序，不再在已冻结模型的 `agent/request` 阶段切换，同时保留旧版 Host 兼容路径。
+- Reverse text routing restores the original user-selected text model without overruling later manual selections. The **default tool-only** vision mode remains unchanged and mounts deep tools before RC1 tool admission. / 后续纯文本可回切用户原先的模型且不覆盖手动选择；**默认工具识图**模式不变，工具提前进入 RC1 许可快照。
+- Real immutable-source RC1 Host Gate passed 6/6 across Windows/macOS/Linux, including Chromium and Desktop image→text E2E; queued/steer, manual model changes, offloaded images and failure-path tests were retained. / RC1 精确源码真实 Host 六项验收全过，包含三端、Chromium 与 Desktop 图片→文字往返；保留排队插话、手动切换、图片卸载及故障路径测试。
+
+### Scanner maintenance / 安全扫描器维护
+
+- #788 supersedes #785 by pinning HOL scanner Action v1.2.816 / plugin-scanner 3.59.0 to its immutable SHA, correcting the comment, and keeping the 90-point, fail-on-high gate unchanged. Current scanner score: 92/100, 0 critical/high, 1 medium. / #788 替代 #785，固定 HOL Action v1.2.816（Scanner 3.59.0）的不可变 SHA 并修正注释；90 分且高危阻断门槛不变，实测 92/100，0 严重/高危、1 中危。
+
+### Compatibility and publication limits / 兼容性与发布边界
+
+- DSH 0.2.2-rc.1 requires Node >=24.9; DVR still supports Node22 on earlier compatible Hosts. RC1 default model-switch compaction headroom (65,536 tokens) can block 32K-window destinations; configure model-specific Host policy or use default tool-only mode. Future 0.2.x variants are not implicitly verified. / RC1 本身要求 Node ≥24.9；旧 Host 的 DVR Node22 支持不变。RC1 默认切换模型压缩预留 65,536 token 会阻止 32K 上下文目标，需调整 Host 模型策略或保留默认工具模式；不将当前验收外推至后续 0.2.x。
+- No breaking API, settings migration, support-floor rise or permission expansion. Formal publication requires release-commit tests, deterministic npm pack, protected tag and OIDC artifact/provenance checks. / 不破坏 API、不迁移设置、不抬高插件最低支持门槛、不扩大权限；正式发布须通过发布提交测试、可复现 npm 包、受保护 Tag 及 OIDC 来源证明与附件验收。
+
 ## v3.1.2
 
 ### Native plugin identity / 原生插件图标
