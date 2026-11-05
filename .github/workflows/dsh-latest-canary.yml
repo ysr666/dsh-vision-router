@@ -29,12 +29,15 @@ jobs:
           - channel: stable
             dist_tag: latest
             settings_mode: auto
+            node_version: '24.21.0'
           - channel: next
             dist_tag: next
             settings_mode: auto
+            node_version: '24.21.0'
           - channel: preview
             dist_tag: alpha
             settings_mode: auto
+            node_version: '24.21.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -44,7 +47,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node_version }}
       - name: Resolve DSH release channel
         shell: bash
         env:
@@ -87,6 +90,18 @@ jobs:
             done
             exit 1
           fi
+          # The scoped native executor is distributed only by newer Host trains.
+          # Probe the exact resolved version instead of assuming only alpha has it:
+          # RC1 next has tools.setExecutor() too, while older stable does not.
+          native_executor='@deepseek-ai/dsh-tool-executor-native'
+          native_version="$(npm view "${native_executor}@${DSH_VERSION}" version 2>/dev/null || true)"
+          if [[ "$native_version" == "$DSH_VERSION" ]]; then
+            echo 'DSH_NATIVE_EXECUTOR_PUBLISHED=true' >> "$GITHUB_ENV"
+            echo "Native Host executor published: ${native_executor}@${DSH_VERSION}"
+          else
+            echo 'DSH_NATIVE_EXECUTOR_PUBLISHED=false' >> "$GITHUB_ENV"
+            echo "No native executor published for ${DSH_VERSION}; a Host requiring one must fail the contract smoke."
+          fi
       - run: pnpm install --frozen-lockfile
       - name: Pack plugin
         run: |
@@ -120,9 +135,9 @@ jobs:
               '@deepseek-ai/dsh-settings': v,
               '@deepseek-ai/dsh-tools': v,
               '@deepseek-ai/dsh-system-prompt': v,
-              ...process.env.DSH_CHANNEL === 'preview'
+              ...(process.env.DSH_NATIVE_EXECUTOR_PUBLISHED === 'true'
                 ? { '@deepseek-ai/dsh-tool-executor-native': v }
-                : {},
+                : {}),
               sharp: '0.35.3'
             }
           }, null, 2))

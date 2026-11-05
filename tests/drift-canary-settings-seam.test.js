@@ -44,6 +44,24 @@ test('floating canaries resolve the release from the registry, not from a pinned
   }
 })
 
+// DSH 0.2.2-rc.1's next channel also exposes tools.setExecutor(), so its isolated
+// fixture needs the published native executor. A channel-name-only alpha check misses
+// this package and fails with MODULE_NOT_FOUND before exercising DVR.
+test('release channel canary installs the native executor by exact published version', async () => {
+  const workflow = await readWorkflow('dsh-latest-canary.yml')
+  assert.match(workflow, /native_executor='@deepseek-ai\/dsh-tool-executor-native'/)
+  assert.match(workflow, /npm view "\$\{native_executor\}@\$\{DSH_VERSION\}" version/)
+  assert.match(workflow, /"\$native_version" == "\$DSH_VERSION"/)
+  assert.match(workflow, /DSH_NATIVE_EXECUTOR_PUBLISHED=true/)
+  assert.match(workflow, /DSH_NATIVE_EXECUTOR_PUBLISHED=false/)
+  assert.match(workflow, /process\.env\.DSH_NATIVE_EXECUTOR_PUBLISHED === 'true'/)
+  assert.doesNotMatch(workflow, /process\.env\.DSH_CHANNEL === 'preview'/)
+  assert.match(workflow, /node-version: \$\{\{ matrix\.node_version \}\}/)
+  assert.match(workflow, /channel: stable\n\s+dist_tag: latest\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
+  assert.match(workflow, /channel: next\n\s+dist_tag: next\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
+  assert.match(workflow, /channel: preview\n\s+dist_tag: alpha\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
+})
+
 test('the alpha canary reports every contract instead of stopping at the first failure', async () => {
   const workflow = await readWorkflow('dsh-alpha-canary.yml')
   for (const id of ['alpha-host-capability', 'alpha-pi-ai-wire', 'alpha-native-lifecycle']) {
