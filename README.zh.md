@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **v3.1.2 候选版更新说明：** 新增 Vision Router 插件管理图标及新版 DSH 的设置导航图标；纳入 Alpha.2/Alpha.3 Cordis 适配、依赖安全与 Host 进程兼容修复。旧版 DSH 的设置导航保持默认图标。详见[v3.1.2 更新说明](docs/releases/v3.1.2.md)。正式可安装版本以 [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) 或 npm 为准。
+> **v3.1.3 候选版更新说明：** 修复 DSH 0.2.2-rc.1 下可选的图片轮次动态模型切换与后续纯文本回切问题，模型选择提前到 Agent pre-step 之前；默认工具识图模式及旧版 Host 兼容行为不变。RC1 本身要求 Node ≥24.9；上下文窗口较小的模型在跨模型切换时可能需要调整 Host 压缩预留量。同步更新 CI 专用安全扫描器，不降低安全门槛。详见[v3.1.3 更新说明](docs/releases/v3.1.3.md)。正式可安装版本以 [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) 或 npm 为准。
 
 ## 先用起来
 
@@ -605,7 +605,7 @@ npx dsh-vision-router doctor --profile web
 
 ## 版本公告与社区链接
 
-版本更新详情：[v3.1.2 候选版更新说明](docs/releases/v3.1.2.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
+版本更新详情：[v3.1.3 候选版更新说明](docs/releases/v3.1.3.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
 
 <p align="center">
   <sub>生态收录：</sub>
