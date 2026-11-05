@@ -29,7 +29,7 @@ jobs:
           - channel: stable
             dist_tag: latest
             settings_mode: auto
-            node_version: '22'
+            node_version: '24.21.0'
           - channel: next
             dist_tag: next
             settings_mode: auto
