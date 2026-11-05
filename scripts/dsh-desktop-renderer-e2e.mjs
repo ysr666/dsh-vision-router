@@ -632,6 +632,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 let desktopOutputBuffer = ''
 let lastCoreProbe
 let runtimePackageEvidence
+const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -647,6 +648,13 @@ try {
     const body = await readJsonBody(req)
     textEvidence.requests += 1
     const serialized = JSON.stringify(body)
+    if (checkWholeTurnRouting && serialized.includes('TEXT_FOLLOWUP_AFTER_IMAGE')) {
+      sendSse(res, [
+        { choices: [{ delta: { content: 'DESKTOP_TEXT_REVERSE_E2E_OK' } }] },
+        { choices: [{ finish_reason: 'stop', delta: {} }] },
+      ])
+      return
+    }
     if (serialized.includes('DESKTOP_VISUAL_E2E_OK')) {
       textEvidence.sawVisionResult = true
       sendSse(res, [
@@ -685,7 +693,7 @@ try {
     const serialized = JSON.stringify(body)
     visionEvidence.sawImage = /data:image\//i.test(serialized) || /image_url/i.test(serialized)
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ choices: [{ message: { content: 'DESKTOP_VISUAL_E2E_OK' } }] }))
+    res.end(JSON.stringify({ choices: [{ message: { content: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK' : 'DESKTOP_VISUAL_E2E_OK' } }] }))
   })
 
   const pnpmVersion = readJson(join(dshRoot, 'apps/desktop/node_modules/pnpm/package.json')).version
@@ -758,7 +766,11 @@ try {
     '        models:',
     '          - id: desktop-text',
     '            input: [text]',
-    '            contextWindow: 32768',
+    // RC1 default model-switch compaction reserves 65,536 headroom tokens.
+    // This synthetic dynamic-routing fixture must declare enough capacity.
+    // Real small-window deployments should use the Host's per-model policy,
+    // never a fabricated context-window size in their adapter manifest.
+    checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
     '            maxTokens: 2048',
     '- id: agent-default-model',
     '  config:',
@@ -766,6 +778,16 @@ try {
     '    model: desktop-text',
     '- id: vision-router',
     '  config:',
+    ...checkWholeTurnRouting
+      ? [
+          '    routing: true',
+          '    reverseRouting: true',
+          '    providers:',
+          '      - provider: vision-http',
+          '        model: desktop-e2e/desktop-vision',
+          '        fallbacks: []',
+        ]
+      : [],
     '    provider: vision-http',
     '    model: desktop-vision',
     '    httpProviders:',
@@ -1055,6 +1077,22 @@ try {
   await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
   if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
   await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
+  // The earlier two-way toggle probe precedes the functional Vision-ON
+  // action above. Read the accepted Host selection AFTER Vision is ON, not
+  // the now-obsolete pre-toggle text route. Correlate this live Session with
+  // the accepted two-way toggle trace; never use the first arbitrary Session.
+  const beforeDynamicImage = checkWholeTurnRouting
+    ? await readHostModelSelections(authenticatedHostUrl) : undefined
+  const originals = (beforeDynamicImage?.sessions ?? []).filter((session) =>
+    session.projected?.next?.provider === 'desktop-e2e-vision'
+    && session.projected?.next?.model === 'desktop-text'
+    && session.latest?.some((event) => event.provider === 'desktop-e2e'
+      && event.model === 'desktop-text'))
+  if (checkWholeTurnRouting && originals.length !== 1) {
+    throw new Error('RC1 pre-image Host selection must reflect settled Vision ON in one Session: '
+      + JSON.stringify(beforeDynamicImage))
+  }
+  const originalModelSelection = originals[0]?.projected?.next
   // The primary action changes its accessible name when a running turn can be
   // queued or steered. Waiting for actionability also waits out attachment upload.
   const send = page.getByRole('button', {
@@ -1062,32 +1100,87 @@ try {
   }).last()
   await send.waitFor({ state: 'visible', timeout: 30_000 })
   await send.click({ timeout: 30_000 })
-  await page.getByText('DESKTOP_VISION_E2E_OK', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
-  if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
-    throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
-  }
-  if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
-    throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
+  if (checkWholeTurnRouting) {
+    // RC1 route authority must be decided before the step's tools/prompt.
+    // The first image goes directly through DVR's chain adapter, and a later
+    // text-only turn returns to the original text model. A fake Settings
+    // mount cannot satisfy either real HTTP backend or rendered response.
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_DYNAMIC_IMAGE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error('RC1 dynamic route did not deliver canonical image to the vision adapter: ' + JSON.stringify(visionEvidence))
+    }
+    const imageModels = await readHostModelSelections(authenticatedHostUrl)
+    // The Host may route through the configured chain or directly to the
+    // first vision-http adapter when chain registration is unavailable. Both
+    // are real visual providers; the test proves the accepted route and image
+    // bytes, not a hard-coded internal implementation detail.
+    const visualSelection = imageModels.sessions
+      .flatMap((session) => session.latest ?? [])
+      .findLast((item) => (item?.provider === 'vision-http'
+        && item.model === 'desktop-e2e/desktop-vision')
+        || (item?.provider === 'vision-chain'
+          && item.model === 'vision-http/desktop-e2e/desktop-vision'))
+    if (!visualSelection || (visualSelection.provider === originalModelSelection.provider
+        && visualSelection.model === originalModelSelection.model)) {
+      throw new Error('RC1 image turn did not commit an independent visual adapter route: '
+        + JSON.stringify({ originalModelSelection, imageModels }))
+    }
+
+    await composer.fill('TEXT_FOLLOWUP_AFTER_IMAGE')
+    await send.waitFor({ state: 'visible', timeout: 30_000 })
+    await send.click({ timeout: 30_000 })
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_TEXT_REVERSE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
+    if (textEvidence.requests < 1) {
+      throw new Error('RC1 text followup never reached the original text adapter')
+    }
+    const textModels = await readHostModelSelections(authenticatedHostUrl)
+    if (!textModels.sessions.some((session) => session.latest?.some((item) => item.provider === visualSelection.provider
+        && item.model === visualSelection.model)
+      && session.projected?.lastUsed?.provider === originalModelSelection.provider
+      && session.projected?.lastUsed?.model === originalModelSelection.model)) {
+      throw new Error('RC1 text followup did not restore its original Session route: '
+        + JSON.stringify({originalModelSelection, textModels}))
+    }
+  } else {
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_VISION_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 15_000 })
+    if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
+      throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
+    }
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
+    }
   }
 
   const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
   const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
   assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
   const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
-  assert.ok(
-    dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
-    `real Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
+  // Tool-driven vision produces DVR-authored notices/tool evidence. In the
+  // optional whole-turn route, the vision adapter handles the image directly
+  // and does not need to author a synthetic DVR message. Both paths already
+  // proved their real model requests above; require producer attribution only
+  // when DVR actually authored a durable Session message.
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
+      `real tool-only Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
   assert.equal(
     dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
     false,
     `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
   )
   const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
-  assert.ok(
-    dvrMessages.length > 0,
-    `real Session v4 log must expose at least one DVR-authored durable message by id: ${JSON.stringify(sessionSourceProbe)}`,
-  )
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrMessages.length > 0,
+      `real tool-only Session v4 log must expose a DVR-authored durable message: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
   for (const message of dvrMessages) {
     assert.equal(
       message.source?.kind,
@@ -1112,7 +1205,12 @@ try {
     toggle: { initial: initialPressed, exercised: true, restored: true },
     onboarding: { settingsPath: true },
     settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
-    functionalVisionTurn: { textEvidence, visionEvidence, rendered: 'DESKTOP_VISION_E2E_OK' },
+    functionalVisionTurn: {
+      mode: checkWholeTurnRouting ? 'whole-turn' : 'tool-only',
+      textEvidence, visionEvidence,
+      rendered: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK + DESKTOP_TEXT_REVERSE_E2E_OK' : 'DESKTOP_VISION_E2E_OK',
+      durableDvrMessages: dvrMessages.length,
+    },
   }
   console.log(JSON.stringify(result))
   if (diagnosticPath) {
