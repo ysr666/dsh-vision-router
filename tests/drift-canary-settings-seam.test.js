@@ -57,7 +57,7 @@ test('release channel canary installs the native executor by exact published ver
   assert.match(workflow, /process\.env\.DSH_NATIVE_EXECUTOR_PUBLISHED === 'true'/)
   assert.doesNotMatch(workflow, /process\.env\.DSH_CHANNEL === 'preview'/)
   assert.match(workflow, /node-version: \$\{\{ matrix\.node_version \}\}/)
-  assert.match(workflow, /channel: stable\n\s+dist_tag: latest\n\s+settings_mode: auto\n\s+node_version: '22'/)
+  assert.match(workflow, /channel: stable\n\s+dist_tag: latest\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
   assert.match(workflow, /channel: next\n\s+dist_tag: next\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
   assert.match(workflow, /channel: preview\n\s+dist_tag: alpha\n\s+settings_mode: auto\n\s+node_version: '24\.21\.0'/)
 })
