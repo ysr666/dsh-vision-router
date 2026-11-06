@@ -1075,3 +1075,44 @@ test('issue #791: whole-turn vision chain skips empty model output and uses the 
   assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
   assert.equal(chunks.filter((chunk) => chunk.type === 'finish').length, 1, 'must finish once after valid fallback')
 })
+
+
+test('issue #791: a whole-turn visual provider ignoring AbortSignal cannot hang the conversation', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 1000,
+    timeoutMs: 1000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  // An incorrectly implemented third-party adapter may ignore the signal
+  // forever. The Agent must still receive one terminal outcome.
+  mock.ctx.llm.stream = async function* () { await new Promise(() => {}) }
+  const chain = mock.adapters.get('vision-chain')
+  assert.ok(chain)
+  const outcome = await Promise.race([
+    (async () => {
+      const events = []
+      for await (const row of chain.stream({
+        provider: 'vision-chain',
+        model: 'qwen-a/qwen3.6-flash',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+            { type: 'text', text: 'Identify this image.' },
+          ],
+        }],
+      })) events.push(row)
+      return { state: 'settled', events }
+    })(),
+    // Keepalive also avoids Node 22 ending the test before the unref'd
+    // AbortSignal.timeout timer can fire.
+    new Promise(resolve => setTimeout(() => resolve({ state: 'still-pending' }), 5000)),
+  ])
+  assert.equal(outcome.state, 'settled', 'the Agent stream must settle after its configured vision budget')
+  const finish = outcome.events.at(-1)
+  assert.equal(finish?.type, 'finish')
+  assert.equal(finish?.reason?.kind, 'error')
+  assert.equal(finish?.reason?.failure?.code, 'VISION_CHAIN_EXHAUSTED')
+})
