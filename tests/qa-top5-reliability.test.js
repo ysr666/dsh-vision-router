@@ -250,3 +250,23 @@ test('settings queue-to-live transition preserves local permission and remote ri
   assert.equal(harness.confirms, 1)
   assert.deepEqual(harness.rpcCalls.map((entry) => entry[1]), ['describe', 'authorize', 'describe'])
 })
+
+test('vision_describe empty answers are not cached as successes and can recover on the same attachment', async () => {
+  const harness = runtimeHarness({ scopeValue: { cache: true, cacheMaxEntries: 200, cacheTtlSeconds: 3600 } })
+  harness.wrapped.inject(['settings'], child => { child.settings.register('vision-router') })
+  const responses = ['', '   ', 'null', '""', 'RECOVERED_VISUAL_ANSWER']
+  let calls = 0
+  harness.wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() {
+      return responses[calls++]
+    },
+  })
+  const args = { attachmentIds: ['same-image'], question: 'What is in this photo?' }
+  const exec = { agent: { session: { header: { cwd: '/workspace' } } } }
+  for (const expected of responses) {
+    assert.equal(await harness.registered.execute(args, exec), expected)
+  }
+  assert.equal(await harness.registered.execute(args, exec), 'RECOVERED_VISUAL_ANSWER')
+  assert.equal(calls, 5, 'empty answers must allow retry, while recovered content remains cached')
+})
