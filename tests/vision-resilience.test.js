@@ -1269,3 +1269,74 @@ test('issue #791 adversarial: prematurely closed stream without finish must fall
   assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'RECOVERED')
   assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
 })
+
+test('issue #791: whole-turn remote visual fallback cannot lose the entire budget to the first hung model', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    timeoutMs: 3000,
+    visionTaskTimeoutMs: 1200,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'hang',
+      'qwen-b/qwen3.6-plus': 'text:RECOVERED_REMOTE_CHAIN_IMAGE',
+    },
+  })
+  const chain = mock.adapters.get('vision-chain')
+  assert.ok(chain)
+  const result = []
+  for await (const chunk of chain.stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+        { type: 'text', text: 'Identify the picture.' },
+      ],
+    }],
+    signal: AbortSignal.timeout(2500),
+  })) result.push(chunk)
+  assert.equal(result.filter(x => x.type === 'text-delta').map(x => x.text).join(''),
+    'RECOVERED_REMOTE_CHAIN_IMAGE')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+  assert.equal(result.filter(x => x.type === 'finish').length, 1)
+})
+
+test('whole-turn text-only remote route retains its existing long first-provider allowance', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    timeoutMs: 3000,
+    visionTaskTimeoutMs: 1200,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  let routed
+  mock.ctx.llm.stream = async function* (options) {
+    routed = options.provider
+    await new Promise(resolve => setTimeout(resolve, 800))
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: 'TEXT_ROUTE_NOT_PREMATURELY_ABORTED' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: 'TEXT_ROUTE_NOT_PREMATURELY_ABORTED' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chain = mock.adapters.get('vision-chain')
+  const parts = []
+  for await (const item of chain.stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Say hello.' }] }],
+    signal: AbortSignal.timeout(2500),
+  })) parts.push(item)
+  assert.equal(routed, 'qwen-a')
+  assert.equal(parts.filter(x => x.type === 'text-delta').map(x => x.text).join(''), 'TEXT_ROUTE_NOT_PREMATURELY_ABORTED')
+  assert.equal(parts.at(-1)?.reason?.kind, 'stop')
+})
