@@ -861,7 +861,53 @@ try {
   browser = await waitForCdp(rendererPort)
   page = await waitForAppPage(browser)
   page.on('pageerror', (error) => rendererErrors.push(String(error?.stack || error)))
+  // Issue #792: a reporter's Windows Desktop showed the Host's boot JS and
+  // CSS *as visible page text*. A boot payload or zero renderer exceptions
+  // alone cannot prove the Document parser actually treated index as HTML.
+  // Probe both the initial shell and the settled UI; keep forensic output
+  // bounded and never log the page URL, Host cookie or message contents.
+  const assertDesktopHtmlRendering = async (phase) => {
+    const state = await page.evaluate(() => {
+      // A broken CSS reset can make <head>/<script>/<style> visible while
+      // body.innerText stays clean. The reporter's screenshot began with a
+      // head bootstrap script, so inspect the rendered document root too.
+      const visible = document.documentElement?.innerText ?? ''
+      return {
+        contentType: document.contentType,
+        scripts: document.querySelectorAll('script').length,
+        styles: document.querySelectorAll('style').length,
+        headVisible: !!document.head && getComputedStyle(document.head).display !== 'none',
+        rawBoot: visible.includes('globalThis.__DSH_BOOT_READY__'),
+        rawLoader: visible.includes('client-modules: HTML did not preload'),
+        rawCss: /:root\s*\{\s*color-scheme\s*:/i.test(visible),
+      }
+    })
+    assert.equal(state.contentType, 'text/html',
+      `Desktop ${phase}: document MIME was not parsed as HTML: ${JSON.stringify(state)}`)
+    // The first Desktop frame is intentionally a shell with only its two
+    // bootstrap scripts; Host-provided <style> rows arrive later. Assert the
+    // real style nodes only after the application has actually settled.
+    assert.ok(state.scripts > 0,
+      `Desktop ${phase}: missing document script nodes: ${JSON.stringify(state)}`)
+    if (phase !== 'boot') {
+      assert.ok(state.styles > 0,
+        `Desktop ${phase}: missing settled style injection nodes: ${JSON.stringify(state)}`)
+    }
+    assert.equal(state.rawBoot || state.rawLoader || state.rawCss || state.headVisible, false,
+      `Desktop ${phase}: boot JS/CSS leaked into visible text: ${JSON.stringify(state)}`)
+  }
+  await assertDesktopHtmlRendering('boot')
   const boot = await page.evaluate(async () => await window.dshDesktopBoot.ready())
+  for (const [index, row] of boot.injections.entries()) {
+    if (row?.kind === 'script' && typeof row.text === 'string') {
+      assert.doesNotMatch(row.text, /<\/script/i,
+        `Desktop structured script row ${index} illegally closes its element`)
+    }
+    if (row?.kind === 'style' && typeof row.text === 'string') {
+      assert.doesNotMatch(row.text, /<\/style/i,
+        `Desktop structured style row ${index} illegally closes its element`)
+    }
+  }
   const authenticatedHostUrl = await Promise.race([
     authenticatedHostUrlPromise,
     new Promise((_, reject) => setTimeout(() => reject(new Error('Desktop Host URL was not reported')), 30_000)),
@@ -1194,6 +1240,7 @@ try {
     )
   }
 
+  await assertDesktopHtmlRendering('after vision turn')
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {
     ok: true,
