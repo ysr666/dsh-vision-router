@@ -28,18 +28,28 @@ const wrappedAdapters = new WeakMap()
 const wrappedDelegatingAdapters = new WeakMap()
 const wrappedTransparentAdapters = new WeakMap()
 const MAX_TRANSPARENT_REASONING_MEMORY = 512
+// An adapter may ignore cancellation and never settle iterator.return().
+// Always attempt teardown, but do not let a broken third-party cleanup pin
+// the caller indefinitely. Healthy cleanup still completes normally.
+const STREAM_ITERATOR_CLEANUP_GRACE_MS = 1000
 const VISION_FAILURE_RESULT_CODES = new Set(Object.values(VISION_RESULT_CODES))
 
 function cacheableVisionDescribeResult(value) {
+  // Empty model/tool output is not evidence. Caching it makes a transient
+  // backend failure permanent for the same attachment and question.
+  if (value === null || value === undefined) return false
   let parsed = value
   if (typeof value === 'string') {
+    if (value.trim() === '') return false
     try {
       parsed = JSON.parse(value)
     } catch {
       return true
     }
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return true
+  if (parsed === null || parsed === undefined) return false
+  if (typeof parsed === 'string' && parsed.trim() === '') return false
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) return true
   return !(parsed.ok === false && VISION_FAILURE_RESULT_CODES.has(parsed.code))
 }
 
@@ -411,7 +421,12 @@ function wrapVisionHttpAdapter(adapter, runtimeState) {
       return async function* streamWithEndpointAlias(options) {
         const mapped = runtimeState.endpoints.mapModelId(options?.model)
         const next = mapped === options?.model ? options : { ...(options ?? {}), model: mapped }
-        for await (const chunk of stream.call(target, next)) yield chunk
+        const parent = toolRuntime.getStore()
+        const state = {
+          ...(parent && typeof parent === 'object' ? parent : {}),
+          signal: combineSignals(parent?.signal, next?.signal),
+        }
+        yield* iterateUnderRuntimeState(stream.call(target, next), state)
       }
     },
   })
@@ -481,12 +496,37 @@ function projectTransparentCallConfig(options, state, runtimeState) {
   return rest
 }
 
+async function closeStreamIterator(iterator, state) {
+  if (typeof iterator.return !== 'function') return
+  let timeout
+  try {
+    // The race installs a rejection handler even if the grace period wins, so
+    // a late adapter failure does not surface as an unhandled rejection.
+    await Promise.race([
+      Promise.resolve().then(() => toolRuntime.run(state, () => iterator.return())),
+      new Promise((resolve) => {
+        timeout = setTimeout(resolve, STREAM_ITERATOR_CLEANUP_GRACE_MS)
+      }),
+    ])
+  } catch (error) {
+    // A cancelled request must remain a cancellation, not become a secondary
+    // adapter teardown failure. Preserve cleanup errors on normal closes.
+    if (!state.signal?.aborted) throw error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 async function* iterateUnderRuntimeState(iterable, state) {
   const iterator = toolRuntime.run(state, () => iterable[Symbol.asyncIterator]())
   let completed = false
   try {
     while (true) {
-      const item = await toolRuntime.run(state, () => iterator.next())
+      // A noncooperative adapter may ignore the signal and never resolve next.
+      // Race the caller's cancellation without mutating the original iterator.
+      const item = await executeAbortable(state.signal, () =>
+        toolRuntime.run(state, () => iterator.next()))
+      if (state.signal?.aborted) throw toolAbortError()
       if (item.done) {
         completed = true
         return
@@ -494,9 +534,7 @@ async function* iterateUnderRuntimeState(iterable, state) {
       yield item.value
     }
   } finally {
-    if (!completed && typeof iterator.return === 'function') {
-      await toolRuntime.run(state, () => iterator.return())
-    }
+    if (!completed) await closeStreamIterator(iterator, state)
   }
 }
 
@@ -521,6 +559,7 @@ function wrapDelegatingAdapter(adapter, runtimeState) {
         const parent = toolRuntime.getStore()
         const state = {
           ...(parent && typeof parent === 'object' ? parent : {}),
+          signal: combineSignals(parent?.signal, options?.signal),
           callConfigAuthority: 'target',
           delegationOwner: 'vision-chain',
         }
@@ -554,6 +593,7 @@ function wrapTransparentAdapter(adapter, runtimeState) {
         const parent = toolRuntime.getStore()
         const state = {
           ...(parent && typeof parent === 'object' ? parent : {}),
+          signal: combineSignals(parent?.signal, options?.signal),
           callConfigAuthority: 'transparent',
           transparentExplicitReasoning: explicitReasoningEffort(options),
           transparentSessionId: sessionIdentity(options),
