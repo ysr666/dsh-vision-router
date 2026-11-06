@@ -2117,10 +2117,12 @@ export function apply(ctx, config = {}, runtime = {}) {
           let failMessage = 'unknown error'
           let failCode
           try {
-            // Local backends get an independent anti-hang budget: a hung local
-            // service must not consume the whole deadline and starve the
-            // existing chain. Regular providers keep main's per-call timeout.
-            const attemptBudgetMs = isLocalBackendPair(pair)
+            // In an image-bearing whole-turn chain, every candidate (remote
+            // included) must leave a real share of the deadline for fallbacks.
+            // Keep the existing local-backend guard and preserve text-only
+            // remote routes' original per-call timeout semantics.
+            const fairShare = imageIds.length > 0 || isLocalBackendPair(pair)
+            const attemptBudgetMs = fairShare
               ? weightedFallbackBudget(
                   deadline.remaining(),
                   timeoutMs(),
@@ -3209,10 +3211,20 @@ ctx.logger?.info(
               [{ role: 'user', content: openAIBlocks }],
               promptText,
             ).messages
+            // A stalled HTTP fallback must leave a real share of the shared
+            // turn deadline for later configured providers. The weighting
+            // preserves a full single-provider budget and prioritizes
+            // user-configured providers over built-in anonymous fallbacks.
+            const attemptBudgetMs = weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
+            )
             const attemptSignal = combineSignals(
               currentVisionTurnBudgetSignal(),
               deadline.signal(),
-              AbortSignal.timeout(timeoutMs()),
+              AbortSignal.timeout(attemptBudgetMs),
             )
             const askHttp = async (correction) => {
               const answer = await callOpenAIWithProviderTransport(
@@ -3783,6 +3795,14 @@ ctx.logger?.info(
           continue
         }
         try {
+          // Shared across OCR, grounding and visual evidence helpers: a
+          // hanging HTTP model must leave time for the next candidate.
+          const attemptBudgetMs = weightedFallbackBudget(
+            deadline.remaining(),
+            timeoutMs(),
+            candidateWeight,
+            weightAtStart,
+          )
           const text = await callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
@@ -3791,7 +3811,7 @@ ctx.logger?.info(
               signal: combineSignals(
                 taskSignal,
                 deadline.signal(),
-                AbortSignal.timeout(timeoutMs()),
+                AbortSignal.timeout(attemptBudgetMs),
               ),
               sessionId: options.sessionId,
               resolveCredential,
