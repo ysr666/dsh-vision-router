@@ -2198,6 +2198,14 @@ export function apply(ctx, config = {}, runtime = {}) {
                 yield chunk
               }
             }
+            if (!succeeded && !failed && imageIds.length > 0) {
+              // An adapter can end iteration without emitting the mandatory
+              // terminal finish. Do not silently close the Agent stream and
+              // strand a later model that could recover the visual answer.
+              failed = true
+              failCode = 'EMPTY_RESPONSE'
+              failMessage = 'vision chain backend ended without a finish event'
+            }
           } catch (error) {
             failed = true
             failMessage = error && error.message ? error.message : String(error)
