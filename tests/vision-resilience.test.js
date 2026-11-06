@@ -1116,3 +1116,69 @@ test('issue #791: a whole-turn visual provider ignoring AbortSignal cannot hang 
   assert.equal(finish?.reason?.kind, 'error')
   assert.equal(finish?.reason?.failure?.code, 'VISION_CHAIN_EXHAUSTED')
 })
+
+
+test('issue #791: whole-turn model-info preflight cannot hang before the inner budget begins', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 1000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  let queries = 0
+  mock.ctx.llm.resolveModelInfo = async () => {
+    queries += 1
+    return new Promise(() => {})
+  }
+  const chain = mock.adapters.get('vision-chain')
+  const result = await Promise.race([
+    (async () => {
+      const events = []
+      for await (const row of chain.stream({
+        provider: 'vision-chain',
+        model: 'qwen-a/qwen3.6-flash',
+        messages: [{ role: 'user', content: [
+          { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+          { type: 'text', text: 'Describe this image' },
+        ] }],
+      })) events.push(row)
+      return { kind: 'settled', events }
+    })(),
+    new Promise(resolve => setTimeout(() => resolve({ kind: 'still-pending' }), 3500)),
+  ])
+  assert.ok(queries > 0, 'must enter the hanging preflight')
+  assert.equal(result.kind, 'settled', 'the outer budget must settle even if model-info discovery never resolves')
+  assert.equal(result.events.at(-1)?.reason?.kind, 'error')
+  assert.equal(result.events.at(-1)?.reason?.failure?.code, 'VISION_CHAIN_EXHAUSTED')
+})
+
+test('issue #791: cancel during hung whole-turn preflight ends as aborted, not timeout', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 5000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  mock.ctx.llm.resolveModelInfo = async () => new Promise(() => {})
+  const chain = mock.adapters.get('vision-chain')
+  const controller = new AbortController()
+  const seen = []
+  const task = (async () => {
+    for await (const row of chain.stream({
+      provider: 'vision-chain',
+      model: 'qwen-a/qwen3.6-flash',
+      signal: controller.signal,
+      messages: [{ role: 'user', content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+      ] }],
+    })) seen.push(row)
+    return seen.at(-1)
+  })()
+  setTimeout(() => controller.abort(new Error('user stopped generation')), 50)
+  const last = await Promise.race([
+    task,
+    new Promise(resolve => setTimeout(() => resolve({ type: 'still-pending' }), 2000)),
+  ])
+  assert.equal(last?.type, 'finish')
+  assert.equal(last?.reason?.kind, 'aborted')
+})
