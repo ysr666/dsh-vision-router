@@ -979,3 +979,62 @@ test('batch3: circuit breaker and turn/session indexes remain bounded', () => {
   assert.deepEqual(memory.stats(), { scopes: 8, sessions: 8 })
   assert.equal(memory.attempted('session-9999:1').length, 4)
 })
+
+
+test('issue #791: empty primary vision answer falls back and must never cache placeholder success', async () => {
+  const mock = await applyAndMount(visionConfig({
+    cache: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'text:',
+      'qwen-b/qwen3.6-plus': 'text:SECOND_VISION_MODEL_OK',
+    },
+  })
+  const answer = await runDescribe(mock, {}, 111)
+  assert.equal(answer, 'SECOND_VISION_MODEL_OK')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+  assert.equal(await runDescribe(mock, {}, 112), 'SECOND_VISION_MODEL_OK')
+})
+
+test('issue #791: empty HTTP success is classified and falls through to second HTTP model', async () => {
+  const { createServer } = await import('node:http')
+  const wire = []
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    wire.push(body.model)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      choices: [{ message: { content: body.model === 'vision-empty' ? '' : 'HTTP_FALLBACK_OK' } }],
+    }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const baseURL = `http://127.0.0.1:${server.address().port}/v1`
+  try {
+    const mock = await applyAndMount(visionConfig({
+      freeFallback: false,
+      cache: true,
+      visionTaskTimeoutMs: 5000,
+      providers: [{ provider: 'vision-http', model: 'first/vision-empty' }],
+      httpProviders: [
+        { name: 'first', baseURL, model: 'vision-empty', apiKeyEnv: '' },
+        { name: 'second', baseURL, model: 'vision-good', apiKeyEnv: '' },
+      ],
+    }))
+    const result = await runDescribe(mock, {}, 114)
+    assert.equal(result, 'HTTP_FALLBACK_OK')
+    assert.deepEqual(wire, ['vision-empty', 'vision-good'])
+    assert.equal(await runDescribe(mock, {}, 115), 'HTTP_FALLBACK_OK')
+  } finally {
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
