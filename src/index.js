@@ -2098,10 +2098,12 @@ export function apply(ctx, config = {}, runtime = {}) {
           let failMessage = 'unknown error'
           let failCode
           try {
-            // Local backends get an independent anti-hang budget: a hung local
-            // service must not consume the whole deadline and starve the
-            // existing chain. Regular providers keep main's per-call timeout.
-            const attemptBudgetMs = isLocalBackendPair(pair)
+            // In an image-bearing whole-turn chain, every candidate (remote
+            // included) must leave a real share of the deadline for fallbacks.
+            // Keep the existing local-backend guard and preserve text-only
+            // remote routes' original per-call timeout semantics.
+            const fairShare = imageIds.length > 0 || isLocalBackendPair(pair)
+            const attemptBudgetMs = fairShare
               ? weightedFallbackBudget(
                   deadline.remaining(),
                   timeoutMs(),
