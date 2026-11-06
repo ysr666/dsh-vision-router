@@ -3186,10 +3186,20 @@ ctx.logger?.info(
               [{ role: 'user', content: openAIBlocks }],
               promptText,
             ).messages
+            // A stalled HTTP fallback must leave a real share of the shared
+            // turn deadline for later configured providers. The weighting
+            // preserves a full single-provider budget and prioritizes
+            // user-configured providers over built-in anonymous fallbacks.
+            const attemptBudgetMs = weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
+            )
             const attemptSignal = combineSignals(
               currentVisionTurnBudgetSignal(),
               deadline.signal(),
-              AbortSignal.timeout(timeoutMs()),
+              AbortSignal.timeout(attemptBudgetMs),
             )
             const askHttp = async (correction) => {
               const answer = await callOpenAIWithProviderTransport(

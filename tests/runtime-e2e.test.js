@@ -1334,3 +1334,69 @@ test('deep tool mounting owns every registration and rolls back a partial failur
   }
   assert.equal(harness.toolDefs.size, 0, 'disposing the fiber must unmount every registered tool')
 })
+
+test('vision_describe reserves a real attempt for later HTTP fallback when first backend never responds', async () => {
+  const config = {
+    freeFallback: false, cache: false,
+    timeoutMs: 3000, visionTaskTimeoutMs: 1200,
+    httpProviders: [
+      { name: 'first-hangs', baseURL: 'http://127.0.0.1:9/v1', model: 'slow', apiKeyEnv: '' },
+      { name: 'second-works', baseURL: 'http://127.0.0.1:9/v1', model: 'fast', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let attempts = 0
+  const transport = {
+    async fetch(_url, init) {
+      attempts += 1
+      if (attempts === 1) return new Promise((_, reject) => {
+        const onAbort = () => reject(init.signal?.reason ?? new Error('timeout'))
+        if (init.signal?.aborted) onAbort()
+        else init.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'SECOND_HTTP_VISUAL_RESPONSE' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-http-fallback-time-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const result = await harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is pictured?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    assert.equal(result, 'SECOND_HTTP_VISUAL_RESPONSE')
+    assert.equal(attempts, 2, 'the healthy second HTTP backend must receive an actual request')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+test('single HTTP vision provider retains full shared-budget chance for a slow valid answer', async () => {
+  const config = {
+    freeFallback: false, cache: false,
+    timeoutMs: 3000, visionTaskTimeoutMs: 1200,
+    httpProviders: [
+      { name: 'slow-valid', baseURL: 'http://127.0.0.1:9/v1', model: 'legit', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  const transport = { async fetch() {
+    await new Promise(resolve => setTimeout(resolve, 800))
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'SLOW_VALID_VISUAL_RESPONSE' } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-single-http-time-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const result = await harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is pictured?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    assert.equal(result, 'SLOW_VALID_VISUAL_RESPONSE')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
