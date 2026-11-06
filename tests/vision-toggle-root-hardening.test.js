@@ -70,6 +70,56 @@ function fakeHost(config, seeded = []) {
   return { ctx, registry }
 }
 
+test('root hardening never mutates foreign structured scripts or inline HTML scripts', () => {
+  // A foreign plugin with an ordinary null-config guard used to lose the
+  // guard when DVR scanned every script row / the entire HTML document.
+  const foreign = [
+    'function foreign(config, hidden) {',
+    "  if (!config || typeof config !== 'object') return hidden",
+    '  return config.value',
+    '}',
+  ].join('\n')
+  const runForeign = (source) => vm.runInNewContext(source + "\nforeign(null, 'safe')", {})
+  assert.equal(runForeign(foreign), 'safe')
+
+  let injectRows
+  const webCtx = {
+    on(name, handler) {
+      if (name === 'webserver/index-inject') injectRows = handler
+    },
+    effect(callback) { callback() },
+    webServer: {
+      register() { return () => {} },
+      tapIndex() { return () => {} },
+    },
+  }
+  const fakeCtx = { inject(_deps, callback) { callback(webCtx) } }
+  createVisionToggleRootHardening(fakeCtx, {}).installClientBoundary()
+  assert.equal(typeof injectRows, 'function')
+
+  const own = `/* data-vision-router-model-visibility */\n${VISION_MODEL_VISIBILITY_PRELUDE}`
+  const rows = [
+    { kind: 'script', placement: 'head', text: foreign },
+    { kind: 'script', placement: 'head', text: own },
+  ]
+  injectRows(rows)
+  assert.equal(rows[0].text, foreign, 'must not rewrite third-party structured script rows')
+  assert.equal(runForeign(rows[0].text), 'safe')
+  assert.notEqual(rows[1].text, own, 'must still harden DVR-owned structured carriers')
+  assert.match(rows[1].text, /lastRecoverySource/)
+
+  const foreignTag = `<script data-foreign-plugin>${foreign}</script>`
+  const html = `<html><head>${foreignTag}</head><body></body></html>`
+  const after = hardenVisionToggleHtml(html)
+  assert.ok(after.includes(foreignTag), 'must not rewrite unrelated inline HTML scripts')
+  assert.equal(runForeign(foreign), 'safe')
+
+  const ownedHtml = injectVisionModelVisibilityBoundary(html)
+  const hardenedOwned = hardenVisionToggleHtml(ownedHtml)
+  assert.match(hardenedOwned, /lastRecoverySource/,
+    'DVR-owned inline scripts must retain their root hardening')
+})
+
 test('root hardening makes duplicate wrapper adoption unreachable across base and live settings scopes', () => {
   const config = { wrapperRoute: 'deepseek-vision', chainRoute: 'vision-chain' }
   const spoof = {
