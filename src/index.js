@@ -3122,6 +3122,10 @@ ctx.logger?.info(
             empty.code = 'EMPTY_RESPONSE'
             throw empty
           } catch (error) {
+            // A user/Host cancel is not a backend outage. Otherwise the
+            // canceled attempt poisons this turn's breaker/failure memory and
+            // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
+            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)
             visionTurnMemory.record(scope, backendKey, classification.kind)
@@ -3255,6 +3259,10 @@ ctx.logger?.info(
             empty.code = 'EMPTY_RESPONSE'
             throw empty
           } catch (error) {
+            // A user/Host cancel is not a backend outage. Otherwise the
+            // canceled attempt poisons this turn's breaker/failure memory and
+            // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
+            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)
             visionTurnMemory.record(scope, backendKey, classification.kind)

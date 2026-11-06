@@ -621,7 +621,7 @@ test('Test 4: 401 + 429 + timeout produce one classified result instead of a ret
 
 // ── Test 5: total task deadline ────────────────────────────────────────────
 
-test('cancelled ambient vision budget aborts an in-flight provider attempt promptly', async () => {
+test('cancelled ambient vision budget propagates AbortError instead of poisoning backend failure memory', async () => {
   const mock = await applyAndMount(
     visionConfig({
       visionTaskTimeoutMs: 20_000,
@@ -640,9 +640,9 @@ test('cancelled ambient vision budget aborts an in-flight provider attempt promp
   )
   await new Promise((resolve) => setImmediate(resolve))
   controller.abort()
-  const parsed = JSON.parse(await pending)
-  assert.equal(parsed.ok, false)
-  assert.equal(parsed.code, VISION_RESULT_CODES.TIMEOUT)
+  // An explicit Host/user abort is not a provider TIMEOUT. Do not turn a
+  // cancelled request into an all-failed memo or poison subsequent retries.
+  await assert.rejects(pending, { name: 'AbortError' })
   assert.ok(Date.now() - started < 1500, 'ambient cancellation must reach the provider instead of waiting for the 20s task timeout')
 })
 
