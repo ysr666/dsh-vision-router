@@ -2203,6 +2203,50 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
       },
     }
+
+    // The chain's own deadline starts after initial model-info preflight.
+    // A noncooperative discovery/capability adapter can therefore keep the
+    // entire Agent turn pending before the first streamed chunk. Protect the
+    // COMPLETE image-bearing stream, not only individual model iterator.next()
+    // calls. Text-only legacy routes retain their existing semantics.
+    const innerChainStream = chainAdapter.stream
+    chainAdapter.stream = async function* boundedVisionChainStream(options) {
+      const imageBearing = collectImageBlocks(options?.messages ?? [])
+        .some(({ block }) => !isOffloadedImageBlock(block))
+      if (!imageBearing) {
+        yield* innerChainStream.call(this, options)
+        return
+      }
+      const budgetSignal = AbortSignal.timeout(visionTaskTimeoutMs())
+      const signal = combineSignals(options?.signal, budgetSignal)
+      try {
+        for await (const chunk of streamVisionWithAbort(
+          innerChainStream.call(this, { ...options, signal }),
+          signal,
+        )) {
+          yield chunk
+          // The Host only accepts one terminal event. Do not remain blocked in
+          // a broken iterator's post-finish cleanup, or emit an error later.
+          if (chunk?.type === 'finish') return
+        }
+      } catch (error) {
+        if (!signal.aborted) throw error
+        if (options?.signal?.aborted) {
+          yield { type: 'finish', reason: { kind: 'aborted' } }
+          return
+        }
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: {
+              code: 'VISION_CHAIN_EXHAUSTED',
+              message: 'vision task timed out before the model finished preparing or responding',
+            },
+          },
+        }
+      }
+    }
   }
 
   // ── reactive routing mounts ────────────────────────────────────────────────
