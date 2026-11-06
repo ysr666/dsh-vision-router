@@ -2102,7 +2102,7 @@ export function apply(ctx, config = {}, runtime = {}) {
                 // completed recognition with no text is not a usable answer.
                 // It must not suppress fallback or cache an earlier failed
                 // candidate's partial output as this backend's result.
-                if ((kind === 'stop' || kind === 'max-tokens') && finalText.trim() === '') {
+                if (imageIds.length > 0 && (kind === 'stop' || kind === 'max-tokens') && finalText.trim() === '') {
                   failed = true
                   failCode = 'EMPTY_RESPONSE'
                   failMessage = 'vision chain backend returned empty content'
