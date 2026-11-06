@@ -2017,10 +2017,19 @@ export function apply(ctx, config = {}, runtime = {}) {
           (sum, pair) => sum + routingPairWeight(pair, chainHttpEntries),
           0,
         )
+        // Streaming a failed candidate is irreversible for the Host. When a
+        // fallback exists, stage its events until a successful finish so a
+        // second backend never appends to a broken first answer. Single-route
+        // and legacy text-only streams keep their existing streaming UX.
+        const holdCandidateEvents = imageIds.length > 0 && chainPairs.length > 1
+        const maxHeldEventBytes = 8 * 1024 * 1024
+        const maxHeldEvents = 32768
         for (const pair of chainPairs) {
           // Keep result text isolated by candidate; a failed stream's partial
           // output must never count as recognition by the next backend.
           let finalText = ''
+          const heldEvents = []
+          let heldBytes = 0
           const candidateWeight = routingPairWeight(pair, chainHttpEntries)
           const weightAtStart = Math.max(candidateWeight, remainingWeight)
           remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -2170,11 +2179,24 @@ export function apply(ctx, config = {}, runtime = {}) {
                   const record = finalText.trim()
                   for (const id of imageIds) imageMemorySet(imageMemory, id, record)
                 }
+                if (holdCandidateEvents) {
+                  for (const event of heldEvents) yield event
+                }
                 yield chunk
                 break
               }
               if (chunk && typeof chunk.text === 'string') finalText += chunk.text
-              yield chunk
+              if (holdCandidateEvents) {
+                const bytes = Buffer.byteLength(JSON.stringify(chunk) ?? '', 'utf8')
+                if (heldEvents.length >= maxHeldEvents || heldBytes + bytes > maxHeldEventBytes) {
+                  failCode = 'VISION_CHAIN_BUFFER_LIMIT'
+                  throw new Error('vision chain candidate output exceeded safe fallback buffer limit')
+                }
+                heldEvents.push(chunk)
+                heldBytes += bytes
+              } else {
+                yield chunk
+              }
             }
           } catch (error) {
             failed = true
