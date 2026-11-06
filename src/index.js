@@ -40,6 +40,56 @@ function throwIfVisionTaskAborted(signal, error) {
   throw aborted
 }
 
+// A provider may ignore AbortSignal and leave iterator.next() pending forever.
+// For whole-turn routing this adapter is the Agent stream itself (unlike
+// vision_describe, it is not protected by the tool execution timeout wrapper).
+// Race each next() with the task signal, and do not await a noncooperative
+// iterator's return() while unwinding: the user's turn must always settle.
+async function* streamVisionWithAbort(source, signal) {
+  const iterator = source?.[Symbol.asyncIterator]?.()
+  if (!iterator) throw new TypeError('vision chain expected an asynchronous stream')
+  let completed = false
+  try {
+    for (;;) {
+      throwIfVisionTaskAborted(signal)
+      let onAbort
+      const aborted = signal
+        ? new Promise((_, reject) => {
+            onAbort = () => reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : Object.assign(new Error('vision stream aborted'), { name: 'AbortError', code: 'ABORT_ERR' }),
+            )
+            signal.addEventListener('abort', onAbort, { once: true })
+            if (signal.aborted) onAbort()
+          })
+        : undefined
+      let step
+      try {
+        // A late rejection remains observed by Promise.race even if cancellation
+        // wins, avoiding unhandled rejection in a provider that later wakes.
+        const next = Promise.resolve().then(() => iterator.next())
+        step = await (aborted ? Promise.race([next, aborted]) : next)
+      } finally {
+        if (onAbort) signal.removeEventListener('abort', onAbort)
+      }
+      if (step.done) {
+        completed = true
+        return
+      }
+      yield step.value
+    }
+  } finally {
+    if (!completed && typeof iterator.return === 'function') {
+      try {
+        // The underlying adapter might never settle. Attempt cleanup, but
+        // never block the Agent waiting for a broken third-party stream.
+        void Promise.resolve(iterator.return()).catch(() => {})
+      } catch { /* noncooperative iterator; outer turn is already settling */ }
+    }
+  }
+}
+
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
@@ -1942,7 +1992,6 @@ export function apply(ctx, config = {}, runtime = {}) {
           }
           if (imageIds.length > 0) break
         }
-        let finalText = ''
         const chainPairs = routingPairs()
         const chainHttpEntries = new Map(httpEntries().map((entry) => [entry.id, entry]))
         // Fit the conversation into the target model's context window: a long
@@ -1968,7 +2017,19 @@ export function apply(ctx, config = {}, runtime = {}) {
           (sum, pair) => sum + routingPairWeight(pair, chainHttpEntries),
           0,
         )
+        // Streaming a failed candidate is irreversible for the Host. When a
+        // fallback exists, stage its events until a successful finish so a
+        // second backend never appends to a broken first answer. Single-route
+        // and legacy text-only streams keep their existing streaming UX.
+        const holdCandidateEvents = imageIds.length > 0 && chainPairs.length > 1
+        const maxHeldEventBytes = 8 * 1024 * 1024
+        const maxHeldEvents = 32768
         for (const pair of chainPairs) {
+          // Keep result text isolated by candidate; a failed stream's partial
+          // output must never count as recognition by the next backend.
+          let finalText = ''
+          const heldEvents = []
+          let heldBytes = 0
           const candidateWeight = routingPairWeight(pair, chainHttpEntries)
           const weightAtStart = Math.max(candidateWeight, remainingWeight)
           remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -2035,6 +2096,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           let succeeded = false
           let failed = false
           let failMessage = 'unknown error'
+          let failCode
           try {
             // Local backends get an independent anti-hang budget: a hung local
             // service must not consume the whole deadline and starve the
@@ -2086,7 +2148,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               }
               yield { type: 'finish', reason: { kind: 'stop' } }
             }
-            for await (const chunk of streamPair()) {
+            for await (const chunk of streamVisionWithAbort(streamPair(), attemptSignal)) {
               if (chunk && chunk.type === 'finish') {
                 const kind = chunk.reason && chunk.reason.kind
                 if (kind === 'error' || kind === 'aborted') {
@@ -2095,7 +2157,16 @@ export function apply(ctx, config = {}, runtime = {}) {
                   failed = true
                   break
                 }
-                // 'stop' / 'max-tokens' / 'tool-calls' are success.
+                // Tool-call handoffs may legitimately have no text, but a
+                // completed recognition with no text is not a usable answer.
+                // It must not suppress fallback or cache an earlier failed
+                // candidate's partial output as this backend's result.
+                if (imageIds.length > 0 && (kind === 'stop' || kind === 'max-tokens') && finalText.trim() === '') {
+                  failed = true
+                  failCode = 'EMPTY_RESPONSE'
+                  failMessage = 'vision chain backend returned empty content'
+                  break
+                }
                 succeeded = true
                 // 视觉链成功留痕：谁识别了几张图、写入跨轮缓存——排障时
                 // "这张图的描述是谁生成的"一眼可查（原版此处静默）。
@@ -2108,18 +2179,41 @@ export function apply(ctx, config = {}, runtime = {}) {
                   const record = finalText.trim()
                   for (const id of imageIds) imageMemorySet(imageMemory, id, record)
                 }
+                if (holdCandidateEvents) {
+                  for (const event of heldEvents) yield event
+                }
                 yield chunk
                 break
               }
               if (chunk && typeof chunk.text === 'string') finalText += chunk.text
-              yield chunk
+              if (holdCandidateEvents) {
+                const bytes = Buffer.byteLength(JSON.stringify(chunk) ?? '', 'utf8')
+                if (heldEvents.length >= maxHeldEvents || heldBytes + bytes > maxHeldEventBytes) {
+                  failCode = 'VISION_CHAIN_BUFFER_LIMIT'
+                  throw new Error('vision chain candidate output exceeded safe fallback buffer limit')
+                }
+                heldEvents.push(chunk)
+                heldBytes += bytes
+              } else {
+                yield chunk
+              }
+            }
+            if (!succeeded && !failed && imageIds.length > 0) {
+              // An adapter can end iteration without emitting the mandatory
+              // terminal finish. Do not silently close the Agent stream and
+              // strand a later model that could recover the visual answer.
+              failed = true
+              failCode = 'EMPTY_RESPONSE'
+              failMessage = 'vision chain backend ended without a finish event'
             }
           } catch (error) {
             failed = true
             failMessage = error && error.message ? error.message : String(error)
           }
           if (failed) {
-            const classification = classifyVisionFailure(failMessage)
+            const classification = classifyVisionFailure(
+              failCode ? { code: failCode, message: failMessage } : failMessage,
+            )
             visionBreaker.record(backendKey, fingerprint, classification, 'chain')
             failures.push(`${pair.provider}/${pair.model}: ${failMessage}`)
             ctx.logger?.warn('vision-router: chain fallback (%s) -> %s', classification.kind, failMessage)
@@ -2138,6 +2232,50 @@ export function apply(ctx, config = {}, runtime = {}) {
           },
         }
       },
+    }
+
+    // The chain's own deadline starts after initial model-info preflight.
+    // A noncooperative discovery/capability adapter can therefore keep the
+    // entire Agent turn pending before the first streamed chunk. Protect the
+    // COMPLETE image-bearing stream, not only individual model iterator.next()
+    // calls. Text-only legacy routes retain their existing semantics.
+    const innerChainStream = chainAdapter.stream
+    chainAdapter.stream = async function* boundedVisionChainStream(options) {
+      const imageBearing = collectImageBlocks(options?.messages ?? [])
+        .some(({ block }) => !isOffloadedImageBlock(block))
+      if (!imageBearing) {
+        yield* innerChainStream.call(this, options)
+        return
+      }
+      const budgetSignal = AbortSignal.timeout(visionTaskTimeoutMs())
+      const signal = combineSignals(options?.signal, budgetSignal)
+      try {
+        for await (const chunk of streamVisionWithAbort(
+          innerChainStream.call(this, { ...options, signal }),
+          signal,
+        )) {
+          yield chunk
+          // The Host only accepts one terminal event. Do not remain blocked in
+          // a broken iterator's post-finish cleanup, or emit an error later.
+          if (chunk?.type === 'finish') return
+        }
+      } catch (error) {
+        if (!signal.aborted) throw error
+        if (options?.signal?.aborted) {
+          yield { type: 'finish', reason: { kind: 'aborted' } }
+          return
+        }
+        yield {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: {
+              code: 'VISION_CHAIN_EXHAUSTED',
+              message: 'vision task timed out before the model finished preparing or responding',
+            },
+          },
+        }
+      }
     }
   }
 
@@ -2976,9 +3114,13 @@ ctx.logger?.info(
               if (cacheEnabled()) cache.set(key, text)
               return text
             }
-            const empty = '(the vision model returned empty content)'
-            if (cacheEnabled()) cache.set(key, empty)
-            return empty
+            // A successfully transported but empty answer is not visual evidence.
+            // In particular, reasoning models can exhaust their output budget
+            // before emitting any content. Never cache a fabricated success or
+            // suppress a healthy later backend in the configured chain.
+            const empty = new Error('vision_describe backend returned empty content')
+            empty.code = 'EMPTY_RESPONSE'
+            throw empty
           } catch (error) {
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)
@@ -3107,6 +3249,11 @@ ctx.logger?.info(
               if (cacheEnabled()) cache.set(key, text)
               return text
             }
+            // Mirror the adapter-backed branch: this HTTP response is a
+            // backend failure, not a valid zero-length recognition result.
+            const empty = new Error(`http provider "${provider.name}": vision response was empty`)
+            empty.code = 'EMPTY_RESPONSE'
+            throw empty
           } catch (error) {
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)

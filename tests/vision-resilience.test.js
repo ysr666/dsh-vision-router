@@ -979,3 +979,293 @@ test('batch3: circuit breaker and turn/session indexes remain bounded', () => {
   assert.deepEqual(memory.stats(), { scopes: 8, sessions: 8 })
   assert.equal(memory.attempted('session-9999:1').length, 4)
 })
+
+
+test('issue #791: empty primary vision answer falls back and must never cache placeholder success', async () => {
+  const mock = await applyAndMount(visionConfig({
+    cache: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'text:',
+      'qwen-b/qwen3.6-plus': 'text:SECOND_VISION_MODEL_OK',
+    },
+  })
+  const answer = await runDescribe(mock, {}, 111)
+  assert.equal(answer, 'SECOND_VISION_MODEL_OK')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+  assert.equal(await runDescribe(mock, {}, 112), 'SECOND_VISION_MODEL_OK')
+})
+
+test('issue #791: empty HTTP success is classified and falls through to second HTTP model', async () => {
+  const { createServer } = await import('node:http')
+  const wire = []
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    wire.push(body.model)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({
+      choices: [{ message: { content: body.model === 'vision-empty' ? '' : 'HTTP_FALLBACK_OK' } }],
+    }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const baseURL = `http://127.0.0.1:${server.address().port}/v1`
+  try {
+    const mock = await applyAndMount(visionConfig({
+      freeFallback: false,
+      cache: true,
+      visionTaskTimeoutMs: 5000,
+      providers: [{ provider: 'vision-http', model: 'first/vision-empty' }],
+      httpProviders: [
+        { name: 'first', baseURL, model: 'vision-empty', apiKeyEnv: '' },
+        { name: 'second', baseURL, model: 'vision-good', apiKeyEnv: '' },
+      ],
+    }))
+    const result = await runDescribe(mock, {}, 114)
+    assert.equal(result, 'HTTP_FALLBACK_OK')
+    assert.deepEqual(wire, ['vision-empty', 'vision-good'])
+    assert.equal(await runDescribe(mock, {}, 115), 'HTTP_FALLBACK_OK')
+  } finally {
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
+
+test('issue #791: whole-turn vision chain skips empty model output and uses the next route', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'text:',
+      'qwen-b/qwen3.6-plus': 'text:CHAIN_SECOND_MODEL_OK',
+    },
+  })
+  const chain = mock.adapters.get('vision-chain')
+  assert.ok(chain, 'whole-turn route must be registered')
+  const chunks = []
+  for await (const chunk of chain.stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+        { type: 'text', text: 'Recognize this image' },
+      ],
+    }],
+    signal: AbortSignal.timeout(3000),
+  })) chunks.push(chunk)
+  assert.equal(chunks.filter((chunk) => chunk.type === 'text-delta').map((chunk) => chunk.text).join(''), 'CHAIN_SECOND_MODEL_OK')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+  assert.equal(chunks.filter((chunk) => chunk.type === 'finish').length, 1, 'must finish once after valid fallback')
+})
+
+
+test('issue #791: a whole-turn visual provider ignoring AbortSignal cannot hang the conversation', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 1000,
+    timeoutMs: 1000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  // An incorrectly implemented third-party adapter may ignore the signal
+  // forever. The Agent must still receive one terminal outcome.
+  mock.ctx.llm.stream = async function* () { await new Promise(() => {}) }
+  const chain = mock.adapters.get('vision-chain')
+  assert.ok(chain)
+  const outcome = await Promise.race([
+    (async () => {
+      const events = []
+      for await (const row of chain.stream({
+        provider: 'vision-chain',
+        model: 'qwen-a/qwen3.6-flash',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+            { type: 'text', text: 'Identify this image.' },
+          ],
+        }],
+      })) events.push(row)
+      return { state: 'settled', events }
+    })(),
+    // Keepalive also avoids Node 22 ending the test before the unref'd
+    // AbortSignal.timeout timer can fire.
+    new Promise(resolve => setTimeout(() => resolve({ state: 'still-pending' }), 5000)),
+  ])
+  assert.equal(outcome.state, 'settled', 'the Agent stream must settle after its configured vision budget')
+  const finish = outcome.events.at(-1)
+  assert.equal(finish?.type, 'finish')
+  assert.equal(finish?.reason?.kind, 'error')
+  assert.equal(finish?.reason?.failure?.code, 'VISION_CHAIN_EXHAUSTED')
+})
+
+
+test('issue #791: whole-turn model-info preflight cannot hang before the inner budget begins', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 1000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  let queries = 0
+  mock.ctx.llm.resolveModelInfo = async () => {
+    queries += 1
+    return new Promise(() => {})
+  }
+  const chain = mock.adapters.get('vision-chain')
+  const result = await Promise.race([
+    (async () => {
+      const events = []
+      for await (const row of chain.stream({
+        provider: 'vision-chain',
+        model: 'qwen-a/qwen3.6-flash',
+        messages: [{ role: 'user', content: [
+          { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+          { type: 'text', text: 'Describe this image' },
+        ] }],
+      })) events.push(row)
+      return { kind: 'settled', events }
+    })(),
+    new Promise(resolve => setTimeout(() => resolve({ kind: 'still-pending' }), 3500)),
+  ])
+  assert.ok(queries > 0, 'must enter the hanging preflight')
+  assert.equal(result.kind, 'settled', 'the outer budget must settle even if model-info discovery never resolves')
+  assert.equal(result.events.at(-1)?.reason?.kind, 'error')
+  assert.equal(result.events.at(-1)?.reason?.failure?.code, 'VISION_CHAIN_EXHAUSTED')
+})
+
+test('issue #791: cancel during hung whole-turn preflight ends as aborted, not timeout', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 5000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  }))
+  mock.ctx.llm.resolveModelInfo = async () => new Promise(() => {})
+  const chain = mock.adapters.get('vision-chain')
+  const controller = new AbortController()
+  const seen = []
+  const task = (async () => {
+    for await (const row of chain.stream({
+      provider: 'vision-chain',
+      model: 'qwen-a/qwen3.6-flash',
+      signal: controller.signal,
+      messages: [{ role: 'user', content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+      ] }],
+    })) seen.push(row)
+    return seen.at(-1)
+  })()
+  setTimeout(() => controller.abort(new Error('user stopped generation')), 50)
+  const last = await Promise.race([
+    task,
+    new Promise(resolve => setTimeout(() => resolve({ type: 'still-pending' }), 2000)),
+  ])
+  assert.equal(last?.type, 'finish')
+  assert.equal(last?.reason?.kind, 'aborted')
+})
+
+test('issue #791 adversarial: a failed partial provider must not leak chunks into successful fallback', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'BROKEN_PARTIAL_ANSWER' : 'SECOND_MODEL_VALID'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    yield { type: 'finish', reason: provider === 'qwen-a'
+      ? { kind: 'error', failure: { code: 'SERVER', message: 'backend died after partial text' } }
+      : { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  const text = chunks.filter(row => row.type === 'text-delta').map(row => row.text).join('')
+  assert.equal(text, 'SECOND_MODEL_VALID', 'failed-provider visible chunks must be rolled back or withheld')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
+
+test('issue #791 adversarial: oversized provisional vision output is bounded and falls back safely', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'x'.repeat(9 * 1024 * 1024) : 'SAFE_FALLBACK'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'SAFE_FALLBACK')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
+
+test('issue #791 adversarial: prematurely closed stream without finish must fall back', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true, freeFallback: false, visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'UNFINISHED' : 'RECOVERED'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    if (provider === 'qwen-b') yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain', model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'RECOVERED')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
