@@ -467,9 +467,20 @@ export function hardenVisionClientSource(source) {
   return next
 }
 
+// Only DVR-owned carriers may be rewritten. Other plugins can register
+// arbitrary index-injection scripts with identical helper source text; editing
+// those scripts silently changes their behavior and can break Desktop boot.
+const OWNED_STRUCTURED_SCRIPT = /^\s*\/\*\s*data-vision-router-[a-z0-9:-]+\s*\*\//
+const OWNED_HTML_SCRIPT = /(<script\s+data-vision-router-[a-z0-9:-]+>)([\s\S]*?)(<\/script\s*>)/gi
+
+function hardenOwnedClientHtml(html) {
+  return html.replace(OWNED_HTML_SCRIPT, (_match, opening, source, closing) =>
+    `${opening}${hardenVisionClientSource(source)}${closing}`)
+}
+
 export function hardenVisionToggleHtml(html) {
   if (typeof html !== 'string') return html
-  let next = hardenVisionClientSource(html)
+  let next = hardenOwnedClientHtml(html)
 
   if (!next.includes(OWNERSHIP_MARK)) {
     const safe = CLIENT_PRELUDE.replace(/<\/script/gi, '<\\/script')
@@ -519,7 +530,8 @@ export function createVisionToggleRootHardening(ctx, config = {}) {
           webCtx.on('webserver/index-inject', (table) => {
             if (!Array.isArray(table)) return
             for (const row of table) {
-              if (row?.kind === 'script' && typeof row.text === 'string') {
+              if (row?.kind === 'script' && typeof row.text === 'string'
+                  && OWNED_STRUCTURED_SCRIPT.test(row.text)) {
                 row.text = hardenVisionClientSource(row.text)
               }
             }
