@@ -2976,9 +2976,13 @@ ctx.logger?.info(
               if (cacheEnabled()) cache.set(key, text)
               return text
             }
-            const empty = '(the vision model returned empty content)'
-            if (cacheEnabled()) cache.set(key, empty)
-            return empty
+            // A successfully transported but empty answer is not visual evidence.
+            // In particular, reasoning models can exhaust their output budget
+            // before emitting any content. Never cache a fabricated success or
+            // suppress a healthy later backend in the configured chain.
+            const empty = new Error('vision_describe backend returned empty content')
+            empty.code = 'EMPTY_RESPONSE'
+            throw empty
           } catch (error) {
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)
@@ -3107,6 +3111,11 @@ ctx.logger?.info(
               if (cacheEnabled()) cache.set(key, text)
               return text
             }
+            // Mirror the adapter-backed branch: this HTTP response is a
+            // backend failure, not a valid zero-length recognition result.
+            const empty = new Error(`http provider "${provider.name}": vision response was empty`)
+            empty.code = 'EMPTY_RESPONSE'
+            throw empty
           } catch (error) {
             const classification = classifyVisionFailure(error)
             visionBreaker.record(backendKey, fingerprint, classification, scope)
