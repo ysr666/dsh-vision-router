@@ -1942,7 +1942,6 @@ export function apply(ctx, config = {}, runtime = {}) {
           }
           if (imageIds.length > 0) break
         }
-        let finalText = ''
         const chainPairs = routingPairs()
         const chainHttpEntries = new Map(httpEntries().map((entry) => [entry.id, entry]))
         // Fit the conversation into the target model's context window: a long
@@ -1969,6 +1968,9 @@ export function apply(ctx, config = {}, runtime = {}) {
           0,
         )
         for (const pair of chainPairs) {
+          // Keep result text isolated by candidate; a failed stream's partial
+          // output must never count as recognition by the next backend.
+          let finalText = ''
           const candidateWeight = routingPairWeight(pair, chainHttpEntries)
           const weightAtStart = Math.max(candidateWeight, remainingWeight)
           remainingWeight = Math.max(0, remainingWeight - candidateWeight)
@@ -2035,6 +2037,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           let succeeded = false
           let failed = false
           let failMessage = 'unknown error'
+          let failCode
           try {
             // Local backends get an independent anti-hang budget: a hung local
             // service must not consume the whole deadline and starve the
@@ -2095,7 +2098,16 @@ export function apply(ctx, config = {}, runtime = {}) {
                   failed = true
                   break
                 }
-                // 'stop' / 'max-tokens' / 'tool-calls' are success.
+                // Tool-call handoffs may legitimately have no text, but a
+                // completed recognition with no text is not a usable answer.
+                // It must not suppress fallback or cache an earlier failed
+                // candidate's partial output as this backend's result.
+                if ((kind === 'stop' || kind === 'max-tokens') && finalText.trim() === '') {
+                  failed = true
+                  failCode = 'EMPTY_RESPONSE'
+                  failMessage = 'vision chain backend returned empty content'
+                  break
+                }
                 succeeded = true
                 // 视觉链成功留痕：谁识别了几张图、写入跨轮缓存——排障时
                 // "这张图的描述是谁生成的"一眼可查（原版此处静默）。
@@ -2119,7 +2131,9 @@ export function apply(ctx, config = {}, runtime = {}) {
             failMessage = error && error.message ? error.message : String(error)
           }
           if (failed) {
-            const classification = classifyVisionFailure(failMessage)
+            const classification = classifyVisionFailure(
+              failCode ? { code: failCode, message: failMessage } : failMessage,
+            )
             visionBreaker.record(backendKey, fingerprint, classification, 'chain')
             failures.push(`${pair.provider}/${pair.model}: ${failMessage}`)
             ctx.logger?.warn('vision-router: chain fallback (%s) -> %s', classification.kind, failMessage)
