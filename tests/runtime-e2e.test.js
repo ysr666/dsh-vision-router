@@ -26,6 +26,7 @@ import {
   createDesktopScreenshotTool,
 } from '../lib/desktop-screenshot-tool.js'
 import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
+import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
 // 1x1 透明 PNG，真实图片字节。
 const PNG_BYTES = Buffer.from(
@@ -1333,6 +1334,146 @@ test('deep tool mounting owns every registration and rolls back a partial failur
     if (typeof dispose === 'function') await dispose()
   }
   assert.equal(harness.toolDefs.size, 0, 'disposing the fiber must unmount every registered tool')
+})
+
+test('vision_describe cancellation does not poison same-session backend failure memory or retries', async () => {
+  const config = {
+    freeFallback: false,
+    cache: false,
+    timeoutMs: 120000,
+    visionTaskTimeoutMs: 120000,
+    httpProviders: [{
+      name: 'abort-then-recover',
+      baseURL: 'http://127.0.0.1:9/v1',
+      model: 'vision-model',
+      apiKeyEnv: '',
+    }],
+  }
+  const harness = bootHarness(config)
+  let requestCount = 0
+  let firstSignal
+  let releaseRequest
+  const requestStarted = new Promise(resolve => { releaseRequest = resolve })
+  const providerTransport = {
+    async fetch(_url, init) {
+      requestCount++
+      if (requestCount === 1) {
+        firstSignal = init.signal
+        releaseRequest()
+        return new Promise((_, reject) => {
+          const onAbort = () => reject(init.signal?.reason ?? new Error('provider aborted'))
+          if (init.signal?.aborted) onAbort()
+          else init.signal?.addEventListener('abort', onAbort, { once: true })
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'RECOVERED_AFTER_CANCEL' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-describe-cancel-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  const session = { header: { cwd: home } }
+  try {
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const describe = harness.toolDefs.get('vision_describe')
+    const controller = new AbortController()
+    const task = describe.execute({ paths: [img], question: 'What is visible?' },
+      { signal: controller.signal, agent: { session } })
+    await Promise.race([requestStarted, new Promise((_,reject)=>setTimeout(()=>reject(new Error('first fetch never started')),2500))])
+    controller.abort()
+    await assert.rejects(task, /abort/i)
+    assert.equal(firstSignal?.aborted, true)
+    await new Promise(resolve=>setTimeout(resolve,100))
+    const recovered = await describe.execute({ paths: [img], question: 'What is visible?' },
+      { signal: new AbortController().signal, agent: { session } })
+    assert.equal(recovered, 'RECOVERED_AFTER_CANCEL')
+    assert.equal(requestCount, 2, 'cancellation must not mark the vision provider failed for this session')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+test('vision_describe 550 then user abort does not turn a healthy later retry into a circuit lock', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 120000, visionTaskTimeoutMs: 120000,
+    httpProviders: [
+      { name: 'server-550', baseURL: 'http://127.0.0.1:9/v1', model: 'fail', apiKeyEnv: '' },
+      { name: 'cancel-pending', baseURL: 'http://127.0.0.1:9/v1', model: 'recover', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let count = 0
+  let signalStarted
+  const pendingStarted = new Promise(resolve => { signalStarted = resolve })
+  const transport = {
+    async fetch(_url, init) {
+      count += 1
+      if (count === 1) return new Response('provider 550', { status: 550 })
+      if (count === 2) {
+        signalStarted()
+        return new Promise((_, reject) => {
+          const onAbort = () => reject(init.signal?.reason ?? new Error('request aborted'))
+          if (init.signal?.aborted) onAbort()
+          else init.signal?.addEventListener('abort', onAbort, { once: true })
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'RESTORED_BACKEND_ANSWER' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-550-then-cancel-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  const session = { header: { cwd: home } }
+  const args = { paths: [img], question: 'What is visible?' }
+  try {
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const describe = harness.toolDefs.get('vision_describe')
+    const ctrl = new AbortController()
+    const first = describe.execute(args, { signal: ctrl.signal, agent: { session } })
+    await Promise.race([pendingStarted, new Promise((_,reject) => setTimeout(()=>reject(new Error('second backend not reached')),2500))])
+    ctrl.abort()
+    await assert.rejects(first, /abort/i)
+    await new Promise(resolve=>setTimeout(resolve,100))
+    const result = await describe.execute(args, { signal: new AbortController().signal, agent: { session } })
+    assert.equal(result, 'RESTORED_BACKEND_ANSWER')
+    assert.equal(count, 3)
+  } finally { rmSync(home, { recursive:true, force:true }) }
+})
+
+test('vision_describe genuine consecutive 550 and 503 keeps all-failed state for the same turn', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 120000, visionTaskTimeoutMs: 120000,
+    httpProviders: [
+      { name: 'server-550', baseURL: 'http://127.0.0.1:9/v1', model: 'fail1', apiKeyEnv: '' },
+      { name: 'server-503', baseURL: 'http://127.0.0.1:9/v1', model: 'fail2', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let count = 0
+  const transport = { async fetch() {
+    count++
+    return new Response('unavailable', { status: count === 1 ? 550 : 503 })
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-genuine-server-failures-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  const session = { header: { cwd: home } }
+  const args = { paths: [img], question: 'What is visible?' }
+  try {
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const describe = harness.toolDefs.get('vision_describe')
+    const first = JSON.parse(await describe.execute(args, { agent: { session } }))
+    assert.equal(first.ok, false)
+    assert.equal(count, 2)
+    const repeat = JSON.parse(await describe.execute(args, { agent: { session } }))
+    assert.equal(repeat.code, 'VISION_BACKEND_UNAVAILABLE_THIS_TURN')
+    assert.equal(count, 2, 'genuine server failures must still avoid repeated backend requests this turn')
+  } finally { rmSync(home, { recursive:true, force:true }) }
 })
 
 test('vision_describe reserves a real attempt for later HTTP fallback when first backend never responds', async () => {
