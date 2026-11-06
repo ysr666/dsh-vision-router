@@ -1243,3 +1243,29 @@ test('issue #791 adversarial: oversized provisional vision output is bounded and
   assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'SAFE_FALLBACK')
   assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
 })
+
+test('issue #791 adversarial: prematurely closed stream without finish must fall back', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true, freeFallback: false, visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'UNFINISHED' : 'RECOVERED'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    if (provider === 'qwen-b') yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain', model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'RECOVERED')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
