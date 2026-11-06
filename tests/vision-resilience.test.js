@@ -1182,3 +1182,64 @@ test('issue #791: cancel during hung whole-turn preflight ends as aborted, not t
   assert.equal(last?.type, 'finish')
   assert.equal(last?.reason?.kind, 'aborted')
 })
+
+test('issue #791 adversarial: a failed partial provider must not leak chunks into successful fallback', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'BROKEN_PARTIAL_ANSWER' : 'SECOND_MODEL_VALID'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    yield { type: 'finish', reason: provider === 'qwen-a'
+      ? { kind: 'error', failure: { code: 'SERVER', message: 'backend died after partial text' } }
+      : { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  const text = chunks.filter(row => row.type === 'text-delta').map(row => row.text).join('')
+  assert.equal(text, 'SECOND_MODEL_VALID', 'failed-provider visible chunks must be rolled back or withheld')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
+
+test('issue #791 adversarial: oversized provisional vision output is bounded and falls back safely', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }))
+  mock.ctx.llm.stream = async function* ({ provider }) {
+    const output = provider === 'qwen-a' ? 'x'.repeat(9 * 1024 * 1024) : 'SAFE_FALLBACK'
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: output }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: output } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const chunks = []
+  for await (const row of mock.adapters.get('vision-chain').stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{ role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+    ] }],
+  })) chunks.push(row)
+  assert.equal(chunks.filter(row => row.type === 'text-delta').map(row => row.text).join(''), 'SAFE_FALLBACK')
+  assert.equal(chunks.filter(row => row.type === 'finish').length, 1)
+})
