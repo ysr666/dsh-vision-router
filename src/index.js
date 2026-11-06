@@ -40,6 +40,56 @@ function throwIfVisionTaskAborted(signal, error) {
   throw aborted
 }
 
+// A provider may ignore AbortSignal and leave iterator.next() pending forever.
+// For whole-turn routing this adapter is the Agent stream itself (unlike
+// vision_describe, it is not protected by the tool execution timeout wrapper).
+// Race each next() with the task signal, and do not await a noncooperative
+// iterator's return() while unwinding: the user's turn must always settle.
+async function* streamVisionWithAbort(source, signal) {
+  const iterator = source?.[Symbol.asyncIterator]?.()
+  if (!iterator) throw new TypeError('vision chain expected an asynchronous stream')
+  let completed = false
+  try {
+    for (;;) {
+      throwIfVisionTaskAborted(signal)
+      let onAbort
+      const aborted = signal
+        ? new Promise((_, reject) => {
+            onAbort = () => reject(
+              signal.reason instanceof Error
+                ? signal.reason
+                : Object.assign(new Error('vision stream aborted'), { name: 'AbortError', code: 'ABORT_ERR' }),
+            )
+            signal.addEventListener('abort', onAbort, { once: true })
+            if (signal.aborted) onAbort()
+          })
+        : undefined
+      let step
+      try {
+        // A late rejection remains observed by Promise.race even if cancellation
+        // wins, avoiding unhandled rejection in a provider that later wakes.
+        const next = Promise.resolve().then(() => iterator.next())
+        step = await (aborted ? Promise.race([next, aborted]) : next)
+      } finally {
+        if (onAbort) signal.removeEventListener('abort', onAbort)
+      }
+      if (step.done) {
+        completed = true
+        return
+      }
+      yield step.value
+    }
+  } finally {
+    if (!completed && typeof iterator.return === 'function') {
+      try {
+        // The underlying adapter might never settle. Attempt cleanup, but
+        // never block the Agent waiting for a broken third-party stream.
+        void Promise.resolve(iterator.return()).catch(() => {})
+      } catch { /* noncooperative iterator; outer turn is already settling */ }
+    }
+  }
+}
+
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
@@ -2089,7 +2139,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               }
               yield { type: 'finish', reason: { kind: 'stop' } }
             }
-            for await (const chunk of streamPair()) {
+            for await (const chunk of streamVisionWithAbort(streamPair(), attemptSignal)) {
               if (chunk && chunk.type === 'finish') {
                 const kind = chunk.reason && chunk.reason.kind
                 if (kind === 'error' || kind === 'aborted') {
