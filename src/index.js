@@ -3766,6 +3766,14 @@ ctx.logger?.info(
           continue
         }
         try {
+          // Shared across OCR, grounding and visual evidence helpers: a
+          // hanging HTTP model must leave time for the next candidate.
+          const attemptBudgetMs = weightedFallbackBudget(
+            deadline.remaining(),
+            timeoutMs(),
+            candidateWeight,
+            weightAtStart,
+          )
           const text = await callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
@@ -3774,7 +3782,7 @@ ctx.logger?.info(
               signal: combineSignals(
                 taskSignal,
                 deadline.signal(),
-                AbortSignal.timeout(timeoutMs()),
+                AbortSignal.timeout(attemptBudgetMs),
               ),
               sessionId: options.sessionId,
               resolveCredential,

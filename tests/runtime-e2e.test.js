@@ -1400,3 +1400,41 @@ test('single HTTP vision provider retains full shared-budget chance for a slow v
     assert.equal(result, 'SLOW_VALID_VISUAL_RESPONSE')
   } finally { rmSync(home, { recursive: true, force: true }) }
 })
+
+test('vision_ocr vision-engine reserves later HTTP fallback after first backend stalls', async () => {
+  const config = {
+    freeFallback: false, cache: false, ocrEngine: 'vision',
+    timeoutMs: 3000, visionTaskTimeoutMs: 1200, ocrTimeoutMs: 1200,
+    httpProviders: [
+      { name: 'ocr-hangs', baseURL: 'http://127.0.0.1:9/v1', model: 'slow', apiKeyEnv: '' },
+      { name: 'ocr-works', baseURL: 'http://127.0.0.1:9/v1', model: 'fast', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  const providerTransport = {
+    async fetch(_url, init) {
+      requests++
+      if (requests === 1) return new Promise((_, reject) => {
+        const onAbort = () => reject(init.signal?.reason ?? new Error('timeout'))
+        if (init.signal?.aborted) onAbort()
+        else init.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OCR_FALLBACK_TEXT' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    },
+  }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-ocr-http-budget-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const tool = harness.toolDefs.get('vision_ocr')
+    const parsed = JSON.parse(await tool.execute({ image: img, engine: 'vision' },
+      { agent: { session: { header: { cwd: home } } } }))
+    assert.equal(parsed.text, 'OCR_FALLBACK_TEXT')
+    assert.equal(requests, 2, 'vision OCR must try the healthy second HTTP provider')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
