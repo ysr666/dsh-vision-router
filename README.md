@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.1.3 release candidate:** Fix optional dynamic image→text model routing on DSH 0.2.2-rc.1 by selecting models before Agent pre-step; preserve the default tool-only mode and legacy Host behavior. RC1 requires Node >=24.9; small-context models may need Host compaction headroom configuration for model switching. Update the CI-only HOL scanner pin without changing security thresholds. See [v3.1.3 notes](docs/releases/v3.1.3.md). Verify publication through [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm.
+> **v3.1.4 stability patch candidate:** Fix cross-plugin script mutation (#793), visual fallback on empty recognition and bounded whole-turn timeouts (#794). Add Desktop bootstrap source-leak regression detection (#795) and canary maintenance (#790); **the specific user-reported 550/503 origins and #792 screenshot root cause are not confirmed**. No settings migration or support-floor change. See [v3.1.4 notes](docs/releases/v3.1.4.md). Verify publication through [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm.
 
 ## Start here
 

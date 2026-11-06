@@ -5,6 +5,25 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.4
+
+### Runtime stability and third-party plugin isolation / 运行稳定性与第三方插件隔离
+
+- **#793:** Scope Vision Router's client index-script hardening to DVR-owned injection rows and tags; preserve other plugins' JavaScript instead of rewriting unrelated client source. / 将客户端入口脚本加固限定于 DVR 自己的注入行及标签，不再误改写其他插件的 JavaScript。
+- **#794 (investigation #791):** Treat empty image descriptions as failed candidates and continue configured fallback instead of caching pseudo-success; preserve textless tool-call handoffs while isolating failed candidates' text and finish state. / 空识图结果不再被缓存成成功，按原有预算继续切换后端；保留合法工具调用交接，隔离失败候选模型的输出及终止状态。
+- **#794:** Bound image-bearing whole-turn preflight and stream waits, including uncooperative adapters ignoring cancellation; emit a terminal failure instead of leaving the Agent pending indefinitely. The default tool-only path and legacy text-only behavior remain supported. / 为整轮识图的模型预检查、流式等待及不响应取消信号的适配器建立总时限，避免 Agent 永久等待；默认工具识图及旧版纯文本行为不变。
+
+### Desktop and CI regression coverage / Desktop 与 CI 回归防护
+
+- **#795 (investigation #792):** Fail the real Desktop E2E gate if bootstrap JS/CSS appears as visible document text, including script/style content exposed through a visible `<head>`; verify real Host injection boundaries. **This is a detection gate, not a proven field fix for #792.** / 防止 Desktop 中启动脚本或样式以可见正文形式外露，检测 `<head>` 误显示与 Host 注入边界。**此项仅为检测门禁，不能视为 #792 现场根因修复。**
+- **#790:** Maintain upstream DSH latest-canary coverage and the Settings seam drift test; no runtime change. / 更新上游 canary 和 Settings 接缝回归测试，不改运行时代码。
+
+### Known limitations / 已知限制
+
+- **#791:** User-reported `550 → 503` error origin is not yet correlated with real provider/Host responses, even though related fallback and unbounded-wait defects were reproduced and fixed. / 用户实际 550、503 的来源仍待现场证据，虽然相关回退和无限等待缺陷已复现并修复。
+- **#792:** Raw JS/CSS Desktop screenshot root cause and multi-plugin attribution remain unverified. Do not claim the issue closed. / Desktop 源码外露截图的实际触发原因及多插件归因仍未确认，不宣称问题已关闭。
+- No Settings schema migration, new runtime dependency, broadened remote permissions, or change to Node/DSH support policy. No change to the privacy behavior of built-in free cloud fallbacks. / 不新增配置迁移、运行时依赖或远程权限，不变更 Node/DSH 支持政策及内置免费云端兜底的数据外发行为。
+
 ## v3.1.3
 
 ### DSH 0.2.2-rc.1 model routing / RC1 模型路由兼容
