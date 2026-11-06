@@ -1038,3 +1038,40 @@ test('issue #791: empty HTTP success is classified and falls through to second H
     await new Promise(resolve => server.close(resolve))
   }
 })
+
+
+test('issue #791: whole-turn vision chain skips empty model output and uses the next route', async () => {
+  const mock = await applyAndMount(visionConfig({
+    routing: true,
+    freeFallback: false,
+    visionTaskTimeoutMs: 3000,
+    providers: [
+      { provider: 'qwen-a', model: 'qwen3.6-flash' },
+      { provider: 'qwen-b', model: 'qwen3.6-plus' },
+    ],
+  }), {
+    behaviors: {
+      'qwen-a/qwen3.6-flash': 'text:',
+      'qwen-b/qwen3.6-plus': 'text:CHAIN_SECOND_MODEL_OK',
+    },
+  })
+  const chain = mock.adapters.get('vision-chain')
+  assert.ok(chain, 'whole-turn route must be registered')
+  const chunks = []
+  for await (const chunk of chain.stream({
+    provider: 'vision-chain',
+    model: 'qwen-a/qwen3.6-flash',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+        { type: 'text', text: 'Recognize this image' },
+      ],
+    }],
+    signal: AbortSignal.timeout(3000),
+  })) chunks.push(chunk)
+  assert.equal(chunks.filter((chunk) => chunk.type === 'text-delta').map((chunk) => chunk.text).join(''), 'CHAIN_SECOND_MODEL_OK')
+  assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+  assert.equal(mock.calls.get('qwen-b/qwen3.6-plus'), 1)
+  assert.equal(chunks.filter((chunk) => chunk.type === 'finish').length, 1, 'must finish once after valid fallback')
+})
