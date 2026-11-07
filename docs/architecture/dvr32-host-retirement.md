@@ -27,3 +27,17 @@ three static refs to the newly approved commit. A stale pin fails closed.
 ## Windows multi-plugin 405 counterexample (2026-11-08)
 
 Original zero-Connection-overlay release candidate passed normal DVR image-tool E2E but **failed** the independent third-party RPC/HTTP waterfall six-order test. With official DSH 0.2.2-rc.1, POST /fixture-rpc/ping fell through to the resource handler (405), because generic connection.rpc.handle registers its route using the Connection provider Fiber's webServer capability, which the DSH native Connection row did not inject. A minimal Connection overlay declaring inject: [webStartup, webServer] preserves the official config.trustedHosts unchanged and returned 200 for all six plugin orderings. This is a non-retired activation boundary, not authorization ownership. Security regression tests reject any extra Connection keys, a missing webServer, or revived private readiness service. Both supported exact-source DSH gates must assert the composed Connection retains the official config in structured form.
+
+## Retired DSH alpha.4 browser forensic
+
+The previous continuous PR browser smoke explicitly checked out DSH 0.1.2-alpha.4,
+which predates the DVR 3.2 minimum by several years and still requires the
+legacy webRuntime Connection dependency. Keeping it as a PR release gate would
+force the private readiness bridge back into production, negating this retirement.
+The original #387 forensic workflow is retained as workflow_dispatch only,
+using the last green historical DVR fbe230ca04c2... and the original
+pre-#388 comparison c7c92d25f7c5..., so investigators can still reproduce the
+old bug without pretending that DVR 3.2 supports the retired Host.
+The **same alpha-browser-cold-toggle-smoke.mjs** remains an active PR/main gate
+against supported pinned DSH 0.2.1-rc.5 in dsh-021-rc5-validation.yml;
+that live cold toggle, Settings lifecycle, and renderer tests must not be removed.

@@ -225,3 +225,17 @@ test('production runtime never depends on DSH private source entry points', asyn
     }
   }
 })
+
+
+test('retired DSH 0.1.2-alpha.4 browser forensic is manual and pinned to a known green DVR', async () => {
+  const archived = await text('.github/workflows/alpha-browser-cold-toggle-smoke.yml')
+  assert.match(archived, /workflow_dispatch:/)
+  assert.doesNotMatch(archived, /\bpull_request:/)
+  assert.doesNotMatch(archived, /^  push:/m)
+  assert.match(archived, /ref: fbe230ca04c2e6c0e6b8f318634f94125326268b/)
+  assert.match(archived, /ref: 4e84901e6471b79ec0338099867ebb4606d12bb5/)
+  assert.match(archived, /c7c92d25f7c5ced65871db4cb40b00b5d5493ce9/)
+  const current = await text('.github/workflows/dsh-021-rc5-validation.yml')
+  assert.match(current, /DSH_EXPECTED_VERSION: 0\.2\.1-rc\.5/)
+  assert.match(current, /Run cold Vision toggle/)
+})

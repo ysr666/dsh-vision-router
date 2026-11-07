@@ -411,24 +411,18 @@ test('security policy links reporters to enabled private vulnerability reporting
   assert.match(policy, /Do \*\*not\*\* post exploit details/)
 })
 
-test('client prelude changes always trigger the real browser and alpha source gates', async () => {
-  const workflows = [
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    const trigger = "      - 'src/lib/*-client-prelude.js'"
-    assert.equal(source.split(trigger).length - 1, 2, `${name}: client preludes must trigger PR and main`)
+test('client prelude changes trigger supported rc5 real browser and exact-source gates', async () => {
+  for (const name of ['dsh-021-rc5-validation.yml', 'dsh-alpha-source-contract.yml']) {
+    const workflow = await readFile(new URL('../.github/workflows/' + name, import.meta.url), 'utf8')
+    assert.equal(workflow.split("      - 'src/**'").length - 1, 2,
+      name + ': PR and main must cover all client prelude changes')
   }
 })
 
-test('audited browser integration modules always trigger every real browser and alpha source gate', async () => {
-  const workflows = [
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  const boundaries = [
+test('audited browser integration modules remain covered by the active DSH 0.2.1-rc.5 lane', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.equal(source.split("      - 'src/**'").length - 1, 2)
+  for (const name of [
     'src/lib/client-host-compat-prelude.js',
     'src/lib/guide-vision-toggle-highlight.js',
     'src/lib/remote-settings-risk-confirmation.js',
@@ -439,32 +433,17 @@ test('audited browser integration modules always trigger every real browser and 
     'src/lib/vision-capability-benchmark-client.js',
     'src/lib/vision-exact-check-client.js',
     'src/lib/vision-routing-settings-prelude.js',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.equal(source.split("      - 'src/lib/web/**'").length - 1, 2, `${name}: lib/web must trigger PR and main`)
-    for (const path of boundaries) {
-      const trigger = `      - '${path}'`
-      assert.equal(source.split(trigger).length - 1, 2, `${name}: ${path} must trigger PR and main`)
-    }
-  }
+    'src/lib/web/benchmark-panel.js',
+  ]) assert.ok(name.startsWith('src/'), name + ': not covered by src/**')
+  assert.match(source, /alpha-browser-cold-toggle-smoke\.mjs/)
+  assert.match(source, /Run cold Vision toggle/)
 })
 
-test('model visibility boundary changes always trigger the real browser and alpha source gates', async () => {
-  const workflows = [
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    for (const path of [
-      'src/lib/vision-model-visibility-boundary-main.js',
-      'src/lib/vision-model-visibility-boundary.js',
-    ]) {
-      const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      assert.equal((source.match(new RegExp(escaped, 'g')) ?? []).length, 2, `${name}: ${path} must trigger PR and main`)
-    }
-  }
+test('model visibility boundary updates trigger the supported Host real browser test', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.equal(source.split("      - 'src/**'").length - 1, 2)
+  assert.match(source, /Run cold Vision toggle/)
+  assert.match(source, /Run real Host\s*\+\s*Chromium|name: real Host \+ Chromium/)
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
@@ -501,9 +480,8 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
 
 test('DSH release evidence triggers live browser and immutable 3.2 Host gates', async () => {
   const paths = [
-    '../.github/workflows/alpha-browser-cold-toggle-smoke.yml',
-    '../.github/workflows/dsh-alpha-source-contract.yml',
     '../.github/workflows/dsh-021-rc5-validation.yml',
+    '../.github/workflows/dsh-alpha-source-contract.yml',
   ]
   for (const path of paths) {
     const workflow = await readFile(new URL(path, import.meta.url), 'utf8')
@@ -527,7 +505,7 @@ test('current DSH rc5 browser lifecycle follows both presentation carriers', asy
   assert.match(source, /real Host \+ Chromium/)
 })
 
-test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
+test('archived alpha.4 forensic browser job retains immutable build-cache integrity', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [
     ['alpha-browser-cold-toggle-smoke.yml', 'dsh-alpha', 'Build exact alpha web runtime', 'Run cold Vision toggle against real Host and Chromium'],
