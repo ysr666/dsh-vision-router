@@ -1525,6 +1525,49 @@ test('issue #791: two server failures cannot leave the last HTTP model silent fo
 
 
 
+
+test('issue #791: real loopback HTTP 550 to 503 to a silent socket ends in structured failure', async () => {
+  const server = await startFakeOpenAI(async (_req, _body, nth) => {
+    if (nth === 1) return { status: 550, body: '{"error":"synthetic server 550"}' }
+    if (nth === 2) return { status: 503, body: '{"error":"synthetic server 503"}' }
+    return new Promise(() => {}) // accepted HTTP request, no response headers
+  })
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'wire-550', baseURL: server.baseURL, model: 'a', apiKeyEnv: '' },
+      { name: 'wire-503', baseURL: server.baseURL, model: 'b', apiKeyEnv: '' },
+      { name: 'wire-silent', baseURL: server.baseURL, model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-550-503-wire-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  let timer
+  try {
+    apply(harness.ctx, Config(config))
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const start = Date.now()
+    const actual = harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    const failure = JSON.parse(await Promise.race([
+      actual,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('real HTTP silent third backend exceeded 1500ms')), 1500)
+      }),
+    ]).finally(() => clearTimeout(timer)))
+    assert.equal(failure.ok, false)
+    assert.equal(server.requests.length, 3)
+    assert.ok(Date.now() - start < 1500)
+  } finally {
+    clearTimeout(timer)
+    await server.close()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('issue #791: a noncooperative third HTTP transport cannot ignore the post-5xx budget', async () => {
   const config = {
     freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
