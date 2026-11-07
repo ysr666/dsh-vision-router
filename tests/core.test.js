@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import path from 'node:path'
 import sharp from 'sharp'
 import { parseVersionComparator } from '../lib/version-range.js'
+import { postServerOutageBudgetMs } from '../lib/core-primitives.js'
 import { VISION_SUCCESS_GUIDANCE, visionDescribeSuccessContext } from '../lib/vision-evidence-guidance.js'
 import { directSessionAffinityHeaders, sessionIdentityOf, wireSessionAffinityId } from '../lib/session-affinity.js'
 import { currentVisionSessionAffinityId } from '../lib/session-affinity-runtime.js'
@@ -3814,6 +3815,17 @@ test('httpProviderFallbackWeight charges one slice for built-in OVH, a full tier
     DEFAULT_HTTP_PROVIDERS.length,
   )
   assert.equal(httpProviderFallbackWeight(undefined), DEFAULT_HTTP_PROVIDERS.length)
+})
+
+test('postServerOutageBudgetMs preserves normal/one-error calls and bounds the multi-5xx tail', () => {
+  assert.equal(postServerOutageBudgetMs(120000, 120000, 0), 120000)
+  assert.equal(postServerOutageBudgetMs(120000, 120000, 1), 120000)
+  assert.equal(postServerOutageBudgetMs(120000, 120000, 2), 20000)
+  assert.equal(postServerOutageBudgetMs(120000, 120000, 3), 20000)
+  assert.equal(postServerOutageBudgetMs(2000, 2000, 2), 500)
+  assert.equal(postServerOutageBudgetMs(200, 2000, 2), 200)
+  assert.equal(postServerOutageBudgetMs(3000, 12000, 2), 3000)
+  assert.equal(postServerOutageBudgetMs(180000, 180000, 2), 180000)
 })
 
 test('weightedFallbackBudget allocates fair shares and clamps to the limits', () => {

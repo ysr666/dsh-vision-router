@@ -1476,6 +1476,206 @@ test('vision_describe genuine consecutive 550 and 503 keeps all-failed state for
   } finally { rmSync(home, { recursive:true, force:true }) }
 })
 
+
+test('issue #791: two server failures cannot leave the last HTTP model silent for the whole default-sized task', async () => {
+  // A scaled 2s budget simulates 120s defaults without burning two minutes.
+  // Pre-fix the third model consumes the entire remaining budget; post-fix
+  // a repeatedly failing SERVER chain returns a structured failure promptly.
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'first-550', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'second-503', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+      { name: 'third-silent', baseURL: 'http://127.0.0.1:9/v1', model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  let lastAborted = false
+  const transport = { async fetch(_url, init) {
+    requests++
+    if (requests <= 2) return new Response('server unavailable', { status: requests === 1 ? 550 : 503 })
+    return new Promise((_, reject) => {
+      const onAbort = () => {
+        lastAborted = true
+        reject(init.signal?.reason ?? new Error('timeout'))
+      }
+      if (init.signal?.aborted) onAbort()
+      else init.signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }}
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-server-chain-stall-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const start = Date.now()
+    const result = JSON.parse(await harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } }))
+    const elapsedMs = Date.now() - start
+    assert.equal(requests, 3)
+    assert.equal(lastAborted, true)
+    assert.equal(result.ok, false)
+    assert.ok(elapsedMs < 1500,
+      'two HTTP 5xx responses followed by a silent last model must not consume the full 2s task budget: ' + elapsedMs)
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+
+
+
+test('issue #791: real loopback HTTP 550 to 503 to a silent socket ends in structured failure', async () => {
+  const server = await startFakeOpenAI(async (_req, _body, nth) => {
+    if (nth === 1) return { status: 550, body: '{"error":"synthetic server 550"}' }
+    if (nth === 2) return { status: 503, body: '{"error":"synthetic server 503"}' }
+    return new Promise(() => {}) // accepted HTTP request, no response headers
+  })
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'wire-550', baseURL: server.baseURL, model: 'a', apiKeyEnv: '' },
+      { name: 'wire-503', baseURL: server.baseURL, model: 'b', apiKeyEnv: '' },
+      { name: 'wire-silent', baseURL: server.baseURL, model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-550-503-wire-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  let timer
+  try {
+    apply(harness.ctx, Config(config))
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const start = Date.now()
+    const actual = harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    const failure = JSON.parse(await Promise.race([
+      actual,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('real HTTP silent third backend exceeded 1500ms')), 1500)
+      }),
+    ]).finally(() => clearTimeout(timer)))
+    assert.equal(failure.ok, false)
+    assert.equal(server.requests.length, 3)
+    assert.ok(Date.now() - start < 1500)
+  } finally {
+    clearTimeout(timer)
+    await server.close()
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('issue #791: a noncooperative third HTTP transport cannot ignore the post-5xx budget', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'server-550', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'server-503', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+      { name: 'ignores-abort', baseURL: 'http://127.0.0.1:9/v1', model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  let thirdSignal
+  const transport = { async fetch(_url, init) {
+    requests++
+    if (requests <= 2) return new Response('unavailable', { status: requests === 1 ? 550 : 503 })
+    thirdSignal = init.signal
+    return new Promise(() => {}) // intentionally ignores AbortSignal
+  }}
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-ignores-abort-server-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const start = Date.now()
+    let timer
+    const outcome = harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    const failure = JSON.parse(await Promise.race([
+      outcome,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('noncooperative transport did not settle within 1500ms')), 1500)
+      }),
+    ]).finally(() => clearTimeout(timer)))
+    const elapsed = Date.now() - start
+    assert.equal(requests, 3)
+    assert.equal(thirdSignal?.aborted, true)
+    assert.equal(failure.ok, false)
+    assert.ok(elapsed < 1500, 'noncooperative HTTP transport exceeded outage recovery budget: ' + elapsed)
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+test('issue #791: a single 550 must not truncate a legitimately slow healthy second HTTP model', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2400, visionTaskTimeoutMs: 2400,
+    httpProviders: [
+      { name: 'server-550', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'slow-but-valid', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  const transport = { async fetch() {
+    requests++
+    if (requests === 1) return new Response('server unavailable', { status: 550 })
+    await new Promise(resolve => setTimeout(resolve, 850))
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'VALID_SLOW_SECOND_BACKEND' } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-one-server-failure-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const result = await harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    assert.equal(result, 'VALID_SLOW_SECOND_BACKEND')
+    assert.equal(requests, 2)
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
+test('issue #791: healthy third HTTP model still answers after 550 and 503', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'server-550', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'server-503', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+      { name: 'healthy-third', baseURL: 'http://127.0.0.1:9/v1', model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  const transport = { async fetch() {
+    requests++
+    if (requests <= 2) return new Response('server unavailable', { status: requests === 1 ? 550 : 503 })
+    await new Promise(resolve => setTimeout(resolve, 70))
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'THIRD_BACKEND_OK_AFTER_550_503' } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-three-server-recovery-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const result = await harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'What is visible?',
+    }, { agent: { session: { header: { cwd: home } } } })
+    assert.equal(result, 'THIRD_BACKEND_OK_AFTER_550_503')
+    assert.equal(requests, 3)
+  } finally { rmSync(home, { recursive: true, force: true }) }
+})
+
 test('vision_describe reserves a real attempt for later HTTP fallback when first backend never responds', async () => {
   const config = {
     freeFallback: false, cache: false,
