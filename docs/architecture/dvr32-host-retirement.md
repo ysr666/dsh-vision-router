@@ -41,3 +41,46 @@ old bug without pretending that DVR 3.2 supports the retired Host.
 The **same alpha-browser-cold-toggle-smoke.mjs** remains an active PR/main gate
 against supported pinned DSH 0.2.1-rc.5 in dsh-021-rc5-validation.yml;
 that live cold toggle, Settings lifecycle, and renderer tests must not be removed.
+
+## Upgrade preflight and safe rollback for existing profiles
+
+This is a **prerelease** compatibility change, not an automatic 3.1.x patch.
+The 3.1.4 line remains available. **Do not update a working DSH profile merely
+to validate this PR.** Validate first in a disposable profile / development
+installation; do not test by rewriting someone else's live config.
+
+1. Verify Node.js >=24.9.0 and the actual DSH executable's version is within
+   `>=0.2.1-rc.5 <0.3.0-0`. Check the **running Desktop's bundled Host**
+   separately from a shell's unrelated `dsh` command. An Oh-DSH profile has
+   its own home and must not be confused with the official ~/.dsh home.
+2. Back up the **complete selected profile directory**, including
+   `package.json`, `pnpm-lock.yaml`, and `cordis.patch.yml`, and record the
+   previous DSH and DVR package versions. Keep independent session, attachment,
+   and settings data intact; do not auto-delete or auto-migrate those stores.
+3. From the **3.2 source checkout**, run the **read-only** preflight:
+   `node lib/doctor-cli-p0.js doctor --profile desktop --no-runtime`
+   (or substitute `web` for the actual profile). Never use `--fix` or `repair`
+   as a preflight, and do not paste raw private reports into public issues.
+4. If Doctor finds a **profile-owned** `id: connection` row or any
+   `visionRouterWebConnectionReady` / `vision-router-web-connection-ready`
+   reference, review the user's exact custom overlay **after backup** before
+   enabling 3.2. Profile patches apply after bundled patches: a historic
+   `webRuntime` injection or old Connection `config` can override the newly
+   verified Host settings and break startup. **Never delete arbitrary profile
+   rows, credentials, trusted hosts, or another plugin's configuration.**
+5. The 3.2 **bundle-owned** Connection row is intentional and should not be
+   removed: its only override is `inject: [webStartup, webServer]`, preserving
+   the official Host's `config.trustedHosts` and auth semantics. Doctor's
+   **profile-owned** override warnings refer to *separate, later user patches*,
+   not to this bundled compatibility ordering shim.
+6. On a disposable upgraded profile, verify cold start, Settings save/reload,
+   browser auth, actual vision result, third-party plugin RPC, and disabling
+   the **entire** DVR bundle without losing the Host's `/`, `/connect`, or
+   `/api` routes. Restore the backed-up profile together with the previously
+   installed compatible DSH/DVR pair if recovery is required. Never claim
+   session or image preservation from a fresh-profile-only test.
+
+No code in this PR edits existing user profiles, session logs, image attachments,
+or saved settings as part of retirement. The remaining upstream stale-Fiber HMR
+issue and the separate #792 source-text screenshot investigation stay tracked
+independently; this document does not claim that either upstream defect is fixed.
