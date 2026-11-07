@@ -64,6 +64,46 @@ export function ensureSentencePunctuation(value) {
 const AUTH_PATTERNS = [/\b401\b/, /\b403\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]
 const RATE_LIMIT_PATTERNS = [/\b429\b/, /rate.?limit/i, /quota temporarily/i, /too many requests/i]
 const TIMEOUT_PATTERNS = [/abort/i, /timeout/i, /etimedout/i, /timed ?out/i, /deadline exceeded/i]
+// An adapter may throw plain Error("HTTP 550 ...") instead of retaining
+// Response.status. Parse explicit 5xx notation (including 520/550) without
+// a backtracking regex, scanning only the first 4096 untrusted characters.
+const HTTP_STATUS_PREFIXES = [
+  'request failed with status code', 'response failed with status code',
+  'request failed with status', 'response failed with status',
+  'http/1.0', 'http/1.1', 'http/2.0', 'http/2', 'http/3',
+  'http status code', 'http status', 'http error', 'http response',
+  'http', 'status code', 'status',
+]
+function isAsciiWord(code) {
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122) || code === 95
+}
+function extractExplicitHttp5xxStatus(message) {
+  const text = message.slice(0, 4096).toLowerCase()
+  const isSpace = (ch) => ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n'
+  const skipSpace = (start) => {
+    let pos = start
+    while (pos < text.length && pos - start < 16 && isSpace(text[pos])) pos += 1
+    return pos
+  }
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== 'h' && text[i] !== 'r' && text[i] !== 's'
+      || isAsciiWord(text.charCodeAt(i - 1))) continue
+    for (const prefix of HTTP_STATUS_PREFIXES) {
+      if (!text.startsWith(prefix, i) || isAsciiWord(text.charCodeAt(i + prefix.length))) continue
+      let pos = skipSpace(i + prefix.length)
+      if (text[pos] === ':' || text[pos] === '=' || text[pos] === '#' || text[pos] === '-') {
+        pos = skipSpace(pos + 1)
+      }
+      if (text[pos] !== '5') continue
+      const digit1 = text.charCodeAt(pos + 1)
+      const digit2 = text.charCodeAt(pos + 2)
+      if (digit1 < 48 || digit1 > 57 || digit2 < 48 || digit2 > 57
+        || isAsciiWord(text.charCodeAt(pos + 3))) continue
+      return Number(text.slice(pos, pos + 3))
+    }
+  }
+  return undefined
+}
 const SERVER_PATTERNS = [/\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
 const INVALID_REQUEST_PATTERNS = [/\b400\b/, /\b404\b/, /\b422\b/, /invalid request/i, /does not support image/i, /unsupported/i, /invalid model/i, /no such model/i, /model not exist/i]
 const NETWORK_PATTERNS = [/econn/i, /enotfound/i, /network/i, /fetch failed/i, /socket/i, /connection reset/i, /dns/i]
@@ -100,12 +140,19 @@ const KIND_BY_PATTERN = [
 ]
 
 /** Status → kind for HTTP-level failures. */
+function numericHttpStatus(status) {
+  if (typeof status === 'number') return Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
+  if (typeof status === 'string' && /^[1-5]\d{2}$/.test(status)) return Number(status)
+  return undefined
+}
+
 export function kindForHttpStatus(status) {
-  if (status === 401 || status === 403) return VISION_FAILURE_KINDS.AUTH
-  if (status === 429) return VISION_FAILURE_KINDS.RATE_LIMIT
-  if (status === 402) return VISION_FAILURE_KINDS.QUOTA
-  if (status === 400 || status === 404 || status === 422) return VISION_FAILURE_KINDS.INVALID_REQUEST
-  if (status >= 500 && status <= 599) return VISION_FAILURE_KINDS.SERVER
+  const code = numericHttpStatus(status)
+  if (code === 401 || code === 403) return VISION_FAILURE_KINDS.AUTH
+  if (code === 429) return VISION_FAILURE_KINDS.RATE_LIMIT
+  if (code === 402) return VISION_FAILURE_KINDS.QUOTA
+  if (code === 400 || code === 404 || code === 422) return VISION_FAILURE_KINDS.INVALID_REQUEST
+  if (code !== undefined && code >= 500) return VISION_FAILURE_KINDS.SERVER
   return undefined
 }
 
@@ -147,7 +194,21 @@ function kindForCode(code) {
  */
 export function classifyVisionFailure(error) {
   const message = safeFailureText(error)
-  let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(safeFailureField(error, 'status'))
+  // Some HTTP adapters surface response.status / statusCode rather than
+  // error.status. Inspect only shallow, narrowly named fields and never
+  // invoke arbitrary object coercion or an untrusted getter.
+  const reportedStatuses = [
+    safeFailureField(error, 'status'),
+    safeFailureField(error, 'statusCode'),
+    safeFailureField(safeFailureField(error, 'response'), 'status'),
+    safeFailureField(safeFailureField(error, 'cause'), 'status'),
+  ]
+  // A concrete HTTP status beats incidental words such as "authentication"
+  // or "timeout" in the server's error body; a branded adapter code still
+  // takes precedence over both. Return the extracted numeric status for logs.
+  const status = reportedStatuses.map(numericHttpStatus).find((code) => kindForHttpStatus(code) !== undefined)
+    ?? extractExplicitHttp5xxStatus(message)
+  let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(status)
   if (kind === undefined) {
     for (const [candidate, patterns] of KIND_BY_PATTERN) {
       if (patterns.some((pattern) => pattern.test(message))) {
@@ -157,10 +218,9 @@ export function classifyVisionFailure(error) {
     }
     if (kind === undefined) kind = VISION_FAILURE_KINDS.OTHER
   }
-  const retryAfterMs =
-    Number.isFinite(error && error.providerRetryAfterMs) && error.providerRetryAfterMs > 0
-      ? error.providerRetryAfterMs
-      : undefined
+  const retryAfter = safeFailureField(error, 'providerRetryAfterMs')
+  const retryAfterMs = typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter > 0
+    ? retryAfter : undefined
   const retryable = kind === VISION_FAILURE_KINDS.TIMEOUT ||
     kind === VISION_FAILURE_KINDS.SERVER ||
     kind === VISION_FAILURE_KINDS.NETWORK
@@ -169,7 +229,7 @@ export function classifyVisionFailure(error) {
     // Whether the SAME backend may be retried as-is (not "may the next backend run").
     retryableProvider: retryable,
     retryAfterMs,
-    status: Number.isInteger(error && error.status) ? error.status : undefined,
+    status,
   }
 }
 
