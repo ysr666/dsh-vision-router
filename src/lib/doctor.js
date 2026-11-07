@@ -414,6 +414,51 @@ function inspectVisionRouterPatchRows(lines) {
   return { mountRows, overrideRows }
 }
 
+/**
+ * Read-only advisory for profile-owned DSH Connection overrides.
+ * The supported DSH 0.2.1+ Web Host owns this row; a user patch is applied
+ * after bundle patches and can silently resurrect the retired dependency.
+ * This deliberately reads only structure, not trust values or secrets.
+ */
+function inspectRetiredConnectionPatchRows(lines) {
+  let connectionOverrideRows = 0
+  let retiredReadyBridgeRows = 0
+  let retiredReadyInjectionRows = 0
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const id = /^\s*-\s+id\s*:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)?.[1]
+    if (id === 'connection') connectionOverrideRows += 1
+    if (id === 'vision-router-web-connection-ready') retiredReadyBridgeRows += 1
+    const name = /^\s*name\s*:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line)?.[1]
+    if (name === './presets/web-connection-ready/index.mjs'
+      || name === 'vision-router-web-connection-ready') {
+      // Count named bridge rows even if an alias id is used, but not twice.
+      const previous = lines.slice(Math.max(0, index - 5), index)
+      if (!previous.some((item) => /^\s*-\s+id:\s*['"]?vision-router-web-connection-ready['"]?\s*$/.test(item))) {
+        retiredReadyBridgeRows += 1
+      }
+    }
+    const inject = /^(\s*)inject\s*:\s*(.*)$/.exec(line)
+    if (!inject) continue
+    const matchService = (value) => /(?:^|[^A-Za-z0-9_])visionRouterWebConnectionReady(?:$|[^A-Za-z0-9_])/.test(value)
+    if (matchService(inject[2])) {
+      retiredReadyInjectionRows += 1
+    } else if (inject[2].trim() === '') {
+      const indent = inject[1].length
+      for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+        const row = lines[cursor]
+        if (!row.trim()) continue
+        if (yamlIndent(row) <= indent) break
+        if (/^\s*-\s+visionRouterWebConnectionReady\s*$/.test(row)) {
+          retiredReadyInjectionRows += 1
+          break
+        }
+      }
+    }
+  }
+  return { connectionOverrideRows, retiredReadyBridgeRows, retiredReadyInjectionRows }
+}
+
 export function inspectProfilePatch(patchPath) {
   if (!existsSync(patchPath)) {
     return {
@@ -421,6 +466,9 @@ export function inspectProfilePatch(patchPath) {
       exists: false,
       visionRouterRows: 0,
       visionRouterOverrideRows: 0,
+      connectionOverrideRows: 0,
+      retiredReadyBridgeRows: 0,
+      retiredReadyInjectionRows: 0,
       manualVisionRouter: false,
       disablesOfficialDeepSeek: false,
     }
@@ -429,10 +477,11 @@ export function inspectProfilePatch(patchPath) {
   try {
     text = readFileBounded(patchPath).toString('utf8')
   } catch (error) {
-    return { path: patchPath, exists: true, visionRouterRows: 0, visionRouterOverrideRows: 0, manualVisionRouter: false, disablesOfficialDeepSeek: false, error: error instanceof Error ? error.message : String(error), oversized: error?.code === 'DOCTOR_INPUT_TOO_LARGE' }
+    return { path: patchPath, exists: true, visionRouterRows: 0, visionRouterOverrideRows: 0, connectionOverrideRows: 0, retiredReadyBridgeRows: 0, retiredReadyInjectionRows: 0, manualVisionRouter: false, disablesOfficialDeepSeek: false, error: error instanceof Error ? error.message : String(error), oversized: error?.code === 'DOCTOR_INPUT_TOO_LARGE' }
   }
   const lines = text.split(/\r?\n/).map(stripYamlComment)
   const { mountRows: visionRouterRows, overrideRows: visionRouterOverrideRows } = inspectVisionRouterPatchRows(lines)
+  const retiredConnection = inspectRetiredConnectionPatchRows(lines)
   let disablesOfficialDeepSeek = false
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]
@@ -450,6 +499,7 @@ export function inspectProfilePatch(patchPath) {
     exists: true,
     visionRouterRows,
     visionRouterOverrideRows,
+    ...retiredConnection,
     manualVisionRouter: visionRouterRows > 0,
     disablesOfficialDeepSeek,
   }
@@ -524,6 +574,12 @@ export function classifyProfileInstallation(profile, { requested = false } = {})
   }
   if (profile?.patch?.disablesOfficialDeepSeek) {
     warnings.push('cordis.patch.yml statically disables llm-deepseek; legacy stealth patches can make the official model disappear when Vision Router is disabled')
+  }
+  if (profile?.patch?.connectionOverrideRows > 0) {
+    warnings.push('Profile-owned Connection override detected: DSH 0.2.1+ owns this Host row. Review/remove the obsolete override manually after backing up your profile; Doctor does not modify authentication or trustedHosts.')
+  }
+  if (profile?.patch?.retiredReadyBridgeRows > 0 || profile?.patch?.retiredReadyInjectionRows > 0) {
+    warnings.push('Profile still references retired visionRouterWebConnectionReady bridge: verify and migrate this custom overlay manually. DVR 3.2 no longer provides that service; Doctor changes no profile data.')
   }
   for (const item of profile?.hostCore?.advisories ?? []) {
     if (item.kind === 'profile-local-host-core') {

@@ -96,3 +96,34 @@ test('repair-sessions CLI repairs the exact legacy reminder and prints the backu
   assert.ok(backupMention)
   assert.equal(existsSync(backupMention), true)
 })
+
+
+test('DVR 3.2 Doctor tells the user about legacy Connection rows but never prints trust values in issue templates', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dsh-cli-connection-retirement-'))
+  const profileDir = path.join(home, 'profiles', 'web')
+  mkdirSync(profileDir, { recursive: true })
+  materializeHealthyProfile(profileDir)
+  const original = [
+    '- id: connection',
+    '  config:',
+    '    trustedHosts: !!js "private.example.invalid?token=do-not-print"',
+    '  inject: [webStartup, visionRouterWebConnectionReady]',
+    '',
+  ].join('\n')
+  const patch = path.join(profileDir, 'cordis.patch.yml')
+  writeFileSync(patch, original)
+  const run = (argv) => spawnSync(process.execPath, [modulePath, ...argv], {
+    encoding: 'utf8', env: { ...process.env, DSH_HOME: home },
+  })
+  const doctor = run(['doctor', '--no-runtime'])
+  assert.equal(doctor.status, 0, doctor.stderr)
+  assert.match(doctor.stdout, /Profile-owned Connection override detected/)
+  assert.match(doctor.stdout, /retired visionRouterWebConnectionReady bridge/)
+  assert.equal(readFileSync(patch, 'utf8'), original)
+  const report = run(['doctor', '--issue-template', '--no-runtime'])
+  assert.equal(report.status, 0, report.stderr)
+  assert.match(report.stdout, /Profile-owned Connection overrides: 1 profile/)
+  assert.match(report.stdout, /Retired private Connection-bridge references: 1 profile/)
+  assert.doesNotMatch(report.stdout, /private\.example\.invalid|do-not-print/)
+  assert.equal(readFileSync(patch, 'utf8'), original)
+})

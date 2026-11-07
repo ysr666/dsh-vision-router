@@ -130,6 +130,8 @@ function formatIssueTemplate(report) {
     `- Vision Router profiles: ${applicable.length} applicable; ${failed.length} installation/problem profile(s)`,
     `- Install modes: ${modes}`,
     `- Offline Host core advisories: ${applicable.filter((profile) => (profile.hostCore?.advisoryCount ?? 0) > 0).length} profile(s), unverified (no Host resolution test)`,
+    `- Profile-owned Connection overrides: ${applicable.filter((profile) => (profile.patch?.connectionOverrideRows ?? 0) > 0).length} profile(s), manual review required`,
+    `- Retired private Connection-bridge references: ${applicable.filter((profile) => (profile.patch?.retiredReadyBridgeRows ?? 0) + (profile.patch?.retiredReadyInjectionRows ?? 0) > 0).length} profile(s)`,
     `- Runtime: ${runtimeState}`,
     `- Settings save failures: ${number(report.log?.currentSettingsFailureCount)} current / ${number(report.log?.historicalSettingsFailureCount)} historical`,
     `- Known session issues: ${sessionState}`,

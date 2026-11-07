@@ -350,6 +350,9 @@ export function supportReport({ profileReport, runtime, platform, sessions }) {
     workspacePinnedCount: item.workspace?.pinned?.length ?? 0,
     patch: item.patch ? {
       visionRouterRows: item.patch.visionRouterRows,
+      connectionOverrideRows: item.patch.connectionOverrideRows ?? 0,
+      retiredReadyBridgeRows: item.patch.retiredReadyBridgeRows ?? 0,
+      retiredReadyInjectionRows: item.patch.retiredReadyInjectionRows ?? 0,
       manualVisionRouter: item.patch.manualVisionRouter,
       disablesOfficialDeepSeek: item.patch.disablesOfficialDeepSeek,
     } : undefined,
