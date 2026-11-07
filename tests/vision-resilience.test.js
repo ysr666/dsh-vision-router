@@ -77,9 +77,12 @@ test('issue #791 unbranded HTTP 5xx is SERVER, not OTHER, without false-positive
     'response failed with status 520',
     'status: 599',
     'HTTP/2 551 bad model gateway',
+    'HTTP 550 upstream gateway timed out during authentication',
+    'HTTP 503 gateway rate limited by an upstream proxy',
   ]) {
     assert.equal(classifyVisionFailure(new Error(value)).kind, 'SERVER', value)
   }
+  assert.equal(classifyVisionFailure(new Error('HTTP 550 upstream gateway timed out')).status, 550)
   assert.equal(classifyVisionFailure(new Error('image contains 550 tokens')).kind, 'OTHER')
   assert.equal(classifyVisionFailure(new Error('status: 429')).kind, 'RATE_LIMIT')
   assert.equal(classifyVisionFailure(new Error('HTTP 404')).kind, 'INVALID_REQUEST')

@@ -68,7 +68,7 @@ const TIMEOUT_PATTERNS = [/abort/i, /timeout/i, /etimedout/i, /timed ?out/i, /de
 // Response.status. Recognize explicit HTTP/status notation for ALL 5xx codes
 // (including non-standard 520/550) without treating arbitrary numbers in
 // vision-error prose as a server failure.
-const HTTP_5XX_PROSE = /(?:\bhttp(?:\/\d+(?:\.\d+)?)?(?:\s+(?:status|error|response))?|\bstatus(?:\s+code)?|\b(?:request|response)\s+failed\s+with\s+status(?:\s+code)?)\s*[:=#-]?\s*5\d\d\b/i
+const HTTP_5XX_PROSE = /(?:\bhttp(?:\/\d+(?:\.\d+)?)?(?:\s+(?:status|error|response))?|\bstatus(?:\s+code)?|\b(?:request|response)\s+failed\s+with\s+status(?:\s+code)?)\s*[:=#-]?\s*(5\d\d)\b/i
 const SERVER_PATTERNS = [HTTP_5XX_PROSE, /\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
 const INVALID_REQUEST_PATTERNS = [/\b400\b/, /\b404\b/, /\b422\b/, /invalid request/i, /does not support image/i, /unsupported/i, /invalid model/i, /no such model/i, /model not exist/i]
 const NETWORK_PATTERNS = [/econn/i, /enotfound/i, /network/i, /fetch failed/i, /socket/i, /connection reset/i, /dns/i]
@@ -168,7 +168,11 @@ export function classifyVisionFailure(error) {
     safeFailureField(safeFailureField(error, 'response'), 'status'),
     safeFailureField(safeFailureField(error, 'cause'), 'status'),
   ]
+  // A concrete HTTP status beats incidental words such as "authentication"
+  // or "timeout" in the server's error body; a branded adapter code still
+  // takes precedence over both. Return the extracted numeric status for logs.
   const status = reportedStatuses.map(numericHttpStatus).find((code) => kindForHttpStatus(code) !== undefined)
+    ?? numericHttpStatus(HTTP_5XX_PROSE.exec(message)?.[1])
   let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(status)
   if (kind === undefined) {
     for (const [candidate, patterns] of KIND_BY_PATTERN) {
