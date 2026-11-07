@@ -96,10 +96,10 @@ jobs:
         with:
           version: 11.7.0
 
-      - name: Install Node 22 browser runtime
+      - name: Install Node 24.9 browser runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
           cache: pnpm
           cache-dependency-path: dsh-alpha/pnpm-lock.yaml
 
@@ -121,7 +121,7 @@ jobs:
           [[ "$DSH_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid DSH source SHA"; exit 1; }
           [[ "$LOCK_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH lock hash"; exit 1; }
           [[ "$TREE_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH build-input hash"; exit 1; }
-          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node24.9-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
           printf 'Exact DSH build cache key: %s\n' "$KEY"
 

@@ -1,59 +1,92 @@
+import semver from 'semver'
+
 export const DSH_SUPPORT_WINDOW = Object.freeze({
-  dvrTrain: '2.3.x',
-  minimum: '0.1.5',
-  currentStable: '0.1.5-rc.3',
+  dvrTrain: '3.2.x',
+  minimum: '0.2.1-rc.5',
+  currentRecommended: '0.2.2-rc.1',
+  nodeMinimum: '24.9.0',
 })
 
 export const DSH_VERIFICATION_EVIDENCE = Object.freeze({
-  exactStable: '0.1.5-rc.3',
-  exactPreview: '0.2.0-rc.2',
+  exactFloor: '0.2.1-rc.5',
+  exactRecommended: '0.2.2-rc.1',
   stableCanaryDistTag: 'latest',
   nextCanaryDistTag: 'next',
   previewCanaryDistTag: 'alpha',
 })
 
-export function supportWindowUpgradeAdvice(capabilities = {}) {
-  const batchAttachments = capabilities?.batchAttachments
-  const maxImageDimension = capabilities?.maxImageDimension
+export const DSH_SUPPORTED_RANGE = '>=0.2.1-rc.5 <0.3.0-0'
 
-  if (batchAttachments === false || maxImageDimension === false) {
+/** Version evidence does not replace a required-capability check. */
+export function supportWindowUpgradeAdvice(capabilities = {}, {
+  nodeVersion = process.versions.node,
+  hostVersion,
+} = {}) {
+  const node = semver.valid(String(nodeVersion).replace(/^v/, ''))
+  if (!node) {
     return Object.freeze({
-      level: 'required',
-      code: 'HOST_BELOW_CURRENT_FLOOR_CAPABILITIES',
-      message: `Host lacks attachment capabilities expected by DVR ${DSH_SUPPORT_WINDOW.dvrTrain}; the minimum supported Host is DSH ${DSH_SUPPORT_WINDOW.minimum}`,
+      level: 'unknown', code: 'NODE_VERSION_UNVERIFIED',
+      message: 'Node runtime version was not established',
     })
   }
-
-  // Capability evidence is tri-state (`true` / `false` / `'unknown'`). Only an
-  // explicit `true` proves the support floor, so a missing field, a wrong-typed
-  // value and `'unknown'` all mean "not proven" rather than "capable".
-  if (batchAttachments !== true || maxImageDimension !== true) {
+  if (!semver.satisfies(node, '>=24.9.0')) {
     return Object.freeze({
-      level: 'unknown',
-      code: 'HOST_CURRENT_FLOOR_UNKNOWN',
-      message: `DVR ${DSH_SUPPORT_WINDOW.dvrTrain} requires DSH ${DSH_SUPPORT_WINDOW.minimum} or newer, but this read-only probe cannot prove the relevant Host capabilities`,
+      level: 'required', code: 'NODE_BELOW_CURRENT_FLOOR',
+      message: `DVR ${DSH_SUPPORT_WINDOW.dvrTrain} requires Node.js >=${DSH_SUPPORT_WINDOW.nodeMinimum}; current Node is ${node}`,
     })
   }
-
+  if (hostVersion !== undefined && hostVersion !== null) {
+    const host = semver.valid(String(hostVersion).replace(/^v/, ''))
+    if (!host) {
+      return Object.freeze({
+        level: 'unknown', code: 'HOST_VERSION_UNVERIFIED',
+        message: 'DSH Host version could not be validated against the new support window',
+      })
+    }
+    if (!semver.satisfies(host, DSH_SUPPORTED_RANGE, { includePrerelease: true })) {
+      return Object.freeze({
+        level: 'required', code: 'HOST_BELOW_CURRENT_FLOOR_VERSION',
+        message: `DVR ${DSH_SUPPORT_WINDOW.dvrTrain} supports DSH ${DSH_SUPPORTED_RANGE}; detected ${host}`,
+      })
+    }
+  }
+  if (capabilities?.batchAttachments === false || capabilities?.maxImageDimension === false) {
+    return Object.freeze({
+      level: 'required', code: 'HOST_BELOW_CURRENT_FLOOR_CAPABILITIES',
+      message: 'Host lacks the attachment capabilities required for DVR 3.2',
+    })
+  }
+  if (!hostVersion) {
+    return Object.freeze({
+      level: 'unknown', code: 'HOST_VERSION_UNVERIFIED',
+      message: `DSH Host version is unverified. DVR ${DSH_SUPPORT_WINDOW.dvrTrain} requires ${DSH_SUPPORTED_RANGE}; attachment capabilities alone cannot prove the version`,
+    })
+  }
+  if (capabilities?.batchAttachments !== true || capabilities?.maxImageDimension !== true) {
+    return Object.freeze({
+      level: 'unknown', code: 'HOST_CURRENT_FLOOR_UNKNOWN',
+      message: 'DSH version is supported, but required runtime attachment capabilities are not proven',
+    })
+  }
   return Object.freeze({
-    level: 'ok',
-    code: 'HOST_CURRENT_FLOOR_CAPABLE',
-    message: `Host exposes the attachment capabilities expected by the DVR ${DSH_SUPPORT_WINDOW.dvrTrain} support floor`,
+    level: 'ok', code: 'HOST_CURRENT_FLOOR_CAPABLE',
+    message: `DSH ${hostVersion} and required attachment capabilities satisfy the DVR 3.2 floor`,
   })
 }
 
-export function formatDshSupportWindowLines(capabilities = {}) {
-  const advice = supportWindowUpgradeAdvice(capabilities)
+export function formatDshSupportWindowLines(capabilities = {}, options = {}) {
+  const advice = supportWindowUpgradeAdvice(capabilities, options)
   return Object.freeze([
     'DSH Host support window:',
     `  DVR train: ${DSH_SUPPORT_WINDOW.dvrTrain}`,
     `  minimum supported Host: ${DSH_SUPPORT_WINDOW.minimum}`,
-    `  current stable Host: ${DSH_SUPPORT_WINDOW.currentStable}`,
-    `  support floor: DVR ${DSH_SUPPORT_WINDOW.dvrTrain} -> DSH ${DSH_SUPPORT_WINDOW.minimum}`,
+    `  current recommended Host: ${DSH_SUPPORT_WINDOW.currentRecommended}`,
+    `  minimum supported Node.js: ${DSH_SUPPORT_WINDOW.nodeMinimum}`,
+    `  support floor: DSH ${DSH_SUPPORTED_RANGE}`,
     'DSH compatibility verification evidence:',
-    `  exact stable: ${DSH_VERIFICATION_EVIDENCE.exactStable}`,
-    `  exact supported 0.2.x boundary: ${DSH_VERIFICATION_EVIDENCE.exactPreview}`,
-    `  scheduled stable canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.stableCanaryDistTag}`,
+    `  exact supported Host floor: ${DSH_VERIFICATION_EVIDENCE.exactFloor}`,
+    `  exact recommended Host: ${DSH_VERIFICATION_EVIDENCE.exactRecommended}`,
+    `  scheduled published canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.stableCanaryDistTag}`,
     `  scheduled next/rc canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.nextCanaryDistTag}`,
     `  scheduled alpha/pre-release canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.previewCanaryDistTag}`,
     `  upgrade advice: ${advice.level} (${advice.code}) — ${advice.message}`,

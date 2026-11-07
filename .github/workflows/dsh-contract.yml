@@ -1,10 +1,8 @@
 name: DSH Contract
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
   workflow_dispatch:
-  push:
-    branches: [main, 2.3.0]
-  pull_request:
 
 permissions:
   contents: read

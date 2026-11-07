@@ -63,5 +63,5 @@ test('RC1 Host Gate validates exactly pinned source across all supported platfor
   for (const script of scripts) assert.ok(readFileSync(path.join(root, script), 'utf8').length > 0, 'missing referenced script: ' + script)
   assert.doesNotMatch(gate,/node-version: 22\.19|dsh-alpha-pin\.mjs read|path: dsh-alpha|working-directory: dsh-alpha/)
   assert.match(alpha, /dsh-alpha-pin\.mjs read/)
-  assert.match(alpha, /node: \[22\.19\.0, 24\.21\.0\]/)
+  assert.match(alpha, /node: \[24\.9\.0, 24\.21\.0\]/)
 })

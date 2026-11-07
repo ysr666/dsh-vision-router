@@ -439,10 +439,10 @@ test('settings compatibility keeps the first-class section without requiring a l
   assert.doesNotMatch(source, /VisionRouterLegacyEntry/)
 })
 
-test('manifest publishes the DVR 2.3 0.1.5 Host train without restoring jagged legacy admission', async () => {
+test('manifest publishes DVR 3.2 modern Host floor and retires Node 22', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0'
-  assert.equal(pkg.engines.node, '^22.19.0 || >=24.0.0')
+  const expectedHostPeerRange = '>=0.2.1-rc.5 <0.3.0-0'
+  assert.equal(pkg.engines.node, '>=24.9.0')
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
   assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
   assert.doesNotMatch(expectedHostPeerRange, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/)
@@ -477,41 +477,30 @@ test('web client modules wait for the official webServer carrier across supporte
   )
 })
 
-test('connection/webServer overlay lifecycle classifies required, retire-ready, and dangerous Host drift', () => {
-  const base = { id: 'connection', name: '@deepseek-ai/dsh-client-connection', inject: ['webRuntime'], config: { trustedHosts: { __jsExpr: 'ctx.webRuntime.trustedHosts' } } }
-  assert.equal(classifyWebConnectionRows([base]).status, 'shim-required')
-  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup'], config: { trustedHosts: { __jsExpr: 'ctx.webStartup.trustedHosts' } } }]).status, 'shim-required')
-  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup'] }]).status, 'dangerous-drift')
-  assert.equal(classifyWebConnectionRows([{ ...base, config: { trustedHosts: { __jsExpr: 'ctx.webRuntime.trustedHosts' }, cookieMaxAgeDays: 30 } }]).status, 'dangerous-drift')
-  assert.equal(
-    classifyWebConnectionRows([{ ...base, inject: ['webRuntime', 'webServer'] }]).status,
-    'retire-ready',
-  )
-  assert.equal(
-    classifyWebConnectionRows([{ ...base, inject: ['newCarrier', 'webRuntime', 'webServer'] }]).status,
-    'retire-ready',
-  )
-  assert.equal(
-    classifyWebConnectionRows([{ ...base, inject: ['webRuntime', 'newCarrier'] }]).status,
-    'dangerous-drift',
-  )
-  assert.equal(
-    classifyWebConnectionRows([{ ...base, inject: ['webServer'] }]).status,
-    'dangerous-drift',
-  )
-  assert.equal(
-    classifyWebConnectionRows([{ ...base, name: '@deepseek-ai/renamed-connection' }]).status,
-    'dangerous-drift',
-  )
+test('native Connection contract admits only the new Host-owned trust generation', () => {
+  const base = {
+    id: 'connection', name: '@deepseek-ai/dsh-client-connection',
+    inject: ['webStartup'],
+    config: { trustedHosts: { __jsExpr: 'ctx.webStartup.trustedHosts' } },
+  }
+  assert.equal(classifyWebConnectionRows([base]).status, 'native-connection')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup', 'webServer'] }]).status, 'native-connection')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webRuntime'],
+    config: { trustedHosts: { __jsExpr: 'ctx.webRuntime.trustedHosts' } } }]).status, 'retired-host')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webStartup'], config: {
+    trustedHosts: { __jsExpr: 'ctx.webStartup.trustedHosts' }, cookieMaxAgeDays: 30,
+  } }]).status, 'dangerous-drift')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['webServer'] }]).status, 'dangerous-drift')
+  assert.equal(classifyWebConnectionRows([{ ...base, inject: ['unreviewed', 'webStartup'] }]).status, 'dangerous-drift')
+  assert.equal(classifyWebConnectionRows([{ ...base, name: '@deepseek-ai/renamed-connection' }]).status, 'dangerous-drift')
   assert.equal(classifyWebConnectionRows([]).status, 'dangerous-drift')
 })
 
-test('web connection provider waits for both runtime trust and the Web route carrier', async () => {
+test('DVR delegates Connection, its authentication and trusted hosts entirely to DSH', async () => {
   const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
-  assert.match(
-    patch,
-    /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer, visionRouterWebConnectionReady\]\s+config:\s*\n\s+trustedHosts: !!js ctx\.visionRouterWebConnectionReady\.trustedHosts/,
-  )
+  assert.doesNotMatch(patch, /^- id: connection$/m)
+  assert.doesNotMatch(patch, /visionRouterWebConnectionReady|vision-router-web-connection-ready/)
+  assert.match(patch, /- id: modules\s+name: '@deepseek-ai\/dsh-client-modules'\s+inject: \[webServer\]/)
 })
 
 test('release evidence separates supported exact-source coverage from historical browser surveillance', async () => {
@@ -522,8 +511,13 @@ test('release evidence separates supported exact-source coverage from historical
     readFile(new URL('../.github/workflows/dsh-upstream-web-modules-watch.yml', import.meta.url), 'utf8'),
   ])
 
-  assert.match(hostGate, /dsh: \['0\.1\.5-rc\.3', '0\.1\.7-rc\.2'\]/)
-  assert.match(hostGate, /Verify release-family Session native image process-restart lifecycle[\s\S]*?run: node scripts\/dsh-preview-native-lifecycle-contract\.mjs/)
+  assert.match(hostGate, /name: DVR 3\.2 capture and adversarial image regressions/)
+  assert.match(hostGate, /tests\/linux-desktop-screenshot-runtime\.test\.js/)
+  assert.doesNotMatch(hostGate, /dsh: \['0\.1\.5-rc\.3'/)
+  const rc5Gate = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  const rc1Gate = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc5Gate, /Run real macOS Desktop renderer lifecycle/)
+  assert.match(rc1Gate, /Run real macOS Desktop renderer lifecycle/)
   assert.doesNotMatch(hostGate, /if: matrix\.dsh ==/)
   assert.match(browserGate, /dsh: 0\.1\.5-rc\.1[\s\S]*?mixedGenericFiles: false/)
   assert.match(browserGate, /dsh: 0\.1\.5-rc\.3[\s\S]*?mixedGenericFiles: true/)
@@ -536,26 +530,24 @@ test('release evidence separates supported exact-source coverage from historical
   assert.match(browserGate, /ref: 477b4f420553e8a52c2fbccc464d7561b239c443/)
   assert.doesNotMatch(browserGate, /ref:\s*\$\{\{\s*matrix\./)
 
-  assert.match(sourceGate, /name: DSH exact source contract/)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.1/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.5-rc\.3/g) ?? []).length, 3)
-  assert.equal((sourceGate.match(/dsh: 0\.1\.7-rc\.2/g) ?? []).length, 3)
-  assert.doesNotMatch(sourceGate, /0\.1\.5-alpha\.2/)
-  assert.equal((sourceGate.match(/183f08e9c6dde7e36cd2318eaee70b0da08fb35e/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/a4c74a91e06b00fe0b0937bde982170c526cc842/g) ?? []).length, 2)
-  assert.equal((sourceGate.match(/477b4f420553e8a52c2fbccc464d7561b239c443/g) ?? []).length, 2)
+  assert.match(sourceGate, /name: DVR 3\.2 exact DSH Host floor sources/)
+  assert.equal((sourceGate.match(/dsh: 0\.2\.1-rc\.5/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/dsh: 0\.2\.2-rc\.1/g) ?? []).length, 3)
+  assert.equal((sourceGate.match(/b830ec950faba0a46dda564be3e2d854afed94f1/g) ?? []).length, 2)
+  assert.equal((sourceGate.match(/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/g) ?? []).length, 2)
+  assert.doesNotMatch(sourceGate, /dsh: 0\.1\./)
   assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
   assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
   assert.doesNotMatch(sourceGate, /cache-dependency-path:/)
-  assert.match(sourceGate, /DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required/)
+  assert.match(sourceGate, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
   assert.match(sourceGate, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /name: DSH upstream Web compatibility overlay watch/)
   assert.match(upstreamOverlayWatch, /DSH_MODULES_WEBSERVER_EXPECTED: shim-required/)
-  assert.match(upstreamOverlayWatch, /DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required/)
+  assert.match(upstreamOverlayWatch, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-modules-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {
-    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 3)
+    assert.equal((sourceGate.match(new RegExp(`os: ${os}`, 'g')) ?? []).length, 2)
   }
 })
 

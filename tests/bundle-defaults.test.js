@@ -413,7 +413,6 @@ test('security policy links reporters to enabled private vulnerability reporting
 
 test('client prelude changes always trigger the real browser and alpha source gates', async () => {
   const workflows = [
-    'dsh-preview-browser-smoke.yml',
     'alpha-browser-cold-toggle-smoke.yml',
     'dsh-alpha-source-contract.yml',
   ]
@@ -426,7 +425,6 @@ test('client prelude changes always trigger the real browser and alpha source ga
 
 test('audited browser integration modules always trigger every real browser and alpha source gate', async () => {
   const workflows = [
-    'dsh-preview-browser-smoke.yml',
     'alpha-browser-cold-toggle-smoke.yml',
     'dsh-alpha-source-contract.yml',
   ]
@@ -454,7 +452,6 @@ test('audited browser integration modules always trigger every real browser and 
 
 test('model visibility boundary changes always trigger the real browser and alpha source gates', async () => {
   const workflows = [
-    'dsh-preview-browser-smoke.yml',
     'alpha-browser-cold-toggle-smoke.yml',
     'dsh-alpha-source-contract.yml',
   ]
@@ -502,42 +499,45 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   }
 })
 
-test('DSH release evidence changes always trigger exact source and real browser gates', async () => {
-  const [browser, source] = await Promise.all([
-    readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
-  ])
-
-  for (const path of ["'package.json'", "'src/lib/dsh-support-window.js'"]) {
-    assert.equal((browser.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
+test('DSH release evidence triggers live browser and immutable 3.2 Host gates', async () => {
+  const paths = [
+    '../.github/workflows/alpha-browser-cold-toggle-smoke.yml',
+    '../.github/workflows/dsh-alpha-source-contract.yml',
+    '../.github/workflows/dsh-021-rc5-validation.yml',
+  ]
+  for (const path of paths) {
+    const workflow = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.match(workflow, /pull_request:/)
+    assert.match(workflow, /push:/)
+    assert.match(workflow, /branches: \[main\]/)
+    assert.match(workflow, /'src\/\*\*'|'src\/lib\/dsh-support-window\.js'/)
+    assert.match(workflow, /'package\.json'/)
   }
-  assert.equal((source.match(/'package\.json'/g) ?? []).length, 2)
-  assert.equal((source.match(/'src\/lib\/dsh-support-window\.js'/g) ?? []).length, 2)
+  const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc1, /pull_request:/)
+  assert.match(rc1, /'src\/\*\*'/)
+  assert.match(rc1, /Node 24 Desktop renderer lifecycle/)
 })
 
-test('DSH 0.1.7 browser smoke follows both presentation-boundary carriers', async () => {
-  const source = await readFile(new URL('../.github/workflows/dsh-017-browser-smoke.yml', import.meta.url), 'utf8')
-  for (const path of [
-    "'src/lib/client-presentation-boundary-main.js'",
-    "'src/lib/client-presentation-boundary.js'",
-  ]) {
-    assert.equal((source.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
-  }
+test('current DSH rc5 browser lifecycle follows both presentation carriers', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.match(source, /pull_request:/)
+  assert.match(source, /push:/)
+  assert.equal((source.match(/'src\/\*\*'/g) ?? []).length, 2)
+  assert.match(source, /real Host \+ Chromium/)
 })
 
 test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [
-    ['dsh-preview-browser-smoke.yml', 'dsh-preview', 'Build preview web runtime', 'Run cold Vision toggle against preview Host and Chromium'],
     ['alpha-browser-cold-toggle-smoke.yml', 'dsh-alpha', 'Build exact alpha web runtime', 'Run cold Vision toggle against real Host and Chromium'],
   ]
-
   for (const [name, root, buildName, smokeName] of cases) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v6.1.0`)
     assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
     assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
-    assert.match(source, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
+    assert.match(source, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node24\.9-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
     assert.match(source, /DSH_SHA="\$\(git rev-parse HEAD\)"/)
     assert.match(source, /LOCK_SHA="\$\(sha256sum pnpm-lock\.yaml/)
     assert.match(source, /TREE_SHA="\$\(git ls-tree -r --full-tree HEAD/)
@@ -718,29 +718,19 @@ test('heavy Host classifier skips only version-only curated release metadata', a
   assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
 })
 
-test('heavy Host workflows fail closed on PR impact and reuse only main-written exact build caches', async () => {
-  const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-  for (const name of ['dsh-017-real-host-smoke.yml', 'dsh-020-rc2-validation.yml']) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.match(source, /name: classify heavy Host impact/)
-    assert.match(source, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-    assert.match(source, /trusted base classifier unavailable: fail closed/)
-    assert.match(source, /if: needs\.impact\.outputs\.heavy == 'true'/)
-    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`))
-    assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`))
-    assert.doesNotMatch(source, /restore-keys:/)
-    assert.match(source, /github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/)
-    assert.match(source, /if: steps\.dsh-build-cache\.outputs\.cache-hit != 'true'/)
-    assert.match(source, /native\/system\/packages\/\*\/lib/)
-    assert.match(source, /native\/system\/packages\/\*\/bin/)
-    assert.match(source, /vendor\/\*\/lib/)
-    assert.match(source, /apps\/\*\/lib/)
-  }
-
-  const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
-  assert.match(rc17, /push:\n\s+branches: \[main\]/)
-  const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc2-validation.yml', import.meta.url), 'utf8')
-  assert.match(rc20, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
-  assert.match(rc20, /KEY="dsh-host-v4-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
-  assert.doesNotMatch(rc20, /DSH_EXPECTED_VERSION: 0\.2\.0-rc\.1/, 'rc.2 Desktop renderer gates must not retain the rc.1 runtime identity')
+test('active rc5 Host gates fail closed on PR impact; rc1 uses isolated immutable source', async () => {
+  const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc5, /classify heavy Host impact/)
+  assert.match(rc5, /trusted base classifier unavailable: fail closed/)
+  assert.match(rc5, /if: needs\.impact\.outputs\.heavy == 'true'/)
+  assert.match(rc5, /actions\/cache\/restore@/)
+  assert.match(rc5, /actions\/cache\/save@/)
+  assert.doesNotMatch(rc5, /restore-keys:/)
+  assert.match(rc5, /DSH_EXPECTED_VERSION: 0\.2\.1-rc\.5/)
+  assert.match(rc5, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
+  assert.match(rc1, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
+  assert.match(rc1, /66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/)
+  assert.doesNotMatch(rc1, /actions\/cache\/restore@/)
+  assert.doesNotMatch(rc1, /actions\/cache\/save@/)
 })

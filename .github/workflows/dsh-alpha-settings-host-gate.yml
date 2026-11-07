@@ -17,7 +17,6 @@ on:
       - 'scripts/build-source-artifacts.mjs'
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'presets/web-connection-ready/**'
       - 'cordis.patch.yml'
       - 'scripts/dsh-peer-admission-contract.mjs'
       - 'scripts/dsh-proxy-egress-contract.mjs'
@@ -78,7 +77,7 @@ jobs:
           version: 11.28.5
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
       - name: Materialize Vision Router package artifacts
         working-directory: dvr
         run: |
@@ -97,7 +96,7 @@ jobs:
         working-directory: dsh-alpha
         shell: bash
         env:
-          NODE_VERSION: '22.19.0'
+          NODE_VERSION: '24.9.0'
         run: |
           set -euo pipefail
           DSH_SHA="$(git rev-parse HEAD)"
@@ -133,11 +132,11 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
-      - name: Verify old/new Web Connection trust-generation overlay
+      - name: Verify DSH-owned native Connection without DVR bridge
         working-directory: dsh-alpha
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha
-          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
       - name: Verify public 0.2 train peer admission
         working-directory: dsh-alpha
@@ -215,7 +214,7 @@ jobs:
       # cache would come from code nobody pinned. The store lives for this run only.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
 
       - name: Read the Host version under test
         id: resolve
@@ -250,7 +249,7 @@ jobs:
         working-directory: dsh-alpha
         shell: bash
         env:
-          NODE_VERSION: '22.19.0'
+          NODE_VERSION: '24.9.0'
         run: |
           set -euo pipefail
           DSH_SHA="$(git rev-parse HEAD)"
@@ -363,7 +362,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22.19.0, 24.21.0]
+        node: [24.9.0, 24.21.0]
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

@@ -121,7 +121,7 @@ jobs:
           version: 11.28.5
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
       - name: Materialize Vision Router package artifacts
         working-directory: dvr
         run: |
@@ -172,7 +172,7 @@ jobs:
         working-directory: dsh-021-rc5
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-021-rc5
-          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
 
       - name: Build exact macOS Desktop runtime
@@ -230,7 +230,7 @@ jobs:
           version: 11.28.5
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
           cache: pnpm
           cache-dependency-path: dsh-021-rc5/pnpm-lock.yaml
       - name: Materialize Vision Router package artifacts
@@ -402,7 +402,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22.19.0, 24.21.0]
+        node: [24.9.0, 24.21.0]
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

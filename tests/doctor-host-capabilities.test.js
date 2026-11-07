@@ -141,17 +141,20 @@ test('Doctor JSON keeps public support policy separate from verification evidenc
 
   const report = JSON.parse(stdout.join('\n'))
   assert.deepEqual(report.hostSupportWindow, {
-    dvrTrain: '2.3.x',
-    minimum: '0.1.5',
-    currentStable: '0.1.5-rc.3',
+    dvrTrain: '3.2.x',
+    minimum: '0.2.1-rc.5',
+    currentRecommended: '0.2.2-rc.1',
+    nodeMinimum: '24.9.0',
   })
   assert.deepEqual(report.hostVerificationEvidence, {
-    exactStable: '0.1.5-rc.3',
-    exactPreview: '0.2.0-rc.2',
+    exactFloor: '0.2.1-rc.5',
+    exactRecommended: '0.2.2-rc.1',
     stableCanaryDistTag: 'latest',
     nextCanaryDistTag: 'next',
     previewCanaryDistTag: 'alpha',
   })
+  assert.equal(report.hostSupportVersionEvidence.source, 'unverified')
+  assert.notEqual(report.hostSupportAdvice.level, 'ok')
   assert.equal(Object.hasOwn(report.hostSupportWindow, 'canary'), false)
   assert.equal(Object.hasOwn(report.hostSupportWindow, 'preview'), false)
 })

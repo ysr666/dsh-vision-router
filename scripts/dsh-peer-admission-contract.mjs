@@ -34,22 +34,10 @@ assert.equal(
 )
 
 const admitted = [
-  // DVR 2.3 supports the 0.1.x line continuously from the first 0.1.5
-  // release candidate; later 0.1.x releases are not enumerated exceptions.
-  '0.1.5-rc.1',
-  '0.1.5-rc.3',
-  '0.1.6-alpha.1',
-  '0.1.7-rc.2',
-  '0.1.99',
-  // The 0.2.x train is admitted from the exact rc.2 boundary that DVR
-  // validates across source, browser, and Desktop contracts.
-  '0.2.0-rc.2',
-  '0.2.0',
-  '0.2.1-alpha.1',
-  '0.2.1-alpha.4',
-  '0.2.1-alpha.5',
-  '0.2.1-rc.1',
+  '0.2.1-rc.5',
   '0.2.1',
+  '0.2.2-alpha.3',
+  '0.2.2-rc.1',
   '0.2.99-rc.1',
   '0.2.99',
 ]
@@ -62,21 +50,15 @@ for (const runtimeVersion of admitted) {
 }
 
 const rejected = [
-  '0.1.4',
-  '0.1.5-beta.1',
-  '0.2.0-beta.1',
-  '0.2.0-rc.0',
-  '0.2.0-rc.1',
-  '0.3.0-alpha.1',
-  '0.3.0-beta.1',
-  '0.3.0-rc.1',
-  '0.3.0',
-  '1.0.0',
+  '0.1.5-rc.1', '0.1.5-rc.3', '0.1.7-rc.2',
+  '0.2.0-rc.2', '0.2.0',
+  '0.2.1-alpha.5', '0.2.1-rc.1', '0.2.1-rc.4',
+  '0.3.0-alpha.1', '0.3.0-rc.1', '0.3.0', '1.0.0',
 ]
 for (const runtimeVersion of rejected) {
   const issue = evaluatePluginCompatibility(manifest, {}, runtimeVersion)
   assert.ok(issue, `DVR manifest must not pre-admit DSH ${runtimeVersion}`)
-  // DSH alpha.4 uses engines.dsh as the sole canonical admission requirement.
+  // DSH 0.2.1-rc.5 uses engines.dsh as the sole canonical admission requirement.
   // Older supported Hosts still report individual DSH peer mismatches.
   // Test the real evaluator's refusal shape instead of coupling to one generation.
   const engineRequirements = issue.requirements
@@ -96,7 +78,7 @@ for (const runtimeVersion of rejected) {
 }
 
 
-// Explicitly characterize the 0.2.1-alpha.5 admission precedence instead of
+// Explicitly characterize the 0.2.1-rc.5 admission precedence instead of
 // only testing manifests whose engines and peer ranges happen to agree. Older
 // supported Hosts still consult peers; newer Hosts consult engines.dsh alone.
 const firstDshPeer = declaredDshPeers[0]
@@ -104,17 +86,17 @@ const conflictingPeers = {
   ...manifest,
   peerDependencies: { ...manifest.peerDependencies, [firstDshPeer]: '<0.1.0' },
 }
-const alpha5Precedence = evaluatePluginCompatibility(conflictingPeers, {}, '0.2.1-alpha.5')
+const rc5Precedence = evaluatePluginCompatibility(conflictingPeers, {}, '0.2.1-rc.5')
 const rejectedWithEngine = evaluatePluginCompatibility({
   ...conflictingPeers,
   engines: { ...manifest.engines, dsh: '<0.1.0' },
-}, {}, '0.2.1-alpha.5')
+}, {}, '0.2.1-rc.5')
 if (Object.hasOwn(evaluatePluginCompatibility(manifest, {}, '0.3.0') ?? {}, 'requirements')) {
-  assert.equal(alpha5Precedence, undefined, 'new Host must prefer a valid engines.dsh over mismatched peers')
+  assert.equal(rc5Precedence, undefined, 'new Host must prefer a valid engines.dsh over mismatched peers')
   assert.deepEqual(rejectedWithEngine?.requirements, { 'engines.dsh': '<0.1.0' },
     'new Host must report the canonical engine requirement when both declarations conflict')
 } else {
-  assert.equal(alpha5Precedence?.peers?.[firstDshPeer], '<0.1.0',
+  assert.equal(rc5Precedence?.peers?.[firstDshPeer], '<0.1.0',
     'legacy Host must keep enforcing its declared DSH peers')
   assert.equal(rejectedWithEngine?.peers?.[firstDshPeer], '<0.1.0',
     'legacy Host must not silently switch admission authority to engines.dsh')

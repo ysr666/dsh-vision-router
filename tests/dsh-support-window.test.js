@@ -1,114 +1,80 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-
 import {
-  DSH_SUPPORT_WINDOW,
-  DSH_VERIFICATION_EVIDENCE,
-  formatDshSupportWindowLines,
-  supportWindowUpgradeAdvice,
+  DSH_SUPPORT_WINDOW, DSH_VERIFICATION_EVIDENCE, DSH_SUPPORTED_RANGE,
+  formatDshSupportWindowLines, supportWindowUpgradeAdvice,
 } from '../lib/dsh-support-window.js'
 
-test('P3 support policy contains only public stable support semantics', () => {
-  assert.deepEqual(DSH_SUPPORT_WINDOW, {
-    dvrTrain: '2.3.x',
-    minimum: '0.1.5',
-    currentStable: '0.1.5-rc.3',
-  })
-  assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'previous'), false)
-  assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'canary'), false)
-  assert.equal(Object.hasOwn(DSH_SUPPORT_WINDOW, 'preview'), false)
-  assert.equal(Object.isFrozen(DSH_SUPPORT_WINDOW), true)
-})
+const fullCapabilities = { batchAttachments: true, maxImageDimension: true }
+const verified = { nodeVersion: '24.21.0', hostVersion: '0.2.1-rc.5' }
 
-test('forward-admission evidence and dynamic canaries stay separate from stable-floor fields', () => {
+test('DVR 3.2 declares a new DSH/Node floor without confusing rc and stable', () => {
+  assert.deepEqual(DSH_SUPPORT_WINDOW, {
+    dvrTrain: '3.2.x', minimum: '0.2.1-rc.5',
+    currentRecommended: '0.2.2-rc.1', nodeMinimum: '24.9.0',
+  })
+  assert.equal(DSH_SUPPORTED_RANGE, '>=0.2.1-rc.5 <0.3.0-0')
   assert.deepEqual(DSH_VERIFICATION_EVIDENCE, {
-    exactStable: '0.1.5-rc.3',
-    exactPreview: '0.2.0-rc.2',
-    stableCanaryDistTag: 'latest',
-    nextCanaryDistTag: 'next',
+    exactFloor: '0.2.1-rc.5', exactRecommended: '0.2.2-rc.1',
+    stableCanaryDistTag: 'latest', nextCanaryDistTag: 'next',
     previewCanaryDistTag: 'alpha',
   })
+  assert.equal(Object.isFrozen(DSH_SUPPORT_WINDOW), true)
   assert.equal(Object.isFrozen(DSH_VERIFICATION_EVIDENCE), true)
 })
 
-test('Doctor advice is capability-based against the active support floor', () => {
-  const old = supportWindowUpgradeAdvice({ batchAttachments: false, maxImageDimension: false })
-  assert.equal(old.level, 'required')
-  assert.equal(old.code, 'HOST_BELOW_CURRENT_FLOOR_CAPABILITIES')
-
-  const unknown = supportWindowUpgradeAdvice({ batchAttachments: 'unknown', maxImageDimension: 'unknown' })
-  assert.equal(unknown.level, 'unknown')
-  assert.equal(unknown.code, 'HOST_CURRENT_FLOOR_UNKNOWN')
-
-  const capable = supportWindowUpgradeAdvice({ batchAttachments: true, maxImageDimension: true })
-  assert.equal(capable.level, 'ok')
-  assert.equal(capable.code, 'HOST_CURRENT_FLOOR_CAPABLE')
+test('Doctor refuses Node 22, 24.8 and unverified Node versions', () => {
+  for (const nodeVersion of ['22.19.0', '22.23.4', '24.8.9']) {
+    const r = supportWindowUpgradeAdvice(fullCapabilities, { ...verified, nodeVersion })
+    assert.equal(r.code, 'NODE_BELOW_CURRENT_FLOOR', nodeVersion)
+    assert.equal(r.level, 'required')
+  }
+  assert.equal(supportWindowUpgradeAdvice(fullCapabilities,
+    { ...verified, nodeVersion: 'unknown' }).code, 'NODE_VERSION_UNVERIFIED')
+  assert.equal(supportWindowUpgradeAdvice(fullCapabilities,
+    { ...verified, nodeVersion: '24.9.0' }).level, 'ok')
 })
 
-test('Doctor text separates public support policy from verification evidence', () => {
-  const lines = formatDshSupportWindowLines({ batchAttachments: false, maxImageDimension: false })
-  const evidenceAt = lines.indexOf('DSH compatibility verification evidence:')
-  assert.ok(evidenceAt > 0)
-  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('minimum supported Host: 0.1.5')))
-  assert.ok(lines.slice(0, evidenceAt).some((line) => line.includes('current stable Host: 0.1.5-rc.3')))
-  assert.equal(lines.slice(0, evidenceAt).some((line) => /alpha|canary/i.test(line)), false)
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('exact supported 0.2.x boundary: 0.2.0-rc.2')))
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag latest')))
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag next')))
-  assert.ok(lines.slice(evidenceAt).some((line) => line.includes('npm dist-tag alpha')))
-  assert.ok(lines.some((line) => line.includes('HOST_BELOW_CURRENT_FLOOR_CAPABILITIES')))
+test('Doctor excludes retired DSH releases even if attachment capabilities are present', () => {
+  for (const hostVersion of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-rc.4', '0.3.0-alpha.1']) {
+    const r = supportWindowUpgradeAdvice(fullCapabilities, { ...verified, hostVersion })
+    assert.equal(r.code, 'HOST_BELOW_CURRENT_FLOOR_VERSION', hostVersion)
+    assert.equal(r.level, 'required')
+  }
+  for (const hostVersion of ['0.2.1-rc.5', '0.2.1', '0.2.2-rc.1']) {
+    assert.equal(supportWindowUpgradeAdvice(fullCapabilities,
+      { ...verified, hostVersion }).level, 'ok', hostVersion)
+  }
+})
+
+test('Doctor never treats capability evidence as proof of the Host version', () => {
+  const missing = supportWindowUpgradeAdvice(fullCapabilities, { nodeVersion: '24.21.0' })
+  assert.equal(missing.level, 'unknown')
+  assert.equal(missing.code, 'HOST_VERSION_UNVERIFIED')
+  assert.equal(supportWindowUpgradeAdvice(fullCapabilities,
+    { ...verified, hostVersion: 'not-a-version' }).level, 'unknown')
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: false, maxImageDimension: true },
+    verified).code, 'HOST_BELOW_CURRENT_FLOOR_CAPABILITIES')
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: 'unknown', maxImageDimension: true },
+    verified).code, 'HOST_CURRENT_FLOOR_UNKNOWN')
+})
+
+test('Doctor text distinguishes published recommended RC from stable host', () => {
+  const lines = formatDshSupportWindowLines(fullCapabilities, verified)
+  assert.ok(lines.some((line) => line.includes('minimum supported Host: 0.2.1-rc.5')))
+  assert.ok(lines.some((line) => line.includes('current recommended Host: 0.2.2-rc.1')))
+  assert.ok(lines.some((line) => line.includes('minimum supported Node.js: 24.9.0')))
+  assert.ok(lines.some((line) => line.includes('HOST_CURRENT_FLOOR_CAPABLE')))
   assert.equal(Object.isFrozen(lines), true)
 })
 
-test('public READMEs state stable support policy and delegate forward-boundary evidence to the canonical support document', async () => {
-  const [english, chinese, supportDoc] = await Promise.all([
-    readFile(new URL('../README.md', import.meta.url), 'utf8'),
-    readFile(new URL('../README.zh.md', import.meta.url), 'utf8'),
-    readFile(new URL('../docs/architecture/dsh-support-window.md', import.meta.url), 'utf8'),
-  ])
-
-  for (const source of [english, chinese]) {
-    assert.match(source, /3\.0\.x/)
-    assert.match(source, /0\.1\.5/)
-    assert.match(source, /0\.1\.5-rc\.1/)
-    assert.match(source, /0\.1\.5-rc\.3/)
-    assert.match(source, /0\.2\.0-rc\.2/)
-    assert.match(source, /docs\/architecture\/dsh-support-window\.md/)
+test('3.2 public documentation describes legacy retirement instead of advertising 0.1.x', async () => {
+  const files = ['../README.md', '../README.zh.md', '../docs/architecture/dsh-support-window.md']
+  for (const file of files) {
+    const source = await readFile(new URL(file, import.meta.url), 'utf8')
+    assert.match(source, /0\.2\.1-rc\.5/, file)
+    assert.match(source, /0\.2\.2-rc\.1/, file)
+    assert.match(source, /24\.9\.0/, file)
   }
-  assert.match(supportDoc, /Exact supported 0\.2\.x boundary \| `0\.2\.0-rc\.2`/)
-})
-
-
-test('current-contract follows the current stable Host while preview remains a separate gate', async () => {
-  const [contract, preview, exactSource] = await Promise.all([
-    readFile(new URL('../.github/workflows/dsh-contract.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
-  ])
-  assert.match(contract, /name: minimum-contract[\s\S]*?dsh: 0\.1\.5-rc\.1/)
-  assert.match(contract, /name: current-contract[\s\S]*?dsh: 0\.1\.5-rc\.3/)
-  assert.doesNotMatch(contract, /dsh: 0\.1\.0-/)
-  assert.doesNotMatch(contract, /dsh: 0\.1\.7-/)
-  assert.match(preview, /dsh: 0\.1\.5-rc\.3/)
-  assert.match(preview, /a4c74a91e06b00fe0b0937bde982170c526cc842/)
-  assert.match(preview, /dsh: 0\.1\.5-alpha\.2/)
-  assert.match(preview, /dsh: 0\.1\.7-rc\.2/)
-  assert.doesNotMatch(contract, /dsh: 0\.1\.5-alpha\.2/)
-  assert.match(exactSource, /DSH_EXPECTED_VERSION: 0\.1\.5-rc\.3/)
-  assert.match(exactSource, /DSH_EXPECTED_COMMIT: a4c74a91e06b00fe0b0937bde982170c526cc842/)
-  assert.match(exactSource, /DSH_EXPECTED_VERSION: 0\.1\.7-rc\.2/)
-  assert.match(exactSource, /DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443/)
-  assert.match(exactSource, /scripts\/dsh-proxy-egress-contract\.mjs/)
-})
-
-test('required compatibility workflows do not gate DVR 2.3 on pre-0.1.5 Hosts', async () => {
-  const [ci, coldResume] = await Promise.all([
-    readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../.github/workflows/native-multimodal-cold-resume.yml', import.meta.url), 'utf8'),
-  ])
-
-  assert.doesNotMatch(ci, /0\.1\.0-rc\.[678]/)
-  assert.doesNotMatch(coldResume, /0\.1\.0-rc\.[678]/)
-  assert.match(coldResume, /dsh: \['0\.1\.5-rc\.1', '0\.1\.7-rc\.2'\]/)
 })

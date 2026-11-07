@@ -227,11 +227,13 @@ const HOST_PACKAGES = [
   '@deepseek-ai/dsh-client-ui-settings-plugins',
   '@deepseek-ai/dsh-attachment-local',
   '@deepseek-ai/dsh-llm-deepseek',
+  '@deepseek-ai/dsh',
 ]
 
 function supportedNodeVersion(version = process.versions.node) {
-  const [major, minor] = String(version).split('.').map(Number)
-  return (major === 22 && minor >= 19) || major >= 24
+  const [major, minor, patch] = String(version).replace(/^v/, '').split('.').map(Number)
+  return Number.isInteger(major) && Number.isInteger(minor) && Number.isInteger(patch)
+    && (major > 24 || (major === 24 && minor >= 9))
 }
 
 export function inspectPlatform({ profileDirs = [], env = process.env } = {}) {
@@ -247,7 +249,7 @@ export function inspectPlatform({ profileDirs = [], env = process.env } = {}) {
     arch: process.arch,
     node: process.version,
     nodeSupported: supportedNodeVersion(),
-    nodeRequirement: '^22.19.0 || >=24.0.0',
+    nodeRequirement: '>=24.9.0',
     release: os.release(),
     tesseract: tesseract ?? { available: false },
     chromium: chromium ?? { available: false },

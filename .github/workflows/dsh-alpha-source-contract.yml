@@ -1,4 +1,4 @@
-name: DSH exact source contract
+name: DVR 3.2 exact DSH Host floor sources
 
 on:
   pull_request:
@@ -49,7 +49,7 @@ on:
       - 'scripts/build-source-artifacts.mjs'
       - '.github/workflows/dsh-alpha-source-contract.yml'
   push:
-    branches: [main, 2.3.0]
+    branches: [main]
     paths:
       - 'cordis.patch.yml'
       - 'package.json'
@@ -114,23 +114,17 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            dsh: 0.1.5-rc.1
+            dsh: 0.2.1-rc.5
           - os: macos-latest
-            dsh: 0.1.5-rc.1
+            dsh: 0.2.1-rc.5
           - os: windows-latest
-            dsh: 0.1.5-rc.1
+            dsh: 0.2.1-rc.5
           - os: ubuntu-latest
-            dsh: 0.1.5-rc.3
+            dsh: 0.2.2-rc.1
           - os: macos-latest
-            dsh: 0.1.5-rc.3
+            dsh: 0.2.2-rc.1
           - os: windows-latest
-            dsh: 0.1.5-rc.3
-          - os: ubuntu-latest
-            dsh: 0.1.7-rc.2
-          - os: macos-latest
-            dsh: 0.1.7-rc.2
-          - os: windows-latest
-            dsh: 0.1.7-rc.2
+            dsh: 0.2.2-rc.1
     steps:
       - name: Checkout Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -138,42 +132,33 @@ jobs:
           persist-credentials: false
           path: dvr
 
-      - name: Checkout exact DSH 0.1.5-rc.1 source
-        if: matrix.dsh == '0.1.5-rc.1'
+      - name: Checkout immutable DSH 0.2.1-rc.5
+        if: matrix.dsh == '0.2.1-rc.5'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 183f08e9c6dde7e36cd2318eaee70b0da08fb35e
+          ref: b830ec950faba0a46dda564be3e2d854afed94f1
           persist-credentials: false
           path: dsh-exact
 
-      - name: Checkout exact DSH 0.1.5-rc.3 source
-        if: matrix.dsh == '0.1.5-rc.3'
+      - name: Checkout immutable DSH 0.2.2-rc.1
+        if: matrix.dsh == '0.2.2-rc.1'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: a4c74a91e06b00fe0b0937bde982170c526cc842
-          persist-credentials: false
-          path: dsh-exact
-
-      - name: Checkout exact DSH 0.1.7-rc.2 source
-        if: matrix.dsh == '0.1.7-rc.2'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: 477b4f420553e8a52c2fbccc464d7561b239c443
+          ref: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
           persist-credentials: false
           path: dsh-exact
 
       - name: Install exact Host package manager
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 11.7.0
+          version: 11.28.5
 
-      - name: Install Node 22 contract runtime
+      - name: Install Node 24.9 DSH 3.2 floor
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
 
       - name: Materialize Vision Router package artifacts
         working-directory: dvr
@@ -188,35 +173,25 @@ jobs:
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
 
-      - name: Run Vision Router against exact 0.1.5-rc.1 source contracts
-        if: matrix.dsh == '0.1.5-rc.1'
+      - name: Verify exact DSH 0.2.1-rc.5 source
+        if: matrix.dsh == '0.2.1-rc.5'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.5-rc.1
-          DSH_EXPECTED_COMMIT: 183f08e9c6dde7e36cd2318eaee70b0da08fb35e
+          DSH_EXPECTED_VERSION: 0.2.1-rc.5
+          DSH_EXPECTED_COMMIT: b830ec950faba0a46dda564be3e2d854afed94f1
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
-      - name: Run Vision Router against exact 0.1.5-rc.3 source contracts
-        if: matrix.dsh == '0.1.5-rc.3'
+      - name: Verify exact DSH 0.2.2-rc.1 source
+        if: matrix.dsh == '0.2.2-rc.1'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.5-rc.3
-          DSH_EXPECTED_COMMIT: a4c74a91e06b00fe0b0937bde982170c526cc842
-        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
-
-      - name: Run Vision Router against exact 0.1.7-rc.2 source contracts
-        if: matrix.dsh == '0.1.7-rc.2'
-        working-directory: dsh-exact
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_EXPECTED_VERSION: 0.1.7-rc.2
-          DSH_EXPECTED_COMMIT: 477b4f420553e8a52c2fbccc464d7561b239c443
+          DSH_EXPECTED_VERSION: 0.2.2-rc.1
+          DSH_EXPECTED_COMMIT: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Verify DVR 0.2.x peer admission with DSH Host evaluator
-        if: matrix.dsh == '0.1.7-rc.2'
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
@@ -237,11 +212,11 @@ jobs:
           DSH_MODULES_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
 
-      - name: Assert connection -> webServer compatibility overlay still belongs to DVR
+      - name: Verify official Connection remains unmodified by DVR
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
 
       - name: Run DVR release-family compatibility unit contracts

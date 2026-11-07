@@ -80,7 +80,6 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/vision-artifact-store.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'artifact/data-boundary Node 22/24 matrix' },
   { path: 'tests/vision-provider-transport.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
 
-  { path: 'tests/minimum-host-settings-persistence.test.js', owner: '.github/workflows/dsh-contract.yml', reason: 'minimum supported Host SettingsProvider persistence contract' },
   { path: 'tests/dsh-support-window.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
@@ -101,7 +100,7 @@ test('canonical repository source never tracks generated runtime artifacts', () 
   )
 })
 
-test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission range', async () => {
+test('host-provided DSH packages publish the DVR 3.2 Host floor', async () => {
   const pkg = await manifest()
   const hostPeers = [
     '@deepseek-ai/dsh-anonymous-user-id',
@@ -111,9 +110,9 @@ test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission r
   for (const name of hostPeers) {
     assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
     const peer = pkg.peerDependencies?.[name]
-    assert.equal(peer, '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0')
+    assert.equal(peer, '>=0.2.1-rc.5 <0.3.0-0')
     assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
-    assert.equal(pkg.devDependencies?.[name], '0.2.0-rc.2', `${name} development fixture must pin exact rc.2`)
+    assert.equal(pkg.devDependencies?.[name], '0.2.1-rc.5', `${name} development fixture must pin exact rc.2`)
   }
 })
 

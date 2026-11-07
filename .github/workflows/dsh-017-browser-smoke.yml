@@ -1,39 +1,7 @@
 name: DSH 0.1.7 browser smoke
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
-  pull_request:
-    paths:
-      - 'src/lib/public-entry.js'
-      - 'src/lib/dsh-settings-017-compat.js'
-      - 'src/lib/settings-client-017-compat.js'
-      - 'src/lib/session-message-source-compat.js'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/web/**'
-      - 'src/lib/client.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-017-browser-smoke.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'src/lib/public-entry.js'
-      - 'src/lib/dsh-settings-017-compat.js'
-      - 'src/lib/settings-client-017-compat.js'
-      - 'src/lib/session-message-source-compat.js'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/web/**'
-      - 'src/lib/client.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-017-browser-smoke.yml'
   workflow_dispatch:
 
 permissions:

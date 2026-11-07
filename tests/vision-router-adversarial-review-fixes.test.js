@@ -268,7 +268,9 @@ test('K11-O1: unproven host capabilities must not be reported as capable', async
   }
 
   // The three proven states keep their exact meaning.
-  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: true, maxImageDimension: true }).level, 'ok')
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: true, maxImageDimension: true }).level, 'unknown')
+  assert.equal(supportWindowUpgradeAdvice({ batchAttachments: true, maxImageDimension: true },
+    { nodeVersion: '24.21.0', hostVersion: '0.2.1-rc.5' }).level, 'ok')
   assert.equal(supportWindowUpgradeAdvice({ batchAttachments: false, maxImageDimension: true }).level, 'required')
   assert.equal(
     supportWindowUpgradeAdvice({ batchAttachments: 'unknown', maxImageDimension: 'unknown' }).level,
