@@ -16,3 +16,9 @@
 The 3.2 DSH rc5 fixture introduced an unsafe transitive zod@4.4.3 (GHSA-mrhx-c7xc-m3w5). The workspace forces zod@4.6.7 across development fixtures, including DSH's transitive packages; the release manifest also consumes the patched runtime version. Recheck the entire lockfile and GitHub dependency review before publishing.
 
 The floating DSH Alpha surveillance lane checks out an upstream commit chosen from a separately reviewed pin and runs on schedule or dispatch. It must never restore or save a shared Actions build cache that a later trusted branch could consume. All three Alpha Host job families now build in disposable job state; this costs CI time intentionally. Do not put the cache back merely to optimize the Alpha lane.
+
+The weekly/dispatch Alpha settings workflow uses a literal reviewed immutable
+SHA in all three upstream checkouts, and checks the config pin against that SHA
+before fetching any upstream code. A config-only pin refresh bot cannot change
+workflow execution authority; the human reviewer must explicitly update all
+three static refs to the newly approved commit. A stale pin fails closed.

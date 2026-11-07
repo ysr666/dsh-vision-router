@@ -91,7 +91,12 @@ test('the host gate loads reviewed pin in all three job families, and the bot st
   const updater = readFileSync(path.join(root, '.github/workflows/dsh-alpha-pin-refresh.yml'), 'utf8')
   const count = (source, needle) => source.split(needle).length - 1
   assert.equal(count(gate, 'run: node dvr/scripts/dsh-alpha-pin.mjs read'), 3)
-  assert.equal(count(gate, 'ref: ' + '$' + '{{ steps.pin.outputs.sha }}'), 3)
+  const locked = '05b1cae8db6e674c5685101494d4eec24652424a'
+  assert.equal(count(gate, 'ref: ' + locked), 3)
+  assert.equal(count(gate, 'ref: ' + '$' + '{{ steps.pin.outputs.sha }}'), 0)
+  assert.equal(count(gate, 'Reject an Alpha pin change without a reviewed immutable checkout update'), 3)
+  assert.equal(count(gate, 'test "$REVIEWED_SHA" = ' + "'" + locked + "'"), 3)
+  assert.equal(readAlphaPin().sha, locked, 'a pin bump must be accompanied by an explicit human-reviewed workflow source update')
   assert.equal(count(gate, 'DSH_EXPECTED_VERSION: ' + '$' + '{{ steps.pin.outputs.version }}'), 5)
   assert.equal(count(gate, 'DSH_EXPECTED_COMMIT: ' + '$' + '{{ steps.pin.outputs.sha }}'), 1)
   assert.ok(gate.includes("      - 'config/dsh-alpha-settings-pin.json'"))
