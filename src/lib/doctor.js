@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, opendirSync, readFileSync, readSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { inspectCoexistingVisionPlugins } from './profile-pnpm-diagnostics.js'
@@ -58,6 +58,74 @@ function readJsonIfPresent(filePath, maxBytes = INSTALLED_MANIFEST_MAX_BYTES) {
   } catch {
     return undefined
   }
+}
+
+
+const HOST_CORE_PACKAGE = /^@deepseek-ai\/dsh-[a-z0-9][a-z0-9._-]*$/
+const PROFILE_PACKAGE = /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/
+const HOST_CORE_SCAN_MAX = 64
+
+function readBoundedProfilePackage(profileDir, packageName) {
+  if (!PROFILE_PACKAGE.test(packageName) || packageName.length > 100) return undefined
+  try {
+    const root = realpathSync(profileDir)
+    const file = path.join(profileDir, 'node_modules', packageName, 'package.json')
+    // Keep the offline probe inside the requested profile, even for pnpm links.
+    if (!realpathSync(file).startsWith(root + path.sep)) return undefined
+    if (!statSync(file).isFile()) return undefined
+    const manifest = readJsonIfPresent(file, 64 * 1024)
+    return manifest?.name === packageName ? manifest : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Advisory only: local package presence is not proof of Host module resolution. */
+export function inspectProfileHostCore(profileDir, manifest) {
+  const advisories = []
+  let scanLimited = false
+  const add = (item) => {
+    if (advisories.length >= 16) { scanLimited = true; return }
+    advisories.push({ ...item, verification: 'unverified' })
+  }
+  try {
+    const scope = path.join(profileDir, 'node_modules', '@deepseek-ai')
+    if (!realpathSync(scope).startsWith(realpathSync(profileDir) + path.sep)) {
+      throw new Error('outside profile scope')
+    }
+    const dir = opendirSync(scope)
+    try {
+      let count = 0
+      let entry
+      while (count < HOST_CORE_SCAN_MAX && (entry = dir.readSync()) !== null) {
+        count += 1
+        const packageName = '@deepseek-ai/' + entry.name
+        if (!HOST_CORE_PACKAGE.test(packageName) || packageName.length > 100) continue
+        const pkg = readBoundedProfilePackage(profileDir, packageName)
+        if (pkg) {
+          const version = typeof pkg.version === 'string' && pkg.version.length <= 64
+            && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(pkg.version) ? pkg.version : undefined
+          add({ kind: 'profile-local-host-core', packageName, version })
+        }
+      }
+      if (count === HOST_CORE_SCAN_MAX && dir.readSync() !== null) scanLimited = true
+    } finally { dir.closeSync() }
+  } catch {
+    // Missing or unreadable scope directory is not positive evidence.
+  }
+  const dependencies = manifest?.dependencies
+  const names = dependencies && typeof dependencies === 'object' && !Array.isArray(dependencies)
+    ? Object.keys(dependencies).filter((name) => PROFILE_PACKAGE.test(name) && name.length <= 100
+      && name !== PLUGIN_NAME && !name.startsWith('@deepseek-ai/')) : []
+  if (names.length > HOST_CORE_SCAN_MAX) scanLimited = true
+  for (const pluginName of names.slice(0, HOST_CORE_SCAN_MAX)) {
+    const pkg = readBoundedProfilePackage(profileDir, pluginName)
+    const runtimeDeps = pkg?.dependencies
+    if (!runtimeDeps || typeof runtimeDeps !== 'object' || Array.isArray(runtimeDeps)) continue
+    const hostPackages = Object.keys(runtimeDeps).filter((name) => HOST_CORE_PACKAGE.test(name)).slice(0, 8)
+    if (hostPackages.length > 0) add({ kind: 'third-party-runtime-host-core', pluginName, hostPackages })
+  }
+  return { advisories, scanLimited }
 }
 
 function dependencySpecKind(value) {
@@ -457,6 +525,19 @@ export function classifyProfileInstallation(profile, { requested = false } = {})
   if (profile?.patch?.disablesOfficialDeepSeek) {
     warnings.push('cordis.patch.yml statically disables llm-deepseek; legacy stealth patches can make the official model disappear when Vision Router is disabled')
   }
+  for (const item of profile?.hostCore?.advisories ?? []) {
+    if (item.kind === 'profile-local-host-core') {
+      warnings.push('Possible Host core shadowing (unverified): profile-local '
+        + item.packageName + (item.version ? '@' + item.version : '')
+        + '; check actual Host module resolution before changing dependencies')
+    } else if (item.kind === 'third-party-runtime-host-core') {
+      warnings.push('Third-party plugin ' + item.pluginName + ' declares DSH Host core runtime dependencies ('
+        + item.hostPackages.join(', ') + '); possible profile hoisting conflict, unverified')
+    }
+  }
+  if (profile?.hostCore?.scanLimited) {
+    warnings.push('Host core advisory scan reached its bounded inspection limit; results may be incomplete')
+  }
   return {
     applicable,
     mode,
@@ -583,6 +664,7 @@ export function doctorProfiles({ dshHome = resolveDshHome(), profile, fix = fals
         patch,
         installedPlugin,
         workspace,
+        hostCore: inspectProfileHostCore(profileDir),
         pluginBundleCount: 0,
         pluginBundle: false,
       }
@@ -597,6 +679,7 @@ export function doctorProfiles({ dshHome = resolveDshHome(), profile, fix = fals
       exists: true,
       ...manifestReport,
       coexistingVisionPlugins: manifestReport.validJson ? inspectCoexistingVisionPlugins(profileDir) : [],
+      hostCore: inspectProfileHostCore(profileDir, manifestReport.manifest),
       workspace,
       patch,
       installedPlugin,
