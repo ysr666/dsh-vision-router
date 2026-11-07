@@ -332,3 +332,27 @@ test('Dependabot maintains pinned GitHub Actions references', async () => {
   const config = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8')
   assert.match(config, /package-ecosystem:\s*"github-actions"/)
 })
+
+
+test('3.2 new DSH Host fixture avoids the vulnerable transitive zod 4.4.3', async () => {
+  const [workspace, lock] = await Promise.all([
+    readFile(new URL('../pnpm-workspace.yaml', import.meta.url), 'utf8'),
+    readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8'),
+  ])
+  assert.match(workspace, /^  zod: 4\.6\.7$/m)
+  assert.match(lock, /zod@4\.6\.7:/)
+  assert.doesNotMatch(lock, /zod@4\.4\.3|zod: 4\.4\.3/,
+    'do not reintroduce vulnerable GHSA-mrhx-c7xc-m3w5 via dev DSH Host fixtures')
+})
+
+test('floating Alpha Host CI cannot restore or seed a shared build cache', async () => {
+  const gate = await readFile(new URL('../.github/workflows/dsh-alpha-settings-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(gate, /schedule:/)
+  assert.match(gate, /workflow_dispatch:/)
+  assert.match(gate, /ref: \$\{\{ steps\.pin\.outputs\.sha \}\}/)
+  assert.doesNotMatch(gate, /actions\/cache\/(?:restore|save)@|dsh-build-cache|dsh-cache-key/)
+  assert.doesNotMatch(gate, /^\s*cache:\s*pnpm/m)
+  assert.match(gate, /- name: Build exact macOS Desktop runtime/)
+  assert.match(gate, /- name: Build the alpha Host runtime/)
+  assert.match(gate, /- name: Build exact Desktop runtime/)
+})

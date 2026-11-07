@@ -22,7 +22,8 @@ test('package root and runtime support contract stay stable during architecture 
   assert.equal(pkg.exports?.['./client'], './lib/client.js')
   assert.equal(pkg.exports?.['./package.json'], './package.json')
   assert.equal(pkg.exports?.['./cordis.patch.yml'], './cordis.patch.yml')
-  assert.equal(pkg.engines?.node, '^22.19.0 || >=24.0.0')
+  assert.equal(pkg.engines?.node, '>=24.9.0')
+  assert.equal(pkg.engines?.dsh, '>=0.2.1-rc.5 <0.3.0-0')
 })
 
 test('public entry remains schema/export only and delegates runtime composition once', async () => {
@@ -84,28 +85,33 @@ test('closure preserves direct Planner-to-ExecutionOrder core consumption', asyn
 })
 
 test('published support-window docs remain the authority for compatibility retirement', async () => {
-  const [support, retirement] = await Promise.all([
+  const [support, history, retirement] = await Promise.all([
     text('docs/architecture/dsh-support-window.md'),
+    text('docs/architecture/dsh-support-window-3.1-historical.md'),
     text('docs/architecture/p3-compat-retirement.md'),
   ])
-  assert.match(support, /2\.0\.x/)
-  assert.match(support, /0\.1\.0-rc\.6/)
-  assert.match(support, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
+  assert.match(support, /DVR 3\.2 DSH Host support window/)
+  assert.match(support, /Minimum DSH Host \| 0\.2\.1-rc\.5/)
+  assert.match(support, /Minimum Node\.js \| 24\.9\.0/)
+  assert.match(support, /DVR 3\.2 stops patching the official Connection/)
+  assert.match(history, /2\.0\.x/)
+  assert.match(history, /0\.1\.0-rc\.6/)
+  assert.match(history, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)
   // The frozen contract pins the *current* release line's row and keeps the
   // previous line pinned as history: v3.0.0 moved the current row to `3.0.x`.
   assert.match(
-    support,
+    history,
     /\| `2\.3\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| historical 2\.3 baseline \|/,
   )
   assert.match(
-    support,
+    history,
     /\| `3\.0\.x` \| \*\*DSH `0\.1\.5` train\*\* \| `0\.1\.5-rc\.3` \| \*\*exact `0\.2\.0-rc\.2`\*\* \|/,
   )
-  assert.match(support, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
-  assert.match(support, /Next\/rc drift canary[^\n]*dist-tag `next`/)
-  assert.match(support, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
-  assert.match(support, /peer-admitted supported 0\.2\.x train/i)
-  assert.match(support, /Historical release notes[^\n]*not rewritten/i)
+  assert.match(history, /Exact supported 0\.2\.x boundary[^\n]*0\.2\.0-rc\.2/)
+  assert.match(history, /Next\/rc drift canary[^\n]*dist-tag `next`/)
+  assert.match(history, /Alpha\/pre-release drift canary[^\n]*dist-tag `alpha`/)
+  assert.match(history, /peer-admitted supported 0\.2\.x train/i)
+  assert.match(history, /Historical release notes[^\n]*not rewritten/i)
   assert.match(retirement, /NO COMPAT DELETION IS CURRENTLY AUTHORIZED/)
 })
 

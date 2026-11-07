@@ -180,6 +180,7 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
           DSH_EXPECTED_VERSION: 0.2.1-rc.5
           DSH_EXPECTED_COMMIT: b830ec950faba0a46dda564be3e2d854afed94f1
+          DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Verify exact DSH 0.2.2-rc.1 source
@@ -189,6 +190,7 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
           DSH_EXPECTED_VERSION: 0.2.2-rc.1
           DSH_EXPECTED_COMMIT: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
+          DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
 
       - name: Verify DVR 0.2.x peer admission with DSH Host evaluator

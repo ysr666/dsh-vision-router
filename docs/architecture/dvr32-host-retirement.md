@@ -11,3 +11,8 @@
 7. Retired Host workflows become historical/manual checks, not mandatory 3.2 release gates. Preserve old 3.1.4 packages and the historical support document.
 
 **Rollback:** Revert the isolated 3.2 branch. Never auto-rewrite the user's profile patches, delete sessions, or release a partial change. Review manual profile-owned Connection overlays separately before user migration.
+\n## CI security pre-release hardening
+
+The 3.2 DSH rc5 fixture introduced an unsafe transitive zod@4.4.3 (GHSA-mrhx-c7xc-m3w5). The workspace forces zod@4.6.7 across development fixtures, including DSH's transitive packages; the release manifest also consumes the patched runtime version. Recheck the entire lockfile and GitHub dependency review before publishing.
+
+The floating DSH Alpha surveillance lane checks out an upstream commit chosen from a separately reviewed pin and runs on schedule or dispatch. It must never restore or save a shared Actions build cache that a later trusted branch could consume. All three Alpha Host job families now build in disposable job state; this costs CI time intentionally. Do not put the cache back merely to optimize the Alpha lane.

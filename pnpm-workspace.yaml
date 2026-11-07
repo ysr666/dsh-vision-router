@@ -12,3 +12,5 @@ minimumReleaseAgeExclude:
 overrides:
   phin: 3.7.1
   follow-redirects: 1.16.2
+  # DSH 0.2.1-rc.5 dev fixtures otherwise pull vulnerable zod@4.4.3 (GHSA-mrhx-c7xc-m3w5).
+  zod: 4.6.7
