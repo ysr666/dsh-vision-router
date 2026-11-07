@@ -93,7 +93,7 @@ test('published support-window docs remain the authority for compatibility retir
   assert.match(support, /DVR 3\.2 DSH Host support window/)
   assert.match(support, /Minimum DSH Host \| 0\.2\.1-rc\.5/)
   assert.match(support, /Minimum Node\.js \| 24\.9\.0/)
-  assert.match(support, /DVR 3\.2 stops patching the official Connection/)
+  assert.match(support, /DVR retains one \*\*minimal ordering-only patch\*\*/)
   assert.match(history, /2\.0\.x/)
   assert.match(history, /0\.1\.0-rc\.6/)
   assert.match(history, /\| `2\.2\.x` \| `0\.1\.0-rc\.8`/)

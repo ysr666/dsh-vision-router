@@ -14,13 +14,17 @@ The prior DVR 3.1.4 release retains its historic support contract. The new suppo
 
 ## Core Host ownership
 
-Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 use Host-owned webStartup trustedHosts for their native Connection. DVR 3.2 stops patching the official Connection row and stops injecting the private readiness provider. DSH owns authentication, /api, WebSocket, trust lists and lifecycle. It is important that native trust restrictions are not extended, guessed or bypassed.
+Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 own webStartup trustedHosts and all Connection authorization. DVR 3.2 retires the cross-generation Connection config override and private readiness provider. However, a real Windows six-order foreign-plugin test caught HTTP 405 from generic connection.rpc.handle() when the Connection provider Fiber omitted a webServer injection. Thus DVR retains one **minimal ordering-only patch**: Connection inject: [webStartup, webServer], with **no config/trustedHosts override**. DSH still exclusively owns cookies, /api, WebSocket, trust authority and all other Connection config. Never extend, guess or bypass the official trust list.
 
 Keep the independent modules/webServer activation dependency and DVR disabled:false recompose guard until each replacement is independently proven; their root causes are not fixed merely by raising the Host floor.
 
 ## Acceptance and safety
 
-The initial unmodified Windows DSH 0.2.2-rc.1 Electron experiment on DVR 3.1.3 verified native Connection after disabling the bundle, preserving token 303, unauthenticated 401 and core-probe 200. One transient /connect timeout was observed. That experiment is not evidence of full 3.2 acceptance, DSH 0.2.1-rc.5 compatibility, macOS/Linux security, or repeated same-process Vision re-mount.
+The initial unmodified Windows DSH 0.2.2-rc.1 Electron experiment on DVR 3.1.3 verified native Connection after disabling the bundle, preserving token 303, unauthenticated 401 and core-probe 200. One transient /connect timeout was observed. The initial zero-Connection-overrides design was later found to return HTTP 405 for third-party RPC endpoints
+despite passing DVR's own Vision end-to-end tests. On Windows 0.2.2-rc.1, reproducing with identical
+multi-plugin fixtures proved HTTP 405 before the minimal ordering patch and HTTP 200 after it for
+all six plugin load orders. These observations are not proof of all cross-platform requirements.
+The minimal patch must preserve the exact Host-owned trustedHosts config in both supported versions.
 
 The new release requires both exact Host boundaries, Node 24.9 and newer 24 LTS, three OSes, cold/reenable/restart, authenticated and unauthenticated transport, trusted/untrusted LAN checks, real image-tool E2E, Settings persistence and historical-data readback.
 

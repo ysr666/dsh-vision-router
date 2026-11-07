@@ -214,11 +214,11 @@ jobs:
           DSH_MODULES_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
 
-      - name: Verify official Connection remains unmodified by DVR
+      - name: Verify only webServer injection is added to official Connection
         working-directory: dsh-exact
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-exact
-          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
 
       - name: Run DVR release-family compatibility unit contracts

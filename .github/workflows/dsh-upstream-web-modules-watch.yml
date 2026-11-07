@@ -95,9 +95,9 @@ jobs:
           DSH_MODULES_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
 
-      - name: Require DSH-owned native Connection and no DVR interception
+      - name: Require Host-owned Connection config with only DVR webServer activation overlay
         working-directory: dsh
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
-          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs

@@ -19,9 +19,17 @@
   name: '@deepseek-ai/dsh-client-modules'
   inject: [webServer]
 
-# DSH 0.2.1-rc.5+ owns Connection's activation graph, trustedHosts, and
-# authentication routes. The retired DVR bridge must not override core
-# Connection; see docs/architecture/dvr32-host-retirement.md.
+# The supported DSH Web Connection owns trustedHosts and authorization, but its
+# generic connection.rpc.handle() registers a WebServer route from its provider
+# Fiber. In 0.2.1-rc.5 / 0.2.2-rc.1 that Fiber does not explicitly inject
+# webServer, so foreign plugins' RPC endpoints can fall through to the static
+# GET/HEAD resource handler (HTTP 405). Retain ONLY the official webServer
+# activation dependency; never replace the native Connection config/trust list.
+# Verified by real Windows multi-plugin RPC red/green, #807.
+- id: connection
+  name: '@deepseek-ai/dsh-client-connection'
+  inject: [webStartup, webServer]
+
 # 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
 # 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
 # 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在 profile /

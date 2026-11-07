@@ -103,11 +103,11 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
         run: node ../dvr/scripts/dsh-rc1-agent-order-contract.mjs
-      - name: Verify DSH-owned native Connection without DVR bridge
+      - name: Verify Host-owned trustedHosts and minimal webServer ordering without DVR ready bridge
         working-directory: dsh-rc1
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
-          DSH_CONNECTION_NATIVE_EXPECTED: native-connection
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
       - name: Verify public 0.2 train peer admission
         working-directory: dsh-rc1

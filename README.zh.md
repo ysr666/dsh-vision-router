@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **尚未发布的 v3.2.0-rc.0 宿主退役候选：** 最低 DSH 0.2.1-rc.5、Node 24.9.0，将核心 Connection 交还 DSH 官方。当前仅为独立开发分支，**并非正式可安装的升级版**；仍需完成安全、生命周期与跨平台验收。详见 [v3.2.0-rc.0 草案](docs/releases/v3.2.0-rc.0.md)，正式可安装版本以 npm 和 [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) 为准。
+> **尚未发布的 v3.2.0-rc.0 宿主退役候选：** 最低 DSH 0.2.1-rc.5、Node 24.9.0，将 Connection 鉴权与 trustedHosts 交还 DSH，仅保留 webServer 启动顺序补丁。当前仅为独立开发分支，**并非正式可安装的升级版**；仍需完成安全、生命周期与跨平台验收。详见 [v3.2.0-rc.0 草案](docs/releases/v3.2.0-rc.0.md)，正式可安装版本以 npm 和 [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) 为准。
 
 ## 先用起来
 
@@ -421,7 +421,7 @@ ollama pull qwen2.5vl
 ## 环境要求
 
 - DeepSeek Harness 的 Web profile。普通安装可用 `npx @deepseek-ai/dsh ...`；从源码仓库运行时用 `pnpm dsh ...`。只有 CLI 已经进入系统 `PATH` 时才能直接写 `dsh ...`。
-- **DSH Host 支持策略（尚未发布的 DVR 3.2 候选）：** 最低 DSH 0.2.1-rc.5，当前建议 0.2.2-rc.1；DSH 0.1.x、0.2.0 和更早的 0.2.1 预发布版本退役。连接鉴权、路由与 trustedHosts 完全由 DSH 官方 Connection 管理；旧版会话、图片附件和设置的持久化数据继续兼容。详见 [新版支持策略](docs/architecture/dsh-support-window.md) 与 [退役实施方案](docs/architecture/dvr32-host-retirement.md)。
+- **DSH Host 支持策略（尚未发布的 DVR 3.2 候选）：** 最低 DSH 0.2.1-rc.5，当前建议 0.2.2-rc.1；DSH 0.1.x、0.2.0 和更早的 0.2.1 预发布版本退役。连接鉴权、路由与 trustedHosts 由 DSH 官方 Connection 管理，DVR 仅保留 webServer 注入顺序补丁；旧版会话、图片附件和设置的持久化数据继续兼容。详见 [新版支持策略](docs/architecture/dsh-support-window.md) 与 [退役实施方案](docs/architecture/dvr32-host-retirement.md)。
 - Node.js >=24.9.0（宿主侧；不再支持 Node 22）。
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。

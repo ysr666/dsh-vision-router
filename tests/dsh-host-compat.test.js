@@ -496,10 +496,12 @@ test('native Connection contract admits only the new Host-owned trust generation
   assert.equal(classifyWebConnectionRows([]).status, 'dangerous-drift')
 })
 
-test('DVR delegates Connection, its authentication and trusted hosts entirely to DSH', async () => {
+test('DVR overrides only Connection webServer activation, never Host authentication or trustedHosts', async () => {
   const patch = await readFile(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
-  assert.doesNotMatch(patch, /^- id: connection$/m)
+  assert.match(patch, /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer\]/)
   assert.doesNotMatch(patch, /visionRouterWebConnectionReady|vision-router-web-connection-ready/)
+  assert.doesNotMatch(patch,
+    /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer\]\s+config:/)
   assert.match(patch, /- id: modules\s+name: '@deepseek-ai\/dsh-client-modules'\s+inject: \[webServer\]/)
 })
 
@@ -539,11 +541,11 @@ test('release evidence separates supported exact-source coverage from historical
   assert.doesNotMatch(sourceGate, /ref:\s*\$\{\{\s*matrix\./)
   assert.doesNotMatch(sourceGate, /cache:\s*pnpm/)
   assert.doesNotMatch(sourceGate, /cache-dependency-path:/)
-  assert.match(sourceGate, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
+  assert.match(sourceGate, /DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering/)
   assert.match(sourceGate, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /name: DSH upstream Web compatibility overlay watch/)
   assert.match(upstreamOverlayWatch, /DSH_MODULES_WEBSERVER_EXPECTED: shim-required/)
-  assert.match(upstreamOverlayWatch, /DSH_CONNECTION_NATIVE_EXPECTED: native-connection/)
+  assert.match(upstreamOverlayWatch, /DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-modules-overlay-contract\.mjs/)
   assert.match(upstreamOverlayWatch, /scripts\/dsh-web-connection-overlay-contract\.mjs/)
   for (const os of ['ubuntu-latest', 'macos-latest', 'windows-latest']) {

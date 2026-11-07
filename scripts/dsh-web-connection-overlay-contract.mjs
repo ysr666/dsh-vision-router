@@ -62,29 +62,42 @@ export async function inspectDshWebConnectionOverlay(dshRoot) {
     item,
     ...(Array.isArray(item?.insert) ? item.insert : []),
   ])
-  if (flattened.some((item) => item?.id === WEB_CONNECTION_ROW_ID ||
-      item?.id === RETIRED_READY_ENTRY || item?.name === RETIRED_READY_ENTRY ||
-      item?.inject?.includes?.(RETIRED_READY_SERVICE))) {
-    return result('dangerous-drift', 'DVR resurrected a retired Connection/ready-bridge overlay')
+  const connectionPatches = flattened.filter((item) => item?.id === WEB_CONNECTION_ROW_ID)
+  if (connectionPatches.length !== 1) {
+    return result('dangerous-drift', 'DVR must have exactly one minimal Connection activation overlay')
+  }
+  const ordering = connectionPatches[0]
+  if (ordering.name !== WEB_CONNECTION_PACKAGE
+      || !isDeepStrictEqual(ordering.inject, ['webStartup', 'webServer'])
+      || !isDeepStrictEqual(Object.keys(ordering).sort(), ['id', 'inject', 'name'])) {
+    return result('dangerous-drift',
+      'Connection overlay may update inject only; Host owns trustedHosts and all config')
+  }
+  if (flattened.some((item) => item?.id === RETIRED_READY_ENTRY
+      || item?.name === RETIRED_READY_ENTRY
+      || item?.inject?.includes?.(RETIRED_READY_SERVICE))) {
+    return result('dangerous-drift', 'DVR resurrected retired private Connection/ready bridge')
   }
 
   const composed = composeEntries([patches, dvrPatches])
   const matches = composed.filter((item) => item?.id === WEB_CONNECTION_ROW_ID)
-  if (matches.length !== 1 || !isDeepStrictEqual(matches[0], classified.row)) {
-    return result('dangerous-drift', 'DVR changed the official Connection row after composition')
+  const expected = { ...classified.row, inject: ['webStartup', 'webServer'] }
+  if (matches.length !== 1 || !isDeepStrictEqual(matches[0], expected)) {
+    return result('dangerous-drift',
+      'composed Connection differs beyond required webServer injection; Host trust may be compromised')
   }
   if (composed.some((item) => item?.id === RETIRED_READY_ENTRY)) {
     return result('dangerous-drift', 'retired readiness bridge still present')
   }
-  return classified
+  return result('minimal-connection-ordering',
+    'Host owns Connection config/trustedHosts; DVR adds only webServer activation', matches[0], matches[0].inject)
 }
 
 async function main() {
   const inspected = await inspectDshWebConnectionOverlay(process.env.DSH_SOURCE_ROOT)
-  const expected = String(process.env.DSH_CONNECTION_NATIVE_EXPECTED ||
-    process.env.DSH_CONNECTION_WEBSERVER_EXPECTED || '').trim()
+  const expected = String(process.env.DSH_CONNECTION_ORDERING_EXPECTED || '').trim()
   const payload = {
-    ok: inspected.status === 'native-connection' && (!expected || inspected.status === expected),
+    ok: inspected.status === 'minimal-connection-ordering' && (!expected || inspected.status === expected),
     status: inspected.status, expected: expected || undefined,
     reason: inspected.reason, inject: inspected.inject,
   }

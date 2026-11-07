@@ -28,6 +28,7 @@ const PATCH_PATH = path.resolve(
 
 const HOST_ROWS = [
   { id: 'modules', name: '@deepseek-ai/dsh-client-modules', inject: ['webServer'] },
+  { id: 'connection', name: '@deepseek-ai/dsh-client-connection', inject: ['webStartup', 'webServer'] },
 ]
 const PLUGIN_ROW = { id: 'vision-router', name: 'dsh-vision-router' }
 
@@ -49,7 +50,7 @@ export function parseBundlePatch(text) {
     const topLevel = line.match(/^- (.*)$/)
     if (topLevel) {
       const rest = topLevel[1]
-      current = { at: index, id: null, name: null, inject: null, disabled: null, inserts: [] }
+      current = { at: index, id: null, name: null, inject: null, disabled: null, inserts: [], keys: [] }
       rows.push(current)
       const inlineId = rest.match(/^id:\s*(\S+)/)
       if (inlineId) current.id = inlineId[1]
@@ -57,6 +58,8 @@ export function parseBundlePatch(text) {
       return
     }
     if (current === null) return
+    const rowKey = !insideInsert && line.match(/^  ([A-Za-z][A-Za-z0-9_-]*):(?:\s|$)/)?.[1]
+    if (rowKey) current.keys.push(rowKey)
     const insertItem = line.match(/^\s+- id:\s*(\S+)/)
     if (insideInsert && insertItem) {
       const item = { at: index, id: insertItem[1], name: null, disabled: null }
@@ -85,6 +88,7 @@ export function parseBundlePatch(text) {
     inject: row.inject ?? [],
     disabled: row.disabled,
     inserts: row.inserts,
+    keys: row.keys,
   }))
 }
 
@@ -109,14 +113,19 @@ export function inspectActivationShim(rows) {
         findings.push(`${expected.id}: activation dependency ${dependency} is missing from inject`)
       }
     }
+    if (expected.id === 'connection') {
+      if (JSON.stringify(row.inject) !== JSON.stringify(expected.inject)) {
+        findings.push('connection: injection must be exactly [webStartup, webServer]')
+      }
+      if (JSON.stringify([...row.keys].sort()) !== JSON.stringify(['inject', 'name'])) {
+        findings.push('connection: only name/inject may be overridden, never Host config or trust')
+      }
+    }
     if (row.disabled === true) findings.push(`${expected.id}: the overlay disables a Host row`)
   }
 
-  // DSH 0.2.1-rc.5+ owns Connection. DVR must never re-add a private
-  // ready service or shadow the Host trust/activation policy.
-  if (list.some((row) => row.id === 'connection')) {
-    findings.push('connection: DVR must not overlay the official Host Connection')
-  }
+  // The only Connection overlay is the expected activation dependency above.
+  // No private ready service and no Host-owned trustedHosts/config overrides.
   if (list.some((row) => row.inserts.some((item) => item.id === 'vision-router-web-connection-ready'))) {
     findings.push('retired ready bridge: DVR must not insert the private Connection provider')
   }
@@ -153,7 +162,7 @@ export function inspectActivationShim(rows) {
   return findings
 }
 
-test('the shipped bundle patch retains modules ordering and recompose re-enable without Connection interception', () => {
+test('the shipped bundle adds only safe Connection ordering and preserves recompose re-enable', () => {
   const findings = inspectActivationShim(parseBundlePatch(readFileSync(PATCH_PATH, 'utf8')))
   assert.deepEqual(findings, [])
 })
@@ -197,7 +206,7 @@ test('the contract fails when the modules identity assertion drifts', () => {
   assert.ok(findings.some((finding) => /identity assertion changed/.test(finding)))
 })
 
-test('the contract rejects any resurrection of the retired Connection overlay', () => {
+test('the contract rejects a second Connection overlay and the retired private ready service', () => {
   const original = readFileSync(PATCH_PATH, 'utf8')
   const legacy = original + '\n- id: connection\n  name: "@deepseek-ai/dsh-client-connection"\n  inject: [webStartup, visionRouterWebConnectionReady]\n'
   const findings = inspectActivationShim(parseBundlePatch(legacy))
@@ -219,5 +228,19 @@ test('the retired private readiness bridge is not distributed or required', () =
   const patch = readFileSync(PATCH_PATH, 'utf8')
   assert.equal(pkg.files.includes('presets'), false)
   assert.doesNotMatch(patch, /visionRouterWebConnectionReady|vision-router-web-connection-ready/)
-  assert.doesNotMatch(patch, /^- id: connection$/m)
+  assert.match(patch, /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer\]/)
+})
+
+test('the activation contract rejects Connection trust/config override and missing webServer', () => {
+  const source = readFileSync(PATCH_PATH, 'utf8')
+  for (const wrong of [
+    source.replace('  inject: [webStartup, webServer]\n', '  inject: [webStartup]\n'),
+    source.replace('  inject: [webStartup, webServer]\n',
+      '  inject: [webStartup, webServer]\n  config:\n    trustedHosts: !!js ctx.webStartup.trustedHosts\n'),
+    source.replace("name: '@deepseek-ai/dsh-client-connection'",
+      "name: '@unexpected/connection'"),
+  ]) {
+    const findings = inspectActivationShim(parseBundlePatch(wrong))
+    assert.ok(findings.some((item) => item.startsWith('connection:')), JSON.stringify(findings))
+  }
 })
