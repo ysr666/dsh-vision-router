@@ -5,6 +5,24 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.1.5
+
+### Visual runtime stability / 视觉运行时稳定性
+
+- **#798:** Cancel noncooperative visual iterators in Vision Chain, direct `vision-http` and DVR-owned transparent adapters; bound abort cleanup and stop caching empty recognition. / 取消可中断不合作的视觉流并有界清理；空识图结果不再缓存为成功。
+- **#799:** Preserve explicit Host/user abort without recording a provider timeout or poisoning turn memory/circuit breakers. / 主动取消不再误记为后端超时或污染本轮熔断状态。
+- **#800:** Weighted timeout sharing across multi-backend image describe, visual OCR and whole-turn remote Vision Chain; preserve single-provider and text-only behavior. / 多视觉后端按权重共享超时预算，覆盖识图、视觉 OCR 与整轮视觉链。
+- **#801:** Route picker-listed composite visual models to their live `vision-chain` and preserve images, rather than passing foreign model IDs to `deepseek-official`. / 注入的视觉复合模型正确进入视觉链，避免送入官方文本模型适配器。
+
+### Offline diagnostics / 离线诊断
+
+- **#802 (closes #797):** Bounded read-only advisory for possible profile-local DSH Host core shadowing and third-party runtime Host-core dependencies; no automatic mutation or unverified attribution. Shareable reports only expose safe aggregate counts. / 离线 doctor 只读提示可疑核心依赖，不能据此认定真实覆盖；不擅自修改文件，分享报告只输出安全统计。
+
+### Known limitations and compatibility / 已知限制与兼容性
+
+- **#791 / #792 remain open:** Exact origin of the original 550/503 error and Windows startup raw JS/CSS screen is not verified; no claim of user-field recovery. / 用户现场 550/503 与 Windows 启动源码外露根因仍未确认。
+- No change to Node/DSH support floors, public API, Settings schema, runtime dependencies, remote permissions or default cloud image-egress policy. / 不更改最低支持版本、接口、配置、依赖、权限或默认图片外发策略。
+
 ## v3.1.4
 
 ### Runtime stability and third-party plugin isolation / 运行稳定性与第三方插件隔离
