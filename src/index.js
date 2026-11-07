@@ -1134,6 +1134,15 @@ export function apply(ctx, config = {}, runtime = {}) {
         return undefined
       }
     }
+    const officialStream = createWrapperStreamBody(ctx, {
+      imageMemory,
+      delegateProvider: wrapperDelegateRoute,
+      instantLocal: instantLocalProvider,
+      instantLocalStyle,
+      instantLocalTimeoutMs: timeoutMs,
+      instantLocalMaxPixels,
+      providerTransport,
+    }).stream
     wrapperAdapter = {
       providerInfo(provider) {
         return { id: provider, name: 'DeepSeek + 自动识图' }
@@ -1230,15 +1239,25 @@ export function apply(ctx, config = {}, runtime = {}) {
           inputModalities: ['text', 'image'],
         }
       },
-      ...createWrapperStreamBody(ctx, {
-        imageMemory,
-        delegateProvider: wrapperDelegateRoute,
-        instantLocal: instantLocalProvider,
-        instantLocalStyle,
-        instantLocalTimeoutMs: timeoutMs,
-        instantLocalMaxPixels,
-        providerTransport,
-      }),
+      // The DeepSeek wrapper also advertises composite vision-chain entries
+      // while whole-turn routing is enabled. Those entries are NOT DeepSeek
+      // model ids: dispatching them through the normal wrapper stream sends
+      // e.g. "remote-vlm/qwen-vl" to deepseek-official and always fails.
+      // Delegate only exact live routing pairs to the registered vision
+      // chain. The regular DeepSeek mirror keeps its normal text/image bridge.
+      async *stream(options) {
+        const isRoutingPair = routingEnabled() && routingPairs().some(
+          (pair) => `${pair.provider}/${pair.model}` === options?.model
+            && adapterAvailable(ctx.llm, pair.provider),
+        )
+        if (isRoutingPair) {
+          // Keep the image blocks intact; the Host must route this
+          // image-capable model through the actual visual chain.
+          yield* ctx.llm.stream({ ...options, provider: chainRoute() })
+          return
+        }
+        yield* officialStream(options)
+      },
     }
   }
 

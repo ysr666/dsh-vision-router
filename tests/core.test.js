@@ -4209,3 +4209,81 @@ test('issue #646 pre-step instant describe uses the Router-owned provider transp
   assert.equal(transportCalls[0].url, 'https://remote-lm.example/api/v1/chat')
   assert.equal(transportCalls[0].body.model, 'qwen2.5-vl')
 })
+
+test('issue #791 followup: listed composite visual model must not dispatch to official DeepSeek with a foreign ID', async () => {
+  const { ctx, adapters, captured } = mockHarnessCtx({ stockRoute: true, config0: { routing: true } })
+  ctx.llm.registerAdapter(['remote-vlm'], {
+    providerInfo: (provider) => ({ id: provider, name: 'Remote Visual Model' }),
+    providerRetryPolicy: () => undefined,
+    listModels: async (provider) => [{
+      provider, id: 'qwen/vl-works', name: 'Qwen VL', inputModalities: ['text', 'image'],
+    }],
+    resolveModel: async (provider, model) => ({
+      provider, id: model, name: 'Qwen VL', inputModalities: ['text', 'image'],
+      context: { contextWindow: 100000 },
+    }),
+    stream: async function* () {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  })
+  apply(ctx, Config({
+    routing: true,
+    freeFallback: false,
+    providers: [{ provider: 'remote-vlm', model: 'qwen/vl-works' }],
+  }))
+  const wrapper = adapters.get('deepseek-vision')
+  assert.ok(wrapper)
+  const syntheticId = 'remote-vlm/qwen/vl-works'
+  const listed = await wrapper.listModels('deepseek-vision')
+  assert.ok(listed.some(model => model.id === syntheticId), 'must first prove catalog advertises the selectable model')
+  const resolved = await wrapper.resolveModel('deepseek-vision', syntheticId)
+  assert.equal(resolved.provider, 'deepseek-vision')
+  assert.equal(resolved.id, syntheticId)
+  assert.ok(resolved.inputModalities.includes('image'))
+  const messages = [{
+    role: 'user', content: [
+      { type: 'image', attachment: { attachmentId: 'image-42', mediaType: 'image/png' } },
+      { type: 'text', text: 'What is shown?' },
+    ],
+  }]
+  for await (const _ of wrapper.stream({ provider: 'deepseek-vision', model: syntheticId, messages })) {}
+  const call = captured.streamCalls.at(-1)
+  assert.equal(call.provider, 'vision-chain', 'synthetic vision model must route through the actual visual chain')
+  assert.equal(call.model, syntheticId)
+  assert.equal(call.messages[0].content.some(block => block.type === 'image'), true,
+    'image must be preserved for the image-capable visual backend')
+  // Prove the actual registered chain can now complete an image-bearing turn,
+  // rather than merely checking that the stub llm service sees a new string.
+  const originalStream = ctx.llm.stream
+  ctx.llm.stream = async function* (request) {
+    if (request.provider === 'vision-chain') {
+      yield* adapters.get('vision-chain').stream(request)
+      return
+    }
+    if (request.provider === 'remote-vlm') {
+      assert.equal(request.model, 'qwen/vl-works')
+      assert.ok(request.messages.some(msg => msg.content?.some(block => block.type === 'image')))
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: 'REAL_VISUAL_CHAIN_DISPATCH_OK' }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: 'REAL_VISUAL_CHAIN_DISPATCH_OK' } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    throw new Error('unexpected visual source: ' + request.provider)
+  }
+  const chunks = []
+  for await (const chunk of wrapper.stream({ provider: 'deepseek-vision', model: syntheticId, messages })) {
+    chunks.push(chunk)
+  }
+  assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''),
+    'REAL_VISUAL_CHAIN_DISPATCH_OK')
+  assert.equal(chunks.filter(chunk => chunk.type === 'finish').length, 1)
+  ctx.llm.stream = originalStream
+  captured.streamCalls.length = 0
+  for await (const _ of wrapper.stream({
+    provider: 'deepseek-vision', model: 'deepseek-v4-flash',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Normal chat still works' }] }],
+  })) {}
+  assert.equal(captured.streamCalls.at(-1).provider, 'deepseek-official',
+    'ordinary DeepSeek mirrored models must still use the official delegate')
+})
