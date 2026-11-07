@@ -4997,6 +4997,13 @@ ctx.logger?.info(
     )
 
     if (progressive) {
+      // Delayed Cordis Fiber registrations may run outside the i18n decorator's
+      // AsyncLocalStorage scope. Report the Core-owned mount state directly
+      // rather than inferring success from which proxy observed registration.
+      const activationExecute = async () => activateDeepTools()
+      Object.defineProperty(activationExecute, Symbol.for('dsh-vision-router.deep-tools-mounted'), {
+        value: () => deepActive,
+      })
       ctx.effect(
         () =>
           ctx.tools.register({
@@ -5008,9 +5015,7 @@ ctx.logger?.info(
               'automatically on image turns; call this only when you need them on a text-only turn.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
             output: stringOutput,
-            async execute() {
-              return activateDeepTools()
-            },
+            execute: activationExecute,
           }),
         'vision-router: progressive bootstrap tool',
       )
