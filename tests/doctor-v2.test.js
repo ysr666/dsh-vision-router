@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { doctorProfiles, inspectProfilePatch, registrySpecSatisfiesVersion } from '../lib/doctor.js'
@@ -198,4 +198,71 @@ test('installed package integrity rejects wrong package identity and missing bun
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
   profile = makeProfile({ manifest: bundleManifest(), createInstalledTargets: false, installedManifest: { name: 'dsh-vision-router', version: '1.7.4', dsh: { bundle: { patch: './missing.yml' } } } })
   assert.equal(doctorProfiles({ dshHome: profile.home, profile: 'web' }).ok, false)
+})
+
+
+test('issue #797: profile-local DSH core is warned as unverified, not a confirmed Host failure', () => {
+  const { home, dir } = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4' })
+  const before = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(before.ok, true)
+  assert.deepEqual(before.profiles[0].hostCore.advisories, [])
+  const dirCore = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh-tools')
+  mkdirSync(dirCore, { recursive: true })
+  writeFileSync(path.join(dirCore, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-tools', version: '0.1.2-rc.1',
+  }))
+  const report = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.equal(report.profiles[0].installation.ok, true)
+  assert.equal(report.profiles[0].hostCore.advisories[0].verification, 'unverified')
+  assert.equal(report.profiles[0].hostCore.advisories[0].kind, 'profile-local-host-core')
+  assert.match(report.profiles[0].installation.warnings.join(' '), /dsh-tools@0\.1\.2-rc\.1/)
+  assert.match(report.profiles[0].installation.warnings.join(' '), /unverified/)
+  assert.equal(doctorProfiles({ dshHome: home, profile: 'web', fix: true }).profiles[0].hostCore.advisories.length, 1,
+    'doctor --fix must not delete or mutate suspicious core packages')
+})
+
+test('issue #797: third-party runtime DSH core dependency warned, peer/dev-only not warned', () => {
+  const manifest = bundleManifest()
+  manifest.dependencies['dsh-custom-style'] = '1.0.0'
+  const { home, dir } = makeProfile({ manifest, installedVersion: '1.7.4' })
+  const pluginDir = path.join(dir, 'node_modules', 'dsh-custom-style')
+  mkdirSync(pluginDir, { recursive: true })
+  const plugin = {
+    name: 'dsh-custom-style', version: '1.0.0',
+    peerDependencies: { '@deepseek-ai/dsh-client': '0.2.2-rc.1' },
+    devDependencies: { '@deepseek-ai/dsh-tools': '0.1.2-rc.1' },
+  }
+  writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify(plugin))
+  assert.deepEqual(doctorProfiles({ dshHome: home, profile: 'web' }).profiles[0].hostCore.advisories, [])
+  plugin.dependencies = { '@deepseek-ai/dsh-tools': '0.1.2-rc.1' }
+  writeFileSync(path.join(pluginDir, 'package.json'), JSON.stringify(plugin))
+  const report = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.equal(report.profiles[0].hostCore.advisories[0].kind, 'third-party-runtime-host-core')
+  assert.match(report.profiles[0].installation.warnings.join(' '), /dsh-custom-style/)
+  assert.match(report.profiles[0].installation.warnings.join(' '), /possible profile hoisting conflict, unverified/)
+})
+
+test('issue #797: skip symlinked manifest escaping the profile', { skip: process.platform === 'win32' }, () => {
+  const { home, dir } = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4' })
+  const outside = mkdtempSync(path.join(tmpdir(), 'vr-doctor-external-'))
+  writeFileSync(path.join(outside, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-tools', version: '0.1.2-rc.1',
+  }))
+  const scope = path.join(dir, 'node_modules', '@deepseek-ai')
+  mkdirSync(scope, { recursive: true })
+  symlinkSync(outside, path.join(scope, 'dsh-tools'), 'dir')
+  assert.deepEqual(doctorProfiles({ dshHome: home, profile: 'web' }).profiles[0].hostCore.advisories, [])
+})
+
+test('issue #797: ignore untrusted oversized or malformed installed manifests', () => {
+  const { home, dir } = makeProfile({ manifest: bundleManifest(), installedVersion: '1.7.4' })
+  const pkg = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh-tools')
+  mkdirSync(pkg, { recursive: true })
+  writeFileSync(path.join(pkg, 'package.json'), 'SENSITIVE' + 'x'.repeat(70 * 1024))
+  const report = doctorProfiles({ dshHome: home, profile: 'web' })
+  assert.equal(report.ok, true)
+  assert.deepEqual(report.profiles[0].hostCore.advisories, [])
+  assert.equal(JSON.stringify(report).includes('SENSITIVE'), false)
 })

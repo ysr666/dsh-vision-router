@@ -341,6 +341,10 @@ export function supportReport({ profileReport, runtime, platform, sessions }) {
     pluginBundle: item.pluginBundle,
     installedVersion: item.installedPlugin?.version,
     installation: safeInstallation(item.installation),
+    hostCore: {
+      advisoryCount: item.hostCore?.advisories?.length ?? 0,
+      scanLimited: item.hostCore?.scanLimited === true,
+    },
     workspacePinnedCount: item.workspace?.pinned?.length ?? 0,
     patch: item.patch ? {
       visionRouterRows: item.patch.visionRouterRows,

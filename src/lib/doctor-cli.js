@@ -129,6 +129,7 @@ function formatIssueTemplate(report) {
     `- Node: ${version(platform.node)} (${platform.nodeSupported ? 'supported' : 'outside or unverified support window'})`,
     `- Vision Router profiles: ${applicable.length} applicable; ${failed.length} installation/problem profile(s)`,
     `- Install modes: ${modes}`,
+    `- Offline Host core advisories: ${applicable.filter((profile) => (profile.hostCore?.advisoryCount ?? 0) > 0).length} profile(s), unverified (no Host resolution test)`,
     `- Runtime: ${runtimeState}`,
     `- Settings save failures: ${number(report.log?.currentSettingsFailureCount)} current / ${number(report.log?.historicalSettingsFailureCount)} historical`,
     `- Known session issues: ${sessionState}`,

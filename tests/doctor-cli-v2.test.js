@@ -133,3 +133,20 @@ test('issue template never prints a runtime URL, including its query token', asy
   assert.match(text, /Runtime: unreachable/)
   assert.doesNotMatch(text, /DO-NOT-LOG-ME|127\.0\.0\.1|token=/)
 })
+
+
+test('issue #797: offline doctor issue template includes only unverified core advisory count, not package/path details', async () => {
+  const home = fixture({ good: true })
+  const core = path.join(home, 'profiles', 'web', 'node_modules', '@deepseek-ai', 'dsh-tools')
+  mkdirSync(core, { recursive: true })
+  writeFileSync(path.join(core, 'package.json'), JSON.stringify({
+    name: '@deepseek-ai/dsh-tools', version: '0.1.2-rc.1',
+  }))
+  const cap = capture()
+  const result = await run(['doctor', '--profile', 'web', '--no-runtime', '--issue-template'], cap.io, { DSH_HOME: home })
+  assert.equal(result, 0, 'advisory should not masquerade as runtime failure')
+  const out = cap.stdout.join('\n')
+  assert.match(out, /Offline Host core advisories: 1 profile\(s\), unverified/)
+  assert.doesNotMatch(out, /dsh-tools|0\.1\.2-rc\.1|node_modules|TOKEN/)
+  assert.equal(out.includes(home), false)
+})
