@@ -1568,6 +1568,49 @@ test('issue #791: real loopback HTTP 550 to 503 to a silent socket ends in struc
   }
 })
 
+test('issue #791 unbranded HTTP 550 and 503 still bound a silent final fallback', async () => {
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'adapter-550-text', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'adapter-503-text', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+      { name: 'adapter-last-silent', baseURL: 'http://127.0.0.1:9/v1', model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  const transport = { async fetch() {
+    requests += 1
+    if (requests === 1) throw new Error('HTTP 550 upstream gateway rejected the visual request')
+    if (requests === 2) throw new Error('request failed with status code 503')
+    return new Promise(() => {}) // third-party transport ignores AbortSignal forever
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-unbranded-server-status-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  let timer
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const start = Date.now()
+    const resultPromise = harness.toolDefs.get('vision_describe').execute({
+      paths: [img], question: 'Describe the image.',
+    }, { agent: { session: { header: { cwd: home } } } })
+    const result = JSON.parse(await Promise.race([
+      resultPromise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('unbranded 5xx chain took more than 1500ms')), 1500)
+      }),
+    ]).finally(() => clearTimeout(timer)))
+    assert.equal(requests, 3)
+    assert.equal(result.ok, false)
+    assert.ok(Date.now() - start < 1500)
+  } finally {
+    clearTimeout(timer)
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
 test('issue #791: a noncooperative third HTTP transport cannot ignore the post-5xx budget', async () => {
   const config = {
     freeFallback: false, cache: false, timeoutMs: 2000, visionTaskTimeoutMs: 2000,

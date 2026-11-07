@@ -64,7 +64,12 @@ export function ensureSentencePunctuation(value) {
 const AUTH_PATTERNS = [/\b401\b/, /\b403\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]
 const RATE_LIMIT_PATTERNS = [/\b429\b/, /rate.?limit/i, /quota temporarily/i, /too many requests/i]
 const TIMEOUT_PATTERNS = [/abort/i, /timeout/i, /etimedout/i, /timed ?out/i, /deadline exceeded/i]
-const SERVER_PATTERNS = [/\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
+// Adapters frequently throw an unbranded Error rather than preserving
+// Response.status. Recognize explicit HTTP/status notation for ALL 5xx codes
+// (including non-standard 520/550) without treating arbitrary numbers in
+// vision-error prose as a server failure.
+const HTTP_5XX_PROSE = /(?:\bhttp(?:\/\d+(?:\.\d+)?)?(?:\s+(?:status|error|response))?|\bstatus(?:\s+code)?|\b(?:request|response)\s+failed\s+with\s+status(?:\s+code)?)\s*[:=#-]?\s*5\d\d\b/i
+const SERVER_PATTERNS = [HTTP_5XX_PROSE, /\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
 const INVALID_REQUEST_PATTERNS = [/\b400\b/, /\b404\b/, /\b422\b/, /invalid request/i, /does not support image/i, /unsupported/i, /invalid model/i, /no such model/i, /model not exist/i]
 const NETWORK_PATTERNS = [/econn/i, /enotfound/i, /network/i, /fetch failed/i, /socket/i, /connection reset/i, /dns/i]
 const QUOTA_PATTERNS = [/\b402\b/, /insufficient/i, /balance/i, /credits/i]
@@ -100,12 +105,19 @@ const KIND_BY_PATTERN = [
 ]
 
 /** Status → kind for HTTP-level failures. */
+function numericHttpStatus(status) {
+  if (typeof status === 'number') return Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
+  if (typeof status === 'string' && /^[1-5]\d{2}$/.test(status)) return Number(status)
+  return undefined
+}
+
 export function kindForHttpStatus(status) {
-  if (status === 401 || status === 403) return VISION_FAILURE_KINDS.AUTH
-  if (status === 429) return VISION_FAILURE_KINDS.RATE_LIMIT
-  if (status === 402) return VISION_FAILURE_KINDS.QUOTA
-  if (status === 400 || status === 404 || status === 422) return VISION_FAILURE_KINDS.INVALID_REQUEST
-  if (status >= 500 && status <= 599) return VISION_FAILURE_KINDS.SERVER
+  const code = numericHttpStatus(status)
+  if (code === 401 || code === 403) return VISION_FAILURE_KINDS.AUTH
+  if (code === 429) return VISION_FAILURE_KINDS.RATE_LIMIT
+  if (code === 402) return VISION_FAILURE_KINDS.QUOTA
+  if (code === 400 || code === 404 || code === 422) return VISION_FAILURE_KINDS.INVALID_REQUEST
+  if (code !== undefined && code >= 500) return VISION_FAILURE_KINDS.SERVER
   return undefined
 }
 
@@ -147,7 +159,17 @@ function kindForCode(code) {
  */
 export function classifyVisionFailure(error) {
   const message = safeFailureText(error)
-  let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(safeFailureField(error, 'status'))
+  // Some HTTP adapters surface response.status / statusCode rather than
+  // error.status. Inspect only shallow, narrowly named fields and never
+  // invoke arbitrary object coercion or an untrusted getter.
+  const reportedStatuses = [
+    safeFailureField(error, 'status'),
+    safeFailureField(error, 'statusCode'),
+    safeFailureField(safeFailureField(error, 'response'), 'status'),
+    safeFailureField(safeFailureField(error, 'cause'), 'status'),
+  ]
+  const status = reportedStatuses.map(numericHttpStatus).find((code) => kindForHttpStatus(code) !== undefined)
+  let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(status)
   if (kind === undefined) {
     for (const [candidate, patterns] of KIND_BY_PATTERN) {
       if (patterns.some((pattern) => pattern.test(message))) {
@@ -157,10 +179,9 @@ export function classifyVisionFailure(error) {
     }
     if (kind === undefined) kind = VISION_FAILURE_KINDS.OTHER
   }
-  const retryAfterMs =
-    Number.isFinite(error && error.providerRetryAfterMs) && error.providerRetryAfterMs > 0
-      ? error.providerRetryAfterMs
-      : undefined
+  const retryAfter = safeFailureField(error, 'providerRetryAfterMs')
+  const retryAfterMs = typeof retryAfter === 'number' && Number.isFinite(retryAfter) && retryAfter > 0
+    ? retryAfter : undefined
   const retryable = kind === VISION_FAILURE_KINDS.TIMEOUT ||
     kind === VISION_FAILURE_KINDS.SERVER ||
     kind === VISION_FAILURE_KINDS.NETWORK
@@ -169,7 +190,7 @@ export function classifyVisionFailure(error) {
     // Whether the SAME backend may be retried as-is (not "may the next backend run").
     retryableProvider: retryable,
     retryAfterMs,
-    status: Number.isInteger(error && error.status) ? error.status : undefined,
+    status,
   }
 }
 

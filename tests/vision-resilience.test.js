@@ -70,6 +70,42 @@ test('classifyVisionFailure maps status, codes and prose into the shared taxonom
   assert.equal(classifyVisionFailure(coded).kind, 'AUTH')
 })
 
+test('issue #791 unbranded HTTP 5xx is SERVER, not OTHER, without false-positive token counts', () => {
+  for (const value of [
+    'HTTP 550 upstream gateway rejected the visual request',
+    'request failed with status code 550',
+    'response failed with status 520',
+    'status: 599',
+    'HTTP/2 551 bad model gateway',
+  ]) {
+    assert.equal(classifyVisionFailure(new Error(value)).kind, 'SERVER', value)
+  }
+  assert.equal(classifyVisionFailure(new Error('image contains 550 tokens')).kind, 'OTHER')
+  assert.equal(classifyVisionFailure(new Error('status: 429')).kind, 'RATE_LIMIT')
+  assert.equal(classifyVisionFailure(new Error('HTTP 404')).kind, 'INVALID_REQUEST')
+  const authWins = new Error('HTTP 550')
+  authWins.code = 'AUTH'
+  assert.equal(classifyVisionFailure(authWins).kind, 'AUTH')
+})
+
+test('issue #791 untrusted status fields do not throw or spoof unrelated errors', () => {
+  const weird = new Error('unrecognized adapter error')
+  weird.status = Symbol('bad')
+  assert.equal(classifyVisionFailure(weird).kind, 'OTHER')
+  const nested = new Error('adapter request failed')
+  nested.response = { status: 550 }
+  assert.equal(classifyVisionFailure(nested).kind, 'SERVER')
+  assert.equal(classifyVisionFailure(nested).status, 550)
+  const statusCode = new Error('adapter failed')
+  statusCode.statusCode = 503
+  assert.equal(classifyVisionFailure(statusCode).status, 503)
+  const throwing = new Error('opaque adapter error')
+  Object.defineProperty(throwing, 'providerRetryAfterMs', { get() { throw new Error('secret getter') } })
+  Object.defineProperty(throwing, 'status', { get() { throw new Error('status getter') } })
+  assert.equal(classifyVisionFailure(throwing).kind, 'OTHER')
+  assert.equal(classifyVisionFailure(throwing).retryAfterMs, undefined)
+})
+
 test('createDeadline shares one budget across sequential stages', async () => {
   const deadline = createDeadline(300)
   const first = deadline.remaining()
