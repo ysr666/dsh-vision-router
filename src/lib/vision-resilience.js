@@ -64,12 +64,47 @@ export function ensureSentencePunctuation(value) {
 const AUTH_PATTERNS = [/\b401\b/, /\b403\b/, /unauthorized/i, /invalid api[ -]?key/i, /forbidden/i, /authentication/i, /check the api key/i]
 const RATE_LIMIT_PATTERNS = [/\b429\b/, /rate.?limit/i, /quota temporarily/i, /too many requests/i]
 const TIMEOUT_PATTERNS = [/abort/i, /timeout/i, /etimedout/i, /timed ?out/i, /deadline exceeded/i]
-// Adapters frequently throw an unbranded Error rather than preserving
-// Response.status. Recognize explicit HTTP/status notation for ALL 5xx codes
-// (including non-standard 520/550) without treating arbitrary numbers in
-// vision-error prose as a server failure.
-const HTTP_5XX_PROSE = /(?:\bhttp(?:\/\d+(?:\.\d+)?)?(?:\s+(?:status|error|response))?|\bstatus(?:\s+code)?|\b(?:request|response)\s+failed\s+with\s+status(?:\s+code)?)\s*[:=#-]?\s*(5\d\d)\b/i
-const SERVER_PATTERNS = [HTTP_5XX_PROSE, /\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
+// An adapter may throw plain Error("HTTP 550 ...") instead of retaining
+// Response.status. Parse explicit 5xx notation (including 520/550) without
+// a backtracking regex, scanning only the first 4096 untrusted characters.
+const HTTP_STATUS_PREFIXES = [
+  'request failed with status code', 'response failed with status code',
+  'request failed with status', 'response failed with status',
+  'http/1.0', 'http/1.1', 'http/2.0', 'http/2', 'http/3',
+  'http status code', 'http status', 'http error', 'http response',
+  'http', 'status code', 'status',
+]
+function isAsciiWord(code) {
+  return (code >= 48 && code <= 57) || (code >= 97 && code <= 122) || code === 95
+}
+function extractExplicitHttp5xxStatus(message) {
+  const text = message.slice(0, 4096).toLowerCase()
+  const isSpace = (ch) => ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n'
+  const skipSpace = (start) => {
+    let pos = start
+    while (pos < text.length && pos - start < 16 && isSpace(text[pos])) pos += 1
+    return pos
+  }
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] !== 'h' && text[i] !== 'r' && text[i] !== 's'
+      || isAsciiWord(text.charCodeAt(i - 1))) continue
+    for (const prefix of HTTP_STATUS_PREFIXES) {
+      if (!text.startsWith(prefix, i) || isAsciiWord(text.charCodeAt(i + prefix.length))) continue
+      let pos = skipSpace(i + prefix.length)
+      if (text[pos] === ':' || text[pos] === '=' || text[pos] === '#' || text[pos] === '-') {
+        pos = skipSpace(pos + 1)
+      }
+      if (text[pos] !== '5') continue
+      const digit1 = text.charCodeAt(pos + 1)
+      const digit2 = text.charCodeAt(pos + 2)
+      if (digit1 < 48 || digit1 > 57 || digit2 < 48 || digit2 > 57
+        || isAsciiWord(text.charCodeAt(pos + 3))) continue
+      return Number(text.slice(pos, pos + 3))
+    }
+  }
+  return undefined
+}
+const SERVER_PATTERNS = [/\b500\b/, /\b502\b/, /\b503\b/, /\b504\b/, /bad gateway/i, /service unavailable/i]
 const INVALID_REQUEST_PATTERNS = [/\b400\b/, /\b404\b/, /\b422\b/, /invalid request/i, /does not support image/i, /unsupported/i, /invalid model/i, /no such model/i, /model not exist/i]
 const NETWORK_PATTERNS = [/econn/i, /enotfound/i, /network/i, /fetch failed/i, /socket/i, /connection reset/i, /dns/i]
 const QUOTA_PATTERNS = [/\b402\b/, /insufficient/i, /balance/i, /credits/i]
@@ -172,7 +207,7 @@ export function classifyVisionFailure(error) {
   // or "timeout" in the server's error body; a branded adapter code still
   // takes precedence over both. Return the extracted numeric status for logs.
   const status = reportedStatuses.map(numericHttpStatus).find((code) => kindForHttpStatus(code) !== undefined)
-    ?? numericHttpStatus(HTTP_5XX_PROSE.exec(message)?.[1])
+    ?? extractExplicitHttp5xxStatus(message)
   let kind = kindForCode(safeFailureField(error, 'code')) ?? kindForHttpStatus(status)
   if (kind === undefined) {
     for (const [candidate, patterns] of KIND_BY_PATTERN) {

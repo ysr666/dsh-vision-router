@@ -77,12 +77,22 @@ test('issue #791 unbranded HTTP 5xx is SERVER, not OTHER, without false-positive
     'response failed with status 520',
     'status: 599',
     'HTTP/2 551 bad model gateway',
+    'HTTP/1.1 550 server failure',
+    'HTTP\t550 upstream error',
+    'HTTP status: 520',
     'HTTP 550 upstream gateway timed out during authentication',
     'HTTP 503 gateway rate limited by an upstream proxy',
   ]) {
     assert.equal(classifyVisionFailure(new Error(value)).kind, 'SERVER', value)
   }
   assert.equal(classifyVisionFailure(new Error('HTTP 550 upstream gateway timed out')).status, 550)
+  // An attacker-controlled adapter error containing a huge whitespace run
+  // must not induce catastrophic regex backtracking or accidentally classify
+  // the unanchored number as an HTTP status.
+  assert.equal(classifyVisionFailure(new Error('HTTP' + ' '.repeat(100_000) + '550')).kind, 'OTHER')
+  assert.equal(classifyVisionFailure(new Error('HTTP 550' + ' '.repeat(100_000))).kind, 'SERVER')
+  assert.equal(classifyVisionFailure(new Error('HTTP 5500')).kind, 'OTHER')
+  assert.equal(classifyVisionFailure(new Error('preHTTP 550')).kind, 'OTHER')
   assert.equal(classifyVisionFailure(new Error('image contains 550 tokens')).kind, 'OTHER')
   assert.equal(classifyVisionFailure(new Error('status: 429')).kind, 'RATE_LIMIT')
   assert.equal(classifyVisionFailure(new Error('HTTP 404')).kind, 'INVALID_REQUEST')
