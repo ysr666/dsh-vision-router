@@ -5,7 +5,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
-## v3.2.0-rc.0
+## v3.2.0-rc.1
+
+- **Release recovery only / 发布恢复：** The prior v3.2.0-rc.0 source tag was created after successful package verification, but the OIDC publishing job failed before `npm publish` because it imported `semver` without installing dependencies. No rc.0 npm package or GitHub Release was published. rc.1 preserves the reviewed runtime and fixes the dependency-free publish-channel gate. / rc.0 仅创建源码 Tag；发布任务因缺少 semver 在 npm publish 之前失败，没有形成 npm 包或 GitHub Release。rc.1 保留已验收的运行时代码，并修复发布阶段独立通道校验。
 
 ### Opt-in Host/Node retirement / 可选升级的 Host/Node 退役
 - Minimum DSH 0.2.1-rc.5 and Node 24.9.0; old DSH 0.1.x / 0.2.0 and Node 22 are no longer supported **by this RC**. The stable 3.1.5 channel remains available. / 本 RC 最低要求 DSH 0.2.1-rc.5、Node 24.9.0；不再支持旧 DSH 与 Node 22，稳定版 3.1.5 仍可用。

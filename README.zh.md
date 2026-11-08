@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **v3.2.0-rc.0 可选预发布版（并非稳定版）：** 最低 DSH 0.2.1-rc.5、Node 24.9.0；Connection 的鉴权和 trustedHosts 仍由 DSH 负责，仅保留最小 webServer 启动顺序补丁。**不要为了试用 RC 就直接升级正在正常使用的 Profile。** 升级前须执行只读预检，并单独验收旧会话数据。只有 npm `next` 和对应不可变的 [GitHub 预发布版](https://github.com/ysr666/dsh-vision-router/releases) 都已正式发布时，才能安装该 RC；npm `latest` 仍为稳定通道。详见 [v3.2.0-rc.0 发布说明](docs/releases/v3.2.0-rc.0.md)。
+> **v3.2.0-rc.1 可选预发布版（并非稳定版）：** 最低 DSH 0.2.1-rc.5、Node 24.9.0；Connection 的鉴权和 trustedHosts 仍由 DSH 负责，仅保留最小 webServer 启动顺序补丁。**不要为了试用 RC 就直接升级正在正常使用的 Profile。** 升级前须执行只读预检，并单独验收旧会话数据。只有 npm `next` 和对应不可变的 [GitHub 预发布版](https://github.com/ysr666/dsh-vision-router/releases) 都已正式发布时，才能安装该 RC；npm `latest` 仍为稳定通道。详见 [v3.2.0-rc.1 发布说明](docs/releases/v3.2.0-rc.1.md)。
 
 ## 先用起来
 
