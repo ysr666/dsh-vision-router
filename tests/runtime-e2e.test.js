@@ -1822,3 +1822,40 @@ test('vision_ocr vision-engine reserves later HTTP fallback after first backend 
     assert.equal(requests, 2, 'vision OCR must try the healthy second HTTP provider')
   } finally { rmSync(home, { recursive: true, force: true }) }
 })
+
+test('issue #791 a silent HTTP transport cannot hang vision_ocr after two 5xx', async () => {
+  const config = {
+    freeFallback: false, cache: false, ocrEngine: 'vision',
+    timeoutMs: 2000, visionTaskTimeoutMs: 2000, ocrTimeoutMs: 2000,
+    httpProviders: [
+      { name: 'ocr-first-550', baseURL: 'http://127.0.0.1:9/v1', model: 'a', apiKeyEnv: '' },
+      { name: 'ocr-second-503', baseURL: 'http://127.0.0.1:9/v1', model: 'b', apiKeyEnv: '' },
+      { name: 'ocr-third-silent', baseURL: 'http://127.0.0.1:9/v1', model: 'c', apiKeyEnv: '' },
+    ],
+  }
+  const harness = bootHarness(config)
+  let requests = 0
+  const transport = { async fetch() {
+    requests += 1
+    if (requests === 1) throw new Error('HTTP 550 upstream gateway rejected the visual request')
+    if (requests === 2) throw new Error('request failed with status code 503')
+    return new Promise(() => {}) // third-party transport ignores AbortSignal forever
+  } }
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-ocr-silent-'))
+  const img = path.join(home, 'small.png')
+  writeFileSync(img, PNG_BYTES)
+  let timer
+  try {
+    apply(harness.ctx, Config(config), { providerTransport: transport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const result = JSON.parse(await Promise.race([
+      harness.toolDefs.get('vision_ocr').execute({ image: img, engine: 'vision' },
+        { agent: { session: { header: { cwd: home } } } }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('vision_ocr hung on a silent HTTP transport')), 1500)
+      }),
+    ]).finally(() => clearTimeout(timer)))
+    assert.equal(requests, 3)
+    assert.equal(result.ok, false)
+  } finally { clearTimeout(timer); rmSync(home, { recursive: true, force: true }) }
+})

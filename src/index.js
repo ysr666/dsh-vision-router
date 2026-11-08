@@ -3710,6 +3710,7 @@ ctx.logger?.info(
           (sum, provider) => sum + httpProviderFallbackWeight(provider),
           0,
         )
+      let consecutiveServerFailures = 0
       const pairCapabilities = new Map()
       for (const pair of pairs()) {
         if (!pair || pair.provider === HTTP_ROUTE) continue
@@ -3795,6 +3796,8 @@ ctx.logger?.info(
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+            ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(pairKey, fingerprint, classification, scope)
           recordFailure(pairKey, classification, error && error.message ? error.message : String(error))
         }
@@ -3823,32 +3826,42 @@ ctx.logger?.info(
         }
         try {
           // Shared across OCR, grounding and visual evidence helpers: a
-          // hanging HTTP model must leave time for the next candidate.
-          const attemptBudgetMs = weightedFallbackBudget(
-            deadline.remaining(),
-            timeoutMs(),
-            candidateWeight,
-            weightAtStart,
+          // hanging HTTP model must leave time for the next candidate. A
+          // transport that ignores AbortSignal must not outlive its share
+          // either, and after two consecutive server failures the recovery
+          // tail is tightened like the vision_describe walk.
+          const attemptBudgetMs = postServerOutageBudgetMs(
+            weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
+            ),
+            visionTaskTimeoutMs(),
+            consecutiveServerFailures,
           )
-          const text = await callOpenAIWithProviderTransport(
+          const attemptSignal = combineSignals(
+            taskSignal,
+            deadline.signal(),
+            AbortSignal.timeout(attemptBudgetMs),
+          )
+          const text = await awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
             {
               maxTokens: provider.maxTokens ?? 4096,
-              signal: combineSignals(
-                taskSignal,
-                deadline.signal(),
-                AbortSignal.timeout(attemptBudgetMs),
-              ),
+              signal: attemptSignal,
               sessionId: options.sessionId,
               resolveCredential,
             },
-          )
+          ))
           throwIfVisionTaskAborted(taskSignal)
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+            ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(backendKey, fingerprint, classification, scope)
           recordFailure(backendKey, classification, error && error.message ? error.message : String(error))
         }
@@ -4997,6 +5010,13 @@ ctx.logger?.info(
     )
 
     if (progressive) {
+      // Delayed Cordis Fiber registrations may run outside the i18n decorator's
+      // AsyncLocalStorage scope. Report the Core-owned mount state directly
+      // rather than inferring success from which proxy observed registration.
+      const activationExecute = async () => activateDeepTools()
+      Object.defineProperty(activationExecute, Symbol.for('dsh-vision-router.deep-tools-mounted'), {
+        value: () => deepActive,
+      })
       ctx.effect(
         () =>
           ctx.tools.register({
@@ -5008,9 +5028,7 @@ ctx.logger?.info(
               'automatically on image turns; call this only when you need them on a text-only turn.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
             output: stringOutput,
-            async execute() {
-              return activateDeepTools()
-            },
+            execute: activationExecute,
           }),
         'vision-router: progressive bootstrap tool',
       )
