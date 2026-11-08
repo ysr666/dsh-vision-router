@@ -499,3 +499,58 @@ test('runtime boundary auto-mounts from image turns even when activation prose c
   assert.match(reminder.content[0].text, /pixel-level vision tools/i)
   assert.doesNotMatch(reminder.content[0].text, /已挂载|本轮消息包含图片/)
 })
+
+test('issue #808: progressive activation reports the Core-owned mount when late Fiber registrations bypass the locale proxy', async () => {
+  const locale = { value: 'en' }
+  const config = { tool: true, autoActivateOnImage: true }
+  const settings = createSettings(locale, config)
+  const defs = new Map()
+  const handlers = new Map()
+  const ctx = {
+    get(name) { return name === 'settings' ? settings : undefined },
+    on(name, handler) { handlers.set(name, handler); return () => handlers.delete(name) },
+    tools: {
+      register(def) {
+        defs.set(def.name, def)
+        return () => defs.delete(def.name)
+      },
+      get(name) { return defs.get(name) },
+    },
+  }
+  const wrapped = installRuntimeI18nBoundary(ctx, config)
+  let mounted = false
+  const coreActivate = async () => {
+    if (!mounted) {
+      mounted = true
+      // Host Fiber runs after the scoped i18n decorator: registration is real
+      // but does not update its historical state.deepActive heuristic.
+      ctx.tools.register({ name: 'vision_describe', async execute() { return 'ok' } })
+    }
+    return 'prose must not be parsed as a machine status'
+  }
+  Object.defineProperty(coreActivate, Symbol.for('dsh-vision-router.deep-tools-mounted'), {
+    value: () => mounted,
+  })
+  wrapped.tools.register({ name: 'vision_activate', execute: coreActivate })
+
+  const activate = defs.get('vision_activate')
+  assert.ok(activate)
+  assert.equal(defs.has('vision_describe'), false)
+  assert.match(await activate.execute({}, {}), /^Pixel-level vision tools mounted:/)
+  assert.equal(defs.has('vision_describe'), true)
+  assert.match(await activate.execute({}, {}), /already mounted/i)
+
+  mounted = false
+  wrapped.on('agent/pre-step', async (_payload, next) => next())
+  const payload = {
+    agent: { session: { header: { version: 4 } } },
+    messages: [{ role: 'user', content: [{ type: 'image', attachment: { attachmentId: 'sha256:issue808' } }] }],
+  }
+  const decision = await handlers.get('agent/pre-step')(
+    payload,
+    async () => ({ messages: payload.messages }),
+  )
+  assert.equal(mounted, true)
+  assert.equal(decision.messages.length, 2, 'auto-mount must emit the image-turn reminder')
+  assert.match(decision.messages[1].content[0].text, /pixel-level vision tools/i)
+})
