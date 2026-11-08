@@ -71,7 +71,7 @@ test('release channel works in publish checkout without node_modules', () => {
     ]) {
       const result = run(version)
       assert.equal(result.status, 0, result.stderr)
-      assert.equal(result.stdout, expected + '\\n')
+      assert.equal(result.stdout, expected + '\n')
     }
     for (const version of [
       '3.2.0-beta.1', '3.2.0-rc.01', '3.2.0+build',
