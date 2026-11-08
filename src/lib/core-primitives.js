@@ -1820,6 +1820,24 @@ export function weightedFallbackBudget(
 }
 
 /**
+ * After two consecutive server-side 5xx failures, a later HTTP backend that
+ * never responds must not consume the full default 120-second task. Keep a
+ * full budget for normal single/first-provider calls and for recoverable
+ * one-off failures; only tighten the post-outage recovery tail.
+ *
+ * With the default task timeout, this limits a silent third HTTP backend to
+ * 20 seconds. Explicit smaller timeouts remain authoritative.
+ */
+export function postServerOutageBudgetMs(attemptBudgetMs, taskTimeoutMs, consecutiveServerFailures) {
+  if (!Number.isInteger(consecutiveServerFailures) || consecutiveServerFailures < 2) return attemptBudgetMs
+  const taskBudget = Math.max(1, Math.floor(Number(taskTimeoutMs) || 1))
+  // A deliberately extended task allowance takes precedence over this
+  // default-only outage recovery policy (the regular per-call limit remains).
+  if (taskBudget > 120_000) return attemptBudgetMs
+  return Math.max(1, Math.min(attemptBudgetMs, 20_000, Math.floor(taskBudget / 4)))
+}
+
+/**
  * dsh-vision 并入：本地 Ollama 视觉后端条目。
  * 启用时返回单个 local-ollama provider（OpenAI 兼容、无 Key）。
  * baseURL 形如 http://127.0.0.1:11434/v1（callOpenAICompatible 会拼 /chat/completions）。

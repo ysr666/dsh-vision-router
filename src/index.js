@@ -90,6 +90,28 @@ async function* streamVisionWithAbort(source, signal) {
   }
 }
 
+/**
+ * A third-party provider transport can ignore AbortSignal indefinitely.
+ * Bound the caller's wait independently from the transport's cooperation,
+ * while still passing the signal downstream so a real HTTP socket can close.
+ * The losing promise remains observed by Promise.race if it settles later.
+ */
+async function awaitVisionBackendAttempt(signal, operation) {
+  if (!signal) return operation()
+  if (signal.aborted) throw signal.reason ?? new Error('vision backend attempt aborted')
+  let onAbort
+  const canceled = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new Error('vision backend attempt aborted'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+  })
+  try {
+    return await Promise.race([Promise.resolve().then(operation), canceled])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 export * from './lib/vision-resilience.js'
 
 import z from '@deepseek-ai/schemastery'
@@ -461,6 +483,7 @@ import {
   DEFAULT_HTTP_PROVIDERS,
   httpProviderFallbackWeight,
   weightedFallbackBudget,
+  postServerOutageBudgetMs,
   localOnlyVisionEnabled,
   isLoopbackVisionBaseURL,
   localOllamaProvidersOf,
@@ -3019,6 +3042,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         const errors = [...rejectedPairs]
         const attempted = []
         const primaryWeight = DEFAULT_HTTP_PROVIDERS.length
+        let consecutiveServerFailures = 0
         let remainingWeight =
           usablePairs.length * primaryWeight +
           httpFallbacks.reduce(
@@ -3148,6 +3172,8 @@ ctx.logger?.info(
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
             throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
             const classification = classifyVisionFailure(error)
+            consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+              ? consecutiveServerFailures + 1 : 0
             visionBreaker.record(backendKey, fingerprint, classification, scope)
             visionTurnMemory.record(scope, backendKey, classification.kind)
             attempted.push({
@@ -3215,11 +3241,10 @@ ctx.logger?.info(
             // turn deadline for later configured providers. The weighting
             // preserves a full single-provider budget and prioritizes
             // user-configured providers over built-in anonymous fallbacks.
-            const attemptBudgetMs = weightedFallbackBudget(
-              deadline.remaining(),
-              timeoutMs(),
-              candidateWeight,
-              weightAtStart,
+            const attemptBudgetMs = postServerOutageBudgetMs(
+              weightedFallbackBudget(deadline.remaining(), timeoutMs(), candidateWeight, weightAtStart),
+              visionTaskTimeoutMs(),
+              consecutiveServerFailures,
             )
             const attemptSignal = combineSignals(
               currentVisionTurnBudgetSignal(),
@@ -3227,7 +3252,7 @@ ctx.logger?.info(
               AbortSignal.timeout(attemptBudgetMs),
             )
             const askHttp = async (correction) => {
-              const answer = await callOpenAIWithProviderTransport(
+              const answer = await awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
                 provider,
                 correction === undefined
                   ? openAIBaseMessages
@@ -3241,7 +3266,7 @@ ctx.logger?.info(
                   sessionId,
                   resolveCredential,
                 },
-              )
+              ))
               return answer
             }
             let text = await askHttp(undefined)
@@ -3295,6 +3320,8 @@ ctx.logger?.info(
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
             throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
             const classification = classifyVisionFailure(error)
+            consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+              ? consecutiveServerFailures + 1 : 0
             visionBreaker.record(backendKey, fingerprint, classification, scope)
             visionTurnMemory.record(scope, backendKey, classification.kind)
             attempted.push({
@@ -3683,6 +3710,7 @@ ctx.logger?.info(
           (sum, provider) => sum + httpProviderFallbackWeight(provider),
           0,
         )
+      let consecutiveServerFailures = 0
       const pairCapabilities = new Map()
       for (const pair of pairs()) {
         if (!pair || pair.provider === HTTP_ROUTE) continue
@@ -3768,6 +3796,8 @@ ctx.logger?.info(
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+            ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(pairKey, fingerprint, classification, scope)
           recordFailure(pairKey, classification, error && error.message ? error.message : String(error))
         }
@@ -3796,32 +3826,42 @@ ctx.logger?.info(
         }
         try {
           // Shared across OCR, grounding and visual evidence helpers: a
-          // hanging HTTP model must leave time for the next candidate.
-          const attemptBudgetMs = weightedFallbackBudget(
-            deadline.remaining(),
-            timeoutMs(),
-            candidateWeight,
-            weightAtStart,
+          // hanging HTTP model must leave time for the next candidate. A
+          // transport that ignores AbortSignal must not outlive its share
+          // either, and after two consecutive server failures the recovery
+          // tail is tightened like the vision_describe walk.
+          const attemptBudgetMs = postServerOutageBudgetMs(
+            weightedFallbackBudget(
+              deadline.remaining(),
+              timeoutMs(),
+              candidateWeight,
+              weightAtStart,
+            ),
+            visionTaskTimeoutMs(),
+            consecutiveServerFailures,
           )
-          const text = await callOpenAIWithProviderTransport(
+          const attemptSignal = combineSignals(
+            taskSignal,
+            deadline.signal(),
+            AbortSignal.timeout(attemptBudgetMs),
+          )
+          const text = await awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
             provider,
             [{ role: 'user', content: [...httpContent, { type: 'text', text: instruction }] }],
             {
               maxTokens: provider.maxTokens ?? 4096,
-              signal: combineSignals(
-                taskSignal,
-                deadline.signal(),
-                AbortSignal.timeout(attemptBudgetMs),
-              ),
+              signal: attemptSignal,
               sessionId: options.sessionId,
               resolveCredential,
             },
-          )
+          ))
           throwIfVisionTaskAborted(taskSignal)
           if (text && text.trim() !== '') return { ok: true, text: text.trim() }
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
+            ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(backendKey, fingerprint, classification, scope)
           recordFailure(backendKey, classification, error && error.message ? error.message : String(error))
         }
