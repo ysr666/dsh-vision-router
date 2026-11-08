@@ -16,6 +16,7 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **#804:** Bound noncooperative HTTP vision fallback after repeated server failures, returning a structured result within the shared task budget. / 连续服务端故障后收紧不响应取消的 HTTP 视觉兜底时限，保证有界退出。
 - **#805:** Classify unbranded HTTP 5xx errors consistently, including adapter text and nested error forms. / 统一识别适配器文本与嵌套异常中的非品牌化 HTTP 5xx。
 - **#810:** Apply the same abort-safe bounded fallback to visual OCR, grounding, pixel diff and shared evidence helpers. / 将取消安全的超时回退扩展到 OCR、视觉定位、像素对比及证据辅助工具。
+- **#809 (investigation #808):** Read the Core-owned deep-tool mount state for progressive `vision_activate` instead of inferring mount success from an i18n proxy that deferred Cordis Fibers can bypass. This fixes false “unavailable” status; reporter-specific Vision-ON `UNKNOWN_TOOL` remains unverified. / 渐进式视觉工具状态以 Core 挂载事实为准，不再依赖可能遗漏延迟注册的本地化代理；修复误报未挂载，但原反馈中的工具不可见场景仍待核实。
 
 ### Offline diagnostics / 离线诊断
 
