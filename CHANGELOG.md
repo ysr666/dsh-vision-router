@@ -13,6 +13,9 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 - **#799:** Preserve explicit Host/user abort without recording a provider timeout or poisoning turn memory/circuit breakers. / 主动取消不再误记为后端超时或污染本轮熔断状态。
 - **#800:** Weighted timeout sharing across multi-backend image describe, visual OCR and whole-turn remote Vision Chain; preserve single-provider and text-only behavior. / 多视觉后端按权重共享超时预算，覆盖识图、视觉 OCR 与整轮视觉链。
 - **#801:** Route picker-listed composite visual models to their live `vision-chain` and preserve images, rather than passing foreign model IDs to `deepseek-official`. / 注入的视觉复合模型正确进入视觉链，避免送入官方文本模型适配器。
+- **#804:** Bound noncooperative HTTP vision fallback after repeated server failures, returning a structured result within the shared task budget. / 连续服务端故障后收紧不响应取消的 HTTP 视觉兜底时限，保证有界退出。
+- **#805:** Classify unbranded HTTP 5xx errors consistently, including adapter text and nested error forms. / 统一识别适配器文本与嵌套异常中的非品牌化 HTTP 5xx。
+- **#810:** Apply the same abort-safe bounded fallback to visual OCR, grounding, pixel diff and shared evidence helpers. / 将取消安全的超时回退扩展到 OCR、视觉定位、像素对比及证据辅助工具。
 
 ### Offline diagnostics / 离线诊断
 
