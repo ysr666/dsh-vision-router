@@ -4,7 +4,7 @@
 
 1. Retire the private web-connection-ready plugin and all Connection config/trustedHosts overrides. Retain precisely one Connection inject: [webStartup, webServer] patch because the native Connection provider's generic foreign RPC registrations otherwise return HTTP 405 in Windows multi-plugin tests. Do not change official Host authentication or add trusted authorities.
 2. Preserve modules/webServer ordering, the DVR disabled:false recompose guard and old user-data migrators until separately proven obsolete.
-3. Maintain engines.dsh as the **single** supported-Host compatibility authority; retire redundant DSH optional peer declarations (which can conflict under strict pnpm), update engines.node, development fixture pins, Doctor and release notes together.
+3. Keep engines.dsh as the **supported** Host compatibility authority. Retire the conflicting anonymous-user-id and storage-domain optional peers, but retain **one optional dsh-llm-deepseek peer** to reject older DSH 0.2.0 Hosts that ignore engines.dsh. Update engines.node, development fixtures, Doctor and release notes together.
 4. Negative admission must reject DSH 0.1.x, DSH 0.2.0, DSH 0.2.1-rc.4, Node 22 and Node 24.8.
 5. Require real DSH 0.2.1-rc.5 and 0.2.2-rc.1 installs: cold start, three enable-disable-reenable cycles, reconnection, 303/401/200, authenticated/unauthenticated API, WebSocket, trusted/untrusted LAN, actual Vision image turn and Settings/restart readback.
 6. Windows, macOS and Linux exact-source gates plus build, typecheck, reproducible pack and migration tests must be green.
@@ -86,29 +86,42 @@ issue and the separate #792 source-text screenshot investigation stay tracked
 independently; this document does not claim that either upstream defect is fixed.
 
 
-## DSH 3.2 peer-graph retirement: install-level A/B
+## DSH 3.2 legacy admission and peer-graph retirement: two-sided A/B
 
-DSH 0.2.1-rc.5 and newer app-boot implementations enforce each plugin's
-`engines.dsh` with prereleases included. DVR 3.2 therefore no longer needs the
-three historical *optional* peer declarations on
-`@deepseek-ai/dsh-anonymous-user-id`, `@deepseek-ai/dsh-llm-deepseek` and
-`@deepseek-ai/dsh-storage-domain`. Their Node runtime implementation is
-Host-owned; storage-domain imports in DVR source are type-only. The regular
-`sharp` optional peer remains.
+Supported DSH 0.2.1-rc.5+ uses `engines.dsh` as its sole native
+plugin-admission authority, but **official DSH 0.2.0-rc.2 only inspects
+`@deepseek-ai/dsh-*` peers**, ignoring `engines.dsh` entirely. Testing
+that official old evaluator against an otherwise identical 3.2 manifest
+proved the crucial negative control:
+- **Zero DSH peer declarations**: old DSH 0.2.0-rc.2 **incorrectly admits**
+  DVR 3.2. This is unsafe, even though 3.2 announces that it retired 0.2.0.
+- One optional `@deepseek-ai/dsh-llm-deepseek` peer with the exact canonical
+  `>=0.2.1-rc.5 <0.3.0-0` requirement: old DSH 0.2.0-rc.2 **rejects**
+  DVR 3.2. Modern rc5/rc1 evaluators still use `engines.dsh` first.
 
-In a disposable Node 24.21 / pnpm 11.20 project using the actual packed
-DVR 3.2 candidate and published DSH 0.2.2-rc.1 packages:
-- DSH llm-deepseek **alone**, `strictPeerDependencies=true`: passes.
-- DSH llm-deepseek + the **original** DVR 3.2 package, with no explicitly
-  installed anonymous-user-id: **fails** with `ERR_PNPM_PEER_DEP_ISSUES`
-  (conflicting anonymous-user-id requirements).
-- Add explicit anonymous-user-id 0.2.2-rc.1: original DVR now passes, proving
-  that this is a dependency-graph problem rather than proven RC admission failure.
-- Retire just DVR's anonymous-user-id peer: strict install passes.
-- Retire **all three** redundant DVR DSH peers, leave `engines.dsh` unchanged:
-  strict install passes, including when the DSH llm provider is present.
-  Exact-source rc5, rc1 and alpha Host admission checks still reject old
-  DSH and 0.3.x, and guard against reviving static Host package imports.
+Therefore DVR 3.2 **retains exactly one** optional DSH LLM peer solely to
+protect legacy Hosts that have not yet learned `engines.dsh`. It retires the
+other two old optional DSH peers (`anonymous-user-id` and `storage-domain`)
+because they add pnpm dependency-graph conflicts without protecting the
+minimum supported Host any further. The `sharp` optional peer is unaffected.
 
-No published registry package or user profile was edited in these tests.
-This is a pure package metadata change plus admission regression guards.
+Disposable Node 24.21 / pnpm 11.20 strict-install A/B using the actual
+3.2 prerelease tarball and published Host provider components:
+- With DSH llm-deepseek rc1 alone, the original three-peer candidate **failed**
+  `ERR_PNPM_PEER_DEP_ISSUES` because anonymous-user-id had two constraints
+  but was not explicitly installed.
+- Installing anonymous-user-id explicitly made that original candidate pass,
+  confirming the cause was the peer graph, not RC version admission.
+- Retaining only the **single legacy LLM guard** and `sharp` passed
+  `strictPeerDependencies=true` with DSH llm-deepseek **both rc5 and rc1**,
+  without an explicit anonymous-user-id install.
+- A package with zero legacy peers also installed, but failed the older-Host
+  safety requirement above, and was intentionally discarded.
+
+DSH Host modules must still not be imported statically at runtime by
+DVR's activation entries; the source, generated-tree and
+child-process negative-control tests continue blocking all three
+Host-provided module names (even the two no longer in peerDependencies).
+The source-only storage-domain import is type-only.
+
+No real user profile or npm release was changed during these tests.

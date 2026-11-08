@@ -18,7 +18,7 @@ Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 own webStartup trustedHosts and all Conne
 
 Keep the independent modules/webServer activation dependency and DVR disabled:false recompose guard until each replacement is independently proven; their root causes are not fixed merely by raising the Host floor.
 
-DSH 0.2.1-rc.5+ uses `engines.dsh` as its sole native plugin-admission authority. DVR 3.2 therefore retires the three redundant DSH optional peer declarations, which can trigger strict pnpm peer conflicts when Host components resolve independently; this does not remove Host-owned runtime services or the type-only development imports. The `sharp` optional peer remains.
+DSH 0.2.1-rc.5+ uses `engines.dsh` as its sole native plugin-admission authority. **DSH 0.2.0-rc.2 still ignores engines.dsh** and only inspects DSH peers, so DVR retains exactly one optional `@deepseek-ai/dsh-llm-deepseek` peer with the same minimum as a defensive *old-Host rejection guard*. DVR retires the redundant anonymous-user-id and storage-domain peers, which can produce strict pnpm conflicts; no actual Host runtime service or type-only import is removed. The `sharp` optional peer remains.
 
 ## Acceptance and safety
 

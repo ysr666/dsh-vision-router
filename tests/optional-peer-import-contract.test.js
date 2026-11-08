@@ -95,8 +95,8 @@ export function optionalPeerOf(specifier, optionalPeers) {
 }
 
 const manifest = JSON.parse(await readFile(MANIFEST, 'utf8'))
-// 3.2 retires legacy DSH peer declarations because engines.dsh alone gates
-// supported Hosts. Keep Host-provided packages in the static-import tripwire:
+// 3.2 retires the redundant DSH peers while retaining one optional
+// legacy refusal guard. Supported Hosts use engines.dsh first. Keep Host-provided packages in the static-import tripwire:
 // they must never turn into activation-time runtime imports by accident.
 const HOST_PROVIDED_MODULES = Object.freeze([
   '@deepseek-ai/dsh-anonymous-user-id',
@@ -125,13 +125,17 @@ const offendersIn = async (directory) => {
 }
 
 test('retired DSH peers remain guarded against static runtime imports', () => {
-  assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), ['sharp'])
+  assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'])
   for (const peer of HOST_PROVIDED_MODULES) {
     assert.equal(optionalPeers.includes(peer), true,
-      peer + ' must stay guarded after removing peer dependency declarations')
-    assert.equal(manifest.peerDependencies?.[peer], undefined)
+      peer + ' must stay guarded independently of peer dependency declarations')
+    if (peer === '@deepseek-ai/dsh-llm-deepseek') {
+      assert.equal(manifest.peerDependencies?.[peer], manifest.engines.dsh,
+        'single legacy Host rejection peer must mirror the new engine floor')
+    } else assert.equal(manifest.peerDependencies?.[peer], undefined)
   }
   assert.equal(manifest.peerDependenciesMeta.sharp.optional, true)
+  assert.equal(manifest.peerDependenciesMeta['@deepseek-ai/dsh-llm-deepseek'].optional, true)
 })
 
 test('negative controls: the scanner flags runtime edges and ignores legal lazy/type forms', () => {

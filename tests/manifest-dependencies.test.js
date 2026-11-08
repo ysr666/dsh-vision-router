@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import semver from 'semver'
 import { execFileSync } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
 
@@ -100,7 +101,7 @@ test('canonical repository source never tracks generated runtime artifacts', () 
   )
 })
 
-test('3.2 relies on engines.dsh alone; no redundant optional DSH Host peer conflicts', async () => {
+test('3.2 Host engine and sole legacy peer gate retire conflicting transitive peers', async () => {
   const pkg = await manifest()
   const hostRange = '>=0.2.1-rc.5 <0.3.0-0'
   assert.equal(pkg.engines?.dsh, hostRange)
@@ -110,12 +111,35 @@ test('3.2 relies on engines.dsh alone; no redundant optional DSH Host peer confl
     '@deepseek-ai/dsh-storage-domain',
   ]) {
     assert.equal(pkg.dependencies?.[name], undefined, name + ' must be Host-owned')
-    assert.equal(pkg.peerDependencies?.[name], undefined,
-      name + ' must not add peer graph constraints after the supported Host gained engines.dsh')
-    assert.equal(pkg.peerDependenciesMeta?.[name], undefined)
+    if (name === '@deepseek-ai/dsh-llm-deepseek') {
+      assert.equal(pkg.peerDependencies?.[name], hostRange,
+        'legacy 0.2.0 Hosts only check DSH peers and must refuse 3.2')
+      assert.equal(pkg.peerDependenciesMeta?.[name]?.optional, true)
+    } else {
+      assert.equal(pkg.peerDependencies?.[name], undefined,
+        name + ' adds peer graph conflicts without providing legacy refusal protection')
+      assert.equal(pkg.peerDependenciesMeta?.[name], undefined)
+    }
     assert.equal(pkg.devDependencies?.[name], '0.2.1-rc.5')
   }
-  assert.deepEqual(Object.keys(pkg.peerDependencies || {}).sort(), ['sharp'])
+  assert.deepEqual(Object.keys(pkg.peerDependencies || {}).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'])
+})
+
+test('a legacy peer-only Host still rejects the retired DSH generations', async () => {
+  const pkg = await manifest()
+  const peers = Object.entries(pkg.peerDependencies || {}).filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+  assert.deepEqual(peers, [['@deepseek-ai/dsh-llm-deepseek', pkg.engines.dsh]])
+  // Immutable official 0.2.0-rc.2 Host comparator only checks DSH peers,
+  // using semver.satisfies(version, range, { includePrerelease: true }).
+  const guard = peers[0][1]
+  for (const old of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.0', '0.2.1-rc.4']) {
+    assert.equal(semver.satisfies(old, guard, { includePrerelease: true }), false,
+      old + ' must be rejected even by the old peer-only Host')
+  }
+  for (const supported of ['0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2-rc.1']) {
+    assert.equal(semver.satisfies(supported, guard, { includePrerelease: true }), true,
+      supported + ' must be admitted when the legacy peer remains')
+  }
 })
 
 test('client package graph does not revive the retired dsh-client-runtime row', async () => {
@@ -135,9 +159,10 @@ test('client package graph does not revive the retired dsh-client-runtime row', 
   )
 })
 
-test('sharp remains the only optional peer and cannot prevent Host core activation', async () => {
+test('both remaining peers are optional; the DSH peer is a legacy refusal guard', async () => {
   const pkg = await manifest()
-  assert.deepEqual(Object.keys(pkg.peerDependenciesMeta || {}).sort(), ['sharp'])
+  assert.deepEqual(Object.keys(pkg.peerDependenciesMeta || {}).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'])
+  assert.equal(pkg.peerDependenciesMeta['@deepseek-ai/dsh-llm-deepseek'].optional, true)
   assert.equal(typeof pkg.peerDependencies.sharp, 'string')
   assert.equal(pkg.peerDependenciesMeta.sharp.optional, true)
 })

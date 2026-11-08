@@ -445,8 +445,10 @@ test('manifest publishes DVR 3.2 modern Host floor and retires Node 22', async (
   assert.equal(pkg.engines.node, '>=24.9.0')
   assert.equal(pkg.engines.dsh, hostRange)
   assert.doesNotMatch(hostRange, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/)
-  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['sharp'],
-    'supported DSH Hosts admit by engines.dsh, not redundant optional peers')
+  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'],
+    'one optional Host peer remains to reject retired DSH 0.2.0; rc5+ uses engines.dsh')
+  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], hostRange)
+  assert.equal(pkg.peerDependenciesMeta['@deepseek-ai/dsh-llm-deepseek']?.optional, true)
 })
 
 test('modules/webServer overlay lifecycle classifies required, retire-ready, and dangerous Host drift', () => {

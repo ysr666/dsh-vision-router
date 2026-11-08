@@ -16,19 +16,27 @@ const compatibilityModule = pathToFileURL(join(
 const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
 // Supported DSH 0.2.1-rc.5+ evaluates engines.dsh as the sole
-// compatibility authority. Redundant DSH peers were dropped after an actual
-// pnpm strict-peer conflict with an incomplete Host peer graph; they must not
+// compatibility authority. Two redundant DSH peers were dropped after an actual
+// pnpm strict-peer conflict. One minimal peer remains because retired DSH
+// 0.2.0 ignores engines.dsh; this refusal guard must not
 // regress without a deliberate new compatibility decision.
 const declaredDshPeers = Object.keys(manifest.peerDependencies ?? {})
   .filter((name) => name.startsWith('@deepseek-ai/dsh-'))
   .sort()
-assert.deepEqual(declaredDshPeers, [], '3.2 must not reintroduce legacy DSH peers')
-assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), ['sharp'],
-  'sharp must be the only optional runtime peer')
+assert.deepEqual(declaredDshPeers, ['@deepseek-ai/dsh-llm-deepseek'],
+  'one legacy peer must reject retired DSH 0.2.0 Hosts which ignore engines.dsh')
+assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(),
+  ['@deepseek-ai/dsh-llm-deepseek', 'sharp'],
+  'retain exactly one DSH legacy refusal guard and one optional sharp peer')
 
 const declaredDshRange = manifest.engines?.dsh
 assert.equal(declaredDshRange, '>=0.2.1-rc.5 <0.3.0-0',
   'engines.dsh is now the canonical DSH 3.2 admission window')
+
+assert.equal(manifest.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], declaredDshRange,
+  'legacy DSH peer refusal guard must match the new canonical minimum')
+assert.equal(manifest.peerDependenciesMeta['@deepseek-ai/dsh-llm-deepseek']?.optional, true,
+  'legacy refusal guard must not pull an unnecessary runtime package')
 
 const admitted = [
   '0.2.1-rc.5',
