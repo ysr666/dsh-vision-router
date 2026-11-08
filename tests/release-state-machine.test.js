@@ -3,7 +3,7 @@
 // Release phase's draft -> attach -> verify -> publish ordering in the workflow.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -51,6 +51,39 @@ test('release channel maps reviewed semver classes but refuses unreviewed prerel
   assert.equal(releaseDistTag('3.2.0-alpha.1'), 'alpha')
   for (const unreviewed of ['3.2.0-beta.1', '3.2.0-rc', '3.2.0-preview.3', '3.2.0-rc.0+build', 'garbage', 'v3.2.0']) {
     assert.throws(() => releaseDistTag(unreviewed), /unreviewed|noncanonical|invalid/, unreviewed)
+  }
+})
+
+test('release channel works in publish checkout without node_modules', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-channel-standalone-'))
+  try {
+    const script = path.join(dir, 'release-channel.mjs')
+    writeFileSync(script, readFileSync(path.join(ROOT, 'scripts/release-channel.mjs'), 'utf8'))
+    const run = (version) => spawnSync(process.execPath, [script, version], {
+      cwd: dir,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_PATH: '' },
+    })
+    for (const [version, expected] of [
+      ['3.1.5', 'latest'],
+      ['3.2.0-rc.0', 'next'],
+      ['3.2.0-alpha.3', 'alpha'],
+    ]) {
+      const result = run(version)
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(result.stdout, expected + '\\n')
+    }
+    for (const version of [
+      '3.2.0-beta.1', '3.2.0-rc.01', '3.2.0+build',
+      '3.2.0-rc.0+build', '9007199254740992.0.0',
+      '3.2.0-rc.9007199254740992',
+    ]) {
+      const result = run(version)
+      assert.equal(result.status, 1, version)
+      assert.match(result.stderr, /release channel refused/)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
