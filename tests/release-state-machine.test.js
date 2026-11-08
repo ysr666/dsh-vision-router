@@ -86,9 +86,9 @@ test('publish-phase channel check is dependency-free and fails closed before npm
   const from = workflow.indexOf('- name: Publish exact tarball to npm with trusted OIDC')
   const to = workflow.indexOf('- name: Verify npm registry tarball identity', from)
   const publish = workflow.slice(from, to)
-  const embedded = publish.match(/node <<'NODE'\n([\s\S]*?)\n          NODE/)
+  const embedded = publish.match(/node <<'NODE'\r?\n([\s\S]*?)\r?\n          NODE/)
   assert.ok(embedded, 'self-contained publish-phase channel verification must exist')
-  const script = embedded[1].split('\n').map((line) => line.replace(/^          /, '')).join('\n')
+  const script = embedded[1].split(/\r?\n/).map((line) => line.replace(/^          /, '')).join('\n')
   const dir = mkdtempSync(path.join(tmpdir(), 'release-publish-no-deps-'))
   try {
     for (const [version, tag, status] of [
