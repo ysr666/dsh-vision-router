@@ -33,7 +33,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Resolve Chrome executable

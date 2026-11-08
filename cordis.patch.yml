@@ -19,29 +19,22 @@
   name: '@deepseek-ai/dsh-client-modules'
   inject: [webServer]
 
-# DSH 0.1.x / 0.2.0-rc.2 Connection 的 Host owner 必须注入 webServer
-# （issue #478），但 0.2.1-alpha.2 已移除 webRuntime、改为 webStartup。
-# 不要静态引用任一代独有的 webRuntime：它会使新 Host 必需服务永远待定。
-#
-# 本层统一让 Connection 在 webServer、webStartup 及 DVR 私有 ready gate
-# 均就绪后启动；ready gate 在旧 Host 等官方 webRuntime（含 bind-derived
-# LAN authorities），在新 Host 直接读取官方 webStartup.trustedHosts。
-# trustedHosts 只转交 Host 授权列表，不自行扩大、合并或猜测网络信任；
-# Cookie、/api 和 RPC 仍归官方 Connection 所有。Host 新增配置项时，
-# exact-source contract 必须拒绝未经审查的整段 config 覆盖。
+# The supported DSH Web Connection owns trustedHosts and authorization, but its
+# generic connection.rpc.handle() registers a WebServer route from its provider
+# Fiber. In 0.2.1-rc.5 / 0.2.2-rc.1 that Fiber does not explicitly inject
+# webServer, so foreign plugins' RPC endpoints can fall through to the static
+# GET/HEAD resource handler (HTTP 405). Retain ONLY the official webServer
+# activation dependency; never replace the native Connection config/trust list.
+# Verified by real Windows multi-plugin RPC red/green, #807.
 - id: connection
   name: '@deepseek-ai/dsh-client-connection'
-  inject: [webStartup, webServer, visionRouterWebConnectionReady]
-  config:
-    trustedHosts: !!js ctx.visionRouterWebConnectionReady.trustedHosts
+  inject: [webStartup, webServer]
 
 # 挂载插件行。默认保持完整视觉工具表常驻（issue #81）：虽然渐进挂载可以
 # 少发一小段工具 schema，但图片轮首次扩展工具列表会改变请求前缀，可能让
 # 长会话的 provider KV/prefix cache 整体失效。高级用户仍可在 profile /
 # composition 补丁中显式把 progressiveTools 改回 true（启动期配置）。
 - insert:
-    - id: vision-router-web-connection-ready
-      name: './presets/web-connection-ready/index.mjs'
     - id: vision-router
       name: dsh-vision-router
       config:

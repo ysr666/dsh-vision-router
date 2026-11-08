@@ -19,7 +19,6 @@ on:
       - 'scripts/dsh-alpha-source-contract.mjs'
       - 'scripts/dsh-rc1-agent-order-contract.mjs'
       - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'presets/web-connection-ready/**'
       - 'cordis.patch.yml'
       - 'scripts/dsh-peer-admission-contract.mjs'
       - 'scripts/dsh-proxy-egress-contract.mjs'
@@ -104,11 +103,11 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
         run: node ../dvr/scripts/dsh-rc1-agent-order-contract.mjs
-      - name: Verify old/new Web Connection trust-generation overlay
+      - name: Verify Host-owned trustedHosts and minimal webServer ordering without DVR ready bridge
         working-directory: dsh-rc1
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
-          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
       - name: Verify public 0.2 train peer admission
         working-directory: dsh-rc1

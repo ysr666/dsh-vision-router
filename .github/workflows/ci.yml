@@ -6,7 +6,7 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
-  # Required test (22)/(24) checks must be emitted for every PR, including docs-only PRs.
+  # Required test (24.9)/(24.21) checks must be emitted for every PR, including docs-only PRs.
   # Keep push path filtering to avoid redundant post-merge builds.
   pull_request:
 
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: ['22', '24']
+        node: ['24.9.0', '24.21.0']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -38,19 +38,19 @@ jobs:
       - name: Verify generated runtime artifacts
         run: pnpm build:check
       - name: Verify reproducible clean build
-        if: matrix.node == '22'
+        if: matrix.node == '24.9.0'
         run: pnpm build:reproducible
       - name: Typecheck Host and Client contracts
-        if: matrix.node == '22'
+        if: matrix.node == '24.9.0'
         run: pnpm typecheck
       - name: Lint canonical source ownership
-        if: matrix.node == '22'
+        if: matrix.node == '24.9.0'
         run: pnpm lint
       - name: Verify source-to-artifact evidence
-        if: matrix.node == '22'
+        if: matrix.node == '24.9.0'
         run: pnpm source:artifact:check
       - name: Verify generated browser source
-        if: matrix.node == '22'
+        if: matrix.node == '24.9.0'
         run: pnpm client:check
       - run: pnpm test
 
@@ -66,7 +66,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build canonical package artifacts
@@ -99,7 +99,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build canonical runtime artifacts

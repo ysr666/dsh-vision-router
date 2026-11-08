@@ -133,8 +133,12 @@ jobs:
           Bump the alpha settings gate from \`${CURRENT}\` to \`${SHA}\`
           (\`dsh-v${VERSION}\`, published ${PUBLISHED}).
 
-          Merging this re-runs the gate on the push, so the new pin is verified end to end
-          (real browser settings lifecycle + Desktop Host injection) against the source below.
+          SECURITY REVIEW REQUIRED: Before merging this config-only bot PR,
+          a human must also update the three immutable alpha source checkout refs
+          in .github/workflows/dsh-alpha-settings-host-gate.yml to the reviewed
+          SHA shown above, in a separate reviewed commit. The gate fails closed
+          when the config and static refs differ. Only then can the real browser
+          settings lifecycle and Desktop Host injection run on the adopted version.
 
           ## Automatable evidence
 

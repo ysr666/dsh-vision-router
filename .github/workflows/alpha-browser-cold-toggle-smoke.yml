@@ -1,59 +1,9 @@
-name: Alpha browser cold toggle smoke
+name: Historical DSH 0.1.2-alpha.4 browser regression (manual)
 
+# Retired Host, below DVR 3.2 minimum DSH 0.2.1-rc.5.
+# #387 forensic reproduction is manual-only against immutable v3.1.4-era DVR.
+# The same cold toggle script runs automatically on supported 0.2.1-rc.5.
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'src/lib/vision-model-visibility-boundary-main.js'
-      - 'src/lib/vision-model-visibility-boundary.js'
-      - 'src/lib/client.js'
-      - 'src/lib/client-host-compat-prelude.js'
-      - 'src/lib/guide-vision-toggle-highlight.js'
-      - 'src/lib/remote-settings-risk-confirmation.js'
-      - 'src/lib/settings-client-loader-lifecycle.js'
-      - 'src/lib/settings-factory-lifecycle.js'
-      - 'src/lib/settings-native-card-layout.js'
-      - 'src/lib/v2-settings-ia-integration.js'
-      - 'src/lib/vision-capability-benchmark-client.js'
-      - 'src/lib/vision-exact-check-client.js'
-      - 'src/lib/vision-routing-settings-prelude.js'
-      - 'src/lib/web/**'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'cordis.patch.yml'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'src/lib/vision-model-visibility-boundary-main.js'
-      - 'src/lib/vision-model-visibility-boundary.js'
-      - 'src/lib/client.js'
-      - 'src/lib/client-host-compat-prelude.js'
-      - 'src/lib/guide-vision-toggle-highlight.js'
-      - 'src/lib/remote-settings-risk-confirmation.js'
-      - 'src/lib/settings-client-loader-lifecycle.js'
-      - 'src/lib/settings-factory-lifecycle.js'
-      - 'src/lib/settings-native-card-layout.js'
-      - 'src/lib/v2-settings-ia-integration.js'
-      - 'src/lib/vision-capability-benchmark-client.js'
-      - 'src/lib/vision-exact-check-client.js'
-      - 'src/lib/vision-routing-settings-prelude.js'
-      - 'src/lib/web/**'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'cordis.patch.yml'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/alpha-browser-cold-toggle-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -65,13 +15,15 @@ concurrency:
 
 jobs:
   alpha-browser-cold-toggle:
-    name: alpha.4 real Host + Chromium
+    name: archived alpha.4 Host + Chromium
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout Vision Router
+      - name: Checkout last green pre-retirement Vision Router
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          repository: ysr666/dsh-vision-router
+          ref: fbe230ca04c2e6c0e6b8f318634f94125326268b
           persist-credentials: false
           path: dvr
 
@@ -96,10 +48,10 @@ jobs:
         with:
           version: 11.7.0
 
-      - name: Install Node 22 browser runtime
+      - name: Install Node 24.9 browser runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
           cache: pnpm
           cache-dependency-path: dsh-alpha/pnpm-lock.yaml
 
@@ -121,7 +73,7 @@ jobs:
           [[ "$DSH_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::invalid DSH source SHA"; exit 1; }
           [[ "$LOCK_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH lock hash"; exit 1; }
           [[ "$TREE_SHA" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::invalid DSH build-input hash"; exit 1; }
-          KEY="dsh-web-v4-${RUNNER_OS}-node22-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
+          KEY="dsh-web-v4-${RUNNER_OS}-node24.9-pnpm11.7.0-${DSH_SHA}-${LOCK_SHA}-${TREE_SHA}"
           printf 'key=%s\n' "$KEY" >> "$GITHUB_OUTPUT"
           printf 'Exact DSH build cache key: %s\n' "$KEY"
 

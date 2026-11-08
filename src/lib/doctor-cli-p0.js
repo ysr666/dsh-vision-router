@@ -179,7 +179,20 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
       report.hostCapabilitiesSource = probe.source
       report.hostSupportWindow = DSH_SUPPORT_WINDOW
       report.hostVerificationEvidence = DSH_VERIFICATION_EVIDENCE
-      report.hostSupportAdvice = supportWindowUpgradeAdvice(probe.capabilities)
+      // An old feature-rich Host must not be admitted based on attachments alone.
+      // Multiple profiles with mismatched or absent Host versions stay unknown.
+      const rows = report.platform?.hostPackages ?? []
+      const detected = rows.map((row) => row.packages?.['@deepseek-ai/dsh'])
+      const hostVersion = detected.length > 0 && detected.every((value) =>
+        typeof value === 'string' && value === detected[0])
+        ? detected[0] : undefined
+      report.hostSupportVersionEvidence = {
+        source: hostVersion ? 'installed-profile-package' : 'unverified',
+        version: hostVersion ?? null,
+      }
+      report.hostSupportAdvice = supportWindowUpgradeAdvice(probe.capabilities, {
+        nodeVersion: process.versions.node, hostVersion,
+      })
       io.log(JSON.stringify(report, null, 2))
       return code
     } catch {

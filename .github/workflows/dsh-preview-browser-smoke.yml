@@ -1,66 +1,7 @@
 name: DSH preview browser smoke
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'src/index.js'
-      - 'package.json'
-      - 'src/lib/dsh-support-window.js'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'src/lib/vision-model-visibility-boundary-main.js'
-      - 'src/lib/vision-model-visibility-boundary.js'
-      - 'src/lib/client-host-compat-prelude.js'
-      - 'src/lib/client.js'
-      - 'src/lib/guide-vision-toggle-highlight.js'
-      - 'src/lib/remote-settings-risk-confirmation.js'
-      - 'src/lib/settings-client-loader-lifecycle.js'
-      - 'src/lib/settings-factory-lifecycle.js'
-      - 'src/lib/settings-native-card-layout.js'
-      - 'src/lib/v2-settings-ia-integration.js'
-      - 'src/lib/vision-capability-benchmark-client.js'
-      - 'src/lib/vision-exact-check-client.js'
-      - 'src/lib/vision-routing-settings-prelude.js'
-      - 'src/lib/web/**'
-      - 'src/lib/session-affinity*.ts'
-      - 'src/lib/pi-ai-bridge-wire-compat.js'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-preview-browser-smoke.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'src/index.js'
-      - 'package.json'
-      - 'src/lib/dsh-support-window.js'
-      - 'src/lib/client-presentation-boundary-main.js'
-      - 'src/lib/client-presentation-boundary.js'
-      - 'src/lib/*-client-prelude.js'
-      - 'src/lib/vision-model-visibility-boundary-main.js'
-      - 'src/lib/vision-model-visibility-boundary.js'
-      - 'src/lib/client-host-compat-prelude.js'
-      - 'src/lib/client.js'
-      - 'src/lib/guide-vision-toggle-highlight.js'
-      - 'src/lib/remote-settings-risk-confirmation.js'
-      - 'src/lib/settings-client-loader-lifecycle.js'
-      - 'src/lib/settings-factory-lifecycle.js'
-      - 'src/lib/settings-native-card-layout.js'
-      - 'src/lib/v2-settings-ia-integration.js'
-      - 'src/lib/vision-capability-benchmark-client.js'
-      - 'src/lib/vision-exact-check-client.js'
-      - 'src/lib/vision-routing-settings-prelude.js'
-      - 'src/lib/web/**'
-      - 'src/lib/session-affinity*.ts'
-      - 'src/lib/pi-ai-bridge-wire-compat.js'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-preview-browser-smoke.yml'
   workflow_dispatch:
 
 permissions:

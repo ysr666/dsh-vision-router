@@ -1,36 +1,8 @@
 name: DSH 0.2.1-rc.2 next exact-source validation
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'package.json'
-      - 'cordis.patch.yml'
-      - 'src/lib/**'
-      - 'scripts/dsh-alpha-source-contract.mjs'
-      - 'scripts/dsh-peer-admission-contract.mjs'
-      - 'scripts/dsh-proxy-egress-contract.mjs'
-      - 'scripts/dsh-web-modules-overlay-contract.mjs'
-      - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/ci-heavy-host-impact.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-021-rc2-validation.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'package.json'
-      - 'cordis.patch.yml'
-      - 'src/lib/**'
-      - 'scripts/**'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-021-rc2-validation.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read

@@ -63,5 +63,11 @@ test('RC1 Host Gate validates exactly pinned source across all supported platfor
   for (const script of scripts) assert.ok(readFileSync(path.join(root, script), 'utf8').length > 0, 'missing referenced script: ' + script)
   assert.doesNotMatch(gate,/node-version: 22\.19|dsh-alpha-pin\.mjs read|path: dsh-alpha|working-directory: dsh-alpha/)
   assert.match(alpha, /dsh-alpha-pin\.mjs read/)
-  assert.match(alpha, /node: \[22\.19\.0, 24\.21\.0\]/)
+  assert.doesNotMatch(alpha, /actions\/cache\/(?:restore|save)@/,
+    'floating scheduled Alpha Host source must never touch a trusted shared Actions cache')
+  assert.doesNotMatch(alpha, /^\s*cache:\s*pnpm/m,
+    'floating Alpha Host may not persist a shared pnpm store')
+  assert.doesNotMatch(alpha, /dsh-build-cache/,
+    'all floating Alpha Host builds should execute in fresh job state')
+  assert.match(alpha, /node: \[24\.9\.0, 24\.21\.0\]/)
 })

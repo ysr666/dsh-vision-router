@@ -16,11 +16,10 @@
 // full desktop install. This contract fails in `pnpm test`, and it ships its own
 // negative controls so the checks cannot silently stop checking.
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { apply as applyConnectionGate, classifyHostWebGeneration, validatedTrustedHosts } from '../presets/web-connection-ready/index.mjs'
 
 const PATCH_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -29,11 +28,7 @@ const PATCH_PATH = path.resolve(
 
 const HOST_ROWS = [
   { id: 'modules', name: '@deepseek-ai/dsh-client-modules', inject: ['webServer'] },
-  {
-    id: 'connection',
-    name: '@deepseek-ai/dsh-client-connection',
-    inject: ['webStartup', 'webServer', 'visionRouterWebConnectionReady'],
-  },
+  { id: 'connection', name: '@deepseek-ai/dsh-client-connection', inject: ['webStartup', 'webServer'] },
 ]
 const PLUGIN_ROW = { id: 'vision-router', name: 'dsh-vision-router' }
 
@@ -55,7 +50,7 @@ export function parseBundlePatch(text) {
     const topLevel = line.match(/^- (.*)$/)
     if (topLevel) {
       const rest = topLevel[1]
-      current = { at: index, id: null, name: null, inject: null, disabled: null, inserts: [] }
+      current = { at: index, id: null, name: null, inject: null, disabled: null, inserts: [], keys: [] }
       rows.push(current)
       const inlineId = rest.match(/^id:\s*(\S+)/)
       if (inlineId) current.id = inlineId[1]
@@ -63,6 +58,8 @@ export function parseBundlePatch(text) {
       return
     }
     if (current === null) return
+    const rowKey = !insideInsert && line.match(/^  ([A-Za-z][A-Za-z0-9_-]*):(?:\s|$)/)?.[1]
+    if (rowKey) current.keys.push(rowKey)
     const insertItem = line.match(/^\s+- id:\s*(\S+)/)
     if (insideInsert && insertItem) {
       const item = { at: index, id: insertItem[1], name: null, disabled: null }
@@ -91,6 +88,7 @@ export function parseBundlePatch(text) {
     inject: row.inject ?? [],
     disabled: row.disabled,
     inserts: row.inserts,
+    keys: row.keys,
   }))
 }
 
@@ -115,7 +113,24 @@ export function inspectActivationShim(rows) {
         findings.push(`${expected.id}: activation dependency ${dependency} is missing from inject`)
       }
     }
+    if (expected.id === 'connection') {
+      if (JSON.stringify(row.inject) !== JSON.stringify(expected.inject)) {
+        findings.push('connection: injection must be exactly [webStartup, webServer]')
+      }
+      if (JSON.stringify([...row.keys].sort()) !== JSON.stringify(['inject', 'name'])) {
+        findings.push('connection: only name/inject may be overridden, never Host config or trust')
+      }
+    }
     if (row.disabled === true) findings.push(`${expected.id}: the overlay disables a Host row`)
+  }
+
+  // The only Connection overlay is the expected activation dependency above.
+  // No private ready service and no Host-owned trustedHosts/config overrides.
+  if (list.some((row) => row.inserts.some((item) => item.id === 'vision-router-web-connection-ready'))) {
+    findings.push('retired ready bridge: DVR must not insert the private Connection provider')
+  }
+  if (list.some((row) => row.inject.includes('visionRouterWebConnectionReady'))) {
+    findings.push('retired ready bridge: DVR must not inject the private Connection service')
   }
 
   const insertRow = list.find((row) => row.inserts.some((item) => item.id === PLUGIN_ROW.id))
@@ -147,7 +162,7 @@ export function inspectActivationShim(rows) {
   return findings
 }
 
-test('the shipped bundle patch keeps both activation shims and the recompose re-enable', () => {
+test('the shipped bundle adds only safe Connection ordering and preserves recompose re-enable', () => {
   const findings = inspectActivationShim(parseBundlePatch(readFileSync(PATCH_PATH, 'utf8')))
   assert.deepEqual(findings, [])
 })
@@ -184,71 +199,48 @@ test('the contract fails when the patch disables a Host row', () => {
   assert.ok(findings.some((finding) => /modules/.test(finding)))
 })
 
-test('the contract fails when the identity assertion drifts from the official package', () => {
-  const findings = inspectActivationShim(
-    parseBundlePatch(
-      '- id: modules\n  name: "@deepseek-ai/dsh-client-modules-next"\n  inject: [webServer]\n' +
-        '- id: connection\n  name: "@deepseek-ai/dsh-client-connection"\n  inject: [webRuntime, webServer]\n',
-    ),
-  )
+test('the contract fails when the modules identity assertion drifts', () => {
+  const findings = inspectActivationShim(parseBundlePatch(
+    '- id: modules\n  name: "@deepseek-ai/dsh-client-modules-next"\n  inject: [webServer]\n',
+  ))
   assert.ok(findings.some((finding) => /identity assertion changed/.test(finding)))
 })
 
-test('alpha.2 gate preserves exactly Host Web Startup authorities', () => {
-  const issued = []
-  const ctx = {
-    webServer: { protocol: 'https:' },
-    webStartup: { trustedHosts: ['app.example', '127.0.0.1'] },
-    provide(name, value) { issued.push([name, value]) },
-    inject() { throw new Error('new Host must not request removed webRuntime') },
-  }
-  assert.equal(classifyHostWebGeneration(ctx.webServer), 'startup')
-  applyConnectionGate(ctx)
-  assert.equal(issued.length, 1)
-  assert.equal(issued[0][0], 'visionRouterWebConnectionReady')
-  assert.deepEqual(issued[0][1].trustedHosts, ['app.example', '127.0.0.1'])
-  assert.ok(Object.isFrozen(issued[0][1].trustedHosts))
+test('the contract rejects a second Connection overlay and the retired private ready service', () => {
+  const original = readFileSync(PATCH_PATH, 'utf8')
+  const legacy = original + '\n- id: connection\n  name: "@deepseek-ai/dsh-client-connection"\n  inject: [webStartup, visionRouterWebConnectionReady]\n'
+  const findings = inspectActivationShim(parseBundlePatch(legacy))
+  assert.ok(findings.some((finding) => finding.startsWith('connection:')))
+  assert.ok(findings.some((finding) => finding.startsWith('retired ready bridge:')))
 })
 
-test('old Host gate waits for real webRuntime LAN authorities, never startup-only fallback', () => {
-  let callback
-  let provided
-  const ctx = {
-    webServer: {},
-    webStartup: { trustedHosts: ['declared.example'] },
-    provide() { throw new Error('legacy gate must wait for native webRuntime') },
-    inject(deps, cb) { assert.deepEqual(deps, ['webRuntime']); callback = cb },
-  }
-  assert.equal(classifyHostWebGeneration(ctx.webServer), 'legacy-runtime')
-  applyConnectionGate(ctx)
-  assert.equal(provided, undefined)
-  callback({
-    webRuntime: { trustedHosts: ['192.0.2.5', 'declared.example'] },
-    provide(name, value) { assert.equal(name, 'visionRouterWebConnectionReady'); provided = value },
-  })
-  assert.deepEqual(provided.trustedHosts, ['192.0.2.5', 'declared.example'])
-  assert.notStrictEqual(provided.trustedHosts, ctx.webStartup.trustedHosts)
+test('a ready-bridge insert is rejected without blocking real Vision Router insertion', () => {
+  const original = readFileSync(PATCH_PATH, 'utf8')
+  const legacy = original.replace(
+    '    - id: vision-router\n',
+    '    - id: vision-router-web-connection-ready\n      name: ./presets/web-connection-ready/index.mjs\n    - id: vision-router\n',
+  )
+  assert.ok(inspectActivationShim(parseBundlePatch(legacy))
+    .some((finding) => finding.startsWith('retired ready bridge:')))
 })
-
-test('connection gate refuses unknown Host protocol and malformed trust lists', () => {
-  assert.throws(() => classifyHostWebGeneration({ protocol: 'ws:' }), /unknown Host Web protocol/)
-  assert.throws(() => validatedTrustedHosts(['good', 23]), /trust list is invalid/)
-  assert.throws(() => validatedTrustedHosts(null), /trust list is invalid/)
-})
-
-test('Connection readiness sidecar has its own private package root and no browser client', () => {
-  const source = JSON.parse(readFileSync(new URL('../presets/web-connection-ready/package.json', import.meta.url), 'utf8'))
-  const plugin = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.notEqual(source.name, plugin.name)
-  assert.equal(source.private, true)
-  assert.equal(source.dsh?.client, undefined)
-})
-
-test('vendor YAML retirement keeps real Web Host startup bridge packaged', () => {
+test('the retired private readiness bridge is not distributed or required', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  const entries = readdirSync(new URL('../presets/', import.meta.url))
-  assert.ok(pkg.files.includes('presets'))
-  assert.ok(entries.includes('web-connection-ready'))
-  assert.deepEqual(entries.filter((name) => /\.ya?ml$/i.test(name)), [])
-  assert.match(readFileSync(PATCH_PATH, 'utf8'), /presets\/web-connection-ready\/index\.mjs/)
+  const patch = readFileSync(PATCH_PATH, 'utf8')
+  assert.equal(pkg.files.includes('presets'), false)
+  assert.doesNotMatch(patch, /visionRouterWebConnectionReady|vision-router-web-connection-ready/)
+  assert.match(patch, /- id: connection\s+name: '@deepseek-ai\/dsh-client-connection'\s+inject: \[webStartup, webServer\]/)
+})
+
+test('the activation contract rejects Connection trust/config override and missing webServer', () => {
+  const source = readFileSync(PATCH_PATH, 'utf8')
+  for (const wrong of [
+    source.replace('  inject: [webStartup, webServer]\n', '  inject: [webStartup]\n'),
+    source.replace('  inject: [webStartup, webServer]\n',
+      '  inject: [webStartup, webServer]\n  config:\n    trustedHosts: !!js ctx.webStartup.trustedHosts\n'),
+    source.replace("name: '@deepseek-ai/dsh-client-connection'",
+      "name: '@unexpected/connection'"),
+  ]) {
+    const findings = inspectActivationShim(parseBundlePatch(wrong))
+    assert.ok(findings.some((item) => item.startsWith('connection:')), JSON.stringify(findings))
+  }
 })

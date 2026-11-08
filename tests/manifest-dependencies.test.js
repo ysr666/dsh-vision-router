@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import semver from 'semver'
 import { execFileSync } from 'node:child_process'
 import { readFile, readdir } from 'node:fs/promises'
 
@@ -80,7 +81,6 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/vision-artifact-store.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'artifact/data-boundary Node 22/24 matrix' },
   { path: 'tests/vision-provider-transport.test.js', owner: '.github/workflows/p2-data-boundary.yml', reason: 'provider/data-boundary Node 22/24 matrix' },
 
-  { path: 'tests/minimum-host-settings-persistence.test.js', owner: '.github/workflows/dsh-contract.yml', reason: 'minimum supported Host SettingsProvider persistence contract' },
   { path: 'tests/dsh-support-window.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-entry-composition.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
   { path: 'tests/p3-web-modularization.test.js', owner: '.github/workflows/p3-compat-convergence.yml', reason: 'compatibility convergence Node 22/24 matrix' },
@@ -101,19 +101,44 @@ test('canonical repository source never tracks generated runtime artifacts', () 
   )
 })
 
-test('host-provided DSH packages publish a train-shaped DVR 2.3 Host admission range', async () => {
+test('3.2 Host engine and sole legacy peer gate retire conflicting transitive peers', async () => {
   const pkg = await manifest()
-  const hostPeers = [
+  const hostRange = '>=0.2.1-rc.5 <0.3.0-0'
+  assert.equal(pkg.engines?.dsh, hostRange)
+  for (const name of [
     '@deepseek-ai/dsh-anonymous-user-id',
     '@deepseek-ai/dsh-llm-deepseek',
-  ]
+    '@deepseek-ai/dsh-storage-domain',
+  ]) {
+    assert.equal(pkg.dependencies?.[name], undefined, name + ' must be Host-owned')
+    if (name === '@deepseek-ai/dsh-llm-deepseek') {
+      assert.equal(pkg.peerDependencies?.[name], hostRange,
+        'legacy 0.2.0 Hosts only check DSH peers and must refuse 3.2')
+      assert.equal(pkg.peerDependenciesMeta?.[name]?.optional, true)
+    } else {
+      assert.equal(pkg.peerDependencies?.[name], undefined,
+        name + ' adds peer graph conflicts without providing legacy refusal protection')
+      assert.equal(pkg.peerDependenciesMeta?.[name], undefined)
+    }
+    assert.equal(pkg.devDependencies?.[name], '0.2.1-rc.5')
+  }
+  assert.deepEqual(Object.keys(pkg.peerDependencies || {}).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'])
+})
 
-  for (const name of hostPeers) {
-    assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
-    const peer = pkg.peerDependencies?.[name]
-    assert.equal(peer, '>=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0')
-    assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
-    assert.equal(pkg.devDependencies?.[name], '0.2.0-rc.2', `${name} development fixture must pin exact rc.2`)
+test('a legacy peer-only Host still rejects the retired DSH generations', async () => {
+  const pkg = await manifest()
+  const peers = Object.entries(pkg.peerDependencies || {}).filter(([name]) => name.startsWith('@deepseek-ai/dsh-'))
+  assert.deepEqual(peers, [['@deepseek-ai/dsh-llm-deepseek', pkg.engines.dsh]])
+  // Immutable official 0.2.0-rc.2 Host comparator only checks DSH peers,
+  // using semver.satisfies(version, range, { includePrerelease: true }).
+  const guard = peers[0][1]
+  for (const old of ['0.1.7-rc.2', '0.2.0-rc.2', '0.2.0', '0.2.1-rc.4']) {
+    assert.equal(semver.satisfies(old, guard, { includePrerelease: true }), false,
+      old + ' must be rejected even by the old peer-only Host')
+  }
+  for (const supported of ['0.2.1-rc.5', '0.2.2-alpha.3', '0.2.2-rc.1']) {
+    assert.equal(semver.satisfies(supported, guard, { includePrerelease: true }), true,
+      supported + ' must be admitted when the legacy peer remains')
   }
 })
 
@@ -134,21 +159,12 @@ test('client package graph does not revive the retired dsh-client-runtime row', 
   )
 })
 
-test('host-provided peers are optional so profile installs never warn about missing peers', async () => {
+test('both remaining peers are optional; the DSH peer is a legacy refusal guard', async () => {
   const pkg = await manifest()
-  const optionalPeers = [
-    '@deepseek-ai/dsh-anonymous-user-id',
-    '@deepseek-ai/dsh-llm-deepseek',
-    'sharp',
-  ]
-  for (const name of optionalPeers) {
-    assert.equal(typeof pkg.peerDependencies?.[name], 'string', `${name} must remain a peerDependency`)
-    assert.equal(
-      pkg.peerDependenciesMeta?.[name]?.optional,
-      true,
-      `${name} must be marked optional in peerDependenciesMeta`,
-    )
-  }
+  assert.deepEqual(Object.keys(pkg.peerDependenciesMeta || {}).sort(), ['@deepseek-ai/dsh-llm-deepseek', 'sharp'])
+  assert.equal(pkg.peerDependenciesMeta['@deepseek-ai/dsh-llm-deepseek'].optional, true)
+  assert.equal(typeof pkg.peerDependencies.sharp, 'string')
+  assert.equal(pkg.peerDependenciesMeta.sharp.optional, true)
 })
 
 test('development sharp is patched without raising the supported Host peer floor', async () => {
@@ -332,4 +348,30 @@ test('large-image stress policy cannot regress to a one-off development branch g
 test('Dependabot maintains pinned GitHub Actions references', async () => {
   const config = await readFile(new URL('../.github/dependabot.yml', import.meta.url), 'utf8')
   assert.match(config, /package-ecosystem:\s*"github-actions"/)
+})
+
+
+test('3.2 new DSH Host fixture avoids the vulnerable transitive zod 4.4.3', async () => {
+  const [workspace, lock] = await Promise.all([
+    readFile(new URL('../pnpm-workspace.yaml', import.meta.url), 'utf8'),
+    readFile(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8'),
+  ])
+  assert.match(workspace, /^  zod: 4\.6\.7$/m)
+  assert.match(lock, /zod@4\.6\.7:/)
+  assert.doesNotMatch(lock, /zod@4\.4\.3|zod: 4\.4\.3/,
+    'do not reintroduce vulnerable GHSA-mrhx-c7xc-m3w5 via dev DSH Host fixtures')
+})
+
+test('floating Alpha Host CI cannot restore or seed a shared build cache', async () => {
+  const gate = await readFile(new URL('../.github/workflows/dsh-alpha-settings-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(gate, /schedule:/)
+  assert.match(gate, /workflow_dispatch:/)
+  assert.match(gate, /ref: 05b1cae8db6e674c5685101494d4eec24652424a/)
+  assert.doesNotMatch(gate, /ref: \$\{\{ steps\.pin\.outputs\.sha \}\}/)
+  assert.equal(gate.split('Reject an Alpha pin change without a reviewed immutable checkout update').length - 1, 3)
+  assert.doesNotMatch(gate, /actions\/cache\/(?:restore|save)@|dsh-build-cache|dsh-cache-key/)
+  assert.doesNotMatch(gate, /^\s*cache:\s*pnpm/m)
+  assert.match(gate, /- name: Build exact macOS Desktop runtime/)
+  assert.match(gate, /- name: Build the alpha Host runtime/)
+  assert.match(gate, /- name: Build exact Desktop runtime/)
 })

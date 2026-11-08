@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from './dsh-desktop-toggle-stability.mjs'
+import { resolveCiElectronBinary } from './ci-electron-download-retry.mjs'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -31,7 +32,7 @@ const { DESKTOP_HOST_PROTOCOL_VERSION } = await importDsh('apps/desktop/src/host
 
 const desktopRequire = createRequire(join(dshRoot, 'apps/desktop/package.json'))
 const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
-const electron = desktopRequire('electron')
+const electron = await resolveCiElectronBinary(desktopRequire)
 const { chromium } = webRequire('playwright')
 
 function inspectRuntimePackage(projectRoot, packageName) {

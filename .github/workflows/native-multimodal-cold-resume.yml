@@ -1,9 +1,7 @@
 name: Native multimodal cold resume
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

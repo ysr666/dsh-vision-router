@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       package_tarball: ${{ steps.prepack.outputs.tarball }}
+      npm_dist_tag: ${{ steps.channel.outputs.dist_tag }}
       package_file_count: ${{ steps.prepack.outputs.file_count }}
       package_sha1: ${{ steps.prepack.outputs.sha1 }}
       package_sha256: ${{ steps.prepack.outputs.sha256 }}
@@ -50,7 +51,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version: '24.21.0'
           registry-url: 'https://registry.npmjs.org/'
           cache: pnpm
 
@@ -135,6 +136,15 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify release distribution channel before irreversible tag
+        id: channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          DIST_TAG="$(node scripts/release-channel.mjs "$VERSION")"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build canonical package artifacts
         run: pnpm build
@@ -290,6 +300,7 @@ jobs:
       artifact-metadata: write
     outputs:
       release_version: ${{ steps.identity.outputs.version }}
+      release_dist_tag: ${{ needs.verify.outputs.npm_dist_tag }}
       package_tarball: ${{ steps.package.outputs.tarball }}
       package_file_count: ${{ steps.package.outputs.file_count }}
       package_sha1: ${{ steps.package.outputs.sha1 }}
@@ -301,6 +312,7 @@ jobs:
       NPM_CONFIG_IGNORE_SCRIPTS: 'true'
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_SHA: ${{ inputs.target_sha }}
+      RELEASE_DIST_TAG: ${{ needs.verify.outputs.npm_dist_tag }}
       PRETAG_TARBALL: ${{ needs.verify.outputs.package_tarball }}
       PRETAG_FILE_COUNT: ${{ needs.verify.outputs.package_file_count }}
       PRETAG_SHA1: ${{ needs.verify.outputs.package_sha1 }}
@@ -423,7 +435,13 @@ jobs:
       - name: Publish exact tarball to npm with trusted OIDC
         if: steps.registry.outputs.already_published == 'false'
         shell: bash
-        run: npm publish "$PACKAGE_TARBALL" --provenance --access public
+        run: |
+          set -euo pipefail
+          [ "$RELEASE_DIST_TAG" = "$(node scripts/release-channel.mjs "$RELEASE_VERSION")" ] || {
+            echo "::error::release npm dist-tag no longer matches the verified version"
+            exit 1
+          }
+          npm publish "$PACKAGE_TARBALL" --tag "$RELEASE_DIST_TAG" --provenance --access public
 
       - name: Verify npm registry tarball identity
         env:
@@ -496,6 +514,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_SHA: ${{ inputs.target_sha }}
+      RELEASE_DIST_TAG: ${{ needs.publish.outputs.release_dist_tag }}
       RELEASE_VERSION: ${{ needs.publish.outputs.release_version }}
       PACKAGE_TARBALL: ${{ needs.publish.outputs.package_tarball }}
       PACKAGE_FILE_COUNT: ${{ needs.publish.outputs.package_file_count }}
@@ -618,11 +637,11 @@ jobs:
           # publish leaves a draft that can be deleted and retried, never a
           # published release that is missing or mismatching assets.
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" \
-              --verify-tag \
-              --draft \
-              --title "$RELEASE_TAG" \
-              --notes-file release-notes.md
+            RELEASE_CREATE_FLAGS=(--verify-tag --draft --title "$RELEASE_TAG" --notes-file release-notes.md)
+            if [ "$RELEASE_DIST_TAG" != "latest" ]; then
+              RELEASE_CREATE_FLAGS+=(--prerelease --latest=false)
+            fi
+            gh release create "$RELEASE_TAG" "${RELEASE_CREATE_FLAGS[@]}"
           fi
 
           for asset in "$PACKAGE_TARBALL" "$PROVENANCE_NAME" "SHA256SUMS.txt"; do
@@ -660,7 +679,15 @@ jobs:
           # Publish only after every asset is attached and verified. Once
           # published the release is immutable, so a draft is the last state in
           # which a retry can still change anything.
-          gh release edit "$RELEASE_TAG" --draft=false --latest
+          if [ "$RELEASE_DIST_TAG" = "latest" ]; then
+            gh release edit "$RELEASE_TAG" --draft=false --latest
+          else
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease
+            [ "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq '.isPrerelease')" = "true" ] || {
+              echo "::error::pre-release $RELEASE_TAG must not be presented as a stable GitHub Release"
+              exit 1
+            }
+          fi
           [ "$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft')" = "false" ] || {
             echo "::error::GitHub Release $RELEASE_TAG is still a draft after publish"
             exit 1

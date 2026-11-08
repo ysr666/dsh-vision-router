@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.1.5 stability patch:** Bound canceled visual streams and empty-result caching (#798–#799), preserve fallback time across multiple backends (#800), classify and bound repeated HTTP 5xx failures including silent OCR/grounding transports (#804, #805, #810), fix picker-selected visual model dispatch (#801), correct misleading progressive Vision activation messages across deferred Host Fibers (#809), and add read-only Host-core dependency warnings (#802/#797). **The original #791 550/503 and #792 Windows screenshot remain unverified field incidents.** No settings, permission, privacy or Node/DSH support-floor change. See [v3.1.5 notes](docs/releases/v3.1.5.md). Confirm publication at [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest) or npm.
+> **v3.2.0-rc.0 optional Host-retirement prerelease track (not stable):** Requires DSH >=0.2.1-rc.5 and Node >=24.9.0, keeps Connection authentication/trustedHosts owned by DSH and retains only the minimal webServer startup-order patch. **Do not upgrade a working profile solely to try this RC.** First use the read-only upgrade preflight and separately verify historical Session compatibility. The RC is installable **only if** npm `next` and a matching immutable [GitHub prerelease](https://github.com/ysr666/dsh-vision-router/releases) have both been published; npm `latest` remains the stable channel. See [v3.2.0-rc.0 release notes](docs/releases/v3.2.0-rc.0.md).
 
 ## Start here
 
@@ -422,8 +422,8 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host support policy:** DVR 3.0.x supports DSH 0.1.x continuously from `0.1.5-rc.1` (current stable evidence: `0.1.5-rc.3`) and supports the 0.2.x train from verified `0.2.0-rc.2`. Exact `0.2.0-rc.2` is also the ordinary 3.0 development Host. Pre-0.1.5 Hosts are unsupported, and DVR no longer publishes the older jagged 0.1.x exception list. Runtime behavior remains capability-based. See [DSH Host support window](docs/architecture/dsh-support-window.md).
-- Node ≥ 22 (host side).
+- **DSH Host policy (unreleased DVR 3.2 candidate):** Minimum DSH 0.2.1-rc.5; currently recommended DSH 0.2.2-rc.1. DSH 0.1.x, 0.2.0 and earlier 0.2.1 prereleases are retired. DSH owns native Connection authentication, routing and trustedHosts. Older sessions, attachments and Settings data remain readable. See [new Host support window](docs/architecture/dsh-support-window.md) and [retirement plan](docs/architecture/dvr32-host-retirement.md).
+- Node.js >=24.9.0 (Host side; Node 22 is retired).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
 - Desktop capture is opt-in. Windows and macOS use OS-provided capture facilities; Linux needs ImageMagick `import` or `scrot` and a capturable desktop session (Wayland support depends on the environment).

@@ -1,40 +1,7 @@
 name: DSH 0.1.7 real Host smoke
-
+# Archived DVR 3.1-era Host validation. These retired versions are no longer
+# automatic CI/release gates for DVR 3.2. The file remains historical evidence.
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'src/index.js'
-      - 'cordis.patch.yml'
-      - 'package.json'
-      - 'src/lib/**'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/ci-heavy-host-impact.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-017-real-host-smoke.yml'
-      - 'src/index.js'
-      - 'cordis.patch.yml'
-      - 'package.json'
-      - 'src/lib/**'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/ci-heavy-host-impact.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
   workflow_dispatch:
 
 permissions:

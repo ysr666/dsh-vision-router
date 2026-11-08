@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { doctorProfiles, hasUtf8Bom, inspectProfileManifest, inspectProfileWorkspace, resolveDshHome } from '../lib/doctor.js'
+import { doctorProfiles, hasUtf8Bom, inspectProfileManifest, inspectProfilePatch, inspectProfileWorkspace, resolveDshHome } from '../lib/doctor.js'
 
 function materializeVisionRouterIfDeclared(dir, manifestText) {
   let text = Buffer.isBuffer(manifestText) ? manifestText : Buffer.from(String(manifestText))
@@ -153,4 +153,77 @@ test('doctorProfiles stays healthy with bare names or no workspace file', () => 
   const none = fixture(validManifest)
   assert.equal(doctorProfiles({ dshHome: none.home, profile: 'web' }).ok, true)
   assert.equal(doctorProfiles({ dshHome: none.home, profile: 'web' }).profiles[0].workspace.exists, false)
+})
+
+
+test('DVR 3.2 Doctor warns about a profile-owned Connection override without changing it', () => {
+  const { home, dir } = fixture(validManifest)
+  const patchPath = path.join(dir, 'cordis.patch.yml')
+  const original = [
+    '# - id: connection (historical comment; must not count)',
+    '- id: connection',
+    '  inject: [webStartup, visionRouterWebConnectionReady]',
+    '  config:',
+    '    trustedHosts: !!js ctx.webRuntime.trustedHosts',
+    '- insert:',
+    '    - id: vision-router-web-connection-ready',
+    '      name: ./presets/web-connection-ready/index.mjs',
+    '',
+  ].join('\n')
+  writeFileSync(patchPath, original)
+  const inspected = inspectProfilePatch(patchPath)
+  assert.equal(inspected.connectionOverrideRows, 1)
+  assert.equal(inspected.retiredReadyBridgeRows, 1)
+  assert.equal(inspected.retiredReadyInjectionRows, 1)
+  assert.equal(inspected.manualVisionRouter, false)
+  const report = doctorProfiles({ dshHome: home, profile: 'web', fix: true })
+  assert.equal(report.ok, true, 'an advisory must not destructively reject a healthy profile')
+  assert.equal(report.profiles[0].installation.warnings.some((text) => text.includes('Profile-owned Connection override')), true)
+  assert.equal(report.profiles[0].installation.warnings.some((text) => text.includes('retired visionRouterWebConnectionReady')), true)
+  assert.equal(readFileSync(patchPath, 'utf8'), original, 'Doctor fix must not edit user trust or connection patches')
+})
+
+test('DVR 3.2 Doctor counts only structural override rows and supports multiline injection', () => {
+  const { dir } = fixture(validManifest)
+  const patchPath = path.join(dir, 'cordis.patch.yml')
+  writeFileSync(patchPath, [
+    '# - id: connection',
+    '#   inject: [visionRouterWebConnectionReady]',
+    '- id: harmless-plugin',
+    '  name: harmless',
+    '  config:',
+    '    note: "connection is not an id here"',
+    '  inject:',
+    '    - webStartup',
+    '    - visionRouterWebConnectionReady',
+    '- insert:',
+    '    - id: alternate-ready',
+    '      name: ./presets/web-connection-ready/index.mjs',
+    '',
+  ].join('\n'))
+  const inspected = inspectProfilePatch(patchPath)
+  assert.equal(inspected.connectionOverrideRows, 0)
+  assert.equal(inspected.retiredReadyBridgeRows, 1)
+  assert.equal(inspected.retiredReadyInjectionRows, 1)
+  assert.equal(inspected.visionRouterRows, 0)
+  writeFileSync(patchPath, [
+    '# - id: connection',
+    '  # inject: [visionRouterWebConnectionReady]',
+    '- id: harmless',
+    '  config:',
+    '    value: "visionRouterWebConnectionReady is part of a string, not an injection"',
+    '',
+  ].join('\n'))
+  const clean = inspectProfilePatch(patchPath)
+  assert.equal(clean.connectionOverrideRows, 0)
+  assert.equal(clean.retiredReadyBridgeRows, 0)
+  assert.equal(clean.retiredReadyInjectionRows, 0)
+})
+
+test('DVR 3.2 Doctor patch fields are defined when no profile patch exists', () => {
+  const { dir } = fixture(validManifest)
+  const missing = inspectProfilePatch(path.join(dir, 'cordis.patch.yml'))
+  assert.equal(missing.connectionOverrideRows, 0)
+  assert.equal(missing.retiredReadyBridgeRows, 0)
+  assert.equal(missing.retiredReadyInjectionRows, 0)
 })

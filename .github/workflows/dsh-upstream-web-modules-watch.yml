@@ -71,7 +71,7 @@ jobs:
       - name: Install Node contract runtime
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.19.0
+          node-version: 24.9.0
           cache: pnpm
           cache-dependency-path: dsh/pnpm-lock.yaml
 
@@ -95,9 +95,9 @@ jobs:
           DSH_MODULES_WEBSERVER_EXPECTED: shim-required
         run: pnpm exec tsx ../dvr/scripts/dsh-web-modules-overlay-contract.mjs
 
-      - name: Require connection -> webServer overlay to remain necessary and non-destructive
+      - name: Require Host-owned Connection config with only DVR webServer activation overlay
         working-directory: dsh
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
-          DSH_CONNECTION_WEBSERVER_EXPECTED: shim-required
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs

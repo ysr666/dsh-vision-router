@@ -4,144 +4,109 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export const WEB_CONNECTION_ROW_ID = 'connection'
 export const WEB_CONNECTION_PACKAGE = '@deepseek-ai/dsh-client-connection'
-export const WEB_RUNTIME_SERVICE = 'webRuntime'
 export const WEB_STARTUP_SERVICE = 'webStartup'
-export const WEB_SERVER_SERVICE = 'webServer'
-export const READY_SERVICE = 'visionRouterWebConnectionReady'
-export const READY_ENTRY = 'vision-router-web-connection-ready'
-export const READY_ENTRY_MODULE = './presets/web-connection-ready/index.mjs'
+export const RETIRED_READY_SERVICE = 'visionRouterWebConnectionReady'
+export const RETIRED_READY_ENTRY = 'vision-router-web-connection-ready'
 
-function result(status, reason, row, inject = [], generation) {
-  return Object.freeze({ status, reason, row, inject: Object.freeze([...inject]), generation })
+function result(status, reason, row, inject = []) {
+  return Object.freeze({ status, reason, row, inject: Object.freeze([...inject]) })
 }
 
+/** Exact-source guard for the new DSH 0.2.1-rc.5+ support floor. */
 export function classifyWebConnectionRows(rows) {
-  const list = Array.isArray(rows) ? rows : []
-  const matches = list.filter((row) => row && row.id === WEB_CONNECTION_ROW_ID)
+  const matches = (Array.isArray(rows) ? rows : []).filter((row) => row?.id === WEB_CONNECTION_ROW_ID)
   if (matches.length !== 1) {
-    return result('dangerous-drift',
-      `expected exactly one official Web ${WEB_CONNECTION_ROW_ID} row, found ${matches.length}`,
-      matches[0])
+    return result('dangerous-drift', `expected one official Connection row, found ${matches.length}`)
   }
   const row = matches[0]
   if (row.name !== WEB_CONNECTION_PACKAGE) {
-    return result('dangerous-drift',
-      `official Web ${WEB_CONNECTION_ROW_ID} row changed identity to ${String(row.name)}`, row)
+    return result('dangerous-drift', 'official Connection package identity changed', row)
   }
-  if (!Array.isArray(row.inject) || row.inject.some((value) => typeof value !== 'string' || value === '')) {
-    return result('dangerous-drift', 'official Web connection inject field is no longer a string array', row)
+  if (!Array.isArray(row.inject) || row.inject.some((name) => typeof name !== 'string' || !name)) {
+    return result('dangerous-drift', 'official Connection injection set is invalid', row)
   }
   const inject = [...new Set(row.inject)]
-  if (inject.includes(WEB_SERVER_SERVICE)) {
-    // webServer alone does not preserve the Host's trust-generation owner.
-    // Retire only when the official row also names a recognized source.
-    if (!inject.includes(WEB_RUNTIME_SERVICE) && !inject.includes(WEB_STARTUP_SERVICE)) {
-      return result('dangerous-drift', 'official Connection declares webServer without native trust source',
-        row, inject)
-    }
-    return result('retire-ready', 'official Connection now injects webServer; review removal of DVR bridge',
-      row, inject)
+  if (inject.includes('webRuntime')) {
+    return result('retired-host', 'legacy webRuntime Host is below the DVR 3.2 floor', row, inject)
   }
-  const generation = inject.length === 1 && inject[0] === WEB_RUNTIME_SERVICE
-    ? 'legacy-runtime'
-    : inject.length === 1 && inject[0] === WEB_STARTUP_SERVICE
-      ? 'startup' : undefined
-  if (!generation) {
-    return result('dangerous-drift',
-      `unreviewed official Web Connection dependencies: ${inject.join(', ')}`, row, inject)
+  if (!inject.includes(WEB_STARTUP_SERVICE) ||
+      inject.some((name) => name !== 'webStartup' && name !== 'webServer')) {
+    return result('dangerous-drift', 'unreviewed Connection injection dependencies', row, inject)
   }
-  // Include's patch replaces the entire config, not just trustedHosts. Reject
-  // new Host-owned settings instead of silently dropping them.
-  const keys = Object.keys(row.config ?? {})
-  const expectedExpression = generation === 'legacy-runtime'
-    ? 'ctx.webRuntime.trustedHosts'
-    : 'ctx.webStartup.trustedHosts'
-  const sourceExpression = row.config?.trustedHosts?.__jsExpr
-  if (keys.length !== 1 || keys[0] !== 'trustedHosts'
-    || sourceExpression !== expectedExpression) {
-    return result('dangerous-drift', 'official Connection trust configuration changed',
-      row, inject, generation)
+  const config = row.config
+  if (!config || Object.keys(config).length !== 1 ||
+      config.trustedHosts?.__jsExpr !== 'ctx.webStartup.trustedHosts') {
+    return result('dangerous-drift', 'official Connection trusted-host ownership changed', row, inject)
   }
-  return result('shim-required',
-    `official Connection uses ${generation}; DVR readiness gate preserves this Host-owned trust list`,
-    row, inject, generation)
+  return result('native-connection', 'official Host owns Connection lifecycle and trust', row, inject)
 }
 
 export async function inspectDshWebConnectionOverlay(dshRoot) {
-  const root = path.resolve(dshRoot || '')
   if (!dshRoot) throw new Error('DSH_SOURCE_ROOT is required')
+  const root = path.resolve(dshRoot)
   const appBootUrl = pathToFileURL(path.join(root, 'packages/boot/app-boot/src/index.ts')).href
   const profileUrl = pathToFileURL(path.join(root, 'packages/boot/app-boot/src/profile.ts')).href
   const [{ loadOverlayPatches }, { composeEntries }] = await Promise.all([
     import(appBootUrl), import(profileUrl),
   ])
-  const patches = loadOverlayPatches('dvr connection/webServer overlay contract',
+  const patches = loadOverlayPatches('DSH native Connection contract',
     path.join(root, 'packages/bundle/web-app/cordis.patch.yml'))
-  const insertedRows = patches.flatMap((patch) => Array.isArray(patch?.insert) ? patch.insert : [])
-  const classified = classifyWebConnectionRows(insertedRows)
-  if (classified.status !== 'shim-required') return classified
+  const officialRows = patches.flatMap((item) => Array.isArray(item?.insert) ? item.insert : [])
+  const classified = classifyWebConnectionRows(officialRows)
+  if (classified.status !== 'native-connection') return classified
 
   const dvrRoot = path.resolve(fileURLToPath(new URL('../', import.meta.url)))
-  const dvrPatches = loadOverlayPatches('dvr connection/webServer overlay contract',
+  const dvrPatches = loadOverlayPatches('DVR Connection retirement contract',
     path.join(dvrRoot, 'cordis.patch.yml'))
+  const flattened = dvrPatches.flatMap((item) => [
+    item,
+    ...(Array.isArray(item?.insert) ? item.insert : []),
+  ])
+  const connectionPatches = flattened.filter((item) => item?.id === WEB_CONNECTION_ROW_ID)
+  if (connectionPatches.length !== 1) {
+    return result('dangerous-drift', 'DVR must have exactly one minimal Connection activation overlay')
+  }
+  const ordering = connectionPatches[0]
+  if (ordering.name !== WEB_CONNECTION_PACKAGE
+      || !isDeepStrictEqual(ordering.inject, ['webStartup', 'webServer'])
+      || !isDeepStrictEqual(Object.keys(ordering).sort(), ['id', 'inject', 'name'])) {
+    return result('dangerous-drift',
+      'Connection overlay may update inject only; Host owns trustedHosts and all config')
+  }
+  if (flattened.some((item) => item?.id === RETIRED_READY_ENTRY
+      || item?.name === RETIRED_READY_ENTRY
+      || item?.inject?.includes?.(RETIRED_READY_SERVICE))) {
+    return result('dangerous-drift', 'DVR resurrected retired private Connection/ready bridge')
+  }
+
   const composed = composeEntries([patches, dvrPatches])
-  const effective = composed.find((row) => row?.id === WEB_CONNECTION_ROW_ID)
-  if (!effective) {
-    return result('dangerous-drift', 'DVR overlay removed the official Web Connection row')
+  const matches = composed.filter((item) => item?.id === WEB_CONNECTION_ROW_ID)
+  const expected = { ...classified.row, inject: ['webStartup', 'webServer'] }
+  if (matches.length !== 1 || !isDeepStrictEqual(matches[0], expected)) {
+    return result('dangerous-drift',
+      'composed Connection differs beyond required webServer injection; Host trust may be compromised')
   }
-  const { inject: officialInject, config: officialConfig, ...officialStable } = classified.row
-  const { inject: effectiveInject, config: effectiveConfig, ...effectiveStable } = effective
-  if (!isDeepStrictEqual(effectiveStable, officialStable)) {
-    return result('dangerous-drift', 'DVR overlay changed official Connection fields other than inject/config',
-      effective, effectiveInject, classified.generation)
+  if (composed.some((item) => item?.id === RETIRED_READY_ENTRY)) {
+    return result('dangerous-drift', 'retired readiness bridge still present')
   }
-  if (!isDeepStrictEqual(effectiveInject, [WEB_STARTUP_SERVICE, WEB_SERVER_SERVICE, READY_SERVICE])) {
-    return result('dangerous-drift', 'DVR Connection required service list drifted',
-      effective, effectiveInject, classified.generation)
-  }
-  if (!isDeepStrictEqual(effectiveConfig,
-    { trustedHosts: { __jsExpr: 'ctx.visionRouterWebConnectionReady.trustedHosts' } })) {
-    return result('dangerous-drift', 'DVR must pass only the private gate Host-owned trust list',
-      effective, effectiveInject, classified.generation)
-  }
-  if (officialConfig === undefined || Object.keys(officialConfig).length !== 1) {
-    return result('dangerous-drift', 'official Connection config expanded after classification',
-      effective, effectiveInject, classified.generation)
-  }
-  const gates = composed.filter((row) => row?.id === READY_ENTRY)
-  // loadOverlayPatches anchors relative insert specifiers beside the actual
-  // bundle patch; comparing to the raw YAML string would reject correct Hosts.
-  const expectedGateUrl = pathToFileURL(path.join(dvrRoot, 'presets/web-connection-ready/index.mjs')).href
-  if (gates.length !== 1 || gates[0].name !== expectedGateUrl) {
-    return result('dangerous-drift', 'private readiness bridge missing or duplicated',
-      effective, effectiveInject, classified.generation)
-  }
-  return classified
+  return result('minimal-connection-ordering',
+    'Host owns Connection config/trustedHosts; DVR adds only webServer activation', matches[0], matches[0].inject)
 }
 
 async function main() {
-  const dshRoot = String(process.env.DSH_SOURCE_ROOT || '').trim()
-  const expected = String(process.env.DSH_CONNECTION_WEBSERVER_EXPECTED || '').trim()
-  const inspected = await inspectDshWebConnectionOverlay(dshRoot)
+  const inspected = await inspectDshWebConnectionOverlay(process.env.DSH_SOURCE_ROOT)
+  const expected = String(process.env.DSH_CONNECTION_ORDERING_EXPECTED || '').trim()
   const payload = {
-    ok: inspected.status !== 'dangerous-drift' && (!expected || inspected.status === expected),
-    status: inspected.status,
-    expected: expected || undefined,
-    reason: inspected.reason,
-    inject: inspected.inject,
-    generation: inspected.generation,
+    ok: inspected.status === 'minimal-connection-ordering' && (!expected || inspected.status === expected),
+    status: inspected.status, expected: expected || undefined,
+    reason: inspected.reason, inject: inspected.inject,
   }
   console.log(JSON.stringify(payload))
-  if (inspected.status === 'dangerous-drift') {
-    throw new Error(`DSH Web connection compatibility overlay is unsafe: ${inspected.reason}`)
-  }
-  if (expected && inspected.status !== expected) {
-    if (inspected.status === 'retire-ready') {
-      throw new Error(`DSH Web now owns connection -> webServer; retire DVR's compatibility overlay before admitting this Host train (${inspected.reason})`)
-    }
-    throw new Error(`expected DSH Web connection state ${expected}, got ${inspected.status}: ${inspected.reason}`)
+  if (!payload.ok) {
+    throw new Error(`DSH Connection Host retirement gate: ${inspected.reason}`)
   }
 }
 
-const invoked = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
+const invoked = process.argv[1] && path.resolve(process.argv[1]) ===
+  path.resolve(fileURLToPath(import.meta.url))
 if (invoked) await main()

@@ -202,7 +202,7 @@ test('every PR-triggered workflow triggers on the repo files it executes', async
 })
 
 const PRODUCT_GATES = [
-  'alpha-browser-cold-toggle-smoke.yml',
+  'dsh-021-rc5-validation.yml',
   'browser-p1-acceptance.yml',
   'dsh-alpha-source-contract.yml',
 ]

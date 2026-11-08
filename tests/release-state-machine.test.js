@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { releaseDistTag } from '../scripts/release-channel.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const STUB = path.join(ROOT, 'tests/fixtures/registry-fetch-stub.mjs')
@@ -42,6 +43,34 @@ function runCli(args, { scenario, env = {} } = {}) {
 const visible = (sha1) => ({ status: 200, body: { name: 'dsh-vision-router', version: '2.3.0', dist: { shasum: sha1 } } })
 const SHA = 'a'.repeat(40)
 const OTHER = 'b'.repeat(40)
+
+test('release channel maps reviewed semver classes but refuses unreviewed prereleases', () => {
+  assert.equal(releaseDistTag('3.1.4'), 'latest')
+  assert.equal(releaseDistTag('3.2.0-rc.0'), 'next')
+  assert.equal(releaseDistTag('3.2.0-rc.5'), 'next')
+  assert.equal(releaseDistTag('3.2.0-alpha.1'), 'alpha')
+  for (const unreviewed of ['3.2.0-beta.1', '3.2.0-rc', '3.2.0-preview.3', '3.2.0-rc.0+build', 'garbage', 'v3.2.0']) {
+    assert.throws(() => releaseDistTag(unreviewed), /unreviewed|noncanonical|invalid/, unreviewed)
+  }
+})
+
+test('release workflow uses Node24 and keeps prereleases off default npm/GitHub latest', () => {
+  const workflow = readFileSync(WORKFLOW, 'utf8')
+  const verify = workflow.slice(workflow.indexOf('  verify:'), workflow.indexOf('  tag:', workflow.indexOf('  verify:') + 1))
+  const publish = workflow.slice(workflow.indexOf('  publish:'), workflow.indexOf('  github-release:'))
+  const release = workflow.slice(workflow.indexOf('  github-release:'))
+  assert.ok(verify.includes("node-version: '24.21.0'"))
+  assert.ok(!verify.includes("node-version: '22'"))
+  assert.ok(verify.includes('Verify release distribution channel before irreversible tag'))
+  assert.ok(verify.includes('node scripts/release-channel.mjs'))
+  assert.ok(verify.includes('npm_dist_tag: ' + '$' + '{{ steps.channel.outputs.dist_tag }}'))
+  assert.ok(publish.includes('RELEASE_DIST_TAG: ' + '$' + '{{ needs.verify.outputs.npm_dist_tag }}'))
+  assert.ok(publish.includes('npm publish "$PACKAGE_TARBALL" --tag "$RELEASE_DIST_TAG" --provenance --access public'))
+  assert.ok(release.includes('RELEASE_CREATE_FLAGS+=(--prerelease --latest=false)'))
+  assert.ok(release.includes('gh release edit "$RELEASE_TAG" --draft=false --prerelease'))
+  assert.ok(release.includes('gh release edit "$RELEASE_TAG" --draft=false --latest'))
+  assert.ok(release.includes('--json isPrerelease --jq'))
+})
 
 test('release state: an unpublished version permits the publish (probe=false)', () => {
   const run = runCli(['probe', '2.3.0', SHA], { scenario: [{ status: 404 }] })
@@ -132,7 +161,8 @@ test('release workflow keeps the draft -> attach -> verify -> publish ordering',
   assert.ok(createIndex > 0 && uploadIndex > createIndex, 'the release must be created before assets are attached')
   assert.ok(verifyIndex > uploadIndex, 'attached assets must be verified after upload')
   assert.ok(publishIndex > verifyIndex, 'the release may only be published after asset verification')
-  assert.match(workflow.slice(createIndex, uploadIndex), /--draft/, 'the release must start as a draft')
+  assert.ok(workflow.slice(Math.max(0, createIndex - 450), createIndex).includes('--draft'),
+    'the release must start as a draft, including when flags are assembled before gh release create')
   assert.match(workflow.slice(uploadIndex, verifyIndex), /--clobber/, 're-running must be able to replace assets')
   assert.match(workflow, /gh release view "\$RELEASE_TAG" >\/dev\/null 2>&1/, 'an existing draft must be reused on re-run')
 })

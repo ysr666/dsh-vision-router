@@ -1,4 +1,4 @@
-name: Adversarial compatibility hardening
+name: DVR 3.2 capture and adversarial image regressions
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify browser-side BMP decode budget and existing clipboard behavior
@@ -48,7 +48,7 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -69,7 +69,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
+          node-version: '24.9.0'
       # The package no longer commits its build output (sources live in src/ and
       # build into lib/), so this pnpm-free Windows smoke takes the artifacts from
       # the build job instead of installing a package manager in a 5-minute job.
@@ -93,104 +93,10 @@ jobs:
           version: 11.20.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '24'
+          node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Install X11 screenshot runtime
         run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick scrot
       - name: Exercise the real Linux root-display capture
         run: xvfb-run -a node --test tests/linux-desktop-screenshot-runtime.test.js
-
-  preview-host-contract:
-    name: DSH ${{ matrix.dsh }} / Node ${{ matrix.node }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dsh: ['0.1.5-rc.3', '0.1.7-rc.2']
-        node: ['22', '24']
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11.20.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: ${{ matrix.node }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Pack Vision Router
-        run: |
-          mkdir -p tmp-pack
-          pnpm pack --pack-destination tmp-pack
-      - name: Install isolated release Host family
-        shell: node {0}
-        env:
-          DSH_VERSION: ${{ matrix.dsh }}
-        run: |
-          const fs = require('node:fs')
-          const path = require('node:path')
-          const { spawnSync } = require('node:child_process')
-
-          const tgz = fs.readdirSync('tmp-pack').find((name) => name.endsWith('.tgz'))
-          if (!tgz) throw new Error('packed plugin tarball not found')
-          const tarball = path.resolve('tmp-pack', tgz).replaceAll('\\', '/')
-          const v = process.env.DSH_VERSION
-          const hostDir = path.join(
-            process.env.RUNNER_TEMP,
-            `dvr-release-${v}-node-${process.versions.node}`,
-          )
-          fs.rmSync(hostDir, { recursive: true, force: true })
-          fs.mkdirSync(hostDir, { recursive: true })
-          fs.writeFileSync(path.join(hostDir, 'package.json'), JSON.stringify({
-            private: true,
-            type: 'module',
-            packageManager: 'pnpm@11.20.0',
-            dependencies: {
-              'dsh-vision-router': `file:${tarball}`,
-              '@deepseek-ai/dsh-anonymous-user-id': v,
-              '@deepseek-ai/dsh-attachment': v,
-              '@deepseek-ai/dsh-attachment-local': v,
-              '@deepseek-ai/dsh-llm': v,
-              '@deepseek-ai/dsh-llm-deepseek': v,
-              '@deepseek-ai/dsh-llm-pi-ai': v,
-              '@deepseek-ai/dsh-settings': v,
-              '@deepseek-ai/dsh-system-prompt': v,
-              '@deepseek-ai/dsh-tools': v,
-              '@deepseek-ai/dsh-session': v,
-              '@deepseek-ai/dsh-session-projection': v,
-              '@deepseek-ai/dsh-session-persistence-jsonl': v,
-              '@deepseek-ai/dsh-agent': v,
-              '@deepseek-ai/dsh-agent-loop': v,
-              sharp: '0.35.3',
-            },
-          }, null, 2))
-          fs.writeFileSync(path.join(hostDir, 'pnpm-workspace.yaml'), [
-            'packages:',
-            '  - .',
-            'allowBuilds:',
-            '  koffi: true',
-            '  fs-ext: true',
-            "  '@google/genai': true",
-            '  protobufjs: true',
-            '',
-          ].join('\n'))
-          const installed = spawnSync('pnpm', ['install'], {
-            cwd: hostDir,
-            stdio: 'inherit',
-          })
-          if (installed.status !== 0) process.exit(installed.status ?? 1)
-          fs.appendFileSync(process.env.GITHUB_ENV, `DSH_CONTRACT_HOST_DIR=${hostDir}\n`)
-      - name: Verify release Host capability contract
-        env:
-          EXPECT_BATCH: 'true'
-          EXPECT_DIMENSION: 'true'
-          EXPECT_CURRENT: 'true'
-          EXPECT_SETTINGS_MODE: ${{ matrix.dsh == '0.1.7-rc.2' && 'config-editor' || 'native-register' }}
-        run: node scripts/dsh-host-contract-smoke.mjs
-      - name: Verify release pi-ai final OpenCode wire
-        run: node tests/opencode-session-wire-contract.mjs
-      - name: Verify release-family Session native image process-restart lifecycle
-        run: node scripts/dsh-preview-native-lifecycle-contract.mjs

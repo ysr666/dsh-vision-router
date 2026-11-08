@@ -172,7 +172,7 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
   assert.match(workflow, /refusing to adopt or republish a pre-existing registry version/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
-  assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
+  assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --tag "\$RELEASE_DIST_TAG" --provenance --access public/)
 })
 
 test('release workflow refuses stale README announcement bars and missing release notes', async () => {
@@ -225,6 +225,17 @@ test('release workflow confines repository and publish write authority to the co
   assert.match(workflow, /sha256sum --check --strict/)
 })
 
+test('real Desktop E2E has bounded official Electron CI-only download recovery', async () => {
+  const renderer = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  const retry = await readFile(new URL('../scripts/ci-electron-download-retry.mjs', import.meta.url), 'utf8')
+  assert.match(renderer, /import \{ resolveCiElectronBinary \} from '\.\/ci-electron-download-retry\.mjs'/)
+  assert.match(renderer, /await resolveCiElectronBinary\(desktopRequire\)/)
+  assert.match(retry, /GITHUB_ACTIONS === 'true'/)
+  assert.match(retry, /attempts = 3/)
+  assert.match(retry, /official Electron install failed for a nontransient reason/)
+  assert.match(retry, /no mirror fallback/)
+})
+
 test('release provenance binds the exact npm tarball before the write-token phase', async () => {
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const publishStart = workflow.indexOf('  publish:')
@@ -248,7 +259,10 @@ test('release provenance binds the exact npm tarball before the write-token phas
   // Immutability applies the moment a release is published, so every asset must
   // be attached to a draft and verified before the release becomes public.
   assert.match(release, /Create immutable GitHub Release \(draft, attach, publish\)/)
-  assert.match(release, /gh release create "\$RELEASE_TAG" \\\n\s+--verify-tag \\\n\s+--draft/)
+  assert.ok(release.includes('RELEASE_CREATE_FLAGS=(--verify-tag --draft'),
+    'a release must be created as draft even when arguments are assembled in an array')
+  assert.ok(release.includes('gh release create "$RELEASE_TAG"'),
+    'immutable release creation must use the verified tag')
   assert.match(release, /gh release upload "\$RELEASE_TAG"[\s\S]*"\$PACKAGE_TARBALL"[\s\S]*"\$PROVENANCE_NAME"[\s\S]*"SHA256SUMS\.txt"/)
   assert.match(release, /attached release tarball does not match the verified package SHA-256/)
   assert.match(release, /gh release edit "\$RELEASE_TAG" --draft=false --latest/)
@@ -411,26 +425,18 @@ test('security policy links reporters to enabled private vulnerability reporting
   assert.match(policy, /Do \*\*not\*\* post exploit details/)
 })
 
-test('client prelude changes always trigger the real browser and alpha source gates', async () => {
-  const workflows = [
-    'dsh-preview-browser-smoke.yml',
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    const trigger = "      - 'src/lib/*-client-prelude.js'"
-    assert.equal(source.split(trigger).length - 1, 2, `${name}: client preludes must trigger PR and main`)
+test('client prelude changes trigger supported rc5 real browser and exact-source gates', async () => {
+  for (const name of ['dsh-021-rc5-validation.yml', 'dsh-alpha-source-contract.yml']) {
+    const workflow = await readFile(new URL('../.github/workflows/' + name, import.meta.url), 'utf8')
+    assert.equal(workflow.split("      - 'src/**'").length - 1, 2,
+      name + ': PR and main must cover all client prelude changes')
   }
 })
 
-test('audited browser integration modules always trigger every real browser and alpha source gate', async () => {
-  const workflows = [
-    'dsh-preview-browser-smoke.yml',
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  const boundaries = [
+test('audited browser integration modules remain covered by the active DSH 0.2.1-rc.5 lane', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.equal(source.split("      - 'src/**'").length - 1, 2)
+  for (const name of [
     'src/lib/client-host-compat-prelude.js',
     'src/lib/guide-vision-toggle-highlight.js',
     'src/lib/remote-settings-risk-confirmation.js',
@@ -441,33 +447,17 @@ test('audited browser integration modules always trigger every real browser and 
     'src/lib/vision-capability-benchmark-client.js',
     'src/lib/vision-exact-check-client.js',
     'src/lib/vision-routing-settings-prelude.js',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.equal(source.split("      - 'src/lib/web/**'").length - 1, 2, `${name}: lib/web must trigger PR and main`)
-    for (const path of boundaries) {
-      const trigger = `      - '${path}'`
-      assert.equal(source.split(trigger).length - 1, 2, `${name}: ${path} must trigger PR and main`)
-    }
-  }
+    'src/lib/web/benchmark-panel.js',
+  ]) assert.ok(name.startsWith('src/'), name + ': not covered by src/**')
+  assert.match(source, /alpha-browser-cold-toggle-smoke\.mjs/)
+  assert.match(source, /Run cold Vision toggle/)
 })
 
-test('model visibility boundary changes always trigger the real browser and alpha source gates', async () => {
-  const workflows = [
-    'dsh-preview-browser-smoke.yml',
-    'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-alpha-source-contract.yml',
-  ]
-  for (const name of workflows) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    for (const path of [
-      'src/lib/vision-model-visibility-boundary-main.js',
-      'src/lib/vision-model-visibility-boundary.js',
-    ]) {
-      const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      assert.equal((source.match(new RegExp(escaped, 'g')) ?? []).length, 2, `${name}: ${path} must trigger PR and main`)
-    }
-  }
+test('model visibility boundary updates trigger the supported Host real browser test', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.equal(source.split("      - 'src/**'").length - 1, 2)
+  assert.match(source, /Run cold Vision toggle/)
+  assert.match(source, /Run real Host\s*\+\s*Chromium|name: real Host \+ Chromium/)
 })
 
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
@@ -502,42 +492,44 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   }
 })
 
-test('DSH release evidence changes always trigger exact source and real browser gates', async () => {
-  const [browser, source] = await Promise.all([
-    readFile(new URL('../.github/workflows/dsh-preview-browser-smoke.yml', import.meta.url), 'utf8'),
-    readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8'),
-  ])
-
-  for (const path of ["'package.json'", "'src/lib/dsh-support-window.js'"]) {
-    assert.equal((browser.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
+test('DSH release evidence triggers live browser and immutable 3.2 Host gates', async () => {
+  const paths = [
+    '../.github/workflows/dsh-021-rc5-validation.yml',
+    '../.github/workflows/dsh-alpha-source-contract.yml',
+  ]
+  for (const path of paths) {
+    const workflow = await readFile(new URL(path, import.meta.url), 'utf8')
+    assert.match(workflow, /pull_request:/)
+    assert.match(workflow, /push:/)
+    assert.match(workflow, /branches: \[main\]/)
+    assert.match(workflow, /'src\/\*\*'|'src\/lib\/dsh-support-window\.js'/)
+    assert.match(workflow, /'package\.json'/)
   }
-  assert.equal((source.match(/'package\.json'/g) ?? []).length, 2)
-  assert.equal((source.match(/'src\/lib\/dsh-support-window\.js'/g) ?? []).length, 2)
+  const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc1, /pull_request:/)
+  assert.match(rc1, /'src\/\*\*'/)
+  assert.match(rc1, /Node 24 Desktop renderer lifecycle/)
 })
 
-test('DSH 0.1.7 browser smoke follows both presentation-boundary carriers', async () => {
-  const source = await readFile(new URL('../.github/workflows/dsh-017-browser-smoke.yml', import.meta.url), 'utf8')
-  for (const path of [
-    "'src/lib/client-presentation-boundary-main.js'",
-    "'src/lib/client-presentation-boundary.js'",
-  ]) {
-    assert.equal((source.match(new RegExp(path.replaceAll('.', '\\.'), 'g')) ?? []).length, 2)
-  }
+test('current DSH rc5 browser lifecycle follows both presentation carriers', async () => {
+  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.match(source, /pull_request:/)
+  assert.match(source, /push:/)
+  assert.equal((source.match(/'src\/\*\*'/g) ?? []).length, 2)
+  assert.match(source, /real Host \+ Chromium/)
 })
 
-test('real DSH browser workflows use exact main-written build caches without skipping Host smoke', async () => {
+test('archived alpha.4 forensic browser job retains immutable build-cache integrity', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [
-    ['dsh-preview-browser-smoke.yml', 'dsh-preview', 'Build preview web runtime', 'Run cold Vision toggle against preview Host and Chromium'],
     ['alpha-browser-cold-toggle-smoke.yml', 'dsh-alpha', 'Build exact alpha web runtime', 'Run cold Vision toggle against real Host and Chromium'],
   ]
-
   for (const [name, root, buildName, smokeName] of cases) {
     const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
     assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`), `${name}: restore must use pinned cache v6.1.0`)
     assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`), `${name}: save must use the same pinned cache action`)
     assert.doesNotMatch(source, /restore-keys:/, `${name}: build cache must use exact keys only`)
-    assert.match(source, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
+    assert.match(source, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node24\.9-pnpm11\.7\.0-\$\{DSH_SHA\}-\$\{LOCK_SHA\}-\$\{TREE_SHA\}"/)
     assert.match(source, /DSH_SHA="\$\(git rev-parse HEAD\)"/)
     assert.match(source, /LOCK_SHA="\$\(sha256sum pnpm-lock\.yaml/)
     assert.match(source, /TREE_SHA="\$\(git ls-tree -r --full-tree HEAD/)
@@ -718,29 +710,19 @@ test('heavy Host classifier skips only version-only curated release metadata', a
   assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
 })
 
-test('heavy Host workflows fail closed on PR impact and reuse only main-written exact build caches', async () => {
-  const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
-  for (const name of ['dsh-017-real-host-smoke.yml', 'dsh-020-rc2-validation.yml']) {
-    const source = await readFile(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8')
-    assert.match(source, /name: classify heavy Host impact/)
-    assert.match(source, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-    assert.match(source, /trusted base classifier unavailable: fail closed/)
-    assert.match(source, /if: needs\.impact\.outputs\.heavy == 'true'/)
-    assert.match(source, new RegExp(`actions/cache/restore@${cacheSha}`))
-    assert.match(source, new RegExp(`actions/cache/save@${cacheSha}`))
-    assert.doesNotMatch(source, /restore-keys:/)
-    assert.match(source, /github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/)
-    assert.match(source, /if: steps\.dsh-build-cache\.outputs\.cache-hit != 'true'/)
-    assert.match(source, /native\/system\/packages\/\*\/lib/)
-    assert.match(source, /native\/system\/packages\/\*\/bin/)
-    assert.match(source, /vendor\/\*\/lib/)
-    assert.match(source, /apps\/\*\/lib/)
-  }
-
-  const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
-  assert.match(rc17, /push:\n\s+branches: \[main\]/)
-  const rc20 = await readFile(new URL('../.github/workflows/dsh-020-rc2-validation.yml', import.meta.url), 'utf8')
-  assert.match(rc20, /KEY="dsh-web-v4-\$\{RUNNER_OS\}-node22-pnpm11\.7\.0-/)
-  assert.match(rc20, /KEY="dsh-host-v4-\$\{RUNNER_OS\}-node\$\{NODE_VERSION\}-pnpm11\.7\.0-/)
-  assert.doesNotMatch(rc20, /DSH_EXPECTED_VERSION: 0\.2\.0-rc\.1/, 'rc.2 Desktop renderer gates must not retain the rc.1 runtime identity')
+test('active rc5 Host gates fail closed on PR impact; rc1 uses isolated immutable source', async () => {
+  const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc5, /classify heavy Host impact/)
+  assert.match(rc5, /trusted base classifier unavailable: fail closed/)
+  assert.match(rc5, /if: needs\.impact\.outputs\.heavy == 'true'/)
+  assert.match(rc5, /actions\/cache\/restore@/)
+  assert.match(rc5, /actions\/cache\/save@/)
+  assert.doesNotMatch(rc5, /restore-keys:/)
+  assert.match(rc5, /DSH_EXPECTED_VERSION: 0\.2\.1-rc\.5/)
+  assert.match(rc5, /DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering/)
+  assert.match(rc1, /DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering/)
+  assert.match(rc1, /66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/)
+  assert.doesNotMatch(rc1, /actions\/cache\/restore@/)
+  assert.doesNotMatch(rc1, /actions\/cache\/save@/)
 })
