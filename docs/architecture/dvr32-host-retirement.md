@@ -63,12 +63,21 @@ installation; do not test by rewriting someone else's live config.
    as a preflight, and do not paste raw private reports into public issues.
    The explicit `--upgrade-preflight` mode returns **nonzero** for known
    profile-owned Connection overrides, retired ready-bridge references, stale
-   workspace version-pinned release-age exclusions, or an unsupported Node
-   version. Ordinary `doctor` still treats historical patch warnings as
-   advisories. A zero exit means only that these known **local profile**
+   workspace version-pinned release-age exclusions, floating GitHub DVR
+   package refs (default branch, main/master or other non-immutable branches),
+   or an unsupported Node version. Ordinary `doctor` still treats historical
+   patch warnings as advisories. A zero exit means only that these known **local profile**
    hazards were not detected: it never proves the actual Desktop Host version,
    runtime image-tool functionality, browser trust, or session migration.
    Report `upgradePreflight.fullReleaseApproval` is always false.
+   In particular, a `github:ysr666/dsh-vision-router` or `#main` dependency
+   may update as soon as `main` advances, bypassing npm `next` altogether.
+   A locked `pnpm-lock.yaml` records today's commit but is not a permanent
+   safeguard against future lock regeneration. Explicit version tags are
+   more stable than branches but can still be force-moved; only a full commit
+   SHA is immutable. These version-specific refs are exempt from this
+   floating-source warning. Freeze refs only in a **backed-up isolated profile copy**
+   first; do not silently rewrite active development profiles.
 4. If Doctor finds a **profile-owned** `id: connection` row or any
    `visionRouterWebConnectionReady` / `vision-router-web-connection-ready`
    reference, review the user's exact custom overlay **after backup** before
@@ -87,6 +96,27 @@ installation; do not test by rewriting someone else's live config.
    `/api` routes. Restore the backed-up profile together with the previously
    installed compatible DSH/DVR pair if recovery is required. Never claim
    session or image preservation from a fresh-profile-only test.
+
+### Historical DSH session format is a separate upstream upgrade gate
+
+An installer-compatible Host does **not** prove historical Session migration.
+The released DSH v0 format writer once produced `permission/preset` with an
+additional `origin` key, which current v0-to-v1 readers may reject. Older
+Hosts also reject certain released `subagent/descriptor` version-2 events.
+See upstream [discussion #9421](https://github.com/deepseek-ai/deepseek-harness/discussions/9421)
+and [#9343](https://github.com/deepseek-ai/deepseek-harness/discussions/9343).
+These are **DSH persistence-reader responsibilities**, not DVR vision routing.
+
+Before retiring a user's old Host, validate **their data** using an isolated
+backup and the target Host's actual Session-persistence `open(id, 'read')`
+API. For legacy v0 stores, favor 0.2.2-rc.1 over 0.2.1-rc.5 where version-2
+subagent descriptors exist; even 0.2.2-rc.1 cannot read all original
+`permission/preset.origin` sources unmodified. A narrow offline
+normalization of known released variants can be evaluated **only on a copy**,
+with original byte-identical backups and read-only API verification. Do not
+strip arbitrary event fields, migrate all user logs in-place, or infer
+successful history migration from the plugin's profile preflight status.
+No historical-log repair or automatic migration is implemented in DVR 3.2.
 
 No code in this PR edits existing user profiles, session logs, image attachments,
 or saved settings as part of retirement. The remaining upstream stale-Fiber HMR

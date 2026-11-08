@@ -200,6 +200,24 @@ function printProfileDetails(profile, io) {
   for (const warning of profile.installation?.warnings ?? []) io.log(`  ! ${warning}`)
 }
 
+/** Source refs are classified without dereferencing credentials or Git.
+ * A lockfile contains a resolved commit today, but lockfile regeneration can
+ * still follow the mutable manifest source.
+ */
+export function isFloatingDvrGitSource(spec) {
+  if (typeof spec !== 'string') return false
+  const source = spec.trim()
+  if (!/^(?:github:|git\+|git@|https?:\/\/(?:www\.)?github\.com\/)/i.test(source)) return false
+  const anchor = source.indexOf('#')
+  if (anchor < 0 || anchor === source.length - 1) return true
+  const ref = source.slice(anchor + 1)
+  if (/^[0-9a-f]{40}$/i.test(ref)) return false
+  if (/^v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?$/i.test(ref)) return false
+  // Branch names, semver ranges, HEAD and unconventional tags need
+  // review before the 3.2 Host floor becomes user-facing.
+  return true
+}
+
 /** Read-only, intentionally narrow upgrade fence. This reports only known
  * profile-owned composition blockers. It does not establish the running
  * Desktop Host version or prove image/transport/session functionality.
@@ -215,6 +233,7 @@ export function assessUpgradeProfileRisk(profileReport, platform) {
     (p.patch?.retiredReadyBridgeRows ?? 0) + (p.patch?.retiredReadyInjectionRows ?? 0) > 0))
   add('STALE_WORKSPACE_RELEASE_AGE_PIN', count((p) =>
     (p.workspace?.pinned?.length ?? 0) > 0 && p.workspace?.rewritten !== true))
+  add('FLOATING_GITHUB_DVR_SOURCE', count((p) => isFloatingDvrGitSource(p.pluginDependency)))
   if (platform?.nodeSupported === false) add('NODE_BELOW_3_2_MINIMUM', 1)
   return Object.freeze({
     scope: 'known-profile-risks-only',

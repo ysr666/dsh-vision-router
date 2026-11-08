@@ -178,3 +178,45 @@ test('upgrade preflight gates workspace pins but never changes ordinary Doctor s
     'STALE_WORKSPACE_RELEASE_AGE_PIN', 'NODE_BELOW_3_2_MINIMUM',
   ])
 })
+
+
+test('upgrade preflight refuses floating GitHub DVR sources while preserving immutable refs', async () => {
+  const { assessUpgradeProfileRisk, isFloatingDvrGitSource } = await import('../lib/doctor-cli.js')
+  const floating = [
+    'github:ysr666/dsh-vision-router',
+    'github:ysr666/dsh-vision-router#main',
+    'github:ysr666/dsh-vision-router#master',
+    'github:ysr666/dsh-vision-router#semver:^3.1.0',
+    'git+https://github.com/ysr666/dsh-vision-router.git#feature-branch',
+  ]
+  const fixed = [
+    '3.1.2',
+    '3.1.4',
+    'github:ysr666/dsh-vision-router#v2.3.0',
+    'github:ysr666/dsh-vision-router#41b048647a5c5b2f6aa7d3fdc5eec3cc5b8db2ec',
+  ]
+  for (const value of floating) assert.equal(isFloatingDvrGitSource(value), true, value)
+  for (const value of fixed) assert.equal(isFloatingDvrGitSource(value), false, value)
+  const profile = (dependency) => ({
+    installation: { applicable: true, ok: true },
+    workspace: { pinned: [], rewritten: false },
+    patch: { connectionOverrideRows: 0, retiredReadyBridgeRows: 0, retiredReadyInjectionRows: 0 },
+    pluginDependency: dependency,
+  })
+  const inspected = assessUpgradeProfileRisk({
+    ok: true,
+    profiles: [
+      profile(floating[0]), profile(floating[1]), profile(floating[2]),
+      profile(fixed[0]), profile(fixed[2]), profile(fixed[3]),
+      { ...profile(floating[3]), installation: { applicable: false } },
+    ],
+  }, { nodeSupported: true })
+  assert.equal(inspected.pass, false)
+  assert.deepEqual(inspected.blockers, [
+    { code: 'FLOATING_GITHUB_DVR_SOURCE', affectedProfiles: 3 },
+  ])
+  assert.equal(inspected.profileCount, 6)
+  assert.equal(inspected.fullReleaseApproval, false)
+  assert.doesNotMatch(JSON.stringify(inspected), /ysr666|github:/,
+    'only reason-code counts are allowed in public upgrade preflight')
+})
