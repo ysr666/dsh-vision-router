@@ -120,10 +120,61 @@ test('DVR 3.2 Doctor tells the user about legacy Connection rows but never print
   assert.match(doctor.stdout, /Profile-owned Connection override detected/)
   assert.match(doctor.stdout, /retired visionRouterWebConnectionReady bridge/)
   assert.equal(readFileSync(patch, 'utf8'), original)
+  const blocked = run(['doctor', '--upgrade-preflight', '--no-runtime'])
+  assert.equal(blocked.status, 1, '3.2 upgrade gate must not treat dangerous Connection warnings as ready')
+  assert.match(blocked.stderr, /PROFILE_CONNECTION_OVERRIDE/)
+  assert.match(blocked.stderr, /RETIRED_READY_BRIDGE_REFERENCE/)
+  const blockedJson = run(['doctor', '--upgrade-preflight', '--no-runtime', '--json'])
+  assert.equal(blockedJson.status, 1)
+  const data = JSON.parse(blockedJson.stdout)
+  assert.equal(data.ok, false)
+  assert.equal(data.upgradePreflight.pass, false)
+  assert.equal(data.upgradePreflight.fullReleaseApproval, false)
+  assert.deepEqual(data.upgradePreflight.blockers.map((x) => x.code).sort(), [
+    'PROFILE_CONNECTION_OVERRIDE', 'RETIRED_READY_BRIDGE_REFERENCE',
+  ])
+  assert.doesNotMatch(blockedJson.stdout, /private\.example\.invalid|do-not-print/)
+  const refusedFix = run(['doctor', '--upgrade-preflight', '--fix', '--no-runtime'])
+  assert.equal(refusedFix.status, 2, 'read-only preflight must reject repair')
+  assert.equal(readFileSync(patch, 'utf8'), original)
   const report = run(['doctor', '--issue-template', '--no-runtime'])
   assert.equal(report.status, 0, report.stderr)
   assert.match(report.stdout, /Profile-owned Connection overrides: 1 profile/)
   assert.match(report.stdout, /Retired private Connection-bridge references: 1 profile/)
   assert.doesNotMatch(report.stdout, /private\.example\.invalid|do-not-print/)
   assert.equal(readFileSync(patch, 'utf8'), original)
+})
+
+
+test('upgrade preflight gates workspace pins but never changes ordinary Doctor semantics', async () => {
+  const { assessUpgradeProfileRisk } = await import('../lib/doctor-cli.js')
+  const base = {
+    ok: true,
+    profiles: [{
+      installation: { applicable: true, ok: true },
+      workspace: { pinned: ['old-minimum-release-exclusion'], rewritten: false },
+      patch: { connectionOverrideRows: 0, retiredReadyBridgeRows: 0, retiredReadyInjectionRows: 0 },
+    }],
+  }
+  const blocked = assessUpgradeProfileRisk(base, { nodeSupported: true })
+  assert.equal(blocked.pass, false)
+  assert.deepEqual(blocked.blockers, [
+    { code: 'STALE_WORKSPACE_RELEASE_AGE_PIN', affectedProfiles: 1 },
+  ])
+  assert.equal(blocked.actualDesktopHostVersionVerified, false)
+  assert.equal(blocked.fullReleaseApproval, false)
+
+  const clean = assessUpgradeProfileRisk({
+    ...base,
+    profiles: [{ ...base.profiles[0], workspace: { pinned: [], rewritten: false } }],
+  }, { nodeSupported: true })
+  assert.equal(clean.pass, true)
+  assert.deepEqual(clean.blockers, [])
+  assert.equal(clean.scope, 'known-profile-risks-only')
+  assert.equal(clean.runtimeAndHistoricalDataVerified, false)
+
+  const oldNode = assessUpgradeProfileRisk(base, { nodeSupported: false })
+  assert.deepEqual(oldNode.blockers.map((item) => item.code), [
+    'STALE_WORKSPACE_RELEASE_AGE_PIN', 'NODE_BELOW_3_2_MINIMUM',
+  ])
 })

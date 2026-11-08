@@ -68,6 +68,22 @@ export function supportWindowUpgradeAdvice(capabilities = {}, {
       message: 'DSH version is supported, but required runtime attachment capabilities are not proven',
     })
   }
+  // Admission is an open 0.2.x train on purpose, not blanket evidence.
+  // A later Host or Node major is not automatically verified by the exact
+  // rc5/rc1, Node 24.9/24.21 matrix; Doctor reports unknown, not green.
+  if (semver.major(node) !== 24) {
+    return Object.freeze({
+      level: 'unknown', code: 'NODE_FORWARD_MAJOR_UNVERIFIED',
+      message: `Node ${node} meets the declared >=24.9 floor, but is outside the verified Node 24 test train`,
+    })
+  }
+  const exactHost = semver.valid(String(hostVersion).replace(/^v/, ''))
+  if (![DSH_VERIFICATION_EVIDENCE.exactFloor, DSH_VERIFICATION_EVIDENCE.exactRecommended].includes(exactHost)) {
+    return Object.freeze({
+      level: 'unknown', code: 'HOST_FORWARD_RELEASE_UNVERIFIED',
+      message: `DSH ${hostVersion} meets the 0.2.x admission range but lacks the two pinned exact-release acceptance gates`,
+    })
+  }
   return Object.freeze({
     level: 'ok', code: 'HOST_CURRENT_FLOOR_CAPABLE',
     message: `DSH ${hostVersion} and required attachment capabilities satisfy the DVR 3.2 floor`,

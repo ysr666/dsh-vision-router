@@ -58,9 +58,17 @@ installation; do not test by rewriting someone else's live config.
    previous DSH and DVR package versions. Keep independent session, attachment,
    and settings data intact; do not auto-delete or auto-migrate those stores.
 3. From the **3.2 source checkout**, run the **read-only** preflight:
-   `node lib/doctor-cli-p0.js doctor --profile desktop --no-runtime`
+   `node lib/doctor-cli-p0.js doctor --profile desktop --upgrade-preflight --no-runtime`
    (or substitute `web` for the actual profile). Never use `--fix` or `repair`
    as a preflight, and do not paste raw private reports into public issues.
+   The explicit `--upgrade-preflight` mode returns **nonzero** for known
+   profile-owned Connection overrides, retired ready-bridge references, stale
+   workspace version-pinned release-age exclusions, or an unsupported Node
+   version. Ordinary `doctor` still treats historical patch warnings as
+   advisories. A zero exit means only that these known **local profile**
+   hazards were not detected: it never proves the actual Desktop Host version,
+   runtime image-tool functionality, browser trust, or session migration.
+   Report `upgradePreflight.fullReleaseApproval` is always false.
 4. If Doctor finds a **profile-owned** `id: connection` row or any
    `visionRouterWebConnectionReady` / `vision-router-web-connection-ready`
    reference, review the user's exact custom overlay **after backup** before

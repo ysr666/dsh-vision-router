@@ -12,6 +12,14 @@
 
 The prior DVR 3.1.4 release retains its historic support contract. The new support floor is a breaking compatibility-policy change, never a silent patch update.
 
+The published `engines.dsh` train allows later 0.2.x releases, including
+prereleases, as a compatibility *admission policy*; it cannot guarantee their
+runtime behavior. Doctor now distinguishes exact-release approval
+(0.2.1-rc.5 and 0.2.2-rc.1 on Node 24) from merely being in that range:
+future/unpinned 0.2.x Hosts and Node 25+ are marked `unknown`, not `ok`,
+until separately validated. This does not rewrite the Host admission range
+or block a user whose separately reviewed deployment works.
+
 ## Core Host ownership
 
 Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 own webStartup trustedHosts and all Connection authorization. DVR 3.2 retires the cross-generation Connection config override and private readiness provider. However, a real Windows six-order foreign-plugin test caught HTTP 405 from generic connection.rpc.handle() when the Connection provider Fiber omitted a webServer injection. Thus DVR retains one **minimal ordering-only patch**: Connection inject: [webStartup, webServer], with **no config/trustedHosts override**. DSH still exclusively owns cookies, /api, WebSocket, trust authority and all other Connection config. Never extend, guess or bypass the official trust list.

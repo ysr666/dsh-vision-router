@@ -8,7 +8,7 @@ import { inspectDoctorVisionLimits, formatDoctorVisionLimits } from './doctor-vi
 import { repairLegacySessionLogs } from './legacy-session-repair.js'
 
 function usage() {
-  return `dsh-vision-router doctor [--profile <name>] [--json | --issue-template] [--sessions] [--runtime-url <url>] [--no-runtime] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --issue-template      Print a safe, Markdown issue template with diagnostics and fill-in reproduction fields. Read-only.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
+  return `dsh-vision-router doctor [--profile <name>] [--json | --issue-template] [--sessions] [--runtime-url <url>] [--no-runtime] [--upgrade-preflight] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --issue-template      Print a safe, Markdown issue template with diagnostics and fill-in reproduction fields. Read-only.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --upgrade-preflight    Read-only gate for known 3.2 profile migration hazards; not a full release approval.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
 }
 
 function parseArgs(argv) {
@@ -20,6 +20,7 @@ function parseArgs(argv) {
   let json = false
   let issueTemplate = false
   let sessions = false
+  let upgradePreflight = false
   let runtime = command === 'doctor'
   let runtimeUrl
 
@@ -39,6 +40,11 @@ function parseArgs(argv) {
     if (value === '--issue-template') {
       if (command !== 'doctor') throw new Error('--issue-template is only used with doctor')
       issueTemplate = true
+      continue
+    }
+    if (value === '--upgrade-preflight') {
+      if (command !== 'doctor') throw new Error('--upgrade-preflight is only used with doctor')
+      upgradePreflight = true
       continue
     }
     if (value === '--sessions') {
@@ -83,6 +89,8 @@ function parseArgs(argv) {
   if (!['doctor', 'repair', 'repair-sessions'].includes(command)) throw new Error(`unknown command: ${command}`)
   if (issueTemplate && json) throw new Error('--issue-template and --json cannot be combined')
   if (issueTemplate && fix) throw new Error('--issue-template is read-only and cannot be combined with --fix')
+  if (upgradePreflight && fix) throw new Error('--upgrade-preflight is read-only and cannot be combined with --fix')
+  if (upgradePreflight && issueTemplate) throw new Error('--upgrade-preflight is not an issue template; use --json instead')
   if (profile && (!/^[A-Za-z0-9._-]+$/.test(profile) || profile === '.' || profile === '..')) {
     throw new Error(`invalid profile name: ${profile}`)
   }
@@ -91,7 +99,7 @@ function parseArgs(argv) {
     try { parsed = new URL(runtimeUrl) } catch { throw new Error(`invalid runtime URL: ${runtimeUrl}`) }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(`invalid runtime URL protocol: ${parsed.protocol}`)
   }
-  return { command, profile, fix, json, issueTemplate, sessions, runtime, runtimeUrl }
+  return { command, profile, fix, json, issueTemplate, sessions, upgradePreflight, runtime, runtimeUrl }
 }
 
 /**
@@ -192,6 +200,33 @@ function printProfileDetails(profile, io) {
   for (const warning of profile.installation?.warnings ?? []) io.log(`  ! ${warning}`)
 }
 
+/** Read-only, intentionally narrow upgrade fence. This reports only known
+ * profile-owned composition blockers. It does not establish the running
+ * Desktop Host version or prove image/transport/session functionality.
+ * Counts only: no user paths, hostnames, credentials or patch bodies.
+ */
+export function assessUpgradeProfileRisk(profileReport, platform) {
+  const applicable = (profileReport?.profiles ?? []).filter((item) => item.installation?.applicable)
+  const count = (predicate) => applicable.filter(predicate).length
+  const blockers = []
+  const add = (code, n) => { if (n > 0) blockers.push({ code, affectedProfiles: n }) }
+  add('PROFILE_CONNECTION_OVERRIDE', count((p) => (p.patch?.connectionOverrideRows ?? 0) > 0))
+  add('RETIRED_READY_BRIDGE_REFERENCE', count((p) =>
+    (p.patch?.retiredReadyBridgeRows ?? 0) + (p.patch?.retiredReadyInjectionRows ?? 0) > 0))
+  add('STALE_WORKSPACE_RELEASE_AGE_PIN', count((p) =>
+    (p.workspace?.pinned?.length ?? 0) > 0 && p.workspace?.rewritten !== true))
+  if (platform?.nodeSupported === false) add('NODE_BELOW_3_2_MINIMUM', 1)
+  return Object.freeze({
+    scope: 'known-profile-risks-only',
+    profileCount: applicable.length,
+    pass: Boolean(profileReport?.ok) && blockers.length === 0,
+    blockers,
+    actualDesktopHostVersionVerified: false,
+    runtimeAndHistoricalDataVerified: false,
+    fullReleaseApproval: false,
+  })
+}
+
 function runSessionRepair(dshHome, io) {
   let report
   try {
@@ -276,13 +311,17 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
   let sessions
   if (options.sessions) sessions = repairLegacySessionLogs({ dshHome, fix: false })
 
+  const upgradePreflight = options.upgradePreflight
+    ? assessUpgradeProfileRisk(profileReport, platform) : undefined
   const overallOk = profileReport.ok
     && (runtime?.ok ?? true)
     && (!sessions || (sessions.affected === 0 && sessions.errors.length === 0))
+    && (!upgradePreflight || upgradePreflight.pass)
 
   if (options.json || options.issueTemplate) {
     const report = supportReport({ profileReport, runtime, platform, sessions })
     report.visionLimits = visionLimits
+    if (upgradePreflight) report.upgradePreflight = upgradePreflight
     report.ok = overallOk
     io.log(options.issueTemplate ? formatIssueTemplate(report) : JSON.stringify(report, null, 2))
     return overallOk ? 0 : 1
@@ -290,6 +329,14 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
 
   io.log(`DSH home: ${profileReport.dshHome}`)
   for (const profile of profileReport.profiles) printProfileDetails(profile, io)
+  if (upgradePreflight) {
+    if (upgradePreflight.pass) io.log('✓ Upgrade profile preflight: known overlay/workspace hazards not detected. Not full release approval.')
+    else {
+      io.error('✗ Upgrade profile preflight: blocked; do not upgrade this profile without resolving the following.')
+      for (const item of upgradePreflight.blockers) io.error(`  ✗ ${item.code}: ${item.affectedProfiles} affected profile(s)`)
+    }
+    io.log('! Upgrade preflight does not verify the running Desktop Host, runtime routes, or historical data.')
+  }
   if (profileReport.applicableProfiles === 0) io.error('✗ Vision Router is not installed or mounted in any discovered profile.')
 
   if (profileReport.log?.settingsSaveFailures?.length > 0) {
