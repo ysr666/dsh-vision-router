@@ -66,10 +66,51 @@ test('release workflow uses Node24 and keeps prereleases off default npm/GitHub 
   assert.ok(verify.includes('npm_dist_tag: ' + '$' + '{{ steps.channel.outputs.dist_tag }}'))
   assert.ok(publish.includes('RELEASE_DIST_TAG: ' + '$' + '{{ needs.verify.outputs.npm_dist_tag }}'))
   assert.ok(publish.includes('npm publish "$PACKAGE_TARBALL" --tag "$RELEASE_DIST_TAG" --provenance --access public'))
+  // The publish job checks out the immutable tag *without* installing project
+  // dependencies. Never call the semver-dependent helper there: doing so after
+  // tagging prevents OIDC publication with ERR_MODULE_NOT_FOUND.
+  const publishStep = publish.slice(publish.indexOf('- name: Publish exact tarball to npm with trusted OIDC'))
+  const publishBody = publishStep.split('\n      - name: Verify npm registry tarball identity')[0]
+  assert.ok(publishBody.includes("const version = process.env.RELEASE_VERSION"))
+  assert.ok(publishBody.includes("const tag = process.env.RELEASE_DIST_TAG"))
+  assert.doesNotMatch(publishBody, /node scripts\/release-channel\.mjs|npm install|pnpm install/)
+
   assert.ok(release.includes('RELEASE_CREATE_FLAGS+=(--prerelease --latest=false)'))
   assert.ok(release.includes('gh release edit "$RELEASE_TAG" --draft=false --prerelease'))
   assert.ok(release.includes('gh release edit "$RELEASE_TAG" --draft=false --latest'))
   assert.ok(release.includes('--json isPrerelease --jq'))
+})
+
+test('publish-phase channel check is dependency-free and fails closed before npm OIDC', () => {
+  const workflow = readFileSync(WORKFLOW, 'utf8')
+  const from = workflow.indexOf('- name: Publish exact tarball to npm with trusted OIDC')
+  const to = workflow.indexOf('- name: Verify npm registry tarball identity', from)
+  const publish = workflow.slice(from, to)
+  const embedded = publish.match(/node <<'NODE'\n([\s\S]*?)\n          NODE/)
+  assert.ok(embedded, 'self-contained publish-phase channel verification must exist')
+  const script = embedded[1].split('\n').map((line) => line.replace(/^          /, '')).join('\n')
+  const dir = mkdtempSync(path.join(tmpdir(), 'release-publish-no-deps-'))
+  try {
+    for (const [version, tag, status] of [
+      ['3.1.5', 'latest', 0],
+      ['3.2.0-rc.0', 'next', 0],
+      ['3.2.0-alpha.1', 'alpha', 0],
+      ['3.2.0-rc.0', 'latest', 1],
+      ['3.1.5', 'next', 1],
+      ['3.2.0-beta.1', 'next', 1],
+      ['3.2.0-rc.0+dirty', 'next', 1],
+      ['v3.2.0-rc.0', 'next', 1],
+    ]) {
+      const run = spawnSync(process.execPath, ['-e', script], {
+        cwd: dir,
+        env: { ...process.env, RELEASE_VERSION: version, RELEASE_DIST_TAG: tag },
+        encoding: 'utf8',
+      })
+      assert.equal(run.status, status, `${version} / ${tag}: ${run.stderr}`)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('release state: an unpublished version permits the publish (probe=false)', () => {

@@ -437,10 +437,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ "$RELEASE_DIST_TAG" = "$(node scripts/release-channel.mjs "$RELEASE_VERSION")" ] || {
-            echo "::error::release npm dist-tag no longer matches the verified version"
-            exit 1
+          # The publish job intentionally has no node_modules: it consumes the
+          # exact candidate and verified channel from the separate source job.
+          # Recheck the channel *without* importing semver or installing a
+          # new dependency in the trusted OIDC publish environment.
+          node <<'NODE'
+          const version = process.env.RELEASE_VERSION
+          const tag = process.env.RELEASE_DIST_TAG
+          const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(rc|alpha)\.(0|[1-9]\d*))?$/.exec(version || '')
+          const expected = match ? (match[4] === 'rc' ? 'next' : match[4] === 'alpha' ? 'alpha' : 'latest') : null
+          if (!expected || tag !== expected) {
+            console.error('::error::release npm dist-tag no longer matches the verified version')
+            process.exit(1)
           }
+          NODE
           npm publish "$PACKAGE_TARBALL" --tag "$RELEASE_DIST_TAG" --provenance --access public
 
       - name: Verify npm registry tarball identity
