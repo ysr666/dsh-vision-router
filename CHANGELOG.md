@@ -5,6 +5,15 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.2.0-rc.0
+
+### Opt-in Host/Node retirement / 可选升级的 Host/Node 退役
+- Minimum DSH 0.2.1-rc.5 and Node 24.9.0; old DSH 0.1.x / 0.2.0 and Node 22 are no longer supported **by this RC**. The stable 3.1.5 channel remains available. / 本 RC 最低要求 DSH 0.2.1-rc.5、Node 24.9.0；不再支持旧 DSH 与 Node 22，稳定版 3.1.5 仍可用。
+- Return Connection authentication and trustedHosts ownership to DSH; retain only the minimal `webServer` ordering injection needed for unrelated plugins' RPC. / 鉴权与 trustedHosts 归 DSH，保留第三方 RPC 必需的最小 webServer 启动顺序依赖。
+- Read-only `doctor --upgrade-preflight` fails closed on known legacy-profile hazards, but never certifies historic Session data or every Host deployment. / 只读升级预检会拒绝已知旧配置风险，但不代表已验收历史会话或任意 Host 环境。
+- Preserve #804/#805/#809/#810 visual stability fixes from 3.1.5. Upstream Host HMR/Fiber #806 and user #792 / #808 field confirmations remain separate. / 继承 3.1.5 的视觉稳定性修复；Host HMR 与用户现场问题另行追踪。
+- The RC, if formally released, belongs exclusively to npm `next` and GitHub prerelease; **not** npm `latest` or GitHub Latest. / RC 仅在正式发布后进入 npm `next` 和 GitHub 预发布通道，不覆盖稳定版本。
+
 ## v3.1.5
 
 ### Visual runtime stability / 视觉运行时稳定性

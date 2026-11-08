@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **Unreleased v3.2.0-rc.0 Host-retirement candidate:** Sets DSH floor 0.2.1-rc.5 and Node 24.9.0; leaves Connection authentication/trustedHosts with DSH and retains only a webServer ordering patch. This is a development branch, **not a published upgrade**. Full security, lifecycle and cross-platform gates remain pending. See [v3.2.0-rc.0 draft notes](docs/releases/v3.2.0-rc.0.md); the officially installable version is still determined by npm and [GitHub Releases](https://github.com/ysr666/dsh-vision-router/releases/latest).
+> **v3.2.0-rc.0 optional Host-retirement prerelease track (not stable):** Requires DSH >=0.2.1-rc.5 and Node >=24.9.0, keeps Connection authentication/trustedHosts owned by DSH and retains only the minimal webServer startup-order patch. **Do not upgrade a working profile solely to try this RC.** First use the read-only upgrade preflight and separately verify historical Session compatibility. The RC is installable **only if** npm `next` and a matching immutable [GitHub prerelease](https://github.com/ysr666/dsh-vision-router/releases) have both been published; npm `latest` remains the stable channel. See [v3.2.0-rc.0 release notes](docs/releases/v3.2.0-rc.0.md).
 
 ## Start here
 
