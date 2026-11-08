@@ -1,24 +1,24 @@
 /**
  * Immutable release identity to npm/GitHub channel mapping.
+ * This module intentionally has no package imports: the privileged publish job
+ * checks the channel after a fresh checkout without installing dependencies.
  * Never silently make a prerelease the default latest release.
  */
-import semver from 'semver'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
+const CANONICAL_REVIEWED_RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(rc|alpha)\.(0|[1-9]\d*))?$/
+
 export function releaseDistTag(version) {
   if (typeof version !== 'string') throw new TypeError('release version must be a string')
-  const info = semver.parse(version)
-  if (info === null || info.version !== version || info.build.length !== 0) {
-    throw new Error('invalid or noncanonical release version')
+  const match = CANONICAL_REVIEWED_RELEASE.exec(version)
+  if (match === null || [match[1], match[2], match[3], match[5]]
+    .filter((part) => part !== undefined)
+    .some((part) => !Number.isSafeInteger(Number(part)))) {
+    throw new Error('invalid, noncanonical, or unreviewed release version')
   }
-  const pre = info.prerelease
-  if (pre.length === 0) return 'latest'
-  if (pre.length === 2 && Number.isSafeInteger(pre[1]) && pre[1] >= 0) {
-    if (pre[0] === 'rc') return 'next'
-    if (pre[0] === 'alpha') return 'alpha'
-  }
-  throw new Error('unreviewed prerelease channel; only rc.N and alpha.N are admitted')
+  if (match[4] === undefined) return 'latest'
+  return match[4] === 'rc' ? 'next' : 'alpha'
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
