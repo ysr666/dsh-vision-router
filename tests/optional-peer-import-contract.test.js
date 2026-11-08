@@ -95,10 +95,20 @@ export function optionalPeerOf(specifier, optionalPeers) {
 }
 
 const manifest = JSON.parse(await readFile(MANIFEST, 'utf8'))
-const optionalPeers = Object.entries(manifest.peerDependenciesMeta ?? {})
-  .filter(([, meta]) => meta?.optional === true)
-  .map(([name]) => name)
-  .sort()
+// 3.2 retires legacy DSH peer declarations because engines.dsh alone gates
+// supported Hosts. Keep Host-provided packages in the static-import tripwire:
+// they must never turn into activation-time runtime imports by accident.
+const HOST_PROVIDED_MODULES = Object.freeze([
+  '@deepseek-ai/dsh-anonymous-user-id',
+  '@deepseek-ai/dsh-llm-deepseek',
+  '@deepseek-ai/dsh-storage-domain',
+])
+const optionalPeers = [...new Set([
+  ...Object.entries(manifest.peerDependenciesMeta ?? {})
+    .filter(([, meta]) => meta?.optional === true)
+    .map(([name]) => name),
+  ...HOST_PROVIDED_MODULES,
+])].sort()
 
 const offendersIn = async (directory) => {
   const found = []
@@ -114,14 +124,14 @@ const offendersIn = async (directory) => {
   return found.sort()
 }
 
-test('the manifest still declares the legacy Host peers as optional', () => {
-  for (const peer of ['@deepseek-ai/dsh-llm-deepseek', '@deepseek-ai/dsh-anonymous-user-id', '@deepseek-ai/dsh-storage-domain']) {
-    assert.equal(
-      optionalPeers.includes(peer),
-      true,
-      peer + ' must stay optional: a profile install without it must not warn, and must not break activation',
-    )
+test('retired DSH peers remain guarded against static runtime imports', () => {
+  assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), ['sharp'])
+  for (const peer of HOST_PROVIDED_MODULES) {
+    assert.equal(optionalPeers.includes(peer), true,
+      peer + ' must stay guarded after removing peer dependency declarations')
+    assert.equal(manifest.peerDependencies?.[peer], undefined)
   }
+  assert.equal(manifest.peerDependenciesMeta.sharp.optional, true)
 })
 
 test('negative controls: the scanner flags runtime edges and ignores legal lazy/type forms', () => {

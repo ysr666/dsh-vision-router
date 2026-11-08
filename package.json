@@ -61,22 +61,10 @@
     "zod": "^4.6.6"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-anonymous-user-id": ">=0.2.1-rc.5 <0.3.0-0",
-    "@deepseek-ai/dsh-llm-deepseek": ">=0.2.1-rc.5 <0.3.0-0",
-    "@deepseek-ai/dsh-storage-domain": ">=0.2.1-rc.5 <0.3.0-0",
     "sharp": ">=0.35.3 <1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-anonymous-user-id": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-llm-deepseek": {
-      "optional": true
-    },
     "sharp": {
-      "optional": true
-    },
-    "@deepseek-ai/dsh-storage-domain": {
       "optional": true
     }
   },

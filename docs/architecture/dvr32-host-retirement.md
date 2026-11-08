@@ -4,7 +4,7 @@
 
 1. Retire the private web-connection-ready plugin and all Connection config/trustedHosts overrides. Retain precisely one Connection inject: [webStartup, webServer] patch because the native Connection provider's generic foreign RPC registrations otherwise return HTTP 405 in Windows multi-plugin tests. Do not change official Host authentication or add trusted authorities.
 2. Preserve modules/webServer ordering, the DVR disabled:false recompose guard and old user-data migrators until separately proven obsolete.
-3. Change engines.dsh, all DSH peer ranges, engines.node, development fixture pins, Doctor and release notes together.
+3. Maintain engines.dsh as the **single** supported-Host compatibility authority; retire redundant DSH optional peer declarations (which can conflict under strict pnpm), update engines.node, development fixture pins, Doctor and release notes together.
 4. Negative admission must reject DSH 0.1.x, DSH 0.2.0, DSH 0.2.1-rc.4, Node 22 and Node 24.8.
 5. Require real DSH 0.2.1-rc.5 and 0.2.2-rc.1 installs: cold start, three enable-disable-reenable cycles, reconnection, 303/401/200, authenticated/unauthenticated API, WebSocket, trusted/untrusted LAN, actual Vision image turn and Settings/restart readback.
 6. Windows, macOS and Linux exact-source gates plus build, typecheck, reproducible pack and migration tests must be green.
@@ -84,3 +84,31 @@ No code in this PR edits existing user profiles, session logs, image attachments
 or saved settings as part of retirement. The remaining upstream stale-Fiber HMR
 issue and the separate #792 source-text screenshot investigation stay tracked
 independently; this document does not claim that either upstream defect is fixed.
+
+
+## DSH 3.2 peer-graph retirement: install-level A/B
+
+DSH 0.2.1-rc.5 and newer app-boot implementations enforce each plugin's
+`engines.dsh` with prereleases included. DVR 3.2 therefore no longer needs the
+three historical *optional* peer declarations on
+`@deepseek-ai/dsh-anonymous-user-id`, `@deepseek-ai/dsh-llm-deepseek` and
+`@deepseek-ai/dsh-storage-domain`. Their Node runtime implementation is
+Host-owned; storage-domain imports in DVR source are type-only. The regular
+`sharp` optional peer remains.
+
+In a disposable Node 24.21 / pnpm 11.20 project using the actual packed
+DVR 3.2 candidate and published DSH 0.2.2-rc.1 packages:
+- DSH llm-deepseek **alone**, `strictPeerDependencies=true`: passes.
+- DSH llm-deepseek + the **original** DVR 3.2 package, with no explicitly
+  installed anonymous-user-id: **fails** with `ERR_PNPM_PEER_DEP_ISSUES`
+  (conflicting anonymous-user-id requirements).
+- Add explicit anonymous-user-id 0.2.2-rc.1: original DVR now passes, proving
+  that this is a dependency-graph problem rather than proven RC admission failure.
+- Retire just DVR's anonymous-user-id peer: strict install passes.
+- Retire **all three** redundant DVR DSH peers, leave `engines.dsh` unchanged:
+  strict install passes, including when the DSH llm provider is present.
+  Exact-source rc5, rc1 and alpha Host admission checks still reject old
+  DSH and 0.3.x, and guard against reviving static Host package imports.
+
+No published registry package or user profile was edited in these tests.
+This is a pure package metadata change plus admission regression guards.

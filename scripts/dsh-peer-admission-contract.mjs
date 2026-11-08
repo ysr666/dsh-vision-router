@@ -15,23 +15,20 @@ const compatibilityModule = pathToFileURL(join(
 )).href
 const { evaluatePluginCompatibility } = await import(compatibilityModule)
 
+// Supported DSH 0.2.1-rc.5+ evaluates engines.dsh as the sole
+// compatibility authority. Redundant DSH peers were dropped after an actual
+// pnpm strict-peer conflict with an incomplete Host peer graph; they must not
+// regress without a deliberate new compatibility decision.
 const declaredDshPeers = Object.keys(manifest.peerDependencies ?? {})
   .filter((name) => name.startsWith('@deepseek-ai/dsh-'))
   .sort()
+assert.deepEqual(declaredDshPeers, [], '3.2 must not reintroduce legacy DSH peers')
+assert.deepEqual(Object.keys(manifest.peerDependencies ?? {}).sort(), ['sharp'],
+  'sharp must be the only optional runtime peer')
 
-assert.ok(
-  declaredDshPeers.length > 0,
-  'DVR manifest must declare at least one DSH Host peer for train admission',
-)
-
-const declaredDshRanges = new Set(declaredDshPeers.map((name) => manifest.peerDependencies[name]))
-assert.equal(declaredDshRanges.size, 1, 'DSH peers must agree on one support window')
-const declaredDshRange = [...declaredDshRanges][0]
-assert.equal(
-  manifest.engines?.dsh,
-  declaredDshRange,
-  'engines.dsh and legacy DSH peers must preserve the same public support window',
-)
+const declaredDshRange = manifest.engines?.dsh
+assert.equal(declaredDshRange, '>=0.2.1-rc.5 <0.3.0-0',
+  'engines.dsh is now the canonical DSH 3.2 admission window')
 
 const admitted = [
   '0.2.1-rc.5',
@@ -57,49 +54,31 @@ const rejected = [
 ]
 for (const runtimeVersion of rejected) {
   const issue = evaluatePluginCompatibility(manifest, {}, runtimeVersion)
-  assert.ok(issue, `DVR manifest must not pre-admit DSH ${runtimeVersion}`)
-  // DSH 0.2.1-rc.5 uses engines.dsh as the sole canonical admission requirement.
-  // Older supported Hosts still report individual DSH peer mismatches.
-  // Test the real evaluator's refusal shape instead of coupling to one generation.
-  const engineRequirements = issue.requirements
-  if (engineRequirements !== undefined) {
-    assert.deepEqual(
-      engineRequirements,
-      { 'engines.dsh': declaredDshRange },
-      `DSH ${runtimeVersion} must reject only the declared engines.dsh window`,
-    )
-  } else {
-    assert.deepEqual(
-      Object.keys(issue.peers).sort(),
-      declaredDshPeers,
-      `DSH ${runtimeVersion} refusal must be caused only by DVR's declared DSH peers`,
-    )
-  }
+  assert.ok(issue, 'DSH ' + runtimeVersion + ' must be rejected')
+  assert.deepEqual(issue.requirements,
+    { 'engines.dsh': declaredDshRange },
+    'DSH ' + runtimeVersion + ': only engines.dsh may refuse on supported Hosts')
 }
 
-
-// Explicitly characterize the 0.2.1-rc.5 admission precedence instead of
-// only testing manifests whose engines and peer ranges happen to agree. Older
-// supported Hosts still consult peers; newer Hosts consult engines.dsh alone.
-const firstDshPeer = declaredDshPeers[0]
-const conflictingPeers = {
+// Engine precedence is explicit: even a fabricated incompatible peer must
+// not alter admission on the exact rc5, rc1 or supported alpha Host.
+const conflictingPeerManifest = {
   ...manifest,
-  peerDependencies: { ...manifest.peerDependencies, [firstDshPeer]: '<0.1.0' },
+  peerDependencies: {
+    ...manifest.peerDependencies,
+    '@deepseek-ai/dsh-anonymous-user-id': '<0.1.0',
+  },
 }
-const rc5Precedence = evaluatePluginCompatibility(conflictingPeers, {}, '0.2.1-rc.5')
-const rejectedWithEngine = evaluatePluginCompatibility({
-  ...conflictingPeers,
-  engines: { ...manifest.engines, dsh: '<0.1.0' },
-}, {}, '0.2.1-rc.5')
-if (Object.hasOwn(evaluatePluginCompatibility(manifest, {}, '0.3.0') ?? {}, 'requirements')) {
-  assert.equal(rc5Precedence, undefined, 'new Host must prefer a valid engines.dsh over mismatched peers')
-  assert.deepEqual(rejectedWithEngine?.requirements, { 'engines.dsh': '<0.1.0' },
-    'new Host must report the canonical engine requirement when both declarations conflict')
-} else {
-  assert.equal(rc5Precedence?.peers?.[firstDshPeer], '<0.1.0',
-    'legacy Host must keep enforcing its declared DSH peers')
-  assert.equal(rejectedWithEngine?.peers?.[firstDshPeer], '<0.1.0',
-    'legacy Host must not silently switch admission authority to engines.dsh')
+for (const version of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-alpha.3']) {
+  assert.equal(evaluatePluginCompatibility(conflictingPeerManifest, {}, version), undefined,
+    'supported Host ' + version + ' must prefer engines.dsh over synthetic peers')
+  const badEngineManifest = {
+    ...conflictingPeerManifest,
+    engines: { ...manifest.engines, dsh: '<0.1.0' },
+  }
+  const issue = evaluatePluginCompatibility(badEngineManifest, {}, version)
+  assert.deepEqual(issue?.requirements, { 'engines.dsh': '<0.1.0' },
+    'supported Host ' + version + ' must reject conflicting engines.dsh')
 }
 
 console.log(JSON.stringify({

@@ -18,6 +18,8 @@ Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 own webStartup trustedHosts and all Conne
 
 Keep the independent modules/webServer activation dependency and DVR disabled:false recompose guard until each replacement is independently proven; their root causes are not fixed merely by raising the Host floor.
 
+DSH 0.2.1-rc.5+ uses `engines.dsh` as its sole native plugin-admission authority. DVR 3.2 therefore retires the three redundant DSH optional peer declarations, which can trigger strict pnpm peer conflicts when Host components resolve independently; this does not remove Host-owned runtime services or the type-only development imports. The `sharp` optional peer remains.
+
 ## Acceptance and safety
 
 The initial unmodified Windows DSH 0.2.2-rc.1 Electron experiment on DVR 3.1.3 verified native Connection after disabling the bundle, preserving token 303, unauthenticated 401 and core-probe 200. One transient /connect timeout was observed. The initial zero-Connection-overrides design was later found to return HTTP 405 for third-party RPC endpoints

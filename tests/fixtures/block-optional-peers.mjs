@@ -7,9 +7,17 @@
 import { readFile } from 'node:fs/promises'
 
 const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'))
-const blocked = Object.entries(manifest.peerDependenciesMeta ?? {})
-  .filter(([, meta]) => meta?.optional === true)
-  .map(([name]) => name)
+const blocked = [...new Set([
+  ...Object.entries(manifest.peerDependenciesMeta ?? {})
+    .filter(([, meta]) => meta?.optional === true)
+    .map(([name]) => name),
+  // Even though engines.dsh now replaces the legacy DSH peer declarations,
+  // these Host-provided packages must remain unavailable to the plugin's
+  // activation module to preserve the original #719 negative control.
+  '@deepseek-ai/dsh-anonymous-user-id',
+  '@deepseek-ai/dsh-llm-deepseek',
+  '@deepseek-ai/dsh-storage-domain',
+])]
 
 export async function resolve(specifier, context, next) {
   for (const peer of blocked) {

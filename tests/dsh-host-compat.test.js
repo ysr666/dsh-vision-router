@@ -441,12 +441,12 @@ test('settings compatibility keeps the first-class section without requiring a l
 
 test('manifest publishes DVR 3.2 modern Host floor and retires Node 22', async () => {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
-  const expectedHostPeerRange = '>=0.2.1-rc.5 <0.3.0-0'
+  const hostRange = '>=0.2.1-rc.5 <0.3.0-0'
   assert.equal(pkg.engines.node, '>=24.9.0')
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-llm-deepseek'], expectedHostPeerRange)
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-anonymous-user-id'], expectedHostPeerRange)
-  assert.doesNotMatch(expectedHostPeerRange, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/)
-  assert.equal(pkg.peerDependencies['@deepseek-ai/dsh-settings'], undefined)
+  assert.equal(pkg.engines.dsh, hostRange)
+  assert.doesNotMatch(hostRange, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/)
+  assert.deepEqual(Object.keys(pkg.peerDependencies).sort(), ['sharp'],
+    'supported DSH Hosts admit by engines.dsh, not redundant optional peers')
 })
 
 test('modules/webServer overlay lifecycle classifies required, retire-ready, and dangerous Host drift', () => {

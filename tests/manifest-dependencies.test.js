@@ -100,20 +100,22 @@ test('canonical repository source never tracks generated runtime artifacts', () 
   )
 })
 
-test('host-provided DSH packages publish the DVR 3.2 Host floor', async () => {
+test('3.2 relies on engines.dsh alone; no redundant optional DSH Host peer conflicts', async () => {
   const pkg = await manifest()
-  const hostPeers = [
+  const hostRange = '>=0.2.1-rc.5 <0.3.0-0'
+  assert.equal(pkg.engines?.dsh, hostRange)
+  for (const name of [
     '@deepseek-ai/dsh-anonymous-user-id',
     '@deepseek-ai/dsh-llm-deepseek',
-  ]
-
-  for (const name of hostPeers) {
-    assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a regular dependency`)
-    const peer = pkg.peerDependencies?.[name]
-    assert.equal(peer, '>=0.2.1-rc.5 <0.3.0-0')
-    assert.doesNotMatch(peer, /0\.1\.0|0\.1\.1|0\.1\.3|0\.1\.7/, `${name} must not restore the old jagged 0.1.x support list`)
-    assert.equal(pkg.devDependencies?.[name], '0.2.1-rc.5', `${name} development fixture must pin exact rc.2`)
+    '@deepseek-ai/dsh-storage-domain',
+  ]) {
+    assert.equal(pkg.dependencies?.[name], undefined, name + ' must be Host-owned')
+    assert.equal(pkg.peerDependencies?.[name], undefined,
+      name + ' must not add peer graph constraints after the supported Host gained engines.dsh')
+    assert.equal(pkg.peerDependenciesMeta?.[name], undefined)
+    assert.equal(pkg.devDependencies?.[name], '0.2.1-rc.5')
   }
+  assert.deepEqual(Object.keys(pkg.peerDependencies || {}).sort(), ['sharp'])
 })
 
 test('client package graph does not revive the retired dsh-client-runtime row', async () => {
@@ -133,21 +135,11 @@ test('client package graph does not revive the retired dsh-client-runtime row', 
   )
 })
 
-test('host-provided peers are optional so profile installs never warn about missing peers', async () => {
+test('sharp remains the only optional peer and cannot prevent Host core activation', async () => {
   const pkg = await manifest()
-  const optionalPeers = [
-    '@deepseek-ai/dsh-anonymous-user-id',
-    '@deepseek-ai/dsh-llm-deepseek',
-    'sharp',
-  ]
-  for (const name of optionalPeers) {
-    assert.equal(typeof pkg.peerDependencies?.[name], 'string', `${name} must remain a peerDependency`)
-    assert.equal(
-      pkg.peerDependenciesMeta?.[name]?.optional,
-      true,
-      `${name} must be marked optional in peerDependenciesMeta`,
-    )
-  }
+  assert.deepEqual(Object.keys(pkg.peerDependenciesMeta || {}).sort(), ['sharp'])
+  assert.equal(typeof pkg.peerDependencies.sharp, 'string')
+  assert.equal(pkg.peerDependenciesMeta.sharp.optional, true)
 })
 
 test('development sharp is patched without raising the supported Host peer floor', async () => {
