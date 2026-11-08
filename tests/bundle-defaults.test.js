@@ -225,6 +225,17 @@ test('release workflow confines repository and publish write authority to the co
   assert.match(workflow, /sha256sum --check --strict/)
 })
 
+test('real Desktop E2E has bounded official Electron CI-only download recovery', async () => {
+  const renderer = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  const retry = await readFile(new URL('../scripts/ci-electron-download-retry.mjs', import.meta.url), 'utf8')
+  assert.match(renderer, /import \{ resolveCiElectronBinary \} from '\.\/ci-electron-download-retry\.mjs'/)
+  assert.match(renderer, /await resolveCiElectronBinary\(desktopRequire\)/)
+  assert.match(retry, /GITHUB_ACTIONS === 'true'/)
+  assert.match(retry, /attempts = 3/)
+  assert.match(retry, /official Electron install failed for a nontransient reason/)
+  assert.match(retry, /no mirror fallback/)
+})
+
 test('release provenance binds the exact npm tarball before the write-token phase', async () => {
   const workflow = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8')
   const publishStart = workflow.indexOf('  publish:')

@@ -180,3 +180,15 @@ and `alpha.N` versions; unknown preview classes fail closed.
   profile-upgrade and real image-tool acceptance gates. Success here
   does not authorize publishing, re-tagging an immutable npm version,
   or rewriting any user profile.
+
+## Transient Electron transport failures in Desktop CI
+
+Exact-source Desktop E2E can fail *before* renderer assertions when GitHub
+returns HTTP 502/503/504 for the **official pnpm-locked Electron binary**.
+The CI-only `scripts/ci-electron-download-retry.mjs` recovers solely from
+Electron's missing-binary error: it invokes the same package's own
+`install.js` with at most three bounded attempts and short backoff.
+It never chooses an alternate mirror, version or unchecked artifact and
+never retries screenshot assertions, DSH Host errors or other non-download
+failures. Exhausted retries still fail the CI job. The default CodeQL
+scanning task has an independent download lifecycle and is not bypassed.
