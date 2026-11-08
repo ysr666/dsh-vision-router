@@ -172,7 +172,7 @@ test('manual Release workflow creates only the exact current-main package tag be
   assert.match(workflow, /gh api[\s\S]*repos\/\$GITHUB_REPOSITORY\/git\/refs[\s\S]*refs\/tags\/\$RELEASE_TAG/)
   assert.match(workflow, /refusing to adopt or republish a pre-existing registry version/)
   assert.match(workflow, /REMOTE_TAG_SHA[\s\S]*\$RELEASE_SHA/)
-  assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --provenance --access public/)
+  assert.match(workflow, /npm publish "\$PACKAGE_TARBALL" --tag "\$RELEASE_DIST_TAG" --provenance --access public/)
 })
 
 test('release workflow refuses stale README announcement bars and missing release notes', async () => {
@@ -248,7 +248,10 @@ test('release provenance binds the exact npm tarball before the write-token phas
   // Immutability applies the moment a release is published, so every asset must
   // be attached to a draft and verified before the release becomes public.
   assert.match(release, /Create immutable GitHub Release \(draft, attach, publish\)/)
-  assert.match(release, /gh release create "\$RELEASE_TAG" \\\n\s+--verify-tag \\\n\s+--draft/)
+  assert.ok(release.includes('RELEASE_CREATE_FLAGS=(--verify-tag --draft'),
+    'a release must be created as draft even when arguments are assembled in an array')
+  assert.ok(release.includes('gh release create "$RELEASE_TAG"'),
+    'immutable release creation must use the verified tag')
   assert.match(release, /gh release upload "\$RELEASE_TAG"[\s\S]*"\$PACKAGE_TARBALL"[\s\S]*"\$PROVENANCE_NAME"[\s\S]*"SHA256SUMS\.txt"/)
   assert.match(release, /attached release tarball does not match the verified package SHA-256/)
   assert.match(release, /gh release edit "\$RELEASE_TAG" --draft=false --latest/)

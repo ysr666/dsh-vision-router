@@ -133,3 +133,20 @@ Host-provided module names (even the two no longer in peerDependencies).
 The source-only storage-domain import is type-only.
 
 No real user profile or npm release was changed during these tests.
+
+## Release-channel safety when retiring old Host generations
+
+Retirement is a new minor prerelease, **not a default npm upgrade**.
+The protected release workflow must verify on Node >=24.9 (exact Node 24.21
+in the release verification job). Before creating an immutable Git tag,
+`scripts/release-channel.mjs` classifies only canonical stable, `rc.N`,
+and `alpha.N` versions; unknown preview classes fail closed.
+
+- `3.2.0-rc.0` publishes to npm `next` and is marked GitHub prerelease,
+  never GitHub Latest; `3.2.0-alpha.N` would use npm `alpha`.
+- Only a reviewed stable version such as `3.2.0` may update npm `latest`
+  and GitHub Latest. The existing DVR 3.1.4 package stays installable.
+- This release-channel gate is independent from the installation,
+  profile-upgrade and real image-tool acceptance gates. Success here
+  does not authorize publishing, re-tagging an immutable npm version,
+  or rewriting any user profile.
