@@ -5,6 +5,7 @@ import { captureFetchDelegate, installFetchWrapper } from './fetch-wrapper-lifec
 import { visionRouterMessageSource } from './session-message-source-compat.js'
 
 const PLUGIN_NAME = 'dsh-vision-router'
+const DEEP_TOOL_MOUNT_PROBE = Symbol.for('dsh-vision-router.deep-tools-mounted')
 const DEEP_TOOL_NAMES = new Set([
   'vision_bootstrap',
   'vision_describe',
@@ -445,6 +446,16 @@ function addAutoMountReminder(decision, payload, i18n) {
   return decision && typeof decision === 'object' ? { ...decision, messages } : { messages }
 }
 
+function deepToolsMounted(state) {
+  // The Core-owned probe is authoritative: registrations performed in a later
+  // Host Fiber phase need not pass through this locale-scoped tools proxy.
+  if (typeof state.activationStateProbe === 'function') {
+    try { return state.activationStateProbe() === true } catch { return false }
+  }
+  // Older direct boundary consumers do not supply the Core probe.
+  return state.deepActive === true
+}
+
 function createToolBoundary(tools, i18n, liveConfig, state) {
   if (!objectLike(tools)) return tools
   return new Proxy(tools, {
@@ -460,13 +471,14 @@ function createToolBoundary(tools, i18n, liveConfig, state) {
         if (DEEP_TOOL_NAMES.has(def.name)) state.deepActive = true
         if (def.name === 'vision_activate' && typeof def.execute === 'function') {
           state.activationExecute = def.execute
+          state.activationStateProbe = def.execute[DEEP_TOOL_MOUNT_PROBE]
           const original = def.execute
           def = {
             ...def,
             async execute(args, exec) {
-              const before = state.deepActive
+              const before = deepToolsMounted(state)
               await original(args, exec)
-              const code = state.deepActive
+              const code = deepToolsMounted(state)
                 ? before
                   ? DEEP_TOOL_MOUNT_STATE.alreadyMounted
                   : DEEP_TOOL_MOUNT_STATE.mounted
@@ -492,10 +504,10 @@ function createToolBoundary(tools, i18n, liveConfig, state) {
 }
 
 async function ensureDeepTools(state) {
-  if (state.deepActive) return DEEP_TOOL_MOUNT_STATE.alreadyMounted
+  if (deepToolsMounted(state)) return DEEP_TOOL_MOUNT_STATE.alreadyMounted
   if (typeof state.activationExecute !== 'function') return DEEP_TOOL_MOUNT_STATE.unavailable
   await state.activationExecute({}, undefined)
-  return state.deepActive ? DEEP_TOOL_MOUNT_STATE.mounted : DEEP_TOOL_MOUNT_STATE.unavailable
+  return deepToolsMounted(state) ? DEEP_TOOL_MOUNT_STATE.mounted : DEEP_TOOL_MOUNT_STATE.unavailable
 }
 
 function localizeRequestBody(value, i18n) {
@@ -566,6 +578,7 @@ export function installRuntimeI18nBoundary(ctx, config = {}) {
   const state = {
     deepActive: false,
     activationExecute: undefined,
+    activationStateProbe: undefined,
     autoMountNotified: false,
   }
   const contextCache = new WeakMap()
