@@ -101,6 +101,10 @@ test('shared remote-risk owner coalesces concurrent authorization and refreshes 
     confirmImpl(message) {
       confirms += 1
       assert.match(String(message), /trustedHosts/)
+      assert.match(String(message), /full ordinary Vision Router configuration/)
+      assert.match(String(message), /local Ollama \/ LM Studio/)
+      assert.match(String(message), /Saved keys and URL credentials are not echoed in plaintext/)
+      assert.doesNotMatch(String(message), /remain unavailable remotely|remote allow-list/)
       return true
     },
     locale: 'en-US',
@@ -122,6 +126,39 @@ test('shared remote-risk owner coalesces concurrent authorization and refreshes 
     calls.find((entry) => entry[1] === REMOTE_SETTINGS_AUTHORIZE_ENDPOINT)[2],
     { acceptedRisk: true },
   )
+})
+
+
+test('Chinese remote consent warns of full configuration scope and privacy impact', async () => {
+  let enabled = false
+  let confirmation
+  const rpc = {
+    async call(channel, endpoint) {
+      assert.equal(channel, REMOTE_SETTINGS_CHANNEL)
+      if (endpoint === 'describe') return {
+        ok: true,
+        value: enabled
+          ? { enabled: true, writable: true, reason: 'enabled', view: { value: {} } }
+          : { enabled: false, reason: 'permission-disabled', writable: false },
+      }
+      assert.equal(endpoint, REMOTE_SETTINGS_AUTHORIZE_ENDPOINT)
+      enabled = true
+      return { ok: true, value: { enabled: true } }
+    },
+  }
+  const wrapped = createRemoteSettingsRiskClientBoundary({
+    locale: 'zh-CN',
+    confirmImpl(message) {
+      confirmation = message
+      return true
+    },
+  }).wrapContext({ get(name) { return name === 'connection' ? { rpc } : undefined } })
+  const result = await wrapped.get('connection').rpc.call(REMOTE_SETTINGS_CHANNEL, 'describe', {})
+  assert.equal(result.value.enabled, true)
+  for (const phrase of ['完整的 Vision Router 普通配置', '本地 Ollama / LM Studio', '仅本地视觉', '桌面截图', '不会以明文回显', 'trustedHosts 本身不是身份认证']) {
+    assert.ok(confirmation.includes(phrase), phrase)
+  }
+  assert.doesNotMatch(confirmation, /不会开放|未列入远程白名单/)
 })
 
 test('remote-risk authorization stays isolated across live RPC replacement', async () => {
