@@ -54,6 +54,38 @@ jobs:
         run: pnpm client:check
       - run: pnpm test
 
+  # Branch protection requires the exact contract (24.9.0) and
+  # contract (24.21.0) statuses in addition to the full test matrix.
+  # They must be real, independently executed checks on *every* PR, not
+  # synthetic green statuses or paths-filtered jobs.
+  contract:
+    name: contract (${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24.9.0', '24.21.0']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build canonical runtime artifacts
+        run: pnpm build
+      - name: Check generated runtime artifacts
+        run: pnpm build:check
+      - name: Typecheck Host, Client and declarations
+        run: pnpm typecheck
+      - name: Lint runtime ownership and lifecycle boundaries
+        run: pnpm lint
+      - name: Validate supported Host, activation and release contracts
+        run: node --test tests/dsh-support-window.test.js tests/activation-shim-contract.test.js tests/release-state-machine.test.js tests/runtime-i18n.test.js
+
   package-contract:
     name: packed public API
     runs-on: ubuntu-latest
