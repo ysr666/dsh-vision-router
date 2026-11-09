@@ -135,6 +135,16 @@ async function executeInGroundingFrame({
         // Core's annotation would be in the protocol frame. Re-publish only an
         // original-raster annotation after the deterministic inverse transform.
         annotate: false,
+        // Trusted runtime-only geometry; never exposed as a user-controlled
+        // parameter. Core can now retry bad padding/source-space answers
+        // before inverse mapping and before publishing an annotation.
+        ...(def.name === 'vision_ground' ? {
+          __dvrGroundingContentRect: {
+            x1: frame.left, y1: frame.top,
+            x2: frame.left + frame.renderedWidth,
+            y2: frame.top + frame.renderedHeight,
+          },
+        } : {}),
       },
       exec,
     )

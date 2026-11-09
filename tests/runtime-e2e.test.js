@@ -27,6 +27,9 @@ import {
 } from '../lib/desktop-screenshot-tool.js'
 import { runWithVisionTurnBudget } from '../lib/turn-budget-context.js'
 import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
+import sharp from 'sharp'
+import { contextWithGroundingCoordinateFrame } from '../lib/grounding-coordinate-runtime.js'
+import { createGroundingFrame, sourceBoxToGroundingFrame } from '../lib/grounding-coordinate-frame.js'
 
 // 1x1 透明 PNG，真实图片字节。
 const PNG_BYTES = Buffer.from(
@@ -1293,6 +1296,99 @@ test('vision chain falls through from a hung local backend to the next local bac
     await fast.close()
     rmSync(workdir, { recursive: true, force: true })
   }
+})
+
+// #818: exercise the real registered vision_ground, not just a pure parser.
+// The 1000px image is actually letterboxed before the model request, then the
+// accepted box is mapped to canonical source pixels without guessing its space.
+async function runIssue818Grounding(replies, verify) {
+  const width = 900
+  const height = 520
+  const home = mkdtempSync(path.join(tmpdir(), 'vr-ground-818-'))
+  const image = path.join(home, 'source.png')
+  const bytes = await sharp({ create: {
+    width, height, channels: 3, background: { r: 248, g: 248, b: 248 },
+  } }).png().toBuffer()
+  writeFileSync(image, bytes)
+  const config = {
+    freeFallback: false, cache: false, timeoutMs: 7000, visionTaskTimeoutMs: 7000,
+    httpProviders: [{ name: 'fixture-ground', baseURL: 'http://127.0.0.1:9/v1', model: 'fixture-vl', apiKeyEnv: '' }],
+  }
+  const harness = bootHarness(config)
+  const requests = []
+  const providerTransport = { async fetch(_url, init) {
+    requests.push(JSON.parse(init.body))
+    const answer = replies[requests.length - 1] ?? replies[replies.length - 1]
+    return new Response(JSON.stringify({ choices: [{ message: { content: answer } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })
+  } }
+  const framedCtx = contextWithGroundingCoordinateFrame(harness.ctx, {
+    core: {
+      isAttachmentIdInput: () => false,
+      artifactStemOf: () => 'fixture-ground',
+    },
+    config,
+  })
+  try {
+    apply(framedCtx, Config(config), { providerTransport })
+    await harness.toolDefs.get('vision_activate').execute({}, {})
+    const tool = harness.toolDefs.get('vision_ground')
+    const args = { image, target: 'the Save changes button', annotate: false }
+    const exec = { agent: { session: { header: { cwd: home } } } }
+    await verify({ tool, args, exec, requests, width, height })
+    const { readdirSync } = await import('node:fs')
+    const leftovers = readdirSync(path.join(home, '.dsh-vision-router', 'artifacts'))
+      .filter((name) => name.includes('.grounding-frame-'))
+    assert.deepEqual(leftovers, [], 'internal letterbox frame is cleaned after any outcome')
+  } finally { rmSync(home, { recursive: true, force: true }) }
+}
+
+test('issue #818: near-JSON ground output resolves from the real 1000px frame in one backend call', async () => {
+  const frame = createGroundingFrame(900, 520)
+  const sourceBox = { x1: 34, y1: 84, x2: 171, y2: 117 }
+  const f = sourceBoxToGroundingFrame(sourceBox, frame)
+  await runIssue818Grounding([
+    `{"x1":${Math.round(f.x1)},"y1:${Math.round(f.y1)}","x2":${Math.round(f.x2)},"y2":${Math.round(f.y2)}"}`,
+  ], async ({ tool, args, exec, requests }) => {
+    const result = JSON.parse(await tool.execute(args, exec))
+    assert.equal(requests.length, 1)
+    for (const k of ['x1', 'y1', 'x2', 'y2']) {
+      assert.ok(Math.abs(result[k] - sourceBox[k]) <= 2, `${k}: ${result[k]}`)
+    }
+    assert.equal(result.width, 900)
+    assert.equal(result.height, 520)
+    assert.match(JSON.stringify(requests[0]), /BLACK padding/)
+    assert.match(JSON.stringify(requests[0]), /Only x=\[0,1000\] and y=\[211,789\]/)
+  })
+})
+
+test('issue #818: padding-only first box triggers one corrected call, never a wrong published coordinate', async () => {
+  const frame = createGroundingFrame(900, 520)
+  const sourceBox = { x1: 34, y1: 84, x2: 171, y2: 117 }
+  const valid = sourceBoxToGroundingFrame(sourceBox, frame)
+  await runIssue818Grounding([
+    '{"x1":45,"y1":0,"x2":180,"y2":36}',
+    JSON.stringify(Object.fromEntries(Object.entries(valid).map(([k, v]) => [k, Math.round(v)]))),
+  ], async ({ tool, args, exec, requests }) => {
+    const result = JSON.parse(await tool.execute(args, exec))
+    assert.equal(requests.length, 2, 'exactly one retry')
+    assert.match(JSON.stringify(requests[1]), /letterbox padding/)
+    assert.match(JSON.stringify(requests[1]), /Save changes button/)
+    for (const k of ['x1', 'y1', 'x2', 'y2']) {
+      assert.ok(Math.abs(result[k] - sourceBox[k]) <= 2, `${k}: ${result[k]}`)
+    }
+  })
+})
+
+test('issue #818: two off-frame boxes fail closed after exactly one correction', async () => {
+  await runIssue818Grounding([
+    '{"x1":45,"y1":0,"x2":180,"y2":36}',
+    '{"x1":1074,"y1":900,"x2":1538,"y2":1115}',
+  ], async ({ tool, args, exec, requests }) => {
+    await assert.rejects(tool.execute(args, exec), /no valid bounding box after one correction/)
+    assert.equal(requests.length, 2, 'no unbounded model retry')
+  })
 })
 
 // ── E. 深看工具挂载的所有权与失败回滚 ─────────────────────────────────────

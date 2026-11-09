@@ -151,6 +151,7 @@ import {
 import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
 import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
 import { currentVisionTurnBudgetSignal } from './lib/turn-budget-context.js'
+import { parseGroundingBoxResponse, assessGroundingBox } from './lib/grounding-box-recovery.js'
 import { createHash } from 'node:crypto'
 import {
   normalizeStructuredBootstrapResult,
@@ -3906,60 +3907,52 @@ ctx.logger?.info(
         const { bytes, mediaType } = await readImageBytes(exec, args.image)
         const { width, height } = await imageDims(bytes)
         if (width <= 0 || height <= 0) throw new Error('vision_ground: could not read image dimensions')
+        const target = String(args.target).slice(0, 500)
+        // Internal-only frame metadata comes from the trusted framing runtime,
+        // not the user's tool schema. The model sees exact content bounds.
+        const content = args.__dvrGroundingContentRect
+        const frameHint = content &&
+          [content.x1, content.y1, content.x2, content.y2].every(Number.isInteger)
+          ? `The supplied image is a letterboxed ${width}x${height} frame with BLACK padding. ` +
+            `Only x=[${content.x1},${content.x2}] and y=[${content.y1},${content.y2}] contain image pixels. ` +
+            'Never return a box in the source image dimensions or black padding. '
+          : ''
         const instruction =
-          `Target to locate: "${String(args.target).slice(0, 500)}". ` +
-          `The image is ${width}x${height} pixels. Return ONE JSON object with integer fields ` +
+          `Target to locate: "${target}". ` +
+          `The image is ${width}x${height} pixels. ` + frameHint +
+          `Return ONE JSON object with integer fields ` +
           `{"x1":...,"y1":...,"x2":...,"y2":...} — the tight bounding box of that target in ` +
-          `ORIGINAL image pixels (0 <= x1 < x2 <= ${width}, 0 <= y1 < y2 <= ${height}). ` +
+          `the pixels of the image you received (0 <= x1 < x2 <= ${width}, 0 <= y1 < y2 <= ${height}). ` +
           `Output only the JSON object.`
         const vision = await answerVisionForTool(exec, bytes, mediaType, instruction)
         if (vision.ok === false) return JSON.stringify(vision)
-        const text = vision.text
-        const parsed = extractJson(text)
-        const box = parsed !== undefined ? parseBox(parsed) : undefined
-        if (box === undefined) {
-          throw new Error(`vision_ground: the vision model did not return a valid box. Raw output: ${text.slice(0, 500)}`)
-        }
-        let clamped = {
-          x1: Math.max(0, Math.min(box.x1, width - 1)),
-          y1: Math.max(0, Math.min(box.y1, height - 1)),
-          x2: Math.max(1, Math.min(box.x2, width)),
-          y2: Math.max(1, Math.min(box.y2, height)),
-        }
-        if (clamped.x2 - clamped.x1 < 2 || clamped.y2 - clamped.y1 < 2) {
-          // Some vision models answer with a degenerate sliver (e.g. 1px wide)
-          // instead of the target's box. Demand the full box once more before
-          // giving up.
+        let assessment = assessGroundingBox(
+          parseGroundingBoxResponse(vision.text), width, height, content,
+        )
+        if (!assessment.ok) {
+          // A single correction only, including near-JSON, degenerate, and
+          // wrong coordinate-space outputs. Both calls share the existing
+          // turn-scoped signal/budget, provider policy, and abort behavior.
           const retry = await answerVisionForTool(
-            exec,
-            bytes,
-            mediaType,
-            `Your previous box ${JSON.stringify(clamped)} was a degenerate sliver, not the target. ` +
-              `Return ONE JSON object with the FULL tight bounding box of the target in ORIGINAL ` +
-              `image pixels (0 <= x1 < x2 <= ${width}, 0 <= y1 < y2 <= ${height}). Output only the JSON object.`,
+            exec, bytes, mediaType,
+            `Your preceding answer was invalid (${assessment.reason}). ` +
+              `Locate the same target: "${target}". ` + frameHint +
+              `Return one strictly valid JSON object with integer x1,y1,x2,y2 ` +
+              `inside the received ${width}x${height} frame, without black padding. ` +
+              'Do not reuse the previous coordinates unless verified against the image. No prose.',
           )
           if (retry.ok === false) return JSON.stringify(retry)
-          const retryParsed = extractJson(retry.text)
-          const retryBox = retryParsed !== undefined ? parseBox(retryParsed) : undefined
-          if (retryBox === undefined) {
+          assessment = assessGroundingBox(
+            parseGroundingBoxResponse(retry.text), width, height, content,
+          )
+          if (!assessment.ok) {
             throw new Error(
-              `vision_ground: the vision model returned a degenerate box (${clamped.x1},${clamped.y1},${clamped.x2},${clamped.y2}) ` +
-                `and the retry returned no valid box. Raw output: ${retry.text.slice(0, 500)}`,
-            )
-          }
-          clamped = {
-            x1: Math.max(0, Math.min(retryBox.x1, width - 1)),
-            y1: Math.max(0, Math.min(retryBox.y1, height - 1)),
-            x2: Math.max(1, Math.min(retryBox.x2, width)),
-            y2: Math.max(1, Math.min(retryBox.y2, height)),
-          }
-          if (clamped.x2 - clamped.x1 < 2 || clamped.y2 - clamped.y1 < 2) {
-            throw new Error(
-              `vision_ground: the vision model returned only degenerate boxes for a ${width}x${height} image. ` +
-                `Last raw output: ${retry.text.slice(0, 500)}`,
+              `vision_ground: no valid bounding box after one correction (${assessment.reason}). ` +
+                `Last model output: ${String(retry.text).slice(0, 500)}`,
             )
           }
         }
+        const clamped = assessment.box
         const result = { ...clamped, width, height }
         if (args.annotate !== false) {
           const annotated = await annotateBoxBuffer(bytes, clamped)
