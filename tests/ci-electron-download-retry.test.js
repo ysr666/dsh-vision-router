@@ -102,7 +102,7 @@ test('CI may recover from five consecutive official 504s without changing the lo
   const result = await resolveCiElectronBinary(f.load, {
     ci: true, exists: () => true,
     runInstall: (entry) => {
-      assert.equal(entry, '/safe/locked-package/electron/install.js')
+      assert.equal(entry, LOCKED_INSTALL)
       count += 1
       if (count < 6) return { status: 1, stderr: 'HTTPError: Response code 504 (Gateway Time-out)' }
       f.enable()
