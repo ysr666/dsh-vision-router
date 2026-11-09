@@ -3,7 +3,7 @@
 // Release phase's draft -> attach -> verify -> publish ordering in the workflow.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -84,6 +84,28 @@ test('release channel works in publish checkout without node_modules', () => {
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('release channel CLI is not silently skipped through a symlinked working directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'release-channel-alias-'))
+  try {
+    const actual = path.join(root, 'actual')
+    mkdirSync(actual)
+    writeFileSync(path.join(actual, 'release-channel.mjs'), readFileSync(path.join(ROOT, 'scripts/release-channel.mjs'), 'utf8'))
+    const linked = path.join(root, 'alias')
+    symlinkSync(actual, linked, process.platform === 'win32' ? 'junction' : 'dir')
+    const run = (version) => spawnSync(process.execPath, [path.join(linked, 'release-channel.mjs'), version], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, NODE_PATH: '' },
+    })
+    const stable = run('3.2.0')
+    assert.equal(stable.status, 0, stable.stderr)
+    assert.equal(stable.stdout, 'latest\n', 'symlink aliases must not produce silent successful empty output')
+    const refused = run('3.2.0-rc.01')
+    assert.equal(refused.status, 1)
+    assert.match(refused.stderr, /release channel refused/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
