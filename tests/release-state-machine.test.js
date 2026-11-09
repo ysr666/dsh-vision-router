@@ -3,7 +3,7 @@
 // Release phase's draft -> attach -> verify -> publish ordering in the workflow.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -84,6 +84,57 @@ test('release channel works in publish checkout without node_modules', () => {
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('release channel CLI is not silently skipped through a symlinked working directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'release-channel-alias-'))
+  try {
+    const actual = path.join(root, 'actual')
+    mkdirSync(actual)
+    writeFileSync(path.join(actual, 'release-channel.mjs'), readFileSync(path.join(ROOT, 'scripts/release-channel.mjs'), 'utf8'))
+    const linked = path.join(root, 'alias')
+    symlinkSync(actual, linked, process.platform === 'win32' ? 'junction' : 'dir')
+    const run = (version) => spawnSync(process.execPath, [path.join(linked, 'release-channel.mjs'), version], {
+      cwd: root, encoding: 'utf8', env: { ...process.env, NODE_PATH: '' },
+    })
+    const stable = run('3.2.0')
+    assert.equal(stable.status, 0, stable.stderr)
+    assert.equal(stable.stdout, 'latest\n', 'symlink aliases must not produce silent successful empty output')
+    const refused = run('3.2.0-rc.01')
+    assert.equal(refused.status, 1)
+    assert.match(refused.stderr, /release channel refused/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('registry identity CLI does not silently succeed through symlinked or Windows paths', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'release-registry-alias-'))
+  try {
+    const actual = path.join(root, 'actual')
+    mkdirSync(actual)
+    writeFileSync(path.join(actual, 'release-registry-identity.mjs'),
+      readFileSync(CLI, 'utf8'))
+    const alias = path.join(root, 'alias')
+    symlinkSync(actual, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const output = path.join(root, 'github-output')
+    const result = spawnSync(process.execPath, [
+      '--import', pathToFileURL(STUB).href,
+      path.join(alias, 'release-registry-identity.mjs'), 'inspect', '2.3.0',
+    ], {
+      cwd: root, encoding: 'utf8',
+      env: {
+        ...process.env, GITHUB_OUTPUT: output,
+        RELEASE_REGISTRY_PROBE_ATTEMPTS: '1', RELEASE_REGISTRY_DELAY_MS: '1',
+        RELEASE_TEST_SCENARIO: JSON.stringify([{ status: 404 }]),
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /"published":false/, 'CLI must run instead of exiting silently')
+    assert.match(readFileSync(output, 'utf8'), /^already_published=false$/m)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

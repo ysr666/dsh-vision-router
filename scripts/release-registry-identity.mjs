@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { appendFile } from 'node:fs/promises'
+import { existsSync, realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 const NPM_REGISTRY_ORIGIN = 'https://registry.npmjs.org'
 const RELEASE_PACKAGE_NAME = 'dsh-vision-router'
@@ -157,7 +159,11 @@ async function main(argv) {
   throw new Error(`npm registry identity check failed: ${result.detail || result.state}`)
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows argv paths are C:\\..., not file:// URLs; macOS /tmp may be
+// a symlink. An invalid lexical comparison silently skips registry safety
+// checks with exit 0. Canonicalize both file identities before dispatch.
+if (process.argv[1] && existsSync(process.argv[1]) &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   main(process.argv.slice(2)).catch((error) => {
     console.error(`::error::${error?.message || error}`)
     process.exitCode = 1

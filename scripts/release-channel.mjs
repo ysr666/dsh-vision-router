@@ -5,7 +5,7 @@
  * Never silently make a prerelease the default latest release.
  */
 import { fileURLToPath } from 'node:url'
-import { resolve } from 'node:path'
+import { existsSync, realpathSync } from 'node:fs'
 
 const CANONICAL_REVIEWED_RELEASE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(rc|alpha)\.(0|[1-9]\d*))?$/
 
@@ -21,7 +21,11 @@ export function releaseDistTag(version) {
   return match[4] === 'rc' ? 'next' : 'alpha'
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// macOS maps /tmp to /private/tmp: lexical argv vs import.meta.url equality
+// silently skipped the actual CLI command (exit 0, empty dist-tag). Compare
+// canonical file identities instead; keep library imports side-effect-free.
+if (process.argv[1] && existsSync(process.argv[1]) &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     const version = process.argv[2]
     process.stdout.write(releaseDistTag(version) + '\n')
