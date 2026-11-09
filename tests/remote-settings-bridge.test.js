@@ -338,3 +338,31 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
     'whole-turn budget no longer owns a duplicate presentation prelude',
   )
 })
+
+test('a masked credential URL cannot overwrite stored proxy or HTTP-provider credentials', async () => {
+  for (const [field, value] of [
+    ['proxy', new URL('http://localhost:1080/')],
+    ['httpProviders', [{ name: 'x', baseURL: 'https://example.org/v1', model: 'v', apiKeyEnv: '' }]],
+  ]) {
+    const { settings, calls } = makeSettings()
+    const url = field === 'proxy' ? value : new URL(value[0].baseURL)
+    url.username = '[REDACTED]'
+    url.password = '[REDACTED]'
+    url.searchParams.set('access_token', '[REDACTED]')
+    const attempted = field === 'proxy' ? url.toString() : [{ ...value[0], baseURL: url.toString() }]
+    const result = await createVisionRouterRemoteSettingsHandler(settings)('mutate', {
+      ops: [{ op: 'set', path: [field], value: attempted }], expectedRevision: 7,
+    })
+    assert.equal(result.ok, false, field)
+    assert.equal(result.error.code, 'bad-request', field)
+    assert.match(result.error.message, /masked credentials cannot be saved/, field)
+    assert.equal(calls.filter((entry) => entry[0] === 'mutate').length, 0, field)
+  }
+  const { settings, resolved } = makeSettings()
+  resolved.guidanceOverrides = []
+  const ordinary = await createVisionRouterRemoteSettingsHandler(settings)('mutate', {
+    ops: [{ op: 'set', path: ['guidanceOverrides'], value: [{ kind: 'test', text: '[REDACTED]' }] }],
+    expectedRevision: 7,
+  })
+  assert.equal(ordinary.ok, true, 'ordinary prompt text must remain editable')
+})

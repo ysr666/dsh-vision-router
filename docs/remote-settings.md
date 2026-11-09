@@ -43,7 +43,10 @@ secret-shaped properties and URL username/password and secret query parameters
 (e.g., in a proxy URL). API-key environment names such as `apiKeyEnv` are
 references, not actual credential values. A just-submitted secret-bearing field
 may be echoed **only** in that caller's successful, exact-value write response
-to support readback; subsequent reads remain redacted. Never treat the complete
+to support readback; subsequent reads remain redacted. If editing a URL
+containing masked username/password or secret query parameters, re-enter
+those values first: the server rejects saving a redaction placeholder rather
+than silently replacing the real credential. Never treat the complete
 settings view as a credential-export endpoint.
 
 A full settings editor **does not** grant access to separate Host capabilities

@@ -36,6 +36,30 @@ function redactUrl(value) {
   } catch { return value }
 }
 
+function containsRedactedCredential(value, field = '') {
+  // A remote descriptor may contain a redacted proxy or endpoint URL. If a
+  // user edits that form field and re-saves it, a masked placeholder is NOT a
+  // credential and must never overwrite the original value in Host settings.
+  if (field !== 'apiKeyEnv' && field !== 'credentialRef' &&
+      SECRET_KEY.test(field) && value === REDACTED) return true
+  if (typeof value === 'string' && /^[a-z][a-z\d+.-]*:\/\//i.test(value)) {
+    try {
+      const url = new URL(value)
+      if ([url.username, url.password].some((part) => {
+        try { return decodeURIComponent(part) === REDACTED } catch { return true }
+      })) return true
+      for (const [key, part] of url.searchParams) {
+        if (SECRET_KEY.test(key) && part === REDACTED) return true
+      }
+    } catch { /* Leave malformed URLs to the Host schema. */ }
+  }
+  if (Array.isArray(value)) return value.some((part) => containsRedactedCredential(part))
+  if (value && typeof value === 'object') {
+    return Object.entries(value).some(([key, part]) => containsRedactedCredential(part, key))
+  }
+  return false
+}
+
 function safeSettingsValue(value, field = '') {
   // The DSH descriptor is already Host-redacted. These additional guards
   // cover plain-text proxy URL userinfo and future nested secret-shaped fields
@@ -112,6 +136,9 @@ function validateMutation(payload, descriptor) {
   if (op.op === 'set') {
     const budgetError = remoteConfigFieldAdmissionError(field, op.value)
     if (budgetError) return { error: budgetError }
+    if (containsRedactedCredential(op.value, field)) {
+      return { error: 'masked credentials cannot be saved; re-enter the credential value before editing this field' }
+    }
   }
   return { ops: [op], expectedRevision }
 }
