@@ -5,14 +5,22 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
-## v3.2.0-rc.0
+## v3.2.0
 
-### Opt-in Host/Node retirement / 可选升级的 Host/Node 退役
-- Minimum DSH 0.2.1-rc.5 and Node 24.9.0; old DSH 0.1.x / 0.2.0 and Node 22 are no longer supported **by this RC**. The stable 3.1.5 channel remains available. / 本 RC 最低要求 DSH 0.2.1-rc.5、Node 24.9.0；不再支持旧 DSH 与 Node 22，稳定版 3.1.5 仍可用。
-- Return Connection authentication and trustedHosts ownership to DSH; retain only the minimal `webServer` ordering injection needed for unrelated plugins' RPC. / 鉴权与 trustedHosts 归 DSH，保留第三方 RPC 必需的最小 webServer 启动顺序依赖。
-- Read-only `doctor --upgrade-preflight` fails closed on known legacy-profile hazards, but never certifies historic Session data or every Host deployment. / 只读升级预检会拒绝已知旧配置风险，但不代表已验收历史会话或任意 Host 环境。
-- Preserve #804/#805/#809/#810 visual stability fixes from 3.1.5. Upstream Host HMR/Fiber #806 and user #792 / #808 field confirmations remain separate. / 继承 3.1.5 的视觉稳定性修复；Host HMR 与用户现场问题另行追踪。
-- The RC, if formally released, belongs exclusively to npm `next` and GitHub prerelease; **not** npm `latest` or GitHub Latest. / RC 仅在正式发布后进入 npm `next` 和 GitHub 预发布通道，不覆盖稳定版本。
+### Supported Host / Node transition | Host 与 Node 支持窗口调整
+- Require DSH >=0.2.1-rc.5 <0.3.0-0 and Node >=24.9.0; retire DSH 0.1.x / 0.2.0, earlier rc5 Hosts and Node 22 for **this** release. Existing v3.1.5 installations are unaffected until users opt in to upgrade. / 本版最低 DSH 0.2.1-rc.5、Node 24.9；旧 Host、旧 Node 22 不再受本版支持，未升级的 3.1.5 安装不会因此改变。
+- Return Connection authentication and trustedHosts ownership to DSH. Preserve minimal webStartup/webServer ordering needed by unrelated third-party plugin RPC; remove private Host-ready integration. / 鉴权与可信主机配置交还 DSH，仅保留第三方 RPC 依赖的最小启动顺序，删除旧私有就绪接入。
+- Preserve one optional DSH LLM peer to reject Host 0.2.0-rc.2, whose older admission ignores engines.dsh; strict pnpm installs pass with exact rc5 / rc1 Hosts. / 保留一个可选 LLM peer，避免旧 Host 忽略 engines.dsh 后误装新版；严格依赖安装在已测 Host 下通过。
+
+### Runtime, diagnostics and release hardening | 运行、诊断和发布加固
+- Carry forward v3.1.5 visual timeout, abort, routing and deep-tool mount fixes, with further 3.2 grounding and Desktop reliability regressions (#816, #819, #820). / 延续 3.1.5 的视觉超时、取消、路由与深度工具修复，并增加 3.2 定位及 Desktop 稳定性回归保护。
+- Read-only `doctor --upgrade-preflight` fails closed for identified legacy profile hazards but never certifies every past Session or custom deployment. No automatic rewrite or deletion of user profile, history, Settings or attachments. / 只读升级预检对已知旧配置危险项阻断，但不担保所有历史数据及部署；不自动改写、删除用户配置、会话、设置或附件。
+- Repair the previously failed release publish-channel gate by removing its `semver` dependency (#813), enforce standalone macOS/Windows CLI execution (#817), and retain exact tarball, OIDC, SHA and provenance verification. / 修复发布阶段缺失 semver 导致的失败，保证 macOS/Windows CLI 真正执行，并保留不可变包及来源证明门禁。
+
+### Upgrade limits and known caveats | 升级边界与已知限制
+- DSH persistence-reader defects may affect older permission/preset and subagent/descriptor records when migrating a historical profile to a new Host. Read-only target-Host acceptance and rollback are necessary; this plugin does **not** normalize Host-owned history. / 老旧会话的权限和子代理事件可能触发新版 DSH 持久化读取器问题；须单独做只读验证并保留回滚，插件不代修 Host 数据。
+- Upstream DSH HMR/Fiber instability and raw JS/CSS field attribution remain separate upstream investigations. Related DVR-triggered defects have mitigation and regression coverage; do not claim unrelated Host defects fixed. / 上游 HMR/Fiber 与源码可见问题仍由上游独立跟进，插件缓解与回归测试不等于修复所有 Host 缺陷。
+- The attempted `v3.2.0-rc.0` publication failed **before npm publish** (immutable candidate tag only); the repaired workflow is used directly for the stable `v3.2.0` release. / 此前 rc.0 仅创建源码 Tag，npm 未发布；本次正式版以修复后的受保护流程发布，不补发 RC。
 
 ## v3.1.5
 
