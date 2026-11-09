@@ -29,6 +29,8 @@ Vision Router 默认让完整视觉工具表从会话开始就保持稳定。正
 
 开启后，平时只暴露 `vision_activate`，首次需要时再挂载完整视觉工具；默认关闭时，完整视觉工具从一开始就常驻。视觉工具本身的能力不变。
 
+**重要时序约束（DSH 0.2.x）：** 宿主会在模型步骤开始前冻结本批可执行工具列表。因此纯文字任务中请先单独调用 `vision_activate`，等待该次调用完成，再在**下一模型步骤**调用 `vision_describe` 等深度工具；同一批并行调用会被宿主拒绝为 `UNKNOWN_TOOL`。图片消息正常会在模型步骤前提前挂载工具。首次激活完成后，工具注册会保持到插件 Fiber 卸载，并非仅对当前会话单独挂载。
+
 ## English
 
 Vision Router keeps the complete vision tool schema stable from the beginning of a session by default. Normal DSH bundle installs provide this composition layer:
@@ -55,3 +57,5 @@ Progressive exposure remains available as an advanced opt-in. If minimizing the 
 `progressiveTools` determines which tools are registered at plugin startup, so it is a **boot-time setting**; do not rely on changing this field through live Web settings. Restart DSH after changing the profile patch.
 
 When enabled, only `vision_activate` is exposed initially and the complete vision tool set mounts on first use. With the default disabled mode, the complete vision tool set is present from the start. The vision capabilities themselves are unchanged.
+
+**DSH 0.2.x step-snapshot contract:** The Host freezes the callable tool set at the start of each model step. On text-only turns, call `vision_activate` **alone**, wait for its result, and use `vision_describe` or another deep tool **in the next model step**. Batching the activation and deep-tool calls together produces Host `UNKNOWN_TOOL`. Image turns normally mount the tools before step admission. Once mounted, registration persists until the plugin Fiber is disposed; it is not scoped only to the current conversation.
