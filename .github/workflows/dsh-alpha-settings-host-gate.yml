@@ -24,6 +24,7 @@ on:
       - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - 'scripts/dsh-desktop-e2e-watchdog.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
@@ -140,7 +141,10 @@ jobs:
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.json
           SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-alpha-macos-desktop-renderer.png
-        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+        # The *whole process* gets a deadline, including synchronous package
+        # installation and unresponsive Electron/Host calls. Keep diagnostics
+        # uploadable instead of exhausting the 60-minute GitHub job timeout.
+        run: node ../dvr/scripts/dsh-desktop-e2e-watchdog.mjs ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
       - name: Upload macOS Desktop diagnostics on failure
         if: matrix.os == 'macos-latest' && failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
