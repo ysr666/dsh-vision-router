@@ -1,6 +1,6 @@
 /**
- * CI-only recovery for transient official Electron binary download HTTP 5xx.
- * Never alters a locked package version, checksum, or mirror.
+ * CI-only recovery for transient official Electron download HTTP 5xx/timeouts.
+ * Never alters the locked package version, verified binary, or mirror.
  * Does not retry renderer assertions or hide Desktop test failures.
  */
 import { spawnSync } from 'node:child_process'
@@ -13,11 +13,11 @@ const TRANSIENT_DOWNLOAD_ERROR = /(?:(?:HTTPError:\s*Response code|HTTP status c
 
 export async function resolveCiElectronBinary(desktopRequire, {
   ci = process.env.GITHUB_ACTIONS === 'true',
-  attempts = 3,
+  attempts = 6,
   runInstall = (entry) => spawnSync(process.execPath, [entry], {
     cwd: dirname(entry),
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: 65_000,
     maxBuffer: 4 * 1024 * 1024,
   }),
   exists = existsSync,
@@ -31,8 +31,8 @@ export async function resolveCiElectronBinary(desktopRequire, {
   }
   const installPath = join(dirname(desktopRequire.resolve('electron')), 'install.js')
   if (!exists(installPath)) throw new Error('official Electron installer unavailable (no mirror fallback)')
-  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 4) {
-    throw new RangeError('official Electron installer attempts must be between 1 and 4')
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 6) {
+    throw new RangeError('official Electron installer attempts must be between 1 and 6')
   }
 
   for (let number = 1; number <= attempts; number += 1) {
@@ -43,14 +43,17 @@ export async function resolveCiElectronBinary(desktopRequire, {
       return desktopRequire('electron')
     }
     const details = String(result?.stderr ?? '') + '\n' + String(result?.stdout ?? '')
-    if (!TRANSIENT_DOWNLOAD_ERROR.test(details)) {
+    // If @electron/get itself stalls instead of returning an HTTP status,
+    // allow the same bounded retry only for the locked official installer.
+    const installTimedOut = result?.error?.code === 'ETIMEDOUT'
+    if (!TRANSIENT_DOWNLOAD_ERROR.test(details) && !installTimedOut) {
       throw new Error('official Electron install failed for a nontransient reason; renderer was not run')
     }
     if (number === attempts) {
-      throw new Error('official Electron download failed with HTTP 5xx after ' + attempts + ' bounded CI attempts')
+      throw new Error('official Electron download failed with transient HTTP 5xx/timeout after ' + attempts + ' bounded CI attempts')
     }
-    notice('Official Electron download transient HTTP 5xx: retry ' + number + '/' + (attempts - 1) + ' (same locked package, same source)')
-    await delay(2_000 * number)
+    notice('Official Electron download transient HTTP 5xx/timeout: retry ' + number + '/' + (attempts - 1) + ' (same locked package, same source)')
+    await delay(3_000 * number)
   }
   throw new Error('unreachable Electron CI recovery state')
 }

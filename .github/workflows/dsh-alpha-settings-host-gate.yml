@@ -25,6 +25,7 @@ on:
       - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - 'scripts/dsh-desktop-e2e-watchdog.mjs'
+      - 'scripts/ci-electron-download-retry.mjs'
       - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
       - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
       - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
