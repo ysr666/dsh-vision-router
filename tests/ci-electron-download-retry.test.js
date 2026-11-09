@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { dirname, join } from 'node:path'
 import { resolveCiElectronBinary } from '../scripts/ci-electron-download-retry.mjs'
+
+const LOCKED_INSTALL = join(dirname('/safe/locked-package/electron/index.js'), 'install.js')
 
 const missingBinary = () => new Error('Electron failed to install correctly. Please delete node_modules/electron')
 const makeRequire = () => {
@@ -43,7 +46,7 @@ test('CI retries only official Electron 504 and then loads the exact locked bina
   const result = await resolveCiElectronBinary(f.load, {
     ci:true, attempts:3, exists:()=>true,
     runInstall:(entry)=>{
-      assert.equal(entry,'/safe/locked-package/electron/install.js')
+      assert.equal(entry, LOCKED_INSTALL)
       attempts++
       if (attempts === 1) return {status:1,stderr:'HTTPError: Response code 504 (Gateway Time-out) for https://github.com/electron/electron'}
       f.enable()
