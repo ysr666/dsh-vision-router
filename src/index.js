@@ -4948,7 +4948,7 @@ ctx.logger?.info(
     let deepActive = false
     const deepDisposers = []
     activateDeepTools = () => {
-      if (deepActive) return '视觉深看工具已在挂载状态。'
+      if (deepActive) return '视觉深看工具已在挂载状态。请在下一模型步骤调用深度工具，不要与 vision_activate 同批并行调用。'
       deepActive = true
       try {
         for (const def of deepToolDefs) {
@@ -4997,7 +4997,7 @@ ctx.logger?.info(
         '视觉深看工具已挂载：vision_bootstrap（结构化预识别）、vision_describe（看图问答）、vision_ground（像素定位）、vision_detect（元素清单）、' +
         'vision_materialize（附件落盘）、vision_crop（裁剪放大）、vision_pixel_diff（像素对比验证）、vision_colors（取色）、' +
         'vision_ocr（文字识别）、vision_trace（SVG 矢量化）、vision_extract_foreground（抠图）、' +
-        'vision_html_screenshot（页面截图）。现在可以直接调用已启用的工具。' +
+        'vision_html_screenshot（页面截图）。本次激活调用结束后，下一模型步骤才可调用深度工具；不要在同一批并行工具调用中同时请求 vision_activate 和 vision_describe 等深度工具。' +
         '注意：vision_ocr 只用于读取图片文字；视觉工具返回 ok:false 后端不可用结果时，不要改问法重复调用，继续文本任务。'
       )
     }
@@ -5024,7 +5024,7 @@ ctx.logger?.info(
             description:
               'Mount the deep vision tools (vision_bootstrap / vision_describe / vision_ground / vision_detect / vision_materialize / vision_crop / ' +
               'vision_pixel_diff / vision_colors / vision_ocr / vision_trace / ' +
-              'vision_extract_foreground / vision_present / vision_html_screenshot) for this session. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
+              'vision_extract_foreground / vision_present / vision_html_screenshot) for subsequent model steps. Do not call any deep vision tool in the same parallel tool batch as vision_activate: DSH freezes the callable tool set before executing that batch. Desktop screenshot remains disabled until the user explicitly opts in through Vision Router settings. They mount ' +
               'automatically on image turns; call this only when you need them on a text-only turn.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
             output: stringOutput,
@@ -5052,8 +5052,8 @@ ctx.logger?.info(
                 '# 视觉深看工具（vision-tools）\n\n' +
                 '当任务需要像素级视觉操作——照着图写 UI、定位元素、裁剪放大细看、像素对比验证还原结果、' +
                 '提取配色、识别图中文字、矢量化图标、抠图、把生成图片安全展示给用户或给页面截图——时使用本套工具。' +
-                '图片消息会自动挂载它们；纯文字任务需要时可调用 `vision_activate`（只需一次）。\n' +
-                'Use these tools for pixel-level vision work. They auto-mount on image turns; on text-only turns call `vision_activate` once if needed. When structured bootstrap is enabled, call `vision_bootstrap` first, then MUST call at least 1 evidence/deepening vision tool before answering; after that use more tools as needed.\n\n' +
+                '图片消息会自动挂载它们；纯文字任务需要时先单独调用 `vision_activate`，等待这一批调用结束，下一模型步骤再调用深看工具；不可同批并行调用。\n' +
+                'Use these tools for pixel-level vision work. They auto-mount on image turns. On text-only turns, call `vision_activate` alone, wait for its result, then use deep tools in a subsequent model step; never batch activation and deep-tool calls together. When structured bootstrap is enabled, call `vision_bootstrap` first, then MUST call at least 1 evidence/deepening vision tool before answering; after that use more tools as needed.\n\n' +
                 '1. 定位与细看：`vision_ground` 定位 → `vision_crop` 裁剪放大 → `vision_describe` 细看；盘点页面元素用 `vision_detect`（编号清单+框，可引用“元素 #n”）；\n' +
                 '2. 还原验证循环（本插件招牌流程）：参考图 → 实现 → `vision_html_screenshot` 截图 → `vision_pixel_diff` 度量差异 → 修复 → 再截图，迭代到差异收敛（0% 是常见终点）；长页面用 `fullPage: true` 一次截整页并拿到 `pageHeight`；\n' +
                 '3. 其余按需取用：配色用 `vision_colors`，文字用 `vision_ocr`，图标矢量化用 `vision_trace`，纯色背景抠图用 `vision_extract_foreground`，本地 HTML 截图用 `vision_html_screenshot`（长页面加 `fullPage: true` 截整页）；\n' +

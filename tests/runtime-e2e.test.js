@@ -734,6 +734,7 @@ async function mountDeepTool(config0, name) {
   apply(ctx, Config({ ...config0 }))
   const activate = toolDefs.get('vision_activate')
   assert.ok(activate, 'progressive mode should register vision_activate')
+  assert.match(activate.description, /same parallel tool batch as vision_activate/)
   await activate.execute({}, {})
   const def = toolDefs.get(name)
   assert.ok(def, `${name} should mount after activation`)
