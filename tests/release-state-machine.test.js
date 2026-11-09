@@ -109,6 +109,35 @@ test('release channel CLI is not silently skipped through a symlinked working di
   }
 })
 
+test('registry identity CLI does not silently succeed through symlinked or Windows paths', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'release-registry-alias-'))
+  try {
+    const actual = path.join(root, 'actual')
+    mkdirSync(actual)
+    writeFileSync(path.join(actual, 'release-registry-identity.mjs'),
+      readFileSync(CLI, 'utf8'))
+    const alias = path.join(root, 'alias')
+    symlinkSync(actual, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const output = path.join(root, 'github-output')
+    const result = spawnSync(process.execPath, [
+      '--import', pathToFileURL(STUB).href,
+      path.join(alias, 'release-registry-identity.mjs'), 'inspect', '2.3.0',
+    ], {
+      cwd: root, encoding: 'utf8',
+      env: {
+        ...process.env, GITHUB_OUTPUT: output,
+        RELEASE_REGISTRY_PROBE_ATTEMPTS: '1', RELEASE_REGISTRY_DELAY_MS: '1',
+        RELEASE_TEST_SCENARIO: JSON.stringify([{ status: 404 }]),
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /"published":false/, 'CLI must run instead of exiting silently')
+    assert.match(readFileSync(output, 'utf8'), /^already_published=false$/m)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('release workflow uses Node24 and keeps prereleases off default npm/GitHub latest', () => {
   const workflow = readFileSync(WORKFLOW, 'utf8')
   const verify = workflow.slice(workflow.indexOf('  verify:'), workflow.indexOf('  tag:', workflow.indexOf('  verify:') + 1))
