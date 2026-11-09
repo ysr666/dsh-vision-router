@@ -412,6 +412,8 @@ test('runtime boundary replaces prose-based activation control flow with machine
   assert.equal(typeof activation?.execute, 'function')
   const result = await activation.execute({})
   assert.match(result, /^Pixel-level vision tools mounted:/)
+  assert.match(result, /next model step/)
+  assert.match(result, /same parallel tool batch/)
 
   wrapped.on('agent/pre-step', async (payload, next) => next())
   assert.equal(typeof preStep, 'function')
@@ -537,6 +539,7 @@ test('issue #808: progressive activation reports the Core-owned mount when late 
   assert.ok(activate)
   assert.equal(defs.has('vision_describe'), false)
   assert.match(await activate.execute({}, {}), /^Pixel-level vision tools mounted:/)
+  assert.match(await activate.execute({}, {}), /next model step/)
   assert.equal(defs.has('vision_describe'), true)
   assert.match(await activate.execute({}, {}), /already mounted/i)
 
