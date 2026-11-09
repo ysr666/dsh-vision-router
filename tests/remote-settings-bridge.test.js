@@ -138,35 +138,54 @@ test('after opt-in, every ordinary Host schema field may be edited remotely', as
   }
 })
 
+function syntheticCredential(...parts) {
+  // Runtime-only test fixture: never place a credential-shaped literal in
+  // source, including a URL with userinfo or an API-key-shaped string.
+  return parts.join('-')
+}
+
+function proxyUrlWithSyntheticCredentials(host, username, password, token) {
+  const url = new URL('http://' + host + ':1080')
+  url.username = username
+  url.password = password
+  if (token) url.searchParams.set('token', token)
+  return url.toString()
+}
+
 test('remote settings redact stored URL credentials and nested secret-shaped fields', async () => {
   const { settings, resolved } = makeSettings()
-  resolved.proxy = 'http://alice:password123@127.0.0.1:1080/?token=old-secret'
-  resolved.httpProviders[0].apiKey = 'unintended-plaintext-secret'
+  const password = syntheticCredential('fixture', 'password', 'one')
+  const queryToken = syntheticCredential('fixture', 'query', 'token')
+  const nestedSecret = syntheticCredential('fixture', 'nested', 'credential')
+  resolved.proxy = proxyUrlWithSyntheticCredentials('127.0.0.1', 'synthetic-user', password, queryToken)
+  resolved.httpProviders[0].apiKey = nestedSecret
   resolved.httpProviders[0].apiKeyEnv = 'OPENAI_API_KEY'
   const handler = createVisionRouterRemoteSettingsHandler(settings)
   const described = await handler('describe', {})
   const view = described.value.view.value
-  assert.equal(JSON.stringify(described).includes('password123'), false)
-  assert.equal(JSON.stringify(described).includes('old-secret'), false)
-  assert.equal(JSON.stringify(described).includes('unintended-plaintext-secret'), false)
+  assert.equal(JSON.stringify(described).includes(password), false)
+  assert.equal(JSON.stringify(described).includes(queryToken), false)
+  assert.equal(JSON.stringify(described).includes(nestedSecret), false)
   assert.equal(view.httpProviders[0].apiKeyEnv, 'OPENAI_API_KEY')
   assert.match(view.proxy, /REDACTED/)
 })
 
 test('a secret-bearing remote write validates authoritative readback without disclosing the old value', async () => {
   const { settings, resolved } = makeSettings()
-  resolved.proxy = 'http://old:supersecret@127.0.0.1:1080'
+  const previouslyStored = syntheticCredential('fixture', 'old', 'password')
+  const justEntered = syntheticCredential('fixture', 'new', 'password')
+  resolved.proxy = proxyUrlWithSyntheticCredentials('127.0.0.1', 'previous', previouslyStored)
   const handler = createVisionRouterRemoteSettingsHandler(settings)
-  const requested = 'http://new:just-entered@localhost:1080'
+  const requested = proxyUrlWithSyntheticCredentials('localhost', 'incoming', justEntered)
   const written = await handler('mutate', {
     ops: [{ op: 'set', path: ['proxy'], value: requested }], expectedRevision: 7,
   })
   assert.equal(written.ok, true)
   assert.equal(written.value.view.value.proxy, requested, 'only the value supplied by this caller may be echoed after verified persistence')
   const reloaded = await handler('describe', {})
-  assert.equal(reloaded.value.view.value.proxy.includes('just-entered'), false)
+  assert.equal(reloaded.value.view.value.proxy.includes(justEntered), false)
   assert.equal(reloaded.value.view.value.proxy.includes('REDACTED'), true)
-  assert.equal(JSON.stringify(reloaded).includes('supersecret'), false)
+  assert.equal(JSON.stringify(reloaded).includes(previouslyStored), false)
 })
 
 test('remote risk acknowledgement never grants an unauthenticated settings mutation by itself', async () => {
