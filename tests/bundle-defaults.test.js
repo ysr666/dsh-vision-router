@@ -231,9 +231,13 @@ test('real Desktop E2E has bounded official Electron CI-only download recovery',
   assert.match(renderer, /import \{ resolveCiElectronBinary \} from '\.\/ci-electron-download-retry\.mjs'/)
   assert.match(renderer, /await resolveCiElectronBinary\(desktopRequire\)/)
   assert.match(retry, /GITHUB_ACTIONS === 'true'/)
-  assert.match(retry, /attempts = 3/)
+  assert.match(retry, /attempts = 6/)
+  assert.match(retry, /attempts > 6/)
+  assert.match(retry, /timeout: 65_000/)
   assert.match(retry, /official Electron install failed for a nontransient reason/)
   assert.match(retry, /no mirror fallback/)
+  const alpha = await readFile(new URL('../.github/workflows/dsh-alpha-settings-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(alpha, /run: node \.\.\/dvr\/scripts\/dsh-desktop-e2e-watchdog\.mjs \.\.\/dvr\/scripts\/dsh-desktop-renderer-e2e\.mjs/)
 })
 
 test('release provenance binds the exact npm tarball before the write-token phase', async () => {

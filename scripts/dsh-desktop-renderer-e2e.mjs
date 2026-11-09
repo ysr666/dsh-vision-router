@@ -446,8 +446,11 @@ async function exerciseVisionOnboardingSettingsPath(page) {
   await page.getByRole('button', { name: /关闭|Close/i }).first().click()
 }
 
+const fetchHostProbe = (url, init = {}, timeoutMs = 8_000) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+
 async function exchangeHostCookie(authenticatedUrl) {
-  const response = await fetch(authenticatedUrl, { redirect: 'manual' })
+  const response = await fetchHostProbe(authenticatedUrl, { redirect: 'manual' })
   const setCookie = response.headers.get('set-cookie')
   await response.body?.cancel()
   if (response.status !== 303 || !setCookie) {
@@ -461,7 +464,7 @@ async function readHostCoreProbe(authenticatedUrl) {
   const cookie = await exchangeHostCookie(authenticatedUrl)
   target.pathname = '/dvr-e2e-core-status'
   target.search = ''
-  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
   const body = await response.json()
   if (!response.ok) throw new Error(`Desktop Host core probe failed (${response.status}): ${JSON.stringify(body)}`)
   return body
@@ -472,7 +475,7 @@ async function readHostSessionSources(authenticatedUrl) {
   const cookie = await exchangeHostCookie(authenticatedUrl)
   target.pathname = '/dvr-e2e-session-sources'
   target.search = ''
-  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
   const text = await response.text()
   if (!response.ok || text.length === 0) {
     throw new Error(`Desktop Host Session source probe failed (${response.status}): ${text || '<empty body>'}`)
@@ -492,7 +495,7 @@ async function readHostModelSelections(authenticatedUrl) {
   const cookie = await exchangeHostCookie(authenticatedUrl)
   target.pathname = '/dvr-e2e-model-selections'
   target.search = ''
-  const response = await fetch(target, { headers: { cookie }, redirect: 'manual' })
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
   if (!response.ok) throw new Error(`model selection probe returned HTTP ${response.status}`)
   const payload = await response.json()
   if (!Array.isArray(payload?.sessions)) throw new Error('model selection probe returned an invalid shape')
@@ -546,11 +549,11 @@ async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 
   while (Date.now() < deadline) {
     const rpcId = `desktop-e2e-${randomUUID()}`
     try {
-      const response = await fetch(target, {
+      const response = await fetchHostProbe(target, {
         method: 'POST',
         headers: { 'content-type': 'application/json', cookie },
         body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } }),
-      })
+      }, Math.max(1, Math.min(8_000, deadline - Date.now())))
       const body = await response.json()
       if (response.ok && body?.type === 'server-response' && body?.rpcId === rpcId && body?.result?.ok === true) {
         return body.result.value
@@ -618,6 +621,16 @@ const userData = join(root, 'user-data')
 const runtimeRoot = join(root, 'runtime')
 const primaryRuntime = join(runtimeRoot, 'primary-runtime')
 const diagnosticPath = process.env.SMOKE_DIAGNOSTIC_PATH
+const progressPath = process.env.DVR_DESKTOP_E2E_PROGRESS_PATH
+const reportPhase = (phase) => {
+  // Fixed, allowlisted phase names only; no Host URL, auth cookie, model reply
+  // or user/session path is copied to CI diagnostics.
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(phase)) throw new Error('invalid desktop E2E phase')
+  console.log(`[desktop-e2e] phase=${phase}`)
+  if (progressPath) {
+    try { writeFileSync(progressPath, JSON.stringify({ phase }) + '\n') } catch {}
+  }
+}
 const screenshotPath = process.env.SMOKE_SCREENSHOT_PATH
 let child
 let browser
@@ -639,6 +652,7 @@ const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
 
 try {
+  reportPhase('initialize-fixture')
   mkdirSync(home)
   mkdirSync(userData)
 
@@ -697,6 +711,7 @@ try {
     res.end(JSON.stringify({ choices: [{ message: { content: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK' : 'DESKTOP_VISUAL_E2E_OK' } }] }))
   })
 
+  reportPhase('mock-providers-ready')
   const pnpmVersion = readJson(join(dshRoot, 'apps/desktop/node_modules/pnpm/package.json')).version
   const electronNode = execFileSync(electron, ['-p', 'process.versions.node'], {
     encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
@@ -806,6 +821,7 @@ try {
     throw new Error(`Desktop profile install failed (${String(install.status)})\n${install.stdout}\n${install.stderr}`)
   }
 
+  reportPhase('desktop-profile-installed')
   const rendererPort = await freePort()
   const mainPort = await freePort()
   const hostPort = await freePort()
@@ -859,8 +875,10 @@ try {
     rejectAuthenticatedHostUrl(new Error(`Desktop exited before Host URL became available (${String(code ?? signal)})`))
   })
 
+  reportPhase('electron-started')
   browser = await waitForCdp(rendererPort)
   page = await waitForAppPage(browser)
+  reportPhase('desktop-cdp-ready')
   page.on('pageerror', (error) => rendererErrors.push(String(error?.stack || error)))
   // Issue #792: a reporter's Windows Desktop showed the Host's boot JS and
   // CSS *as visible page text*. A boot payload or zero renderer exceptions
@@ -909,6 +927,7 @@ try {
         `Desktop structured style row ${index} illegally closes its element`)
     }
   }
+  reportPhase('desktop-boot-ready')
   const authenticatedHostUrl = await Promise.race([
     authenticatedHostUrlPromise,
     new Promise((_, reject) => setTimeout(() => reject(new Error('Desktop Host URL was not reported')), 30_000)),
@@ -931,7 +950,9 @@ try {
   // below to prove that initialization completed before exercising Vision mode.
   const toggle = await waitForVisionToggle(page, authenticatedHostUrl)
   if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
+  reportPhase('vision-toggle-ready')
   await exerciseVisionOnboardingSettingsPath(page)
+  reportPhase('onboarding-complete')
 
   const initialPressed = await toggle.getAttribute('aria-pressed')
   if (initialPressed !== 'true' && initialPressed !== 'false') {
@@ -1052,6 +1073,7 @@ try {
     row.current?.provider === provider && row.current.model === 'desktop-text')),
     `Desktop selection transition trace did not observe both models: ${JSON.stringify(clientTransitions)}`)
 
+  reportPhase('two-way-toggle-passed')
   const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
   await accountMenu.click()
   await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
@@ -1108,6 +1130,7 @@ try {
   if (await restoredToggle.isChecked() !== originalChecked) throw new Error('Desktop Settings restore did not survive save readback')
   await page.getByRole('button', { name: /关闭|Close/i }).first().click()
 
+  reportPhase('settings-roundtrip-passed')
   // A true product smoke ends at the rendered answer, not at an injected DOM node.
   // Reuse the exact live Session whose composer and Vision slot were exercised
   // above. Do not couple the smoke to a version-specific “new session” chrome.
@@ -1201,6 +1224,7 @@ try {
     }
   }
 
+  reportPhase('vision-answer-rendered')
   const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
   const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
   assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
@@ -1241,6 +1265,7 @@ try {
     )
   }
 
+  reportPhase('session-source-verified')
   await assertDesktopHtmlRendering('after vision turn')
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {
@@ -1260,6 +1285,7 @@ try {
       durableDvrMessages: dvrMessages.length,
     },
   }
+  reportPhase('all-assertions-passed')
   console.log(JSON.stringify(result))
   if (diagnosticPath) {
     const fileResult = {
