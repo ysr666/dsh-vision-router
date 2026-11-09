@@ -14,6 +14,12 @@ export const WEB_ROUTE_REMOTE_CAPABILITY = Object.freeze({
 // callers that use isLocalMutationRoute(); local-only GET capabilities such as
 // test-connection are intentionally not reclassified as mutations.
 const ROUTE_CAPABILITY_POLICIES = new Map([
+  // The ConfigEditor-backed root route has its own explicit transport and
+  // BrowserAuth fence; declare its local-only semantics here as well.
+  ['/_dsh/vision-router/local-settings', new Map([
+    ['GET', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY }],
+    ['POST', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY, legacyMutation: true }],
+  ])],
   ['/_dsh/vision-router/self-update', new Map([
     ['POST', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY, legacyMutation: true }],
   ])],

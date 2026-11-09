@@ -315,10 +315,10 @@ export const Config = z.object({
   ocrEngine: z.union(['auto', 'tesseract', 'vision']).default('auto'),
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
-  // Remote browsers are intentionally unable to use DSH's broad settings.*
-  // plane. This narrow Vision Router bridge is opt-in and still uses DSH's
-  // trusted-host transport fence. Only a loopback/local settings page may
-  // change this permission; the remote bridge rejects writes to the field.
+  // DSH versions expose different browser Settings transports. DVR's remote
+  // RPC is opt-in, but once acknowledged it edits the same Host-owned config
+  // namespace and schema as the local browser. The permission itself is
+  // managed by risk confirmation or local revocation, not ordinary remote writes.
   allowRemoteSettings: z.boolean().default(false),
   // Privacy policy switch: when enabled, Vision Router executes image-model
   // requests only against loopback visual endpoints (Ollama, LM Studio, or

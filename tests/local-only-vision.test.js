@@ -13,10 +13,7 @@ import {
 } from '../index.js'
 import { configuredVisionAdapterModels } from '../lib/replay-delegation.js'
 import { configuredVisionPairs } from '../lib/vision-routing-evidence.js'
-import {
-  REMOTE_SETTINGS_READABLE_FIELDS,
-  REMOTE_SETTINGS_MUTABLE_FIELDS,
-} from '../lib/remote-settings-bridge.js'
+import { createVisionRouterRemoteSettingsHandler } from '../lib/remote-settings-bridge.js'
 
 const cloudHttp = {
   name: 'cloud',
@@ -72,9 +69,31 @@ test('local-only policy rejects mispointed local backend cards', () => {
   assert.deepEqual(lmStudio, [])
 })
 
-test('local-only privacy control is remotely visible but not remotely mutable', () => {
-  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('localOnlyVision'), true)
-  assert.equal(REMOTE_SETTINGS_MUTABLE_FIELDS.includes('localOnlyVision'), false)
+test('local-only privacy control remains an effective runtime restriction but can be edited after remote risk acknowledgement', async () => {
+  let revision = 0
+  const value = { allowRemoteSettings: true, localOnlyVision: true }
+  const user = { allowRemoteSettings: true }
+  const handler = createVisionRouterRemoteSettingsHandler({
+    writable: true,
+    describe() {
+      return [{ ns: 'vision-router', value: structuredClone(value), user: structuredClone(user), revision }]
+    },
+    async mutate(ns, ops, expectedRevision) {
+      assert.equal(ns, 'vision-router')
+      assert.equal(expectedRevision, revision)
+      value.localOnlyVision = ops[0].value
+      user.localOnlyVision = ops[0].value
+      revision += 1
+    },
+  })
+  assert.equal((await handler('describe', {})).value.view.value.localOnlyVision, true)
+  const result = await handler('mutate', {
+    ops: [{ op: 'set', path: ['localOnlyVision'], value: false }], expectedRevision: revision,
+  })
+  assert.equal(result.ok, true)
+  assert.equal(value.localOnlyVision, false)
+  assert.equal(result.value.view.value.localOnlyVision, false)
+  assert.equal(localOnlyVisionEnabled(value), false)
 })
 
 test('Settings UI exposes the productized local-only control and disables OVH while active', async () => {
@@ -82,7 +101,7 @@ test('Settings UI exposes the productized local-only control and disables OVH wh
   assert.match(source, /localOnlyVision/)
   assert.match(source, /Local-only vision/)
   assert.match(source, /runtime-blocked while Local-only vision is enabled/)
-  assert.match(source, /Change this only on the local DSH machine/)
+  assert.match(source, /Remote changes also affect the Host image-data flow/)
   assert.match(source, /Result text may still go to a cloud chat model/)
   assert.match(source, /Results may still go to a cloud chat model/)
   assert.match(source, /Vision result destination/)

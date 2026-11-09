@@ -71,7 +71,7 @@ test('remote enablement requires explicit risk acknowledgement and only enables 
     4,
   ])
   assert.equal(Object.hasOwn(enabled.value.view.value, 'allowRemoteSettings'), false)
-  assert.equal(Object.hasOwn(enabled.value.view.value, 'proxy'), false)
+  assert.equal(enabled.value.view.value.proxy, 'http://127.0.0.1:1080')
   assert.equal(enabled.value.view.value.routing, false)
 })
 

@@ -4,14 +4,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   REMOTE_SETTINGS_PERMISSION,
-  REMOTE_SETTINGS_READABLE_FIELDS,
   createVisionRouterRemoteSettingsHandler,
 } from '../lib/remote-settings-bridge.js'
 
 test('remote settings preserve v2 routing authority fields after settings IA merge', async () => {
-  for (const field of ['routingMode', 'routingPreference', 'backgroundBenchmarking', 'ocrEngine']) {
-    assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes(field), true, field)
-  }
 
   const value = {
     [REMOTE_SETTINGS_PERMISSION]: true,

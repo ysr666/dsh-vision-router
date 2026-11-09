@@ -11,53 +11,47 @@ export const REMOTE_SETTINGS_CHANNEL = '/vision-router-settings'
 export const REMOTE_SETTINGS_PERMISSION = 'allowRemoteSettings'
 export const REMOTE_SETTINGS_AUTHORIZE_ENDPOINT = 'authorize'
 
-// Remote DSH pages are deliberately less privileged than the loopback settings UI.
-// This is a capability allow-list, not a blacklist: a future Config field is local-only
-// until it is reviewed and explicitly added here.
-export const REMOTE_SETTINGS_READABLE_FIELDS = Object.freeze([
-  'providers',
-  'routing',
-  'reverseRouting',
-  'routingMode',
-  'routingPreference',
-  'backgroundBenchmarking',
-  'textProvider',
-  'tool',
-  'structuredVisionBootstrap',
-  'visionDepth',
-  'visionDepthMaxCalls',
-  'guidanceOverrides',
-  'progressiveTools',
-  'autoActivateOnImage',
-  'extraVisionModels',
-  'rewriteImages',
-  'downscale',
-  'downscaleMaxPixels',
-  'cache',
-  'cacheTtlSeconds',
-  'cacheMaxEntries',
-  'timeoutMs',
-  'visionTaskTimeoutMs',
-  'visionTurnBudgetMs',
-  'ocrTimeoutMs',
-  'ocrEngine',
-  'localOnlyVision',
-  'freeFallback',
-  'freeCloudFirst',
-  'autoWrapProviders',
-  'wrappedProviders',
-  'onboardingSeen',
-])
+// Remote settings are an opt-in view of the *same* Host-owned DVR namespace.
+// No second field allow-list: after the once-per-profile risk acknowledgement,
+// DSH-authenticated clients can edit any ordinary field admitted by the Host
+// schema. The permission flag itself is managed through the explicit
+// risk-confirmation/revocation flow, not as an ordinary settings mutation.
+const REDACTED = '[REDACTED]'
+const SECRET_KEY = /(?:password|passwd|private.?key|(?:api|access|refresh).?token|token|secret|credential|api.?key|authorization)/i
 
-// Privacy-critical local-only policy is visible remotely for truthful status,
-// but only a loopback/local Settings page may disable it. This prevents an
-// already-authorized remote Settings session from re-enabling visual egress.
-export const REMOTE_SETTINGS_MUTABLE_FIELDS = Object.freeze(
-  REMOTE_SETTINGS_READABLE_FIELDS.filter((field) => field !== 'localOnlyVision'),
-)
+function redactUrl(value) {
+  if (typeof value !== 'string' || !/^[a-z][a-z\d+.-]*:\/\//i.test(value)) return value
+  try {
+    const url = new URL(value)
+    let changed = false
+    if (url.username || url.password) {
+      url.username = REDACTED
+      url.password = REDACTED
+      changed = true
+    }
+    for (const key of url.searchParams.keys()) {
+      if (SECRET_KEY.test(key)) { url.searchParams.set(key, REDACTED); changed = true }
+    }
+    return changed ? url.toString() : value
+  } catch { return value }
+}
 
-const readable = new Set(REMOTE_SETTINGS_READABLE_FIELDS)
-const mutable = new Set(REMOTE_SETTINGS_MUTABLE_FIELDS)
+function safeSettingsValue(value, field = '') {
+  // The DSH descriptor is already Host-redacted. These additional guards
+  // cover plain-text proxy URL userinfo and future nested secret-shaped fields
+  // without reintroducing a field-level *capability* allow-list.
+  if (field !== 'apiKeyEnv' && field !== 'credentialRef' && SECRET_KEY.test(field)) return REDACTED
+  if (Array.isArray(value)) return value.map((item) => safeSettingsValue(item))
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+      out[key] = safeSettingsValue(item, key)
+    }
+    return out
+  }
+  return redactUrl(value)
+}
 
 function badRequest(message) {
   return { ok: false, error: { code: 'bad-request', message, details: { issues: [] } } }
@@ -67,12 +61,12 @@ function settingsRejected(message) {
   return { ok: false, error: { code: 'settings-rejected', message, details: { ns: SETTINGS_NS } } }
 }
 
-function project(value, fields = readable) {
+function project(value) {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-  const out = Object.create(null)
-  for (const field of fields) {
-    if (Object.prototype.hasOwnProperty.call(value, field)) out[field] = structuredClone(value[field])
-  }
+  const out = safeSettingsValue(value)
+  // Permission is not a normal remote-editable field. The authenticated
+  // describe envelope already exposes enabled/disabled state explicitly.
+  delete out[REMOTE_SETTINGS_PERMISSION]
   return out
 }
 
@@ -112,7 +106,7 @@ function validateMutation(payload, descriptor) {
   if (!Array.isArray(op.path) || op.path.length !== 1 || typeof op.path[0] !== 'string' || op.path[0] === '') return { error: 'remote settings may edit one top-level field at a time' }
   const field = op.path[0]
   if (field === '__proto__' || field === 'prototype' || field === 'constructor') return { error: 'unsafe settings field name' }
-  if (!mutable.has(field)) return { error: 'Vision Router setting ' + JSON.stringify(field) + ' is local-only' }
+  if (field === REMOTE_SETTINGS_PERMISSION) return { error: 'Remote permission is managed by risk confirmation and local revocation' }
   const value = descriptor && descriptor.value
   if (typeof value !== 'object' || value === null || Array.isArray(value) || !Object.prototype.hasOwnProperty.call(value, field)) return { error: 'unknown Vision Router settings field ' + JSON.stringify(field) }
   if (op.op === 'set') {
@@ -144,10 +138,10 @@ function conflictResult(error) {
  * `acceptedRisk === true` is an acknowledgement bit for the UX flow, not an
  * authentication/authorization credential, proof of local presence, challenge
  * response, one-time secret, or administrator approval. Do not strengthen this
- * endpoint into a second security gate unless the product policy is explicitly
- * changed. The real capability boundary is the narrow remote mutable-field
- * allow-list plus the fields that remain local-only. The historical RPC/function
- * name uses "authorize"; do not infer security-auth semantics from that name.
+ * endpoint into a second authentication mechanism. Security is enforced by
+ * the DSH-authenticated Connection carrier, the persisted opt-in, the Host
+ * schema and resource bounds. Sensitive stored values are redacted on reads.
+ * The historical RPC name "authorize" does not mean user authentication.
  */
 export async function authorizeRemoteSettingsAfterRiskConfirmation(settings, payload, logger) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload) || payload.acceptedRisk !== true) {
@@ -248,8 +242,23 @@ export function createVisionRouterRemoteSettingsHandler(settings, logger) {
       logger?.warn?.('vision-router: remote settings mutation rejected: %s', error?.message ?? String(error))
       return settingsRejected(error?.message ?? 'Vision Router settings write was rejected')
     }
-    try { return { ok: true, value: accessSnapshot(settings) } }
-    catch { return settingsRejected('Vision Router settings changed but the refreshed view could not be read') }
+    try {
+      const after = namespaceDescriptor(settings)
+      const result = accessSnapshot(settings)
+      if (validated.ops[0].op === 'set' && result.enabled && after) {
+        const field = validated.ops[0].path[0]
+        const requested = validated.ops[0].value
+        const persisted = after.value?.[field]
+        // The Host may normalize values. Only echo what this caller already
+        // provided if the authoritative persisted value matches exactly.
+        if (JSON.stringify(persisted) === JSON.stringify(requested)
+            && JSON.stringify(result.view.value[field]) !== JSON.stringify(requested)) {
+          result.view.value[field] = structuredClone(requested)
+          if (Object.hasOwn(after.user ?? {}, field)) result.view.user[field] = structuredClone(requested)
+        }
+      }
+      return { ok: true, value: result }
+    } catch { return settingsRejected('Vision Router settings changed but the refreshed view could not be read') }
   }
 }
 

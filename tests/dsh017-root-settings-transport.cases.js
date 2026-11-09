@@ -52,7 +52,7 @@ function descriptor(revision, value) {
   }
 }
 
-function makeHarness() {
+function makeHarness({ browserAuth = (req) => req?.browserRejected } = {}) {
   const routes = []
   const rootDisposers = []
   const webServer = {
@@ -66,9 +66,10 @@ function makeHarness() {
   }
   const root = {
     inject(dependencies, callback) {
-      assert.deepEqual(dependencies, ['webServer'])
+      assert.deepEqual(dependencies, ['webServer', 'connection'])
       callback({
         webServer,
+        connection: typeof browserAuth === 'function' ? { requestRejection: browserAuth } : {},
         effect(factory) {
           const dispose = factory()
           rootDisposers.push(dispose)
@@ -273,4 +274,68 @@ test('root settings transport rejects a compatible Settings generation without l
     /requires lifecycle ownership/,
   )
   assert.equal(rootInjectCalls, 0)
+})
+
+test('root settings transport rejects remote, proxied and unauthenticated reads and writes', async () => {
+  const harness = makeHarness()
+  let mutations = 0
+  const settings = {
+    [DSH_017_SETTINGS_COMPAT_MARK]: true,
+    writable: true,
+    describe() { return [descriptor(0, { localOnlyVision: true, proxy: 'http://localhost:8888' })] },
+    async mutate() { mutations += 1 },
+  }
+  installDsh017RootLocalSettingsTransport(harness.generation(settings).ctx)
+  const handler = harness.routes[0].handler
+
+  function networkRequest(method, remoteAddress, host, { forwarded, rejected } = {}) {
+    const req = request(method, method === 'POST'
+      ? { ops: [{ op: 'set', path: ['localOnlyVision'], value: false }], expectedRevision: 0 }
+      : undefined)
+    req.socket = { remoteAddress }
+    req.headers = { host }
+    if (forwarded) req.headers['x-forwarded-for'] = '203.0.113.7'
+    if (rejected) req.browserRejected = rejected
+    return req
+  }
+
+  for (const method of ['GET', 'POST']) {
+    for (const req of [
+      networkRequest(method, '203.0.113.7', 'dvr.example.org'),
+      networkRequest(method, '127.0.0.1', 'dvr.example.org'),
+      networkRequest(method, '127.0.0.1', 'localhost:3080', { forwarded: true }),
+      networkRequest(method, '127.0.0.1', 'localhost:3080', { rejected: 401 }),
+    ]) {
+      const res = response()
+      await handler(req, res)
+      assert.ok([401, 403].includes(res.snapshot().status), method)
+      assert.equal(res.snapshot().json.error.code, 'access-denied')
+    }
+  }
+  assert.equal(mutations, 0, 'no untrusted request may reach the ConfigEditor settings facade')
+  const localRes = response()
+  await handler(networkRequest('GET', '127.0.0.1', 'localhost:3080'), localRes)
+  assert.equal(localRes.snapshot().status, 200)
+  assert.equal(localRes.snapshot().json.value.value.localOnlyVision, true)
+})
+
+test('root settings transport fails closed when browser-auth service is absent or throws', async () => {
+  for (const browserAuth of [null, () => { throw new Error('auth not ready') }]) {
+    const harness = makeHarness({ browserAuth })
+    let reads = 0
+    const settings = {
+      [DSH_017_SETTINGS_COMPAT_MARK]: true,
+      writable: true,
+      describe() { reads += 1; return [descriptor(0, { localOnlyVision: true })] },
+      async mutate() { assert.fail('must not mutate without Host browser auth') },
+    }
+    installDsh017RootLocalSettingsTransport(harness.generation(settings).ctx)
+    const req = request('GET')
+    req.socket = { remoteAddress: '127.0.0.1' }
+    req.headers = { host: 'localhost:3080' }
+    const res = response()
+    await harness.routes[0].handler(req, res)
+    assert.equal(res.snapshot().status, 403)
+    assert.equal(reads, 0)
+  }
 })
