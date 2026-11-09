@@ -4,7 +4,6 @@ import {
   REMOTE_SETTINGS_CHANNEL,
   REMOTE_SETTINGS_PERMISSION,
   registerVisionRouterRemoteSettingsChannel,
-  REMOTE_SETTINGS_READABLE_FIELDS,
   createVisionRouterRemoteSettingsHandler,
   installVisionRouterRemoteSettingsBridge,
 } from '../lib/remote-settings-bridge.js'
@@ -15,6 +14,7 @@ function makeSettings({ enabled = true, revision = 7, writable = true, registere
     providers: [{ provider: 'zhipu', model: 'glm-4.6v-flash', fallbacks: [] }],
     routing: false,
     visionDepth: 'standard',
+    localOnlyVision: false,
     visionDepthMaxCalls: 0,
     visionTurnBudgetMs: 120000,
     proxy: 'http://127.0.0.1:1080',
@@ -64,22 +64,22 @@ test('remote describe distinguishes disabled, initializing, and read-only states
   assert.equal(readOnly.value.writable, false)
 })
 
-test('remote describe projects only the explicit safe capability allow-list', async () => {
-  const { settings } = makeSettings()
+test('authenticated remote describe exposes the complete Host-owned settings namespace without the permission control', async () => {
+  const { settings, calls } = makeSettings()
   const result = await createVisionRouterRemoteSettingsHandler(settings)('describe', {})
   assert.equal(result.ok, true)
   assert.equal(result.value.writable, true)
   assert.equal(result.value.view.value.routing, false)
-  assert.equal(result.value.view.value.visionDepth, 'standard')
-  assert.equal(result.value.view.value.visionDepthMaxCalls, 0)
-  assert.equal(result.value.view.value.visionTurnBudgetMs, 120000)
-  for (const field of ['proxy', 'proxyHosts', 'artifactsDir', 'desktopScreenshot', 'httpProviders', 'localOllama', 'localLmStudio', 'stealth', 'wrapperRoute', 'chainRoute', REMOTE_SETTINGS_PERMISSION]) {
-    assert.equal(Object.hasOwn(result.value.view.value, field), false, field)
-    assert.equal(Object.hasOwn(result.value.view.user ?? {}, field), false, field)
+  for (const field of [
+    'proxy', 'proxyHosts', 'artifactsDir', 'desktopScreenshot',
+    'httpProviders', 'localOllama', 'localLmStudio', 'stealth', 'wrapperRoute',
+    'chainRoute', 'visionDepthMaxCalls', 'visionTurnBudgetMs',
+  ]) {
+    assert.equal(Object.hasOwn(result.value.view.value, field), true, field)
   }
-  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('routing'), true)
-  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionDepthMaxCalls'), true)
-  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionTurnBudgetMs'), true)
+  assert.equal(result.value.view.value.localOllama.baseURL, 'http://10.0.0.2:11434/v1')
+  assert.equal(Object.hasOwn(result.value.view.value, REMOTE_SETTINGS_PERMISSION), false)
+  assert.deepEqual(calls[0], ['describe', { redactSecrets: true }])
 })
 
 test('remote mutation allows safe fields and returns authoritative readback', async () => {
@@ -112,20 +112,90 @@ test('remote mutation keeps custom depth, cap and turn budget on the same safe s
   assert.equal(budget.value.view.value.visionTurnBudgetMs, 180000)
 })
 
-test('host/network/privacy/credential-bearing fields are always local-only remotely', async () => {
-  const denied = [
-    REMOTE_SETTINGS_PERMISSION, 'proxy', 'proxyHosts', 'artifactsDir', 'desktopScreenshot',
-    'httpProviders', 'localOllama', 'localLmStudio', 'stealth', 'wrapperRoute', 'chainRoute',
-  ]
-  for (const field of denied) {
+test('after opt-in, every ordinary Host schema field may be edited remotely', async () => {
+  for (const [field, value] of [
+    ['proxy', 'http://127.0.0.1:1080'],
+    ['proxyHosts', ['localhost']],
+    ['artifactsDir', '.dsh-vision-router/artifacts'],
+    ['desktopScreenshot', false],
+    ['httpProviders', [{ name: 'x', baseURL: 'https://example.org/v1', model: 'vision', apiKeyEnv: 'OPENAI_API_KEY' }]],
+    ['localOllama', { enabled: true, baseURL: 'http://127.0.0.1:11434/v1', model: 'vision' }],
+    ['localLmStudio', { enabled: true, baseURL: 'http://localhost:1234/v1', model: 'vision' }],
+    ['stealth', false],
+    ['wrapperRoute', 'dvr-twin'],
+    ['chainRoute', 'dvr-chain'],
+    ['localOnlyVision', true],
+  ]) {
     const { settings, calls } = makeSettings()
+    // A future Settings schema may add fields; admission is based on the
+    // described Host namespace, not a DVR-maintained browser allow-list.
     const result = await createVisionRouterRemoteSettingsHandler(settings)('mutate', {
-      ops: [{ op: 'set', path: [field], value: field === 'desktopScreenshot' ? true : 'evil' }], expectedRevision: 7,
+      ops: [{ op: 'set', path: [field], value }], expectedRevision: 7,
     })
-    assert.equal(result.ok, false, field)
-    assert.equal(result.error.code, 'bad-request', field)
-    assert.equal(calls.some((entry) => entry[0] === 'mutate'), false, field)
+    assert.equal(result.ok, true, field)
+    assert.equal(calls.filter((entry) => entry[0] === 'mutate').length, 1, field)
+    assert.deepEqual(result.value.view.value[field], value, field)
   }
+})
+
+function syntheticCredential(...parts) {
+  // Runtime-only test fixture: never place a credential-shaped literal in
+  // source, including a URL with userinfo or an API-key-shaped string.
+  return parts.join('-')
+}
+
+function proxyUrlWithSyntheticCredentials(host, username, password, token) {
+  const url = new URL('http://' + host + ':1080')
+  url.username = username
+  url.password = password
+  if (token) url.searchParams.set('token', token)
+  return url.toString()
+}
+
+test('remote settings redact stored URL credentials and nested secret-shaped fields', async () => {
+  const { settings, resolved } = makeSettings()
+  const password = syntheticCredential('fixture', 'password', 'one')
+  const queryToken = syntheticCredential('fixture', 'query', 'token')
+  const nestedSecret = syntheticCredential('fixture', 'nested', 'credential')
+  resolved.proxy = proxyUrlWithSyntheticCredentials('127.0.0.1', 'synthetic-user', password, queryToken)
+  resolved.httpProviders[0].apiKey = nestedSecret
+  resolved.httpProviders[0].apiKeyEnv = 'OPENAI_API_KEY'
+  const handler = createVisionRouterRemoteSettingsHandler(settings)
+  const described = await handler('describe', {})
+  const view = described.value.view.value
+  assert.equal(JSON.stringify(described).includes(password), false)
+  assert.equal(JSON.stringify(described).includes(queryToken), false)
+  assert.equal(JSON.stringify(described).includes(nestedSecret), false)
+  assert.equal(view.httpProviders[0].apiKeyEnv, 'OPENAI_API_KEY')
+  assert.match(view.proxy, /REDACTED/)
+})
+
+test('a secret-bearing remote write validates authoritative readback without disclosing the old value', async () => {
+  const { settings, resolved } = makeSettings()
+  const previouslyStored = syntheticCredential('fixture', 'old', 'password')
+  const justEntered = syntheticCredential('fixture', 'new', 'password')
+  resolved.proxy = proxyUrlWithSyntheticCredentials('127.0.0.1', 'previous', previouslyStored)
+  const handler = createVisionRouterRemoteSettingsHandler(settings)
+  const requested = proxyUrlWithSyntheticCredentials('localhost', 'incoming', justEntered)
+  const written = await handler('mutate', {
+    ops: [{ op: 'set', path: ['proxy'], value: requested }], expectedRevision: 7,
+  })
+  assert.equal(written.ok, true)
+  assert.equal(written.value.view.value.proxy, requested, 'only the value supplied by this caller may be echoed after verified persistence')
+  const reloaded = await handler('describe', {})
+  assert.equal(reloaded.value.view.value.proxy.includes(justEntered), false)
+  assert.equal(reloaded.value.view.value.proxy.includes('REDACTED'), true)
+  assert.equal(JSON.stringify(reloaded).includes(previouslyStored), false)
+})
+
+test('remote risk acknowledgement never grants an unauthenticated settings mutation by itself', async () => {
+  const { settings, calls } = makeSettings({ enabled: false })
+  const handler = createVisionRouterRemoteSettingsHandler(settings)
+  const refused = await handler('mutate', { ops: [{ op: 'set', path: ['proxy'], value: 'http://x' }], expectedRevision: 7 })
+  assert.equal(refused.value.reason, 'permission-disabled')
+  assert.equal(calls.filter((entry) => entry[0] === 'mutate').length, 0)
+  const special = await handler('mutate', { ops: [{ op: 'set', path: [REMOTE_SETTINGS_PERMISSION], value: true }], expectedRevision: 7 })
+  assert.equal(special.value.reason, 'permission-disabled')
 })
 
 test('remote mutation rejects nested, unknown and prototype-polluting paths', async () => {
@@ -267,4 +337,32 @@ test('bridge remains behind the DSH trusted-host carrier fence', () => {
     false,
     'whole-turn budget no longer owns a duplicate presentation prelude',
   )
+})
+
+test('a masked credential URL cannot overwrite stored proxy or HTTP-provider credentials', async () => {
+  for (const [field, value] of [
+    ['proxy', new URL('http://localhost:1080/')],
+    ['httpProviders', [{ name: 'x', baseURL: 'https://example.org/v1', model: 'v', apiKeyEnv: '' }]],
+  ]) {
+    const { settings, calls } = makeSettings()
+    const url = field === 'proxy' ? value : new URL(value[0].baseURL)
+    url.username = '[REDACTED]'
+    url.password = '[REDACTED]'
+    url.searchParams.set('access_token', '[REDACTED]')
+    const attempted = field === 'proxy' ? url.toString() : [{ ...value[0], baseURL: url.toString() }]
+    const result = await createVisionRouterRemoteSettingsHandler(settings)('mutate', {
+      ops: [{ op: 'set', path: [field], value: attempted }], expectedRevision: 7,
+    })
+    assert.equal(result.ok, false, field)
+    assert.equal(result.error.code, 'bad-request', field)
+    assert.match(result.error.message, /masked credentials cannot be saved/, field)
+    assert.equal(calls.filter((entry) => entry[0] === 'mutate').length, 0, field)
+  }
+  const { settings, resolved } = makeSettings()
+  resolved.guidanceOverrides = []
+  const ordinary = await createVisionRouterRemoteSettingsHandler(settings)('mutate', {
+    ops: [{ op: 'set', path: ['guidanceOverrides'], value: [{ kind: 'test', text: '[REDACTED]' }] }],
+    expectedRevision: 7,
+  })
+  assert.equal(ordinary.ok, true, 'ordinary prompt text must remain editable')
 })

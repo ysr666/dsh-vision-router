@@ -2,6 +2,7 @@ import {
   DSH_017_SETTINGS_COMPAT_MARK,
   LOCAL_SETTINGS_PATH,
 } from '../dsh-settings-017-compat.js'
+import { isLocalUiRequest } from '../web-capability-boundary.js'
 
 const BODY_LIMIT_BYTES = 256 * 1024
 const ROOT_TRANSPORT_REGISTRY_KEY = Symbol.for('dsh-vision-router.settings-017-root-local-transport')
@@ -153,11 +154,33 @@ function beginSlowMutationWatch(root, requestId) {
   }, SLOW_MUTATION_MS)
 }
 
-function routeFor(root, state) {
+function allowLocalSettingsRequest(req, res, connection) {
+  // This root-owned route bypasses DVR's usual child-Context WebServer wrapper.
+  // Check *both* transport locality and the Host's authenticated browser
+  // session before reading or mutating the complete settings namespace.
+  let denied = !isLocalUiRequest(req) ? 403 : undefined
+  if (denied === undefined) {
+    try {
+      if (typeof connection?.requestRejection !== 'function') denied = 403
+      else {
+        const rejection = connection.requestRejection(req)
+        if (rejection !== undefined && rejection !== null) {
+          denied = rejection === 401 ? 401 : 403
+        }
+      }
+    } catch { denied = 403 }
+  }
+  if (denied === undefined) return true
+  sendJson(res, denied, { ok: false, error: { code: 'access-denied', message: 'Local settings require an authenticated local DSH browser' } })
+  return false
+}
+
+function routeFor(root, state, getConnection) {
   return {
     kind: 'exact',
     path: LOCAL_SETTINGS_PATH,
     async handler(req, res) {
+      if (!allowLocalSettingsRequest(req, res, getConnection())) return
       const requestId = ++state.requestSequence
       trace('handler-enter', { requestId, method: req.method, generation: state.current?.id })
       const settings = currentSettings(state)
@@ -230,14 +253,16 @@ function ensureRootRoute(root, state) {
 
   state.routeInstalling = true
   try {
-    const owner = root.inject(['webServer'], (webCtx) => {
+    const owner = root.inject(['webServer', 'connection'], (webCtx) => {
       if (!webCtx?.webServer || typeof webCtx.webServer.register !== 'function' || typeof webCtx.effect !== 'function') {
         throw new Error('Vision Router requires WebServer route registration on DSH 0.1.7')
       }
       trace('route-register', {})
       webCtx.effect(
         () => {
-          const dispose = webCtx.webServer.register(routeFor(root, state))
+          const dispose = webCtx.webServer.register(routeFor(root, state, () => {
+            try { return webCtx.connection } catch { return undefined }
+          }))
           return () => {
             trace('route-dispose', {})
             dispose()

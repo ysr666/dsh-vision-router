@@ -165,7 +165,7 @@ test('remote confirmation immediately unlocks v2 settings writes with authoritat
   assert.equal(value.backgroundBenchmarking, 'local-free')
 })
 
-test('remote v2 access still refuses local/network-sensitive fields after authorization', async () => {
+test('remote v2 access allows normal network, local-backend and privacy preferences after authorization', async () => {
   let revision = 2
   const value = {
     [REMOTE_SETTINGS_PERMISSION]: true,
@@ -176,34 +176,47 @@ test('remote v2 access still refuses local/network-sensitive fields after author
     localOllama: { enabled: false },
     desktopScreenshot: false,
   }
+  const user = { [REMOTE_SETTINGS_PERMISSION]: true }
   const settings = {
     writable: true,
-    describe() {
+    describe(options) {
+      assert.equal(options?.redactSecrets, true)
       return [{
         ns: 'vision-router',
         value: structuredClone(value),
-        user: { [REMOTE_SETTINGS_PERMISSION]: true },
+        user: structuredClone(user),
         revision,
         applies: 'live',
         secrets: [],
       }]
     },
-    async mutate() {
+    async mutate(namespace, ops, expectedRevision) {
+      assert.equal(namespace, 'vision-router')
+      assert.equal(expectedRevision, revision)
+      const op = ops[0]
+      assert.equal(op.op, 'set')
+      value[op.path[0]] = structuredClone(op.value)
+      user[op.path[0]] = structuredClone(op.value)
       revision += 1
-      assert.fail('sensitive remote mutation must not reach SettingsProvider.mutate')
     },
   }
   const handler = createVisionRouterRemoteSettingsHandler(settings)
   for (const [field, next] of [
-    ['proxy', 'http://attacker.invalid'],
-    ['localOllama', { enabled: true, baseURL: 'http://10.0.0.9:11434/v1', model: 'x' }],
+    ['proxy', 'http://127.0.0.1:8080'],
+    ['localOllama', { enabled: true, baseURL: 'http://127.0.0.1:11434/v1', model: 'x' }],
     ['desktopScreenshot', true],
   ]) {
     const result = await handler('mutate', {
       ops: [{ op: 'set', path: [field], value: next }],
       expectedRevision: revision,
     })
-    assert.equal(result.ok, false, field)
-    assert.equal(result.error.code, 'bad-request', field)
+    assert.equal(result.ok, true, field)
+    assert.deepEqual(result.value.view.value[field], next, field)
   }
+  const consentMutation = await handler('mutate', {
+    ops: [{ op: 'set', path: [REMOTE_SETTINGS_PERMISSION], value: false }],
+    expectedRevision: revision,
+  })
+  assert.equal(consentMutation.ok, false)
+  assert.equal(consentMutation.error.code, 'bad-request')
 })

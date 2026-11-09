@@ -16,7 +16,7 @@ import {
 import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-boundary.js'
 import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
-import { REMOTE_SETTINGS_READABLE_FIELDS } from '../lib/remote-settings-bridge.js'
+import { createVisionRouterRemoteSettingsHandler } from '../lib/remote-settings-bridge.js'
 
 const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
@@ -430,6 +430,17 @@ test('a foreign adapter on the configured wrapper route cannot manufacture Visio
   assert.equal(authority.reason, 'ordinary-route')
 })
 
-test('the turn budget is available through the trusted remote settings channel', () => {
-  assert.equal(REMOTE_SETTINGS_READABLE_FIELDS.includes('visionTurnBudgetMs'), true)
+test('the turn budget is available through the trusted remote settings channel', async () => {
+  const handler = createVisionRouterRemoteSettingsHandler({
+    writable: true,
+    describe() {
+      return [{
+        ns: 'vision-router', value: { allowRemoteSettings: true, visionTurnBudgetMs: 120000 },
+        revision: 0, user: {}, base: {},
+      }]
+    },
+  })
+  const described = await handler('describe', {})
+  assert.equal(described.ok, true)
+  assert.equal(described.value.view.value.visionTurnBudgetMs, 120000)
 })

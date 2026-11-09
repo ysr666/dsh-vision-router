@@ -214,9 +214,11 @@ export const SETTINGS_017_CLIENT_PRELUDE = String.raw`(function(){
           if (typeof getter !== 'function') return getter;
           return function(name) {
             if (name === 'settingsScope') {
+              // Match ctx.settingsScope: an empty legacy Host binder must
+              // never bypass the DVR namespace's generation-safe local bridge.
               var original = safeGet(target, 'settingsScope');
-              if (original && typeof original.bind === 'function') return original;
-              return syntheticBinder(ctx, configFormsBinder(target));
+              return syntheticBinder(ctx,
+                original && typeof original.bind === 'function' ? original : configFormsBinder(target));
             }
             var value = getter.call(target, name);
             return name === 'connection' ? normalizeConnection(value) : value;

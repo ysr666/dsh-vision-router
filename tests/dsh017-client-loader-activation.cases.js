@@ -387,3 +387,82 @@ test('0.1.7 prelude restores configForms dependency when another loader shim str
     ['configForms', 'slots', 'locale', 'sessions', 'remote'],
   )
 })
+
+test('#822: both Settings compatibility script orders route property/get binders to one healthy local DVR scope', async () => {
+  for (const order of [
+    [SETTINGS_017_CLIENT_PRELUDE, SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE],
+    [SETTINGS_CONFIG_FORMS_CLIENT_PRELUDE, SETTINGS_017_CLIENT_PRELUDE],
+  ]) {
+    let loadedSpec
+    const fetches = []
+    const deadNativeScope = {
+      subscribe() { return () => {} },
+      getSnapshot() { return { status: 'unavailable', mode: 'host', value: undefined } },
+      async load() {},
+    }
+    const foreign = { getSnapshot() { return { status: 'ready', value: { foreign: true } } } }
+    const nativeBinder = {
+      bind({ namespace }) {
+        return namespace === 'vision-router' ? deadNativeScope : foreign
+      },
+    }
+    const loader = {
+      mode: 'live',
+      load(spec) { loadedSpec = spec; return spec },
+      create() { return this },
+    }
+    const sandbox = {
+      window: {
+        __ModuleLoader__: loader,
+        location: { protocol: 'http:', hostname: '127.0.0.1' },
+      },
+      fetch: async (url) => {
+        fetches.push(url)
+        assert.equal(url, '/_dsh/vision-router/local-settings')
+        return {
+          ok: true,
+          async json() {
+            return {
+              ok: true,
+              value: { value: { routing: false }, base: {}, user: {}, revision: 0, writable: true },
+            }
+          },
+        }
+      },
+    }
+    for (const prelude of order) runInNewContext(prelude, sandbox)
+    loader.create()
+
+    const observed = {}
+    loader.load({
+      id: 'dsh-vision-router',
+      factory: () => ({
+        inject: ['settingsScope'],
+        apply(ctx) {
+          observed.byProperty = ctx.settingsScope.bind({ namespace: 'vision-router' })
+          observed.byGet = ctx.get('settingsScope').bind({ namespace: 'vision-router' })
+          observed.foreign = ctx.get('settingsScope').bind({ namespace: 'foreign-plugin' })
+        },
+      }),
+    })
+    const plugin = loadedSpec.factory(() => undefined)
+    plugin.apply({
+      settingsScope: nativeBinder,
+      get(name) {
+        if (name === 'settingsScope') return nativeBinder
+        if (name === 'configForms') return { get() { return deadNativeScope } }
+        if (name === 'connection') return { isLoopback: false, rpc: { call() {} } }
+        return undefined
+      },
+    })
+    assert.equal(observed.foreign, foreign)
+    await observed.byProperty.load()
+    await observed.byGet.load()
+    for (const scope of [observed.byProperty, observed.byGet]) {
+      assert.equal(scope.getSnapshot().status, 'ready', 'must never fall back to stale Host namespace')
+      assert.equal(scope.getSnapshot().value.routing, false)
+      assert.equal(scope.getSnapshot().mode, 'host')
+    }
+    assert.ok(fetches.length >= 1)
+  }
+})

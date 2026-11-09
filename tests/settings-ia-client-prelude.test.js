@@ -211,12 +211,12 @@ test('v3.1: cloud upload guidance points to the actual save action and supports 
   assert.match(textOf(render()), /要停止上传，请在本页开启「仅本地视觉」/)
 })
 
-test('v3.1: remote view explains where to disable uploads and hidden notice never changes local-only policy', () => {
+test('remote vision privacy settings can be edited in-place while preserving explicit cloud-egress guidance', () => {
   const { registeredComponent, scope } = createHarness(reactStub(), { local: false })
   const text = textOf(registeredComponent({ scope }))
-  assert.match(text, /在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」/)
-  assert.match(text, /开启「仅本地视觉」并保存/)
-  assert.doesNotMatch(text, /在本页开启「仅本地视觉」，然后点击「保存」/)
+  assert.match(text, /在本页开启「仅本地视觉」，然后点击「保存」/)
+  assert.match(text, /远程修改也会改变 Host 的图像数据流向/)
+  assert.doesNotMatch(text, /在运行 DSH 的电脑上打开「设置 → Vision Router → 常规」/)
 
   const store = { getItem() { return '1' }, setItem() {}, removeItem() {} }
   const local = createHarness(reactStub(), {
@@ -516,7 +516,7 @@ test('diagnostics reports the vision-result destination without claiming end-to-
 })
 
 
-test('H3 keeps proxy advanced/local-only while blank developer routes restore defaults', async () => {
+test('H3 keeps proxy in advanced and exposes it to authenticated remote settings while blank routes restore defaults', async () => {
   assert.match(SETTINGS_IA_CLIENT_PRELUDE, /key==='proxy'\|\|key==='wrapperRoute'\|\|key==='chainRoute'/)
   assert.match(SETTINGS_IA_CLIENT_PRELUDE, /return text\?\{value:text\}:\{clear:true\}/)
 
@@ -540,11 +540,12 @@ test('H3 keeps proxy advanced/local-only while blank developer routes restore de
   ])
   const remote = createHarness(remoteReact, { local: false })
   const remoteText = textOf(remote.registeredComponent({ scope: remote.scope }))
-  assert.doesNotMatch(remoteText, /视觉专用代理覆盖/)
-  assert.doesNotMatch(remoteText, /视觉代理覆盖域名/)
+  assert.match(remoteText, /视觉专用代理覆盖/)
+  assert.match(remoteText, /视觉代理覆盖域名/)
+  assert.match(remoteText, /视觉链路由名/)
 })
 
-test('remote view does not expose local backend and privileged network controls', () => {
+test('remote view exposes local backend configuration and capture preference after authorization', () => {
   const React = reactStub([
     'local',
     {},
@@ -557,11 +558,12 @@ test('remote view does not expose local backend and privileged network controls'
   ])
   const { registeredComponent, scope } = createHarness(React, { local: false })
   const text = textOf(registeredComponent({ scope }))
-  assert.match(text, /只能在运行 DSH 的机器上配置/)
-  assert.doesNotMatch(text, /允许 Agent 读取桌面截图/)
+  assert.match(text, /允许 Agent 读取桌面截图/)
+  assert.match(text, /本地与设备/)
+  assert.doesNotMatch(text, /只能在运行 DSH 的机器上配置/)
 })
 
-test('official Desktop origin is local without trusting lookalike app origins', () => {
+test('full configuration remains visible independently of page origin while OS-only actions retain separate locality checks', () => {
   function renderAt(location) {
     const React = reactStub([
       'local', {}, undefined, undefined, undefined,
@@ -583,7 +585,34 @@ test('official Desktop origin is local without trusting lookalike app origins', 
     { protocol: 'other-app:', hostname: 'app' },
   ]) {
     const text = renderAt(location)
-    assert.match(text, /只能在运行 DSH 的机器上配置/)
-    assert.doesNotMatch(text, /允许 Agent 读取桌面截图/)
+    assert.match(text, /允许 Agent 读取桌面截图/)
+    assert.doesNotMatch(text, /只能在运行 DSH 的机器上配置/)
   }
+})
+
+test('#822: an unavailable local settings scope reports a local bridge error, never a remote-channel error', () => {
+  const harness = createHarness(reactStub())
+  const scope = {
+    ...harness.scope,
+    getSnapshot() {
+      return { status: 'unavailable', mode: 'host', error: 'settings namespace is unavailable' }
+    },
+  }
+  const output = textOf(harness.registeredComponent({ scope }))
+  assert.match(output, /本地设置不可用/)
+  assert.match(output, /\/_dsh\/vision-router\/local-settings/)
+  assert.doesNotMatch(output, /远程设置通道不可用/)
+})
+
+test('a disconnected remote settings scope names its own channel rather than blaming the local bridge', () => {
+  const harness = createHarness(reactStub(), { local: false })
+  const scope = {
+    ...harness.scope,
+    getSnapshot() {
+      return { status: 'unavailable', mode: 'remote', remoteReason: 'connection-unavailable' }
+    },
+  }
+  const output = textOf(harness.registeredComponent({ scope }))
+  assert.match(output, /远程设置通道不可用/)
+  assert.doesNotMatch(output, /本地设置不可用/)
 })
