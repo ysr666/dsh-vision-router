@@ -14,7 +14,8 @@ test('RC2 gate source is exact, immutable, and independent of Alpha', () => {
   assert.deepEqual(readRc2Pin(), {version:'0.2.2-rc.2',sha:source})
   assert.equal(RC2_RELEASE_SHA,source)
   const alpha=JSON.parse(readFileSync(path.join(root,'config/dsh-alpha-settings-pin.json'),'utf8'))
-  assert.equal(alpha.version,'0.2.2-alpha.3')
+  assert.match(alpha.version, /^\d+\.\d+\.\d+-alpha\.\d+$/)
+  assert.notEqual(alpha.sha, source, 'fixed RC2 pin must not track the moving Alpha SHA')
 })
 test('RC2 pin strictly rejects version drift and malicious or malformed inputs', () => {
   for (const invalid of [null,[],{}, {version:'0.2.2-alpha.3',sha:source},{version:'0.2.2-rc.1',sha:source},{version:'0.2.2-rc.2\nfoo=1',sha:source},{version:'0.2.2-rc.2',sha:source+'\nfoo=1'},{version:'0.2.2-rc.2',sha:'f'.repeat(40)},{version:'0.2.2-rc.2',sha:'f'.repeat(40),other:true}]){
