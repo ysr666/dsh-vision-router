@@ -81,6 +81,27 @@ async function grayscaleTrace(bytes, steps) {
     rgba[offset + 3] = 255
   }
   const palette = grayPalette(data, channels, width, height, steps)
+  // VTracer's palette option constrains color *selection* but does not force
+  // grayscale pixel clustering. Without quantizing the raster itself,
+  // smooth black-to-white gradients can collapse to a single solid path.
+  // Explicitly posterize each input pixel to the nearest adaptive level.
+  const paletteValues = palette.map((hex) => Number.parseInt(hex.slice(1, 3), 16))
+  const lookup = new Uint8Array(256)
+  for (let gray = 0; gray < 256; gray++) {
+    let closest = paletteValues[0]
+    let distance = Infinity
+    for (const candidate of paletteValues) {
+      const delta = Math.abs(candidate - gray)
+      if (delta < distance) { distance = delta; closest = candidate }
+    }
+    lookup[gray] = closest
+  }
+  for (let i = 0; i < rgba.length; i += 4) {
+    const q = lookup[rgba[i]]
+    rgba[i] = q
+    rgba[i + 1] = q
+    rgba[i + 2] = q
+  }
   return vtracer.convertPixels(rgba, width, height, {
     preset: 'poster', mode: 'spline', hierarchical: 'cutout',
     palette, maxColors: palette.length, simplify: 0.5, optimize: 1,

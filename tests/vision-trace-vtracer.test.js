@@ -112,3 +112,29 @@ test('Host Node --input-type=module entry does not propagate incompatible flags 
   assert.equal(child.status, 0, child.stderr || child.error?.message)
   assert.match(child.stdout, /WORKER_INPUT_TYPE_OK/)
 })
+
+
+test('adaptive grayscale steps preserve a continuous gradient instead of collapsing to one fill', async () => {
+  const width = 256, height = 64
+  const rgba = Buffer.alloc(width * height * 4)
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4
+    rgba[i] = rgba[i + 1] = rgba[i + 2] = x
+    rgba[i + 3] = 255
+  }
+  const png = await sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer()
+  const results = []
+  for (const steps of [1, 4, 8, 16]) {
+    const svg = await posterizeSvg(png, steps, 'dominant', 10000)
+    const fills = new Set([...svg.matchAll(/fill="(#[a-f0-9]{6})"/gi)].map((match) => match[1]))
+    const actual = await sharp(Buffer.from(svg)).resize(width, height)
+      .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer()
+    let sum = 0
+    for (let i = 0; i < width * height; i++) sum += Math.abs(actual[i * 3] - (i % width))
+    results.push({ steps, error: sum / (width * height), fills: fills.size })
+  }
+  assert.ok(results[1].fills >= 3, '4 gray steps must not collapse to one flat fill')
+  assert.ok(results[3].fills >= 6, '16 gray steps must produce multiple distinct grayscale regions')
+  assert.ok(results[3].error < 22, '16 gray steps must reconstruct the reference gradient')
+  assert.ok(results[3].error < results[0].error, 'additional grayscale steps must improve gradient fidelity')
+})
