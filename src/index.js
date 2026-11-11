@@ -4761,9 +4761,14 @@ ctx.logger?.info(
             const colors = Number.isInteger(args.colors) && args.colors > 0 ? Math.min(args.colors, 16) : 8
             const raw = await sharp(traceBytes, { failOn: 'none' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
             throwIfVisionTaskAborted(taskSignal)
-            const palette = quantizeColors(raw.data, colors)
-            colorCount = palette.length
-            svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs(), { signal: taskSignal })
+            // User-facing colors is a strict maximum, not an exact
+            // palette. VTracer chooses the colors for better gradient/alpha
+            // fidelity; explicit palette callers use the separate array form.
+            svg = await posterizeSvgColor(raw.data, raw.info, colors, timeoutMs(), { signal: taskSignal })
+            colorCount = Math.min(colors, new Set(
+              [...svg.matchAll(/<path\b[^>]*\bfill="(#[0-9a-fA-F]{6})"/g)]
+                .map((match) => match[1].toLowerCase()),
+            ).size)
           } else {
             svg = await posterizeSvg(traceBytes, steps, 'dominant', timeoutMs(), { signal: taskSignal })
           }

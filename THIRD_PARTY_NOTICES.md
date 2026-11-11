@@ -24,6 +24,7 @@ This document records the vectorizer-related notices and a reviewed license snap
 - Full MIT license including upstream copyright: `assets/licenses/vtracer-MIT.txt`.
 - Apache-2.0, BSD-2-Clause, BSD-3-Clause, Zlib and Unicode-3.0 notice/license texts: `assets/licenses/`.
 - unicode-ident additionally requires Unicode-3.0; its exact text is included.
+- Per-crate original license texts and copyright attributions: `docs/compliance/vtracer-alpha4-rust-license-texts.md`.
 - The Rust package inventory below was resolved from the exact source tag on 2026-11-11.
   It is NOT proof of original prebuilt npm WASM dependency revisions; see
   `docs/compliance/vtracer-alpha4-provenance.md`.

@@ -1219,7 +1219,11 @@ function runTraceWorker(mode, payload, timeoutMs, signal) {
       'vector trace timed out — crop the image or reduce its complexity',
     )), timeoutMs)
     try {
+      // This file-backed runtime worker uses only published JavaScript and
+      // absolute peer imports; it never needs Host CLI, eval, test or loader
+      // flags. Inheriting them can fail or run unwanted diagnostic hooks.
       worker = new Worker(new URL('./trace-vtracer-worker.js', import.meta.url), {
+        execArgv: [],
         workerData: { mode, ...payload },
         resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
       })
@@ -1251,8 +1255,13 @@ export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant', timeou
   return runTraceWorker('grayscale', { bytes: Buffer.from(bytes), steps, sharpUrl }, timeoutMs, options?.signal)
 }
 
-/** Compatible export: color-preserving local vectorization without Potrace/Jimp. */
-export function posterizeSvgColor(data, info, palette, timeoutMs = 60000, options = {}) {
+/**
+ * Local color SVG tracing.
+ * An explicit palette array must be honored exactly (VTracer palette option);
+ * an integer 1..16 requests automatic colors with that strict maximum.
+ * The public vision_trace tool uses the integer form for higher visual fidelity.
+ */
+export function posterizeSvgColor(data, info, paletteOrColors, timeoutMs = 60000, options = {}) {
   if (options?.signal?.aborted) return Promise.reject(visionAbortReason(options.signal, 'color trace aborted'))
   const width = info?.width
   const height = info?.height
@@ -1261,13 +1270,17 @@ export function posterizeSvgColor(data, info, palette, timeoutMs = 60000, option
     width < 1 || height < 1 || width * height > 1_000_000 ||
     !(data instanceof Uint8Array) || data.byteLength !== width * height * 4
   ) return Promise.reject(new RangeError('invalid color trace RGBA dimensions'))
-  if (!Array.isArray(palette) || palette.length > 16 ||
-    palette.some((p) => !p || typeof p.hex !== 'string' || !/^#[a-f0-9]{6}$/i.test(p.hex))) {
-    return Promise.reject(new RangeError('invalid trace color palette'))
-  }
+  const explicit = Array.isArray(paletteOrColors)
+  if (explicit
+    ? (paletteOrColors.length > 16 || paletteOrColors.some((p) =>
+      !p || typeof p.hex !== 'string' || !/^#[a-f0-9]{6}$/i.test(p.hex)))
+    : (!Number.isInteger(paletteOrColors) || paletteOrColors < 1 || paletteOrColors > 16)
+  ) return Promise.reject(new RangeError('invalid trace color palette or color limit'))
   return runTraceWorker('color', {
     data: Buffer.from(data), width, height,
-    palette: palette.map((p) => ({ hex: p.hex })),
+    ...(explicit
+      ? { palette: paletteOrColors.map((p) => ({ hex: p.hex.toLowerCase() })) }
+      : { colors: paletteOrColors }),
   }, timeoutMs, options?.signal)
 }
 

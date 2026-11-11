@@ -49,14 +49,15 @@ function grayPalette(gray, channels, width, height, steps) {
   return values.sort((a, b) => a - b).map((v) => '#' + v.toString(16).padStart(2, '0').repeat(3))
 }
 
-function colorPalette(palette, hasTransparency) {
+function colorPalette(palette) {
   if (!Array.isArray(palette) || palette.length > 16 ||
     palette.some((p) => !p || typeof p.hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(p.hex))) {
     throw new RangeError('invalid trace color palette')
   }
-  const colors = [...new Set(palette.map((p) => p.hex.toLowerCase()))]
-  if (hasTransparency && !colors.includes('#ffffff')) colors.push('#ffffff')
-  return colors
+  // Exact-palette callers own their color choices. Never silently append
+  // white (which could exceed the 16-color contract); alpha is still composited
+  // against white before tracing.
+  return [...new Set(palette.map((p) => p.hex.toLowerCase()))]
 }
 
 async function grayscaleTrace(bytes, steps) {
@@ -86,13 +87,17 @@ async function grayscaleTrace(bytes, steps) {
   })
 }
 
-function colorTrace(data, width, height, palette) {
+function colorTrace(data, width, height, palette, colorLimit) {
   assertDimensions(width, height, data.length)
+  const explicit = Array.isArray(palette)
+  const colors = explicit ? colorPalette(palette) : undefined
+  const maxColors = explicit ? Math.max(1, colors.length) : colorLimit
+  if (!Number.isInteger(maxColors) || maxColors < 1 || maxColors > 16) {
+    throw new RangeError('invalid trace color limit')
+  }
   const raw = Buffer.from(data)
-  let hasTransparency = false
   for (let i = 0; i < raw.length; i += 4) {
     const alpha = raw[i + 3]
-    if (alpha !== 255) hasTransparency = true
     // Preserve existing DVR's opaque-white SVG artifact background.
     if (alpha === 0) {
       raw[i] = 255; raw[i + 1] = 255; raw[i + 2] = 255
@@ -104,15 +109,15 @@ function colorTrace(data, width, height, palette) {
     }
     raw[i + 3] = 255
   }
-  const colors = colorPalette(palette, hasTransparency)
-  if (colors.length === 0) {
+  if (explicit && colors.length === 0) {
     return '<svg xmlns="http://www.w3.org/2000/svg" width="' + width +
       '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height +
       '"><rect width="' + width + '" height="' + height + '" fill="#ffffff"/></svg>'
   }
   return vtracer.convertPixels(raw, width, height, {
     preset: 'poster', mode: 'spline', hierarchical: 'cutout',
-    maxColors: colors.length, simplify: 0.5, optimize: 1,
+    ...(explicit ? { palette: colors } : {}),
+    maxColors, simplify: 0.5, optimize: 1,
   })
 }
 
@@ -122,7 +127,8 @@ async function main() {
   if (mode === 'grayscale') {
     svg = await grayscaleTrace(Buffer.from(workerData.bytes), workerData.steps)
   } else if (mode === 'color') {
-    svg = colorTrace(workerData.data, workerData.width, workerData.height, workerData.palette)
+    svg = colorTrace(workerData.data, workerData.width, workerData.height,
+      workerData.palette, workerData.colors)
   } else {
     throw new RangeError('unsupported trace mode')
   }

@@ -42,8 +42,14 @@ const inventory = JSON.parse(read('docs/compliance/vtracer-alpha4-rust-inventory
 assert.equal(inventory.tag, '2500df76b5aea0ac22d15296b22722442f825c5b')
 assert.equal(inventory.packages.length, 66, 'review changed Rust dependency closure')
 for (const item of inventory.packages) assertPermissive(item.license, item.name)
+const rustLicenseText = read('docs/compliance/vtracer-alpha4-rust-license-texts.md')
+for (const item of inventory.packages) {
+  assert.ok(rustLicenseText.includes('## ' + item.name + ' @ ' + item.version),
+    'missing original Rust attribution entry for ' + item.name + '@' + item.version)
+}
 for (const notice of [
   'THIRD_PARTY_NOTICES.md',
+  'docs/compliance/vtracer-alpha4-rust-license-texts.md',
   'assets/licenses/vtracer-MIT.txt',
   'assets/licenses/apache-2.0.txt',
   'assets/licenses/unicode-ident-Unicode-3.0.txt',

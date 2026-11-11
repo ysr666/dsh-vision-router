@@ -67,3 +67,48 @@ test('VTracer executes off-main-thread', async () => {
   assert.equal(winner, 'main-timer')
   await vectorizing
 })
+
+
+test('VTracer honors explicit palette values, not just palette length', async () => {
+  const { rgba, info } = colorSample()
+  const redAndWhite = [{ hex: '#ff0000' }, { hex: '#ffffff' }]
+  const greenAndBlue = [{ hex: '#00ff00' }, { hex: '#0000ff' }]
+  const a = await posterizeSvgColor(rgba, info, redAndWhite, 8000)
+  const b = await posterizeSvgColor(rgba, info, greenAndBlue, 8000)
+  assert.notEqual(a, b, 'distinct palettes of equal size must produce distinct SVGs')
+  const used = (svg) => [...svg.matchAll(/<path\b[^>]*\bfill="(#[0-9a-f]{6})"/g)]
+    .map((m) => m[1])
+  assert.ok(used(a).length > 0)
+  assert.ok(used(b).length > 0)
+  assert.ok(used(a).every((c) => redAndWhite.some((p) => p.hex === c)))
+  assert.ok(used(b).every((c) => greenAndBlue.some((p) => p.hex === c)))
+})
+
+test('Auto-color mode preserves quality and respects the 1..16 budget, including transparency', async () => {
+  const { rgba, info } = colorSample()
+  for (let i = 0; i < rgba.length; i += 4 * info.width) rgba[i + 3] = 0
+  for (const maxColors of [1, 2, 8, 16]) {
+    const svg = await posterizeSvgColor(rgba, info, maxColors, 8000)
+    const colors = new Set([...svg.matchAll(/<path\b[^>]*\bfill="(#[0-9a-f]{6})"/g)]
+      .map((m) => m[1]))
+    assert.ok(colors.size <= maxColors, `requested ${maxColors}, got ${colors.size}`)
+  }
+  await assert.rejects(posterizeSvgColor(rgba, info, 17), /color limit|palette/)
+  await assert.rejects(posterizeSvgColor(rgba, info, 0), /color limit|palette/)
+})
+
+test('Host Node --input-type=module entry does not propagate incompatible flags to file worker', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const { fileURLToPath } = await import('node:url')
+  const root = fileURLToPath(new URL('../', import.meta.url))
+  const program = `import {posterizeSvgColor} from './lib/core-primitives.js';
+    const w=16,h=16,b=Buffer.alloc(w*h*4,255);
+    const svg=await posterizeSvgColor(b,{width:w,height:h},2,8000);
+    if (!svg.includes('<svg')) process.exit(2);
+    console.log('WORKER_INPUT_TYPE_OK');`
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', program], {
+    cwd: root, encoding: 'utf8', timeout: 14000, windowsHide: true,
+  })
+  assert.equal(child.status, 0, child.stderr || child.error?.message)
+  assert.match(child.stdout, /WORKER_INPUT_TYPE_OK/)
+})

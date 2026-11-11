@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
-import { posterizeSvgColor, quantizeColors } from '../lib/core-primitives.js'
+import { posterizeSvgColor } from '../lib/core-primitives.js'
 
 const svgImage = (body) => Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">' + body + '</svg>',
@@ -9,8 +9,7 @@ const svgImage = (body) => Buffer.from(
 async function compare(source, { maxMAE, center, ring } = {}) {
   const input = await sharp(source).png().toBuffer()
   const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  const palette = quantizeColors(data, 8)
-  const svg = await posterizeSvgColor(data, info, palette, 10000)
+  const svg = await posterizeSvgColor(data, info, 8, 10000)
   const expected = await sharp(input).flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer()
   const actual = await sharp(Buffer.from(svg)).resize(info.width, info.height)
     .flatten({ background: '#ffffff' }).removeAlpha().raw().toBuffer()
