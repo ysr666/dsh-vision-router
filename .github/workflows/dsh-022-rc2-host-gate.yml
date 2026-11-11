@@ -241,7 +241,7 @@ jobs:
           TARBALL="$(find "$RUNNER_TEMP/dvr-rc2-packed" -maxdepth 1 -type f -name 'dsh-vision-router-*.tgz' -print -quit)"
           test -n "$TARBALL"
           node scripts/verify-packed-public-api.mjs "$TARBALL"
-          printf 'tarball=%s\\n' "$TARBALL" >> "$GITHUB_OUTPUT"
+          printf 'tarball=%s\n' "$TARBALL" >> "$GITHUB_OUTPUT"
       - name: Verify packed candidate install and recompose on real RC2 Host
         working-directory: dsh-rc2
         env:
