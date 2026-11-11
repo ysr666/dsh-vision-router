@@ -230,6 +230,26 @@ jobs:
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Pack current DVR checkout and verify published-file inventory
+        id: packed-candidate
+        working-directory: dvr
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dvr-rc2-packed"
+          pnpm pack --pack-destination "$RUNNER_TEMP/dvr-rc2-packed"
+          TARBALL="$(find "$RUNNER_TEMP/dvr-rc2-packed" -maxdepth 1 -type f -name 'dsh-vision-router-*.tgz' -print -quit)"
+          test -n "$TARBALL"
+          node scripts/verify-packed-public-api.mjs "$TARBALL"
+          printf 'tarball=%s\\n' "$TARBALL" >> "$GITHUB_OUTPUT"
+      - name: Verify packed candidate install and recompose on real RC2 Host
+        working-directory: dsh-rc2
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_SMOKE_PACKAGE_SPEC: file:${{ steps.packed-candidate.outputs.tarball }}
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
       - name: Run cold Vision lifecycle
         working-directory: dsh-rc2
         env:
