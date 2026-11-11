@@ -68,8 +68,13 @@ function serviceOf(ctx, name) {
 
 function compatibleSettings(ctx) {
   const settings = serviceOf(ctx, 'settings')
-  if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] !== true) return undefined
-  if (typeof settings.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
+  if (typeof settings?.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
+  // Modern Hosts can expose both native SettingsProvider.register() and
+  // configForms. Their browser uses the local bridge even without our
+  // ConfigEditor compatibility facade/marker. Keep legacy Hosts without
+  // configForms on their original settings path.
+  const forms = serviceOf(ctx, 'configForms')
+  if (settings[DSH_017_SETTINGS_COMPAT_MARK] !== true && typeof forms?.get !== 'function') return undefined
   return settings
 }
 
@@ -295,7 +300,7 @@ export function installDsh017RootLocalSettingsTransport(ctx) {
   if (!objectLike(root)) return
   const state = stateFor(root)
 
-  ctx.inject(['settings'], (settingsCtx) => {
+  const mountGeneration = (settingsCtx) => {
     const mounted = compatibleSettings(settingsCtx)
     if (!mounted) return
 
@@ -335,5 +340,21 @@ export function installDsh017RootLocalSettingsTransport(ctx) {
       disposeGeneration()
       throw error
     }
+  }
+
+  // The 0.1.7 facade needs only settings and must continue to work when the
+  // modern configForms service does not exist.
+  ctx.inject(['settings'], (settingsCtx) => {
+    const settings = serviceOf(settingsCtx, 'settings')
+    if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] === true) mountGeneration(settingsCtx)
+  })
+
+  // Native SettingsProvider + configForms is a two-service capability.
+  // Depending only on "settings" can observe it before configForms starts and
+  // permanently skip the route. Cordis reinvokes a multi-service inject when
+  // configForms becomes ready and disposes it if either service disappears.
+  ctx.inject(['settings', 'configForms'], (servicesCtx) => {
+    const settings = serviceOf(servicesCtx, 'settings')
+    if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] !== true) mountGeneration(servicesCtx)
   })
 }
