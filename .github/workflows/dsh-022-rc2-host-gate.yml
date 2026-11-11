@@ -33,14 +33,16 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'tests/dsh-rc2-pin.test.js'
+      - 'scripts/dsh-rc2-session-batch-integration.mjs'
+      - 'lib/**'
+      - 'entry.js'
+      - 'index.js'
+      - 'presets/**'
+      - 'tests/**'
   # Review and merge of this fixed RC2 audit records the validated baseline.
   # The original Alpha monitoring lane remains separate.
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/dsh-022-rc2-host-gate.yml'
-      - 'config/dsh-rc2-settings-pin.json'
-      - 'scripts/dsh-rc2-pin.mjs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -104,6 +106,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-rc2
         run: pnpm exec vitest run packages/core/session/tests/append.spec.ts
+      - name: Verify DVR feed integration with real RC2 Session atomic batches
+        working-directory: dsh-rc2
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+        run: pnpm exec tsx ../dvr/scripts/dsh-rc2-session-batch-integration.mjs
       - name: Verify RC2 Agent model/inbox notification ordering
         working-directory: dsh-rc2
         env:
