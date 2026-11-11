@@ -55,6 +55,7 @@ function descriptor(revision, value) {
 function makeHarness({ browserAuth = (req) => req?.browserRejected, configForms } = {}) {
   const routes = []
   const rootDisposers = []
+  const pendingFormCallbacks = []
   const webServer = {
     register(route) {
       routes.push(route)
@@ -88,8 +89,7 @@ function makeHarness({ browserAuth = (req) => req?.browserRejected, configForms 
         return name === 'settings' ? settings : name === 'configForms' ? configForms : undefined
       },
       inject(dependencies, callback) {
-        assert.deepEqual(dependencies, ['settings'])
-        callback({
+        const scope = {
           settings,
           get(name) {
             return name === 'settings' ? settings : name === 'configForms' ? configForms : undefined
@@ -98,7 +98,18 @@ function makeHarness({ browserAuth = (req) => req?.browserRejected, configForms 
             disposeGeneration = factory()
             return disposeGeneration
           },
-        })
+        }
+        if (dependencies.join(',') === 'settings,configForms') {
+          if (typeof configForms?.get !== 'function') {
+            const slot = { callback, scope }
+            pendingFormCallbacks.push(slot)
+            return () => {
+              const pos = pendingFormCallbacks.indexOf(slot)
+              if (pos >= 0) pendingFormCallbacks.splice(pos, 1)
+            }
+          }
+        } else assert.deepEqual(dependencies, ['settings'])
+        callback(scope)
         return () => {}
       },
     }
@@ -110,7 +121,13 @@ function makeHarness({ browserAuth = (req) => req?.browserRejected, configForms 
     }
   }
 
-  return { routes, rootDisposers, generation }
+  return {
+    routes, rootDisposers, generation,
+    startConfigForms(service) {
+      configForms = service
+      for (const { callback, scope } of pendingFormCallbacks.splice(0)) callback(scope)
+    },
+  }
 }
 
 test('0.1.7 root settings route survives repeated ConfigEditor reconciliation across sequential writes', async () => {
@@ -395,4 +412,34 @@ test('#827: native SettingsProvider plus configForms mounts an authenticated loc
   assert.equal(readback.snapshot().json.value.revision, 1)
   assert.equal(readback.snapshot().json.value.value.visionDepth, 'fast')
   assert.equal(mutations, 1)
+})
+
+
+test('native SettingsProvider waits for delayed configForms without permanent 404', async () => {
+  const harness = makeHarness()
+  const native = {
+    register() {},
+    describe() { return [descriptor(3, { visionDepth: 'standard' })] },
+    async mutate(namespace, ops, revision) {
+      assert.equal(namespace, 'vision-router')
+      assert.equal(revision, 3)
+      assert.deepEqual(ops, [{ op: 'set', path: ['visionDepth'], value: 'fast' }])
+    },
+  }
+  const generation = harness.generation(native)
+  installDsh017RootLocalSettingsTransport(generation.ctx)
+  assert.equal(harness.routes.length, 0, 'before configForms, do not bind native route')
+  harness.startConfigForms({ get(namespace) { assert.equal(namespace, 'vision-router'); return {} } })
+  assert.equal(harness.routes.length, 1, 'Cordis multi-service injection must mount after configForms arrives')
+  const out = response()
+  await harness.routes[0].handler(request('GET'), out)
+  assert.equal(out.snapshot().status, 200)
+  assert.equal(out.snapshot().json.value.value.visionDepth, 'standard')
+  const post = response()
+  await harness.routes[0].handler(request('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 3,
+  }), post)
+  assert.equal(post.snapshot().status, 200)
+  assert.equal(harness.routes.length, 1, 'do not duplicate root route')
 })
