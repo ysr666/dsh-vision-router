@@ -25,11 +25,16 @@ await ctx.plugin(SessionStore)
 const stateStore = createSessionVisionStateStore()
 let logReads = 0
 let eventReads = 0
+let overflowSession
 const index = createSessionVisionIndex({
   core,
   stateStore,
   readSessionLog: async () => { logReads++; throw new Error('unexpected full-history read') },
-  readSessionEvent: async () => { eventReads++; throw new Error('unexpected exact-event read') },
+  readSessionEvent: async (session, seq) => {
+    eventReads++
+    if (session !== overflowSession) throw new Error('unexpected exact-event read')
+    return { supported: true, event: session.eventAt(seq) }
+  },
 })
 installSessionVisionIndexBoundary(ctx, {}, core, { index })
 const seen = new Map()
@@ -136,6 +141,27 @@ try {
 
   assert.equal(logReads, 0, 'no full-history reads in normal batch feed')
   assert.equal(eventReads, 0, 'no exact-event recovery in bounded normal batch feed')
+
+  // A single hostile burst crossing the 256-event fast-path cap must recover
+  // only its 16 evicted events, not scan the whole Session or silently drop
+  // repairs. All 272 entries are real accepted RC2 events in ONE append.
+  const overflow = newSession('burst-overflow')
+  overflowSession = overflow
+  const count = 272
+  const fullBatch = Array.from({ length: count }, (_, index) => [
+    'user/message', guard(String(1000 + index)), { surfaceOp: 'append' },
+  ])
+  const committed = overflow.append(fullBatch)
+  assert.equal(committed.length, count)
+  assert.equal(overflow.seq, count)
+  assert.equal(await index.repairGuardStopSurface(overflow), count,
+    'batch overflow must not lose repair events')
+  assert.equal(overflow.seq, count * 2)
+  assert.equal(overflow.surface.nodes.length, count)
+  assert.equal(await index.repairGuardStopSurface(overflow), 0)
+  assert.equal(eventReads, count - 256,
+    'overflow recovery must read only evicted exact events')
+  assert.equal(logReads, 0, 'large batch must never request a whole-log clone')
   console.log(JSON.stringify({
     ok: true,
     dsh: '0.2.2-rc.2',
@@ -147,6 +173,8 @@ try {
     rejectedBatchHasNoSideEffects: true,
     guardShadows: 2,
     repeatedRepair: 0,
+    overflowEvents: 272,
+    boundedOverflowReads: eventReads,
     historyReads: logReads,
     eventReads,
   }))
