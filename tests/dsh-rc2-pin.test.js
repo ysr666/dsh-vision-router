@@ -53,6 +53,9 @@ test('RC2 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate,/dsh-rc2-agent-order-contract\.mjs/)
   assert.match(gate, /dsh-rc2-session-batch-integration\.mjs/)
   assert.match(gate, /Verify DVR feed integration with real RC2 Session atomic batches/)
+  assert.match(gate, /Verify packed candidate install and recompose on real RC2 Host/)
+  assert.match(gate, /DVR_SMOKE_PACKAGE_SPEC: file:/)
+  assert.match(gate, /verify-packed-public-api\.mjs/)
   const mainPush = gate.split('\n  push:\n')[1]?.split('\n  workflow_dispatch:')[0]
   assert.ok(mainPush, 'RC2 main push gate must exist')
   assert.match(mainPush, /branches: \[main\]/)
