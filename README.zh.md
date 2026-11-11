@@ -102,7 +102,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 
 默认 `progressiveTools: false`：14 个深看工具在插件启动时即注册。但**注册成功不等于所有会话都能调用**：须在当前聊天中打开 **Vision（视觉）**，该会话的 Agent 才能看到和调用视觉工具。Vision 关闭时，即使设置里 `tool: true`，也无法调用 `vision_colors`、`vision_ocr` 等工具。默认模式下**不会注册 `vision_activate`**。
 
-需要渐进式挂载时，可在 profile / composition 的 `cordis.patch.yml` 中显式设置 `progressiveTools: true`。这时已开启 Vision 的会话初始可使用 `vision_activate`，激活后再挂载完整工具并注册 `vision-tools` 技能。该开关属于启动期配置，修改后需重启 DSH。全部工具基于 sharp / potrace / tesseract / 系统 Chrome——无 Python：
+需要渐进式挂载时，可在 profile / composition 的 `cordis.patch.yml` 中显式设置 `progressiveTools: true`。这时已开启 Vision 的会话初始可使用 `vision_activate`，激活后再挂载完整工具并注册 `vision-tools` 技能。该开关属于启动期配置，修改后需重启 DSH。全部工具基于 sharp / VTracer / tesseract / 系统 Chrome——无 Python：
 
 <p align="center">
   <img src="assets/vision-tools-zh.svg" width="100%" alt="DSH Vision Router 的 11 个图像处理工具。" />
@@ -122,7 +122,7 @@ Agent 仅根据参考图复刻 UI，再用 `vision_pixel_diff` 验证最终结�
 | `vision_pixel_diff` | 逐像素对比：差异率 + 最差 8×8 网格区域 | 红色热力图 PNG + JSON 报告 |
 | `vision_colors` | 主色提取（十六进制 + 占比） | — |
 | `vision_ocr` | 文字转写：默认引擎可配置为 `auto` / 本地 Tesseract / 视觉模型；单次显式 engine 仍优先 | — |
-| `vision_trace` | SVG 矢量化（potrace 分色；图标/logo） | SVG |
+| `vision_trace` | SVG 矢量化（VTracer 分色；图标/logo） | SVG |
 | `vision_extract_foreground` | 边界洪泛抠图（纯色背景） | 透明 PNG |
 | `vision_html_screenshot` | 给本地 HTML 文件截图（无头系统 Chrome）；`fullPage: true` 截整页并返回 `pageHeight` | PNG |
 | `vision_screenshot` | **默认关闭，必须显式开启隐私开关。** 截取 Windows 虚拟屏幕、macOS 主显示器或 Linux 根窗口；Windows 使用 PowerShell CopyFromScreen，macOS 使用 `screencapture`，Linux 需安装 ImageMagick `import` 或 `scrot`；`identify=true` 可按顺序尝试已启用的本地识别后端并返回路径+识别文本 | PNG / +描述文本 |
@@ -248,7 +248,7 @@ Vision Router 在默认配置下不是完全离线工具。具体边界取决于
 
 - **一条命令安装。** 包自带组合补丁（`dsh.bundle.patch`）：`dsh plugin add` 自动完成插件行挂载、准入包装与附件限制放宽——不用手改任何文件。是否接管官方 DeepSeek 路由由「隐身模式」开关决定（默认关）。
 - **默认免费。** 视觉工具最终兜底为 4 个 OVHcloud 匿名视觉模型：免注册、免 Key，每 IP、每模型 2 次/分钟，独立限额理论合计约 8 次/分钟；用户自备视觉模型会优先调用。
-- **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / potrace / tesseract / 系统 Chrome。
+- **无 Python。** 整条管线——缩放、定位、裁剪、像素对比、取色、OCR、SVG 矢量化、抠图、HTML 截图——全部基于 sharp / VTracer / tesseract / 系统 Chrome。
 - **可连续多步看图。** 图片轮 = 调用工具的文本轮：`vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → 修复 → 再截图，Agent 可以一直迭代到任务完成。
 - **DeepSeek 始终是大脑。** 文字轮在模型、成本、上下文上完全不动；视觉模型只当“眼睛”、按需调用，答案按图片内容缓存。
 - **界面无感。** 上传的图片在会话界面里照常显示为图片；指向视觉工具的改写只发生在模型输入层，从不写入会话日志。

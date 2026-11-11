@@ -4720,8 +4720,8 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_trace',
       description:
-        'Vectorize an image (icon/logo) into an SVG via a local potrace pipeline (no Python). ' +
-        'Default: COLOR-preserving vectorization — one path per dominant color with fill="#rrggbb". ' +
+        'Vectorize an image (icon/logo) into an SVG via a local VTracer/WASM worker (no Python). ' +
+        'Default: color-preserving vectorization with a limited color palette. ' +
         'Set color=false for the layered grayscale posterization, where `steps` (1-16, default 4) ' +
         'controls levels. Writes the SVG as an artifact.',
       parameters: {
@@ -4770,7 +4770,7 @@ ctx.logger?.info(
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           throw new Error(
-            `vision_trace: potrace failed (${error && error.message ? error.message : String(error)})`,
+            `vision_trace: vectorization failed (${error && error.message ? error.message : String(error)})`,
           )
         }
         throwIfVisionTaskAborted(taskSignal)

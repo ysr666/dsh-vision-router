@@ -1191,215 +1191,84 @@ function isVisionAbort(error, signal) {
   return signal?.aborted === true || error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
 }
 
-/** Vectorize an image buffer into an SVG string via potrace posterization. */
-export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant', timeoutMs = 60000, options = {}) {
-  // potrace is CPU-bound and runs its computation in long synchronous
-  // chunks: on the main thread it blocks the whole dsh process (other
-  // sessions time out) and a setTimeout-based timeout can NEVER fire while
-  // the loop is blocked. Run it in a worker thread instead — the main loop
-  // stays responsive, and a timeout hard-terminates the worker.
-  const signal = options?.signal
+/** Shared hard-timeout and cancellation boundary for local VTracer SVG workers. */
+function runTraceWorker(mode, payload, timeoutMs, signal) {
+  const aborted = () => visionAbortReason(signal, 'vector trace aborted')
+  if (signal?.aborted) return Promise.reject(aborted())
   return new Promise((resolve, reject) => {
-    let settled = false
     let worker
     let timer
-    let abortListener
+    let finished = false
     const finish = (error, svg) => {
-      if (settled) return
-      settled = true
+      if (finished) return
+      finished = true
       if (timer !== undefined) clearTimeout(timer)
-      if (signal && abortListener) signal.removeEventListener?.('abort', abortListener)
-      void worker?.terminate()
+      signal?.removeEventListener?.('abort', onAbort)
+      if (worker) void worker.terminate().catch(() => {})
       if (error) reject(error)
       else resolve(svg)
     }
-    abortListener = () => finish(visionAbortReason(signal, 'potrace aborted'))
-    if (signal?.aborted) {
-      finish(visionAbortReason(signal, 'potrace aborted'))
+    const onAbort = () => finish(aborted())
+    signal?.addEventListener?.('abort', onAbort, { once: true })
+    if (signal?.aborted) { finish(aborted()); return }
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      finish(new Error('vector trace timed out'))
       return
     }
-    signal?.addEventListener?.('abort', abortListener, { once: true })
-    timer = setTimeout(() => {
-      finish(
-        new Error(
-          'potrace timed out — the image is too large or too complex; crop it to the target region first',
-        ),
-      )
-    }, timeoutMs)
+    timer = setTimeout(() => finish(new Error(
+      'vector trace timed out — crop the image or reduce its complexity',
+    )), timeoutMs)
     try {
-      // Resolve potrace's entry to an absolute file URL the worker can import
-      // regardless of the dsh process cwd or the worker's module mode.
-      const potraceUrl = pathToFileURL(createRequire(import.meta.url).resolve('potrace')).href
-      const source = `
-        import('node:worker_threads').then(({ parentPort, workerData }) => {
-          import(workerData.potraceUrl).then((mod) => {
-            const potrace = mod.default ?? mod
-            potrace.posterize(Buffer.from(workerData.bytes), {
-              steps: workerData.steps,
-              fillStrategy: workerData.fillStrategy,
-            }, (error, svg) => {
-              parentPort.postMessage(error ? { error: String((error && error.message) || error) } : { svg })
-            })
-          }).catch((error) => {
-            parentPort.postMessage({ error: String((error && error.message) || error) })
-          })
-        })
-      `
-      worker = new Worker(source, {
-        eval: true,
-        workerData: { potraceUrl, bytes, steps, fillStrategy },
+      worker = new Worker(new URL('./trace-vtracer-worker.js', import.meta.url), {
+        workerData: { mode, ...payload },
+        resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
       })
       worker.once('message', (message) => {
-        if (message && message.error) finish(new Error(message.error))
-        else finish(undefined, message && message.svg)
+        if (message?.ok === true && typeof message.svg === 'string') finish(undefined, message.svg)
+        else finish(new Error(String(message?.error || 'vector trace worker returned invalid output')))
       })
       worker.once('error', (error) => finish(error))
       worker.once('exit', (code) => {
-        if (code !== 0 && !settled) finish(new Error(`potrace worker exited with code ${code}`))
+        if (!finished) finish(new Error('vector trace worker exited before producing SVG (code ' + code + ')'))
       })
-    } catch (error) {
-      finish(error)
-    }
+    } catch (error) { finish(error) }
   })
 }
 
-/**
- * Color-preserving vectorization: quantize the image into its top colors
- * (the caller supplies the palette), build one 1-bit mask per color, trace
- * each mask with potrace, and emit a real colored SVG — one <path> per color
- * with fill="#rrggbb" — instead of potrace posterize's grayscale
- * black + fill-opacity layers. Runs in a worker with the same hard timeout
- * and termination semantics as posterizeSvg.
- *
- * @param data - raw RGBA pixel buffer the tool decoded (already downscaled
- *   to the trace budget).
- * @param info - { width, height } of that buffer.
- * @param palette - [{ hex, count, share }] from quantizeColors, ordered by
- *   share descending.
- */
+/** Compatible export: grayscale trace in an isolated Worker with adaptive posterized levels. */
+export function posterizeSvg(bytes, steps = 4, fillStrategy = 'dominant', timeoutMs = 60000, options = {}) {
+  if (options?.signal?.aborted) return Promise.reject(visionAbortReason(options.signal, 'vector trace aborted'))
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength === 0 || bytes.byteLength > 32 * 1024 * 1024) {
+    return Promise.reject(new RangeError('invalid trace image byte length'))
+  }
+  if (!Number.isInteger(steps) || steps < 1 || steps > 16) {
+    return Promise.reject(new RangeError('trace steps must be an integer between 1 and 16'))
+  }
+  if (fillStrategy !== 'dominant') {
+    return Promise.reject(new RangeError('unsupported grayscale fill strategy'))
+  }
+  const sharpUrl = pathToFileURL(createRequire(import.meta.url).resolve('sharp')).href
+  return runTraceWorker('grayscale', { bytes: Buffer.from(bytes), steps, sharpUrl }, timeoutMs, options?.signal)
+}
+
+/** Compatible export: color-preserving local vectorization without Potrace/Jimp. */
 export function posterizeSvgColor(data, info, palette, timeoutMs = 60000, options = {}) {
-  const signal = options?.signal
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let worker
-    let timer
-    let abortListener
-    const finish = (error, svg) => {
-      if (settled) return
-      settled = true
-      if (timer !== undefined) clearTimeout(timer)
-      if (signal && abortListener) signal.removeEventListener?.('abort', abortListener)
-      void worker?.terminate()
-      if (error) reject(error)
-      else resolve(svg)
-    }
-    abortListener = () => finish(visionAbortReason(signal, 'color trace aborted'))
-    if (signal?.aborted) {
-      finish(visionAbortReason(signal, 'color trace aborted'))
-      return
-    }
-    signal?.addEventListener?.('abort', abortListener, { once: true })
-    timer = setTimeout(() => {
-      finish(
-        new Error(
-          'color trace timed out — the image is too large or too complex; crop it to the target region first',
-        ),
-      )
-    }, timeoutMs)
-    try {
-      const sharpUrl = pathToFileURL(createRequire(import.meta.url).resolve('sharp')).href
-      const potraceUrl = pathToFileURL(createRequire(import.meta.url).resolve('potrace')).href
-      const source = `
-        import('node:worker_threads').then(({ parentPort, workerData }) => {
-          Promise.all([import(workerData.sharpUrl), import(workerData.potraceUrl)]).then(([sharpMod, potraceMod]) => {
-            const sharp = sharpMod.default ?? sharpMod
-            const potrace = potraceMod.default ?? potraceMod
-            const { width, height, palette } = workerData
-            const raw = Buffer.from(workerData.raw)
-            const hexRgb = (hex) => {
-              const n = parseInt(hex.slice(1), 16)
-              return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-            }
-            const paletteRgb = palette.map((p) => hexRgb(p.hex))
-            const pixels = width * height
-            const masks = palette.map(() => Buffer.alloc(pixels))
-            for (let p = 0; p < pixels; p++) {
-              const o = p * 4
-              if (raw[o + 3] < 128) continue
-              let best = 0
-              let bestD = Infinity
-              for (let c = 0; c < paletteRgb.length; c++) {
-                const dr = raw[o] - paletteRgb[c][0]
-                const dg = raw[o + 1] - paletteRgb[c][1]
-                const db = raw[o + 2] - paletteRgb[c][2]
-                const d = dr * dr + dg * dg + db * db
-                if (d < bestD) { bestD = d; best = c }
-              }
-              masks[best][p] = 1
-            }
-            const paths = []
-            let pending = palette.length
-            const maybeDone = () => {
-              if (pending > 0) return
-              const pathSvg = paths.map((p) => '<path fill="' + p.hex + '" d="' + p.d + '"/>').join('')
-              parentPort.postMessage({
-                ok: true,
-                svg: '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height +
-                  '" viewBox="0 0 ' + width + ' ' + height + '"><rect width="' + width + '" height="' + height +
-                  '" fill="#ffffff"/>' + pathSvg + '</svg>',
-              })
-            }
-            if (pending === 0) { maybeDone(); return }
-            palette.forEach((entry, index) => {
-              const gray = Buffer.alloc(pixels)
-              const mask = masks[index]
-              for (let p = 0; p < pixels; p++) gray[p] = mask[p] ? 0 : 255
-              sharp(gray, { raw: { width, height, channels: 1 } })
-                .png()
-                .toBuffer()
-                .then((pngBuf) => {
-                  potrace.trace(pngBuf, (err, svg) => {
-                    pending -= 1
-                    if (!err && svg) {
-                      const found = [...svg.matchAll(/d="([^"]+)"/g)].map((m) => m[1])
-                      for (const d of found) paths.push({ hex: entry.hex, d })
-                    }
-                    maybeDone()
-                  })
-                })
-                .catch(() => {
-                  pending -= 1
-                  maybeDone()
-                })
-            })
-          }).catch((error) => {
-            parentPort.postMessage({ error: String((error && error.message) || error) })
-          })
-        })
-      `
-      worker = new Worker(source, {
-        eval: true,
-        workerData: {
-          sharpUrl,
-          potraceUrl,
-          width: info.width,
-          height: info.height,
-          palette,
-          raw: data,
-        },
-      })
-      worker.once('message', (message) => {
-        if (message && message.error) finish(new Error(message.error))
-        else finish(undefined, message && message.svg)
-      })
-      worker.once('error', (error) => finish(error))
-      worker.once('exit', (code) => {
-        if (code !== 0 && !settled) finish(new Error(`color-trace worker exited with code ${code}`))
-      })
-    } catch (error) {
-      finish(error)
-    }
-  })
+  if (options?.signal?.aborted) return Promise.reject(visionAbortReason(options.signal, 'color trace aborted'))
+  const width = info?.width
+  const height = info?.height
+  if (
+    !Number.isSafeInteger(width) || !Number.isSafeInteger(height) ||
+    width < 1 || height < 1 || width * height > 1_000_000 ||
+    !(data instanceof Uint8Array) || data.byteLength !== width * height * 4
+  ) return Promise.reject(new RangeError('invalid color trace RGBA dimensions'))
+  if (!Array.isArray(palette) || palette.length > 16 ||
+    palette.some((p) => !p || typeof p.hex !== 'string' || !/^#[a-f0-9]{6}$/i.test(p.hex))) {
+    return Promise.reject(new RangeError('invalid trace color palette'))
+  }
+  return runTraceWorker('color', {
+    data: Buffer.from(data), width, height,
+    palette: palette.map((p) => ({ hex: p.hex })),
+  }, timeoutMs, options?.signal)
 }
 
 /** Resolve the effective vision_ocr engine without hiding explicit user/model intent. */
