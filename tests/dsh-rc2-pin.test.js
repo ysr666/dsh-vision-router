@@ -5,20 +5,20 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { RC2_RELEASE_SHA, RC2_PIN_PATH, readRc1Pin, validateRc1Pin } from '../scripts/dsh-rc2-pin.mjs'
+import { RC2_RELEASE_SHA, RC2_PIN_PATH, readRc2Pin, validateRc2Pin } from '../scripts/dsh-rc2-pin.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const source = 'ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c'
 test('RC2 gate source is exact, immutable, and independent of Alpha', () => {
   assert.equal(RC2_PIN_PATH, path.join(root, 'config/dsh-rc2-settings-pin.json'))
-  assert.deepEqual(readRc1Pin(), {version:'0.2.2-rc.2',sha:source})
+  assert.deepEqual(readRc2Pin(), {version:'0.2.2-rc.2',sha:source})
   assert.equal(RC2_RELEASE_SHA,source)
   const alpha=JSON.parse(readFileSync(path.join(root,'config/dsh-alpha-settings-pin.json'),'utf8'))
   assert.equal(alpha.version,'0.2.2-alpha.3')
 })
 test('RC2 pin strictly rejects version drift and malicious or malformed inputs', () => {
   for (const invalid of [null,[],{}, {version:'0.2.2-alpha.3',sha:source},{version:'0.2.2-rc.1',sha:source},{version:'0.2.2-rc.2\nfoo=1',sha:source},{version:'0.2.2-rc.2',sha:source+'\nfoo=1'},{version:'0.2.2-rc.2',sha:'f'.repeat(40)},{version:'0.2.2-rc.2',sha:'f'.repeat(40),other:true}]){
-    assert.throws(()=>validateRc1Pin(invalid))
+    assert.throws(()=>validateRc2Pin(invalid))
   }
 })
 test('RC2 read command creates exact GitHub step output and rejects writes', () => {
