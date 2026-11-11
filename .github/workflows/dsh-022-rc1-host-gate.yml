@@ -203,6 +203,8 @@ jobs:
       - name: Build the rc1 Host runtime
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Prefer official Ubuntu apt mirror for Chromium dependencies
+        run: bash dvr/scripts/ci-prefer-ubuntu-archive.sh
       - name: Install Chromium
         working-directory: dsh-rc1
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium

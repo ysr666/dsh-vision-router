@@ -96,6 +96,8 @@ jobs:
           node-version: '24.9.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Prefer official Ubuntu apt mirror for X11 dependencies
+        run: bash scripts/ci-prefer-ubuntu-archive.sh
       - name: Install X11 screenshot runtime
         run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick scrot
       - name: Exercise the real Linux root-display capture
