@@ -51,6 +51,12 @@ test('RC2 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate,/dsh-preview-settings-browser-lifecycle-smoke\.mjs/)
   assert.match(gate,/dsh017-desktop-multiplugin-smoke\.mjs/)
   assert.match(gate,/dsh-rc2-agent-order-contract\.mjs/)
+  assert.match(gate, /dsh-rc2-session-batch-integration\\.mjs/)
+  assert.match(gate, /Verify DVR feed integration with real RC2 Session atomic batches/)
+  const mainPush = gate.split('\n  push:\n')[1]?.split('\n  workflow_dispatch:')[0]
+  assert.ok(mainPush, 'RC2 main push gate must exist')
+  assert.match(mainPush, /branches: \\[main\\]/)
+  assert.doesNotMatch(mainPush, /paths:/, 'all main changes must requalify RC2')
   assert.equal((gate.match(/DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'/g) ?? []).length, 2)
   assert.match(gate,/Run default tool-only image conversation on RC2/)
   assert.match(gate,/if: matrix.node == '24\.9\.0'/)
