@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -13,6 +13,15 @@ if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
 const dshRequire = createRequire(join(dshRoot, 'package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
+const candidateSpec = String(process.env.DVR_SMOKE_PACKAGE_SPEC ?? '').trim()
+if (candidateSpec) {
+  const file = candidateSpec.startsWith('file:') ? candidateSpec.slice(5) : ''
+  if (!isAbsolute(file) || !file.endsWith('.tgz') || !existsSync(file)) {
+    throw new Error('DVR_SMOKE_PACKAGE_SPEC requires an existing absolute file:*.tgz candidate')
+  }
+}
+const installSpec = candidateSpec || `file:${dvrRoot}`
+
 
 async function assertBundleInsertRecoversFromLoaderMutation() {
   const webRequire = createRequire(join(dshRoot, 'packages/bundle/web-app/package.json'))
@@ -47,7 +56,7 @@ async function assertBundleInsertRecoversFromLoaderMutation() {
 
 function installCurrentPlugin(env) {
   const result = spawnSync(process.execPath,
-    ['--import', tsxLoader, cli, 'plugin', '--profile', 'web', 'add', `file:${dvrRoot}`],
+    ['--import', tsxLoader, cli, 'plugin', '--profile', 'web', 'add', installSpec],
     { cwd: dshRoot, env, encoding: 'utf8', stdio: 'pipe' })
   if (result.status !== 0) {
     throw new Error(`plugin install failed (${result.status})\n${result.stdout}\n${result.stderr}`)
@@ -133,6 +142,7 @@ try {
     recomposes: 3,
     processStable: true,
     dvrRouteStable: true,
+    installForm: candidateSpec ? 'packed-tarball' : 'source-directory',
   }))
 } finally {
   if (child && child.exitCode === null) {
