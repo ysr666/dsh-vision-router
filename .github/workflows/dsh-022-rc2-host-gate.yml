@@ -34,9 +34,7 @@ on:
       - 'pnpm-lock.yaml'
       - 'tests/dsh-rc2-pin.test.js'
       - 'scripts/dsh-rc2-session-batch-integration.mjs'
-      - 'lib/**'
-      - 'entry.js'
-      - 'index.js'
+      - 'scripts/verify-packed-public-api.mjs'
       - 'presets/**'
       - 'tests/**'
   # Review and merge of this fixed RC2 audit records the validated baseline.
