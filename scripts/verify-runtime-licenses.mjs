@@ -57,11 +57,15 @@ for (const notice of [
   'assets/licenses/moxcms-BSD-3-Clause.txt',
   'assets/licenses/zlib-rs-Zlib.txt',
 ]) assert.ok(existsSync(path.join(ROOT, notice)) && statSync(path.join(ROOT, notice)).size > 400, 'notice missing: ' + notice)
-const scan = spawnSync('pnpm', ['licenses', 'list', '--prod', '--json'], {
-  cwd: ROOT, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
-  shell: process.platform === 'win32',
-  windowsHide: true,
-})
+// On Windows, use a fixed cmd.exe command rather than spawnSync(shell: true).
+// The latter creates an avoidable DEP0190 warning in Node 24 and leaves room
+// for accidental shell argument interpolation if this gate grows later.
+const isWin = process.platform === 'win32'
+const scan = spawnSync(isWin ? (process.env.ComSpec || 'cmd.exe') : 'pnpm',
+  isWin ? ['/d', '/s', '/c', 'pnpm licenses list --prod --json'] : ['licenses', 'list', '--prod', '--json'], {
+    cwd: ROOT, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+    windowsHide: true,
+  })
 assert.equal(scan.status, 0, 'pnpm license listing failed: ' + scan.stderr)
 const grouped = JSON.parse(scan.stdout)
 let npmCount = 0
