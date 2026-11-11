@@ -52,9 +52,10 @@ function descriptor(revision, value) {
   }
 }
 
-function makeHarness({ browserAuth = (req) => req?.browserRejected } = {}) {
+function makeHarness({ browserAuth = (req) => req?.browserRejected, configForms } = {}) {
   const routes = []
   const rootDisposers = []
+  const pendingFormCallbacks = []
   const webServer = {
     register(route) {
       routes.push(route)
@@ -85,20 +86,30 @@ function makeHarness({ browserAuth = (req) => req?.browserRejected } = {}) {
     const ctx = {
       root,
       get(name) {
-        return name === 'settings' ? settings : undefined
+        return name === 'settings' ? settings : name === 'configForms' ? configForms : undefined
       },
       inject(dependencies, callback) {
-        assert.deepEqual(dependencies, ['settings'])
-        callback({
+        const scope = {
           settings,
           get(name) {
-            return name === 'settings' ? settings : undefined
+            return name === 'settings' ? settings : name === 'configForms' ? configForms : undefined
           },
           effect(factory) {
             disposeGeneration = factory()
             return disposeGeneration
           },
-        })
+        }
+        if (dependencies.join(',') === 'settings,configForms') {
+          if (typeof configForms?.get !== 'function') {
+            const slot = { callback, scope }
+            pendingFormCallbacks.push(slot)
+            return () => {
+              const pos = pendingFormCallbacks.indexOf(slot)
+              if (pos >= 0) pendingFormCallbacks.splice(pos, 1)
+            }
+          }
+        } else assert.deepEqual(dependencies, ['settings'])
+        callback(scope)
         return () => {}
       },
     }
@@ -110,7 +121,13 @@ function makeHarness({ browserAuth = (req) => req?.browserRejected } = {}) {
     }
   }
 
-  return { routes, rootDisposers, generation }
+  return {
+    routes, rootDisposers, generation,
+    startConfigForms(service) {
+      configForms = service
+      for (const { callback, scope } of pendingFormCallbacks.splice(0)) callback(scope)
+    },
+  }
 }
 
 test('0.1.7 root settings route survives repeated ConfigEditor reconciliation across sequential writes', async () => {
@@ -338,4 +355,91 @@ test('root settings transport fails closed when browser-auth service is absent o
     assert.equal(res.snapshot().status, 403)
     assert.equal(reads, 0)
   }
+})
+
+test('#827: native SettingsProvider plus configForms mounts an authenticated local bridge with readback', async () => {
+  const harness = makeHarness({ configForms: { get() {} } })
+  let revision = 0
+  let depth = 'standard'
+  let mutations = 0
+  const nativeSettings = {
+    register() {},
+    writable: true,
+    describe() { return [descriptor(revision, { visionDepth: depth })] },
+    async mutate(namespace, ops, expectedRevision) {
+      assert.equal(namespace, 'vision-router')
+      assert.equal(expectedRevision, revision)
+      assert.deepEqual(ops, [{ op: 'set', path: ['visionDepth'], value: 'fast' }])
+      depth = 'fast'
+      revision += 1
+      mutations += 1
+    },
+  }
+  installDsh017RootLocalSettingsTransport(harness.generation(nativeSettings).ctx)
+  assert.equal(harness.routes.length, 1, 'native SettingsProvider must not be rejected for missing the facade marker')
+
+  function localRequest(method, payload, remoteAddress = '127.0.0.1') {
+    const req = request(method, payload)
+    req.socket = { remoteAddress }
+    req.headers = { host: remoteAddress === '127.0.0.1' ? 'localhost:3080' : 'dvr.example.org' }
+    return req
+  }
+
+  const denied = response()
+  await harness.routes[0].handler(localRequest('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 0,
+  }, '203.0.113.7'), denied)
+  assert.equal(denied.snapshot().status, 403)
+  assert.equal(mutations, 0, 'remote requests must not mutate native SettingsProvider')
+
+  const initial = response()
+  await harness.routes[0].handler(localRequest('GET'), initial)
+  assert.equal(initial.snapshot().status, 200)
+  assert.equal(initial.snapshot().json.value.revision, 0)
+
+  const saved = response()
+  await harness.routes[0].handler(localRequest('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 0,
+  }), saved)
+  assert.equal(saved.snapshot().status, 200)
+  assert.equal(saved.snapshot().json.value.revision, 1)
+  assert.equal(saved.snapshot().json.value.value.visionDepth, 'fast')
+
+  const readback = response()
+  await harness.routes[0].handler(localRequest('GET'), readback)
+  assert.equal(readback.snapshot().json.value.revision, 1)
+  assert.equal(readback.snapshot().json.value.value.visionDepth, 'fast')
+  assert.equal(mutations, 1)
+})
+
+
+test('native SettingsProvider waits for delayed configForms without permanent 404', async () => {
+  const harness = makeHarness()
+  const native = {
+    register() {},
+    describe() { return [descriptor(3, { visionDepth: 'standard' })] },
+    async mutate(namespace, ops, revision) {
+      assert.equal(namespace, 'vision-router')
+      assert.equal(revision, 3)
+      assert.deepEqual(ops, [{ op: 'set', path: ['visionDepth'], value: 'fast' }])
+    },
+  }
+  const generation = harness.generation(native)
+  installDsh017RootLocalSettingsTransport(generation.ctx)
+  assert.equal(harness.routes.length, 0, 'before configForms, do not bind native route')
+  harness.startConfigForms({ get(namespace) { assert.equal(namespace, 'vision-router'); return {} } })
+  assert.equal(harness.routes.length, 1, 'Cordis multi-service injection must mount after configForms arrives')
+  const out = response()
+  await harness.routes[0].handler(request('GET'), out)
+  assert.equal(out.snapshot().status, 200)
+  assert.equal(out.snapshot().json.value.value.visionDepth, 'standard')
+  const post = response()
+  await harness.routes[0].handler(request('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 3,
+  }), post)
+  assert.equal(post.snapshot().status, 200)
+  assert.equal(harness.routes.length, 1, 'do not duplicate root route')
 })
