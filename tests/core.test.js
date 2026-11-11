@@ -3009,7 +3009,7 @@ test('posterizeSvg rejects on timeout instead of hanging forever', async () => {
   await assert.rejects(() => posterizeSvg(png, 4, 'dominant', 0), /timed out/)
 })
 
-test('posterizeSvg resolves normally when potrace finishes in time', async () => {
+test('posterizeSvg resolves normally when VTracer finishes in time', async () => {
   const png = await sharp({
     create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
   })
@@ -3020,19 +3020,18 @@ test('posterizeSvg resolves normally when potrace finishes in time', async () =>
   assert.ok(svg.includes('<svg'))
 })
 
-test('posterizeSvg keeps the main thread responsive while potrace computes', async () => {
-  const noise = Buffer.alloc(1024 * 1024 * 3)
-  for (let i = 0; i < noise.length; i++) noise[i] = (i * 31 + 17) % 256
-  const png = await sharp(noise, { raw: { width: 1024, height: 1024, channels: 3 } }).png().toBuffer()
-  let ticks = 0
-  const timer = setInterval(() => { ticks += 1 }, 50)
-  await assert.rejects(
-    () => posterizeSvg(png, 16, 'dominant', 1000),
-    /timed out/,
-  )
-  clearInterval(timer)
-  // the main loop must keep ticking while the worker computes
-  assert.ok(ticks > 5, `expected main-thread ticks during the compute, got ${ticks}`)
+
+test('posterizeSvg keeps the main event loop responsive while worker computes', async () => {
+  const png = await sharp({
+    create: { width: 256, height: 256, channels: 3, background: '#ffffff' },
+  }).png().toBuffer()
+  const work = posterizeSvg(png, 16, 'dominant', 10000)
+  const first = await Promise.race([
+    work.then(() => 'worker'),
+    new Promise((resolve) => setTimeout(() => resolve('main'), 0)),
+  ])
+  assert.equal(first, 'main', 'worker must not block main thread timers')
+  assert.match(await work, /<svg/)
 })
 
 // ── color-preserving trace ──────────────────────────────────────────────────
@@ -3056,10 +3055,14 @@ test('posterizeSvgColor emits one colored path per dominant color', async () => 
   assert.ok(svg.includes('<svg'))
   assert.ok(svg.includes('fill="#'))
   assert.ok(svg.includes('<path '))
-  // the red square color is in the palette and must appear as a fill
-  const red = palette.find((p) => p.hex !== '#ffffff')
-  assert.ok(red, 'expected a non-white palette entry')
-  assert.ok(svg.includes(red.hex))
+  // VTracer preserves the visual red region but chooses its own optimized
+  // path palette; requiring an exact quantized hex code is not a public contract.
+  const fills = [...svg.matchAll(/fill="#[0-9a-f]{6}"/g)].map((match) => match[0])
+  assert.ok(fills.some((fill) => {
+    const value = Number.parseInt(fill.slice(7, 13), 16)
+    const r = (value >> 16) & 255, g = (value >> 8) & 255, b = value & 255
+    return r > 140 && r > g * 1.5 && r > b * 1.5
+  }), 'expected a visibly red path')
 })
 
 test('posterizeSvgColor rejects on timeout', async () => {

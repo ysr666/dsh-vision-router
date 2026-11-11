@@ -4720,8 +4720,8 @@ ctx.logger?.info(
     deepToolDefs.push({
       name: 'vision_trace',
       description:
-        'Vectorize an image (icon/logo) into an SVG via a local potrace pipeline (no Python). ' +
-        'Default: COLOR-preserving vectorization — one path per dominant color with fill="#rrggbb". ' +
+        'Vectorize an image (icon/logo) into an SVG via a local VTracer/WASM worker (no Python). ' +
+        'Default: color-preserving vectorization with a limited color palette. ' +
         'Set color=false for the layered grayscale posterization, where `steps` (1-16, default 4) ' +
         'controls levels. Writes the SVG as an artifact.',
       parameters: {
@@ -4761,16 +4761,21 @@ ctx.logger?.info(
             const colors = Number.isInteger(args.colors) && args.colors > 0 ? Math.min(args.colors, 16) : 8
             const raw = await sharp(traceBytes, { failOn: 'none' }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
             throwIfVisionTaskAborted(taskSignal)
-            const palette = quantizeColors(raw.data, colors)
-            colorCount = palette.length
-            svg = await posterizeSvgColor(raw.data, raw.info, palette, timeoutMs(), { signal: taskSignal })
+            // User-facing colors is a strict maximum, not an exact
+            // palette. VTracer chooses the colors for better gradient/alpha
+            // fidelity; explicit palette callers use the separate array form.
+            svg = await posterizeSvgColor(raw.data, raw.info, colors, timeoutMs(), { signal: taskSignal })
+            colorCount = Math.min(colors, new Set(
+              [...svg.matchAll(/<path\b[^>]*\bfill="(#[0-9a-fA-F]{6})"/g)]
+                .map((match) => match[1].toLowerCase()),
+            ).size)
           } else {
             svg = await posterizeSvg(traceBytes, steps, 'dominant', timeoutMs(), { signal: taskSignal })
           }
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           throw new Error(
-            `vision_trace: potrace failed (${error && error.message ? error.message : String(error)})`,
+            `vision_trace: vectorization failed (${error && error.message ? error.message : String(error)})`,
           )
         }
         throwIfVisionTaskAborted(taskSignal)
