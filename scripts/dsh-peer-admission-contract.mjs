@@ -43,6 +43,7 @@ const admitted = [
   '0.2.1',
   '0.2.2-alpha.3',
   '0.2.2-rc.1',
+  '0.2.2-rc.2',
   '0.2.99-rc.1',
   '0.2.99',
 ]
@@ -77,7 +78,7 @@ const conflictingPeerManifest = {
     '@deepseek-ai/dsh-anonymous-user-id': '<0.1.0',
   },
 }
-for (const version of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-alpha.3']) {
+for (const version of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-alpha.3']) {
   assert.equal(evaluatePluginCompatibility(conflictingPeerManifest, {}, version), undefined,
     'supported Host ' + version + ' must prefer engines.dsh over synthetic peers')
   const badEngineManifest = {
