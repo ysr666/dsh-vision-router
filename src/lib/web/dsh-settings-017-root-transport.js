@@ -68,8 +68,13 @@ function serviceOf(ctx, name) {
 
 function compatibleSettings(ctx) {
   const settings = serviceOf(ctx, 'settings')
-  if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] !== true) return undefined
-  if (typeof settings.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
+  if (typeof settings?.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
+  // Modern Hosts can expose both native SettingsProvider.register() and
+  // configForms. Their browser uses the local bridge even without our
+  // ConfigEditor compatibility facade/marker. Keep legacy Hosts without
+  // configForms on their original settings path.
+  const forms = serviceOf(ctx, 'configForms')
+  if (settings[DSH_017_SETTINGS_COMPAT_MARK] !== true && typeof forms?.get !== 'function') return undefined
   return settings
 }
 
