@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -13,6 +13,20 @@ if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
 const dshRequire = createRequire(join(dshRoot, 'package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
+const candidateSpec = String(process.env.DVR_SMOKE_PACKAGE_SPEC ?? '').trim()
+const publishedVersion = String(process.env.DVR_SMOKE_PUBLISHED_VERSION ?? '').trim()
+if (publishedVersion && publishedVersion !== '3.2.0') {
+  throw new Error('DVR_SMOKE_PUBLISHED_VERSION is restricted to immutable published 3.2.0')
+}
+if (candidateSpec && publishedVersion) throw new Error('select one package provenance')
+if (candidateSpec) {
+  const file = candidateSpec.startsWith('file:') ? candidateSpec.slice(5) : ''
+  if (!isAbsolute(file) || !file.endsWith('.tgz') || !existsSync(file)) {
+    throw new Error('DVR_SMOKE_PACKAGE_SPEC requires an existing absolute file:*.tgz candidate')
+  }
+}
+const installSpec = candidateSpec || (publishedVersion ? `dsh-vision-router@${publishedVersion}` : `file:${dvrRoot}`)
+
 
 async function assertBundleInsertRecoversFromLoaderMutation() {
   const webRequire = createRequire(join(dshRoot, 'packages/bundle/web-app/package.json'))
@@ -47,7 +61,7 @@ async function assertBundleInsertRecoversFromLoaderMutation() {
 
 function installCurrentPlugin(env) {
   const result = spawnSync(process.execPath,
-    ['--import', tsxLoader, cli, 'plugin', '--profile', 'web', 'add', `file:${dvrRoot}`],
+    ['--import', tsxLoader, cli, 'plugin', '--profile', 'web', 'add', installSpec],
     { cwd: dshRoot, env, encoding: 'utf8', stdio: 'pipe' })
   if (result.status !== 0) {
     throw new Error(`plugin install failed (${result.status})\n${result.stdout}\n${result.stderr}`)
@@ -83,6 +97,23 @@ async function authenticatedWeb(launchUrl) {
   return { origin: new URL(launchUrl).origin, cookie: setCookie.split(';', 1)[0] }
 }
 
+async function assertLocalSettingsBridge(auth) {
+  const response = await fetch(new URL('/_dsh/vision-router/local-settings', auth.origin), {
+    headers: { cookie: auth.cookie },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(20_000),
+  })
+  try {
+    if (response.status !== 200) {
+      throw new Error(`local-settings HTTP ${response.status}: released 3.2.0 cannot use the native settings bridge on RC2`)
+    }
+    const body = await response.json()
+    if (body?.ok !== true) throw new Error('local-settings response did not contain ok:true')
+  } finally {
+    await response.body?.cancel().catch(() => {})
+  }
+}
+
 async function assertDvrRoute(auth, phase) {
   const response = await fetch(new URL('/_dsh/vision-router/logs', auth.origin), {
     cache: 'no-store',
@@ -114,6 +145,7 @@ try {
   const readyUrl = await waitForReady(child)
   const auth = await authenticatedWeb(readyUrl)
   await assertDvrRoute(auth, 'before recompose')
+  if (publishedVersion) await assertLocalSettingsBridge(auth)
 
   const profilePatch = join(env.DSH_HOME, 'profiles', 'web', 'cordis.patch.yml')
   for (let generation = 1; generation <= 3; generation += 1) {
@@ -133,6 +165,7 @@ try {
     recomposes: 3,
     processStable: true,
     dvrRouteStable: true,
+    installForm: candidateSpec ? 'packed-tarball' : publishedVersion ? 'published-npm' : 'source-directory',
   }))
 } finally {
   if (child && child.exitCode === null) {
