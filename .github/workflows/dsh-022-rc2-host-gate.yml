@@ -248,6 +248,33 @@ jobs:
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
           DVR_SMOKE_PACKAGE_SPEC: file:${{ steps.packed-candidate.outputs.tarball }}
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      # Historical artifact only: a failure is reported visibly but cannot be
+      # fixed retroactively by the current PR. Never count this as a candidate
+      # release acceptance result, and never silently treat it as compatible.
+      - name: Diagnose immutable published npm 3.2.0 on RC2 (advisory)
+        id: historical_npm
+        continue-on-error: true
+        working-directory: dsh-rc2
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_SMOKE_PUBLISHED_VERSION: '3.2.0'
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Record published npm 3.2.0 diagnostic separately from candidate
+        if: always()
+        shell: bash
+        env:
+          HISTORICAL_OUTCOME: ${{ steps.historical_npm.outcome }}
+        run: |
+          {
+            echo '### Immutable published npm 3.2.0 × RC2 (historical diagnostic)'
+            echo "Historical npm installation + settings bridge: \`$HISTORICAL_OUTCOME\`"
+            echo 'This is NOT current PR head qualification and is NOT the third-party Dataelem generation installer.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HISTORICAL_OUTCOME" != success ]; then
+            echo '::warning::Immutable published npm 3.2.0 does not have a verified RC2 settings bridge; inspect the historical advisory log. This PR cannot rewrite a published tarball.'
+          fi
       - name: Run cold Vision lifecycle
         working-directory: dsh-rc2
         env:
