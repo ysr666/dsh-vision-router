@@ -14,13 +14,18 @@ const dshRequire = createRequire(join(dshRoot, 'package.json'))
 const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
 const candidateSpec = String(process.env.DVR_SMOKE_PACKAGE_SPEC ?? '').trim()
+const publishedVersion = String(process.env.DVR_SMOKE_PUBLISHED_VERSION ?? '').trim()
+if (publishedVersion && publishedVersion !== '3.2.0') {
+  throw new Error('DVR_SMOKE_PUBLISHED_VERSION is restricted to immutable published 3.2.0')
+}
+if (candidateSpec && publishedVersion) throw new Error('select one package provenance')
 if (candidateSpec) {
   const file = candidateSpec.startsWith('file:') ? candidateSpec.slice(5) : ''
   if (!isAbsolute(file) || !file.endsWith('.tgz') || !existsSync(file)) {
     throw new Error('DVR_SMOKE_PACKAGE_SPEC requires an existing absolute file:*.tgz candidate')
   }
 }
-const installSpec = candidateSpec || `file:${dvrRoot}`
+const installSpec = candidateSpec || (publishedVersion ? `dsh-vision-router@${publishedVersion}` : `file:${dvrRoot}`)
 
 
 async function assertBundleInsertRecoversFromLoaderMutation() {
@@ -92,6 +97,23 @@ async function authenticatedWeb(launchUrl) {
   return { origin: new URL(launchUrl).origin, cookie: setCookie.split(';', 1)[0] }
 }
 
+async function assertLocalSettingsBridge(auth) {
+  const response = await fetch(new URL('/_dsh/vision-router/local-settings', auth.origin), {
+    headers: { cookie: auth.cookie },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(20_000),
+  })
+  try {
+    if (response.status !== 200) {
+      throw new Error(`local-settings HTTP ${response.status}: released 3.2.0 cannot use the native settings bridge on RC2`)
+    }
+    const body = await response.json()
+    if (body?.ok !== true) throw new Error('local-settings response did not contain ok:true')
+  } finally {
+    await response.body?.cancel().catch(() => {})
+  }
+}
+
 async function assertDvrRoute(auth, phase) {
   const response = await fetch(new URL('/_dsh/vision-router/logs', auth.origin), {
     cache: 'no-store',
@@ -123,6 +145,7 @@ try {
   const readyUrl = await waitForReady(child)
   const auth = await authenticatedWeb(readyUrl)
   await assertDvrRoute(auth, 'before recompose')
+  if (publishedVersion) await assertLocalSettingsBridge(auth)
 
   const profilePatch = join(env.DSH_HOME, 'profiles', 'web', 'cordis.patch.yml')
   for (let generation = 1; generation <= 3; generation += 1) {
@@ -142,7 +165,7 @@ try {
     recomposes: 3,
     processStable: true,
     dvrRouteStable: true,
-    installForm: candidateSpec ? 'packed-tarball' : 'source-directory',
+    installForm: candidateSpec ? 'packed-tarball' : publishedVersion ? 'published-npm' : 'source-directory',
   }))
 } finally {
   if (child && child.exitCode === null) {
