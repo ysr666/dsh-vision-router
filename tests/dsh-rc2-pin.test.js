@@ -56,6 +56,10 @@ test('RC2 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate, /Verify packed candidate install and recompose on real RC2 Host/)
   assert.match(gate, /DVR_SMOKE_PACKAGE_SPEC: file:/)
   assert.match(gate, /verify-packed-public-api\.mjs/)
+  assert.match(gate, /DVR_SMOKE_PUBLISHED_VERSION: '3\.2\.0'/, 'historical npm version must be immutable')
+  assert.match(gate, /Diagnose immutable published npm 3\.2\.0 on RC2 \(advisory\)/)
+  assert.match(gate, /continue-on-error: true/, 'historical immutable artifact must not block current head qualification')
+  assert.match(gate, /Record published npm 3\.2\.0 diagnostic separately from candidate/)
   const mainPush = gate.split('\n  push:\n')[1]?.split('\n  workflow_dispatch:')[0]
   assert.ok(mainPush, 'RC2 main push gate must exist')
   assert.match(mainPush, /branches: \[main\]/)
