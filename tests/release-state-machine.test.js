@@ -260,3 +260,20 @@ test('release workflow publishes npm only when the registry probe says unpublish
   const waitStep = workflow.indexOf('release-registry-identity.mjs wait')
   assert.ok(waitStep > publishStep, 'registry identity must be re-verified after the publish')
 })
+
+test('release verification preserves and actually runs the VTracer prepack license gate', () => {
+  const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  const workflow = readFileSync(WORKFLOW, 'utf8')
+  const expectedPrepack = 'pnpm license:check && pnpm build'
+  assert.equal(pkg.scripts.prepare, 'pnpm build')
+  assert.equal(pkg.scripts.prepack, expectedPrepack)
+  assert.equal(pkg.scripts['license:check'], 'node scripts/verify-runtime-licenses.mjs')
+  assert.match(workflow, /prepack: 'pnpm license:check && pnpm build'/)
+  assert.match(workflow, /'license:check': 'node scripts\/verify-runtime-licenses\.mjs'/)
+  const verify = workflow.indexOf('name: Verify runtime dependency licenses before packaging')
+  const run = workflow.indexOf('run: pnpm license:check', verify)
+  const build = workflow.indexOf('name: Build canonical package artifacts')
+  const pack = workflow.indexOf('name: Preflight exact packed contract before irreversible tag')
+  assert.ok(verify > 0 && run > verify && build > run && pack > build,
+    'release verify must execute the license gate before build and pre-tag packaging')
+})
