@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.2.0 stable release:** Requires DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0; DSH 0.1.x / 0.2.0 and Node 22 are no longer supported by this version. The DSH Host owns Connection authorization and trustedHosts; DVR retains only the minimal third-party RPC startup-order patch. **Existing profiles are not upgraded automatically.** Run the read-only `doctor --upgrade-preflight` first, then separately verify legacy Session data, custom profile overlays and a rollback path. Older installations may stay on v3.1.5. See [v3.2.0 release notes](docs/releases/v3.2.0.md).
+> **v3.2.1 stable maintenance release:** Fixes Settings bridge initialization and local/authorized remote configuration handling, and replaces the Potrace/Jimp SVG tracing dependency chain with isolated VTracer WASM. Requires DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0; old DSH/Node environments are **not** newly supported. **Existing profiles are not upgraded automatically.** Back up your profile and run the read-only `doctor --upgrade-preflight` before upgrading; keep a rollback path. Third-party Desktop generation installers have not been separately certified. See [v3.2.1 release notes](docs/releases/v3.2.1.md).
 
 ## Start here
 
