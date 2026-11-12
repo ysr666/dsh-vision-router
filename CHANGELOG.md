@@ -5,6 +5,20 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.2.1
+
+### Settings and tracing / 设置与图形追踪
+- **#823 / #828:** Restore native Settings bridge mount and local/authorized remote settings save/readback/reload, with authentication and redaction protections. / 恢复原生设置桥挂载、本地与授权远程设置读写及回读／重载，保留鉴权与脱敏。
+- **#829:** Replace Potrace/Jimp tracing chain with pinned VTracer WASM Worker, audited third-party notices and output-quality tests; SVG geometry may change. / 用隔离的 VTracer WASM 替换 Potrace/Jimp，补齐许可与质量测试；SVG 形状可能变化。
+
+### Exact Host acceptance and maintenance / 实机验收与维护
+- **#830:** Pin and qualify DSH 0.2.2-rc.2 using real Session batch semantics, exact three-OS source, browser/Settings, macOS/Windows Desktop and candidate package install; independently diagnose old npm 3.2.0. / 对 RC2 的会话批量事件、三端 Host、浏览器及桌面、候选包安装完成精确验收。
+- **#824 / #825:** Upgrade CodeQL SARIF and pnpm Action immutable pins across all relevant workflows. / 更新 CodeQL 与 pnpm Actions 不可变版本。
+
+### Boundaries / 边界
+- **Unchanged support floor:** DSH >=0.2.1-rc.5 <0.3.0-0; Node >=24.9.0. Earlier Host versions, including rc.3, remain unsupported. / 不恢复旧 Host 或 Node 支持；切勿强行绕过安装限制。
+- The default cloud Vision fallback, local-only choices and profile migration policy are unchanged. Back up and use `doctor --upgrade-preflight` before upgrade. The Dataelem third-party Desktop generation installer has **not** been verified using the newly released package; removal of the Jimp dependency chain does not certify external installers. / 云端图片外发及 Profile 迁移策略不变，升级前预检与备份；第三方 Desktop 新包安装尚未独立验证。
+
 ## v3.2.0
 
 ### Supported Host / Node transition | Host 与 Node 支持窗口调整
