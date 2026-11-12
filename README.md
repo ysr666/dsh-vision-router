@@ -102,7 +102,7 @@ The vision model is **only the eyes**; DeepSeek is **always the brain**. An imag
 
 Default `progressiveTools: false`: all fourteen deep tools are registered at startup. **Registration does not grant access in every conversation**: turn **Vision ON** in the current chat to make them visible and callable by its Agent. While Vision is OFF, that Agent cannot use `vision_colors`, `vision_ocr`, or the other Vision Router tools, even with `tool: true` in Settings. Under this default mode, `vision_activate` is **not registered**.
 
-To opt into progressive mounting, explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`. Only then is `vision_activate` initially exposed to Vision-enabled Sessions; the full tool set mounts upon activation and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / potrace / tesseract / system Chrome — no Python:
+To opt into progressive mounting, explicitly set `progressiveTools: true` in the profile/composition `cordis.patch.yml`. Only then is `vision_activate` initially exposed to Vision-enabled Sessions; the full tool set mounts upon activation and the `vision-tools` skill is registered. This is a boot-time switch; restart DSH after changing it. Built on sharp / VTracer / tesseract / system Chrome — no Python:
 
 <p align="center">
   <img src="assets/vision-tools.svg" width="100%" alt="Eleven image-processing tools available in DSH Vision Router." />
@@ -122,7 +122,7 @@ The diagram covers the eleven image-processing tools. `vision_present` (durable 
 | `vision_pixel_diff` | Per-pixel comparison: diff ratio + worst 8×8-grid regions | red heatmap PNG + JSON report |
 | `vision_colors` | Dominant colors (hex + share) | — |
 | `vision_ocr` | Text transcription: configurable default engine (`auto` / local Tesseract / vision model); an explicit per-call engine still wins | — |
-| `vision_trace` | SVG vectorization (potrace posterization; icons/logos) | SVG |
+| `vision_trace` | SVG vectorization (VTracer posterization; icons/logos) | SVG |
 | `vision_extract_foreground` | Cutout via border flood fill (uniform backgrounds) | transparent PNG |
 | `vision_html_screenshot` | Screenshot a local HTML file (headless system Chrome); `fullPage: true` captures the whole page and reports `pageHeight` | PNG |
 | `vision_screenshot` | **Disabled by default; explicit opt-in required.** Capture the Windows virtual screen, macOS main display, or Linux root display. Windows uses PowerShell CopyFromScreen, macOS uses `screencapture`, and Linux requires ImageMagick `import` or `scrot`; optional `identify=true` tries enabled local recognition backends in order and returns the description with the path | PNG / + description |
@@ -248,7 +248,7 @@ Most DSH vision plugins bridge images to DeepSeek as *text descriptions* — los
 
 - **One command install.** The package ships its own composition patch (`dsh.bundle.patch`): `dsh plugin add` wires the row, the admission wrapper and the attachment limits automatically — zero manual file edits. Taking over the official DeepSeek route is an optional setting (stealth mode, off by default).
 - **Free by default.** Vision tools end with a four-model OVHcloud anonymous fallback: no account, no key, 2 requests/minute per IP per model, roughly 8 RPM in theory across independent buckets. User-provided vision models run first.
-- **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / potrace / tesseract / system Chrome.
+- **No Python.** The whole pipeline — downscale, grounding, crop, pixel diff, palette, OCR, SVG trace, cutout, HTML screenshot — runs on sharp / VTracer / tesseract / system Chrome.
 - **Continuous multi-step image work.** An image turn is a text turn that calls tools: `vision_ground` → `vision_crop` → `vision_describe` → `vision_pixel_diff` → fix → screenshot again. The agent keeps iterating until the work is done.
 - **DeepSeek stays the brain.** Text turns are untouched in model, cost and context. The vision model is only the eyes, called on demand; answers are cached by image content.
 - **Transparent to the user.** Uploaded images keep rendering as images in the conversation UI; the rewrite that points the model at the vision tools happens only inside the model call, never in the session log.
