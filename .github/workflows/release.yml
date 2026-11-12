@@ -115,7 +115,11 @@ jobs:
           const scripts = pkg.scripts || {}
           const requiredBuildLifecycle = {
             prepare: 'pnpm build',
-            prepack: 'pnpm build',
+            // #829 added an independently audited license gate to VTracer's
+            // pack lifecycle. Release verification must not accidentally roll
+            // that gate back to the old plain build command.
+            prepack: 'pnpm license:check && pnpm build',
+            'license:check': 'node scripts/verify-runtime-licenses.mjs',
           }
           for (const [name, expected] of Object.entries(requiredBuildLifecycle)) {
             if (scripts[name] !== expected) {
@@ -145,6 +149,11 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           DIST_TAG="$(node scripts/release-channel.mjs "$VERSION")"
           echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+
+      # npm pack intentionally ignores lifecycle scripts, so the declared
+      # prepack license gate must also run explicitly before the release build.
+      - name: Verify runtime dependency licenses before packaging
+        run: pnpm license:check
 
       - name: Build canonical package artifacts
         run: pnpm build
