@@ -167,6 +167,11 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      # License/provenance attestation must be a hard gate even though
+      # package prepack is intentionally the canonical single pnpm build.
+      - name: Verify runtime licenses and VTracer provenance before immutable tag
+        run: pnpm license:check
+
       - name: Verify generated browser source
         run: pnpm client:check
 

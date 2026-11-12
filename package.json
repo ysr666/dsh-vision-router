@@ -114,7 +114,7 @@
     "typecheck:declaration": "tsc -p tsconfig.declaration.json",
     "typecheck": "pnpm typecheck:host && pnpm typecheck:client && pnpm typecheck:declaration",
     "prepare": "pnpm build",
-    "prepack": "pnpm license:check && pnpm build",
+    "prepack": "pnpm build",
     "lint": "node scripts/lint-source-ownership.mjs && node scripts/lint-lifecycle-invariants.mjs",
     "source:artifact:check": "node scripts/verify-source-artifact-map.mjs",
     "test:regression-closure": "node --test tests/auto-wrap-model-removal.test.js tests/guard-stop-surface-shadow.test.js tests/release-package-content-identity.test.js tests/settings-card-race-safety.test.js tests/settings-guide-replay-safety.test.js tests/settings-ia-targeted-adversarial.test.js tests/v2-release-acceptance-regressions.test.js tests/vision-turn-budget-client-prelude.test.js tests/wrapper-scope-client-prelude.test.js",

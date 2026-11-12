@@ -44,6 +44,20 @@ const visible = (sha1) => ({ status: 200, body: { name: 'dsh-vision-router', ver
 const SHA = 'a'.repeat(40)
 const OTHER = 'b'.repeat(40)
 
+test('release prepack is canonical and runtime license provenance is a separate pre-tag hard gate', () => {
+  const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  assert.equal(pkg.scripts.prepare, 'pnpm build')
+  assert.equal(pkg.scripts.prepack, 'pnpm build',
+    'release verification and npm pack must share the same canonical source build command')
+  assert.equal(pkg.scripts['license:check'], 'node scripts/verify-runtime-licenses.mjs')
+  const workflow = readFileSync(WORKFLOW, 'utf8')
+  const license = workflow.indexOf('      - name: Verify runtime licenses and VTracer provenance before immutable tag')
+  const pretag = workflow.indexOf('      - name: Preflight exact packed contract before irreversible tag')
+  assert.ok(license !== -1 && pretag > license,
+    'runtime license provenance must be a hard gate before an irreversible package/tag')
+  assert.match(workflow.slice(license, pretag), /run: pnpm license:check/)
+})
+
 test('release channel maps reviewed semver classes but refuses unreviewed prereleases', () => {
   assert.equal(releaseDistTag('3.1.4'), 'latest')
   assert.equal(releaseDistTag('3.2.0-rc.0'), 'next')
