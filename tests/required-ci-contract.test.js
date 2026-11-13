@@ -21,12 +21,18 @@ test('PRs always publish both real branch-protected contract checks', () => {
 test('branch protection requires trusted impact and all three real Host results', () => {
   assert.match(workflow, /\n  host_impact:\n/)
   assert.match(workflow, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-  // CodeQL / defense-in-depth: the classification job must never check out
-  // untrusted PR merge/head code just to read its package.json as data.
+  // The classifier does not checkout either PR code or a worktree at all:
+  // it validates a pinned immutable PR head against the repository PR ref,
+  // and evaluates only the trusted base classifier extracted via git show.
   const impactJob = workflow.split('\n  host_impact:\n')[1]?.split('\n  # All three Host contracts')[0]
   assert.ok(impactJob, 'trusted classifier job must exist')
-  assert.ok(impactJob.includes('ref: ${{ github.event.pull_request.base.sha || github.sha }}'))
-  assert.match(impactJob, /persist-credentials: false/)
+  assert.doesNotMatch(impactJob, /actions\/checkout@|\bgit checkout\b|\bgit switch\b|\bgit worktree\b/)
+  assert.match(impactJob, /git init --quiet "\$RUNNER_TEMP\/dvr-impact-objects"/)
+  assert.match(impactJob, /git remote add origin "https:\/\/github\.com\/\$\{GITHUB_REPOSITORY\}\.git"/)
+  assert.match(impactJob, /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \|\| '' \}\}/)
+  assert.match(impactJob, /refs\/pull\/\$\{PR_NUMBER\}\/head:refs\/remotes\/origin\/pr-head/)
+  assert.match(impactJob, /if \[ "\$fetched_head" != "\$HEAD_SHA" \]; then/)
+  assert.match(impactJob, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
   assert.match(impactJob, /git show "\$HEAD_SHA:package\.json"/)
   assert.match(impactJob, /node "\$RUNNER_TEMP\/trusted-host-impact\.mjs"/)
   assert.doesNotMatch(impactJob, /(?:pnpm|npm) (?:install|run|exec)|node scripts\//)

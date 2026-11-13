@@ -54,9 +54,10 @@ jobs:
         run: pnpm client:check
       - run: pnpm test
 
-  # Use immutable BASE revision of the classifier, never untrusted PR changes.
-  # On PR events the checkout itself must be the trusted base commit; the
-  # untrusted head is read as Git objects only, never checked out or executed.
+  # Never checkout a PR worktree (even the PR merge result) in this job.
+  # Fetch only Git objects, verify the exact PR head identity, then execute
+  # the classifier from the immutable trusted base commit. The untrusted head
+  # contributes package.json JSON data and changed paths, never executable code.
   host_impact:
     name: trusted-base Host impact
     runs-on: ubuntu-latest
@@ -65,13 +66,6 @@ jobs:
       heavy: ${{ steps.classify.outputs.heavy }}
       reason: ${{ steps.classify.outputs.reason }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          # Explicit immutable trusted base; GitHub's default PR merge checkout
-          # would materialize untrusted PR code unnecessarily in this job.
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
       - name: Classify changes using protected base source
         id: classify
         shell: bash
@@ -79,6 +73,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         run: |
           set -euo pipefail
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
@@ -88,7 +83,21 @@ jobs:
           if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo '::error::Invalid PR SHA identity'; exit 1
           fi
-          git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA"
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo '::error::Invalid PR number'; exit 1
+          fi
+          # Git-object-only read: NO checkout, PR merge worktree or PR script execution.
+          # The base repository publishes refs/pull/<number>/head even for forks.
+          git init --quiet "$RUNNER_TEMP/dvr-impact-objects"
+          cd "$RUNNER_TEMP/dvr-impact-objects"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --no-recurse-submodules origin \
+            "$BASE_SHA" "refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pr-head"
+          fetched_head="$(git rev-parse refs/remotes/origin/pr-head)"
+          if [ "$fetched_head" != "$HEAD_SHA" ]; then
+            echo "::error::PR head changed while classifying; fail closed"
+            exit 1
+          fi
           git cat-file -e "$BASE_SHA:scripts/ci-heavy-host-impact.mjs"
           git show "$BASE_SHA:scripts/ci-heavy-host-impact.mjs" > "$RUNNER_TEMP/trusted-host-impact.mjs"
           git show "$BASE_SHA:package.json" > "$RUNNER_TEMP/base-package.json"

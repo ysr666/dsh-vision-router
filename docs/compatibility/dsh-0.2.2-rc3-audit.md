@@ -102,3 +102,18 @@ commit. These immutable prior successes do not pre-certify a newer PR head.
 6. Record the **tested DVR SHA**, **DSH SHA**, **CI run/job IDs**, supported
    scope, limitations and findings in this ledger and in the PR description.
    A passing semver range or a source-only pin is never runtime proof.
+
+
+## No-worktree trust-boundary hardening (CodeQL follow-up)
+
+The protected `CI` impact classifier no longer uses `actions/checkout` at
+all. In a fresh empty Git repository it fetches only the trusted base SHA
+and the official base-repository `refs/pull/<number>/head`, verifies that
+ref is **exactly** the event's pinned PR head SHA, and fails closed if the
+PR moved. It extracts the classifier script from the immutable base Git tree,
+while the untrusted head supplies only `package.json` data and path diffs.
+No worktree, PR action or installation script from the head is executed.
+No credentials or privileged GitHub token are needed for this public repo.
+The source-controlled security contract tests assert the absence of checkout
+and the SHA fence. The new commit must separately pass its own GitHub Actions
+and CodeQL annotations; prior green checks are not proof the alert is closed.
