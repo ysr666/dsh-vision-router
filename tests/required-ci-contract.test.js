@@ -27,9 +27,9 @@ test('branch protection requires trusted impact and all three real Host results'
   assert.ok(impactJob, 'trusted classifier job must exist')
   assert.ok(impactJob.includes('ref: ${{ github.event.pull_request.base.sha || github.sha }}'))
   assert.match(impactJob, /persist-credentials: false/)
-  assert.match(impactJob, /git show "\\$HEAD_SHA:package\\.json"/)
-  assert.match(impactJob, /node "\\$RUNNER_TEMP\\/trusted-host-impact\\.mjs"/)
-  assert.doesNotMatch(impactJob, /(?:pnpm|npm) (?:install|run|exec)|node scripts\\//)
+  assert.match(impactJob, /git show "\$HEAD_SHA:package\.json"/)
+  assert.match(impactJob, /node "\$RUNNER_TEMP\/trusted-host-impact\.mjs"/)
+  assert.doesNotMatch(impactJob, /(?:pnpm|npm) (?:install|run|exec)|node scripts\//)
 
   assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
   for (const [name, target] of [
