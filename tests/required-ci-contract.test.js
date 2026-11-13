@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 const workflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
@@ -49,4 +50,53 @@ test('branch protection requires trusted impact and all three real Host results'
   assert.match(contract, /if \[ "\$result" != skipped \]; then/)
   assert.match(contract, /Invalid trusted impact verdict/)
   assert.doesNotMatch(contract, /continue-on-error: true/)
+})
+
+test('actual protected CI shell rejects a missing, failed or skipped Host contract', () => {
+  const start = workflow.indexOf('      - name: Enforce trusted impact and all three exact Host results')
+  assert.ok(start >= 0, 'real protection script must exist')
+  const runStart = workflow.indexOf('        run: |\n', start)
+  const runEnd = workflow.indexOf('\n      - uses:', runStart)
+  assert.ok(runStart > start && runEnd > runStart, 'bounded real shell guard expected')
+  const script = workflow.slice(runStart + '        run: |\n'.length, runEnd)
+    .split('\n').map((line) => line.startsWith('          ') ? line.slice(10) : line).join('\n')
+  assert.match(script, /set -euo pipefail/)
+
+  const invoke = (classifierResult, impact, floor, recommended, latest) => {
+    const result = spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CLASSIFIER_RESULT: classifierResult,
+        HOST_IMPACT: impact,
+        FLOOR_RESULT: floor,
+        RECOMMENDED_RESULT: recommended,
+        LATEST_RESULT: latest,
+      },
+    })
+    assert.equal(result.error, undefined, 'bash guard must execute')
+    return result.status
+  }
+  assert.equal(invoke('success', 'true', 'success', 'success', 'success'), 0)
+  assert.equal(invoke('success', 'false', 'skipped', 'skipped', 'skipped'), 0)
+
+  for (const bad of ['failure', 'cancelled', 'skipped', '']) {
+    for (let gate = 0; gate < 3; gate += 1) {
+      const statuses = ['success', 'success', 'success']
+      statuses[gate] = bad
+      assert.notEqual(invoke('success', 'true', ...statuses), 0, 'heavy gate ' + gate + ': ' + bad)
+    }
+  }
+  for (const bad of ['success', 'failure', 'cancelled', '']) {
+    assert.notEqual(invoke('success', 'false', bad, 'skipped', 'skipped'), 0,
+      'unexpected light-only Host state: ' + bad)
+  }
+  for (const bad of ['failure', 'cancelled', 'skipped', '']) {
+    assert.notEqual(invoke(bad, 'false', 'skipped', 'skipped', 'skipped'), 0,
+      'unverified classifier state: ' + bad)
+  }
+  for (const bad of ['', 'unknown', 'TRUE', '0']) {
+    assert.notEqual(invoke('success', bad, 'success', 'success', 'success'), 0,
+      'unverified impact classification: ' + bad)
+  }
 })

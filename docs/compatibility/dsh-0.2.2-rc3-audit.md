@@ -45,10 +45,10 @@ separate optional Host workflow failed or was never triggered. The reusable
 workflow has an isolated concurrency group to avoid canceling its CI caller.
 This preserves existing required check names without repository ruleset edits.
 
-This deliberately invokes the real Host gate even for documentation-only
-pull requests rather than making a mandatory check silently pending or
-skipped. A later path-impact optimization must remain fail-closed, must
-use reviewed change classification, and must not fabricate an acceptance run.
+This previously invoked the latest Host for documentation-only PRs. The
+three-tier convergence below adds a trusted-base impact classifier: only
+non-runtime Markdown and version-only package metadata can skip the heavy
+Host matrices. An unknown, failed or inconsistent classifier fails closed.
 
 ## Required coverage of minimum, recommended, and latest
 
@@ -67,3 +67,38 @@ The change deliberately avoids doubling the Host job count: it moves the
 previous separate minimum/recommended matrices under the existing required
 CI rather than running new copies. Exact qualification and original run URLs
 remain preserved by immutable refs in this audit/PR history.
+
+## Durable acceptance evidence ledger
+
+This source-controlled summary remains in the Git history after hosted
+Actions logs expire. It preserves verified commit and source identities,
+verification scope, official run links and outcome; it is not a substitute
+for permanently archived full logs or a guarantee for untested workflows.
+
+| Verified DVR candidate | Immutable Host identity | Real verification | Recorded outcome |
+| --- | --- | --- | --- |
+| [4dfba17fadfbe21305083054a44dcbbc773212ef](https://github.com/ysr666/dsh-vision-router/commit/4dfba17fadfbe21305083054a44dcbbc773212ef) | DSH 0.2.2-rc.3 @ 38a6a5c965aa99ab525161efb7cc5cf1fe62fced | [Protected CI run #43416019566](https://github.com/ysr666/dsh-vision-router/actions/runs/43416019566): six exact RC3 Host jobs (Linux/macOS/Windows, real Chromium, Windows Node 24.9/24.21), core/contract checks | 16 of 16 workflows succeeded |
+| [4dfba17fadfbe21305083054a44dcbbc773212ef](https://github.com/ysr666/dsh-vision-router/commit/4dfba17fadfbe21305083054a44dcbbc773212ef) | DSH 0.2.1-rc.5 @ b830ec950faba0a46dda564be3e2d854afed94f1 | [Minimum Host run #43416019215](https://github.com/ysr666/dsh-vision-router/actions/runs/43416019215) | Success |
+| [4dfba17fadfbe21305083054a44dcbbc773212ef](https://github.com/ysr666/dsh-vision-router/commit/4dfba17fadfbe21305083054a44dcbbc773212ef) | DSH 0.2.2-rc.1 @ 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db | [Recommended Host run #43416019244](https://github.com/ysr666/dsh-vision-router/actions/runs/43416019244) | Success |
+| [d4ea0f973a9daeb8376fcc6abcad9af9396a1fd6](https://github.com/ysr666/dsh-vision-router/commit/d4ea0f973a9daeb8376fcc6abcad9af9396a1fd6) | DSH 0.2.2-rc.3 | [Chromium job #131828321004](https://github.com/ysr666/dsh-vision-router/actions/runs/43408342770/job/131828321004): published npm 3.2.1, packed candidate, source, three recompositions each | All three install forms succeeded |
+
+**Evidence boundary:** the new three-tier protected CI changes postdate the
+above successfully verified heads and must independently pass on their final
+commit. These immutable prior successes do not pre-certify a newer PR head.
+
+## Required process for the next upstream Host RC
+
+1. Pin the *official immutable* upstream tag target and review Host ABI,
+   Session, Web, model selection, image ownership, and security changes.
+2. Promote the new latest exact workflow through protected CI. Keep the old
+   latest source pin and run references available for manual replay, but do
+   not permanently duplicate its full automatic matrix.
+3. Preserve both minimum and recommended exact Host obligations until an
+   explicit supported-window policy change is approved.
+4. Run real three-OS, Chromium and Windows Node 24.9/24.21 Desktop gates,
+   with fail-closed trusted-base classification and required contract checks.
+5. Update Doctor's exact verified-version evidence only after a successful
+   immutable real-Host gate; update the recommended version separately.
+6. Record the **tested DVR SHA**, **DSH SHA**, **CI run/job IDs**, supported
+   scope, limitations and findings in this ledger and in the PR description.
+   A passing semver range or a source-only pin is never runtime proof.
