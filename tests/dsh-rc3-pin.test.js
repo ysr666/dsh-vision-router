@@ -60,8 +60,8 @@ test('RC3 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate, /Diagnose immutable published npm 3\.2\.1 on RC3 \(advisory\)/)
   assert.match(gate, /continue-on-error: true/, 'historical immutable artifact must not block current head qualification')
   assert.match(gate, /Record published npm 3\.2\.1 diagnostic separately from candidate/)
-  const triggers = gate.split('\\njobs:\\n')[0]
-  assert.match(triggers, /\\non:\\n  workflow_call:\\n  workflow_dispatch:/,
+  const triggers = gate.split('\njobs:\n')[0]
+  assert.match(triggers, /\non:\n  workflow_call:\n  workflow_dispatch:/,
     'latest RC is called from branch-protected CI and retains manual replay')
   assert.doesNotMatch(triggers, /^  (?:pull_request|push):/m,
     'standalone triggers must not duplicate the required CI Host run')
