@@ -18,6 +18,18 @@ test('PRs always publish both real branch-protected contract checks', () => {
   assert.doesNotMatch(contract, /if:\s*false|continue-on-error:\s*true/)
 })
 
+test('architecture closure never shadows branch-required CI contract check names', () => {
+  const architecture = readFileSync(new URL('../.github/workflows/architecture-closure.yml', import.meta.url), 'utf8')
+    .replaceAll('\r\n', '\n')
+  const job = architecture.match(/\n  contract:\n([\s\S]*?)(?=\n  [a-z][a-z_-]*:\n|$)/)?.[1]
+  assert.ok(job, 'architecture contract job must remain active')
+  assert.ok(job.includes('name: architecture contract (${{ matrix.node }})'))
+  assert.match(job, /node:\s*\['24\.9\.0', '24\.21\.0'\]/)
+  assert.doesNotMatch(job, /^    name: contract \(/m)
+  // Only the required CI workflow may publish these two exact status names.
+  const ci = workflow.match(/\n  contract:\n([\s\S]*?)(?=\n  [a-z][a-z_-]*:\n|$)/)?.[1]
+  assert.ok(ci?.includes('name: contract (${{ matrix.node }})'))
+})
 test('branch protection requires trusted impact and all three real Host results', () => {
   assert.match(workflow, /\n  host_impact:\n/)
   // CodeQL recognizes PR checkout AND PR-head git fetch. Both are forbidden.
