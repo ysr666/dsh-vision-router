@@ -21,6 +21,16 @@ test('PRs always publish both real branch-protected contract checks', () => {
 test('branch protection requires trusted impact and all three real Host results', () => {
   assert.match(workflow, /\n  host_impact:\n/)
   assert.match(workflow, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
+  // CodeQL / defense-in-depth: the classification job must never check out
+  // untrusted PR merge/head code just to read its package.json as data.
+  const impactJob = workflow.split('\n  host_impact:\n')[1]?.split('\n  # All three Host contracts')[0]
+  assert.ok(impactJob, 'trusted classifier job must exist')
+  assert.ok(impactJob.includes('ref: ${{ github.event.pull_request.base.sha || github.sha }}'))
+  assert.match(impactJob, /persist-credentials: false/)
+  assert.match(impactJob, /git show "\\$HEAD_SHA:package\\.json"/)
+  assert.match(impactJob, /node "\\$RUNNER_TEMP\\/trusted-host-impact\\.mjs"/)
+  assert.doesNotMatch(impactJob, /(?:pnpm|npm) (?:install|run|exec)|node scripts\\//)
+
   assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
   for (const [name, target] of [
     ['floor_qualification', 'dsh-021-rc5-validation.yml'],

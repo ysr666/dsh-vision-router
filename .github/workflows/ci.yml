@@ -55,6 +55,8 @@ jobs:
       - run: pnpm test
 
   # Use immutable BASE revision of the classifier, never untrusted PR changes.
+  # On PR events the checkout itself must be the trusted base commit; the
+  # untrusted head is read as Git objects only, never checked out or executed.
   host_impact:
     name: trusted-base Host impact
     runs-on: ubuntu-latest
@@ -65,6 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # Explicit immutable trusted base; GitHub's default PR merge checkout
+          # would materialize untrusted PR code unnecessarily in this job.
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Classify changes using protected base source
