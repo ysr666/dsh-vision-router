@@ -9,38 +9,9 @@ name: DSH 0.2.2-rc.2 Exact-source Host Gate
 # No shared Actions cache restore/save: newly executed upstream code never
 # receives a path to poison caches trusted by future default-branch jobs.
 
+# Historical immutable RC2 qualification: manual replay only. The supported
+# floor, recommended RC1 and latest RC3 retain automatic gates.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/dsh-022-rc2-host-gate.yml'
-      - 'config/dsh-rc2-settings-pin.json'
-      - 'scripts/dsh-rc2-pin.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - 'scripts/dsh-alpha-source-contract.mjs'
-      - 'scripts/dsh-rc2-agent-order-contract.mjs'
-      - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'cordis.patch.yml'
-      - 'scripts/dsh-peer-admission-contract.mjs'
-      - 'scripts/dsh-proxy-egress-contract.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'src/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'tests/dsh-rc2-pin.test.js'
-      - 'scripts/dsh-rc2-session-batch-integration.mjs'
-      - 'scripts/verify-packed-public-api.mjs'
-      - 'presets/**'
-      - 'tests/**'
-  # Review and merge of this fixed RC2 audit records the validated baseline.
-  # The original Alpha monitoring lane remains separate.
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read

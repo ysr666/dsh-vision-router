@@ -1,0 +1,394 @@
+name: DSH 0.2.2-rc.3 Exact-source Host Gate
+
+# Immutable RC3 qualification, reused by protected CI; independent of Alpha
+# surveillance. RC3 requires Node >=24.9; older DVR/Host compatibility remains
+# covered by the existing Node22 lanes and must not be silently redefined.
+# Run all three exact-source OS contracts, real Chromium Settings/save/reload,
+# native Desktop macOS, Windows Node24.9 and Node24.21, and multiplugin ordering.
+# No permission escalation, automated merge or release.
+# No shared Actions cache restore/save: newly executed upstream code never
+# receives a path to poison caches trusted by future default-branch jobs.
+
+# Called by protected CI; manual exact-source replay remains available.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  # Reused workflows inherit github.workflow="CI"; sharing CI's group
+  # would cancel the very caller we must qualify.
+  group: dvr-rc3-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rc3-exact-source:
+    name: exact rc3 source / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc3 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc3-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc3 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 38a6a5c965aa99ab525161efb7cc5cf1fe62fced # dsh-v0.2.2-rc.3 immutable reviewed release
+          persist-credentials: false
+          path: dsh-rc3
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.9.0
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact rc3 Host workspace dependencies
+        working-directory: dsh-rc3
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Run exact source and Host-owned Sharp contract
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+          DSH_EXPECTED_PNPM: '11.28.5'
+        run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify upstream RC3 Session batch append (atomic commit, post-commit per-event observers)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-rc3
+        run: pnpm exec vitest run packages/core/session/tests/append.spec.ts
+      - name: Verify DVR feed integration with real RC3 Session atomic batches
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+        run: pnpm exec tsx ../dvr/scripts/dsh-rc3-session-batch-integration.mjs
+      - name: Verify RC3 Agent model/inbox notification ordering
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
+        run: node ../dvr/scripts/dsh-rc3-agent-order-contract.mjs
+      - name: Verify Host-owned trustedHosts and minimal webServer ordering without DVR ready bridge
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
+        run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
+      - name: Verify public 0.2 train peer admission
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
+      - name: Verify Host proxy egress authority
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-rc3
+        run: pnpm run build
+      - name: Run real macOS Desktop renderer lifecycle
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-macos-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Upload macOS Desktop diagnostics on failure
+        if: matrix.os == 'macos-latest' && failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc3-macos-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-rc3-macos-desktop-renderer.*
+          if-no-files-found: ignore
+
+  rc3-settings-host:
+    name: real rc3 Host + Chromium lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc3 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc3-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc3 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 38a6a5c965aa99ab525161efb7cc5cf1fe62fced # dsh-v0.2.2-rc.3 immutable reviewed release
+          persist-credentials: false
+          path: dsh-rc3
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
+        with:
+          version: 11.28.5
+      # Isolate RC3 dependency installation from shared cache state.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.9.0
+
+      - name: Read the Host version under test
+        id: resolve
+        working-directory: dsh-rc3
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          test -n "$VERSION"
+          echo "Testing @deepseek-ai/dsh $VERSION"
+          printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo '### RC3 settings host gate'
+            echo
+            echo "- DSH version: \`$VERSION\`"
+            echo "- source commit: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install rc3 Host workspace dependencies
+        working-directory: dsh-rc3
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build the rc3 Host runtime
+        working-directory: dsh-rc3
+        run: pnpm run build
+      - name: Prefer official Ubuntu apt mirror for Chromium dependencies
+        run: bash dvr/scripts/ci-prefer-ubuntu-archive.sh
+      - name: Install Chromium
+        working-directory: dsh-rc3
+        run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      - name: Run bundle recompose stability
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Pack current DVR checkout and verify published-file inventory
+        id: packed-candidate
+        working-directory: dvr
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dvr-rc3-packed"
+          pnpm pack --pack-destination "$RUNNER_TEMP/dvr-rc3-packed"
+          TARBALL="$(find "$RUNNER_TEMP/dvr-rc3-packed" -maxdepth 1 -type f -name 'dsh-vision-router-*.tgz' -print -quit)"
+          test -n "$TARBALL"
+          node scripts/verify-packed-public-api.mjs "$TARBALL"
+          printf 'tarball=%s\n' "$TARBALL" >> "$GITHUB_OUTPUT"
+      - name: Verify packed candidate install and recompose on real RC3 Host
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_SMOKE_PACKAGE_SPEC: file:${{ steps.packed-candidate.outputs.tarball }}
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      # Historical artifact only: a failure is reported visibly but cannot be
+      # fixed retroactively by the current PR. Never count this as a candidate
+      # release acceptance result, and never silently treat it as compatible.
+      - name: Diagnose immutable published npm 3.2.1 on RC3 (advisory)
+        id: historical_npm
+        continue-on-error: true
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_SMOKE_PUBLISHED_VERSION: '3.2.1'
+        run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
+      - name: Record published npm 3.2.1 diagnostic separately from candidate
+        if: always()
+        shell: bash
+        env:
+          HISTORICAL_OUTCOME: ${{ steps.historical_npm.outcome }}
+        run: |
+          {
+            echo '### Immutable published npm 3.2.1 × RC3 (historical diagnostic)'
+            echo "Historical npm installation + settings bridge: \`$HISTORICAL_OUTCOME\`"
+            echo 'This is NOT current PR head qualification and is NOT the third-party Dataelem generation installer.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HISTORICAL_OUTCOME" != success ]; then
+            echo '::warning::Immutable published npm 3.2.1 does not have a verified RC3 settings bridge; inspect the historical advisory log. This PR cannot rewrite a published tarball.'
+          fi
+      - name: Run cold Vision lifecycle
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-cold-toggle.png
+        run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
+      - name: Run mixed attachment lifecycle
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-mixed.png
+        run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
+      - name: Run Settings mount/save/reload/readback lifecycle
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
+          DVR_EXPECT_NATIVE_SETTINGS_ICON: '1'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+      - name: Run Desktop Host injection contract
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc3-settings-host-diagnostics
+          path: |
+            ${{ runner.temp }}/dsh-rc3-*.json
+            ${{ runner.temp }}/dsh-rc3-*.png
+          if-no-files-found: ignore
+
+  rc3-windows-desktop:
+    name: Windows rc3 Desktop / Node ${{ matrix.node }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24.9.0, 24.21.0]
+    steps:
+      - name: Checkout Vision Router
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Resolve reviewed rc3 pin
+        id: pin
+        run: node dvr/scripts/dsh-rc3-pin.mjs read
+      - name: Checkout immutable reviewed DSH rc3 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 38a6a5c965aa99ab525161efb7cc5cf1fe62fced # dsh-v0.2.2-rc.3 immutable reviewed release
+          persist-credentials: false
+          path: dsh-rc3
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Materialize Vision Router package artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Install exact rc3 Host workspace dependencies
+        working-directory: dsh-rc3
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build exact Desktop runtime
+        working-directory: dsh-rc3
+        run: pnpm run build
+      - name: Run authenticated Desktop Host contract
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_BASE_PORT: '19410'
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Run Node 24 Desktop renderer lifecycle
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Run default tool-only image conversation on RC3
+        if: matrix.node == '24.9.0'
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc3-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc3-windows-desktop-renderer.png
+        run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Run Node 24 multi-plugin ordering adversary
+        if: matrix.node == '24.21.0'
+        working-directory: dsh-rc3
+        shell: bash
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+          DVR_MULTIPLUGIN_BASE_PORT: '19600'
+        run: |
+          set -euo pipefail
+          for index in 0 1; do
+            DVR_MULTIPLUGIN_SHARD_COUNT=2 DVR_MULTIPLUGIN_SHARD_INDEX="$index" \
+              node --import tsx ../dvr/scripts/dsh017-desktop-multiplugin-smoke.mjs
+          done
+      - name: Upload Windows Desktop diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dsh-rc3-windows-desktop-diagnostics-${{ matrix.node }}
+          path: ${{ runner.temp }}/dsh-rc3-windows-desktop-renderer.*
+          if-no-files-found: ignore

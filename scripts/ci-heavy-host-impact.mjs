@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const RELEASE_NOTE = /^docs\/releases\/v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\.md$/
+// Only Markdown documentation, never arbitrary scripts or fixtures in docs/.
+const DOCUMENTATION_NOTE = /^(?:README(?:\.zh)?\.md|CHANGELOG\.md|docs\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.md)$/
 
 function sameExceptVersion(basePackage, headPackage) {
   const base = structuredClone(basePackage)
@@ -16,11 +18,12 @@ export function classifyHeavyHostImpact({ changedPaths, basePackage, headPackage
   const paths = [...new Set(changedPaths.map(String))].sort()
   if (paths.length === 0) return { heavy: true, reason: 'empty change set: fail closed' }
 
-  const allowed = paths.every((path) => path === 'package.json' || RELEASE_NOTE.test(path))
+  const allowed = paths.every((path) => path === 'package.json' || DOCUMENTATION_NOTE.test(path))
   if (!allowed) return { heavy: true, reason: 'Host-relevant or unclassified path changed' }
 
   if (!paths.includes('package.json')) {
-    return { heavy: false, reason: 'curated release notes only' }
+    return { heavy: false, reason: paths.every((path) => RELEASE_NOTE.test(path))
+      ? 'curated release notes only' : 'non-runtime Markdown documentation only' }
   }
   if (!basePackage || !headPackage || typeof basePackage !== 'object' || typeof headPackage !== 'object') {
     return { heavy: true, reason: 'package metadata unavailable: fail closed' }
@@ -31,7 +34,9 @@ export function classifyHeavyHostImpact({ changedPaths, basePackage, headPackage
   if (!sameExceptVersion(basePackage, headPackage)) {
     return { heavy: true, reason: 'package.json changed beyond version' }
   }
-  return { heavy: false, reason: 'release metadata only: package version + curated notes' }
+  return { heavy: false, reason: paths.every((path) => path === 'package.json' || RELEASE_NOTE.test(path))
+    ? 'release metadata only: package version + curated notes'
+    : 'release metadata only: package version + non-runtime Markdown' }
 }
 
 async function main() {

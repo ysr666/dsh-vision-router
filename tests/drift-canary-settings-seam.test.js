@@ -202,7 +202,6 @@ test('every PR-triggered workflow triggers on the repo files it executes', async
 })
 
 const PRODUCT_GATES = [
-  'dsh-021-rc5-validation.yml',
   'browser-p1-acceptance.yml',
   'dsh-alpha-source-contract.yml',
 ]
@@ -213,4 +212,16 @@ test('end-to-end gates trigger on the whole product source tree', async () => {
     assert.ok(patterns.length > 0, `${name} must keep a pull_request paths list`)
     assert.ok(patterns.includes('src/**'), `${name} must trigger on src/**`)
   }
+
+  // The minimum RC5 gate is no longer a separately triggered PR workflow.
+  // Every PR invokes protected CI; its trusted-base classifier marks all
+  // src/** changes heavy and the mandatory contract requires RC5 success.
+  const ci = await readWorkflow('ci.yml')
+  const rc5 = await readWorkflow('dsh-021-rc5-validation.yml')
+  const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
+  assert.match(ci, /\n  pull_request:\n/)
+  assert.match(ci, /floor_qualification:[\s\S]*uses: \.\/\.github\/workflows\/dsh-021-rc5-validation\.yml/)
+  assert.match(ci, /needs: \[host_impact, floor_qualification, recommended_qualification, host_qualification\]/)
+  assert.match(rc5, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['src/lib/client.js'] }).heavy, true)
 })

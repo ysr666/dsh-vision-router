@@ -15,8 +15,9 @@ const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
 const candidateSpec = String(process.env.DVR_SMOKE_PACKAGE_SPEC ?? '').trim()
 const publishedVersion = String(process.env.DVR_SMOKE_PUBLISHED_VERSION ?? '').trim()
-if (publishedVersion && publishedVersion !== '3.2.0') {
-  throw new Error('DVR_SMOKE_PUBLISHED_VERSION is restricted to immutable published 3.2.0')
+const reviewedPublishedVersions = new Set(['3.2.0', '3.2.1'])
+if (publishedVersion && !reviewedPublishedVersions.has(publishedVersion)) {
+  throw new Error('DVR_SMOKE_PUBLISHED_VERSION must be an explicitly reviewed immutable published version')
 }
 if (candidateSpec && publishedVersion) throw new Error('select one package provenance')
 if (candidateSpec) {
@@ -105,7 +106,7 @@ async function assertLocalSettingsBridge(auth) {
   })
   try {
     if (response.status !== 200) {
-      throw new Error(`local-settings HTTP ${response.status}: released 3.2.0 cannot use the native settings bridge on RC2`)
+      throw new Error(`local-settings HTTP ${response.status}: published DVR ${publishedVersion} has no verified native settings bridge on DSH ${process.env.DSH_EXPECTED_VERSION || 'unknown'}`)
     }
     const body = await response.json()
     if (body?.ok !== true) throw new Error('local-settings response did not contain ok:true')

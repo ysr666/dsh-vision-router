@@ -1,43 +1,9 @@
 name: DSH 0.2.1-rc.5 next exact-source validation
 
+# Protected CI calls this reusable exact Host gate; manual replay is retained.
 on:
-  pull_request:
-    paths:
-      - 'src/**'
-      - 'presets/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'cordis.patch.yml'
-      - 'scripts/dsh-alpha-source-contract.mjs'
-      - 'scripts/dsh-peer-admission-contract.mjs'
-      - 'scripts/dsh-proxy-egress-contract.mjs'
-      - 'scripts/dsh-web-modules-overlay-contract.mjs'
-      - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'scripts/ci-heavy-host-impact.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh021-rc3-agent-visibility-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-021-rc5-validation.yml'
-  push:
-    branches: [main]
-    paths:
-      # Host-impacting changes can enter through src/index.js, presets, and lockfile,
-      # not only src/lib. Keep main qualification aligned with those inputs.
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'cordis.patch.yml'
-      - 'src/**'
-      - 'presets/**'
-      - 'scripts/**'
-      - 'scripts/build-source-artifacts.mjs'
-      - '.github/workflows/dsh-021-rc5-validation.yml'
-
+  workflow_call:
+  workflow_dispatch:
 permissions:
   contents: read
 
@@ -87,7 +53,7 @@ jobs:
           git show "$BASE_SHA:scripts/ci-heavy-host-impact.mjs" > "$RUNNER_TEMP/ci-heavy-host-impact.mjs"
           git show "$BASE_SHA:package.json" > "$RUNNER_TEMP/base-package.json"
           git show "$HEAD_SHA:package.json" > "$RUNNER_TEMP/head-package.json"
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+          git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
           node "$RUNNER_TEMP/ci-heavy-host-impact.mjs" \
             --base-package "$RUNNER_TEMP/base-package.json" \
             --head-package "$RUNNER_TEMP/head-package.json" \

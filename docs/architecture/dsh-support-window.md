@@ -1,6 +1,6 @@
 # DVR 3.2 DSH Host support window
 
-**Status: 3.2.0-rc.0 development branch; NOT released.** The previous DVR 3.1.x support policy remains available in [historical support window](dsh-support-window-3.1-historical.md).
+**Status: DVR 3.2.x support policy; this document is not a release or npm publication assertion.** The previous DVR 3.1.x support policy remains available in [historical support window](dsh-support-window-3.1-historical.md).
 
 | Policy | DVR 3.2 candidate |
 |---|---|
@@ -14,15 +14,34 @@ The prior DVR 3.1.4 release retains its historic support contract. The new suppo
 
 The published `engines.dsh` train allows later 0.2.x releases, including
 prereleases, as a compatibility *admission policy*; it cannot guarantee their
-runtime behavior. Doctor now distinguishes exact-release approval
-(0.2.1-rc.5 and 0.2.2-rc.1 on Node 24) from merely being in that range:
-future/unpinned 0.2.x Hosts and Node 25+ are marked `unknown`, not `ok`,
-until separately validated. This does not rewrite the Host admission range
+runtime behavior. Doctor distinguishes **admitted**, **exact-release verified** and **recommended** Hosts.
+The exact-source/real-Host gates have verified `0.2.1-rc.5`, `0.2.2-rc.1`,
+`0.2.2-rc.2` and `0.2.2-rc.3` on the exercised Node 24 matrix. The conservative
+**recommended** Host remains `0.2.2-rc.1`: verification of a newer prerelease
+is not, by itself, a recommendation to upgrade. Future/unpinned 0.2.x Hosts
+and Node 25+ are marked `unknown`, not `ok`, until separately validated. This does not rewrite the Host admission range
 or block a user whose separately reviewed deployment works.
+
+The active compatibility CI is organized by responsibility: the **minimum Host**
+(`0.2.1-rc.5`), the **recommended Host** (`0.2.2-rc.1`) and the **latest
+qualified RC** (`0.2.2-rc.3`) retain normal automated gates. The RC2 full
+matrix is preserved for explicit `workflow_dispatch` replay, with its prior
+immutable verification recorded; it no longer duplicates every PR/main run.
+All three Host gates now run as reusable workflows inside the branch-protected
+`CI` for **Host-impacting changes**: minimum RC5, recommended RC1, and latest RC3.
+Both mandatory `contract` checks wait for their aggregate results and explicitly
+reject failure, cancellation, skipped Host verification, or failed classification.
+A reviewed trusted-base classifier alone can exempt Markdown-only documentation
+or a version-only package change, and in that case all three heavy gates must be
+skipped, never faked as passed. An unexpected/unknown path fails closed to heavy.
+The RC1/RC3 concurrency groups are distinct from CI to prevent self-cancellation.
+This is a CI scheduling policy, not a withdrawal of RC2 compatibility evidence.
+When the recommendation or latest RC advances, move the active lane instead
+of permanently adding another full automatic historical matrix.
 
 ## Core Host ownership
 
-Both DSH 0.2.1-rc.5 and DSH 0.2.2-rc.1 own webStartup trustedHosts and all Connection authorization. DVR 3.2 retires the cross-generation Connection config override and private readiness provider. However, a real Windows six-order foreign-plugin test caught HTTP 405 from generic connection.rpc.handle() when the Connection provider Fiber omitted a webServer injection. Thus DVR retains one **minimal ordering-only patch**: Connection inject: [webStartup, webServer], with **no config/trustedHosts override**. DSH still exclusively owns cookies, /api, WebSocket, trust authority and all other Connection config. Never extend, guess or bypass the official trust list.
+The verified DSH 0.2.1-rc.5 and DSH 0.2.2 release candidates own webStartup trustedHosts and all Connection authorization. DVR 3.2 retires the cross-generation Connection config override and private readiness provider. However, a real Windows six-order foreign-plugin test caught HTTP 405 from generic connection.rpc.handle() when the Connection provider Fiber omitted a webServer injection. Thus DVR retains one **minimal ordering-only patch**: Connection inject: [webStartup, webServer], with **no config/trustedHosts override**. DSH still exclusively owns cookies, /api, WebSocket, trust authority and all other Connection config. Never extend, guess or bypass the official trust list.
 
 Keep the independent modules/webServer activation dependency and DVR disabled:false recompose guard until each replacement is independently proven; their root causes are not fixed merely by raising the Host floor.
 

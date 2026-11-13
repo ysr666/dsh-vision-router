@@ -97,6 +97,9 @@ concurrency:
 
 jobs:
   contract:
+    # Only CI owns the branch-required "contract (Node)" status names.
+    # Reusing those names in this workflow causes ambiguous check results.
+    name: architecture contract (${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
