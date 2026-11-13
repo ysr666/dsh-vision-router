@@ -88,7 +88,7 @@ jobs:
           git show "$BASE_SHA:scripts/ci-heavy-host-impact.mjs" > "$RUNNER_TEMP/trusted-host-impact.mjs"
           git show "$BASE_SHA:package.json" > "$RUNNER_TEMP/base-package.json"
           git show "$HEAD_SHA:package.json" > "$RUNNER_TEMP/head-package.json"
-          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
+          git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed-paths.txt"
           node "$RUNNER_TEMP/trusted-host-impact.mjs" \
             --base-package "$RUNNER_TEMP/base-package.json" \
             --head-package "$RUNNER_TEMP/head-package.json" < "$RUNNER_TEMP/changed-paths.txt"

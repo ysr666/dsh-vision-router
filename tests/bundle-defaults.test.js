@@ -726,6 +726,8 @@ test('heavy Host classifier skips only version-only curated release metadata', a
     assert.equal(classifyHeavyHostImpact({ changedPaths: [path] }).heavy, true, path)
   }
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['README.md', 'src/lib/client.js'] }).heavy, true)
+  // A rename out of src/ is a deletion PLUS an addition under --no-renames.
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['src/runtime.js', 'docs/runtime.md'] }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'docs/compatibility/release.md'], basePackage: base, headPackage: release }).heavy, false)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'README.md'], basePackage: base, headPackage: base }).heavy, true)
 

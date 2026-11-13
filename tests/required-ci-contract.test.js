@@ -21,7 +21,7 @@ test('PRs always publish both real branch-protected contract checks', () => {
 test('branch protection requires trusted impact and all three real Host results', () => {
   assert.match(workflow, /\n  host_impact:\n/)
   assert.match(workflow, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-  assert.match(workflow, /git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
+  assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
   for (const [name, target] of [
     ['floor_qualification', 'dsh-021-rc5-validation.yml'],
     ['recommended_qualification', 'dsh-022-rc1-host-gate.yml'],
@@ -99,4 +99,12 @@ test('actual protected CI shell rejects a missing, failed or skipped Host contra
     assert.notEqual(invoke('success', bad, 'success', 'success', 'success'), 0,
       'unverified impact classification: ' + bad)
   }
+})
+
+test('trusted-base Host classifier never collapses runtime deletions into documentation renames', () => {
+  assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
+  assert.doesNotMatch(workflow, /git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
+  const rc5 = readFileSync(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  assert.match(rc5, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
+  assert.doesNotMatch(rc5, /git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
 })
