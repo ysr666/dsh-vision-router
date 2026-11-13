@@ -20,24 +20,23 @@ test('PRs always publish both real branch-protected contract checks', () => {
 
 test('branch protection requires trusted impact and all three real Host results', () => {
   assert.match(workflow, /\n  host_impact:\n/)
-  assert.match(workflow, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-  // The classifier does not checkout either PR code or a worktree at all:
-  // it validates a pinned immutable PR head against the repository PR ref,
-  // and evaluates only the trusted base classifier extracted via git show.
+  // CodeQL recognizes PR checkout AND PR-head git fetch. Both are forbidden.
   const impactJob = workflow.split('\n  host_impact:\n')[1]?.split('\n  # All three Host contracts')[0]
   assert.ok(impactJob, 'trusted classifier job must exist')
-  assert.doesNotMatch(impactJob, /actions\/checkout@|\bgit checkout\b|\bgit switch\b|\bgit worktree\b/)
-  assert.match(impactJob, /git init --quiet "\$RUNNER_TEMP\/dvr-impact-objects"/)
-  assert.match(impactJob, /git remote add origin "https:\/\/github\.com\/\$\{GITHUB_REPOSITORY\}\.git"/)
-  assert.match(impactJob, /PR_NUMBER: \$\{\{ github\.event\.pull_request\.number \|\| '' \}\}/)
-  assert.match(impactJob, /refs\/pull\/\$\{PR_NUMBER\}\/head:refs\/remotes\/origin\/pr-head/)
-  assert.match(impactJob, /if \[ "\$fetched_head" != "\$HEAD_SHA" \]; then/)
-  assert.match(impactJob, /git show "\$BASE_SHA:scripts\/ci-heavy-host-impact\.mjs"/)
-  assert.match(impactJob, /git show "\$HEAD_SHA:package\.json"/)
-  assert.match(impactJob, /node "\$RUNNER_TEMP\/trusted-host-impact\.mjs"/)
+  assert.doesNotMatch(impactJob, /actions\/checkout@|\bgit (?:fetch|checkout|pull|worktree|switch)\b|\bgh pr checkout\b/)
+  assert.ok(impactJob.includes('GH_TOKEN: ${{ github.token }}'))
+  assert.ok(impactJob.includes('pull-requests: read'))
+  assert.ok(impactJob.includes('contents: read'))
+  assert.ok(impactJob.includes('gh api "$api/pulls/$PR_NUMBER"'))
+  assert.ok(impactJob.includes('gh api "$api/pulls/$PR_NUMBER/files?per_page=100"'))
+  assert.ok(impactJob.includes('count > 100'))
+  assert.ok(impactJob.includes('unknown-or-renamed-paths'))
+  assert.ok(impactJob.includes('.head.sha == $head'))
+  assert.ok(impactJob.includes('.base.sha == $base'))
+  assert.ok(impactJob.includes('gh api "$api/contents/scripts/ci-heavy-host-impact.mjs?ref=$BASE_SHA"'))
+  assert.ok(impactJob.includes('gh api "$api/contents/package.json?ref=$HEAD_SHA"'))
+  assert.ok(impactJob.includes('node "$RUNNER_TEMP/trusted-host-impact.mjs"'))
   assert.doesNotMatch(impactJob, /(?:pnpm|npm) (?:install|run|exec)|node scripts\//)
-
-  assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
   for (const [name, target] of [
     ['floor_qualification', 'dsh-021-rc5-validation.yml'],
     ['recommended_qualification', 'dsh-022-rc1-host-gate.yml'],
@@ -123,9 +122,12 @@ test('actual protected CI shell rejects a missing, failed or skipped Host contra
   }
 })
 
-test('trusted-base Host classifier never collapses runtime deletions into documentation renames', () => {
-  assert.match(workflow, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
-  assert.doesNotMatch(workflow, /git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
+test('trusted API classifier treats renames and incomplete path lists as heavy', () => {
+  const impactJob = workflow.split('\n  host_impact:\n')[1]?.split('\n  # All three Host contracts')[0]
+  assert.ok(impactJob.includes('length == $n'))
+  assert.ok(impactJob.includes('unknown-or-renamed-paths'))
+  assert.ok(impactJob.includes('.status == "removed"'))
+  assert.ok(impactJob.includes('count > 100'))
   const rc5 = readFileSync(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
   assert.match(rc5, /git diff --no-renames --name-only "\$BASE_SHA" "\$HEAD_SHA"/)
   assert.doesNotMatch(rc5, /git diff --name-only "\$BASE_SHA" "\$HEAD_SHA"/)

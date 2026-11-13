@@ -117,3 +117,15 @@ No credentials or privileged GitHub token are needed for this public repo.
 The source-controlled security contract tests assert the absence of checkout
 and the SHA fence. The new commit must separately pass its own GitHub Actions
 and CodeQL annotations; prior green checks are not proof the alert is closed.
+
+## API-only Host impact classification (CodeQL follow-up)
+
+The CodeQL medium rule models PR-head Git fetch as well as `actions/checkout`.
+The protected CI classifier no longer fetches PR Git refs or checks out a
+worktree. Instead its read-only token (`contents: read` and `pull-requests:
+read`) retrieves pinned contents and complete changed-path metadata from
+GitHub API. It checks the PR base/head SHAs both before and after reading the
+files, refuses missing/incomplete results, treats every rename/copy/unknown
+status and PRs above 100 files as **heavy**, and only executes the classifier
+from the immutable trusted base. SHA races/API failures fail protected CI
+closed. New head CI and CodeQL alert adjudication are separate obligations.

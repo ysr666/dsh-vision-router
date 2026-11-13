@@ -54,70 +54,10 @@ jobs:
         run: pnpm client:check
       - run: pnpm test
 
-  # Never checkout or git-fetch PR HEAD (including a worktree-free object fetch).
-  # GitHub read-only API supplies exact PR metadata and pinned JSON, while the
-  # classifier executable comes only from the trusted base commit.
-name: CI
-
-on:
-  push:
-    branches: [main, 3.0, feat/auto-wrap-providers]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-  # Required test (24.9)/(24.21) checks must be emitted for every PR, including docs-only PRs.
-  # Keep push path filtering to avoid redundant post-merge builds.
-  pull_request:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: ['24.9.0', '24.21.0']
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: ${{ matrix.node }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Build canonical runtime artifacts
-        run: pnpm build
-      - name: Verify generated runtime artifacts
-        run: pnpm build:check
-      - name: Verify reproducible clean build
-        if: matrix.node == '24.9.0'
-        run: pnpm build:reproducible
-      - name: Typecheck Host and Client contracts
-        if: matrix.node == '24.9.0'
-        run: pnpm typecheck
-      - name: Lint canonical source ownership
-        if: matrix.node == '24.9.0'
-        run: pnpm lint
-      - name: Verify source-to-artifact evidence
-        if: matrix.node == '24.9.0'
-        run: pnpm source:artifact:check
-      - name: Verify generated browser source
-        if: matrix.node == '24.9.0'
-        run: pnpm client:check
-      - run: pnpm test
-
-  # Never checkout a PR worktree (even the PR merge result) in this job.
-  # Fetch only Git objects, verify the exact PR head identity, then execute
-  # the classifier from the immutable trusted base commit. The untrusted head
-  # contributes package.json JSON data and changed paths, never executable code.
-host_impact:
+  # PR-head checkout AND Git fetch can trigger medium CodeQL findings.
+  # Read-only GitHub REST API supplies pinned JSON and exhaustive change paths.
+  # Only the base-commit classifier executable is run.
+  host_impact:
     name: trusted-base Host impact
     runs-on: ubuntu-latest
     timeout-minutes: 3
