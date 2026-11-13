@@ -18,7 +18,7 @@ The six upstream commits include an experimental DeepSeek website chat-export im
 
 ## Candidate verification
 
-The separate `dsh-022-rc3-host-gate.yml` runs normal `pull_request` CI (not `workflow_dispatch`) with immutable RC3 source on Linux/macOS/Windows, Node 24.9/24.21, source/host-sharp contracts, upstream Session batch tests, DVR event/attachment integration, Agent selection order, peer admission, proxy egress, real Chromium cold Vision/mixed attachments/Settings save-reload-readback, bundle recomposition, packed candidate CLI installation, Desktop Host injection and multi-plugin ordering. The legacy Host floor lanes remain independent; RC3 requires Node >=24.9, and DVR 3.2 does not advertise Node 22 support.
+The `dsh-022-rc3-host-gate.yml` reusable workflow is called by branch-protected `CI` for every PR (and separately allows manual replay) with immutable RC3 source on Linux/macOS/Windows, Node 24.9/24.21, source/host-sharp contracts, upstream Session batch tests, DVR event/attachment integration, Agent selection order, peer admission, proxy egress, real Chromium cold Vision/mixed attachments/Settings save-reload-readback, bundle recomposition, packed candidate CLI installation, Desktop Host injection and multi-plugin ordering. The legacy Host floor lanes remain independent; RC3 requires Node >=24.9, and DVR 3.2 does not advertise Node 22 support.
 
 Historical published npm `dsh-vision-router@3.2.1` is a separate **advisory-only** diagnostic. The historical package allowlist was amended to admit immutable 3.2.1; an early harness failure must never be misreported as a tested incompatibility. A successful candidate tarball install does not certify third-party Desktop generation installation, and no source CI result can rewrite a published artifact.
 
@@ -35,3 +35,17 @@ Doctor reports RC1/RC2/RC3 as exact-version verified only when runtime
 attachment capabilities are confirmed on Node 24; recommending an upgrade
 remains a separate policy decision, with RC1 still recommended. New DSH
 versions do not become verified solely by satisfying `engines.dsh`.
+
+## Required fail-closed acceptance
+The latest exact RC is invoked as a reusable workflow by the existing `CI` workflow.
+Both branch-protected `contract (24.9.0)` and `contract (24.21.0)`
+checks depend on the complete six-job Host gate, explicitly failing if it
+fails, is cancelled, or is skipped. They cannot silently succeed because a
+separate optional Host workflow failed or was never triggered. The reusable
+workflow has an isolated concurrency group to avoid canceling its CI caller.
+This preserves existing required check names without repository ruleset edits.
+
+This deliberately invokes the real Host gate even for documentation-only
+pull requests rather than making a mandatory check silently pending or
+skipped. A later path-impact optimization must remain fail-closed, must
+use reviewed change classification, and must not fabricate an acceptance run.

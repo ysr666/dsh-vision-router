@@ -1,6 +1,6 @@
 name: DSH 0.2.2-rc.3 Exact-source Host Gate
 
-# This is an immutable RC3 validation lane, independent of floating Alpha
+# Immutable RC3 qualification, reused by protected CI; independent of Alpha
 # surveillance. RC3 requires Node >=24.9; older DVR/Host compatibility remains
 # covered by the existing Node22 lanes and must not be silently redefined.
 # Run all three exact-source OS contracts, real Chromium Settings/save/reload,
@@ -9,44 +9,17 @@ name: DSH 0.2.2-rc.3 Exact-source Host Gate
 # No shared Actions cache restore/save: newly executed upstream code never
 # receives a path to poison caches trusted by future default-branch jobs.
 
+# Called by protected CI; manual exact-source replay remains available.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/dsh-022-rc3-host-gate.yml'
-      - 'config/dsh-rc3-settings-pin.json'
-      - 'scripts/dsh-rc3-pin.mjs'
-      - 'scripts/build-source-artifacts.mjs'
-      - 'scripts/dsh-alpha-source-contract.mjs'
-      - 'scripts/dsh-rc3-agent-order-contract.mjs'
-      - 'scripts/dsh-web-connection-overlay-contract.mjs'
-      - 'cordis.patch.yml'
-      - 'scripts/dsh-peer-admission-contract.mjs'
-      - 'scripts/dsh-proxy-egress-contract.mjs'
-      - 'scripts/dsh017-bundle-recompose-smoke.mjs'
-      - 'scripts/dsh017-desktop-host-injection-smoke.mjs'
-      - 'scripts/dsh017-desktop-multiplugin-smoke.mjs'
-      - 'scripts/dsh-desktop-renderer-e2e.mjs'
-      - 'scripts/dsh-preview-mixed-attachment-paste-smoke.mjs'
-      - 'scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs'
-      - 'scripts/alpha-browser-cold-toggle-smoke.mjs'
-      - 'src/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'tests/dsh-rc3-pin.test.js'
-      - 'scripts/dsh-rc3-session-batch-integration.mjs'
-      - 'scripts/verify-packed-public-api.mjs'
-      - 'presets/**'
-      - 'tests/**'
-  # Review and merge of this fixed RC3 audit records the validated baseline.
-  # The original Alpha monitoring lane remains separate.
-  push:
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Reused workflows inherit github.workflow="CI"; sharing CI's group
+  # would cancel the very caller we must qualify.
+  group: dvr-rc3-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
