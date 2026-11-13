@@ -52,7 +52,13 @@ test('branch protection requires trusted impact and all three real Host results'
   assert.doesNotMatch(contract, /continue-on-error: true/)
 })
 
-test('actual protected CI shell rejects a missing, failed or skipped Host contract', () => {
+test('actual protected CI shell rejects a missing, failed or skipped Host contract', (t) => {
+  // GitHub's required contracts run on Ubuntu; never make Windows npm test
+  // depend on Git Bash being installed on the user's PATH.
+  if (process.platform === 'win32') {
+    t.skip('Bash policy execution is verified by the required Ubuntu CI contracts')
+    return
+  }
   const start = workflow.indexOf('      - name: Enforce trusted impact and all three exact Host results')
   assert.ok(start >= 0, 'real protection script must exist')
   const runStart = workflow.indexOf('        run: |\n', start)
