@@ -27,11 +27,14 @@ The active compatibility CI is organized by responsibility: the **minimum Host**
 qualified RC** (`0.2.2-rc.3`) retain normal automated gates. The RC2 full
 matrix is preserved for explicit `workflow_dispatch` replay, with its prior
 immutable verification recorded; it no longer duplicates every PR/main run.
-The latest RC gate runs as a reusable workflow inside `CI`, which is already
-required by the protected branch: the two existing mandatory `contract`
-jobs depend on all six real Host jobs and explicitly fail for any non-success
-outcome. A separate green core test cannot mask a failed Host gate.
-The called workflow has a distinct concurrency group to prevent self-cancel.
+All three Host gates now run as reusable workflows inside the branch-protected
+`CI` for **Host-impacting changes**: minimum RC5, recommended RC1, and latest RC3.
+Both mandatory `contract` checks wait for their aggregate results and explicitly
+reject failure, cancellation, skipped Host verification, or failed classification.
+A reviewed trusted-base classifier alone can exempt Markdown-only documentation
+or a version-only package change, and in that case all three heavy gates must be
+skipped, never faked as passed. An unexpected/unknown path fails closed to heavy.
+The RC1/RC3 concurrency groups are distinct from CI to prevent self-cancellation.
 This is a CI scheduling policy, not a withdrawal of RC2 compatibility evidence.
 When the recommendation or latest RC advances, move the active lane instead
 of permanently adding another full automatic historical matrix.

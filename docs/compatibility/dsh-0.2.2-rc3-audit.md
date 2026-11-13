@@ -49,3 +49,21 @@ This deliberately invokes the real Host gate even for documentation-only
 pull requests rather than making a mandatory check silently pending or
 skipped. A later path-impact optimization must remain fail-closed, must
 use reviewed change classification, and must not fabricate an acceptance run.
+
+## Required coverage of minimum, recommended, and latest
+
+The follow-up CI convergence on the same draft PR removes the older
+standalone automatic RC5/RC1 gates, retaining their full immutable reusable
+workflows and manual replay. Protected `CI` now qualifies all three named
+Host contracts for runtime or unclassified changes. The two protected
+`contract` statuses require all three successful results; a failed or missing
+trusted-base impact classification fails closed. Only reviewed Markdown-only
+documentation and version-only package metadata can bypass these expensive
+matrices. The decision is made using the classifier at the PR's protected base
+commit, not modifiable PR-head code. Non-host changes still run the protected
+Node 24 `test` and `contract` checks.
+
+The change deliberately avoids doubling the Host job count: it moves the
+previous separate minimum/recommended matrices under the existing required
+CI rather than running new copies. Exact qualification and original run URLs
+remain preserved by immutable refs in this audit/PR history.

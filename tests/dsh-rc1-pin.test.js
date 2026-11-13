@@ -39,6 +39,9 @@ test('RC1 Host Gate validates exactly pinned source across all supported platfor
   assert.equal(count(gate,'run: node dvr/scripts/dsh-rc1-pin.mjs read'),3)
   assert.equal(count(gate, 'ref: '+source+' # dsh-v0.2.2-rc.1 immutable reviewed release'),3)
   assert.equal(count(gate, 'ref: '+ '$'+'{{ steps.pin.outputs.sha }}'),0)
+  assert.match(gate, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.doesNotMatch(gate, /^  (?:pull_request|push):/m)
+  assert.match(gate, /group: dvr-rc1-qualification-/)
   assert.match(gate,/permissions:\n  contents: read/)
   assert.equal(count(gate,'persist-credentials: false'),6)
   assert.doesNotMatch(gate, /actions\/cache\/|dsh-build-cache|hashFiles\(/,

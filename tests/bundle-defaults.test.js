@@ -429,18 +429,25 @@ test('security policy links reporters to enabled private vulnerability reporting
   assert.match(policy, /Do \*\*not\*\* post exploit details/)
 })
 
-test('client prelude changes trigger supported rc5 real browser and exact-source gates', async () => {
-  for (const name of ['dsh-021-rc5-validation.yml', 'dsh-alpha-source-contract.yml']) {
-    const workflow = await readFile(new URL('../.github/workflows/' + name, import.meta.url), 'utf8')
-    assert.equal(workflow.split("      - 'src/**'").length - 1, 2,
-      name + ': PR and main must cover all client prelude changes')
-  }
+
+test('client prelude changes are classified heavy and trigger required rc5 Host gate', async () => {
+  const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  const alpha = await readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8')
+  const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
+  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-021-rc5-validation\.yml/)
+  assert.match(rc5, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.match(rc5, /Run cold Vision toggle/)
+  assert.equal(alpha.split("      - 'src/**'").length - 1, 2)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['src/lib/client-host-compat-prelude.js'] }).heavy, true)
 })
 
-test('audited browser integration modules remain covered by the active DSH 0.2.1-rc.5 lane', async () => {
-  const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
-  assert.equal(source.split("      - 'src/**'").length - 1, 2)
-  for (const name of [
+test('audited client browser modules remain covered by the required rc5 Host gate', async () => {
+  const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
+  const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
+  assert.match(ci, /floor_qualification:[\s\S]*uses: \.\/\.github\/workflows\/dsh-021-rc5-validation\.yml/)
+  for (const path of [
     'src/lib/client-host-compat-prelude.js',
     'src/lib/guide-vision-toggle-highlight.js',
     'src/lib/remote-settings-risk-confirmation.js',
@@ -452,18 +459,20 @@ test('audited browser integration modules remain covered by the active DSH 0.2.1
     'src/lib/vision-exact-check-client.js',
     'src/lib/vision-routing-settings-prelude.js',
     'src/lib/web/benchmark-panel.js',
-  ]) assert.ok(name.startsWith('src/'), name + ': not covered by src/**')
-  assert.match(source, /alpha-browser-cold-toggle-smoke\.mjs/)
-  assert.match(source, /Run cold Vision toggle/)
+  ]) assert.equal(classifyHeavyHostImpact({ changedPaths: [path] }).heavy, true, path)
+  assert.match(rc5, /alpha-browser-cold-toggle-smoke\.mjs/)
+  assert.match(rc5, /Run cold Vision toggle/)
 })
 
-test('model visibility boundary updates trigger the supported Host real browser test', async () => {
+test('model visibility changes require minimum Host real browser validation', async () => {
   const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
-  assert.equal(source.split("      - 'src/**'").length - 1, 2)
+  const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const { classifyHeavyHostImpact } = await import('../scripts/ci-heavy-host-impact.mjs')
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['src/lib/client-host-compat-prelude.js'] }).heavy, true)
+  assert.match(ci, /needs: \[host_impact, floor_qualification, recommended_qualification, host_qualification\]/)
   assert.match(source, /Run cold Vision toggle/)
-  assert.match(source, /Run real Host\s*\+\s*Chromium|name: real Host \+ Chromium/)
+  assert.match(source, /name: real Host \+ Chromium/)
 })
-
 test('release runtime exposes one benchmark UI and no production v2 acceptance control surface', async () => {
   const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
   const runtimeComposition = await readFile(new URL('../lib/runtime-composition.js', import.meta.url), 'utf8')
@@ -496,33 +505,34 @@ test('release runtime exposes one benchmark UI and no production v2 acceptance c
   }
 })
 
-test('DSH release evidence triggers live browser and immutable 3.2 Host gates', async () => {
-  const paths = [
-    '../.github/workflows/dsh-021-rc5-validation.yml',
-    '../.github/workflows/dsh-alpha-source-contract.yml',
-  ]
-  for (const path of paths) {
-    const workflow = await readFile(new URL(path, import.meta.url), 'utf8')
-    assert.match(workflow, /pull_request:/)
-    assert.match(workflow, /push:/)
-    assert.match(workflow, /branches: \[main\]/)
-    assert.match(workflow, /'src\/\*\*'|'src\/lib\/dsh-support-window\.js'/)
-    assert.match(workflow, /'package\.json'/)
-  }
+
+test('branch-protected CI qualifies minimum, recommended, and latest real Host boundaries', async () => {
+  const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
   const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
-  assert.match(rc1, /pull_request:/)
-  assert.match(rc1, /'src\/\*\*'/)
+  const alpha = await readFile(new URL('../.github/workflows/dsh-alpha-source-contract.yml', import.meta.url), 'utf8')
+  assert.match(ci, /\n  pull_request:/)
+  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-021-rc5-validation\.yml/)
+  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc1-host-gate\.yml/)
+  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc3-host-gate\.yml/)
+  assert.match(rc5, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.match(rc1, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.doesNotMatch(rc5, /^  (?:pull_request|push):/m)
+  assert.doesNotMatch(rc1, /^  (?:pull_request|push):/m)
   assert.match(rc1, /Node 24 Desktop renderer lifecycle/)
+  assert.match(alpha, /pull_request:/)
+  assert.match(alpha, /push:/)
+  assert.match(alpha, /branches: \[main\]/)
 })
 
-test('current DSH rc5 browser lifecycle follows both presentation carriers', async () => {
+test('rc5 live browser carriers are preserved under protected CI reuse', async () => {
   const source = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
-  assert.match(source, /pull_request:/)
-  assert.match(source, /push:/)
-  assert.equal((source.match(/'src\/\*\*'/g) ?? []).length, 2)
+  const ci = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  assert.match(source, /\non:\n  workflow_call:\n  workflow_dispatch:/)
+  assert.match(ci, /floor_qualification:[\s\S]*dsh-021-rc5-validation\.yml/)
   assert.match(source, /real Host \+ Chromium/)
+  assert.match(source, /Run cold Vision toggle/)
 })
-
 test('archived alpha.4 forensic browser job retains immutable build-cache integrity', async () => {
   const cacheSha = '55cc8345863c7cc4c66a329aec7e433d2d1c52a9'
   const cases = [
@@ -707,6 +717,18 @@ test('heavy Host classifier skips only version-only curated release metadata', a
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: release }).heavy, false)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['docs/releases/v2.2.6.md'], basePackage: base, headPackage: release }).heavy, false)
 
+
+  // Both skipped and required paths are adversarially characterized.
+  for (const path of ['docs/compatibility/dsh-0.2.2-rc3-audit.md', 'docs/architecture/dsh-support-window.md', 'README.md', 'README.zh.md', 'CHANGELOG.md']) {
+    assert.equal(classifyHeavyHostImpact({ changedPaths: [path] }).heavy, false, path)
+  }
+  for (const path of ['docs/generated.js', 'docs/fixtures/settings.yaml', 'src/lib/client.js', 'scripts/ci-heavy-host-impact.mjs', '.github/workflows/ci.yml', 'tests/bundle-defaults.test.js']) {
+    assert.equal(classifyHeavyHostImpact({ changedPaths: [path] }).heavy, true, path)
+  }
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['README.md', 'src/lib/client.js'] }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'docs/compatibility/release.md'], basePackage: base, headPackage: release }).heavy, false)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'README.md'], basePackage: base, headPackage: base }).heavy, true)
+
   const peerChanged = { ...release, peerDependencies: { dsh: '>=0.2.0-rc.1 <0.3.0-0' } }
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: peerChanged }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'src/lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
@@ -717,6 +739,7 @@ test('heavy Host classifier skips only version-only curated release metadata', a
 test('active rc5 Host gates fail closed on PR impact; rc1 uses isolated immutable source', async () => {
   const rc5 = await readFile(new URL('../.github/workflows/dsh-021-rc5-validation.yml', import.meta.url), 'utf8')
   const rc1 = await readFile(new URL('../.github/workflows/dsh-022-rc1-host-gate.yml', import.meta.url), 'utf8')
+  assert.match(rc5, /\non:\n  workflow_call:\n  workflow_dispatch:/)
   assert.match(rc5, /classify heavy Host impact/)
   assert.match(rc5, /trusted base classifier unavailable: fail closed/)
   assert.match(rc5, /if: needs\.impact\.outputs\.heavy == 'true'/)
