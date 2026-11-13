@@ -60,10 +60,8 @@ test('RC2 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate, /Diagnose immutable published npm 3\.2\.0 on RC2 \(advisory\)/)
   assert.match(gate, /continue-on-error: true/, 'historical immutable artifact must not block current head qualification')
   assert.match(gate, /Record published npm 3\.2\.0 diagnostic separately from candidate/)
-  const mainPush = gate.split('\n  push:\n')[1]?.split('\n  workflow_dispatch:')[0]
-  assert.ok(mainPush, 'RC2 main push gate must exist')
-  assert.match(mainPush, /branches: \[main\]/)
-  assert.doesNotMatch(mainPush, /paths:/, 'all main changes must requalify RC2')
+  assert.match(gate, /\non:\n  workflow_dispatch:\npermissions:/, 'historical RC2 must remain manually replayable')
+  assert.doesNotMatch(gate, /^  (?:pull_request|push):/m, 'historical RC2 must not rerun on every PR/main change')
   assert.equal((gate.match(/DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'/g) ?? []).length, 2)
   assert.match(gate,/Run default tool-only image conversation on RC2/)
   assert.match(gate,/if: matrix.node == '24\.9\.0'/)

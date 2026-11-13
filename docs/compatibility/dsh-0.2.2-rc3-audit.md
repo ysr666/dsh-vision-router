@@ -18,8 +18,20 @@ The six upstream commits include an experimental DeepSeek website chat-export im
 
 ## Candidate verification
 
-The separate `dsh-022-rc3-host-gate.yml` runs normal `pull_request` CI (not `workflow_dispatch`) with immutable RC3 source on Linux/macOS/Windows, Node 24.9/24.21, source/host-sharp contracts, upstream Session batch tests, DVR event/attachment integration, Agent selection order, peer admission, proxy egress, real Chromium cold Vision/mixed attachments/Settings save-reload-readback, bundle recomposition, packed candidate CLI installation, Desktop Host injection and multi-plugin ordering. Existing Node22/older Host gates are unchanged; RC3 itself requires Node >=24.9.
+The separate `dsh-022-rc3-host-gate.yml` runs normal `pull_request` CI (not `workflow_dispatch`) with immutable RC3 source on Linux/macOS/Windows, Node 24.9/24.21, source/host-sharp contracts, upstream Session batch tests, DVR event/attachment integration, Agent selection order, peer admission, proxy egress, real Chromium cold Vision/mixed attachments/Settings save-reload-readback, bundle recomposition, packed candidate CLI installation, Desktop Host injection and multi-plugin ordering. The legacy Host floor lanes remain independent; RC3 requires Node >=24.9, and DVR 3.2 does not advertise Node 22 support.
 
-Historical published npm `dsh-vision-router@3.2.1` is a separate **advisory-only** diagnostic. A successful candidate tarball install does not certify third-party Desktop generation installation, and no source CI result can rewrite a published artifact.
+Historical published npm `dsh-vision-router@3.2.1` is a separate **advisory-only** diagnostic. The historical package allowlist was amended to admit immutable 3.2.1; an early harness failure must never be misreported as a tested incompatibility. A successful candidate tarball install does not certify third-party Desktop generation installation, and no source CI result can rewrite a published artifact.
 
-**Status: awaiting actual current-head pull_request jobs.** Do not call RC3 compatible until the real Host, Desktop, Chromium, adversarial and contract jobs pass. Investigate first failing product assertions before considering a code fix. No release or merge is authorized.
+**Status: the initial RC3 head `5b994d6` passed all six exact-Host jobs; each later PR head must pass its own normal CI before final acceptance.** Do not call RC3 compatible until the real Host, Desktop, Chromium, adversarial and contract jobs pass. Investigate first failing product assertions before considering a code fix. No release or merge is authorized.
+
+## Maintainable qualification policy
+
+Normal CI retains the supported minimum Host, conservative recommended RC1,
+and latest qualified RC3 as distinct evidence boundaries. The validated RC2
+workflow remains available through explicit manual replay, not every main push
+or ordinary PR. This avoids retiring RC2's evidence while preventing each
+upstream prerelease from permanently adding another six-job automatic matrix.
+Doctor reports RC1/RC2/RC3 as exact-version verified only when runtime
+attachment capabilities are confirmed on Node 24; recommending an upgrade
+remains a separate policy decision, with RC1 still recommended. New DSH
+versions do not become verified solely by satisfying `engines.dsh`.

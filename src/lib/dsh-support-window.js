@@ -10,6 +10,8 @@ export const DSH_SUPPORT_WINDOW = Object.freeze({
 export const DSH_VERIFICATION_EVIDENCE = Object.freeze({
   exactFloor: '0.2.1-rc.5',
   exactRecommended: '0.2.2-rc.1',
+  // Qualified exact-host evidence is distinct from the recommended upgrade target.
+  exactVerified: Object.freeze(['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3']),
   stableCanaryDistTag: 'latest',
   nextCanaryDistTag: 'next',
   previewCanaryDistTag: 'alpha',
@@ -70,7 +72,7 @@ export function supportWindowUpgradeAdvice(capabilities = {}, {
   }
   // Admission is an open 0.2.x train on purpose, not blanket evidence.
   // A later Host or Node major is not automatically verified by the exact
-  // rc5/rc1, Node 24.9/24.21 matrix; Doctor reports unknown, not green.
+  // pinned-release Node 24.9/24.21 matrix; Doctor reports unknown, not green.
   if (semver.major(node) !== 24) {
     return Object.freeze({
       level: 'unknown', code: 'NODE_FORWARD_MAJOR_UNVERIFIED',
@@ -78,10 +80,10 @@ export function supportWindowUpgradeAdvice(capabilities = {}, {
     })
   }
   const exactHost = semver.valid(String(hostVersion).replace(/^v/, ''))
-  if (![DSH_VERIFICATION_EVIDENCE.exactFloor, DSH_VERIFICATION_EVIDENCE.exactRecommended].includes(exactHost)) {
+  if (!DSH_VERIFICATION_EVIDENCE.exactVerified.includes(exactHost)) {
     return Object.freeze({
       level: 'unknown', code: 'HOST_FORWARD_RELEASE_UNVERIFIED',
-      message: `DSH ${hostVersion} meets the 0.2.x admission range but lacks the two pinned exact-release acceptance gates`,
+      message: `DSH ${hostVersion} meets the 0.2.x admission range but has no exact-release acceptance evidence`,
     })
   }
   return Object.freeze({
@@ -102,6 +104,7 @@ export function formatDshSupportWindowLines(capabilities = {}, options = {}) {
     'DSH compatibility verification evidence:',
     `  exact supported Host floor: ${DSH_VERIFICATION_EVIDENCE.exactFloor}`,
     `  exact recommended Host: ${DSH_VERIFICATION_EVIDENCE.exactRecommended}`,
+    `  verified exact Host releases: ${DSH_VERIFICATION_EVIDENCE.exactVerified.join(', ')}`,
     `  scheduled published canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.stableCanaryDistTag}`,
     `  scheduled next/rc canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.nextCanaryDistTag}`,
     `  scheduled alpha/pre-release canary: npm dist-tag ${DSH_VERIFICATION_EVIDENCE.previewCanaryDistTag}`,

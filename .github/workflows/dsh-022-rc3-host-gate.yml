@@ -41,6 +41,7 @@ on:
   # The original Alpha monitoring lane remains separate.
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 
