@@ -34,6 +34,7 @@ export type SessionEventReader = (
 
 export type SessionLogReader = (
   session: unknown,
+  signal?: AbortSignal,
 ) => Promise<SessionLogReadResult>
 
 export type SessionEventTailReader = (
@@ -310,7 +311,9 @@ export function createSessionEventTailReader(ctx: unknown): SessionEventTailRead
 export function createSessionLogReader(ctx: unknown): SessionLogReader {
   return async function readSessionLog(
     session: unknown,
+    signal?: AbortSignal,
   ): Promise<SessionLogReadResult> {
+    signal?.throwIfAborted()
     const sessionId = sessionIdOf(session)
     if (sessionId === undefined || sessionId === null) return { supported: false }
 
@@ -324,8 +327,9 @@ export function createSessionLogReader(ctx: unknown): SessionLogReader {
         observation = await observeSession.call(
           query,
           sessionId,
-          { projectionMode: 'none' },
+          signal === undefined ? { projectionMode: 'none' } : { projectionMode: 'none', signal },
         )
+        signal?.throwIfAborted()
         const observationBag = propertyBag(observation)
         const events = observationBag?.events
         if (!Array.isArray(events)) {
@@ -350,6 +354,10 @@ export function createSessionLogReader(ctx: unknown): SessionLogReader {
     if (typeof readSession !== 'function') return { supported: false }
 
     const snapshot = await readSession.call(query, sessionId)
+    // Older Hosts expose readSession without a signal parameter. They cannot
+    // interrupt the underlying read, but aborted reads must never publish
+    // recovered attachment authority after the result eventually arrives.
+    signal?.throwIfAborted()
     const snapshotBag = propertyBag(snapshot)
     const events = snapshotBag?.events
     if (!Array.isArray(events)) {

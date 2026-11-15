@@ -27,7 +27,7 @@ export function createVisionImageInputReader(ctx, resolveAttachment, throwIfVisi
       const canonicalInput = input.trim()
       const ref = resolvedAttachmentRefs instanceof Map
         ? resolvedAttachmentRefs.get(canonicalInput)
-        : await resolveAttachment(session, canonicalInput)
+        : await resolveAttachment(session, canonicalInput, signal)
       if (ref === undefined) {
         throw new Error(
           `vision-router: unknown attachment id "${input}" (it must come from an image uploaded in this conversation)`,

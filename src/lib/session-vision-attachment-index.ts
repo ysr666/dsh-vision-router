@@ -25,10 +25,12 @@ export interface SessionVisionAttachmentIndex {
   resolveAttachment(
     session: unknown,
     attachmentId: unknown,
+    signal?: AbortSignal,
   ): Promise<SessionVisionAttachmentRef | undefined>
   resolveAttachments(
     session: unknown,
     attachmentIds: readonly unknown[],
+    signal?: AbortSignal,
   ): Promise<Map<string, SessionVisionAttachmentRef>>
 }
 
@@ -157,7 +159,9 @@ export function createSessionVisionAttachmentIndex({
   const resolveAttachments = async (
     session: unknown,
     attachmentIds: readonly unknown[],
+    signal?: AbortSignal,
   ): Promise<Map<string, SessionVisionAttachmentRef>> => {
+    signal?.throwIfAborted()
     const requested = [
       ...new Set((Array.isArray(attachmentIds) ? attachmentIds : []).map((id) => String(id))),
     ]
@@ -188,6 +192,7 @@ export function createSessionVisionAttachmentIndex({
       fromSession.push(ref)
       if (wanted.size === 0) break
     }
+    signal?.throwIfAborted()
     if (fromSession.length > 0) stateStore.recordAttachments(session, fromSession)
     if (wanted.size === 0) return resolved
     const remaining = missing.filter((id) => wanted.has(id))
@@ -196,8 +201,12 @@ export function createSessionVisionAttachmentIndex({
     if (typeof readSessionLog === 'function') {
       let result: unknown
       try {
-        result = await readSessionLog(session)
+        result = await readSessionLog(session, signal)
+        signal?.throwIfAborted()
       } catch (error) {
+        // Cancellation is not a corrupted or missing Session. Never convert
+        // it to a successful partial lookup or log an attachment identifier.
+        if (signal?.aborted) throw signal.reason ?? error
         warnAttachmentRecoveryFailure(session, remaining[0], error)
         return resolved
       }
@@ -219,7 +228,9 @@ export function createSessionVisionAttachmentIndex({
 
     // Explicitly unsupported SessionQuery keeps the released Session-local
     // compatibility fallback. Advertised reader failures above never fall back.
+    signal?.throwIfAborted()
     if (events === undefined) events = legacySessionEvents(session)
+    signal?.throwIfAborted()
 
     const recovered = recoverAttachmentsFromEvents(session, remaining, events)
     for (const [id, ref] of recovered) resolved.set(id, ref)
@@ -229,8 +240,9 @@ export function createSessionVisionAttachmentIndex({
   const resolveAttachment = async (
     session: unknown,
     attachmentId: unknown,
+    signal?: AbortSignal,
   ): Promise<SessionVisionAttachmentRef | undefined> => {
-    return (await resolveAttachments(session, [attachmentId])).get(String(attachmentId))
+    return (await resolveAttachments(session, [attachmentId], signal)).get(String(attachmentId))
   }
 
   return Object.freeze({
