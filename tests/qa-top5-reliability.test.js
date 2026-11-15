@@ -133,12 +133,12 @@ test('vision_describe answer cache publishes successes but never structured visi
   assert.equal(firstFailure, secondFailure)
   assert.equal(calls.get('failure'), 2, 'a repaired backend must get a fresh attempt instead of a cached failure')
 
-  const successArgs = { attachmentIds: ['A'], question: 'success' }
+  const successArgs = { paths: ['image.png'], question: 'success' }
   assert.equal(await harness.registered.execute(successArgs, exec), 'visible answer')
   assert.equal(await harness.registered.execute(successArgs, exec), 'visible answer')
-  assert.equal(calls.get('success'), 1, 'successful visual knowledge remains cacheable')
+  assert.equal(calls.get('success'), 1, 'successful filesystem image knowledge remains cacheable')
 
-  const ordinaryJsonArgs = { attachmentIds: ['A'], question: 'ordinary-json' }
+  const ordinaryJsonArgs = { paths: ['image.png'], question: 'ordinary-json' }
   await harness.registered.execute(ordinaryJsonArgs, exec)
   await harness.registered.execute(ordinaryJsonArgs, exec)
   assert.equal(
@@ -146,6 +146,60 @@ test('vision_describe answer cache publishes successes but never structured visi
     1,
     'only the exact Vision Router failure-code contract is excluded from the answer cache',
   )
+})
+
+test('vision_describe never returns an attachment-ID cache hit before Session authorization', async () => {
+  const harness = runtimeHarness({ scopeValue: { cache: true } })
+  const authorized = new WeakSet()
+  let calls = 0
+  harness.wrapped.tools.register({
+    name: 'vision_describe',
+    async execute(_args, exec) {
+      calls += 1
+      if (!authorized.has(exec?.agent?.session)) {
+        throw new Error('attachment is not authorized by this Session')
+      }
+      return 'private image description'
+    },
+  })
+  const sessionA = { header: { cwd: '/workspace' } }
+  const sessionB = { header: { cwd: '/workspace' } }
+  authorized.add(sessionA)
+  for (const args of [
+    { attachmentIds: ['sha256:' + 'a'.repeat(64)], question: 'describe' },
+    { paths: ['sha256:' + 'a'.repeat(64)], question: 'describe' },
+  ]) {
+    assert.equal(await harness.registered.execute(args, { agent: { session: sessionA } }), 'private image description')
+    await assert.rejects(
+      harness.registered.execute(args, { agent: { session: sessionB } }),
+      /not authorized/,
+    )
+  }
+  assert.equal(calls, 4, 'an upload ID must always pass through the executor authorization check')
+})
+
+test('vision_describe invalidates ordinary path cache when model settings change', async () => {
+  const settings = {
+    cache: true,
+    cacheMaxEntries: 200,
+    cacheTtlSeconds: 3600,
+    pairs: [{ provider: 'p', model: 'old' }],
+  }
+  const harness = runtimeHarness({ scopeValue: settings })
+  let scope
+  harness.wrapped.inject(['settings'], (child) => { scope = child.settings.register('vision-router') })
+  let calls = 0
+  harness.wrapped.tools.register({
+    name: 'vision_describe',
+    async execute() { return 'version-' + ++calls },
+  })
+  const exec = { agent: { session: { header: { cwd: '/workspace' } } } }
+  const args = { paths: ['image.png'], question: 'describe' }
+  assert.equal(await harness.registered.execute(args, exec), 'version-1')
+  assert.equal(await harness.registered.execute(args, exec), 'version-1')
+  settings.pairs = [{ provider: 'p', model: 'new' }]
+  scope.get() // simulate the Host reporting the current live Settings value
+  assert.equal(await harness.registered.execute(args, exec), 'version-2')
 })
 
 function legacyLimits() {
@@ -251,7 +305,7 @@ test('settings queue-to-live transition preserves local permission and remote ri
   assert.deepEqual(harness.rpcCalls.map((entry) => entry[1]), ['describe', 'authorize', 'describe'])
 })
 
-test('vision_describe empty answers are not cached as successes and can recover on the same attachment', async () => {
+test('vision_describe empty answers are not cached as successes and can recover on the same path', async () => {
   const harness = runtimeHarness({ scopeValue: { cache: true, cacheMaxEntries: 200, cacheTtlSeconds: 3600 } })
   harness.wrapped.inject(['settings'], child => { child.settings.register('vision-router') })
   const responses = ['', '   ', 'null', '""', 'RECOVERED_VISUAL_ANSWER']
@@ -262,7 +316,7 @@ test('vision_describe empty answers are not cached as successes and can recover 
       return responses[calls++]
     },
   })
-  const args = { attachmentIds: ['same-image'], question: 'What is in this photo?' }
+  const args = { paths: ['same-image.png'], question: 'What is in this photo?' }
   const exec = { agent: { session: { header: { cwd: '/workspace' } } } }
   for (const expected of responses) {
     assert.equal(await harness.registered.execute(args, exec), expected)

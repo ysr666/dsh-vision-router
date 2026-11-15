@@ -652,7 +652,7 @@ export function cacheKeyFor({ pairs, httpProviders, contentIds, wantJson, questi
   ]
   const payload = JSON.stringify({
     chains,
-    contentIds: [...(contentIds ?? [])].sort(),
+    contentIds: [...(contentIds ?? [])],
     mode: wantJson ? 'json' : 'text',
     question: String(question ?? ''),
   })

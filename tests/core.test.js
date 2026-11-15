@@ -623,7 +623,7 @@ test('cacheKeyFor covers chains, content, mode and question without retaining pl
   }
   const k1 = cacheKeyFor(base)
   assert.match(k1, /^v2:[a-f0-9]{64}$/)
-  assert.equal(k1, cacheKeyFor({ ...base, contentIds: ['a', 'b'] }))
+  assert.notEqual(k1, cacheKeyFor({ ...base, contentIds: ['a', 'b'] }), 'multi-image identity is order-sensitive')
   assert.notEqual(k1, cacheKeyFor({ ...base, wantJson: true }))
   assert.notEqual(k1, cacheKeyFor({ ...base, httpProviders: [] }))
   assert.notEqual(k1, cacheKeyFor({ ...base, contentIds: ['b'] }))

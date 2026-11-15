@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { retainArtifactRun } from './artifact-retention.js'
 import {
@@ -100,16 +100,13 @@ function sessionCwd(exec) {
 function stableRuntimeConfigSignature(value) {
   if (!value || typeof value !== 'object') return '{}'
   try {
-    return JSON.stringify({
-      cache: value.cache,
-      cacheMaxEntries: value.cacheMaxEntries,
-      cacheTtlSeconds: value.cacheTtlSeconds,
-      httpProviders: value.httpProviders,
-      proxy: value.proxy,
-      proxyHosts: value.proxyHosts,
-    })
+    // Every live setting may change the tool's answer (model pairs, fallback
+    // order, downscale policy, prompt mode, etc.). Hash the full configuration
+    // rather than retaining its secrets or relying on a partial field whitelist.
+    return createHash('sha256').update(JSON.stringify(value)).digest('hex')
   } catch {
-    return String(Date.now())
+    // Cyclic/unserializable settings must never keep a stale cache revision.
+    return randomUUID()
   }
 }
 
