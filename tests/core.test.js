@@ -4021,6 +4021,176 @@ test('vision_materialize exposes an authorized attachment as a workspace file (i
   await rm(new URL('../' + artifactsDir + '/', import.meta.url), { recursive: true, force: true })
 })
 
+test('vision_describe uses the same canonical image publication for uploaded IDs and file paths', async () => {
+  const imageBytes = Buffer.from('89504e470d0a1a0a0000000000000000', 'hex')
+  const sourceId = 'sha256:' + 'a'.repeat(64)
+  const sourceRef = { attachmentId: sourceId, mediaType: 'image/png', name: 'upload.png' }
+  const saved = []
+  const readSignals = []
+  const log = []
+  const hostAttachments = {
+    async readImage(ref, signal) {
+      readSignals.push(signal)
+      assert.equal(ref.attachmentId, sourceId)
+      return { ref, data: imageBytes }
+    },
+    async saveImage({ data, mediaType }) {
+      saved.push({ data: Buffer.from(data), mediaType })
+      return { attachmentId: 'sha256:' + 'b'.repeat(64), mediaType }
+    },
+  }
+  const config = {
+    freeFallback: false, localOnlyVision: true, progressiveTools: false,
+    providers: [{ provider: 'missing-adapter', model: 'none' }],
+  }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const originalGet = ctx.get
+  ctx.get = (name) => {
+    if (name === 'attachments') return hostAttachments
+    if (name === 'fs') return {
+      async resolve(source) { return source },
+      async readBytes() { return imageBytes },
+    }
+    return originalGet.call(ctx, name)
+  }
+  ctx.logger = {
+    info(...args) { log.push(args) },
+    warn(...args) { log.push(args) },
+    error() {},
+  }
+  apply(ctx, Config(config))
+  const session = { id: 'describe-unified', header: { cwd: process.cwd() }, events: [] }
+  const messages = [{ role: 'user', content: [{ type: 'image', attachment: sourceRef }] }]
+  await captured.on.get('agent/pre-step')(
+    { agent: { session }, messages, turn: 1 },
+    async () => ({ messages }),
+  )
+  const tool = captured.tools.find((def) => def.name === 'vision_describe')
+  assert.ok(tool)
+  const controller = new AbortController()
+  const exec = { agent: { session }, signal: controller.signal }
+  const first = await tool.execute({ attachmentIds: [sourceId], question: 'describe' }, exec)
+  const second = await tool.execute({ paths: ['image.png'], question: 'describe' }, exec)
+  assert.equal(typeof first, 'string')
+  assert.equal(typeof second, 'string')
+  assert.equal(saved.length, 2, 'uploaded IDs and ordinary paths each re-publish canonical bytes')
+  assert.deepEqual(saved[0], saved[1])
+  assert.equal(readSignals[0], controller.signal, 'Host attachment reads observe task cancellation')
+  assert.ok(log.some((entry) => entry[0].includes('stage=%s') && entry[3] === 'resolve-upload-refs'))
+  assert.ok(log.some((entry) => entry[0].includes('stage=%s') && entry[3] === 'save-normalized-image-0'))
+})
+
+test('vision_describe does not confuse legacy attachment IDs with filesystem paths', async () => {
+  const ref = { attachmentId: 'legacy-host-image-id', mediaType: 'image/png' }
+  const config = { freeFallback: false, localOnlyVision: true, progressiveTools: false }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const originalGet = ctx.get
+  let storeReads = 0
+  let filesystemReads = 0
+  let saves = 0
+  ctx.get = (name) => {
+    if (name === 'attachments') return {
+      async readImage(input) {
+        assert.equal(input.attachmentId, ref.attachmentId)
+        storeReads++
+        return { ref, data: Buffer.from('89504e470d0a1a0a0000000000000000', 'hex') }
+      },
+      async saveImage({ mediaType }) {
+        saves++
+        return { attachmentId: 'sha256:' + 'f'.repeat(64), mediaType }
+      },
+    }
+    if (name === 'fs') return {
+      async resolve() { filesystemReads++; throw new Error('attachment ID treated as a filesystem path') },
+      async readBytes() { throw new Error('unexpected fs read') },
+    }
+    return originalGet.call(ctx, name)
+  }
+  apply(ctx, Config(config))
+  const session = { id: 'legacy-id', header: { cwd: process.cwd() }, events: [] }
+  const messages = [{ role: 'user', content: [{ type: 'image', attachment: ref }] }]
+  await captured.on.get('agent/pre-step')(
+    { agent: { session }, messages, turn: 1 },
+    async () => ({ messages }),
+  )
+  const tool = captured.tools.find((def) => def.name === 'vision_describe')
+  const output = await tool.execute(
+    { attachmentIds: [ref.attachmentId], question: 'describe' }, { agent: { session } },
+  )
+  assert.equal(typeof output, 'string')
+  assert.equal(storeReads, 1)
+  assert.equal(saves, 1)
+  assert.equal(filesystemReads, 0)
+})
+
+test('late completion after a canceled attachment read never begins Host publication', async () => {
+  const sourceId = 'sha256:' + 'd'.repeat(64)
+  const ref = { attachmentId: sourceId, mediaType: 'image/png' }
+  const config = { freeFallback: false, localOnlyVision: true, progressiveTools: false }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const originalGet = ctx.get
+  let finishRead
+  let saved = false
+  let seenSignal
+  const readStarted = new Promise((resolve) => { seenSignal = resolve })
+  ctx.get = (name) => name === 'attachments'
+    ? {
+      readImage(_ref, signal) {
+        seenSignal?.(signal)
+        return new Promise((resolve) => { finishRead = resolve })
+      },
+      async saveImage() { saved = true; return { attachmentId: 'never' } },
+    }
+    : originalGet.call(ctx, name)
+  apply(ctx, Config(config))
+  const session = { id: 'cancel-read', header: { cwd: process.cwd() }, events: [] }
+  const messages = [{ role: 'user', content: [{ type: 'image', attachment: ref }] }]
+  await captured.on.get('agent/pre-step')(
+    { agent: { session }, messages, turn: 1 },
+    async () => ({ messages }),
+  )
+  const controller = new AbortController()
+  const tool = captured.tools.find((def) => def.name === 'vision_describe')
+  const pending = tool.execute({ attachmentIds: [sourceId], question: 'describe' }, {
+    agent: { session }, signal: controller.signal,
+  })
+  const deliveredSignal = await readStarted
+  assert.equal(deliveredSignal, controller.signal)
+  controller.abort(new Error('the user canceled'))
+  finishRead({ ref, data: Buffer.from('89504e470d0a1a0a0000000000000000', 'hex') })
+  await assert.rejects(pending, /the user canceled/)
+  assert.equal(saved, false, 'late Host attachment bytes must never start a new write')
+})
+
+test('vision_describe fails closed when canonical publication rejects an uploaded image', async () => {
+  const sourceId = 'sha256:' + 'c'.repeat(64)
+  const ref = { attachmentId: sourceId, mediaType: 'image/png' }
+  const config = { freeFallback: false, localOnlyVision: true, progressiveTools: false }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const originalGet = ctx.get
+  const source = Buffer.from('89504e470d0a1a0a0000000000000000', 'hex')
+  let reads = 0
+  ctx.get = (name) => name === 'attachments'
+    ? {
+      async readImage() { reads++; return { ref, data: source } },
+      async saveImage() { throw new Error('simulated Host attachment store failure') },
+    }
+    : originalGet.call(ctx, name)
+  apply(ctx, Config(config))
+  const session = { id: 'describe-save-fail', header: { cwd: process.cwd() }, events: [] }
+  const messages = [{ role: 'user', content: [{ type: 'image', attachment: ref }] }]
+  await captured.on.get('agent/pre-step')(
+    { agent: { session }, messages, turn: 1 },
+    async () => ({ messages }),
+  )
+  const tool = captured.tools.find((def) => def.name === 'vision_describe')
+  await assert.rejects(
+    tool.execute({ attachmentIds: [sourceId], question: 'describe' }, { agent: { session } }),
+    /simulated Host attachment store failure/,
+  )
+  assert.equal(reads, 1, 'authorization succeeds but an invalid ref cannot reach any model')
+})
+
 test('vision_describe failure contract points attachment ids at vision_materialize (issue #153)', async () => {
   const source = (await import('node:fs')).readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert.match(source, /degradedAccess/)

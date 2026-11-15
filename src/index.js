@@ -151,6 +151,7 @@ import {
 import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
 import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
 import { currentVisionTurnBudgetSignal } from './lib/turn-budget-context.js'
+import { createVisionToolStageTrace } from './lib/vision-tool-stage.js'
 import { parseGroundingBoxResponse, assessGroundingBox } from './lib/grounding-box-recovery.js'
 import { createHash } from 'node:crypto'
 import {
@@ -2880,102 +2881,75 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
         const blocks = []
         const contentIds = []
-
+        const taskSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+        const stage = createVisionToolStageTrace(ctx.logger, 'vision_describe', taskSignal)
         const paths = Array.isArray(args.paths) ? args.paths : []
         const attachmentIds = Array.isArray(args.attachmentIds) ? args.attachmentIds : []
         if (paths.length + attachmentIds.length === 0 || paths.length + attachmentIds.length > 4) {
           throw new Error('vision_describe: provide 1-4 images via paths and/or attachmentIds')
         }
-        // Preserve only durable upload ids for a deterministic offline fallback.
-        // Never expose or guess the attachment store's private filesystem path.
-        const materializableAttachmentIds = [...new Set([
-          ...attachmentIds.map((id) => String(id)).filter((id) => isAttachmentIdInput(id)),
-          ...paths.map((item) => String(item)).filter((item) => isAttachmentIdInput(item)),
+        // Both argument forms now use the exact same read -> normalize ->
+        // downscale -> save path. The old attachmentIds-only path could retain
+        // an oversized original ref after resize publication failed.
+        const sources = [...paths, ...attachmentIds]
+        const materializableAttachmentIds = [...new Set(
+          sources.map((value) => String(value)).filter((value) => isAttachmentIdInput(value)),
+        )]
+        // attachmentIds is always an attachment namespace, even for a legacy
+        // Host whose authorized IDs do not yet have a sha256: prefix.
+        const requestedRefs = [...new Set([
+          ...attachmentIds.map((value) => String(value)),
+          ...paths.map((value) => String(value)).filter((value) => isAttachmentIdInput(value)),
         ])]
-        const attachmentSession = exec && exec.agent && exec.agent.session
-        const resolvedAttachmentRefs = materializableAttachmentIds.length > 0
-          ? await resolveAttachments(attachmentSession, materializableAttachmentIds)
+        const attachmentSession = exec?.agent?.session
+        const resolvedAttachmentRefs = requestedRefs.length > 0
+          ? await stage('resolve-upload-refs', () =>
+            resolveAttachments(attachmentSession, requestedRefs))
           : new Map()
 
-        for (const path of paths) {
+        for (const [index, item] of sources.entries()) {
+          const source = String(item)
+          const attachmentInput = index >= paths.length
           let bytes
           let mediaType
           try {
-            // readImageBytes accepts both filesystem paths and attachment ids
-            // ("sha256:..."), so a model that passes an uploaded image's id as
-            // a path gets the right pixels instead of a not-found error.
-            ;({ bytes, mediaType } = await readImageBytes(exec, path, resolvedAttachmentRefs))
+            ;({ bytes, mediaType } = await stage('read-image-' + index, () =>
+              readImageBytes(exec, source, resolvedAttachmentRefs, attachmentInput)))
           } catch (error) {
             throw new Error(
-              `vision_describe: failed to read ${path} (${error && error.message ? error.message : String(error)})`,
+              `vision_describe: failed to read ${source} (${error && error.message ? error.message : String(error)})`,
+              { cause: error },
             )
           }
           if (downscaleEnabled()) {
-            const resized = await downscaleImage(bytes, downscaleMaxPixels())
+            const resized = await stage('downscale-image-' + index, () =>
+              downscaleImage(bytes, downscaleMaxPixels(), { signal: taskSignal }))
             if (resized !== bytes) {
-              ctx.logger?.info('vision-router: downscaled %s for the vision call', path)
+              ctx.logger?.info('vision-router: downscaled vision input index=%d', index)
             }
             bytes = resized
           }
+          // Always publish canonical bytes, including an uploaded image.
+          // Host adapters then read the verified/downsized version, never a
+          // stale or mismatched original attachment reference.
           let ref
           try {
-            ref = await attachments.saveImage({
+            ref = await stage('save-normalized-image-' + index, () => attachments.saveImage({
               data: bytes,
               mediaType,
-              ...(isAttachmentIdInput(path) || basenameOf(path) === undefined
+              ...(attachmentInput || isAttachmentIdInput(source) || basenameOf(source) === undefined
                 ? {}
-                : { name: basenameOf(path) }),
-            })
+                : { name: basenameOf(source) }),
+            }))
           } catch (error) {
             throw new Error(
-              `vision_describe: image ${path} was rejected (${error && error.message ? error.message : String(error)})`,
+              `vision_describe: image ${source} was rejected (${error && error.message ? error.message : String(error)})`,
+              { cause: error },
             )
           }
+          throwIfVisionTaskAborted(taskSignal)
           contentIds.push(String(ref.attachmentId))
           blocks.push({ type: 'image', attachment: ref })
-        }
-
-        for (const id of attachmentIds) {
-          const attachmentId = String(id)
-          const ref = isAttachmentIdInput(attachmentId)
-            ? resolvedAttachmentRefs.get(attachmentId)
-            : await resolveAttachment(attachmentSession, attachmentId)
-          if (ref === undefined) {
-            throw new Error(
-              `vision_describe: unknown attachment id "${id}" (it must come from an image uploaded in this conversation)`,
-            )
-          }
-          let stored
-          try {
-            stored = await attachments.readImage(ref)
-          } catch (error) {
-            throw new Error(
-              `vision_describe: failed to read attachment ${id} (${error && error.message ? error.message : String(error)})`,
-            )
-          }
-          // Downscale oversized uploads before the vision call: retina
-          // screenshots easily reach 10MP+ and the vision encoder's cost
-          // scales with pixels — a full-size upload is the dominant part of
-          // the tool-call latency. Re-save a resized attachment so the
-          // adapter reads the small one.
-          if (downscaleEnabled() && stored.data && stored.data.length > 0) {
-            const resized = await downscaleImage(stored.data, downscaleMaxPixels())
-            if (resized !== stored.data) {
-              try {
-                const resizedRef = await attachments.saveImage({
-                  data: resized,
-                  mediaType: stored.ref && stored.ref.mediaType ? stored.ref.mediaType : 'image/png',
-                  ...(stored.ref && stored.ref.name ? { name: stored.ref.name } : {}),
-                })
-                stored = { ref: resizedRef, data: resized }
-                ctx.logger?.info('vision-router: downscaled attachment %s for the vision call', id)
-              } catch {
-                stored = { ...stored, data: resized }
-              }
-            }
-          }
-          contentIds.push(String(ref.attachmentId))
-          blocks.push({ type: 'image', attachment: stored.ref })
         }
 
         const question = String(args.question ?? '')
@@ -2983,7 +2957,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         // Keep the adapter path and direct OpenAI-compatible HTTP path on the
         // exact same prompt, including the structured JSON evidence contract.
         const promptText = visionDescribePrompt(question, wantJson)
-        const usablePairs = await resolveToolVisionPairs()
+        const usablePairs = await stage('resolve-vision-backends', () => resolveToolVisionPairs())
         // Freeze this task's direct fallback list: settings changes take effect
         // on the next call, never halfway through one fallback walk.
         const httpFallbacks = httpProviders()
@@ -3225,7 +3199,8 @@ ctx.logger?.info(
             const openAIBlocks = []
             for (const block of blocks) {
               if (block.type === 'image' && block.attachment) {
-                const stored = await attachments.readImage(block.attachment)
+                const stored = await attachments.readImage(block.attachment, taskSignal)
+                throwIfVisionTaskAborted(taskSignal)
                 openAIBlocks.push(toOpenAIContent([block], () => stored.data)[0])
               } else {
                 openAIBlocks.push({ type: 'text', text: block.text })
@@ -3498,11 +3473,13 @@ ctx.logger?.info(
       return String(attachmentIds[0]).trim()
     }
 
-    const readImageBytes = async (exec, imagePath, resolvedAttachmentRefs) => {
+    const readImageBytes = async (exec, imagePath, resolvedAttachmentRefs, attachmentInput = false) => {
       const input = String(imagePath ?? '')
+      const signal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+      throwIfVisionTaskAborted(signal)
       let bytes
       let storedMediaType
-      if (isAttachmentIdInput(input)) {
+      if (attachmentInput || isAttachmentIdInput(input)) {
         // Uploaded images reach the tool arguments as durable attachment ids
         // ("sha256:..."); resolve them through the session's recorded upload
         // index instead of treating the id as a filesystem path.
@@ -3522,7 +3499,8 @@ ctx.logger?.info(
         }
         let stored
         try {
-          stored = await attachments.readImage(ref)
+          stored = await attachments.readImage(ref, signal)
+          throwIfVisionTaskAborted(signal)
         } catch (error) {
           throw new Error(
             `vision-router: failed to read attachment ${input} (${error && error.message ? error.message : String(error)})`,
@@ -3536,7 +3514,9 @@ ctx.logger?.info(
         const fs = ctx.get('fs')
         if (fs === undefined) throw new Error('vision-router: the fs service is not available')
         const target = await fs.resolve(input)
-        bytes = await fs.readBytes(target, undefined, 20 * 1024 * 1024)
+        throwIfVisionTaskAborted(signal)
+        bytes = await fs.readBytes(target, signal, 20 * 1024 * 1024)
+        throwIfVisionTaskAborted(signal)
       }
       // Attachments are stored as content-addressed files without an
       // extension: sniff the format from the bytes, and fall back to the
