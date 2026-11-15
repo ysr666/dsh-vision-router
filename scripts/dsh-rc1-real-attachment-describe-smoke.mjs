@@ -98,21 +98,45 @@ async function mount(home) {
 }
 
 async function executeDescribe(ctx, agent, attachmentId, shouldSucceed = true) {
-  // Use the exact definition published to the real Host's ToolService.
-  // Scoped Host admission is separate and is covered by the existing Agent
-  // lifecycle gates. This contract exercises Session, AttachmentStore and
-  // the entire registered vision_describe implementation without network.
-  const definition = ctx.tools.get('vision_describe')
-  assert.equal(typeof definition?.execute, 'function', 'Host must register vision_describe')
-  const call = () => definition.execute(
-    { attachmentIds: [attachmentId], question: 'identify the uploaded test image' },
-    { agent, signal: AbortSignal.timeout(8000), callId: ToolCallId('rc1-upload-image-probe') },
-  )
-  if (!shouldSucceed) {
-    await assert.rejects(call, /unknown attachment id|not authorized|uploaded in this conversation/)
-    return
+  // Exercise the *Host-owned* NativeToolExecutor pipeline, including per-Agent
+  // tool admission, argument parsing, cancellation and canonical result
+  // publication. Directly invoking a registered definition would miss these
+  // seams and allow an unrelated dispatch regression to escape CI.
+  const signal = AbortSignal.timeout(8000)
+  const admitted = await ctx.tools.resolve({
+    agent,
+    modelSelection: { provider: 'rc1-offline-mm-vision', model: 'probe' },
+    signal,
+  })
+  try {
+    const batch = await ctx.tools.execute({
+      calls: [{
+        type: 'tool-call',
+        id: ToolCallId('rc1-upload-image-probe'),
+        name: 'vision_describe',
+        arguments: JSON.stringify({
+          attachmentIds: [attachmentId],
+          question: 'identify the uploaded test image',
+        }),
+      }],
+      agent,
+      toolSet: admitted,
+      signal,
+    })
+    assert.equal(batch.results.length, 1)
+    const result = batch.results[0].result
+    if (!shouldSucceed) {
+      assert.equal(result.isError, true, 'foreign attachment ID must be rejected')
+      const message = result.content?.filter(block => block.type === 'text')
+        .map(block => block.text).join(' ') ?? ''
+      assert.match(message, /unknown attachment id|not authorized|uploaded in this conversation/)
+      return
+    }
+    assert.equal(result.isError, false, 'authorized upload must return a successful canonical tool result')
+    assert.equal(result.value, RESULT, 'real Host attached image must reach the offline vision model')
+  } finally {
+    admitted.dispose()
   }
-  assert.equal(await call(), RESULT, 'real Host attached image must reach offline visual model')
 }
 
 const root = await mkdtemp(path.join(tmpdir(), 'dvr-rc1-upload-'))
