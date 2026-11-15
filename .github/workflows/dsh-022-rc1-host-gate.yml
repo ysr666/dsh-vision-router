@@ -96,16 +96,17 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
-      - name: Real rc1 attachmentIds describe (hot, cold resume, Session isolation)
+      - name: Build exact macOS Desktop runtime
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-rc1
+        run: pnpm run build
+      - name: Real rc1 attachmentIds describe on macOS after native Host build
+        if: matrix.os == 'macos-latest'
         working-directory: dsh-rc1
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-rc1-real-attachment-describe-smoke.mjs
-      - name: Build exact macOS Desktop runtime
-        if: matrix.os == 'macos-latest'
-        working-directory: dsh-rc1
-        run: pnpm run build
       - name: Run real macOS Desktop renderer lifecycle
         if: matrix.os == 'macos-latest'
         working-directory: dsh-rc1
@@ -184,6 +185,12 @@ jobs:
       - name: Build the rc1 Host runtime
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Real rc1 attachmentIds describe on Ubuntu after native Host build
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-rc1-real-attachment-describe-smoke.mjs
       - name: Prefer official Ubuntu apt mirror for Chromium dependencies
         run: bash dvr/scripts/ci-prefer-ubuntu-archive.sh
       - name: Install Chromium
