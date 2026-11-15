@@ -4,6 +4,7 @@ import type {
   SessionVisionStateStore,
 } from './session-vision-state.js'
 import { legacySessionEvents } from './session-event-history-compat.js'
+import { sessionImageAttachmentRefs } from './vision-attachment-handle-runtime.js'
 
 type UnknownRecord = Record<PropertyKey, unknown>
 
@@ -170,13 +171,34 @@ export function createSessionVisionAttachmentIndex({
     }
     if (missing.length === 0 || session === undefined) return resolved
 
+    // Modern Session.deriveMessages() gives Session-owned image references
+    // without acquiring the Host SessionQuery observation lease. This is the
+    // same authorized source already used for projected short image handles.
+    // Especially on a cold resumed Session, avoid waiting on full-log I/O
+    // when all requested images are already present in derived messages.
+    const wanted = new Set(missing)
+    const fromSession: SessionVisionAttachmentRef[] = []
+    for (const value of sessionImageAttachmentRefs(session)) {
+      const ref = attachmentRef(value)
+      if (ref === undefined) continue
+      const id = attachmentIdOf(ref)
+      if (!wanted.has(id)) continue
+      wanted.delete(id)
+      resolved.set(id, ref)
+      fromSession.push(ref)
+      if (wanted.size === 0) break
+    }
+    if (fromSession.length > 0) stateStore.recordAttachments(session, fromSession)
+    if (wanted.size === 0) return resolved
+    const remaining = missing.filter((id) => wanted.has(id))
+
     let events: unknown
     if (typeof readSessionLog === 'function') {
       let result: unknown
       try {
         result = await readSessionLog(session)
       } catch (error) {
-        warnAttachmentRecoveryFailure(session, missing[0], error)
+        warnAttachmentRecoveryFailure(session, remaining[0], error)
         return resolved
       }
 
@@ -188,7 +210,7 @@ export function createSessionVisionAttachmentIndex({
       } else if (resultRecord?.supported !== false) {
         warnAttachmentRecoveryFailure(
           session,
-          missing[0],
+          remaining[0],
           new Error('Session log reader returned an invalid capability result'),
         )
         return resolved
@@ -199,7 +221,7 @@ export function createSessionVisionAttachmentIndex({
     // compatibility fallback. Advertised reader failures above never fall back.
     if (events === undefined) events = legacySessionEvents(session)
 
-    const recovered = recoverAttachmentsFromEvents(session, missing, events)
+    const recovered = recoverAttachmentsFromEvents(session, remaining, events)
     for (const [id, ref] of recovered) resolved.set(id, ref)
     return resolved
   }

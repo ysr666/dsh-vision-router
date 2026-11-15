@@ -176,6 +176,71 @@ test('bounded attachment eviction keeps sync lookup cache-only and recovers thro
   assert.equal(store.stateStats(session).attachments, 1)
 })
 
+test('cold attachment recovery uses the current Session-derived image before full Host SessionQuery', async () => {
+  let historyCalls = 0
+  const image = ref('sha256:' + 'a'.repeat(64))
+  const session = {
+    id: 'derived-cold',
+    deriveMessages() {
+      return [
+        { role: 'user', content: [{ type: 'image', attachment: image }] },
+      ]
+    },
+  }
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore({ attachmentMaxEntries: 2 }),
+    core: coreStub(),
+    readSessionLog: async () => {
+      historyCalls++
+      return new Promise(() => {})
+    },
+  })
+  const resolved = await index.resolveAttachments(session, [image.attachmentId])
+  assert.equal(resolved.get(image.attachmentId), image)
+  assert.equal(index.lookupAttachment(session, image.attachmentId), image)
+  assert.equal(historyCalls, 0, 'known current Session image never waits for full-log observation')
+})
+
+test('cold recovery never treats an image in a different Session as authorized', async () => {
+  const foreign = ref('sha256:' + 'b'.repeat(64))
+  let calls = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionLog: async () => { calls++; return { supported: true, events: [] } },
+  })
+  const original = {
+    id: 'derived-owner',
+    deriveMessages: () => [{ role: 'user', content: [{ type: 'image', attachment: foreign }] }],
+  }
+  const other = { id: 'different-session', deriveMessages: () => [] }
+  assert.equal((await index.resolveAttachment(original, foreign.attachmentId))?.attachmentId, foreign.attachmentId)
+  assert.equal(await index.resolveAttachment(other, foreign.attachmentId), undefined)
+  assert.equal(calls, 1, 'foreign image still fails through own Session log')
+})
+
+test('partial derived image recovery reads only the missing refs from SessionQuery', async () => {
+  const recent = ref('recent-image')
+  const older = ref('older-image')
+  let historyCalls = 0
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    readSessionLog: async () => {
+      historyCalls++
+      return { supported: true, events: [{ type: 'user/message', data: { refs: [older] } }] }
+    },
+  })
+  const session = {
+    id: 'partial-derived',
+    deriveMessages: () => [{ role: 'user', content: [{ type: 'image', attachment: recent }] }],
+  }
+  const result = await index.resolveAttachments(session, [recent.attachmentId, older.attachmentId])
+  assert.equal(result.get(recent.attachmentId), recent)
+  assert.equal(result.get(older.attachmentId), older)
+  assert.equal(historyCalls, 1)
+})
+
 test('batch attachment recovery reads one Session log and returns all requested refs beyond cache capacity', async () => {
   const events = [
     { type: 'user/message', data: { refs: [ref('one'), ref('two'), ref('three')] } },
