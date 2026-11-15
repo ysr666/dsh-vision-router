@@ -96,6 +96,12 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
+      - name: Real rc1 attachmentIds describe (hot, cold resume, Session isolation)
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-rc1-real-attachment-describe-smoke.mjs
       - name: Build exact macOS Desktop runtime
         if: matrix.os == 'macos-latest'
         working-directory: dsh-rc1
@@ -281,6 +287,12 @@ jobs:
       - name: Build exact Desktop runtime
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Real rc1 attachmentIds describe on Windows (hot, cold, isolation)
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: node --import tsx ../dvr/scripts/dsh-rc1-real-attachment-describe-smoke.mjs
       - name: Run authenticated Desktop Host contract
         working-directory: dsh-rc1
         env:
