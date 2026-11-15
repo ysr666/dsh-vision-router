@@ -1025,20 +1025,35 @@ export function apply(ctx, config = {}, runtime = {}) {
               }
               if (attachments === undefined) continue
               try {
-                const stored = await attachments.readImage(block.attachment)
+                throwIfVisionTaskAborted(options.signal)
+                const stored = await attachments.readImage(block.attachment, options.signal)
+                throwIfVisionTaskAborted(options.signal)
                 // Last-mile guard: never send oversized images to the vision
                 // endpoint — encoder cost scales with pixels and dominates
                 // tool-call latency on retina screenshots.
                 let bytes = stored.data
                 if (downscaleEnabled() && bytes && bytes.length > 0) {
                   bytes = await downscaleImage(bytes, downscaleMaxPixels())
+                  throwIfVisionTaskAborted(options.signal)
                 }
                 content.push(...toOpenAIContent([block], () => bytes))
               } catch (error) {
-                ctx.logger?.warn(
-                  'vision-http: failed to read image attachment: %s',
-                  error && error.message ? error.message : String(error),
-                )
+                throwIfVisionTaskAborted(options.signal, error)
+                // A text-only completion here would falsely claim the model
+                // saw pixels. Fail this backend immediately and let the
+                // normal vision fallback chain choose another backend.
+                ctx.logger?.warn('vision-http: retained image delivery failed; refusing text-only downgrade')
+                yield {
+                  type: 'finish',
+                  reason: {
+                    kind: 'error',
+                    failure: {
+                      code: 'VISION_IMAGE_DELIVERY_UNAVAILABLE',
+                      message: 'vision-http: retained image could not be delivered to the model',
+                    },
+                  },
+                }
+                return
               }
             } else if (block && block.type === 'tool-result') {
               // The OpenAI wire has no tool-call frames to hang a `role: tool`
@@ -1703,7 +1718,9 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     const content = []
     for (const block of blocks) {
-      const stored = await attachments.readImage(block.attachment)
+      throwIfVisionTaskAborted(options.signal)
+      const stored = await attachments.readImage(block.attachment, options.signal)
+      throwIfVisionTaskAborted(options.signal)
       content.push(...toOpenAIContent([block], () => stored.data))
     }
     return callOpenAIWithProviderTransport(
@@ -1799,14 +1816,18 @@ export function apply(ctx, config = {}, runtime = {}) {
       throw new Error('corrected route: the attachment service is not registered')
     }
     const bytesOf = async (attachment) => {
-      const stored = await attachments.readImage(attachment)
+      throwIfVisionTaskAborted(options.signal)
+      const stored = await attachments.readImage(attachment, options.signal)
+      throwIfVisionTaskAborted(options.signal)
       let bytes = stored.data
       if (downscaleEnabled() && bytes && bytes.length > 0) {
         bytes = await downscaleImage(bytes, downscaleMaxPixels())
+        throwIfVisionTaskAborted(options.signal)
       }
       return bytes
     }
     const anthropic = await toAnthropicMessages(messages, bytesOf)
+    throwIfVisionTaskAborted(options.signal)
     if (anthropic.messages.length === 0) {
       throw new Error(`corrected route "${pair.provider}/${pair.model}": no representable content to send`)
     }
@@ -3026,7 +3047,7 @@ export function apply(ctx, config = {}, runtime = {}) {
             0,
           )
 
-        for (const pair of usablePairs) {
+        for (const [pairIndex, pair] of usablePairs.entries()) {
           if (localOnlyVisionEnabled(current()) && !isLocalBackendPair(pair)) {
             errors.push(`${pair.provider}/${pair.model}: skipped (local-only vision policy)`)
             continue
@@ -3039,7 +3060,8 @@ export function apply(ctx, config = {}, runtime = {}) {
             break
           }
           const backendKey = `${pair.provider}/${pair.model}`
-          const fingerprint = await credentialFingerprintFor({ provider: pair.provider })
+          const fingerprint = await stage('adapter-auth-' + pairIndex, () =>
+            credentialFingerprintFor({ provider: pair.provider }))
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
@@ -3068,15 +3090,16 @@ export function apply(ctx, config = {}, runtime = {}) {
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
-            const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-            let text = await callVisionPairWithOptionalBridge(pair, messages, {
+            const capability = await stage('adapter-capability-' + pairIndex, () =>
+              resolveVisionBackendCapability(pair.provider, pair.model))
+            let text = await stage('adapter-request-' + pairIndex, () => callVisionPairWithOptionalBridge(pair, messages, {
               maxTokens: 4096,
               signal,
               sessionId,
               capability,
               bridgeBlocks: blocks,
               bridgeInstruction: promptText,
-            })
+            }))
 assertNoRepetitionLoop(text, backendKey)
 ctx.logger?.info(
               'vision-router: vision call %s ok (%d chars, %d ms)',
@@ -3108,7 +3131,7 @@ ctx.logger?.info(
                     },
                   ]
                   attemptStarted = Date.now()
-                  text = await callVisionPairWithOptionalBridge(pair, messages, {
+                  text = await stage('adapter-json-correction-' + pairIndex, () => callVisionPairWithOptionalBridge(pair, messages, {
                     maxTokens: 4096,
                     signal,
                     sessionId,
@@ -3116,7 +3139,7 @@ ctx.logger?.info(
                     bridgeBlocks: blocks,
                     bridgeInstruction:
                       promptText + '\n\nThat output was not valid JSON. Respond with ONLY a valid JSON object now.',
-                  })
+                  }))
 assertNoRepetitionLoop(text, backendKey)
 ctx.logger?.info(
                     'vision-router: vision call %s ok after JSON correction (%d chars, %d ms)',
@@ -3172,7 +3195,7 @@ ctx.logger?.info(
         // Direct HTTP providers (built-in keyless OVHcloud by default) are the
         // final fallbacks: they bypass the harness llm service entirely, so the
         // anonymous free endpoint works without any credential.
-        for (const provider of httpFallbacks) {
+        for (const [httpIndex, provider] of httpFallbacks.entries()) {
           if (localOnlyVisionEnabled(current()) && !isLoopbackVisionBaseURL(provider?.baseURL)) {
             errors.push(`http:${provider?.name}/${provider?.model}: skipped (local-only vision policy)`)
             continue
@@ -3185,7 +3208,8 @@ ctx.logger?.info(
             break
           }
           const backendKey = `http:${provider.name}/${provider.model}`
-          const fingerprint = await credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv })
+          const fingerprint = await stage('http-auth-' + httpIndex, () =>
+            credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv }))
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
@@ -3197,16 +3221,19 @@ ctx.logger?.info(
           let attemptStarted = Date.now()
           try {
             // Precompute bytes once per block (attachments.readImage is async).
-            const openAIBlocks = []
-            for (const block of blocks) {
-              if (block.type === 'image' && block.attachment) {
-                const stored = await attachments.readImage(block.attachment, taskSignal)
-                throwIfVisionTaskAborted(taskSignal)
-                openAIBlocks.push(toOpenAIContent([block], () => stored.data)[0])
-              } else {
-                openAIBlocks.push({ type: 'text', text: block.text })
+            const openAIBlocks = await stage('http-image-delivery-' + httpIndex, async () => {
+              const converted = []
+              for (const block of blocks) {
+                if (block.type === 'image' && block.attachment) {
+                  const stored = await attachments.readImage(block.attachment, taskSignal)
+                  throwIfVisionTaskAborted(taskSignal)
+                  converted.push(toOpenAIContent([block], () => stored.data)[0])
+                } else {
+                  converted.push({ type: 'text', text: block.text })
+                }
               }
-            }
+              return converted
+            })
             // Direct HTTP providers must receive the same image + question as
             // adapter-backed providers. Some endpoints (e.g. Zhipu GLM) reject
             // a pure-image user message even when permissive endpoints accept it.
@@ -3229,7 +3256,10 @@ ctx.logger?.info(
               AbortSignal.timeout(attemptBudgetMs),
             )
             const askHttp = async (correction) => {
-              const answer = await awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
+              const phase = correction === undefined
+                ? 'http-request-' + httpIndex : 'http-json-correction-' + httpIndex
+              const answer = await stage(phase, () =>
+                awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
                 provider,
                 correction === undefined
                   ? openAIBaseMessages
@@ -3243,7 +3273,7 @@ ctx.logger?.info(
                   sessionId,
                   resolveCredential,
                 },
-              ))
+              )))
               return answer
             }
             let text = await askHttp(undefined)

@@ -4264,6 +4264,111 @@ test('batch3: direct OpenAI success bodies are rejected before oversized JSON al
 // `reasoning: off`, different wire) while every other path (instant local
 // describe, vision_screenshot identify) used the native transport.
 
+test('vision_describe stage trace covers the actual adapter request, not only image preprocessing', async () => {
+  const config = {
+    providers: [{ provider: 'diagnostic-vision-provider', model: 'probe-model' }],
+    freeFallback: false,
+    progressiveTools: false,
+    downscale: false,
+    cache: false,
+  }
+  const { ctx, captured } = mockHarnessCtx({ attachments: true, config0: config })
+  const originalGet = ctx.get
+  const pixels = Buffer.from('89504e470d0a1a0a0000000000000000', 'hex')
+  ctx.get = (name) => name === 'fs'
+    ? {
+      async resolve(value) { return value },
+      async readBytes() { return pixels },
+    }
+    : originalGet.call(ctx, name)
+  ctx.llm.registerAdapter(['diagnostic-vision-provider'], {
+    providerInfo(provider) { return { id: provider, name: provider } },
+    providerRetryPolicy() { return undefined },
+    listModels: async (provider) => [{ provider, id: 'probe-model', inputModalities: ['text', 'image'] }],
+    resolveModel: async (provider, model) =>
+      ({ provider, id: model, name: model, inputModalities: ['text', 'image'] }),
+  })
+  ctx.llm.stream = async function* (options) {
+    assert.equal(options.provider, 'diagnostic-vision-provider')
+    assert.equal(options.model, 'probe-model')
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: 'photo seen' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: 'photo seen' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+  const stages = []
+  ctx.logger = {
+    info(template, ...args) {
+      if (template.includes('stage=%s')) stages.push({ stage: args[2], status: args[3] })
+    },
+    warn() {},
+    error() {},
+  }
+  apply(ctx, Config(config))
+  const tool = captured.tools.find((def) => def.name === 'vision_describe')
+  assert.equal(
+    await tool.execute({ paths: ['probe.png'], question: 'describe' }, {
+      agent: { session: { id: 'trace-model', header: { cwd: process.cwd() } } },
+    }),
+    'photo seen',
+  )
+  assert.ok(stages.some((row) => row.stage === 'adapter-request-0' && row.status === 'begin'))
+  assert.ok(stages.some((row) => row.stage === 'adapter-request-0' && row.status === 'ok'))
+  assert.ok(stages.some((row) => row.stage === 'save-normalized-image-0' && row.status === 'ok'))
+  assert.ok(stages.every((row) => !JSON.stringify(row).includes('probe.png')))
+})
+
+test('vision-http fails closed if a retained image cannot be read, never sending an image-free model request', async () => {
+  const { ctx } = mockHarnessCtx({
+    config0: { localLmStudio: { enabled: true, model: 'qwen2.5-vl', format: 'lmstudio' } },
+  })
+  const originalGet = ctx.get
+  const seen = []
+  ctx.get = (name) => name === 'attachments'
+    ? {
+      async readImage(_ref, signal) {
+        seen.push(signal)
+        throw new Error('simulated private store path should not leak')
+      },
+    }
+    : originalGet.call(ctx, name)
+  apply(ctx, Config({ localLmStudio: { enabled: true, model: 'qwen2.5-vl', format: 'lmstudio' } }))
+  const adapter = ctx.llm.registration('vision-http').adapter
+  const controller = new AbortController()
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls++
+    throw new Error('text-only remote fallback must not happen')
+  }
+  try {
+    const result = []
+    for await (const chunk of adapter.stream({
+      model: 'local-lmstudio/qwen2.5-vl',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', attachment: { attachmentId: 'sha256:' + 'a'.repeat(64), mediaType: 'image/png' } },
+          { type: 'text', text: 'describe' },
+        ],
+      }],
+      signal: controller.signal,
+    })) {
+      result.push(chunk)
+    }
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0], controller.signal)
+    assert.equal(calls, 0)
+    assert.equal(result.length, 1)
+    assert.equal(result[0].type, 'finish')
+    assert.equal(result[0].reason.kind, 'error')
+    assert.equal(result[0].reason.failure.code, 'VISION_IMAGE_DELIVERY_UNAVAILABLE')
+    assert.doesNotMatch(JSON.stringify(result), /private store path/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 test('vision-http chain routes format=lmstudio through the native local backend', async () => {
   const { ctx } = mockHarnessCtx()
   apply(ctx, Config({
