@@ -23,8 +23,8 @@ async function archiveEntries(tarball) {
     execFileAsync('tar', ['-tzf', tarball], { maxBuffer: TAR_LIST_BUFFER }),
     execFileAsync('tar', ['-tvzf', tarball], { maxBuffer: TAR_LIST_BUFFER }),
   ])
-  const names = namesText.split('\n').filter(Boolean)
-  const verbose = verboseText.split('\n').filter(Boolean)
+  const names = namesText.split(/\r?\n/).filter(Boolean)
+  const verbose = verboseText.split(/\r?\n/).filter(Boolean)
   if (names.length === 0 || names.length !== verbose.length) {
     throw new Error(`unreadable or empty npm tarball: ${tarball}`)
   }
@@ -72,10 +72,17 @@ async function packageManifest(tarball) {
 }
 
 export async function comparePackageTarballs(left, right) {
-  const [leftManifest, rightManifest] = await Promise.all([
+  // Drain both subprocess-backed manifest readers even when one fails.
+  // Otherwise a caller may remove a temporary archive while the other tar
+  // child is still reading it (especially problematic on Windows).
+  const [leftResult, rightResult] = await Promise.allSettled([
     packageManifest(left),
     packageManifest(right),
   ])
+  if (leftResult.status === 'rejected') throw leftResult.reason
+  if (rightResult.status === 'rejected') throw rightResult.reason
+  const leftManifest = leftResult.value
+  const rightManifest = rightResult.value
   return {
     exact: JSON.stringify(leftManifest) === JSON.stringify(rightManifest),
     leftManifest,

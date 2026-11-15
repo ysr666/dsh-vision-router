@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { resolveDshHome } from './doctor.js'
@@ -74,8 +74,28 @@ async function save(file, records, fsOps) {
   const temporary = `${file}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`
   const verdicts = selectRetainedVerdicts(records.values())
   await fsOps.mkdir(path.dirname(file), { recursive: true })
-  await fsOps.writeFile(temporary, JSON.stringify({ version: CACHE_VERSION, verdicts }), { encoding: 'utf8', mode: 0o600 })
-  await fsOps.rename(temporary, file)
+  try {
+    await fsOps.writeFile(temporary, JSON.stringify({ version: CACHE_VERSION, verdicts }), { encoding: 'utf8', mode: 0o600 })
+    // Windows antivirus/indexing and concurrent writers can temporarily lock
+    // an existing destination during replace. Keep the unique temporary file
+    // and retry only transient filesystem errors; never unlink the destination.
+    const delays = [5, 10, 20, 40, 80, 160]
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fsOps.rename(temporary, file)
+        break
+      } catch (error) {
+        if (!['EACCES', 'EBUSY', 'EPERM'].includes(error?.code) || attempt >= delays.length) {
+          throw error
+        }
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]))
+      }
+    }
+  } catch (error) {
+    // On a permanent error, don't accumulate orphaned cache snapshots.
+    try { await fsOps.rm(temporary, { force: true }) } catch {}
+    throw error
+  }
 }
 
 export function createImageInputVerdictStore(options = {}) {
@@ -85,6 +105,7 @@ export function createImageInputVerdictStore(options = {}) {
     mkdir: options.fsOps?.mkdir ?? mkdir,
     writeFile: options.fsOps?.writeFile ?? writeFile,
     rename: options.fsOps?.rename ?? rename,
+    rm: options.fsOps?.rm ?? rm,
   }
   const logger = options.logger
   let records = new Map()
