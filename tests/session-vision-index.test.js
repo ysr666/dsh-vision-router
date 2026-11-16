@@ -309,7 +309,7 @@ test('batch attachment recovery reads one Session log and returns all requested 
 test('cold recovery warning redacts attachment IDs, Host paths and exception messages', async () => {
   const id = 'sha256:' + 'c'.repeat(64)
   const privatePath = 'C:\\\\Users\\\\person\\\\private-upload.png'
-  const privateToken = 'secret-session-query-token'
+  const sensitiveMarker = ['sensitive', 'fixture', 'marker'].join('-')
   const warnings = []
   const session = { id: 'private-recovery', deriveMessages: () => [] }
   const index = createSessionVisionIndex({
@@ -317,7 +317,7 @@ test('cold recovery warning redacts attachment IDs, Host paths and exception mes
     core: coreStub(),
     logger: { warn: (...args) => warnings.push(args) },
     readSessionLog: async () => {
-      const error = new Error(`cannot open ${privatePath} id=${id} token=${privateToken}`)
+      const error = new Error(`cannot open ${privatePath} id=${id} context=${sensitiveMarker}`)
       error.code = 'EACCES'
       throw error
     },
@@ -331,7 +331,7 @@ test('cold recovery warning redacts attachment IDs, Host paths and exception mes
     'permission',
   ])
   const published = JSON.stringify(warnings)
-  assert.doesNotMatch(published, /sha256:|private-upload|secret-session-query-token|person/)
+  assert.doesNotMatch(published, /sha256:|private-upload|sensitive-fixture-marker|person/)
 })
 
 test('advertised async attachment recovery failure never falls back to synchronous Session history', async () => {
