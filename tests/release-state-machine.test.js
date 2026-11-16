@@ -270,11 +270,38 @@ test('release verification preserves and actually runs the VTracer prepack licen
   assert.equal(pkg.scripts['license:check'],
     'node scripts/verify-runtime-licenses.mjs && node scripts/verify-native-ocr-licenses.mjs')
   assert.match(workflow, /prepack: 'pnpm license:check && pnpm build'/)
-  assert.match(workflow, /'license:check': 'node scripts\/verify-runtime-licenses\.mjs'/)
+  assert.ok(workflow.includes(
+    "'license:check': 'node scripts/verify-runtime-licenses.mjs && node scripts/verify-native-ocr-licenses.mjs'"
+  ), 'release verification must require both license audits')
+
   const verify = workflow.indexOf('name: Verify runtime dependency licenses before packaging')
   const run = workflow.indexOf('run: pnpm license:check', verify)
   const build = workflow.indexOf('name: Build canonical package artifacts')
   const pack = workflow.indexOf('name: Preflight exact packed contract before irreversible tag')
   assert.ok(verify > 0 && run > verify && build > run && pack > build,
     'release verify must execute the license gate before build and pre-tag packaging')
+})
+
+test('release regression manifest actually executes native OCR tests, not license-check arguments', () => {
+  const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
+  const steps = pkg.scripts.test.split(/\s*&&\s*/)
+  assert.equal(steps.filter(step => step === 'pnpm license:check').length, 1)
+  const native = steps.find(step => step.startsWith('node --test tests/native-ocr-annotation-risk.test.js '))
+  assert.ok(native, 'native OCR regression stage must invoke node --test')
+  for (const file of [
+    'tests/native-ocr-annotation-risk.test.js',
+    'tests/native-ocr-bundle.test.js',
+    'tests/native-ocr-canary.test.js',
+    'tests/native-ocr-chemistry-review.test.js',
+    'tests/native-ocr-document.test.js',
+    'tests/native-ocr-host-canary.test.js',
+    'tests/native-ocr-installation.test.js',
+    'tests/native-ocr-integrity.test.js',
+    'tests/native-ocr-provenance.test.js',
+    'tests/native-ocr-question-labels.test.js',
+    'tests/native-ocr-supervisor.test.js',
+    'tests/issue-836-ocr-regression.test.js',
+  ]) assert.ok(native.includes(file), 'missing native OCR test: ' + file)
+  assert.equal(steps.some(step => /pnpm license:check\s+tests\//.test(step)), false,
+    'test files must never be forwarded as license-check CLI args')
 })
