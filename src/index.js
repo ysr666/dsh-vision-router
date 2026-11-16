@@ -2903,9 +2903,10 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
         const blocks = []
         const contentIds = []
-        // Own the *whole* operation, including cold SessionQuery recovery and
-        // image normalization. Previously this clock started only after those
-        // stages, letting attachmentIds stall until the Host's ~120s watchdog.
+        // One shared deadline for the WHOLE task: image preflight, every
+        // provider, fallback and JSON correction draw from one clock.
+        // Previously the clock started after SessionQuery/image loading,
+        // leaving attachmentIds vulnerable to the Host's ~120s watchdog.
         const hostSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
         const deadline = createDeadline(visionTaskTimeoutMs())
         const taskSignal = combineSignals(hostSignal, deadline.signal())
