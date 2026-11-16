@@ -87,16 +87,15 @@ export function runIsolatedTraceProcess({
             windowsHide: true,
             env: childEnv,
           })
-          child.once('close', release)
           child.once('message', (message) => {
             if (message?.ok === true && typeof message.svg === 'string') pendingSvg = message.svg
             else finish(new Error('vector trace process returned an invalid result'))
           })
-          child.once('error', () => {
-            finish(new Error('vector trace process startup failed'))
-            if (child?.pid === undefined) release()
-          })
-          child.once('exit', (code, termSignal) => {
+          child.once('error', () => finish(new Error('vector trace process startup failed')))
+          child.once('close', (code, termSignal) => {
+            // Do not resolve a healthy result before the IPC pipe is closed
+            // and this process' concurrency slot has actually been released.
+            release()
             if (finished) return
             if (code === 0 && typeof pendingSvg === 'string') finish(undefined, pendingSvg)
             else finish(new Error('vector trace process exited before producing SVG (' +
