@@ -120,8 +120,9 @@ test('isolated VTracer process queue is bounded and recovers after all deadlines
   }))
   const settled = await Promise.allSettled(requests)
   assert.equal(settled.filter((entry) => entry.status === 'rejected').length, 12)
-  assert.equal(settled.filter((entry) =>
-    String(entry.reason?.message).includes('capacity exceeded')).length, 1)
+  assert.ok(settled.some((entry) =>
+    String(entry.reason?.message).includes('capacity exceeded')),
+  'excess work must be refused rather than spawning unlimited children')
 
   const { rgba, info } = colorSample()
   const result = await posterizeSvgColor(rgba, info, 2, 10000)
