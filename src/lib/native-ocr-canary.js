@@ -10,8 +10,10 @@ import { verifyNativeOcrAssets } from './native-ocr-integrity.js'
 const MAX_TIME_MS = 22_000
 const MAX_DECODE_INPUT_BYTES = 24 * 1024 * 1024
 const MAX_INPUT_PIXELS = 16_000_000
-// EXPERIMENTAL binary build identities only. Must be replaced with signed,
-// packaged, CI-built artifacts and SBOM before any release.
+// SHA-pinned experimental identities for owner-installed native OCR workers.
+// These hashes do NOT establish public redistribution clearance. A public
+// model/binary archive needs signed clean-CI builds, SBOM and all notices;
+// the JS/npm release must not silently bundle these native assets.
 export const EXPERIMENTAL_OCR_BINARY_SHA256 = Object.freeze({
   'darwin-arm64': '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204',
   'win32-x64': '2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33',
@@ -105,8 +107,9 @@ export async function decodeExperimentalOcrRgb(bytes, {
 }
 
 /**
- * Deliberately not wired to the default path. Caller must explicitly enable
- * local preview. The executable's hash AND all 5 model/charset file hashes
+ * Called only for explicit isolated canary tests or when auto mode finds an
+ * approved owner-installed native worker; absent native assets cannot enable
+ * OCR by themselves. The executable's hash AND all 5 model/charset file hashes
  * must match before the child process can be started.
  *
  * Returns full document OCR evidence for the caller to render conservatively.
