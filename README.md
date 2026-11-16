@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.2.1 stable maintenance release:** Fixes Settings bridge initialization and local/authorized remote configuration handling, and replaces the Potrace/Jimp SVG tracing dependency chain with isolated VTracer WASM. Requires DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0; old DSH/Node environments are **not** newly supported. **Existing profiles are not upgraded automatically.** Back up your profile and run the read-only `doctor --upgrade-preflight` before upgrading; keep a rollback path. Third-party Desktop generation installers have not been separately certified. See [v3.2.1 release notes](docs/releases/v3.2.1.md).
+> **v3.2.2 release candidate — not yet published:** Hardens uploaded attachment-ID recovery, whole-task vision cancellation and cache permissions; VTracer native/WASM conversion now runs in a bounded subprocess, protecting the Host from native faults. Windows package/cache portability is improved. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required; older Hosts are **not** newly supported. **Profiles are not migrated automatically.** Back up, run read-only `doctor --upgrade-preflight`, and keep a rollback path. Third-party Desktop generation installers are not independently certified. See [v3.2.2 release candidate notes](docs/releases/v3.2.2.md).
 
 ## Start here
 
@@ -611,7 +611,7 @@ exploration (LLM7.io and OVHcloud anonymous tiers) by
 
 ## Release notes and community
 
-Release details: [v3.1.3 release candidate notes](docs/releases/v3.1.3.md). Check GitHub Releases or npm for the published version.
+Release preparation: [v3.2.2 candidate notes](docs/releases/v3.2.2.md). Check GitHub Releases or npm for the actually published version.
 
 <p align="center">
   <sub>Ecosystem:</sub>

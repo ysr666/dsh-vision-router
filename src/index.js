@@ -151,6 +151,8 @@ import {
 import { currentVisionExecutionOrder } from './lib/vision-execution-order.js'
 import { applyVisionExecutionOrder } from './lib/vision-execution-order-apply.js'
 import { currentVisionTurnBudgetSignal } from './lib/turn-budget-context.js'
+import { createVisionToolStageTrace } from './lib/vision-tool-stage.js'
+import { createVisionImageInputReader } from './lib/vision-image-input-reader.js'
 import { parseGroundingBoxResponse, assessGroundingBox } from './lib/grounding-box-recovery.js'
 import { createHash } from 'node:crypto'
 import {
@@ -1023,20 +1025,35 @@ export function apply(ctx, config = {}, runtime = {}) {
               }
               if (attachments === undefined) continue
               try {
-                const stored = await attachments.readImage(block.attachment)
+                throwIfVisionTaskAborted(options.signal)
+                const stored = await attachments.readImage(block.attachment, options.signal)
+                throwIfVisionTaskAborted(options.signal)
                 // Last-mile guard: never send oversized images to the vision
                 // endpoint — encoder cost scales with pixels and dominates
                 // tool-call latency on retina screenshots.
                 let bytes = stored.data
                 if (downscaleEnabled() && bytes && bytes.length > 0) {
                   bytes = await downscaleImage(bytes, downscaleMaxPixels())
+                  throwIfVisionTaskAborted(options.signal)
                 }
                 content.push(...toOpenAIContent([block], () => bytes))
               } catch (error) {
-                ctx.logger?.warn(
-                  'vision-http: failed to read image attachment: %s',
-                  error && error.message ? error.message : String(error),
-                )
+                throwIfVisionTaskAborted(options.signal, error)
+                // A text-only completion here would falsely claim the model
+                // saw pixels. Fail this backend immediately and let the
+                // normal vision fallback chain choose another backend.
+                ctx.logger?.warn('vision-http: retained image delivery failed; refusing text-only downgrade')
+                yield {
+                  type: 'finish',
+                  reason: {
+                    kind: 'error',
+                    failure: {
+                      code: 'VISION_IMAGE_DELIVERY_UNAVAILABLE',
+                      message: 'vision-http: retained image could not be delivered to the model',
+                    },
+                  },
+                }
+                return
               }
             } else if (block && block.type === 'tool-result') {
               // The OpenAI wire has no tool-call frames to hang a `role: tool`
@@ -1701,7 +1718,9 @@ export function apply(ctx, config = {}, runtime = {}) {
     }
     const content = []
     for (const block of blocks) {
-      const stored = await attachments.readImage(block.attachment)
+      throwIfVisionTaskAborted(options.signal)
+      const stored = await attachments.readImage(block.attachment, options.signal)
+      throwIfVisionTaskAborted(options.signal)
       content.push(...toOpenAIContent([block], () => stored.data))
     }
     return callOpenAIWithProviderTransport(
@@ -1797,14 +1816,18 @@ export function apply(ctx, config = {}, runtime = {}) {
       throw new Error('corrected route: the attachment service is not registered')
     }
     const bytesOf = async (attachment) => {
-      const stored = await attachments.readImage(attachment)
+      throwIfVisionTaskAborted(options.signal)
+      const stored = await attachments.readImage(attachment, options.signal)
+      throwIfVisionTaskAborted(options.signal)
       let bytes = stored.data
       if (downscaleEnabled() && bytes && bytes.length > 0) {
         bytes = await downscaleImage(bytes, downscaleMaxPixels())
+        throwIfVisionTaskAborted(options.signal)
       }
       return bytes
     }
     const anthropic = await toAnthropicMessages(messages, bytesOf)
+    throwIfVisionTaskAborted(options.signal)
     if (anthropic.messages.length === 0) {
       throw new Error(`corrected route "${pair.provider}/${pair.model}": no representable content to send`)
     }
@@ -2402,8 +2425,8 @@ export function apply(ctx, config = {}, runtime = {}) {
   // Host-owned proxy overrides are scoped by lib/legacy-global-proxy-boundary.js.
   // Core no longer owns or installs a process-wide proxy fetch implementation.
 
-  const resolveAttachment = (session, id) => sessionVisionIndex.resolveAttachment(session, id)
-  const resolveAttachments = (session, ids) => sessionVisionIndex.resolveAttachments(session, ids)
+  const resolveAttachment = (session, id, signal) => sessionVisionIndex.resolveAttachment(session, id, signal)
+  const resolveAttachments = (session, ids, signal) => sessionVisionIndex.resolveAttachments(session, ids, signal)
 
   // Session-local routing handoff between pre-step and agent/request. Modern
   // Hosts store one exact async raw-log tail seq; legacy Hosts retain only the
@@ -2880,102 +2903,82 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
         const blocks = []
         const contentIds = []
-
+        // One shared deadline for the WHOLE task: image preflight, every
+        // provider, fallback and JSON correction draw from one clock.
+        // Previously the clock started after SessionQuery/image loading,
+        // leaving attachmentIds vulnerable to the Host's ~120s watchdog.
+        const hostSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+        const deadline = createDeadline(visionTaskTimeoutMs())
+        const taskSignal = combineSignals(hostSignal, deadline.signal())
+        const stage = createVisionToolStageTrace(ctx.logger, 'vision_describe', taskSignal)
+        try {
         const paths = Array.isArray(args.paths) ? args.paths : []
         const attachmentIds = Array.isArray(args.attachmentIds) ? args.attachmentIds : []
         if (paths.length + attachmentIds.length === 0 || paths.length + attachmentIds.length > 4) {
           throw new Error('vision_describe: provide 1-4 images via paths and/or attachmentIds')
         }
-        // Preserve only durable upload ids for a deterministic offline fallback.
-        // Never expose or guess the attachment store's private filesystem path.
-        const materializableAttachmentIds = [...new Set([
-          ...attachmentIds.map((id) => String(id)).filter((id) => isAttachmentIdInput(id)),
-          ...paths.map((item) => String(item)).filter((item) => isAttachmentIdInput(item)),
+        // Both argument forms now use the exact same read -> normalize ->
+        // downscale -> save path. The old attachmentIds-only path could retain
+        // an oversized original ref after resize publication failed.
+        const sources = [...paths, ...attachmentIds]
+        const materializableAttachmentIds = [...new Set(
+          sources.map((value) => String(value)).filter((value) => isAttachmentIdInput(value)),
+        )]
+        // attachmentIds is always an attachment namespace, even for a legacy
+        // Host whose authorized IDs do not yet have a sha256: prefix.
+        const requestedRefs = [...new Set([
+          ...attachmentIds.map((value) => String(value)),
+          ...paths.map((value) => String(value)).filter((value) => isAttachmentIdInput(value)),
         ])]
-        const attachmentSession = exec && exec.agent && exec.agent.session
-        const resolvedAttachmentRefs = materializableAttachmentIds.length > 0
-          ? await resolveAttachments(attachmentSession, materializableAttachmentIds)
+        const attachmentSession = exec?.agent?.session
+        const resolvedAttachmentRefs = requestedRefs.length > 0
+          ? await stage('resolve-upload-refs', () =>
+            resolveAttachments(attachmentSession, requestedRefs, taskSignal))
           : new Map()
 
-        for (const path of paths) {
+        for (const [index, item] of sources.entries()) {
+          const source = String(item)
+          const attachmentInput = index >= paths.length
           let bytes
           let mediaType
           try {
-            // readImageBytes accepts both filesystem paths and attachment ids
-            // ("sha256:..."), so a model that passes an uploaded image's id as
-            // a path gets the right pixels instead of a not-found error.
-            ;({ bytes, mediaType } = await readImageBytes(exec, path, resolvedAttachmentRefs))
+            ;({ bytes, mediaType } = await stage('read-image-' + index, () =>
+              readImageBytes(exec, source, resolvedAttachmentRefs, attachmentInput)))
           } catch (error) {
             throw new Error(
-              `vision_describe: failed to read ${path} (${error && error.message ? error.message : String(error)})`,
+              `vision_describe: failed to read ${source} (${error && error.message ? error.message : String(error)})`,
+              { cause: error },
             )
           }
           if (downscaleEnabled()) {
-            const resized = await downscaleImage(bytes, downscaleMaxPixels())
+            const resized = await stage('downscale-image-' + index, () =>
+              downscaleImage(bytes, downscaleMaxPixels(), { signal: taskSignal }))
             if (resized !== bytes) {
-              ctx.logger?.info('vision-router: downscaled %s for the vision call', path)
+              ctx.logger?.info('vision-router: downscaled vision input index=%d', index)
             }
             bytes = resized
           }
+          // Always publish canonical bytes, including an uploaded image.
+          // Host adapters then read the verified/downsized version, never a
+          // stale or mismatched original attachment reference.
           let ref
           try {
-            ref = await attachments.saveImage({
+            ref = await stage('save-normalized-image-' + index, () => attachments.saveImage({
               data: bytes,
               mediaType,
-              ...(isAttachmentIdInput(path) || basenameOf(path) === undefined
+              ...(attachmentInput || isAttachmentIdInput(source) || basenameOf(source) === undefined
                 ? {}
-                : { name: basenameOf(path) }),
-            })
+                : { name: basenameOf(source) }),
+            }))
           } catch (error) {
             throw new Error(
-              `vision_describe: image ${path} was rejected (${error && error.message ? error.message : String(error)})`,
+              `vision_describe: image ${source} was rejected (${error && error.message ? error.message : String(error)})`,
+              { cause: error },
             )
           }
+          throwIfVisionTaskAborted(taskSignal)
           contentIds.push(String(ref.attachmentId))
           blocks.push({ type: 'image', attachment: ref })
-        }
-
-        for (const id of attachmentIds) {
-          const attachmentId = String(id)
-          const ref = isAttachmentIdInput(attachmentId)
-            ? resolvedAttachmentRefs.get(attachmentId)
-            : await resolveAttachment(attachmentSession, attachmentId)
-          if (ref === undefined) {
-            throw new Error(
-              `vision_describe: unknown attachment id "${id}" (it must come from an image uploaded in this conversation)`,
-            )
-          }
-          let stored
-          try {
-            stored = await attachments.readImage(ref)
-          } catch (error) {
-            throw new Error(
-              `vision_describe: failed to read attachment ${id} (${error && error.message ? error.message : String(error)})`,
-            )
-          }
-          // Downscale oversized uploads before the vision call: retina
-          // screenshots easily reach 10MP+ and the vision encoder's cost
-          // scales with pixels — a full-size upload is the dominant part of
-          // the tool-call latency. Re-save a resized attachment so the
-          // adapter reads the small one.
-          if (downscaleEnabled() && stored.data && stored.data.length > 0) {
-            const resized = await downscaleImage(stored.data, downscaleMaxPixels())
-            if (resized !== stored.data) {
-              try {
-                const resizedRef = await attachments.saveImage({
-                  data: resized,
-                  mediaType: stored.ref && stored.ref.mediaType ? stored.ref.mediaType : 'image/png',
-                  ...(stored.ref && stored.ref.name ? { name: stored.ref.name } : {}),
-                })
-                stored = { ref: resizedRef, data: resized }
-                ctx.logger?.info('vision-router: downscaled attachment %s for the vision call', id)
-              } catch {
-                stored = { ...stored, data: resized }
-              }
-            }
-          }
-          contentIds.push(String(ref.attachmentId))
-          blocks.push({ type: 'image', attachment: stored.ref })
         }
 
         const question = String(args.question ?? '')
@@ -2983,18 +2986,20 @@ export function apply(ctx, config = {}, runtime = {}) {
         // Keep the adapter path and direct OpenAI-compatible HTTP path on the
         // exact same prompt, including the structured JSON evidence contract.
         const promptText = visionDescribePrompt(question, wantJson)
-        const usablePairs = await resolveToolVisionPairs()
+        const usablePairs = await stage('resolve-vision-backends', () => resolveToolVisionPairs())
         // Freeze this task's direct fallback list: settings changes take effect
         // on the next call, never halfway through one fallback walk.
         const httpFallbacks = httpProviders()
         const rejectedPairs = []
+        let backendPreflightIndex = 0
         for (const pair of pairs()) {
           if (!pair || pair.provider === HTTP_ROUTE) continue
           if (!adapterAvailable(ctx.llm, pair.provider)) {
             rejectedPairs.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
             continue
           }
-          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          const capability = await stage('backend-preflight-' + backendPreflightIndex++, () =>
+            resolveVisionBackendCapability(pair.provider, pair.model))
           if (capability.attemptable === false) {
             rejectedPairs.push(
               `${pair.provider}/${pair.model}: structurally unavailable (${capability.reason ?? 'unknown reason'})`,
@@ -3030,9 +3035,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           )
         }
 
-        // One shared deadline for the WHOLE task: every provider, fallback and
-        // the JSON-correction retry draws from this single budget.
-        const deadline = createDeadline(visionTaskTimeoutMs())
+        // The same clock already started before attachment resolution.
         const baseMessages = [
           {
             role: 'user',
@@ -3051,7 +3054,7 @@ export function apply(ctx, config = {}, runtime = {}) {
             0,
           )
 
-        for (const pair of usablePairs) {
+        for (const [pairIndex, pair] of usablePairs.entries()) {
           if (localOnlyVisionEnabled(current()) && !isLocalBackendPair(pair)) {
             errors.push(`${pair.provider}/${pair.model}: skipped (local-only vision policy)`)
             continue
@@ -3064,7 +3067,8 @@ export function apply(ctx, config = {}, runtime = {}) {
             break
           }
           const backendKey = `${pair.provider}/${pair.model}`
-          const fingerprint = await credentialFingerprintFor({ provider: pair.provider })
+          const fingerprint = await stage('adapter-auth-' + pairIndex, () =>
+            credentialFingerprintFor({ provider: pair.provider }))
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
@@ -3089,19 +3093,20 @@ export function apply(ctx, config = {}, runtime = {}) {
                 )
               : timeoutMs()
             const signal = combineSignals(
-              currentVisionTurnBudgetSignal(),
+              hostSignal,
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
-            const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
-            let text = await callVisionPairWithOptionalBridge(pair, messages, {
+            const capability = await stage('adapter-capability-' + pairIndex, () =>
+              resolveVisionBackendCapability(pair.provider, pair.model))
+            let text = await stage('adapter-request-' + pairIndex, () => callVisionPairWithOptionalBridge(pair, messages, {
               maxTokens: 4096,
               signal,
               sessionId,
               capability,
               bridgeBlocks: blocks,
               bridgeInstruction: promptText,
-            })
+            }))
 assertNoRepetitionLoop(text, backendKey)
 ctx.logger?.info(
               'vision-router: vision call %s ok (%d chars, %d ms)',
@@ -3133,7 +3138,7 @@ ctx.logger?.info(
                     },
                   ]
                   attemptStarted = Date.now()
-                  text = await callVisionPairWithOptionalBridge(pair, messages, {
+                  text = await stage('adapter-json-correction-' + pairIndex, () => callVisionPairWithOptionalBridge(pair, messages, {
                     maxTokens: 4096,
                     signal,
                     sessionId,
@@ -3141,7 +3146,7 @@ ctx.logger?.info(
                     bridgeBlocks: blocks,
                     bridgeInstruction:
                       promptText + '\n\nThat output was not valid JSON. Respond with ONLY a valid JSON object now.',
-                  })
+                  }))
 assertNoRepetitionLoop(text, backendKey)
 ctx.logger?.info(
                     'vision-router: vision call %s ok after JSON correction (%d chars, %d ms)',
@@ -3171,7 +3176,7 @@ ctx.logger?.info(
             // A user/Host cancel is not a backend outage. Otherwise the
             // canceled attempt poisons this turn's breaker/failure memory and
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
-            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
+            throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
@@ -3197,7 +3202,7 @@ ctx.logger?.info(
         // Direct HTTP providers (built-in keyless OVHcloud by default) are the
         // final fallbacks: they bypass the harness llm service entirely, so the
         // anonymous free endpoint works without any credential.
-        for (const provider of httpFallbacks) {
+        for (const [httpIndex, provider] of httpFallbacks.entries()) {
           if (localOnlyVisionEnabled(current()) && !isLoopbackVisionBaseURL(provider?.baseURL)) {
             errors.push(`http:${provider?.name}/${provider?.model}: skipped (local-only vision policy)`)
             continue
@@ -3210,7 +3215,8 @@ ctx.logger?.info(
             break
           }
           const backendKey = `http:${provider.name}/${provider.model}`
-          const fingerprint = await credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv })
+          const fingerprint = await stage('http-auth-' + httpIndex, () =>
+            credentialFingerprintFor({ kind: 'http', apiKeyEnv: provider.apiKeyEnv }))
           const gate = visionBreaker.inspect(backendKey, fingerprint, scope)
           if (gate.blocked) {
             errors.push(`${backendKey}: skipped (circuit open: ${gate.reason})`)
@@ -3222,15 +3228,19 @@ ctx.logger?.info(
           let attemptStarted = Date.now()
           try {
             // Precompute bytes once per block (attachments.readImage is async).
-            const openAIBlocks = []
-            for (const block of blocks) {
-              if (block.type === 'image' && block.attachment) {
-                const stored = await attachments.readImage(block.attachment)
-                openAIBlocks.push(toOpenAIContent([block], () => stored.data)[0])
-              } else {
-                openAIBlocks.push({ type: 'text', text: block.text })
+            const openAIBlocks = await stage('http-image-delivery-' + httpIndex, async () => {
+              const converted = []
+              for (const block of blocks) {
+                if (block.type === 'image' && block.attachment) {
+                  const stored = await attachments.readImage(block.attachment, taskSignal)
+                  throwIfVisionTaskAborted(taskSignal)
+                  converted.push(toOpenAIContent([block], () => stored.data)[0])
+                } else {
+                  converted.push({ type: 'text', text: block.text })
+                }
               }
-            }
+              return converted
+            })
             // Direct HTTP providers must receive the same image + question as
             // adapter-backed providers. Some endpoints (e.g. Zhipu GLM) reject
             // a pure-image user message even when permissive endpoints accept it.
@@ -3248,12 +3258,15 @@ ctx.logger?.info(
               consecutiveServerFailures,
             )
             const attemptSignal = combineSignals(
-              currentVisionTurnBudgetSignal(),
+              hostSignal,
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
             const askHttp = async (correction) => {
-              const answer = await awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
+              const phase = correction === undefined
+                ? 'http-request-' + httpIndex : 'http-json-correction-' + httpIndex
+              const answer = await stage(phase, () =>
+                awaitVisionBackendAttempt(attemptSignal, () => callOpenAIWithProviderTransport(
                 provider,
                 correction === undefined
                   ? openAIBaseMessages
@@ -3267,7 +3280,7 @@ ctx.logger?.info(
                   sessionId,
                   resolveCredential,
                 },
-              ))
+              )))
               return answer
             }
             let text = await askHttp(undefined)
@@ -3319,7 +3332,7 @@ ctx.logger?.info(
             // A user/Host cancel is not a backend outage. Otherwise the
             // canceled attempt poisons this turn's breaker/failure memory and
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
-            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
+            throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
@@ -3367,6 +3380,18 @@ ctx.logger?.info(
           }
         }
         return JSON.stringify(baseFailure)
+        } catch (error) {
+          // The caller's explicit cancellation is not a model outage.
+          if (hostSignal?.aborted) throw hostSignal.reason ?? error
+          if (deadline.expired() || taskSignal?.aborted) {
+            return JSON.stringify(buildVisionFailure({
+              code: VISION_RESULT_CODES.TIMEOUT,
+              retryable: false,
+              reason: 'Vision task deadline exhausted while preparing or processing the image.',
+            }))
+          }
+          throw error
+        }
       },
     }
     deepToolDefs.push(visionDescribeTool)
@@ -3498,55 +3523,9 @@ ctx.logger?.info(
       return String(attachmentIds[0]).trim()
     }
 
-    const readImageBytes = async (exec, imagePath, resolvedAttachmentRefs) => {
-      const input = String(imagePath ?? '')
-      let bytes
-      let storedMediaType
-      if (isAttachmentIdInput(input)) {
-        // Uploaded images reach the tool arguments as durable attachment ids
-        // ("sha256:..."); resolve them through the session's recorded upload
-        // index instead of treating the id as a filesystem path.
-        const attachments = ctx.get('attachments')
-        if (attachments === undefined) {
-          throw new Error('vision-router: the attachment service is not available in this deployment')
-        }
-        const session = exec && exec.agent && exec.agent.session
-        const canonicalInput = input.trim()
-        const ref = resolvedAttachmentRefs instanceof Map
-          ? resolvedAttachmentRefs.get(canonicalInput)
-          : await resolveAttachment(session, canonicalInput)
-        if (ref === undefined) {
-          throw new Error(
-            `vision-router: unknown attachment id "${input}" (it must come from an image uploaded in this conversation)`,
-          )
-        }
-        let stored
-        try {
-          stored = await attachments.readImage(ref)
-        } catch (error) {
-          throw new Error(
-            `vision-router: failed to read attachment ${input} (${error && error.message ? error.message : String(error)})`,
-          )
-        }
-        bytes = stored.data
-        if (stored.ref && typeof stored.ref.mediaType === 'string') {
-          storedMediaType = stored.ref.mediaType
-        }
-      } else {
-        const fs = ctx.get('fs')
-        if (fs === undefined) throw new Error('vision-router: the fs service is not available')
-        const target = await fs.resolve(input)
-        bytes = await fs.readBytes(target, undefined, 20 * 1024 * 1024)
-      }
-      // Attachments are stored as content-addressed files without an
-      // extension: sniff the format from the bytes, and fall back to the
-      // stored ref / extension only when sniffing cannot decide.
-      const mediaType = sniffMediaType(bytes) ?? storedMediaType ?? mediaTypeOf(input)
-      if (mediaType === undefined) {
-        throw new Error(`unsupported image format ${input} (png/jpeg/webp/gif only)`)
-      }
-      return { bytes, mediaType }
-    }
+    const readImageBytes = createVisionImageInputReader(
+      ctx, resolveAttachment, throwIfVisionTaskAborted,
+    )
 
     const imageDims = async (bytes) => {
       const sharp = await loadSharp()

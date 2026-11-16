@@ -668,6 +668,61 @@ test('Test 4: 401 + 429 + timeout produce one classified result instead of a ret
   assert.ok(Date.now() - started < 10000, `tool took ${Date.now() - started}ms`)
 })
 
+
+test('cold attachmentIds preflight cannot outlive the configured vision task deadline', async () => {
+  const config = visionConfig({
+    freeFallback: false,
+    cache: false,
+    visionTaskTimeoutMs: 1000,
+    providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+  })
+  const mock = mockVisionCtx()
+  const originalGet = mock.ctx.get.bind(mock.ctx)
+  let observationCalls = 0
+  let observedSignal
+  mock.ctx.get = (name) => {
+    if (name === 'sessionQuery') {
+      return {
+        observeSession(_id, options) {
+          observationCalls++
+          observedSignal = options.signal
+          // The old Host is allowed to ignore AbortSignal completely.
+          return new Promise(() => {})
+        },
+      }
+    }
+    return originalGet(name)
+  }
+  mock.setSeamConfig(config)
+  apply(mock.ctx, config)
+  await firePreStep(mock)
+
+  const tool = findTool(mock, 'vision_describe')
+  let safetyTimer
+  const started = Date.now()
+  try {
+    const result = await Promise.race([
+      tool.execute(
+        { attachmentIds: ['sha256:' + 'a'.repeat(64)], question: 'inspect' },
+        { agent: { session: { id: 'isolated-stale-session', events: [], deriveMessages: () => [] } } },
+      ),
+      new Promise((_, reject) => {
+        safetyTimer = setTimeout(() => reject(new Error('preflight remained stuck past 3s')), 3000)
+      }),
+    ])
+    const failed = JSON.parse(result)
+    assert.equal(failed.ok, false)
+    assert.equal(failed.code, VISION_RESULT_CODES.TIMEOUT)
+    assert.equal(failed.retryable, false)
+    assert.equal(observationCalls, 1)
+    assert.equal(observedSignal?.aborted, true)
+    assert.ok(Date.now() - started < 2700, 'preflight timeout must not be delayed until the Host watchdog')
+    assert.equal(mock.calls.get('qwen-a/qwen3.6-flash') ?? 0, 0, 'no backend call after preflight timeout')
+  } finally {
+    clearTimeout(safetyTimer)
+  }
+})
+
 // ── Test 5: total task deadline ────────────────────────────────────────────
 
 test('cancelled ambient vision budget propagates AbortError instead of poisoning backend failure memory', async () => {
@@ -693,6 +748,57 @@ test('cancelled ambient vision budget propagates AbortError instead of poisoning
   // cancelled request into an all-failed memo or poison subsequent retries.
   await assert.rejects(pending, { name: 'AbortError' })
   assert.ok(Date.now() - started < 1500, 'ambient cancellation must reach the provider instead of waiting for the 20s task timeout')
+})
+
+test('explicit Host execution signal reaches the backend and cancels it without poisoning failures', async () => {
+  const backend = 'qwen-a/qwen3.6-flash'
+  const mock = await applyAndMount(
+    visionConfig({
+      visionTaskTimeoutMs: 20_000,
+      providers: [{ provider: 'qwen-a', model: 'qwen3.6-flash' }],
+    }),
+    { behaviors: { [backend]: 'hang' } },
+  )
+  const tool = findTool(mock, 'vision_describe')
+  const originalStream = mock.ctx.llm.stream.bind(mock.ctx.llm)
+  let notifyEntered
+  const entered = new Promise((resolve) => { notifyEntered = resolve })
+  let observedSignal
+  mock.ctx.llm.stream = async function* (options) {
+    observedSignal = options.signal
+    notifyEntered()
+    yield* originalStream(options)
+  }
+
+  const controller = new AbortController()
+  const started = Date.now()
+  const pending = tool.execute(
+    { attachmentIds: [IMG_ID], question: 'cancel this provider request' },
+    { agent: { session: fakeSession(1) }, signal: controller.signal },
+  )
+  let safetyTimer
+  try {
+    await Promise.race([
+      entered,
+      new Promise((_, reject) => {
+        safetyTimer = setTimeout(() => reject(new Error('the backend never started')), 3000)
+      }),
+    ])
+  } finally {
+    clearTimeout(safetyTimer)
+  }
+  const reason = new DOMException('Host user cancellation', 'AbortError')
+  controller.abort(reason)
+  await assert.rejects(pending, { name: 'AbortError' })
+  assert.equal(observedSignal?.aborted, true, 'Host cancellation must reach the transport')
+  assert.ok(Date.now() - started < 1500, 'do not wait for the configured 20s deadline')
+  // Explicit cancellation is not an outage; a healthy next turn must run.
+  mock.behaviors[backend] = 'text:HEALTHY_AFTER_HOST_CANCEL'
+  const next = await tool.execute(
+    { attachmentIds: [IMG_ID], question: 'different question after cancellation' },
+    { agent: { session: fakeSession(2) } },
+  )
+  assert.match(next, /HEALTHY_AFTER_HOST_CANCEL/)
 })
 
 test('Test 5: hanging backends cannot multiply the task wall-clock', async () => {

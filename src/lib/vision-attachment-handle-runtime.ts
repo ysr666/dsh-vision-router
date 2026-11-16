@@ -127,9 +127,19 @@ function collectImageRefsFromMessages(messages: unknown, out: CompatibleImageAtt
   }
 }
 
-function authorizedRefs(agent: AgentLike | undefined): CompatibleImageAttachmentRef[] {
+/**
+ * The current Session's derived image blocks are already authorized as that
+ * Session's content. Reuse this same collector for projected short handles
+ * and target-only cold attachment recovery; neither may scan other Sessions.
+ */
+export function sessionImageAttachmentRefs(session: unknown): CompatibleImageAttachmentRef[] {
   const refs: CompatibleImageAttachmentRef[] = []
-  collectImageRefsFromMessages(sessionMessages(agent?.session), refs)
+  collectImageRefsFromMessages(sessionMessages(session as SessionLike | undefined), refs)
+  return refs
+}
+
+function authorizedRefs(agent: AgentLike | undefined): CompatibleImageAttachmentRef[] {
+  const refs: CompatibleImageAttachmentRef[] = sessionImageAttachmentRefs(agent?.session)
   collectImageRefsFromMessages(agent?.inbox?.nextTurn, refs)
   collectImageRefsFromMessages(agent?.inbox?.nextStep, refs)
 

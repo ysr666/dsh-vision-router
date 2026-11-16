@@ -27,6 +27,7 @@ function memoryFs(initial = {}) {
         files.set(to, files.get(from))
         files.delete(from)
       },
+      async rm(file) { files.delete(file) },
     },
   }
 }
@@ -131,4 +132,55 @@ test('oversized verdict cache is bounded on load and live survivors match the ne
     measuredAt: 1,
   }), undefined)
   assert.equal((await store.list()).some((item) => item.fingerprint === tooOldFingerprint), false)
+})
+
+test('transient destination lock retries the atomic cache replace without losing data', async () => {
+  const mem = memoryFs()
+  const rename = mem.ops.rename
+  const file = '/virtual/atomic-retry.json'
+  let attempts = 0
+  mem.ops.rename = async (from, to) => {
+    attempts++
+    if (attempts <= 2) {
+      const error = new Error('temporarily locked destination')
+      error.code = 'EBUSY'
+      throw error
+    }
+    return rename(from, to)
+  }
+  const warnings = []
+  const store = createImageInputVerdictStore({ cacheFile: file, fsOps: mem.ops, logger: {
+    warn(...args) { warnings.push(args) },
+  } })
+  await store.markUnsupported({
+    fingerprint: 'ep2_' + 'a'.repeat(32),
+    key: 'a', provider: 'p', model: 'm', hostMode: 'native-image',
+  })
+  await store.flush()
+  assert.equal(attempts, 3)
+  assert.equal(warnings.length, 0)
+  assert.equal(JSON.parse(mem.files.get(file)).verdicts.length, 1)
+  assert.equal([...mem.files.keys()].filter((name) => name.endsWith('.tmp')).length, 0)
+})
+
+test('permanent cache replace failure is reported and removes its private temporary file', async () => {
+  const mem = memoryFs()
+  const file = '/virtual/permanent-error.json'
+  mem.ops.rename = async () => {
+    const error = new Error('disk rejected rename')
+    error.code = 'EIO'
+    throw error
+  }
+  const warnings = []
+  const store = createImageInputVerdictStore({ cacheFile: file, fsOps: mem.ops, logger: {
+    warn(...args) { warnings.push(args) },
+  } })
+  await store.markUnsupported({
+    fingerprint: 'ep2_' + 'b'.repeat(32),
+    key: 'b', provider: 'p', model: 'm', hostMode: 'native-image',
+  })
+  await store.flush()
+  assert.equal(warnings.length, 1)
+  assert.equal(mem.files.has(file), false)
+  assert.equal([...mem.files.keys()].filter((name) => name.endsWith('.tmp')).length, 0)
 })

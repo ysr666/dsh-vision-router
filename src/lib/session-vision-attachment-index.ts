@@ -4,6 +4,7 @@ import type {
   SessionVisionStateStore,
 } from './session-vision-state.js'
 import { legacySessionEvents } from './session-event-history-compat.js'
+import { sessionImageAttachmentRefs } from './vision-attachment-handle-runtime.js'
 
 type UnknownRecord = Record<PropertyKey, unknown>
 
@@ -24,10 +25,12 @@ export interface SessionVisionAttachmentIndex {
   resolveAttachment(
     session: unknown,
     attachmentId: unknown,
+    signal?: AbortSignal,
   ): Promise<SessionVisionAttachmentRef | undefined>
   resolveAttachments(
     session: unknown,
     attachmentIds: readonly unknown[],
+    signal?: AbortSignal,
   ): Promise<Map<string, SessionVisionAttachmentRef>>
 }
 
@@ -67,10 +70,16 @@ function iterableValues(value: unknown): Iterable<unknown> {
   return value as Iterable<unknown>
 }
 
-function boundedMessage(error: unknown): string {
-  const record = propertyBag(error)
-  const text = record?.message ?? error
-  return String(text ?? '').slice(0, 400)
+// Host error messages may contain file paths, image ids or provider credentials.
+// Only log a controlled diagnostic category, never arbitrary exception text.
+function recoveryFailureKind(error: unknown): string {
+  const code = propertyBag(error)?.code
+  if (code === 'ENOENT') return 'not-found'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission'
+  if (code === 'EBUSY') return 'busy'
+  if (code === 'ETIMEDOUT') return 'timeout'
+  if (code === 'SESSION_QUERY_CORRUPT_SESSION') return 'corrupt-session'
+  return 'session-query-error'
 }
 
 /**
@@ -141,22 +150,21 @@ export function createSessionVisionAttachmentIndex({
     attachmentId: unknown,
     error: unknown,
   ): void => {
-    const message = boundedMessage(error)
-    const warningKey = `${String(attachmentId)}:${message}`
+    const kind = recoveryFailureKind(error)
+    // The full attachment id is used only for in-memory de-duplication.
+    const warningKey = `${String(attachmentId)}:${kind}`
     const key = weakKey(session)
     if (key !== undefined && attachmentRecoveryWarnings.get(key) === warningKey) return
     if (key !== undefined) attachmentRecoveryWarnings.set(key, warningKey)
-    logger?.warn?.(
-      'vision-router: session attachment recovery failed id=%s error=%s',
-      String(attachmentId),
-      message,
-    )
+    logger?.warn?.('vision-router: session attachment recovery failed kind=%s', kind)
   }
 
   const resolveAttachments = async (
     session: unknown,
     attachmentIds: readonly unknown[],
+    signal?: AbortSignal,
   ): Promise<Map<string, SessionVisionAttachmentRef>> => {
+    signal?.throwIfAborted()
     const requested = [
       ...new Set((Array.isArray(attachmentIds) ? attachmentIds : []).map((id) => String(id))),
     ]
@@ -170,13 +178,39 @@ export function createSessionVisionAttachmentIndex({
     }
     if (missing.length === 0 || session === undefined) return resolved
 
+    // Modern Session.deriveMessages() gives Session-owned image references
+    // without acquiring the Host SessionQuery observation lease. This is the
+    // same authorized source already used for projected short image handles.
+    // Especially on a cold resumed Session, avoid waiting on full-log I/O
+    // when all requested images are already present in derived messages.
+    const wanted = new Set(missing)
+    const fromSession: SessionVisionAttachmentRef[] = []
+    for (const value of sessionImageAttachmentRefs(session)) {
+      const ref = attachmentRef(value)
+      if (ref === undefined) continue
+      const id = attachmentIdOf(ref)
+      if (!wanted.has(id)) continue
+      wanted.delete(id)
+      resolved.set(id, ref)
+      fromSession.push(ref)
+      if (wanted.size === 0) break
+    }
+    signal?.throwIfAborted()
+    if (fromSession.length > 0) stateStore.recordAttachments(session, fromSession)
+    if (wanted.size === 0) return resolved
+    const remaining = missing.filter((id) => wanted.has(id))
+
     let events: unknown
     if (typeof readSessionLog === 'function') {
       let result: unknown
       try {
-        result = await readSessionLog(session)
+        result = await readSessionLog(session, signal)
+        signal?.throwIfAborted()
       } catch (error) {
-        warnAttachmentRecoveryFailure(session, missing[0], error)
+        // Cancellation is not a corrupted or missing Session. Never convert
+        // it to a successful partial lookup or log an attachment identifier.
+        if (signal?.aborted) throw signal.reason ?? error
+        warnAttachmentRecoveryFailure(session, remaining[0], error)
         return resolved
       }
 
@@ -188,7 +222,7 @@ export function createSessionVisionAttachmentIndex({
       } else if (resultRecord?.supported !== false) {
         warnAttachmentRecoveryFailure(
           session,
-          missing[0],
+          remaining[0],
           new Error('Session log reader returned an invalid capability result'),
         )
         return resolved
@@ -197,9 +231,11 @@ export function createSessionVisionAttachmentIndex({
 
     // Explicitly unsupported SessionQuery keeps the released Session-local
     // compatibility fallback. Advertised reader failures above never fall back.
+    signal?.throwIfAborted()
     if (events === undefined) events = legacySessionEvents(session)
+    signal?.throwIfAborted()
 
-    const recovered = recoverAttachmentsFromEvents(session, missing, events)
+    const recovered = recoverAttachmentsFromEvents(session, remaining, events)
     for (const [id, ref] of recovered) resolved.set(id, ref)
     return resolved
   }
@@ -207,8 +243,9 @@ export function createSessionVisionAttachmentIndex({
   const resolveAttachment = async (
     session: unknown,
     attachmentId: unknown,
+    signal?: AbortSignal,
   ): Promise<SessionVisionAttachmentRef | undefined> => {
-    return (await resolveAttachments(session, [attachmentId])).get(String(attachmentId))
+    return (await resolveAttachments(session, [attachmentId], signal)).get(String(attachmentId))
   }
 
   return Object.freeze({

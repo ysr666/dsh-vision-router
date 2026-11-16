@@ -165,6 +165,13 @@ export async function describeCacheKey(ctx, args = {}, exec, revision = 0) {
   hash.update(`revision:${revision}\n`)
   const paths = Array.isArray(args.paths) ? args.paths : []
   const attachments = Array.isArray(args.attachmentIds) ? args.attachmentIds : []
+  // Cache hits bypass the actual tool executor, including its Session-owned
+  // attachment authorization. Until authorization can be proved at this outer
+  // boundary, never cache any upload-identity input (including the paths alias).
+  // Ordinary paths remain cacheable only after fs.resolve/readBytes succeeds.
+  if (attachments.length > 0 || paths.some((input) => /^sha256:/i.test(String(input).trim()))) {
+    return undefined
+  }
   const fs = ctx?.get?.('fs')
   const cwd = exec?.agent?.session?.header?.cwd
   const signal = exec?.signal

@@ -132,7 +132,7 @@ function contentHasImage(_core, messages) {
   return (messages ?? []).some((message) => blocksHaveRetainedImage(message?.content))
 }
 
-async function toOpenAIMessages(ctx, messages) {
+async function toOpenAIMessages(ctx, messages, signal) {
   const attachments = ctx?.get?.('attachments')
   if (!attachments || typeof attachments.readImage !== 'function') {
     const error = new Error('vision preflight bridge unavailable: attachment service is not registered')
@@ -152,7 +152,9 @@ async function toOpenAIMessages(ctx, messages) {
           converted.push({ type: 'text', text: offloadedImagePlaceholder(block) })
           continue
         }
-        const stored = await attachments.readImage(block.attachment)
+        if (signal?.aborted) throw signal.reason ?? new Error('vision delivery aborted')
+        const stored = await attachments.readImage(block.attachment, signal)
+        if (signal?.aborted) throw signal.reason ?? new Error('vision delivery aborted')
         const mediaType = block.attachment.mediaType || stored?.mediaType || 'image/png'
         const data = Buffer.from(stored.data).toString('base64')
         converted.push({ type: 'image_url', image_url: { url: `data:${mediaType};base64,${data}` } })
@@ -235,7 +237,7 @@ function directStream(ctx, core, plan, call, logger, source, providerTransport) 
         if (typeof plan.transport?.apiKeyEnv === 'string' && plan.transport.apiKeyEnv !== '' && !apiKey) {
           throw new Error('vision preflight bridge unavailable: channel credential could not be resolved')
         }
-        const messages = await toOpenAIMessages(ctx, call.messages)
+        const messages = await toOpenAIMessages(ctx, call.messages, call.signal)
         if (messages.length === 0) {
           throw new Error('vision preflight bridge unavailable: no representable image request content')
         }
