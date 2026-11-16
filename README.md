@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.2.2 release candidate — not yet published:** Hardens uploaded attachment-ID recovery, whole-task vision cancellation and cache permissions; VTracer native/WASM conversion now runs in a bounded subprocess, protecting the Host from native faults. Windows package/cache portability is improved. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required; older Hosts are **not** newly supported. **Profiles are not migrated automatically.** Back up, run read-only `doctor --upgrade-preflight`, and keep a rollback path. Third-party Desktop generation installers are not independently certified. See [v3.2.2 release candidate notes](docs/releases/v3.2.2.md).
+> **v3.3.0 minor release candidate — not yet published:** Brings the v3.2.2 attachment/Session timeout and security fixes, bounded VTracer subprocess isolation, Windows portability, and a SHA-verified **owner-installed** PP-OCRv6/ncnn OCR preference on supported Mac ARM64/Windows x64. Native model weights and executables are **not included in npm**; optional native archive redistribution remains separately gated. Local Tesseract stays an explicit compatibility option. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required; no profile auto-migration. The default cloud vision fallback may transmit images externally unless strict local-only is enabled. Back up, run read-only `doctor --upgrade-preflight`, and keep a rollback option. See [v3.3.0 candidate notes](docs/releases/v3.3.0.md).
 
 ## Start here
 
@@ -422,7 +422,7 @@ ollama pull qwen2.5vl
 ## Requirements
 
 - DeepSeek Harness Web profile. Normal installs can use `npx @deepseek-ai/dsh ...`; source checkouts use `pnpm dsh ...`. A bare `dsh ...` command only works when the CLI is already on your shell `PATH`.
-- **DSH Host policy (unreleased DVR 3.2 candidate):** Minimum DSH 0.2.1-rc.5; currently recommended DSH 0.2.2-rc.1. DSH 0.1.x, 0.2.0 and earlier 0.2.1 prereleases are retired. DSH owns native Connection authentication, routing and trustedHosts. Older sessions, attachments and Settings data remain readable. See [new Host support window](docs/architecture/dsh-support-window.md) and [retirement plan](docs/architecture/dvr32-host-retirement.md).
+- **DSH Host policy (DVR 3.2+ / 3.3.0 candidate):** Minimum DSH 0.2.1-rc.5; currently recommended DSH 0.2.2-rc.1. DSH 0.1.x, 0.2.0 and earlier 0.2.1 prereleases are retired. DSH owns native Connection authentication, routing and trustedHosts. Older sessions, attachments and Settings data remain readable. See [new Host support window](docs/architecture/dsh-support-window.md) and [retirement plan](docs/architecture/dvr32-host-retirement.md).
 - Node.js >=24.9.0 (Host side; Node 22 is retired).
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
@@ -611,7 +611,7 @@ exploration (LLM7.io and OVHcloud anonymous tiers) by
 
 ## Release notes and community
 
-Release preparation: [v3.2.2 candidate notes](docs/releases/v3.2.2.md). Check GitHub Releases or npm for the actually published version.
+Release preparation: [v3.3.0 candidate notes](docs/releases/v3.3.0.md). Check GitHub Releases or npm for the actually published version.
 
 <p align="center">
   <sub>Ecosystem:</sub>
