@@ -2903,8 +2903,14 @@ export function apply(ctx, config = {}, runtime = {}) {
         }
         const blocks = []
         const contentIds = []
-        const taskSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+        // Own the *whole* operation, including cold SessionQuery recovery and
+        // image normalization. Previously this clock started only after those
+        // stages, letting attachmentIds stall until the Host's ~120s watchdog.
+        const hostSignal = combineSignals(currentVisionTurnBudgetSignal(), exec?.signal)
+        const deadline = createDeadline(visionTaskTimeoutMs())
+        const taskSignal = combineSignals(hostSignal, deadline.signal())
         const stage = createVisionToolStageTrace(ctx.logger, 'vision_describe', taskSignal)
+        try {
         const paths = Array.isArray(args.paths) ? args.paths : []
         const attachmentIds = Array.isArray(args.attachmentIds) ? args.attachmentIds : []
         if (paths.length + attachmentIds.length === 0 || paths.length + attachmentIds.length > 4) {
@@ -3026,9 +3032,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           )
         }
 
-        // One shared deadline for the WHOLE task: every provider, fallback and
-        // the JSON-correction retry draws from this single budget.
-        const deadline = createDeadline(visionTaskTimeoutMs())
+        // The same clock already started before attachment resolution.
         const baseMessages = [
           {
             role: 'user',
@@ -3086,7 +3090,7 @@ export function apply(ctx, config = {}, runtime = {}) {
                 )
               : timeoutMs()
             const signal = combineSignals(
-              currentVisionTurnBudgetSignal(),
+              hostSignal,
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
@@ -3169,7 +3173,7 @@ ctx.logger?.info(
             // A user/Host cancel is not a backend outage. Otherwise the
             // canceled attempt poisons this turn's breaker/failure memory and
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
-            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
+            throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
@@ -3251,7 +3255,7 @@ ctx.logger?.info(
               consecutiveServerFailures,
             )
             const attemptSignal = combineSignals(
-              currentVisionTurnBudgetSignal(),
+              hostSignal,
               deadline.signal(),
               AbortSignal.timeout(attemptBudgetMs),
             )
@@ -3325,7 +3329,7 @@ ctx.logger?.info(
             // A user/Host cancel is not a backend outage. Otherwise the
             // canceled attempt poisons this turn's breaker/failure memory and
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
-            throwIfVisionTaskAborted(currentVisionTurnBudgetSignal(), error)
+            throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
@@ -3373,6 +3377,18 @@ ctx.logger?.info(
           }
         }
         return JSON.stringify(baseFailure)
+        } catch (error) {
+          // The caller's explicit cancellation is not a model outage.
+          if (hostSignal?.aborted) throw hostSignal.reason ?? error
+          if (deadline.expired() || taskSignal?.aborted) {
+            return JSON.stringify(buildVisionFailure({
+              code: VISION_RESULT_CODES.TIMEOUT,
+              retryable: false,
+              reason: 'Vision task deadline exhausted while preparing or processing the image.',
+            }))
+          }
+          throw error
+        }
       },
     }
     deepToolDefs.push(visionDescribeTool)
