@@ -1199,12 +1199,15 @@ function runTraceWorker(mode, payload, timeoutMs, signal) {
     let worker
     let timer
     let finished = false
+    let pendingSvg
     const finish = (error, svg) => {
       if (finished) return
       finished = true
       if (timer !== undefined) clearTimeout(timer)
       signal?.removeEventListener?.('abort', onAbort)
-      if (worker) void worker.terminate().catch(() => {})
+      // A successful Worker must exit naturally; terminating immediately after
+      // postMessage can interrupt native/WASM cleanup in the shared Host process.
+      if (worker && error) void worker.terminate().catch(() => {})
       if (error) reject(error)
       else resolve(svg)
     }
@@ -1228,12 +1231,16 @@ function runTraceWorker(mode, payload, timeoutMs, signal) {
         resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
       })
       worker.once('message', (message) => {
-        if (message?.ok === true && typeof message.svg === 'string') finish(undefined, message.svg)
+        if (message?.ok === true && typeof message.svg === 'string') pendingSvg = message.svg
         else finish(new Error(String(message?.error || 'vector trace worker returned invalid output')))
       })
       worker.once('error', (error) => finish(error))
       worker.once('exit', (code) => {
-        if (!finished) finish(new Error('vector trace worker exited before producing SVG (code ' + code + ')'))
+        if (finished) return
+        // A message is not final success until native cleanup finishes with
+        // exit code 0. A failed/abrupt exit must never publish a partial SVG.
+        if (code === 0 && typeof pendingSvg === 'string') finish(undefined, pendingSvg)
+        else finish(new Error('vector trace worker exited before producing SVG (code ' + code + ')'))
       })
     } catch (error) { finish(error) }
   })
