@@ -44,7 +44,7 @@ test('a never-settling Host image stage is abandoned promptly on abort', async (
     finishLate = resolve
   }))
   await assert.rejects(pending, /aborted|timeout|operation timed out/i)
-  assert.ok(Date.now() - started < 800, 'the Host's pending Promise must not hold the caller')
+  assert.ok(Date.now() - started < 800, 'a pending Host Promise must not hold the caller')
   finishLate?.('ref-from-canceled-session')
   await Promise.resolve()
   assert.ok(entries.some((entry) => entry[3] === 'resolve-upload-refs' && entry[4] === 'aborted'))
