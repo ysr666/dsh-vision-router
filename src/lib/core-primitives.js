@@ -3,11 +3,12 @@
 import path from 'node:path'
 
 import { existsSync } from 'node:fs'
-import { execFile, fork } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { fetchWithOpenAICompatibility } from './http-compat.js'
+import { runIsolatedTraceProcess } from './trace-vtracer-process-runtime.js'
 import {
   directSessionAffinityHeaders,
   rawSessionIdentity,
@@ -1190,62 +1191,11 @@ function isVisionAbort(error, signal) {
   return signal?.aborted === true || error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
 }
 
-/** Bounded one-shot child-process boundary for native VTracer, independent of Host memory. */
+/** Shared deadline and cancellation wrapper around the isolated trace subprocess. */
 function runTraceWorker(mode, payload, timeoutMs, signal) {
-  const aborted = () => visionAbortReason(signal, 'vector trace aborted')
-  if (signal?.aborted) return Promise.reject(aborted())
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return Promise.reject(new Error('vector trace timed out'))
-  }
-  return new Promise((resolve, reject) => {
-    let child
-    let timer
-    let finished = false
-    let pendingSvg
-    const finish = (error, svg) => {
-      if (finished) return
-      finished = true
-      if (timer !== undefined) clearTimeout(timer)
-      signal?.removeEventListener?.('abort', onAbort)
-      // A child-process crash cannot corrupt the Host address space.
-      if (error && child && !child.killed) child.kill()
-      if (error) reject(error)
-      else resolve(svg)
-    }
-    const onAbort = () => finish(aborted())
-    signal?.addEventListener?.('abort', onAbort, { once: true })
-    if (signal?.aborted) { finish(aborted()); return }
-    timer = setTimeout(() => finish(new Error(
-      'vector trace timed out — crop the image or reduce its complexity',
-    )), timeoutMs)
-    try {
-      // No Host CLI/test loader flags, no inherited NODE_OPTIONS code injections.
-      const childEnv = { ...process.env, NODE_OPTIONS: '' }
-      if (process.versions?.electron) childEnv.ELECTRON_RUN_AS_NODE = '1'
-      child = fork(new URL('./trace-vtracer-process.js', import.meta.url), [], {
-        execArgv: [],
-        serialization: 'advanced',
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-        windowsHide: true,
-        env: childEnv,
-      })
-      child.once('message', (message) => {
-        if (message?.ok === true && typeof message.svg === 'string') pendingSvg = message.svg
-        else finish(new Error('vector trace process returned an invalid result'))
-      })
-      child.once('error', () => finish(new Error('vector trace process startup failed')))
-      child.once('exit', (code, termSignal) => {
-        if (finished) return
-        if (code === 0 && typeof pendingSvg === 'string') finish(undefined, pendingSvg)
-        else finish(new Error('vector trace process exited before producing SVG (' +
-          (code === null ? String(termSignal ?? 'signal') : String(code)) + ')'))
-      })
-      child.send({ type: 'trace', mode, payload }, (error) => {
-        if (error) finish(new Error('vector trace process IPC failed'))
-      })
-    } catch {
-      finish(new Error('vector trace process launch failed'))
-    }
+  return runIsolatedTraceProcess({
+    mode, payload, timeoutMs, signal,
+    abortReason: () => visionAbortReason(signal, 'vector trace aborted'),
   })
 }
 
