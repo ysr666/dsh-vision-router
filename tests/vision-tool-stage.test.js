@@ -50,3 +50,18 @@ test('a never-settling Host image stage is abandoned promptly on abort', async (
   assert.ok(entries.some((entry) => entry[3] === 'resolve-upload-refs' && entry[4] === 'aborted'))
   assert.equal(entries.filter((entry) => entry[4] === 'ok').length, 0)
 })
+
+test('a pre-aborted stage rejects without invoking Host code or leaking rejected promises', async () => {
+  const controller = new AbortController()
+  controller.abort(new Error('preflight already cancelled'))
+  const trace = createVisionToolStageTrace({ info() {}, warn() {} }, 'vision_describe', controller.signal)
+  let calls = 0
+  await assert.rejects(trace('resolve-upload-refs', () => {
+    calls++
+    return 'should not execute'
+  }), /preflight already cancelled/)
+  assert.equal(calls, 0)
+  // An unobserved cancellation rejection is reported by node:test after
+  // the microtask boundary, even when the returned stage rejects correctly.
+  await new Promise((resolve) => setImmediate(resolve))
+})
