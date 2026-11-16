@@ -88,7 +88,7 @@ test('adaptive OCR repairs a weak table layout with PSM 3', async () => {
   assert.equal(result.psm, 3)
   assert.match(result.text, /Cable \$15/)
   assert.equal(result.uncertain, false)
-  assert.deepEqual(result.attemptedPsms, [6, 3, 11])
+  assert.deepEqual(result.attemptedPsms, [6, 7, 3, 11])
 })
 test('adaptive OCR preserves uncertainty for confusable character runs', async () => {
   const result = await ocrWithTesseractAdaptive(Buffer.from('png'), 12000, {
@@ -114,7 +114,7 @@ test('an optional review failure never discards a successful local OCR result', 
   })
   assert.ok(result.text.length > 0)
   assert.equal(result.uncertain, true)
-  assert.deepEqual(result.attemptedPsms, [6, 3, 11])
+  assert.deepEqual(result.attemptedPsms, [6, 7, 3, 11])
 })
 
 

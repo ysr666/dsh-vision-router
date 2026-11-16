@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "purpose": "PP-OCRv6 small / ncnn laboratory provenance ledger, NOT a redistributable release manifest",
+  "sourceSnapshotDate": "2026-11-15",
+  "distributionReady": false,
+  "releaseGates": {
+    "originalOnnxReacquiredAndVerified": true,
+    "conversionReproducedInCleanBuild": false,
+    "thirdPartyNoticesBundled": false,
+    "windowsCrtLicenseReviewed": false,
+    "linuxRuntimeValidated": false,
+    "artifactSignatureAndSbom": false
+  },
+  "modelSources": {
+    "detector": {
+      "source": "PaddlePaddle/PP-OCRv6_small_det_onnx",
+      "revision": "28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+      "file": "inference.onnx",
+      "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+      "license": "Apache-2.0",
+      "licenseEvidence": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/tree/28fe5895c24fd108c19eb3e8479f4ab385fbfc62",
+      "onDiskVerified": true,
+      "bytes": 9880512,
+      "verifiedOn": "Windows isolated experimental cache (2026-11-15); not included in Git"
+    },
+    "recognizer": {
+      "source": "PaddlePaddle/PP-OCRv6_small_rec_onnx",
+      "revision": "b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+      "file": "inference.onnx",
+      "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+      "license": "Apache-2.0",
+      "licenseEvidence": "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/tree/b8f84f0b80c529de40b4fbb3544b84fa7233a513",
+      "onDiskVerified": true,
+      "bytes": 21159378,
+      "verifiedOn": "Windows isolated experimental cache (2026-11-15); not included in Git"
+    }
+  },
+  "dictionary": {
+    "source": "PaddlePaddle/PaddleOCR",
+    "revision": "dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf",
+    "file": "ppocr/utils/dict/ppocrv6_dict.txt",
+    "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+    "bytes": 74947,
+    "lines": 18708,
+    "license": "Apache-2.0",
+    "verifiedByteEqualToSource": true,
+    "licenseEvidence": "https://github.com/PaddlePaddle/PaddleOCR/blob/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/LICENSE"
+  },
+  "ncnn": {
+    "source": "Tencent/ncnn",
+    "revision": "d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+    "license": "BSD-3-Clause",
+    "thirdPartyLicenseCategories": [
+      "zlib",
+      "BSD-2-Clause",
+      "BSD-3-Clause"
+    ],
+    "licenseEvidence": "https://github.com/Tencent/ncnn/blob/d1f6ac67e9fc91390cc70f7168573fd2626f1d66/LICENSE.txt",
+    "observedMacBuildFlags": {
+      "NCNN_OPENMP": false,
+      "NCNN_VULKAN": false,
+      "NCNN_SHARED_LIB": false,
+      "NCNN_BUILD_TESTS": false,
+      "NCNN_BUILD_TOOLS": false
+    }
+  },
+  "nativeAssets": {
+    "det.ncnn.bin": {
+      "bytes": 9813748,
+      "sha256": "720620c709ae18566e037f5ac086075553118c91fa2d289af405060e7d047357"
+    },
+    "det.ncnn.param": {
+      "bytes": 18868,
+      "sha256": "986dbd2de4746574263bc616295435d9d775cf2092379ab4c0df42143205bfc4"
+    },
+    "rec.ncnn.bin": {
+      "bytes": 21066500,
+      "sha256": "40f8afb7b9d835e8f5b7d03bd08d74d0f762b27999d05ffdf4644c1c4b24f798"
+    },
+    "rec.ncnn.param": {
+      "bytes": 13845,
+      "sha256": "ad92c23ca2cac8cfa414bc2b6b8c4ad73121f53543d7fb1d6953853b05fc5bda"
+    },
+    "ppocrv6_dict.txt": {
+      "bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+    }
+  },
+  "experimentalBinaries": {
+    "darwin-arm64": {
+      "sha256": "71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204",
+      "buildReproducible": false,
+      "relinkedSourceAndFullNcnnBuildLocally": true,
+      "sourceBuildReference": "quality/native-ocr-macos-build-LAB.sh (Mac arm64; independently rebuilt pinned ncnn; not signed release CI)"
+    },
+    "win32-x64": {
+      "sha256": "2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33",
+      "buildReproducible": false,
+      "sourceBuildReference": "quality/native-ocr-windows-llvm-build-LAB.ps1 (Windows x64; pinned source and extracted toolchain, no signed release CI)",
+      "compiler": "LLVM-MinGW 20261020 / Clang 23.1.4 / UCRT / -static",
+      "toolchainZipSha256": "fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd",
+      "sourceTreeSha256": "2fb93b766406c4499d093e1d1c2f509363c2ef21a34fc448980ab99e327aefca",
+      "stdlibHeaderOverlay": {
+        "replacedLegacyGccStdargSha256": "09f6041cdc0f2f3325828a0e1bfb05e2fb4fb0a73cf715a3b6cb5315612c8c56",
+        "usingLlvmApacheHeaderSha256": "ce6e43d79dc89b50208ecf259b1ffd519f5a78cd3a2c7fcaac6386f376b89fef",
+        "recompiledAffectedNcnnObjects": 549,
+        "observedUsedToolchainHeaders": 743,
+        "observedGplLgplHeadersAfterOverlay": 0,
+        "wineOriginHeader": "corecrt_stdio_config.h; explicitly public domain"
+      },
+      "linkedSystemDllPolicy": "Only KERNEL32.dll and Windows UCRT API-set DLLs",
+      "testedInWindowsNativeLab": "1,686 chars / 56 regions; parallel, malformed, blank and recovery; normal auto without legacy flag"
+    }
+  },
+  "notes": "Original ONNX and four converted ncnn outputs SHA-verified. Alpine WSL2 x64-musl native and real DSH 0.2.2-rc.1 Agent/Node24 valid path/canonical/cancel/mid-inference SIGTERM/restart, local Tesseract fallback with installed chi_sim+eng, 1000ms bounded failure, and stopped-Host plugin remove/reinstall validated in private labs. Linux glibc/ARM64/non-WSL/stable/rc.3, clean CI, signed distribution, NOTICE/SBOM, packet-level egress measurement, and genuinely unseen accuracy remain release blockers.",
+  "unadmittedPrototypes": {
+    "darwin-x64": {
+      "sha256": "23c76c4345b84fccdadb5e8eb1d368f40f31925e4b60ab2d60b93a24be8a301c",
+      "sourceCommit": "d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+      "binaryFormat": "Mach-O x86_64",
+      "licenseClosed": false,
+      "inCanaryAllowlist": false,
+      "observedHost": "Apple Silicon (Rosetta 2), not real Intel Mac",
+      "observedSinglePageWallMs": 13530,
+      "observedSinglePagePeakRssBytes": 544956416,
+      "observedThreeCanaryDurationsMs": [
+        20667,
+        20545,
+        21001
+      ],
+      "reason": "Near the 21-second native OCR budget on Rosetta, no actual Intel Mac/DSH Host gate; do not enable experimentally based on compile alone"
+    },
+    "linux-x64-musl": {
+      "sha256": "72e8a8b172922dac50ff38ebdfa1e8828c256e026f9edb3dfc95323966a98a32",
+      "binaryFormat": "ELF x86_64 PIE, interpreter /lib/ld-musl-x86_64.so.1",
+      "sourceCommit": "d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+      "cppSourceSha256": "707568bd5750367780ee02174bcdc09ed671bd8a6ffa20318c18628049bbe543",
+      "labDistro": "Alpine Linux 3.22.2 x86_64 on Windows WSL2",
+      "gcc": "14.2.0",
+      "licenseClosed": false,
+      "inCanaryAllowlist": false,
+      "measuredPrivatePhotoMs": 4152,
+      "measuredPrivatePhotoPeakRssKiB": 376512,
+      "measuredRegions": 56,
+      "resourceDependencies": [
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "musl libc"
+      ],
+      "releaseQualified": false,
+      "realLinuxDshHostValidated": false
+    },
+    "linux-x64-musl-llvm-libcxx": {
+      "sha256": "18f42c9a93fe94d1e0bd66834b672a4f128d004030eeafa2e8c062d2e6a6f5f2",
+      "binaryFormat": "ELF x86_64 PIE with /lib/ld-musl-x86_64.so.1",
+      "sourceCommit": "d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+      "cppSourceSha256": "707568bd5750367780ee02174bcdc09ed671bd8a6ffa20318c18628049bbe543",
+      "compiler": "Alpine clang 20.1.8 with -stdlib=libc++ and LLVM libunwind",
+      "labDistro": "Alpine 3.22.2 x86_64 under WSL2",
+      "dynamicDependencies": [
+        "libc++.so.1",
+        "libc++abi.so.1",
+        "libunwind.so.1",
+        "musl libc"
+      ],
+      "runtimeApkLabels": {
+        "libc++": "Apache-2.0",
+        "llvm-libunwind": "Apache-2.0",
+        "musl": "MIT"
+      },
+      "measuredPrivatePhotoMs": 3920,
+      "measuredPrivatePhotoRegions": 56,
+      "measuredPrivatePhotoChars": 1686,
+      "twoConcurrentWorkersPassed": true,
+      "sigtermCancelAndSubsequentRecoveryPassed": true,
+      "licenseClosed": false,
+      "realLinuxDshHostValidated": true,
+      "inCanaryAllowlist": false,
+      "releaseQualified": false,
+      "realLinuxDshHostVersion": "0.2.2-rc.1",
+      "realLinuxHostNodeVersion": "v24.22.3",
+      "realLinuxHostDistro": "Alpine Linux 3.23.8, WSL2 x86_64",
+      "sandboxOnlyDigestInjection": true,
+      "realLinuxHostPathAndCanonicalAttachmentsPassed": true,
+      "realLinuxHostCancelAndMidInferenceShutdownPassed": true,
+      "realLinuxHostPostShutdownRestartPassed": true,
+      "realLinuxHostReleaseQualified": false,
+      "realLinuxHostLocalTesseractFallbackPassed": true,
+      "realLinuxHostLocalTesseractVersion": "5.5.1",
+      "realLinuxHostTesseractInstalledLanguages": [
+        "chi_sim",
+        "eng"
+      ],
+      "realLinuxHostShortBudgetMs": 1000,
+      "realLinuxHostShortBudgetControlledFailurePassed": true,
+      "realLinuxHostStoppedPluginRemovalAndReinstallPassed": true,
+      "realLinuxHostAgentAfterPluginReinstallPassed": true,
+      "realLinuxHostPrivateServicesCleanedUp": true
+    }
+  },
+  "conversionReproduction": {
+    "status": "byte-identical isolated directory rerun; NOT clean CI build",
+    "engine": "pnnx",
+    "packageVersion": "20261020",
+    "standaloneWindowsExeSha256": "b8c56a0b0319e6ce4d229e9a339e4ee377fb0c42f7f3e66eec235ed00cd71b18",
+    "detectorArgs": [
+      "inputshape=[1,3,640,640]",
+      "inputshape2=[1,3,960,960]",
+      "fp16=0",
+      "optlevel=2"
+    ],
+    "recognizerArgs": [
+      "inputshape=[1,3,48,320]",
+      "inputshape2=[1,3,48,640]",
+      "fp16=0",
+      "optlevel=2"
+    ],
+    "fourOutputFilesByteIdentical": true,
+    "releaseCiReproducible": false,
+    "outputHashesCheckedAgainst": "nativeAssets",
+    "location": "Windows isolated laboratory output, not tracked source"
+  }
+}

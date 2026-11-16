@@ -1,5 +1,65 @@
 # Third-Party Notices
 
+## Optional local PP-OCRv6 / ncnn OCR engine (macOS ARM64 and Windows x64)
+
+This npm package does **not** bundle native OCR binaries, model weights or conversion output.
+Owners may install a single checksum-validated release archive using
+`scripts/install-native-ocr.mjs --bundle /absolute/path/to/ppocrv6-small-darwin-arm64.tar.gz`.
+The bundle is created by `scripts/package-native-ocr.mjs` from previously verified
+source-linked binaries and models. Its contents are individually verified before installation,
+and unknown archive members are refused. When available, `vision_ocr` auto mode uses
+the local engine, otherwise it preserves Tesseract/vision fallback.
+
+- PaddlePaddle PP-OCRv6 small detector model: `PP-OCRv6_small_det_onnx`,
+  revision `28fe5895c24fd108c19eb3e8479f4ab385fbfc62`,
+  upstream model card **Apache-2.0**:
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+- PaddlePaddle PP-OCRv6 small recognizer model: `PP-OCRv6_small_rec_onnx`,
+  revision `b8f84f0b80c529de40b4fbb3544b84fa7233a513`,
+  upstream model card **Apache-2.0**:
+  https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+- Dictionary `ppocr/utils/dict/ppocrv6_dict.txt`: PaddlePaddle/PaddleOCR
+  commit `dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf`,
+  **Apache-2.0**.
+- CPU inference engine: Tencent/ncnn
+  commit `d1f6ac67e9fc91390cc70f7168573fd2626f1d66`,
+  **BSD-3-Clause** plus its internally listed **BSD-2-Clause/zlib**
+  components. The unmodified upstream 6.3 KiB license/third-party attribution
+  text is included as `assets/licenses/ncnn-LICENSE.txt` with SHA-256
+  `7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255`.
+- Full Apache 2.0 text: `assets/licenses/apache-2.0.txt`.
+
+Windows x64 research candidate (not publicly released) uses LLVM-MinGW
+20261020 UCRT (official toolchain tarball SHA-256
+`fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd`)
+and explicitly `-static` to statically link `libc++`, `libunwind`, and
+compiler runtime. Full original Apache-2.0 WITH LLVM Exceptions license is
+`assets/licenses/llvm-mingw-LICENSE.txt` and the exact mingw-w64 runtime
+notice is `assets/licenses/mingw-w64-runtime-COPYING.txt`.
+Windows ncnn binary's actual PE import table lists only KERNEL32 and OS UCRT
+API-set DLLs; no additional GNU/LLVM runtime DLLs. The mingw-w64 runtime notice contains a general disclosure about LGPL
+Wine-imported headers/IDLs. The **actual** Windows build's Ninja dependency
+graph contains 743 unique toolchain headers. After replacing the toolchain's
+old GPL-with-GCC-only-exception \`stdarg.h\` with the pin-verified Apache-2.0
+LLVM header and recompiling 549 affected objects, no GPL/LGPL-labeled header
+remained in that observed dependency set. The sole Wine-origin header
+(\`corecrt_stdio_config.h\`) explicitly declares **Public Domain**.
+Full upstream notices are still retained even where a component is unused.
+These checks cover the tested binary's identified build dependencies, not
+a formal legal opinion, signed reproducible release or every LLVM/MinGW target.
+
+The verified Mac ARM64 executable imports only the operating system's
+`/usr/lib/libc++.1.dylib` and `/usr/lib/libSystem.B.dylib`; the npm package
+does not redistribute them. **The tested Windows x64 binary's compiler/header/runtime source license
+inventory is recorded and its discovered linked components have permissive
+terms; a public release still requires clean build attestation and final
+third-party notice review.** Linux remains excluded. Native binaries and
+models are not included in the npm package or a public release.
+The original ONNX and converted ncnn model hashes are pinned in
+`quality/native-ocr-provenance-LAB.json` (research record, not a packaged
+weight). The installed local asset directory includes copies of the two
+license texts and a source notice.
+
 dsh-vision-router is distributed under the MIT license; it is not a relicensing of its dependencies.
 The versioned VTracer WASM package is distributed separately as an npm dependency.
 This document records the vectorizer-related notices and a reviewed license snapshot.

@@ -426,7 +426,22 @@ ollama pull qwen2.5vl
 - 默认免费链路无需 API Key；付费 `httpProviders` 只需一个凭据引用（`apiKeyEnv`）。
 - 只有 `vision_html_screenshot` 需要 Chrome / Chromium / Edge；其余工具无浏览器也能用。
 - 桌面截屏必须显式开启。Windows/macOS 使用系统截屏能力；Linux 需安装 ImageMagick `import` 或 `scrot`，且必须处于可截取的桌面会话（Wayland 支持取决于环境）。
-- tesseract 可选。`vision_ocr` 默认使用 `ocrEngine: auto`（本地 Tesseract 优先、失败或空结果再回退视觉模型）；也可在「设置 → 高级 → OCR 默认引擎」强制仅 Tesseract 或直接使用视觉模型，无需卸载 Tesseract。单次调用显式 `engine=tesseract|vision` 始终覆盖默认设置。
+- tesseract 可选。`vision_ocr` 默认使用 `ocrEngine: auto`：在 **Mac ARM64 / Windows x64** 上优先使用已安装且 SHA-256 校验通过的 PP-OCRv6 small/ncnn，未安装或失败才使用本地 Tesseract，最后按照现有隐私设置决定是否回退视觉模型。其他系统暂时保持 Tesseract 优先。针对 Issue #836，Tesseract 自适应识别增加 PSM 7（单行）；只有低置信度时才按需尝试底部字幕的灰度、放大与暗底反相预处理。`auto` 遇到非空但低置信度的本地结果时，在非严格本地模式、未触发熔断且剩余时间允许的情况下，可继续调用视觉模型核查（可能产生服务商用量）；否则保留带不确定性标记的本地结果。仍可在「设置 → 高级 → OCR 默认引擎」强制仅 Tesseract 或直接使用视觉模型。单次调用显式 `engine=tesseract|vision` 始终优先，`engine=tesseract` 绝不触发云端视觉请求。
+
+  本地安装已验证的 PP-OCRv6 引擎（Mac ARM64 已验证；Windows x64 已通过本地安装与正式 \`auto\` 调用，公开发行仍待最终审查）：拿到经来源核验的单文件包后运行下面一条命令即可，不需要自行编译；安装器会逐项校验二进制与五个模型资产。当前两个包均为**本地验证候选，尚未上传公共 Release**；Windows 版本仍需完成许可证审核。
+
+  ```bash
+  node scripts/install-native-ocr.mjs --bundle /absolute/path/to/ppocrv6-small-darwin-arm64.tar.gz
+  # Windows x64 则使用 ppocrv6-small-win32-x64.tar.gz
+  ```
+
+  维护者仍可使用原有两个路径参数安装已验证的本地产物：
+
+  ```bash
+  node scripts/install-native-ocr.mjs --binary /absolute/path/to/native-ocr-worker --models /absolute/path/to/ppocrv6-ncnn-models
+  ```
+
+  安装成功后无需设置 `DVR_NCNN_OCR_CANARY` 等实验环境变量；`auto` 自动启用。若未安装则正常回退。**npm 包不包含任何原生二进制或模型权重**；来源和完整许可声明见 `THIRD_PARTY_NOTICES.md`。Linux 原生版本仍未获准进入默认路径；Windows x64 的本地安装需经明确选择且不提供公开发行包，详见许可声明。
 
 ## 安装与生命周期
 
