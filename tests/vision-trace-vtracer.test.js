@@ -77,8 +77,8 @@ test('successive mixed VTracer workers complete and cleanly exit without leaking
       posterizeSvgColor(rgba, info, 3, 10000),
       posterizeSvg(png, 4, 'dominant', 10000),
     ])
-    assert.match(color, /<svg[\\s>]/)
-    assert.match(gray, /<svg[\\s>]/)
+    assert.match(color, /<svg[\s>]/)
+    assert.match(gray, /<svg[\s>]/)
   }
 })
 
