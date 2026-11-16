@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **v3.3.0 待发布次版本：** 集成附件 ID／会话恢复的完整任务超时和权限加固、VTracer 独立进程隔离、Windows 兼容修复，以及 Mac ARM64／Windows x64 **用户自行安装**的 SHA-256 校验 PP-OCRv6/ncnn 主力 OCR 路线；`auto` 对不确定识别在授权和预算内核查。**npm 包不包含原生模型或可执行文件**，原生离线包公开分发仍须独立完成许可证和供应链审核。未安装原生 ncnn 时仍可回退到 Tesseract，也可以显式指定兼容引擎。最低要求仍为 DSH >=0.2.1-rc.5 <0.3.0-0、Node.js >=24.9.0；不自动迁移 Profile。默认云端视觉兜底可能发送图片，敏感内容应使用严格纯本地。升级前请备份、运行只读 `doctor --upgrade-preflight` 并保留回滚版本。详见 [v3.3.0 候选说明](docs/releases/v3.3.0.md)。
+> **v3.3.0 次版本更新（正式发布状态请核实 GitHub Releases/npm）：** 集成附件 ID／会话恢复的完整任务超时和权限加固、VTracer 独立进程隔离、Windows 兼容修复，以及 Mac ARM64／Windows x64 **用户自行安装**的 SHA-256 校验 PP-OCRv6/ncnn 主力 OCR 路线；`auto` 对不确定识别在授权和预算内核查。**npm 包不包含原生模型或可执行文件**，原生离线包公开分发仍须独立完成许可证和供应链审核。未安装原生 ncnn 时仍可回退到 Tesseract，也可以显式指定兼容引擎。最低要求仍为 DSH >=0.2.1-rc.5 <0.3.0-0、Node.js >=24.9.0；不自动迁移 Profile。默认云端视觉兜底可能发送图片，敏感内容应使用严格纯本地。升级前请备份、运行只读 `doctor --upgrade-preflight` 并保留回滚版本。详见 [v3.3.0 发布说明](docs/releases/v3.3.0.md)。
 
 ## 先用起来
 
@@ -620,7 +620,7 @@ npx dsh-vision-router doctor --profile web
 
 ## 版本公告与社区链接
 
-版本更新详情：[v3.3.0 候选发布说明](docs/releases/v3.3.0.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
+版本更新详情：[v3.3.0 发布说明](docs/releases/v3.3.0.md)。正式可安装版本请以 GitHub Releases 或 npm 为准。
 
 <p align="center">
   <sub>生态收录：</sub>
