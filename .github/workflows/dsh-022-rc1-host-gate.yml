@@ -72,12 +72,6 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
-      - name: Verify actual NativeToolExecutor color grayscale and session-authorized VTracer child
-        working-directory: dsh-rc1
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
-        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Verify RC1 Agent model/inbox notification ordering
         working-directory: dsh-rc1
         env:
@@ -106,6 +100,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Native rc1 VTracer child after built macOS Host
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Run real macOS Desktop renderer lifecycle
         if: matrix.os == 'macos-latest'
         working-directory: dsh-rc1
@@ -184,6 +185,12 @@ jobs:
       - name: Build the rc1 Host runtime
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Native rc1 VTracer child after built Ubuntu Host
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Prefer official Ubuntu apt mirror for Chromium dependencies
         run: bash dvr/scripts/ci-prefer-ubuntu-archive.sh
       - name: Install Chromium
@@ -287,6 +294,12 @@ jobs:
       - name: Build exact Desktop runtime
         working-directory: dsh-rc1
         run: pnpm run build
+      - name: Native rc1 VTracer child after built Windows Host
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: node --import tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Run authenticated Desktop Host contract
         working-directory: dsh-rc1
         env:
