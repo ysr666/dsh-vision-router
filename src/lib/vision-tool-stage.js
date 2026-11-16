@@ -24,6 +24,9 @@ export function createVisionToolStageTrace(logger, toolName, signal) {
     let abortReported = false
     let rejectAborted
     const canceled = signal && new Promise((_, reject) => { rejectAborted = reject })
+    // Pre-aborted signals can reject before Promise.race attaches a handler.
+    // Keep that intentional cancellation rejection observed in every race.
+    if (canceled) void canceled.catch(() => {})
     const onAbort = () => {
       if (completed || abortReported) return
       abortReported = true
