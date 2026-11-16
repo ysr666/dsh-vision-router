@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { performance } from 'node:perf_hooks'
+import { randomUUID } from 'node:crypto'
 import { encodeNativeOcrRgbFrame, runIsolatedLocalOcr } from '../src/lib/native-ocr-supervisor.js'
 
 const valid = 'process.stdin.resume(); process.stdin.on("end", () => process.stdout.write(JSON.stringify({text:"吃饱了",confidence:0.98})))'
@@ -64,7 +65,7 @@ test('native OCR supervisor rejects unbounded output and malformed JSON/results'
 
 test('native OCR supervisor does not pass credentials to workers', async () => {
   const old = process.env.OCR_TEST_SECRET
-  process.env.OCR_TEST_SECRET = 'never-send-this-secret'
+  process.env.OCR_TEST_SECRET = randomUUID()
   try {
     const result = await runIsolatedLocalOcr(input, args('process.stdout.write(JSON.stringify({text:String(process.env.OCR_TEST_SECRET)}))'))
     assert.equal(result.text, 'undefined')
@@ -78,7 +79,7 @@ test('native OCR worker receives only the Linux parent identity, not inherited h
   const old = process.env.DVR_OCR_PARENT_PID
   const secret = process.env.OCR_TEST_SECRET
   process.env.DVR_OCR_PARENT_PID = 'untrusted-forged-value'
-  process.env.OCR_TEST_SECRET = 'never-send-this-secret'
+  process.env.OCR_TEST_SECRET = randomUUID()
   try {
     const worker = 'process.stdout.write(JSON.stringify({text:JSON.stringify({parent:process.env.DVR_OCR_PARENT_PID??null,secret:process.env.OCR_TEST_SECRET??null})}))'
     const result = await runIsolatedLocalOcr(input, args(worker))
