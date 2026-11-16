@@ -72,6 +72,12 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify actual NativeToolExecutor color grayscale and session-authorized VTracer child
+        working-directory: dsh-rc1
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc1
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Verify RC1 Agent model/inbox notification ordering
         working-directory: dsh-rc1
         env:
