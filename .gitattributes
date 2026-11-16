@@ -1,4 +1,6 @@
-# Preserve upstream license texts byte-for-byte, including original
-# trailing whitespace and final newlines; the license hashes are audited.
-assets/licenses/llvm-mingw-LICENSE.txt -whitespace
-assets/licenses/mingw-w64-runtime-COPYING.txt -whitespace
+# Keep audited upstream license texts byte-for-byte on every checkout,
+# including Windows core.autocrlf=true: original newline bytes are hashed.
+# -text prevents Git replacing LF with CRLF; -whitespace preserves notices.
+assets/licenses/ncnn-LICENSE.txt -text -whitespace
+assets/licenses/llvm-mingw-LICENSE.txt -text -whitespace
+assets/licenses/mingw-w64-runtime-COPYING.txt -text -whitespace
