@@ -476,6 +476,7 @@ import {
   ocrWithTesseract,
   ocrWithTesseractAdaptive,
   shouldVerifyUncertainAutoOcr,
+  verifyUncertainAutoOcrResult,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -572,6 +573,7 @@ export {
   ocrWithTesseract,
   ocrWithTesseractAdaptive,
   shouldVerifyUncertainAutoOcr,
+  verifyUncertainAutoOcrResult,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -4348,7 +4350,7 @@ ctx.logger?.info(
         'Transcribe TEXT from an image. ENGINE POLICY: explicit engine=tesseract or engine=vision always wins. ' +
         'Otherwise the configured OCR engine policy applies. Auto first prefers a locally installed, SHA-verified ' +
         'PP-OCRv6/ncnn on macOS ARM64 or Windows x64, then Tesseract (chi_sim+eng), and finally a vision model ' +
-        'when local OCR fails or returns no text. Structured 1+x follow-up does not change the selected policy. ' +
+        'when local OCR fails, returns no text, or remains uncertain (subject to permission and budget). Structured 1+x follow-up does not change the selected policy. ' +
         'Returns the text and ' +
         'which engine produced it. ' +
         'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
@@ -4379,7 +4381,7 @@ ctx.logger?.info(
           },
           engine: {
             type: 'string',
-            description: '"auto": use the configured OCR engine policy: prefer installed SHA-verified PP-OCRv6 on macOS ARM64 or Windows x64, otherwise local Tesseract; vision fallback on local failure; explicit "tesseract"/"vision" always overrides the configured policy.',
+            description: '"auto": prefer installed SHA-verified PP-OCRv6 on macOS ARM64 or Windows x64, otherwise local Tesseract; permitted vision fallback on local failure or uncertain text; explicit "tesseract"/"vision" always overrides the configured policy.',
           },
         },
         additionalProperties: false,
@@ -4438,7 +4440,7 @@ ctx.logger?.info(
                   { uncertain: native.uncertain === true },
                 )
               }
-              return JSON.stringify({
+              const nativeResult = {
                 engine: 'ncnn',
                 text: native.text.trim(),
                 uncertain: native.uncertain === true,
@@ -4451,7 +4453,23 @@ ctx.logger?.info(
                     reviewTruncated: Array.isArray(native.reviewQueue) && native.reviewQueue.length > 12,
                   } }
                   : {}),
+              }
+              // Installing ncnn must not turn uncertain, nonempty local OCR
+              // into an unreviewable final answer. Never bypass privacy,
+              // breaker or the shared one-task deadline to verify it.
+              const reviewed = await verifyUncertainAutoOcrResult(nativeResult, {
+                engine,
+                localOnlyVision: localOnlyVisionEnabled(current()),
+                degraded: degraded.active,
+                remainingMs: deadline.remaining(),
+                verifyVision: () => answerVisionForTool(
+                  exec, bytes, mediaType,
+                  '请核查图片中的原文，尤其是易混淆的数字、化学式和底部字幕；不确定时不要猜。只输出文字。',
+                  { deadline },
+                ),
+                checkAbort: error => throwIfVisionTaskAborted(taskSignal, error),
               })
+              return JSON.stringify(reviewed)
             }
           } catch (error) {
             throwIfVisionTaskAborted(taskSignal, error)
