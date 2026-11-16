@@ -70,10 +70,16 @@ function iterableValues(value: unknown): Iterable<unknown> {
   return value as Iterable<unknown>
 }
 
-function boundedMessage(error: unknown): string {
-  const record = propertyBag(error)
-  const text = record?.message ?? error
-  return String(text ?? '').slice(0, 400)
+// Host error messages may contain file paths, image ids or provider credentials.
+// Only log a controlled diagnostic category, never arbitrary exception text.
+function recoveryFailureKind(error: unknown): string {
+  const code = propertyBag(error)?.code
+  if (code === 'ENOENT') return 'not-found'
+  if (code === 'EACCES' || code === 'EPERM') return 'permission'
+  if (code === 'EBUSY') return 'busy'
+  if (code === 'ETIMEDOUT') return 'timeout'
+  if (code === 'SESSION_QUERY_CORRUPT_SESSION') return 'corrupt-session'
+  return 'session-query-error'
 }
 
 /**
@@ -144,16 +150,13 @@ export function createSessionVisionAttachmentIndex({
     attachmentId: unknown,
     error: unknown,
   ): void => {
-    const message = boundedMessage(error)
-    const warningKey = `${String(attachmentId)}:${message}`
+    const kind = recoveryFailureKind(error)
+    // The full attachment id is used only for in-memory de-duplication.
+    const warningKey = `${String(attachmentId)}:${kind}`
     const key = weakKey(session)
     if (key !== undefined && attachmentRecoveryWarnings.get(key) === warningKey) return
     if (key !== undefined) attachmentRecoveryWarnings.set(key, warningKey)
-    logger?.warn?.(
-      'vision-router: session attachment recovery failed id=%s error=%s',
-      String(attachmentId),
-      message,
-    )
+    logger?.warn?.('vision-router: session attachment recovery failed kind=%s', kind)
   }
 
   const resolveAttachments = async (
