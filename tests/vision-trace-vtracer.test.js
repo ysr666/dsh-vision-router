@@ -113,6 +113,21 @@ test('isolated VTracer child timeout and cancellation kill stalled work', async 
   await assert.rejects(pending, /probe canceled/)
 })
 
+test('isolated VTracer process queue is bounded and recovers after all deadlines', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  const requests = Array.from({ length: 12 }, () => runIsolatedTraceProcess({
+    mode: 'hang', payload: {}, timeoutMs: 450, childUrl,
+  }))
+  const settled = await Promise.allSettled(requests)
+  assert.equal(settled.filter((entry) => entry.status === 'rejected').length, 12)
+  assert.equal(settled.filter((entry) =>
+    String(entry.reason?.message).includes('capacity exceeded')).length, 1)
+
+  const { rgba, info } = colorSample()
+  const result = await posterizeSvgColor(rgba, info, 2, 10000)
+  assert.ok(result.includes('<svg'), 'a later healthy trace must not be stuck in the queue')
+})
+
 test('VTracer honors explicit palette values, not just palette length', async () => {
   const { rgba, info } = colorSample()
   const redAndWhite = [{ hex: '#ff0000' }, { hex: '#ffffff' }]
