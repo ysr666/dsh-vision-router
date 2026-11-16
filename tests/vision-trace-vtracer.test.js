@@ -92,7 +92,7 @@ test('isolated VTracer child must not publish a message from an abnormal process
   }
   // The parent Node process remains usable after both child faults.
   const { rgba, info } = colorSample()
-  assert.match(await posterizeSvgColor(rgba, info, 2, 10000), /<svg[\\s>]/)
+  assert.match(await posterizeSvgColor(rgba, info, 2, 10000), /<svg[\s>]/)
 })
 
 test('isolated VTracer child timeout and cancellation kill stalled work', async () => {
