@@ -31,3 +31,22 @@ test('stage tracing logs the unresolved Host stage at cancellation without late 
   assert.equal(entries.filter((entry) => entry[4] === 'ok').length, 0)
   assert.equal(entries.filter((entry) => entry[4] === 'aborted').length, 1)
 })
+
+test('a never-settling Host image stage is abandoned promptly on abort', async () => {
+  const entries = []
+  const trace = createVisionToolStageTrace({
+    info(...args) { entries.push(args) },
+    warn(...args) { entries.push(args) },
+  }, 'vision_describe', AbortSignal.timeout(80))
+  let finishLate
+  const started = Date.now()
+  const pending = trace('resolve-upload-refs', () => new Promise((resolve) => {
+    finishLate = resolve
+  }))
+  await assert.rejects(pending, /aborted|timeout|operation timed out/i)
+  assert.ok(Date.now() - started < 800, 'the Host's pending Promise must not hold the caller')
+  finishLate?.('ref-from-canceled-session')
+  await Promise.resolve()
+  assert.ok(entries.some((entry) => entry[3] === 'resolve-upload-refs' && entry[4] === 'aborted'))
+  assert.equal(entries.filter((entry) => entry[4] === 'ok').length, 0)
+})
