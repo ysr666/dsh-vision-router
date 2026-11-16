@@ -88,8 +88,19 @@ export function runIsolatedTraceProcess({
             env: childEnv,
           })
           child.once('message', (message) => {
-            if (message?.ok === true && typeof message.svg === 'string') pendingSvg = message.svg
-            else finish(new Error('vector trace process returned an invalid result'))
+            const svg = message?.svg
+            // The subprocess is a trust boundary, not an output validator.
+            // Native faults must never let bogus or oversized markup reach
+            // the Host artifact writer, even if IPC closes with status zero.
+            if (
+              message?.ok === true && typeof svg === 'string' &&
+              svg.length > 0 && svg.length <= 16 * 1024 * 1024 &&
+              /<svg[\s>]/.test(svg) && Buffer.byteLength(svg) <= 16 * 1024 * 1024
+            ) {
+              pendingSvg = svg
+            } else {
+              finish(new Error('vector trace process returned an invalid result'))
+            }
           })
           child.once('error', () => finish(new Error('vector trace process startup failed')))
           child.once('close', (code, termSignal) => {
