@@ -12,6 +12,9 @@ import {
 } from '../src/lib/native-ocr-canary.js'
 
 const digest = content => createHash('sha256').update(content).digest('hex')
+// Hash/path validation is platform-neutral. Force an approved identity so Linux
+// CI exercises the intended rejection instead of short-circuiting on platform.
+const FIXTURE_NATIVE_PLATFORM = Object.freeze({ platform: 'darwin', arch: 'arm64' })
 async function localSharp() {
   const resolved = process.env.DVR_OCR_TEST_SHARP_PATH
     ? pathToFileURL(process.env.DVR_OCR_TEST_SHARP_PATH).href
@@ -27,17 +30,17 @@ const tiny = Buffer.from(
 test('binary integrity gate rejects untrusted, missing, changed and unsupported binaries', async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), 'dvr-ocr-bin-'))
   const executable = path.join(folder, 'worker')
-  const binaries = { [process.platform + '-' + process.arch]: digest('trusted') }
+  const binaries = { 'darwin-arm64': digest('trusted') }
   try {
     await writeFile(executable, 'trusted')
     assert.deepEqual(await verifyExperimentalNativeOcrBinary(executable, {
-      binaryDigests: binaries,
+      ...FIXTURE_NATIVE_PLATFORM, binaryDigests: binaries,
     }), { ok: true, digest: digest('trusted') })
     await writeFile(executable, 'evil!!')
     await assert.rejects(verifyExperimentalNativeOcrBinary(executable, {
-      binaryDigests: binaries,
+      ...FIXTURE_NATIVE_PLATFORM, binaryDigests: binaries,
     }), { code: 'OCR_BINARY_INTEGRITY' })
-    await assert.rejects(verifyExperimentalNativeOcrBinary('relative/worker'), {
+    await assert.rejects(verifyExperimentalNativeOcrBinary('relative/worker', FIXTURE_NATIVE_PLATFORM), {
       code: 'OCR_UNTRUSTED_RUNNER',
     })
     await assert.rejects(verifyExperimentalNativeOcrBinary(executable, {
@@ -53,6 +56,7 @@ test('preview rejects corrupt binary before invoking any image decoder', async (
   await assert.rejects(runExperimentalNativeOcrCanary(tiny, {
     binaryPath: path.join(os.tmpdir(), 'no-native-ocr-file-abc'),
     modelDir: os.tmpdir(),
+    ...FIXTURE_NATIVE_PLATFORM,
     loadSharp: async () => { decoded = true; throw new Error('must not decode') },
   }), { code: 'OCR_UNTRUSTED_RUNNER' })
   assert.equal(decoded, false)
