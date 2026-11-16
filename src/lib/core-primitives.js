@@ -6,7 +6,6 @@ import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
 import { fetchWithOpenAICompatibility } from './http-compat.js'
 import { runIsolatedTraceProcess } from './trace-vtracer-process-runtime.js'
 import {
@@ -1251,9 +1250,52 @@ export function resolveVisionOcrEngine(requestedEngine, configuredEngine = 'auto
   return 'auto'
 }
 
+/** Node's asynchronous execFile does not support an \`input\` option.
+ * Explicitly stream bounded image bytes to the subprocess's stdin.
+ * The callback still owns timeout, AbortSignal, output cap and exit status.
+ */
+export function execFileWithStdin(file, args, { input, ...options } = {}) {
+  if (!(input instanceof Uint8Array)) {
+    return Promise.reject(new TypeError('subprocess input must be a byte array'))
+  }
+  return new Promise((resolve, reject) => {
+    let inputError
+    const child = execFile(file, args, { encoding: 'utf8', ...options }, (error, stdout, stderr) => {
+      if (error || inputError) reject(error ?? inputError)
+      else resolve({ stdout, stderr })
+    })
+    if (!child.stdin) {
+      child.kill()
+      reject(new Error('subprocess stdin unavailable'))
+      return
+    }
+    child.stdin.on('error', error => {
+      inputError = error
+      if (child.exitCode === null) child.kill()
+    })
+    try {
+      child.stdin.end(input)
+    } catch (error) {
+      inputError = error
+      child.kill()
+    }
+  })
+}
+
+/** Never spend a model call on uncertain local OCR when the caller explicitly
+ * requested local-only text, a breaker is degraded, or the shared deadline is low.
+ */
+export function shouldVerifyUncertainAutoOcr({
+  engine, uncertain, localOnlyVision, degraded, remainingMs,
+} = {}) {
+  return engine === 'auto' && uncertain === true &&
+    localOnlyVision !== true && degraded !== true &&
+    Number.isFinite(remainingMs) && remainingMs >= 1200
+}
+
 /** OCR image bytes with a local tesseract binary (chi_sim+eng) when available. */
 export async function ocrWithTesseract(bytes, timeoutMs = 60000, options = {}) {
-  const exec = typeof options.exec === 'function' ? options.exec : promisify(execFile)
+  const exec = typeof options.exec === 'function' ? options.exec : execFileWithStdin
   const signal = options.signal
   throwIfVisionAborted(signal, 'tesseract OCR aborted')
   const { stdout } = await exec(
@@ -1270,7 +1312,7 @@ export async function ocrWithTesseract(bytes, timeoutMs = 60000, options = {}) {
   return String(stdout ?? '')
 }
 
-const TESSERACT_OCR_PSMS = Object.freeze([6, 3, 11])
+const TESSERACT_OCR_PSMS = Object.freeze([6, 7, 3, 11])
 const TESSERACT_REVIEW_THRESHOLD = 70
 const TESSERACT_CANDIDATE_MARGIN = 5
 const TESSERACT_CONFUSABLE_RUN = /[0O1IlL]{3,}/
@@ -1329,7 +1371,7 @@ export function selectTesseractOcrCandidate(candidates) {
 }
 
 export async function ocrWithTesseractAdaptive(bytes, timeoutMs = 12000, options = {}) {
-  const exec = typeof options.exec === 'function' ? options.exec : promisify(execFile)
+  const exec = typeof options.exec === 'function' ? options.exec : execFileWithStdin
   const signal = options.signal
   const requestedBudget = Number(timeoutMs)
   const budgetMs = Number.isFinite(requestedBudget) && requestedBudget > 0
@@ -1338,27 +1380,27 @@ export async function ocrWithTesseractAdaptive(bytes, timeoutMs = 12000, options
   const started = Date.now()
   const attemptedPsms = []
   const remaining = () => Math.max(1, budgetMs - (Date.now() - started))
-  const run = async (psm) => {
+  const run = async (psm, inputBytes = bytes, variant = 'original') => {
     throwIfVisionAborted(signal, 'adaptive tesseract OCR aborted')
     attemptedPsms.push(psm)
     const common = ['stdin', 'stdout', '-l', 'chi_sim+eng', '--psm', String(psm)]
     const execOptions = () => ({
       timeout: remaining(),
       maxBuffer: 32 * 1024 * 1024,
-      input: bytes,
+      input: inputBytes,
       ...(signal === undefined ? {} : { signal }),
     })
     const { stdout: plain } = await exec('tesseract', common, execOptions())
     throwIfVisionAborted(signal, 'adaptive tesseract OCR aborted')
     const text = String(plain ?? '').trim()
-    if (text === '') return assessTesseractOcr('', '', psm)
+    if (text === '') return { ...assessTesseractOcr('', '', psm), variant }
     try {
       const { stdout: tsv } = await exec('tesseract', [...common, 'tsv'], execOptions())
       throwIfVisionAborted(signal, 'adaptive tesseract OCR aborted')
-      return assessTesseractOcr(text, String(tsv ?? ''), psm)
+      return { ...assessTesseractOcr(text, String(tsv ?? ''), psm), variant }
     } catch (error) {
       if (isVisionAbort(error, signal)) throw error
-      return { psm, text, words: 0, quality: 0, riskyTokens: [], uncertain: true }
+      return { psm, text, words: 0, quality: 0, riskyTokens: [], uncertain: true, variant }
     }
   }
 
@@ -1375,7 +1417,27 @@ export async function ocrWithTesseractAdaptive(bytes, timeoutMs = 12000, options
       // Keep the first successful local OCR result when an optional review pass fails.
     }
   }
-  const selected = selectTesseractOcrCandidate(candidates) ?? candidates[0]
+  let selected = selectTesseractOcrCandidate(candidates) ?? candidates[0]
+  // Last resort only. A damaged/low-confidence original can still contain
+  // a legitimate single subtitle line; a bounded local crop may recover it.
+  if (selected.uncertain && typeof options.preprocess === 'function' &&
+    budgetMs - (Date.now() - started) >= 900) {
+    try {
+      const processed = await options.preprocess(bytes, {
+        signal, remainingMs: Math.max(0, budgetMs - (Date.now() - started)),
+      })
+      throwIfVisionAborted(signal, 'adaptive tesseract OCR aborted')
+      if (processed?.bytes instanceof Uint8Array && processed.bytes.length > 0 &&
+          processed.bytes.length <= 16 * 1024 * 1024 &&
+          budgetMs - (Date.now() - started) >= 500) {
+        const retry = await run(7, processed.bytes, processed.variant ?? 'preprocessed')
+        selected = selectTesseractOcrCandidate([...candidates, retry]) ?? selected
+      }
+    } catch (error) {
+      if (isVisionAbort(error, signal)) throw error
+      // The original best candidate still wins when preprocessing is unavailable.
+    }
+  }
   return { ...selected, attemptedPsms }
 }
 

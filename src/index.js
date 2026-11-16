@@ -118,6 +118,9 @@ import z from '@deepseek-ai/schemastery'
 
 import path from 'node:path'
 import { existsSync } from 'node:fs'
+import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
+import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
+import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
 
 import { pathToFileURL } from 'node:url'
 import { appendPromptToImageOnlyMessage } from './lib/http-compat.js'
@@ -313,7 +316,7 @@ export const Config = z.object({
   // (its own cap) and the vision-model fallback only the rest — never two
   // full timeouts added together.
   ocrTimeoutMs: z.number().step(1).min(1000).max(120000).default(30000),
-  // Default engine for vision_ocr. Per-call engine=tesseract|vision remains authoritative.
+  // Auto prefers verified owner-installed PP-OCRv6 when supported; explicit engine wins.
   ocrEngine: z.union(['auto', 'tesseract', 'vision']).default('auto'),
   proxy: z.string().default(''),
   proxyHosts: z.array(z.string()).default([...DEFAULT_PROXY_HOSTS]),
@@ -472,6 +475,7 @@ import {
   resolveVisionOcrEngine,
   ocrWithTesseract,
   ocrWithTesseractAdaptive,
+  shouldVerifyUncertainAutoOcr,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -567,6 +571,7 @@ export {
   resolveVisionOcrEngine,
   ocrWithTesseract,
   ocrWithTesseractAdaptive,
+  shouldVerifyUncertainAutoOcr,
   estimateTokens,
   estimateMessages,
   trimMessagesToBudget,
@@ -4341,9 +4346,10 @@ ctx.logger?.info(
       name: 'vision_ocr',
       description:
         'Transcribe TEXT from an image. ENGINE POLICY: explicit engine=tesseract or engine=vision always wins. ' +
-        'Otherwise the configured OCR engine policy applies. The default auto policy tries local Tesseract ' +
-        '(chi_sim+eng) first — fast, free, offline — then falls back to a vision model if local OCR fails or ' +
-        'returns no text. Structured 1+x follow-up does not change the selected policy. Returns the text and ' +
+        'Otherwise the configured OCR engine policy applies. Auto first prefers a locally installed, SHA-verified ' +
+        'PP-OCRv6/ncnn on macOS ARM64 or Windows x64, then Tesseract (chi_sim+eng), and finally a vision model ' +
+        'when local OCR fails or returns no text. Structured 1+x follow-up does not change the selected policy. ' +
+        'Returns the text and ' +
         'which engine produced it. ' +
         'SCOPE: vision_ocr reads letters, it does NOT recognize people, objects or scenes. Never use it ' +
         'as a fallback when vision_describe fails to identify who/what is in a picture ("这是谁" / ' +
@@ -4373,7 +4379,7 @@ ctx.logger?.info(
           },
           engine: {
             type: 'string',
-            description: '"auto": use the configured OCR engine policy (default policy is local Tesseract first, then vision fallback); explicit "tesseract"/"vision" always overrides the configured default for this call.',
+            description: '"auto": use the configured OCR engine policy: prefer installed SHA-verified PP-OCRv6 on macOS ARM64 or Windows x64, otherwise local Tesseract; vision fallback on local failure; explicit "tesseract"/"vision" always overrides the configured policy.',
           },
         },
         additionalProperties: false,
@@ -4402,6 +4408,67 @@ ctx.logger?.info(
         // gets a capped slice (never more than 12s), the vision model only the
         // remainder. The two timeouts can never stack into a multi-minute wait.
         const deadline = createDeadline(ocrBudgetMs())
+        // Prefer an owner-installed and SHA-pinned PP-OCRv6 worker in auto mode.
+        // No models or native binaries are bundled with the npm package.
+        // The isolated legacy preview override remains for existing lab tests.
+        const nativeAssets = process.env.DVR_NCNN_OCR_CANARY === '1'
+          ? {
+            binaryPath: process.env.DVR_NCNN_OCR_EXECUTABLE,
+            modelDir: process.env.DVR_NCNN_OCR_MODELS,
+          }
+          : (() => {
+            const installed = localNativeOcrInstallPaths()
+            return installed && existsSync(installed.binaryPath) ? installed : null
+          })()
+        if (engine === 'auto' && nativeAssets !== null) {
+          try {
+            const native = await runExperimentalNativeOcrCanary(bytes, {
+              binaryPath: nativeAssets.binaryPath,
+              modelDir: nativeAssets.modelDir,
+              loadSharp,
+              signal: taskSignal,
+              timeoutMs: Math.min(21000, Math.max(1, Math.floor(deadline.remaining() * .75))),
+            })
+            throwIfVisionTaskAborted(taskSignal)
+            if (native.text.trim()) {
+              if (session) {
+                visionTurnMemory.recordLocalOcr(
+                  visionScopeOf(session),
+                  visionEvidenceSourceKey(imageInput),
+                  { uncertain: native.uncertain === true },
+                )
+              }
+              return JSON.stringify({
+                engine: 'ncnn',
+                text: native.text.trim(),
+                uncertain: native.uncertain === true,
+                ...(native.uncertain
+                  ? { review: {
+                    documentRefined: native.documentRefined === true,
+                    regions: Array.isArray(native.regions) ? native.regions.length : undefined,
+                    numericOrFormulaRisks: Array.isArray(native.reviewQueue)
+                      ? native.reviewQueue.slice(0, 12) : undefined,
+                    reviewTruncated: Array.isArray(native.reviewQueue) && native.reviewQueue.length > 12,
+                  } }
+                  : {}),
+              })
+            }
+          } catch (error) {
+            throwIfVisionTaskAborted(taskSignal, error)
+            // Native resource saturation must not fork extra local workers.
+            if (error?.code === 'OCR_BUSY' || error?.code === 'OCR_QUEUE_TIMEOUT') {
+              return JSON.stringify({
+                engine: 'none', ok: false,
+                code: error.code, text: '', retryable: false,
+                reason: 'local OCR worker capacity is exhausted',
+              })
+            }
+            ctx.logger?.warn(
+              'vision-router: local PP-OCRv6 unavailable; using Tesseract/vision policy ' +
+              '(' + String(error?.code ?? 'OCR_NATIVE_FAILED').slice(0, 60) + ')',
+            )
+          }
+        }
         const tesseractSlice = Math.min(12000, deadline.remaining())
         if (engine !== 'vision') {
           let localAttempted = false
@@ -4410,7 +4477,11 @@ ctx.logger?.info(
             const local = await ocrWithTesseractAdaptive(
               bytes,
               tesseractSlice,
-              { signal: taskSignal },
+              {
+                signal: taskSignal,
+                preprocess: (source, context) =>
+                  prepareTesseractSubtitleRetry(source, { ...context, loadSharp }),
+              },
             )
             if (local.text.trim() !== '') {
               if (session) {
@@ -4420,7 +4491,7 @@ ctx.logger?.info(
                   { uncertain: local.uncertain === true },
                 )
               }
-              return JSON.stringify({
+              const localResult = {
                 engine: 'tesseract',
                 text: local.text.trim(),
                 uncertain: local.uncertain === true,
@@ -4431,10 +4502,48 @@ ctx.logger?.info(
                       attemptedPsms: local.attemptedPsms,
                       quality: Number(local.quality.toFixed(2)),
                       riskyTokens: local.riskyTokens,
+                      ...(local.variant && local.variant !== 'original'
+                        ? { preprocessing: local.variant } : {}),
                     },
                   }
                   : {}),
-              })
+              }
+              // A nonempty but low-confidence transcript is not proof of
+              // accuracy. In auto ONLY, try the existing consent-controlled
+              // vision route while retaining local evidence if unavailable.
+              if (shouldVerifyUncertainAutoOcr({
+                engine,
+                uncertain: local.uncertain,
+                localOnlyVision: localOnlyVisionEnabled(current()),
+                degraded: degraded.active,
+                remainingMs: deadline.remaining(),
+              })) {
+                try {
+                  const vision = await answerVisionForTool(
+                    exec, bytes, mediaType,
+                    '请严格辨认图片上的原文，尤其是底部字幕或浅色文字；不确定时不要猜。只输出文字。',
+                    { deadline },
+                  )
+                  throwIfVisionTaskAborted(taskSignal)
+                  if (vision.ok !== false && typeof vision.text === 'string' &&
+                    vision.text.trim()) {
+                    return JSON.stringify({
+                      engine: 'vision',
+                      text: vision.text.trim(),
+                      review: {
+                        fallbackReason: 'low_confidence_local_ocr',
+                        localText: localResult.text.slice(0, 1000),
+                        localQuality: localResult.review?.quality,
+                      },
+                    })
+                  }
+                } catch (error) {
+                  throwIfVisionTaskAborted(taskSignal, error)
+                  // The existing local transcript remains available and
+                  // retains its uncertainty if visual fallback fails.
+                }
+              }
+              return JSON.stringify(localResult)
             }
             if (engine === 'tesseract') return JSON.stringify({ engine: 'tesseract', text: '', uncertain: true })
           } catch (error) {

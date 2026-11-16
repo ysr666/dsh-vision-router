@@ -267,7 +267,8 @@ test('release verification preserves and actually runs the VTracer prepack licen
   const expectedPrepack = 'pnpm license:check && pnpm build'
   assert.equal(pkg.scripts.prepare, 'pnpm build')
   assert.equal(pkg.scripts.prepack, expectedPrepack)
-  assert.equal(pkg.scripts['license:check'], 'node scripts/verify-runtime-licenses.mjs')
+  assert.equal(pkg.scripts['license:check'],
+    'node scripts/verify-runtime-licenses.mjs && node scripts/verify-native-ocr-licenses.mjs')
   assert.match(workflow, /prepack: 'pnpm license:check && pnpm build'/)
   assert.match(workflow, /'license:check': 'node scripts\/verify-runtime-licenses\.mjs'/)
   const verify = workflow.indexOf('name: Verify runtime dependency licenses before packaging')

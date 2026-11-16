@@ -1,0 +1,4 @@
+# Preserve upstream license texts byte-for-byte, including original
+# trailing whitespace and final newlines; the license hashes are audited.
+assets/licenses/llvm-mingw-LICENSE.txt -whitespace
+assets/licenses/mingw-w64-runtime-COPYING.txt -whitespace
