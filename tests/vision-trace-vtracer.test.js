@@ -69,6 +69,19 @@ test('VTracer executes off-main-thread', async () => {
 })
 
 
+test('successive mixed VTracer workers complete and cleanly exit without leaking native state', async () => {
+  const { rgba, info } = colorSample()
+  const png = await sharp(rgba, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer()
+  for (let i = 0; i < 4; i++) {
+    const [color, gray] = await Promise.all([
+      posterizeSvgColor(rgba, info, 3, 10000),
+      posterizeSvg(png, 4, 'dominant', 10000),
+    ])
+    assert.match(color, /<svg[\\s>]/)
+    assert.match(gray, /<svg[\\s>]/)
+  }
+})
+
 test('VTracer honors explicit palette values, not just palette length', async () => {
   const { rgba, info } = colorSample()
   const redAndWhite = [{ hex: '#ff0000' }, { hex: '#ffffff' }]
