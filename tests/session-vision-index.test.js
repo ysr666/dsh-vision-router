@@ -306,6 +306,34 @@ test('batch attachment recovery reads one Session log and returns all requested 
   assert.equal(resolved.get('three')?.attachmentId, 'three')
 })
 
+test('cold recovery warning redacts attachment IDs, Host paths and exception messages', async () => {
+  const id = 'sha256:' + 'c'.repeat(64)
+  const privatePath = 'C:\\\\Users\\\\person\\\\private-upload.png'
+  const privateToken = 'secret-session-query-token'
+  const warnings = []
+  const session = { id: 'private-recovery', deriveMessages: () => [] }
+  const index = createSessionVisionIndex({
+    stateStore: createSessionVisionStateStore(),
+    core: coreStub(),
+    logger: { warn: (...args) => warnings.push(args) },
+    readSessionLog: async () => {
+      const error = new Error(`cannot open ${privatePath} id=${id} token=${privateToken}`)
+      error.code = 'EACCES'
+      throw error
+    },
+  })
+
+  assert.equal(await index.resolveAttachment(session, id), undefined)
+  assert.equal(await index.resolveAttachment(session, id), undefined)
+  assert.equal(warnings.length, 1, 'repeat warnings for the same failed image are de-duplicated')
+  assert.deepEqual(warnings[0], [
+    'vision-router: session attachment recovery failed kind=%s',
+    'permission',
+  ])
+  const published = JSON.stringify(warnings)
+  assert.doesNotMatch(published, /sha256:|private-upload|secret-session-query-token|person/)
+})
+
 test('advertised async attachment recovery failure never falls back to synchronous Session history', async () => {
   let syncReads = 0
   const session = sessionWith([])
