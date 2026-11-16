@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { gzipSync } from 'node:zlib'
 import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -51,13 +52,37 @@ test('package content identity rejects a registry tarball with different package
   }
 })
 
+function tarHeader(name, type, linkTarget = '') {
+  // Build a valid ustar entry in memory so the symlink rejection test does
+  // not depend on a Unix 'ln' executable or Windows symlink privileges.
+  const header = Buffer.alloc(512)
+  const field = (text, offset, length) => header.write(text, offset, length, 'ascii')
+  field(name, 0, 100)
+  field('0000755\0', 100, 8)
+  field('0000000\0', 108, 8)
+  field('0000000\0', 116, 8)
+  field('00000000000\0', 124, 12)
+  field('00000000000\0', 136, 12)
+  header.fill(0x20, 148, 156)
+  header[156] = type.charCodeAt(0)
+  field(linkTarget, 157, 100)
+  field('ustar\0', 257, 6)
+  field('00', 263, 2)
+  const checksum = header.reduce((sum, byte) => sum + byte, 0)
+  field(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 8)
+  return header
+}
+
 test('package content identity rejects symlink entries without extracting the archive', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'dvr-release-content-symlink-'))
   try {
-    const source = path.join(root, 'symlink-src', 'package')
-    await mkdir(source, { recursive: true })
-    await execFileAsync('ln', ['-s', '/etc/passwd', path.join(source, 'escape')])
-    const archive = await tarball(root, 'symlink')
+    const archive = path.join(root, 'symlink.tgz')
+    const tarBytes = Buffer.concat([
+      tarHeader('package/', '5'),
+      tarHeader('package/escape', '2', '/etc/passwd'),
+      Buffer.alloc(1024),
+    ])
+    await writeFile(archive, gzipSync(tarBytes))
     await assert.rejects(
       () => comparePackageTarballs(archive, archive),
       /unsupported npm tar entry type/,

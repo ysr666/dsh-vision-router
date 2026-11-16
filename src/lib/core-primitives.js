@@ -4,11 +4,11 @@ import path from 'node:path'
 
 import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { Worker } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { fetchWithOpenAICompatibility } from './http-compat.js'
+import { runIsolatedTraceProcess } from './trace-vtracer-process-runtime.js'
 import {
   directSessionAffinityHeaders,
   rawSessionIdentity,
@@ -652,7 +652,7 @@ export function cacheKeyFor({ pairs, httpProviders, contentIds, wantJson, questi
   ]
   const payload = JSON.stringify({
     chains,
-    contentIds: [...(contentIds ?? [])].sort(),
+    contentIds: [...(contentIds ?? [])],
     mode: wantJson ? 'json' : 'text',
     question: String(question ?? ''),
   })
@@ -1191,51 +1191,11 @@ function isVisionAbort(error, signal) {
   return signal?.aborted === true || error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
 }
 
-/** Shared hard-timeout and cancellation boundary for local VTracer SVG workers. */
+/** Shared deadline and cancellation wrapper around the isolated trace subprocess. */
 function runTraceWorker(mode, payload, timeoutMs, signal) {
-  const aborted = () => visionAbortReason(signal, 'vector trace aborted')
-  if (signal?.aborted) return Promise.reject(aborted())
-  return new Promise((resolve, reject) => {
-    let worker
-    let timer
-    let finished = false
-    const finish = (error, svg) => {
-      if (finished) return
-      finished = true
-      if (timer !== undefined) clearTimeout(timer)
-      signal?.removeEventListener?.('abort', onAbort)
-      if (worker) void worker.terminate().catch(() => {})
-      if (error) reject(error)
-      else resolve(svg)
-    }
-    const onAbort = () => finish(aborted())
-    signal?.addEventListener?.('abort', onAbort, { once: true })
-    if (signal?.aborted) { finish(aborted()); return }
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      finish(new Error('vector trace timed out'))
-      return
-    }
-    timer = setTimeout(() => finish(new Error(
-      'vector trace timed out — crop the image or reduce its complexity',
-    )), timeoutMs)
-    try {
-      // This file-backed runtime worker uses only published JavaScript and
-      // absolute peer imports; it never needs Host CLI, eval, test or loader
-      // flags. Inheriting them can fail or run unwanted diagnostic hooks.
-      worker = new Worker(new URL('./trace-vtracer-worker.js', import.meta.url), {
-        execArgv: [],
-        workerData: { mode, ...payload },
-        resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
-      })
-      worker.once('message', (message) => {
-        if (message?.ok === true && typeof message.svg === 'string') finish(undefined, message.svg)
-        else finish(new Error(String(message?.error || 'vector trace worker returned invalid output')))
-      })
-      worker.once('error', (error) => finish(error))
-      worker.once('exit', (code) => {
-        if (!finished) finish(new Error('vector trace worker exited before producing SVG (code ' + code + ')'))
-      })
-    } catch (error) { finish(error) }
+  return runIsolatedTraceProcess({
+    mode, payload, timeoutMs, signal,
+    abortReason: () => visionAbortReason(signal, 'vector trace aborted'),
   })
 }
 

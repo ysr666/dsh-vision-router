@@ -70,7 +70,13 @@ test('runtime describe cache serves a hit and respects a live cache disable', as
   }
   const ctx = {
     tools: { register(def) { registered = def; return () => {} } },
-    get() { return undefined },
+    get(name) {
+      if (name === 'fs') return {
+        async resolve(value) { return value },
+        async readBytes() { return Buffer.from('image-pixels') },
+      }
+      return undefined
+    },
     inject(deps, callback) {
       if (deps.includes('settings')) return callback(settingsChild)
       return undefined
@@ -90,7 +96,7 @@ test('runtime describe cache serves a hit and respects a live cache disable', as
       async execute() { calls += 1; return `answer-${calls}` },
     })
 
-    const args = { attachmentIds: ['sha256:a', 'sha256:b'], question: 'compare' }
+    const args = { paths: ['photo.png'], question: 'compare' }
     const first = await registered.execute(args, {})
     const second = await registered.execute(args, {})
     assert.equal(first, 'answer-1')

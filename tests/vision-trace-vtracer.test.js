@@ -5,6 +5,7 @@ import sharp from 'sharp'
 import {
   posterizeSvg, posterizeSvgColor, quantizeColors,
 } from '../lib/core-primitives.js'
+import { runIsolatedTraceProcess } from '../lib/trace-vtracer-process-runtime.js'
 
 function colorSample() {
   const width = 64, height = 48
@@ -68,6 +69,76 @@ test('VTracer executes off-main-thread', async () => {
   await vectorizing
 })
 
+
+test('successive mixed VTracer workers complete and cleanly exit without leaking native state', async () => {
+  const { rgba, info } = colorSample()
+  const png = await sharp(rgba, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer()
+  for (let i = 0; i < 4; i++) {
+    const [color, gray] = await Promise.all([
+      posterizeSvgColor(rgba, info, 3, 10000),
+      posterizeSvg(png, 4, 'dominant', 10000),
+    ])
+    assert.match(color, /<svg[\s>]/)
+    assert.match(gray, /<svg[\s>]/)
+  }
+})
+
+test('isolated VTracer child must not publish a message from an abnormal process exit', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  for (const mode of ['premature-success', 'exit-without-message']) {
+    await assert.rejects(runIsolatedTraceProcess({
+      mode, payload: {}, timeoutMs: 15000, childUrl,
+    }), /process exited before producing SVG/)
+  }
+  // The parent Node process remains usable after both child faults.
+  const { rgba, info } = colorSample()
+  assert.match(await posterizeSvgColor(rgba, info, 2, 10000), /<svg[\s>]/)
+})
+
+test('isolated trace IPC rejects clean-exit invalid SVG and permits valid markup', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  await assert.rejects(runIsolatedTraceProcess({
+    mode: 'invalid-svg', payload: {}, timeoutMs: 10000, childUrl,
+  }), /invalid result/)
+  const svg = await runIsolatedTraceProcess({
+    mode: 'valid-svg', payload: {}, timeoutMs: 10000, childUrl,
+  })
+  assert.match(svg, /<svg[\s>]/)
+})
+
+test('isolated VTracer child timeout and cancellation kill stalled work', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  await assert.rejects(runIsolatedTraceProcess({
+    mode: 'hang', payload: {}, timeoutMs: 75, childUrl,
+  }), /timed out/)
+
+  const controller = new AbortController()
+  const pending = runIsolatedTraceProcess({
+    mode: 'hang', payload: {}, timeoutMs: 10000,
+    signal: controller.signal,
+    abortReason: () => new Error('probe canceled'),
+    childUrl,
+  })
+  await delay(50)
+  controller.abort()
+  await assert.rejects(pending, /probe canceled/)
+})
+
+test('isolated VTracer process queue is bounded and recovers after all deadlines', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  const requests = Array.from({ length: 12 }, () => runIsolatedTraceProcess({
+    mode: 'hang', payload: {}, timeoutMs: 450, childUrl,
+  }))
+  const settled = await Promise.allSettled(requests)
+  assert.equal(settled.filter((entry) => entry.status === 'rejected').length, 12)
+  assert.ok(settled.some((entry) =>
+    String(entry.reason?.message).includes('capacity exceeded')),
+  'excess work must be refused rather than spawning unlimited children')
+
+  const { rgba, info } = colorSample()
+  const result = await posterizeSvgColor(rgba, info, 2, 10000)
+  assert.ok(result.includes('<svg'), 'a later healthy trace must not be stuck in the queue')
+})
 
 test('VTracer honors explicit palette values, not just palette length', async () => {
   const { rgba, info } = colorSample()
