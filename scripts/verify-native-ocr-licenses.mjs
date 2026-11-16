@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
 const read = rel => readFileSync(join(root, rel), 'utf8')
@@ -53,8 +53,17 @@ assert.ok(pkg.files.includes('assets'))
 const selection = read('src/lib/native-ocr-installation.js')
 assert.ok(selection.includes("target !== 'darwin-arm64' && target !== 'win32-x64'"))
 const args = ['pack','--dry-run','--ignore-scripts','--json']
-const npm = spawnSync('npm', args, { cwd: root, encoding: 'utf8', timeout: 30_000 })
-assert.equal(npm.status, 0, npm.stderr.slice(-400))
+// On Windows, npm is a .cmd shim. Node's spawnSync cannot execute it
+// without a shell (EINVAL); invoking npm's bundled JS CLI directly avoids
+// cmd.exe, shell injection and platform-dependent command discovery.
+const onWindows = process.platform === 'win32'
+const npmCommand = onWindows ? process.execPath : 'npm'
+const npmArgs = onWindows
+  ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'), ...args]
+  : args
+const npm = spawnSync(npmCommand, npmArgs, { cwd: root, encoding: 'utf8', timeout: 30_000 })
+assert.equal(npm.status, 0,
+  String(npm.error?.message ?? npm.stderr ?? 'npm pack failed').slice(-400))
 const files = JSON.parse(npm.stdout)[0].files.map(f=>f.path)
 for (const required of [
   'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt',
