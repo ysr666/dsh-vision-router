@@ -2425,8 +2425,8 @@ export function apply(ctx, config = {}, runtime = {}) {
   // Host-owned proxy overrides are scoped by lib/legacy-global-proxy-boundary.js.
   // Core no longer owns or installs a process-wide proxy fetch implementation.
 
-  const resolveAttachment = (session, id) => sessionVisionIndex.resolveAttachment(session, id)
-  const resolveAttachments = (session, ids) => sessionVisionIndex.resolveAttachments(session, ids)
+  const resolveAttachment = (session, id, signal) => sessionVisionIndex.resolveAttachment(session, id, signal)
+  const resolveAttachments = (session, ids, signal) => sessionVisionIndex.resolveAttachments(session, ids, signal)
 
   // Session-local routing handoff between pre-step and agent/request. Modern
   // Hosts store one exact async raw-log tail seq; legacy Hosts retain only the
@@ -2926,7 +2926,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         const attachmentSession = exec?.agent?.session
         const resolvedAttachmentRefs = requestedRefs.length > 0
           ? await stage('resolve-upload-refs', () =>
-            resolveAttachments(attachmentSession, requestedRefs))
+            resolveAttachments(attachmentSession, requestedRefs, taskSignal))
           : new Map()
 
         for (const [index, item] of sources.entries()) {

@@ -242,6 +242,30 @@ test('async Session log reader prefers one observation lease and disposes it aft
   assert.equal(disposed, 2)
 })
 
+test('cold SessionQuery observation receives the tool AbortSignal and disposes a late lease', async () => {
+  const controller = new AbortController()
+  let finishObservation
+  let observedSignal
+  let disposed = 0
+  const entered = new Promise((resolve) => { observedSignal = resolve })
+  const read = createSessionLogReader(runtimeWithSessionQuery({
+    observeSession(_sessionId, options) {
+      observedSignal(options.signal)
+      return new Promise((resolve) => { finishObservation = resolve })
+    },
+  }))
+  const pending = read({ id: 'cancelled-session' }, controller.signal)
+  assert.equal(await entered, controller.signal)
+  controller.abort(new Error('stop observation'))
+  finishObservation({
+    header: { id: 'cancelled-session' },
+    events: [{ type: 'user/message' }],
+    [Symbol.dispose]() { disposed += 1 },
+  })
+  await assert.rejects(pending, /stop observation/)
+  assert.equal(disposed, 1, 'the late observation lease must be released after cancellation')
+})
+
 test('async Session log reader falls back to readSession when observation capability is absent', async () => {
   const events = [{ seq: 0, type: 'user/message', data: {} }]
   const read = createSessionLogReader(runtimeWithSessionQuery({

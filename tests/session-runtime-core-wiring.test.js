@@ -101,11 +101,11 @@ test('core delegates Session indexing, recovery and surface repair to SessionVis
   )
   assert.match(
     core,
-    /const resolveAttachment = \(session, id\) => sessionVisionIndex\.resolveAttachment\(session, id\)/,
+    /const resolveAttachment = \(session, id, signal\) => sessionVisionIndex\.resolveAttachment\(session, id, signal\)/,
   )
   assert.match(
     core,
-    /const resolveAttachments = \(session, ids\) => sessionVisionIndex\.resolveAttachments\(session, ids\)/,
+    /const resolveAttachments = \(session, ids, signal\) => sessionVisionIndex\.resolveAttachments\(session, ids, signal\)/,
   )
   assert.doesNotMatch(core, /const scanSessionEventLog\s*=/)
   assert.doesNotMatch(core, /const sanitizeSessionToolResults\s*=/)
