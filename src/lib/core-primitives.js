@@ -3,8 +3,7 @@
 import path from 'node:path'
 
 import { existsSync } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { Worker } from 'node:worker_threads'
+import { execFile, fork } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -1191,12 +1190,15 @@ function isVisionAbort(error, signal) {
   return signal?.aborted === true || error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
 }
 
-/** Shared hard-timeout and cancellation boundary for local VTracer SVG workers. */
+/** Bounded one-shot child-process boundary for native VTracer, independent of Host memory. */
 function runTraceWorker(mode, payload, timeoutMs, signal) {
   const aborted = () => visionAbortReason(signal, 'vector trace aborted')
   if (signal?.aborted) return Promise.reject(aborted())
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return Promise.reject(new Error('vector trace timed out'))
+  }
   return new Promise((resolve, reject) => {
-    let worker
+    let child
     let timer
     let finished = false
     let pendingSvg
@@ -1205,44 +1207,45 @@ function runTraceWorker(mode, payload, timeoutMs, signal) {
       finished = true
       if (timer !== undefined) clearTimeout(timer)
       signal?.removeEventListener?.('abort', onAbort)
-      // A successful Worker must exit naturally; terminating immediately after
-      // postMessage can interrupt native/WASM cleanup in the shared Host process.
-      if (worker && error) void worker.terminate().catch(() => {})
+      // A child-process crash cannot corrupt the Host address space.
+      if (error && child && !child.killed) child.kill()
       if (error) reject(error)
       else resolve(svg)
     }
     const onAbort = () => finish(aborted())
     signal?.addEventListener?.('abort', onAbort, { once: true })
     if (signal?.aborted) { finish(aborted()); return }
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-      finish(new Error('vector trace timed out'))
-      return
-    }
     timer = setTimeout(() => finish(new Error(
       'vector trace timed out — crop the image or reduce its complexity',
     )), timeoutMs)
     try {
-      // This file-backed runtime worker uses only published JavaScript and
-      // absolute peer imports; it never needs Host CLI, eval, test or loader
-      // flags. Inheriting them can fail or run unwanted diagnostic hooks.
-      worker = new Worker(new URL('./trace-vtracer-worker.js', import.meta.url), {
+      // No Host CLI/test loader flags, no inherited NODE_OPTIONS code injections.
+      const childEnv = { ...process.env, NODE_OPTIONS: '' }
+      if (process.versions?.electron) childEnv.ELECTRON_RUN_AS_NODE = '1'
+      child = fork(new URL('./trace-vtracer-process.js', import.meta.url), [], {
         execArgv: [],
-        workerData: { mode, ...payload },
-        resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
+        serialization: 'advanced',
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        windowsHide: true,
+        env: childEnv,
       })
-      worker.once('message', (message) => {
+      child.once('message', (message) => {
         if (message?.ok === true && typeof message.svg === 'string') pendingSvg = message.svg
-        else finish(new Error(String(message?.error || 'vector trace worker returned invalid output')))
+        else finish(new Error('vector trace process returned an invalid result'))
       })
-      worker.once('error', (error) => finish(error))
-      worker.once('exit', (code) => {
+      child.once('error', () => finish(new Error('vector trace process startup failed')))
+      child.once('exit', (code, termSignal) => {
         if (finished) return
-        // A message is not final success until native cleanup finishes with
-        // exit code 0. A failed/abrupt exit must never publish a partial SVG.
         if (code === 0 && typeof pendingSvg === 'string') finish(undefined, pendingSvg)
-        else finish(new Error('vector trace worker exited before producing SVG (code ' + code + ')'))
+        else finish(new Error('vector trace process exited before producing SVG (' +
+          (code === null ? String(termSignal ?? 'signal') : String(code)) + ')'))
       })
-    } catch (error) { finish(error) }
+      child.send({ type: 'trace', mode, payload }, (error) => {
+        if (error) finish(new Error('vector trace process IPC failed'))
+      })
+    } catch {
+      finish(new Error('vector trace process launch failed'))
+    }
   })
 }
 
