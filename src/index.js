@@ -2990,13 +2990,15 @@ export function apply(ctx, config = {}, runtime = {}) {
         // on the next call, never halfway through one fallback walk.
         const httpFallbacks = httpProviders()
         const rejectedPairs = []
+        let backendPreflightIndex = 0
         for (const pair of pairs()) {
           if (!pair || pair.provider === HTTP_ROUTE) continue
           if (!adapterAvailable(ctx.llm, pair.provider)) {
             rejectedPairs.push(`${pair.provider}/${pair.model}: provider adapter is not registered`)
             continue
           }
-          const capability = await resolveVisionBackendCapability(pair.provider, pair.model)
+          const capability = await stage('backend-preflight-' + backendPreflightIndex++, () =>
+            resolveVisionBackendCapability(pair.provider, pair.model))
           if (capability.attemptable === false) {
             rejectedPairs.push(
               `${pair.provider}/${pair.model}: structurally unavailable (${capability.reason ?? 'unknown reason'})`,
