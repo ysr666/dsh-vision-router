@@ -73,6 +73,12 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify actual NativeToolExecutor VTracer subprocess hot cold and foreign Session
+        working-directory: dsh-rc3
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc3
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Verify upstream RC3 Session batch append (atomic commit, post-commit per-event observers)
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-rc3
