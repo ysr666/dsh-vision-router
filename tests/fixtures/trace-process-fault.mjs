@@ -11,7 +11,7 @@ process.once('message', (task) => {
     process.exit(94)
     return
   }
-  if (task?.mode === 'hang') return
+  if (task?.mode === 'hang') { setInterval(() => {}, 1_000); return }
   process.send?.({ ok: false, error: 'invalid fixture mode' }, () => {
     process.disconnect?.()
   })
