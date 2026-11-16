@@ -95,6 +95,17 @@ test('isolated VTracer child must not publish a message from an abnormal process
   assert.match(await posterizeSvgColor(rgba, info, 2, 10000), /<svg[\s>]/)
 })
 
+test('isolated trace IPC rejects clean-exit invalid SVG and permits valid markup', async () => {
+  const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
+  await assert.rejects(runIsolatedTraceProcess({
+    mode: 'invalid-svg', payload: {}, timeoutMs: 10000, childUrl,
+  }), /invalid result/)
+  const svg = await runIsolatedTraceProcess({
+    mode: 'valid-svg', payload: {}, timeoutMs: 10000, childUrl,
+  })
+  assert.match(svg, /<svg[\s>]/)
+})
+
 test('isolated VTracer child timeout and cancellation kill stalled work', async () => {
   const childUrl = new URL('./fixtures/trace-process-fault.mjs', import.meta.url)
   await assert.rejects(runIsolatedTraceProcess({
