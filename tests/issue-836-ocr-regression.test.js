@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import sharp from 'sharp'
-import { ocrWithTesseractAdaptive, execFileWithStdin, shouldVerifyUncertainAutoOcr } from '../lib/core-primitives.js'
+import { ocrWithTesseractAdaptive, execFileWithStdin, shouldVerifyUncertainAutoOcr, verifyUncertainAutoOcrResult } from '../lib/core-primitives.js'
 import { prepareTesseractSubtitleRetry } from '../lib/tesseract-image-preprocess.js'
 
 const header = 'level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext'
@@ -149,4 +149,62 @@ test('issue #836: only auto+uncertain+consented+unblocked+time-left uses vision 
     { degraded: true }, { remainingMs: 1199 },
     { remainingMs: Number.NaN },
   ]) assert.equal(shouldVerifyUncertainAutoOcr({ ...baseline, ...override }), false)
+})
+
+test('issue #836: installed ncnn uncertain text can use permitted vision review without a Tesseract retry', async () => {
+  const local = { engine: 'ncnn', text: 'C2H2(1)', uncertain: true,
+    review: { numericOrFormulaRisks: [{ text: 'C2H2(1)' }] } }
+  let calls = 0
+  const result = await verifyUncertainAutoOcrResult(local, {
+    engine: 'auto', remainingMs: 5000,
+    verifyVision: async () => { calls++; return { text: 'C₂H₂(l)' } },
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.engine, 'vision')
+  assert.equal(result.text, 'C₂H₂(l)')
+  assert.equal(result.review.localEngine, 'ncnn')
+  assert.equal(result.review.localText, 'C2H2(1)')
+  assert.equal(result.review.fallbackReason, 'low_confidence_local_ocr')
+})
+
+test('issue #836: ncnn review respects local-only, breaker, deadline, and confidence', async () => {
+  const local = { engine: 'ncnn', text: '局部可信文字', uncertain: true }
+  for (const policy of [
+    { engine: 'tesseract' },
+    { localOnlyVision: true },
+    { degraded: true },
+    { remainingMs: 1199 },
+    { remainingMs: Number.NaN },
+  ]) {
+    const result = await verifyUncertainAutoOcrResult(local, {
+      engine: 'auto', remainingMs: 5000, ...policy,
+      verifyVision: async () => { throw Error('review must not run') },
+    })
+    assert.equal(result, local, 'review must keep native local text under blocked policy')
+  }
+  const confident = { ...local, uncertain: false }
+  const result = await verifyUncertainAutoOcrResult(confident, {
+    engine: 'auto', remainingMs: 5000,
+    verifyVision: async () => { throw Error('confident text must not trigger review') },
+  })
+  assert.equal(result, confident)
+})
+
+test('issue #836: ncnn review failure or empty response retains uncertain local evidence', async () => {
+  const local = { engine: 'ncnn', text: '原始低置信度结果', uncertain: true }
+  const allowed = { engine: 'auto', remainingMs: 5000 }
+  for (const verifyVision of [
+    async () => { throw Error('backend unavailable') },
+    async () => ({ ok: false, text: 'hallucination' }),
+    async () => ({ text: '' }),
+    async () => null,
+  ]) {
+    assert.equal(await verifyUncertainAutoOcrResult(local, { ...allowed, verifyVision }), local)
+  }
+  const controller = new AbortController()
+  await assert.rejects(verifyUncertainAutoOcrResult(local, {
+    ...allowed,
+    verifyVision: async () => { controller.abort(); throw Error('turn cancelled') },
+    checkAbort: error => { if (controller.signal.aborted) throw error },
+  }), /turn cancelled/)
 })
