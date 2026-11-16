@@ -1293,6 +1293,43 @@ export function shouldVerifyUncertainAutoOcr({
     Number.isFinite(remainingMs) && remainingMs >= 1200
 }
 
+/**
+ * A nonempty, uncertain local transcript remains useful evidence. In auto
+ * mode only, optionally verify it using the caller's existing vision route,
+ * without discarding the local result if no trustworthy review is available.
+ * The caller owns permission, breaker, deadline and abort enforcement.
+ */
+export async function verifyUncertainAutoOcrResult(localResult, {
+  engine = 'auto', localOnlyVision = false, degraded = false,
+  remainingMs = 0, verifyVision, checkAbort,
+} = {}) {
+  if (!shouldVerifyUncertainAutoOcr({
+    engine, uncertain: localResult?.uncertain, localOnlyVision, degraded, remainingMs,
+  }) || typeof verifyVision !== 'function') return localResult
+
+  let vision
+  try {
+    vision = await verifyVision()
+  } catch (error) {
+    checkAbort?.(error)
+    return localResult
+  }
+  checkAbort?.()
+  if (vision?.ok === false || typeof vision?.text !== 'string' ||
+      vision.text.trim() === '') return localResult
+  return {
+    engine: 'vision',
+    text: vision.text.trim(),
+    review: {
+      fallbackReason: 'low_confidence_local_ocr',
+      localEngine: localResult.engine,
+      localText: localResult.text.slice(0, 1000),
+      ...(Number.isFinite(localResult.review?.quality)
+        ? { localQuality: localResult.review.quality } : {}),
+    },
+  }
+}
+
 /** OCR image bytes with a local tesseract binary (chi_sim+eng) when available. */
 export async function ocrWithTesseract(bytes, timeoutMs = 60000, options = {}) {
   const exec = typeof options.exec === 'function' ? options.exec : execFileWithStdin
