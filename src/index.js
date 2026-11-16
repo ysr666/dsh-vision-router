@@ -4381,7 +4381,7 @@ ctx.logger?.info(
           },
           engine: {
             type: 'string',
-            description: '"auto": prefer installed SHA-verified PP-OCRv6 on macOS ARM64 or Windows x64, otherwise local Tesseract; permitted vision fallback on local failure or uncertain text; explicit "tesseract"/"vision" always overrides the configured policy.',
+            description: '"auto": use the configured OCR engine policy: prefer installed SHA-verified PP-OCRv6 on macOS ARM64 or Windows x64, otherwise local Tesseract; permitted vision fallback on local failure or uncertain text; explicit "tesseract"/"vision" always overrides the configured policy.',
           },
         },
         additionalProperties: false,
