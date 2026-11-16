@@ -119,7 +119,7 @@ jobs:
             // pack lifecycle. Release verification must not accidentally roll
             // that gate back to the old plain build command.
             prepack: 'pnpm license:check && pnpm build',
-            'license:check': 'node scripts/verify-runtime-licenses.mjs',
+            'license:check': 'node scripts/verify-runtime-licenses.mjs && node scripts/verify-native-ocr-licenses.mjs',
           }
           for (const [name, expected] of Object.entries(requiredBuildLifecycle)) {
             if (scripts[name] !== expected) {
