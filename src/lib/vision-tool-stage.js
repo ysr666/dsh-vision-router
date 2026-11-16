@@ -22,10 +22,13 @@ export function createVisionToolStageTrace(logger, toolName, signal) {
     const started = Date.now()
     let completed = false
     let abortReported = false
+    let rejectAborted
+    const canceled = signal && new Promise((_, reject) => { rejectAborted = reject })
     const onAbort = () => {
       if (completed || abortReported) return
       abortReported = true
       report('warn', phase, 'aborted', Date.now() - started)
+      rejectAborted?.(signal?.reason ?? new Error('vision stage aborted'))
     }
 
     report('info', phase, 'begin', 0)
@@ -33,7 +36,11 @@ export function createVisionToolStageTrace(logger, toolName, signal) {
     else signal?.addEventListener?.('abort', onAbort, { once: true })
     try {
       if (signal?.aborted) throw signal.reason ?? new Error('vision stage aborted')
-      const value = await operation()
+      // A legacy or broken Host Promise may ignore AbortSignal indefinitely.
+      // Race the stage *without* publishing its late result, while still
+      // observing the detached Promise and releasing our abort listener.
+      const running = Promise.resolve().then(operation)
+      const value = await (canceled ? Promise.race([running, canceled]) : running)
       if (signal?.aborted) throw signal.reason ?? new Error('vision stage aborted')
       report('info', phase, 'ok', Date.now() - started)
       return value
