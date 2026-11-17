@@ -57,7 +57,7 @@ async function ownedNativeDirectory(root) {
   if (!await regularFile(notice, 32 * 1024)) return false
   try {
     const contents = await readFile(notice, 'utf8')
-    return contents.startsWith('# Locally installed native OCR assets\\n'.replace('\\n', '\n')) &&
+    return contents.startsWith('# Locally installed native OCR assets\n') &&
       contents.includes('Runtime: Tencent/ncnn @')
   } catch { return false }
 }
