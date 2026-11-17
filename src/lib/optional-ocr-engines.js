@@ -89,7 +89,7 @@ export async function optionalOcrStatus({ home = homedir(), probeSystem = system
   return {
     ok: true,
     busy: mutating,
-    tesseract: { managedInstalled: managedTesseract, systemInstalled: !!systemReady, installed: managedTesseract || !!systemReady, canInstall: !mutating && !managedTesseract, canUninstall: !mutating && managedTesseract && activeManagedRuns === 0 },
+    tesseract: { managedInstalled: managedTesseract, systemInstalled: !!systemReady, installed: managedTesseract || !!systemReady, canInstall: !mutating && !managedTesseract && !systemReady, canUninstall: !mutating && managedTesseract && activeManagedRuns === 0 },
     ppocrv6: { installed: nativeReady, supported: !!pp, canInstallFromFile: !mutating && !!pp, canUninstall: !mutating && nativeReady },
   }
 }
