@@ -118,6 +118,8 @@ jobs:
           Write-Output "REPRODUCIBLE_WINDOWS_CANDIDATE_SHA256=$second; not admitted or published"
           python -I quality/native-ocr-candidate-inventory.py --root $root --report (Join-Path $root 'header-evidence.json')
           if ($LASTEXITCODE -ne 0) { throw 'CANDIDATE_INVENTORY_FAILED' }
+          python -I quality/native-ocr-candidate-link-inventory.py --root $root --trace (Join-Path $root 'candidate-link-trace.txt') --worker $worker --map (Join-Path $root 'candidate-link-map.txt') --report (Join-Path $root 'link-inventory.json')
+          if ($LASTEXITCODE -ne 0) { throw 'CANDIDATE_LINK_INVENTORY_FAILED' }
           $conversion = Join-Path $root 'conversion'
           python -I quality/native-ocr-clean-conversion.py --work-dir $conversion
           if ($LASTEXITCODE -ne 0) { throw 'CANDIDATE_MODEL_CONVERSION_FAILED' }
@@ -135,4 +137,5 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/smoke-evidence.json
             ${{ runner.temp }}/dvr-native-worker/candidate-link-map.txt
             ${{ runner.temp }}/dvr-native-worker/candidate-link-trace.txt
+            ${{ runner.temp }}/dvr-native-worker/link-inventory.json
           if-no-files-found: error

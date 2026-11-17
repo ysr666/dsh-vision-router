@@ -73,14 +73,16 @@ $linkFlags=@()
 if($Candidate){
   $map=Join-Path $LabRoot 'candidate-link-map.txt'
   $linkFlags+=@("-ffile-prefix-map=$LabRoot=/dvr-native","-ffile-prefix-map=$RepoRoot=/dvr-src",
-    '-Wl,--no-insert-timestamp',"-Wl,-Map,$map",'-v','-H')
+    '-Wl,--no-insert-timestamp',"-Wl,-Map,$map",'-v','-Wl,--verbose','-H')
 }
 & $cxx -O2 -std=c++17 -static @linkFlags "-I$(Join-Path $ncnn 'src')" "-I$(Join-Path $build 'src')" $cpp (Join-Path $build 'src\libncnn.a') -o $out > (Join-Path $LabRoot 'candidate-link-trace.txt') 2> (Join-Path $LabRoot 'candidate-wrapper-headers.txt')
 if($LASTEXITCODE -ne 0){Get-Content (Join-Path $LabRoot 'candidate-wrapper-headers.txt') -Tail 30 | Write-Output; throw 'WORKER_LINK_FAILED'}
 if($Candidate){
   # Clang -v writes its full linker invocation to stderr, alongside -H.
   # Keep the actual input command/diagnostics as evidence, not empty stdout.
-  Copy-Item (Join-Path $LabRoot 'candidate-wrapper-headers.txt') (Join-Path $LabRoot 'candidate-link-trace.txt') -Force
+  $tracePath=Join-Path $LabRoot 'candidate-link-trace.txt'
+  $traceLines=@(Get-Content -LiteralPath $tracePath)+@(Get-Content -LiteralPath (Join-Path $LabRoot 'candidate-wrapper-headers.txt'))
+  $traceLines | Set-Content -Encoding utf8 -LiteralPath $tracePath
   & $ninja -C $build -t deps | Set-Content -Encoding utf8 (Join-Path $LabRoot 'candidate-ninja-deps.txt')
   if($LASTEXITCODE -ne 0){throw 'HEADER_INVENTORY_FAILED'}
 }
