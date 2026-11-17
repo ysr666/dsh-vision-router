@@ -180,7 +180,7 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
           ),
           h('div',{className:'vr-field',key:'ppocrv6'},
             h('strong',null,'PP-OCRv6 small / ncnn'),
-            h('p',{className:'vr-hint'},!pp.supported?tx('此平台暂无审核通过的本地原生引擎。','Native engine not qualified for this platform.'):pp.installed?tx('已经安装且完整性校验通过。','Installed and integrity-verified.'):tx('尚未安装。原生包公开分发审核未完成；当前只能选择你已合法获得的可信本地安装包。','Not installed. Public native-bundle redistribution is not cleared; only an owner-provided trusted local archive can be imported.')),
+            h('p',{className:'vr-hint'},!pp.supported?tx('此平台暂无审核通过的本地原生引擎。','Native engine not qualified for this platform.'):pp.installed?tx('已经安装且完整性校验通过。','Installed and integrity-verified.'):pp.damaged?tx('检测到插件管理的安装文件损坏；可点击卸载后重新导入可信离线包。','Managed installation is damaged; you may remove it and import a trusted bundle again.'):tx('尚未安装。原生包公开分发审核未完成；当前只能选择你已合法获得的可信本地安装包。','Not installed. Public native-bundle redistribution is not cleared; only an owner-provided trusted local archive can be imported.')),
             pp.supported?h('input',{className:'vr-input',type:'file',accept:'.tar.gz,.tgz,application/gzip','aria-label':tx('选择 PP-OCRv6 离线包','Choose PP-OCRv6 offline bundle'),disabled:busy||ocrState.status!=='ready',onChange:function(event){setOcrFile(event.target.files&&event.target.files[0]||undefined);}}):null,
             h('div',{className:'vr-ia-actions'},
               h('button',{type:'button',className:'vr-btn vr-btn-save',disabled:busy||ocrState.status!=='ready'||!pp.supported||!ocrFile||ocrFile.size>64*1024*1024,onClick:function(){void runOptionalOcr('ppocrv6','install');}},tx('安装所选离线包','Install selected bundle')),
