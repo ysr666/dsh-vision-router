@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "scope": "Private Windows CRT remediation and exact re-link acceptance; no public redistribution admission.",
+  "sourceHead": "99dd0327481bc99a5c8a12a15bc547f67854f198",
+  "originalWorkerSha256": "4f7ad042349239baca6a654d8ca31937c2c49886f6f51413c8447071ff80bfa8",
+  "supersededArchiveSha256": "0355aef41ad7b9b93ac0e03999c717ef93d7f9b424433e612ffb38961aec698a",
+  "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+  "archive": {
+    "bytes": 35186113,
+    "sha256": "9c26dd7c8c0c065122583bd315ce75662297b9ad0aa1898b757514fb85177a45"
+  },
+  "upstreamBuild": {
+    "commit": "e08a31fbfe5cfdad07b698299af22d66e5608383",
+    "releaseRun": 39558379509,
+    "buildRun": 39448002486,
+    "crossJob": 118815539720,
+    "stage1Job": 118715038768,
+    "windowsArtifact": 12295293755,
+    "stage1Artifact": 12284949503
+  },
+  "mingwSourceRevision": "0d6dfbc348dfad714761c0a7151615767f96bcb5",
+  "sourceArchiveSha256": "03f717ddb9005d6519e38434359af281d0819d5d468a42578e28bd0fd8e31d0c",
+  "macCrossCompilerArchiveSha256": "e9c13e4ede38e715003ffc674d4d00a1088df8235439d1f0c16188ff0704c17e",
+  "llvmSourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+  "reconstruction": {
+    "matchedNormalizedCoffObjects": 68,
+    "emptyOriginalStartupObjects": 2,
+    "dependencyFileCount": 419,
+    "legacyStdargPaths": [],
+    "riskHints": {
+      "toolchain/generic-w64-mingw32/include/math.h": [
+        {
+          "line": 822,
+          "text": "/* Implementations adapted from Cephes versions */"
+        }
+      ]
+    },
+    "reportSha256": "0d7525fe29814f1e84d5a32ead468487e33f55309285981e59b1341d46416df9",
+    "privateReplacementZipSha256": "011c1d2777f991641afb8373fd2ab5dcec4a98da0441251bd7fef7bb75349b0b",
+    "privateReplacementZipBytes": 88571,
+    "normalizedCoffMethod": "section data, flags and relocations with symbols; excludes debug and LLVM address-significance metadata"
+  },
+  "relink": {
+    "selectedStaticMembers": 640,
+    "archives": 8,
+    "localNcnnArchiveSha256": "1346fc6c0728de98a0f198a75898f428a15f2ea6208bfd1e90ddbc1d4c041dd2",
+    "scriptSha256": "befb092e7a7870ed135f17af5a978cdf1d8023ebc729251a6e8fa57fa24ea59a",
+    "exactIndependentRelinkMatch": true,
+    "testedScriptSha256": "2973f9c76f73755637cd89fadd4b72d38b902ace2f4212956fe999284e31b115",
+    "sourceNormalization": "Only surplus final blank line removed after tested replay; Python AST unchanged."
+  },
+  "acceptance": {
+    "bundleTestsPassed": 6,
+    "bundleTestsSkipped": 1,
+    "settingsRoute": true,
+    "actualRecognition": "HELLO 123",
+    "confidence": 0.97396,
+    "blankMalformedRecoveryPassed": true,
+    "desktopVersion": "0.2.2-rc.3",
+    "desktopPhasesPassed": 9,
+    "privateHttpsResponseInjection": true,
+    "oldCandidateRejectedWithoutBreakingNewInstall": true
+  },
+  "privateEvidenceSha256": {
+    "candidate": "578749b3c3811b08b90a43fff1d02e94637c411cb8604498d8e20a2f538708ea",
+    "smoke": "18f02c1169a5c3f63658618e75ca73a39012e6c7fc6b051cb1e32d2ec935167c",
+    "desktop": "401c2f8bf7603f4c26521da0314f846c6f09d763314d0aa25cd52f228bf233d7",
+    "replay": "8c49d2ef11db26e44c62abed550ee4280e748f44c5a22a341da388010c2f0b54",
+    "newLinkInventory": "9e447d6321aac9fcc0b7e1e494fc4ca7f4dde1315f5d821cb4110cbdbfa0cff0"
+  },
+  "limitations": [
+    "The source-only replay helper consumes the exact private replacement archive; the cross-host reconstruction scripts and inputs are retained separately.",
+    "Original historical compile dependencies are reconstructed, not obtained as historical depfiles.",
+    "The existing archive SBOM remains conservative and incomplete; replacement sidecar is not public redistribution or legal clearance.",
+    "Archive compression output differed between runs; exact tested private archive is pinned.",
+    "No production catalog, version, binary pins, release or merge changed."
+  ],
+  "distributionReady": false
+}
