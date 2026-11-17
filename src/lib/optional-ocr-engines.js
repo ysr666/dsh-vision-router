@@ -128,7 +128,10 @@ async function assertOwned(root) {
   const marker = await readJSON(join(root, 'DVR-MANAGED.json'))
   if (marker?.kind !== MANAGED_MARK) throw Error('refusing to remove unowned OCR installation')
 }
-export async function installTesseract({ home = homedir(), npm = npmCommand, exec = execBounded } = {}) {
+export async function installTesseract({ home = homedir(), npm = npmCommand, exec = execBounded, probeSystem = systemTesseract } = {}) {
+  // A valid system installation already meets this optional capability.
+  // Do not download a second Tesseract implementation or touch system files.
+  if (await probeSystem()) return { ok: true, installed: false, reusedSystem: true, engine: 'tesseract' }
   const dest = managedTesseractPaths({ home })
   if (await directory(dest.root)) throw Error('Tesseract managed directory already exists; refusing to overwrite')
   const parent = dirname(dest.root)
