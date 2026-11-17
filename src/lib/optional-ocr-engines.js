@@ -80,7 +80,7 @@ async function verifyManaged(root) {
   }
   return true
 }
-async function systemTesseract() {
+export async function systemTesseract() {
   const probe = spawnSync('tesseract', ['--list-langs'], { encoding: 'utf8', timeout: 3000, windowsHide: true, maxBuffer: 16384 })
   const names = (probe.stdout ?? '') + '\n' + (probe.stderr ?? '')
   return probe.status === 0 && /(?:^|\s)chi_sim(?:\s|$)/.test(names) && /(?:^|\s)eng(?:\s|$)/.test(names)
@@ -206,12 +206,22 @@ export async function installNativeBundle(bytes, { home = homedir(), exec = exec
     return { ok: true, installed: true, engine: 'ppocrv6' }
   } finally { await rm(archive, { force: true }) }
 }
-export async function uninstallNative({ home = homedir() } = {}) {
-  const dest = localNativeOcrInstallPaths({ home })
+export async function uninstallNative({
+  home = homedir(),
+  resolvePaths = localNativeOcrInstallPaths,
+} = {}) {
+  const dest = resolvePaths({ home })
   if (!dest || !await directory(dest.root)) throw Error('PP-OCRv6 is not installed')
-  // Only the exact managed path, not user-supplied paths or system libraries.
-  await verifyExperimentalNativeOcrBinary(dest.binaryPath)
-  await verifyNativeOcrAssets(dest.modelDir)
+  // A corrupt model/worker is precisely when the user must still be able
+  // to remove an optional installation. Require the installer-created
+  // owner notice and exact managed directory instead of full model hashes.
+  // Never mutate a system binary, a symlink, or an arbitrary caller path.
+  const notice = join(dest.root, 'SOURCE-NOTICE.md')
+  if (!await regularFile(notice, 32 * 1024)) throw Error('refusing to remove unowned PP-OCRv6 installation')
+  const contents = await readFile(notice, 'utf8')
+  if (!contents.startsWith('# Locally installed native OCR assets\n') ||
+      !contents.includes('Runtime: Tencent/ncnn @'))
+    throw Error('refusing to remove unowned PP-OCRv6 installation')
   const tomb = dest.root + '.removing-' + randomUUID()
   await rename(dest.root, tomb)
   await rm(tomb, { recursive: true, force: true })
