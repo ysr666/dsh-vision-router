@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { createCachedUpdateChecker } from './update-check.js'
 import { isLocalUiRequest } from './web-capability-boundary.js'
 import { detectDshSelfUpdatePlan, runDshPluginUpdate } from './self-update.js'
+import { installOptionalOcrRoutes } from './optional-ocr-routes.js'
 
 function json(res, status, body, headers = {}) {
   res.writeHead(status, {
@@ -20,6 +21,7 @@ function json(res, status, body, headers = {}) {
  */
 export function installVisionMaintenanceRoutes(ctx, options = {}) {
   if (!ctx || typeof ctx.inject !== 'function') return
+  installOptionalOcrRoutes(ctx, options.optionalOcr)
   const logger = options.logger ?? ctx.logger
   const updateChecker = options.updateChecker ?? createCachedUpdateChecker()
   const selfUpdatePlan = options.selfUpdatePlan ?? detectDshSelfUpdatePlan()
