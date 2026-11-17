@@ -5,6 +5,16 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+## v3.4.0
+
+### Opt-in local OCR / 按需本地 OCR
+- **#856 — user-controlled, not automatically bundled:** Settings → Local & device → Optional local OCR now exposes separate status, install and uninstall controls for Tesseract and PP-OCRv6. No engine/model is installed automatically when the plugin itself is installed. / 新增设置页可选本地 OCR 的独立状态、安装与卸载操作；正常安装插件不额外下载本地 OCR。
+- **System Tesseract reuse:** When a system `tesseract` has both `chi_sim` and `eng` language data, the plugin reuses it and disables duplicate installation. It never removes system packages. Otherwise the user may install a **plugin-private Tesseract.js 7.0.0/WASM** and pinned Chinese/English traineddata, with integrity-checked atomic installation, isolated bounded subprocess execution and owner-only uninstall. / 系统版中英文识别可用时不重复安装；否则可主动安装／卸载插件私有 WASM 和语言数据，不修改系统安装。
+- **Owner-installed PP-OCRv6/ncnn:** On verified Mac ARM64 / Windows x64, users may select their own trusted local archive for SHA-pinned native installation and remove even a damaged owner-marked installation. **Public native OCR bundles are NOT cleared for redistribution**, so no public download is offered and npm includes no native worker or model weights. / 支持自备可信离线包导入、安全校验、卸载；未放行的原生包不公开下载或塞入 npm。
+- **Fallback unchanged:** Without local engines, normal OCR continues through the already-authorized vision-model fallback. The default free cloud fallback can transmit image content unless strict local-only is enabled; neither installing a local engine nor this release changes that policy. / 两个本地引擎均为可选，未安装时维持原有视觉模型兜底及隐私边界。
+- **Verification:** Final reviewed #856 head passed 14/14 workflows, 28/28 complete CI jobs and exact DSH Host/Alpha gates; real Mac and Windows temporary-profile Tesseract.js install → recognition → uninstall passed. Chinese sample `你好世界 123` was returned with spaces (`你 好 世界 123`) in the Mac isolated test, so do not promise perfect formatting. / 完整 CI、真实 Host、两平台私有安装／识别／卸载验收通过；中文排版仍可能存在空格。
+- **Compatibility:** DSH >=0.2.1-rc.5 <0.3.0-0, Node.js >=24.9.0; no automatic profile migration, no new default local download. Back up, run read-only `doctor --upgrade-preflight`, keep v3.3.0 rollback. / 兼容窗口不变，升级前备份与预检。
+
 ## v3.2.1
 
 ### Settings and tracing / 设置与图形追踪
