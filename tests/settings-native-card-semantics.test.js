@@ -360,3 +360,53 @@ test('guide replay button is disabled while any card has staged edits', () => {
 
   assert.equal(guide.props.disabled, true)
 })
+
+function localOcrReactState(tesseractState) {
+  const state = stateValues({ cardsOpen: { local: true } })
+  state.push(
+    { status: 'idle' }, // connection test
+    { status: 'idle' }, // update check
+    { status: 'idle' }, // self-update
+    { status: 'idle' }, // general action state
+    { status: 'ready', value: {
+      ok: true, token: 'local-test',
+      tesseract: tesseractState,
+      ppocrv6: { installed: false, supported: true, canUninstall: false },
+    } }, // local OCR
+    undefined, // archive selection
+    false, // egress notice
+  )
+  return state
+}
+function buttonWithText(tree, text) {
+  return findOne(tree, node => node.type === 'button' &&
+    (node.children ?? []).some(child => child === text))
+}
+test('Local settings reuses a working system Tesseract without a duplicate install action', () => {
+  const React = reactStub(localOcrReactState({
+    installed: true, systemInstalled: true, managedInstalled: false,
+    canInstall: false, canUninstall: false,
+  }))
+  const harness = createHarness(React)
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  assert.equal(buttonWithText(tree, '安装 Tesseract').props.disabled, true)
+  assert.equal(buttonWithText(tree, '卸载插件版').props.disabled, true)
+  const available = []
+  walk(tree, node => {
+    for (const child of node.children ?? []) if (typeof child === 'string' &&
+      child.includes('系统 Tesseract（简体中文＋英文）已可使用')) available.push(child)
+  })
+  assert.equal(available.length, 1)
+})
+test('Local settings offers private Tesseract install only when no usable system installation exists', () => {
+  const React = reactStub(localOcrReactState({
+    installed: false, systemInstalled: false, managedInstalled: false,
+    canInstall: true, canUninstall: false,
+  }))
+  const harness = createHarness(React)
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  assert.equal(buttonWithText(tree, '安装 Tesseract').props.disabled, false)
+  assert.equal(buttonWithText(tree, '卸载插件版').props.disabled, true)
+  assert.equal(buttonWithText(tree, '安装所选离线包').props.disabled, true,
+    'PP-OCRv6 may only install after explicit local archive selection')
+})
