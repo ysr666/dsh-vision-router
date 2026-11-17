@@ -43,3 +43,17 @@ test('installer denies missing or unsupported artifacts before modifying local s
   ], { encoding: 'utf8' })
   assert.notEqual(output.status, 0)
 })
+
+test('native ownership check refuses unrelated directories and symbolic links', async () => {
+  const { isOwnedNativeOcrDirectory } = await import('../src/lib/native-ocr-installation.js')
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = await mkdtemp(join(tmpdir(), 'dvr-native-owned-'))
+  try {
+    await writeFile(join(dir, 'unrelated'), 'must survive')
+    assert.equal(await isOwnedNativeOcrDirectory(dir), false)
+    await writeFile(join(dir, 'SOURCE-NOTICE.md'), '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    assert.equal(await isOwnedNativeOcrDirectory(dir), true)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

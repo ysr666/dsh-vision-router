@@ -151,6 +151,7 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
         var value=ocrState.value;
         if(!localPage()||!value||!value.token||ocrState.status!=='ready'||typeof fetch!=='function')return Promise.resolve();
         if(engine==='ppocrv6'&&action==='install'&&!ocrFile)return Promise.resolve();
+        if(action==='download'&&(engine!=='ppocrv6'||!value.ppocrv6||value.ppocrv6.canDownload!==true))return Promise.resolve();
         if(action==='uninstall'){
           try{if(typeof window.confirm==='function'&&!window.confirm(tx('卸载此插件管理的 '+(engine==='ppocrv6'?'PP-OCRv6':'Tesseract')+' 文件？不会卸载系统其他软件。','Remove plugin-managed '+(engine==='ppocrv6'?'PP-OCRv6':'Tesseract')+' files? System-wide packages will be untouched.')))return Promise.resolve();}catch(_){}
         }
@@ -172,7 +173,7 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
           h('div',{className:'vr-ia-actions',key:'refresh'},h('button',{type:'button',className:'vr-btn',disabled:busy,onClick:function(){void refreshOptionalOcr();}},tx('刷新安装状态','Refresh installation status'))),
           h('div',{className:'vr-field',key:'tesseract'},
             h('strong',null,'Tesseract (WASM)'),
-            h('p',{className:'vr-hint'},ocrState.status==='loading'?tx('检测中…','Checking…'):tess.managedInstalled?tx('插件私有安装已就绪（简体中文＋英文，离线识别）。','Plugin-managed installation ready (Chinese + English, offline).'):tess.systemInstalled?tx('系统 Tesseract（简体中文＋英文）已可使用，无需额外安装。','System Tesseract with Chinese and English is ready; no additional installation needed.'):tx('未安装。仅点击安装时才下载 WASM 与语言数据；卸载不会修改系统软件。','Not installed. WASM and languages are downloaded only on request. Uninstall never changes system packages.')),
+            h('p',{className:'vr-hint'},ocrState.status==='loading'?tx('检测中…','Checking…'):tess.managedInstalled?tx('插件私有安装已就绪（简体中文＋英文，离线识别）。','Plugin-managed installation ready (Chinese + English, offline).'):tess.damaged?tx('插件私有 Tesseract 文件损坏；可卸载后重新安装，系统版不受影响。','Plugin-managed Tesseract is damaged; remove and reinstall it. System packages are unaffected.'):tess.systemInstalled?tx('系统 Tesseract（简体中文＋英文）已可使用，无需额外安装。','System Tesseract with Chinese and English is ready; no additional installation needed.'):tx('未安装。仅点击安装时才下载 WASM 与语言数据；卸载不会修改系统软件。','Not installed. WASM and languages are downloaded only on request. Uninstall never changes system packages.')),
             h('div',{className:'vr-ia-actions'},
               h('button',{type:'button',className:'vr-btn vr-btn-save',disabled:busy||ocrState.status!=='ready'||tess.managedInstalled||tess.canInstall!==true,onClick:function(){void runOptionalOcr('tesseract','install');}},tx('安装 Tesseract','Install Tesseract')),
               h('button',{type:'button',className:'vr-btn',disabled:busy||ocrState.status!=='ready'||tess.canUninstall!==true,onClick:function(){void runOptionalOcr('tesseract','uninstall');}},tx('卸载插件版','Remove plugin copy'))
@@ -180,9 +181,10 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
           ),
           h('div',{className:'vr-field',key:'ppocrv6'},
             h('strong',null,'PP-OCRv6 small / ncnn'),
-            h('p',{className:'vr-hint'},!pp.supported?tx('此平台暂无审核通过的本地原生引擎。','Native engine not qualified for this platform.'):pp.installed?tx('已经安装且完整性校验通过。','Installed and integrity-verified.'):pp.damaged?tx('检测到插件管理的安装文件损坏；可点击卸载后重新导入可信离线包。','Managed installation is damaged; you may remove it and import a trusted bundle again.'):tx('尚未安装。原生包公开分发审核未完成；当前只能选择你已合法获得的可信本地安装包。','Not installed. Public native-bundle redistribution is not cleared; only an owner-provided trusted local archive can be imported.')),
+            h('p',{className:'vr-hint'},!pp.supported?tx('此平台暂无审核通过的本地原生引擎。','Native engine not qualified for this platform.'):pp.installed?tx('已经安装且完整性校验通过。','Installed and integrity-verified.'):pp.damaged?tx('检测到插件管理的安装文件损坏；可点击卸载后重新导入可信离线包。','Managed installation is damaged; you may remove it and import a trusted bundle again.'):pp.onlineAvailable?tx('未安装。可下载此平台经过审核的原生包，也可导入离线包。','Not installed. Download the reviewed archive for this platform or import an offline bundle.'):tx('尚未安装。原生包公开分发审核未完成；当前只能选择你已合法获得的可信本地安装包。','Not installed. Public native-bundle redistribution is not cleared; only an owner-provided trusted local archive can be imported.')),
             pp.supported?h('input',{className:'vr-input',type:'file',accept:'.tar.gz,.tgz,application/gzip','aria-label':tx('选择 PP-OCRv6 离线包','Choose PP-OCRv6 offline bundle'),disabled:busy||ocrState.status!=='ready',onChange:function(event){setOcrFile(event.target.files&&event.target.files[0]||undefined);}}):null,
             h('div',{className:'vr-ia-actions'},
+              pp.onlineAvailable?h('button',{type:'button',className:'vr-btn vr-btn-save',disabled:busy||ocrState.status!=='ready'||pp.canDownload!==true,onClick:function(){void runOptionalOcr('ppocrv6','download');}},tx('下载并安装 PP-OCRv6','Download and install PP-OCRv6')):null,
               h('button',{type:'button',className:'vr-btn vr-btn-save',disabled:busy||ocrState.status!=='ready'||!pp.supported||!ocrFile||ocrFile.size>64*1024*1024,onClick:function(){void runOptionalOcr('ppocrv6','install');}},tx('安装所选离线包','Install selected bundle')),
               h('button',{type:'button',className:'vr-btn',disabled:busy||ocrState.status!=='ready'||!pp.canUninstall,onClick:function(){void runOptionalOcr('ppocrv6','uninstall');}},tx('卸载 PP-OCRv6','Remove PP-OCRv6'))
             )

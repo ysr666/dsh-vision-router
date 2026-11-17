@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { createHash } from 'node:crypto'
+import { approvedNativeArchive, downloadVerifiedNativeArchive } from '../src/lib/native-ocr-download.js'
 import { Readable } from 'node:stream'
 import { mkdtemp, mkdir, writeFile, lstat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallNative, nodeChildEnvironment,
+  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallTesseract, uninstallNative, nodeChildEnvironment, downloadAndInstallNative,
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
@@ -200,4 +202,49 @@ test('Electron child Node mode is opt-in and inherited preload flags are cleared
   const normal = nodeChildEnvironment({ env, electron: undefined })
   assert.equal(normal.ELECTRON_RUN_AS_NODE, undefined)
   assert.equal(normal.NODE_OPTIONS, '')
+})
+
+test('damaged plugin Tesseract is removable but cannot be silently overwritten', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-tess-damaged-'))
+  try {
+    const paths = managedTesseractPaths({ home })
+    await mkdir(paths.root, { recursive: true })
+    await writeFile(paths.manifest, JSON.stringify({ kind: 'dvr-tesseract-js-v1', version: '7.0.0' }))
+    const before = await optionalOcrStatus({ home, probeSystem: async () => false })
+    assert.equal(before.tesseract.installed, false)
+    assert.equal(before.tesseract.damaged, true)
+    assert.equal(before.tesseract.canInstall, false)
+    assert.equal(before.tesseract.canUninstall, true)
+    await uninstallTesseract({ home })
+    const after = await optionalOcrStatus({ home, probeSystem: async () => false })
+    assert.equal(after.tesseract.canInstall, true)
+    assert.equal(after.tesseract.canUninstall, false)
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('online native installation stays unavailable without an approved public artifact', async () => {
+  assert.equal(approvedNativeArchive('darwin', 'arm64'), null)
+  assert.equal(approvedNativeArchive('win32', 'x64'), null)
+  await assert.rejects(downloadAndInstallNative(), /no approved public archive/)
+  await assert.rejects(mutateOptionalOcr({ engine:'tesseract', action:'download' }), /invalid OCR operation/)
+})
+test('reviewed download verifies bounded archive bytes before invoking the existing installer', async () => {
+  const bytes = Buffer.alloc(256, 7)
+  const entry = {
+    url:'https://github.com/ysr666/dsh-vision-router/releases/download/native-test-v1/ppocrv6-small-darwin-arm64.tar.gz',
+    bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+  let called = false
+  const result = await downloadAndInstallNative({ entry,
+    fetchImpl: async () => new Response(bytes),
+    install: async archive => { called = true; assert.deepEqual(archive, bytes); return {ok:true} }
+  })
+  assert.equal(result.ok,true)
+  assert.equal(called,true)
+  called=false
+  await assert.rejects(downloadAndInstallNative({ entry, fetchImpl: async () => new Response(Buffer.alloc(256,8)),
+    install:async()=>{called=true} }), /integrity mismatch/)
+  assert.equal(called,false)
+  await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(Buffer.alloc(257))}),/exceeds reviewed size/)
+  await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(null,{status:302,headers:{location:'https://example.org/fake'}})}),/untrusted.*redirect/)
 })

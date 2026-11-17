@@ -1,0 +1,84 @@
+name: Native OCR clean candidate audit
+on:
+  pull_request:
+    paths:
+      - 'quality/native-ocr-clean-conversion.py'
+      - 'quality/native-ocr-*-build-LAB.*'
+      - '.github/workflows/native-ocr-clean-audit.yml'
+      - 'quality/native-ocr-provenance-LAB.json'
+permissions:
+  contents: read
+concurrency:
+  group: native-ocr-clean-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  conversion:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Reacquire and match all five native model assets
+        shell: pwsh
+        run: python -I quality/native-ocr-clean-conversion.py --work-dir "$env:RUNNER_TEMP/dvr-ocr-conversion"
+      - name: Save evidence only (no model files or executables)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-clean-conversion-evidence
+          path: ${{ runner.temp }}/dvr-ocr-conversion/conversion-evidence.json
+          if-no-files-found: error
+  mac-worker:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build from pinned ncnn source on clean Apple Silicon
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/dvr-native-worker"
+          mkdir -p "$root"
+          git init "$root/ncnn"
+          git -C "$root/ncnn" fetch --depth 1 https://github.com/Tencent/ncnn.git d1f6ac67e9fc91390cc70f7168573fd2626f1d66
+          git -C "$root/ncnn" checkout --detach FETCH_HEAD
+          git -C "$root/ncnn" submodule update --init --recursive
+          export DVR_OCR_NCNN_SOURCE="$root/ncnn" DVR_OCR_MAC_BUILD_ROOT="$root/build"
+          /usr/bin/clang++ --version
+          cmake --version
+          ninja --version
+          bash quality/native-ocr-macos-build-LAB.sh
+          actual="$(shasum -a 256 "$root/build/worker" | cut -d' ' -f1)"
+          echo "Clean worker SHA256: $actual"
+          test "$actual" = '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204'
+  windows-worker:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build with pinned LLVM UCRT and ncnn, no publication
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'dvr-native-worker'
+          New-Item -ItemType Directory -Path $root | Out-Null
+          $ncnn = Join-Path $root 'ncnn'
+          git init $ncnn
+          git -C $ncnn fetch --depth 1 https://github.com/Tencent/ncnn.git d1f6ac67e9fc91390cc70f7168573fd2626f1d66
+          if ($LASTEXITCODE -ne 0) { throw 'NCNN_FETCH_FAILED' }
+          git -C $ncnn checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'NCNN_CHECKOUT_FAILED' }
+          git -C $ncnn submodule update --init --recursive
+          if ($LASTEXITCODE -ne 0) { throw 'NCNN_SUBMODULE_FAILED' }
+          $zip = Join-Path $root 'llvm-mingw-20261020-ucrt-x86_64.zip'
+          curl.exe --fail --location --silent --show-error --max-time 300 --output $zip https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-x86_64.zip
+          if ($LASTEXITCODE -ne 0 -or (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd') { throw 'TOOLCHAIN_IDENTITY_FAILED' }
+          Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $root 'toolchain')
+          & ./quality/native-ocr-windows-llvm-build-LAB.ps1 -LabRoot $root -RepoRoot (Get-Location).Path
+          $actual = (Get-FileHash (Join-Path $root 'worker-llvm-header-static.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Output "Clean worker SHA256: $actual"
+          if ($actual -ne '2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33') { throw 'CLEAN_WORKER_IDENTITY_DIFFERS: review required' }

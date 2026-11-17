@@ -1,3 +1,4 @@
+import { readFileSync as readDvrManifest } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { mkdtempSync } from 'node:fs'
@@ -141,7 +142,7 @@ test('Doctor JSON keeps public support policy separate from verification evidenc
 
   const report = JSON.parse(stdout.join('\n'))
   assert.deepEqual(report.hostSupportWindow, {
-    dvrTrain: '3.2.x',
+    dvrTrain: JSON.parse(readDvrManifest(new URL('../package.json', import.meta.url), 'utf8')).version.split('.').slice(0, 2).join('.') + '.x',
     minimum: '0.2.1-rc.5',
     currentRecommended: '0.2.2-rc.1',
     nodeMinimum: '24.9.0',

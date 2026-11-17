@@ -1,3 +1,4 @@
+import { readFileSync as readDvrManifest } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -11,7 +12,7 @@ const verified = { nodeVersion: '24.21.0', hostVersion: '0.2.1-rc.5' }
 
 test('DVR 3.2 declares a new DSH/Node floor without confusing rc and stable', () => {
   assert.deepEqual(DSH_SUPPORT_WINDOW, {
-    dvrTrain: '3.2.x', minimum: '0.2.1-rc.5',
+    dvrTrain: JSON.parse(readDvrManifest(new URL('../package.json', import.meta.url), 'utf8')).version.split('.').slice(0, 2).join('.') + '.x', minimum: '0.2.1-rc.5',
     currentRecommended: '0.2.2-rc.1', nodeMinimum: '24.9.0',
   })
   assert.equal(DSH_SUPPORTED_RANGE, '>=0.2.1-rc.5 <0.3.0-0')
