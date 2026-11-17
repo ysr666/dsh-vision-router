@@ -73,9 +73,9 @@ $linkFlags=@()
 if($Candidate){
   $map=Join-Path $LabRoot 'candidate-link-map.txt'
   $linkFlags+=@("-ffile-prefix-map=$LabRoot=/dvr-native","-ffile-prefix-map=$RepoRoot=/dvr-src",
-    '-Wl,--no-insert-timestamp',"-Wl,-Map,$map",'-H')
+    '-Wl,--no-insert-timestamp',"-Wl,-Map,$map",'-Wl,--trace','-H')
 }
-& $cxx -O2 -std=c++17 -static @linkFlags "-I$(Join-Path $ncnn 'src')" "-I$(Join-Path $build 'src')" $cpp (Join-Path $build 'src\libncnn.a') -o $out 2> (Join-Path $LabRoot 'candidate-wrapper-headers.txt')
+& $cxx -O2 -std=c++17 -static @linkFlags "-I$(Join-Path $ncnn 'src')" "-I$(Join-Path $build 'src')" $cpp (Join-Path $build 'src\libncnn.a') -o $out > (Join-Path $LabRoot 'candidate-link-trace.txt') 2> (Join-Path $LabRoot 'candidate-wrapper-headers.txt')
 if($LASTEXITCODE -ne 0){throw 'WORKER_LINK_FAILED'}
 if($Candidate){
   & $ninja -C $build -t deps | Set-Content -Encoding utf8 (Join-Path $LabRoot 'candidate-ninja-deps.txt')

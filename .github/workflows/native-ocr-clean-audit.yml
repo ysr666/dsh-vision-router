@@ -9,6 +9,9 @@ on:
       - '.github/workflows/native-ocr-clean-audit.yml'
       - 'quality/native-ocr-provenance-LAB.json'
       - '.gitattributes'
+      - 'scripts/package-native-ocr.mjs'
+      - 'scripts/install-native-ocr.mjs'
+      - 'src/lib/native-ocr-bundle-metadata.js'
 permissions:
   contents: read
 concurrency:
@@ -62,6 +65,19 @@ jobs:
           otool -l "$root/build-a/worker" | awk '/cmd LC_BUILD_VERSION/{seen=1} seen && /minos/{if ($2 != "13.0") exit 1; ok=1; exit} END{if(!ok) exit 1}'
           actual="$(shasum -a 256 "$root/build-a/worker" | cut -d' ' -f1)"
           echo "REPRODUCIBLE_MAC_CANDIDATE_SHA256=$actual; not admitted or published"
+          # Independently obtain the exact model identities without moving
+          # binaries/weights between jobs or uploading them to artifacts.
+          python3 -I quality/native-ocr-clean-conversion.py --work-dir "$root/conversion"
+          python3 -I quality/native-ocr-candidate-fixture.py --output "$root/synthetic.bmp"
+          python3 -I quality/native-ocr-candidate-smoke.py --worker "$root/build-a/worker" --models "$root/conversion/models" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --report "$root/smoke-evidence.json"
+      - name: Save Mac evidence only (no worker, models or images)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-mac-candidate-evidence
+          path: |
+            ${{ runner.temp }}/dvr-native-worker/smoke-evidence.json
+            ${{ runner.temp }}/dvr-native-worker/conversion/conversion-evidence.json
+          if-no-files-found: error
 
   windows-worker:
     runs-on: windows-latest
@@ -117,4 +133,5 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/header-evidence.json
             ${{ runner.temp }}/dvr-native-worker/smoke-evidence.json
             ${{ runner.temp }}/dvr-native-worker/candidate-link-map.txt
+            ${{ runner.temp }}/dvr-native-worker/candidate-link-trace.txt
           if-no-files-found: error

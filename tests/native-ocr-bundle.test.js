@@ -59,3 +59,44 @@ test('tampered bundles fail closed and do not modify an installed worker', {
     assert.equal(hash(install.binaryPath), before)
   } finally { rmSync(dir, { force:true, recursive:true }) }
 })
+
+test('v2 metadata is verified, installed, and cannot be replaced by archive-supplied claims', {
+  skip: !isApprovedNativePlatform || !process.env.DVR_OCR_PRIVATE_BUNDLE,
+}, () => {
+  const archive = process.env.DVR_OCR_PRIVATE_BUNDLE
+  const installed = localNativeOcrInstallPaths()
+  const before = hash(installed.binaryPath)
+  const manifest = JSON.parse(readFileSync(join(installed.root, 'MANIFEST.json'), 'utf8'))
+  assert.equal(manifest.schemaVersion, 2)
+  assert.equal(manifest.distributionReady, false)
+  const sbom = JSON.parse(readFileSync(join(installed.root, 'SBOM.cdx.json'), 'utf8'))
+  assert.equal(sbom.bomFormat, 'CycloneDX')
+  assert.equal(sbom.compositions[0].aggregate, 'incomplete')
+  assert.ok(existsSync(join(installed.root, 'PROJECT-LICENSE.txt')))
+  const dir = mkdtempSync(join(tmpdir(),'dvr-ocr-notice-tamper-'))
+  try {
+    const listing = spawnSync('tar',['-tzf',archive],{encoding:'utf8'})
+    assert.equal(listing.status,0)
+    const members = listing.stdout.trim().split(/\r?\n/)
+    // The caller's archive has already passed the installer's validation.
+    if (!members.includes('ppocrv6-small/SBOM.cdx.json')) return
+    for (const member of members) {
+      assert.match(member,/^ppocrv6-small\/(?:models\/)?[A-Za-z0-9._-]+$/)
+      assert.ok(!member.endsWith('/..') && !member.endsWith('/.'))
+      const output=join(dir,member)
+      mkdirSync(resolve(output,'..'),{recursive:true})
+      const part=spawnSync('tar',['-xOzf',archive,member],{maxBuffer:32*1024*1024})
+      assert.equal(part.status,0)
+      writeFileSync(output,part.stdout)
+    }
+    writeFileSync(join(dir,'ppocrv6-small','SOURCE-NOTICE.md'),'forged notice')
+    const bad = join(dir,'notice-tamper.tar.gz')
+    const packed = spawnSync('tar',['-czf',bad,'-C',dir,...members],{encoding:'utf8',
+      env:{...process.env,COPYFILE_DISABLE:'1'}})
+    assert.equal(packed.status,0,packed.stderr)
+    const result = invoke(bad)
+    assert.notEqual(result.status,0)
+    assert.match(result.stderr,/metadata integrity mismatch/)
+    assert.equal(hash(installed.binaryPath),before)
+  } finally { rmSync(dir,{recursive:true,force:true}) }
+})

@@ -45,8 +45,11 @@ def main():
     data = link.read_bytes()
     if len(data) < 1024:
         raise RuntimeError('EMPTY_LINK_MAP')
+    trace = root / 'candidate-link-trace.txt'
+    trace_bytes = trace.read_bytes() if trace.exists() else b''
     report = {'headerCount':len(rows), 'headers':rows, 'copyleftTextFlaggedPaths':flags,
               'linkMapSha256':hashlib.sha256(data).hexdigest(),
+              'linkTraceSha256':hashlib.sha256(trace_bytes).hexdigest() if trace_bytes else None,
               'status':'review-required', 'distributionReady':False}
     a.report.write_text(json.dumps(report, indent=2) + '\n')
     print(f'CANDIDATE_HEADER_INVENTORY={len(rows)}; copyleft-text flags={len(flags)}; manual license review required')

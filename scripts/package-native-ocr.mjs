@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
+import { nativeBundleMetadata, nativeBundleLicenseFiles } from '../lib/native-ocr-bundle-metadata.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -40,35 +41,18 @@ async function main() {
       await copyFile(join(models, name), join(root, 'models', name))
       files.push(prefix + '/models/' + name)
     }
-    const lic = fileURLToPath(new URL('../assets/licenses/', import.meta.url))
-    const licenseFiles = [
-      ['ncnn-LICENSE.txt', 'NCNN-LICENSE.txt'],
-      ['apache-2.0.txt', 'APACHE-2.0.txt'],
-      ...(win ? [
-        ['llvm-mingw-LICENSE.txt', 'LLVM-LICENSE.txt'],
-        ['mingw-w64-runtime-COPYING.txt', 'MINGW-RUNTIME-COPYING.txt'],
-      ] : []),
-    ]
-    for (const [name, outputName] of licenseFiles) {
-      await copyFile(join(lic, name), join(root, outputName))
+    const project = fileURLToPath(new URL('../', import.meta.url))
+    for (const [name, outputName] of nativeBundleLicenseFiles()) {
+      await copyFile(join(project, name), join(root, outputName))
       files.push(prefix + '/' + outputName)
     }
-    const binarySha = createHash('sha256').update(await readFile(binary)).digest('hex')
-    const manifest = {
-      schemaVersion: 1,
-      platform: process.platform,
-      arch: process.arch,
-      worker: { sha256: binarySha },
-      models: EXPERIMENTAL_OCR_MODEL_FILES,
-      modelLicense: 'Apache-2.0',
-      ncnnSource: 'Tencent/ncnn@d1f6ac67e9fc91390cc70f7168573fd2626f1d66',
-      ncnnLicense: 'BSD-3-Clause (additional BSD-2-Clause and zlib notices included)',
-      policy: win
-        ? 'owner-installed; static LLVM runtime and MinGW-w64 notices; only Windows system DLL imports'
-        : 'owner-installed; only macOS system shared libraries; no bundled Windows CRT or GNU runtime',
+    await verifyExperimentalNativeOcrBinary(join(root, workerName))
+    await verifyNativeOcrAssets(join(root, 'models'))
+    const metadata = await nativeBundleMetadata({ root })
+    for (const [name, value] of Object.entries(metadata)) {
+      await writeFile(join(root, name), value, { mode: 0o600 })
+      files.push(prefix + '/' + name)
     }
-    await writeFile(join(root, 'MANIFEST.json'), JSON.stringify(manifest,null,2)+'\n', { mode: 0o600 })
-    files.push(prefix + '/MANIFEST.json')
     files.sort()
     await mkdir(dirname(output), { recursive: true })
     const archive = spawnSync('tar', ['-czf', output, '-C', workspace, ...files], {

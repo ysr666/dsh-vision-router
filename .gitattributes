@@ -7,3 +7,7 @@ assets/licenses/mingw-w64-runtime-COPYING.txt -text -whitespace
 
 # Preserve exact audited worker source bytes on Windows.
 quality/native-ocr-lab.cpp -text
+
+assets/licenses/apache-2.0.txt -text -whitespace
+
+LICENSE -text -whitespace

@@ -1,5 +1,5 @@
 """Reacquire public inputs and reproduce the pinned PP-OCRv6 model bytes.
-Windows x64 only. No upload, installation, private test images or release.
+Windows x64 and macOS ARM64. No upload, installation, private images or release.
 """
 import argparse
 import hashlib
@@ -14,10 +14,16 @@ import zipfile
 
 REPO = Path(__file__).resolve().parent.parent
 LEDGER = json.loads((REPO / 'quality/native-ocr-provenance-LAB.json').read_text())
-WHEEL = {
+WINDOWS_WHEEL = {
     'url': 'https://files.pythonhosted.org/packages/e8/51/1b30523f85f9482f55f3f4f11ad8f4a37db7c8773d66625cceb2973c5c60/pnnx-20261020-py3-none-win_amd64.whl',
     'bytes': 18662314,
     'sha256': 'cde5381cdebbef5d3e0e796e824ed02e2e1dfd075731921a3b3653514c518309',
+}
+
+MAC_WHEEL = {
+    'url': 'https://files.pythonhosted.org/packages/8c/e7/98373b217be926b9a6895c9316c350f97fad8bedeb64e5f43cc99c0f498e/pnnx-20261020-py3-none-macosx_10_9_universal2.macosx_10_9_x86_64.macosx_11_0_arm64.whl',
+    'bytes': 54800431,
+    'sha256': 'f4d60b7df5d1f7329f60cf75018ab4e25006db6d2299cf5ef8d56c051044660b',
 }
 
 def identity(path):
@@ -47,23 +53,31 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--work-dir', required=True, type=Path)
     args = parser.parse_args()
-    if platform.system() != 'Windows' or platform.machine().lower() not in ('amd64', 'x86_64'):
-        raise RuntimeError('WINDOWS_X64_REQUIRED')
+    win = platform.system() == 'Windows' and platform.machine().lower() in ('amd64', 'x86_64')
+    mac = platform.system() == 'Darwin' and platform.machine().lower() in ('arm64', 'aarch64')
+    if not (win or mac):
+        raise RuntimeError('WINDOWS_X64_OR_MAC_ARM64_REQUIRED')
+    wheel_source = WINDOWS_WHEEL if win else MAC_WHEEL
+    executable_name = 'pnnx.exe' if win else 'pnnx'
     root = args.work_dir.resolve()
     root.mkdir(parents=True, exist_ok=False)
     models = root / 'models'
     models.mkdir()
     wheel = root / 'converter.whl'
-    wheel_id = acquire(WHEEL['url'], wheel, WHEEL)
-    exe = root / 'pnnx.exe'
+    wheel_id = acquire(wheel_source['url'], wheel, wheel_source)
+    exe = root / executable_name
     with zipfile.ZipFile(wheel) as archive:
         candidates = [item for item in archive.infolist()
-                      if item.filename.replace('\\', '/').split('/')[-1].lower() == 'pnnx.exe']
-        if len(candidates) != 1 or candidates[0].file_size > 160 * 1024 * 1024:
+                      if item.filename.replace('\\', '/').split('/')[-1].lower() == executable_name]
+        if len(candidates) != 1 or candidates[0].file_size > 256 * 1024 * 1024:
             raise RuntimeError('INVALID_CONVERTER_MEMBER')
         with archive.open(candidates[0]) as source, exe.open('xb') as dest:
             shutil.copyfileobj(source, dest)
-    exe_id = verify(exe, {'sha256': LEDGER['conversionReproduction']['standaloneWindowsExeSha256']})
+    # The exact official-wheel digest is required before any code extraction.
+    # Windows also has the prior standalone executable pin; record the Mac
+    # member identity separately without pretending it equals Windows bytes.
+    exe_id = verify(exe, {'sha256': LEDGER['conversionReproduction']['standaloneWindowsExeSha256']}) if win else identity(exe)
+    if mac: exe.chmod(0o700)
     report = {'sourceCommit': subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip(),
               'environment': platform.platform(), 'converterWheel': wheel_id, 'converterExe': exe_id,
               'inputs': {}, 'outputs': {}, 'distributionReady': False}
