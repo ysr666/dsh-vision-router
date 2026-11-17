@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,7 +9,6 @@ import {
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
-import { classifyWebRouteCapability } from '../src/lib/web-capability-boundary.js'
 
 function response() {
   return {
