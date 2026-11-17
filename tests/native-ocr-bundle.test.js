@@ -7,7 +7,7 @@ import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { localNativeOcrInstallPaths } from '../src/lib/native-ocr-installation.js'
 import { EXPERIMENTAL_OCR_BINARY_SHA256 } from '../src/lib/native-ocr-canary.js'
-import { nativeBundleLicenseFiles } from '../src/lib/native-ocr-bundle-metadata.js'
+import { nativeBundleLicenseFiles, readVerifiedNativeBundleLicense } from '../src/lib/native-ocr-bundle-metadata.js'
 
 const installer = resolve('scripts/install-native-ocr.mjs')
 const target = process.platform + '-' + process.arch
@@ -16,6 +16,26 @@ const invoke = archive => spawnSync(process.execPath, [installer, '--bundle', ar
   encoding: 'utf8', timeout: 45_000,
 })
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
+
+test('native package creation rejects stale CRLF and changed canonical license sources', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'dvr-ocr-stale-checkout-'))
+  try {
+    for (const [name] of nativeBundleLicenseFiles('win32')) {
+      const original = await readVerifiedNativeBundleLicense(resolve('.'), name)
+      const file = join(fixture, name)
+      mkdirSync(resolve(file, '..'), { recursive: true })
+      writeFileSync(file, original)
+      assert.deepEqual(await readVerifiedNativeBundleLicense(fixture, name), original)
+      writeFileSync(file, Buffer.concat([original, Buffer.from('changed')]))
+      await assert.rejects(readVerifiedNativeBundleLicense(fixture, name), /canonical license source mismatch/)
+      if (name === 'LICENSE' || name === 'assets/licenses/apache-2.0.txt') {
+        writeFileSync(file, original.toString('utf8').replace(/\n/g, '\r\n'))
+        await assert.rejects(readVerifiedNativeBundleLicense(fixture, name), /canonical license source mismatch/)
+      }
+    }
+    await assert.rejects(readVerifiedNativeBundleLicense(fixture, '../outside'), /unknown native OCR license source/)
+  } finally { rmSync(fixture, { force: true, recursive: true }) }
+})
 
 test('Windows runtime attribution is required for new bundles, while prior member sets stay explicit', () => {
   const names = opts => nativeBundleLicenseFiles('win32', opts).map(([,name]) => name)

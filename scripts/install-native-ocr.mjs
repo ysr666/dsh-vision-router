@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { localNativeOcrInstallPaths, isOwnedNativeOcrDirectory } from '../lib/native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
-import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES } from '../lib/native-ocr-bundle-metadata.js'
+import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -51,7 +51,7 @@ async function installFromSources(binary, sourceModels) {
     }
     const project = fileURLToPath(new URL('../', import.meta.url))
     for (const [name, destination] of nativeBundleLicenseFiles()) {
-      await copyFile(join(project, name), join(staged, destination))
+      await writeFile(join(staged, destination), await readVerifiedNativeBundleLicense(project, name), { mode: 0o600 })
     }
     const metadata = await nativeBundleMetadata({ root: staged })
     for (const [name, value] of Object.entries(metadata)) {
@@ -141,7 +141,7 @@ async function install() {
     const project = fileURLToPath(new URL('../', import.meta.url))
     for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices })) {
       if (!isV2 && name === 'PROJECT-LICENSE.txt') continue
-      const expected = await readFile(join(project, source))
+      const expected = await readVerifiedNativeBundleLicense(project, source)
       const supplied = await readFile(join(tmp, name))
       // Older Windows v1 archives may contain the canonical Apache text with
       // checkout CRLF. Do not accept changed content or relax v2 byte identity.

@@ -22,6 +22,26 @@ export function nativeBundleLicenseFiles(platform = process.platform, { includeS
   ]
 }
 const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+// Pin the canonical source bytes as well as payload bytes. A Windows worktree
+// created before .gitattributes was tightened can retain stale CRLF files.
+const LICENSE_SOURCE_SHA256 = Object.freeze({
+  'assets/licenses/ncnn-LICENSE.txt': '7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255',
+  'assets/licenses/apache-2.0.txt': 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+  'assets/licenses/llvm-mingw-LICENSE.txt': '8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee',
+  'assets/licenses/mingw-w64-runtime-COPYING.txt': '1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f',
+  'assets/licenses/mingw-w64-source-NOTICES.txt': '3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4',
+  'assets/licenses/windows-native-runtime-NOTICES.txt': 'ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006',
+  'LICENSE': '8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93',
+})
+export async function readVerifiedNativeBundleLicense(project, source) {
+  const expected = Object.hasOwn(LICENSE_SOURCE_SHA256, source) ? LICENSE_SOURCE_SHA256[source] : undefined
+  if (!expected) throw Error('unknown native OCR license source: ' + source)
+  const bytes = await readFile(join(project, source))
+  if (digest(bytes) !== expected)
+    throw Error('native OCR canonical license source mismatch: ' + source + '; use a clean checkout with exact Git blob bytes')
+  return bytes
+}
+
 const hash = sha256 => [{ alg: 'SHA-256', content: sha256 }]
 const license = id => [{ license: { id } }]
 const component = (ref, name, version, source, id, extra = {}) => ({

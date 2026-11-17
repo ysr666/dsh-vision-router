@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
-import { nativeBundleMetadata, nativeBundleLicenseFiles } from '../lib/native-ocr-bundle-metadata.js'
+import { nativeBundleMetadata, nativeBundleLicenseFiles, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -43,7 +43,7 @@ async function main() {
     }
     const project = fileURLToPath(new URL('../', import.meta.url))
     for (const [name, outputName] of nativeBundleLicenseFiles()) {
-      await copyFile(join(project, name), join(root, outputName))
+      await writeFile(join(root, outputName), await readVerifiedNativeBundleLicense(project, name), { mode: 0o600 })
       files.push(prefix + '/' + outputName)
     }
     await verifyExperimentalNativeOcrBinary(join(root, workerName))
