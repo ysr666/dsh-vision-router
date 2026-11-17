@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, writeFile, lstat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallNative,
+  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallNative, nodeChildEnvironment,
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
@@ -185,4 +185,15 @@ test('PP-OCRv6 uninstall refuses unowned directories and symlinks', async () => 
     await assert.rejects(uninstallNative({ home, resolvePaths: () => ({ root }) }), /unowned/)
     assert.equal((await lstat(join(root, 'unrelated-owner-file'))).isFile(), true)
   } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test('Electron child Node mode is opt-in and inherited preload flags are cleared', () => {
+  const env = { PATH: '/usr/local/bin', NODE_OPTIONS: '--require unsafe-preload.js' }
+  const electron = nodeChildEnvironment({ env, electron: '33.0.0' })
+  assert.equal(electron.ELECTRON_RUN_AS_NODE, '1')
+  assert.equal(electron.NODE_OPTIONS, '')
+  assert.equal(electron.PATH, env.PATH)
+  const normal = nodeChildEnvironment({ env, electron: undefined })
+  assert.equal(normal.ELECTRON_RUN_AS_NODE, undefined)
+  assert.equal(normal.NODE_OPTIONS, '')
 })
