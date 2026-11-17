@@ -128,7 +128,7 @@ async function assertOwned(root) {
   const marker = await readJSON(join(root, 'DVR-MANAGED.json'))
   if (marker?.kind !== MANAGED_MARK) throw Error('refusing to remove unowned OCR installation')
 }
-async function installTesseract({ home = homedir(), npm = npmCommand, exec = execBounded } = {}) {
+export async function installTesseract({ home = homedir(), npm = npmCommand, exec = execBounded } = {}) {
   const dest = managedTesseractPaths({ home })
   if (await directory(dest.root)) throw Error('Tesseract managed directory already exists; refusing to overwrite')
   const parent = dirname(dest.root)
@@ -166,7 +166,7 @@ async function installTesseract({ home = homedir(), npm = npmCommand, exec = exe
     return { ok: true, installed: true, engine: 'tesseract' }
   } finally { await rm(stage, { recursive: true, force: true }) }
 }
-async function uninstallTesseract({ home = homedir() } = {}) {
+export async function uninstallTesseract({ home = homedir() } = {}) {
   if (activeManagedRuns > 0) throw Error('Tesseract is busy; retry after OCR completes')
   const dest = managedTesseractPaths({ home })
   await assertOwned(dest.root)
@@ -181,7 +181,7 @@ function nativeInstallerPath() {
   if (existsSync(adjacent)) return adjacent
   return fileURLToPath(new URL('../../scripts/install-native-ocr.mjs', import.meta.url))
 }
-async function installNativeBundle(bytes, { home = homedir(), exec = execBounded } = {}) {
+export async function installNativeBundle(bytes, { home = homedir(), exec = execBounded } = {}) {
   const dest = localNativeOcrInstallPaths({ home })
   if (!dest) throw Error('PP-OCRv6 is not approved for this platform')
   if (!Buffer.isBuffer(bytes) || bytes.length < 128 || bytes.length > MAX_BINARY_UPLOAD) throw Error('invalid PP-OCRv6 archive')
@@ -194,7 +194,7 @@ async function installNativeBundle(bytes, { home = homedir(), exec = execBounded
     return { ok: true, installed: true, engine: 'ppocrv6' }
   } finally { await rm(archive, { force: true }) }
 }
-async function uninstallNative({ home = homedir() } = {}) {
+export async function uninstallNative({ home = homedir() } = {}) {
   const dest = localNativeOcrInstallPaths({ home })
   if (!dest || !await directory(dest.root)) throw Error('PP-OCRv6 is not installed')
   // Only the exact managed path, not user-supplied paths or system libraries.
