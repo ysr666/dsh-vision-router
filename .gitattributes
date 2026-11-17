@@ -4,3 +4,6 @@
 assets/licenses/ncnn-LICENSE.txt -text -whitespace
 assets/licenses/llvm-mingw-LICENSE.txt -text -whitespace
 assets/licenses/mingw-w64-runtime-COPYING.txt -text -whitespace
+
+# Preserve exact audited worker source bytes on Windows.
+quality/native-ocr-lab.cpp -text

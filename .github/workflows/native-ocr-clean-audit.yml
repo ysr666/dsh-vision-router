@@ -6,6 +6,7 @@ on:
       - 'quality/native-ocr-*-build-LAB.*'
       - '.github/workflows/native-ocr-clean-audit.yml'
       - 'quality/native-ocr-provenance-LAB.json'
+      - '.gitattributes'
 permissions:
   contents: read
 concurrency:
@@ -45,14 +46,21 @@ jobs:
           git -C "$root/ncnn" fetch --depth 1 https://github.com/Tencent/ncnn.git d1f6ac67e9fc91390cc70f7168573fd2626f1d66
           git -C "$root/ncnn" checkout --detach FETCH_HEAD
           git -C "$root/ncnn" submodule update --init --recursive
-          export DVR_OCR_NCNN_SOURCE="$root/ncnn" DVR_OCR_MAC_BUILD_ROOT="$root/build"
+          export DVR_OCR_NCNN_SOURCE="$root/ncnn"
+          # New candidate target; the old lab worker requires macOS 27.
+          export MACOSX_DEPLOYMENT_TARGET=13.0
           /usr/bin/clang++ --version
+          xcrun --show-sdk-version
           cmake --version
           ninja --version
-          bash quality/native-ocr-macos-build-LAB.sh
-          actual="$(shasum -a 256 "$root/build/worker" | cut -d' ' -f1)"
-          echo "Clean worker SHA256: $actual"
-          test "$actual" = '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204'
+          DVR_OCR_MAC_BUILD_ROOT="$root/build-a" bash quality/native-ocr-macos-build-LAB.sh
+          DVR_OCR_MAC_BUILD_ROOT="$root/build-b" bash quality/native-ocr-macos-build-LAB.sh
+          cmp "$root/build-a/worker" "$root/build-b/worker"
+          otool -l "$root/build-a/worker" | grep -A6 LC_BUILD_VERSION
+          otool -l "$root/build-a/worker" | awk '/cmd LC_BUILD_VERSION/{seen=1} seen && /minos/{if ($2 != "13.0") exit 1; ok=1; exit} END{if(!ok) exit 1}'
+          actual="$(shasum -a 256 "$root/build-a/worker" | cut -d' ' -f1)"
+          echo "REPRODUCIBLE_MAC_CANDIDATE_SHA256=$actual; not admitted or published"
+
   windows-worker:
     runs-on: windows-latest
     timeout-minutes: 45
@@ -68,6 +76,7 @@ jobs:
           New-Item -ItemType Directory -Path $root | Out-Null
           $ncnn = Join-Path $root 'ncnn'
           git init $ncnn
+          git -C $ncnn config core.autocrlf false
           git -C $ncnn fetch --depth 1 https://github.com/Tencent/ncnn.git d1f6ac67e9fc91390cc70f7168573fd2626f1d66
           if ($LASTEXITCODE -ne 0) { throw 'NCNN_FETCH_FAILED' }
           git -C $ncnn checkout --detach FETCH_HEAD
