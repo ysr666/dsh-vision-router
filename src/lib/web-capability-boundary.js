@@ -23,6 +23,10 @@ const ROUTE_CAPABILITY_POLICIES = new Map([
   ['/_dsh/vision-router/self-update', new Map([
     ['POST', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY, legacyMutation: true }],
   ])],
+  ['/_dsh/vision-router/local-ocr', new Map([
+    ['GET', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY }],
+    ['POST', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY, legacyMutation: true }],
+  ])],
   ['/_dsh/vision-router/logs', new Map([
     ['GET', { remote: WEB_ROUTE_REMOTE_CAPABILITY.REDACT_REMOTE }],
     ['POST', { remote: WEB_ROUTE_REMOTE_CAPABILITY.LOCAL_ONLY, legacyMutation: true }],
