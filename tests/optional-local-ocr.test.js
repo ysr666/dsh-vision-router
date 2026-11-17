@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr,
+  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract,
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
@@ -127,6 +127,7 @@ test('optional engines are never installed by default and system packages are no
     assert.equal(system.tesseract.systemInstalled,true)
     assert.equal(system.tesseract.managedInstalled,false)
     assert.equal(system.tesseract.canUninstall,false)
+    assert.equal(system.tesseract.canInstall,false, 'a complete system Tesseract never requires a duplicate private installation')
     const paths = managedTesseractPaths({ home })
     assert.ok(paths.root.startsWith(home))
   } finally { await rm(home,{recursive:true,force:true}) }
@@ -144,4 +145,19 @@ test('Tesseract installation pins exact versions and SHA-512, no global package 
   for(const [name,[version,integrity]] of Object.entries(OPTIONAL_TESSERACT_PACKAGES)){
     assert.ok(name && version && integrity.startsWith('sha512-'))
   }
+})
+
+test('Tesseract install reuses complete system binary without npm or filesystem mutation', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-ocr-system-'))
+  try {
+    const result = await installTesseract({
+      home, probeSystem: async () => true,
+      npm: async () => { throw Error('must not call npm when system OCR works') },
+      exec: async () => { throw Error('must not install private OCR when system OCR works') },
+    })
+    assert.deepEqual(result, { ok: true, installed: false, reusedSystem: true, engine: 'tesseract' })
+    const managed = await optionalOcrStatus({ home, probeSystem: async () => true })
+    assert.equal(managed.tesseract.systemInstalled, true)
+    assert.equal(managed.tesseract.managedInstalled, false)
+  } finally { await rm(home, { recursive:true, force:true }) }
 })
