@@ -169,3 +169,5 @@ This summary does not waive upstream attribution, notice or source obligations.
 
 Earlier DVR versions used `potrace@2.1.8`, which declares GPL-2.0.
 This change removes it. Historical distribution legal obligations need separate review.
+
+Windows native OCR supplemental runtime attribution: `assets/licenses/windows-native-runtime-NOTICES.txt` contains full pinned LLVM libc++, libc++abi, libunwind and compiler-rt license texts plus private MinGW CRT header notices. This extends the existing runtime and translation-unit notices; it is not a declaration of public redistribution approval.

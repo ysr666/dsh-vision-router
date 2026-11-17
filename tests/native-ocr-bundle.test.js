@@ -7,6 +7,7 @@ import { tmpdir, homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { localNativeOcrInstallPaths } from '../src/lib/native-ocr-installation.js'
 import { EXPERIMENTAL_OCR_BINARY_SHA256 } from '../src/lib/native-ocr-canary.js'
+import { nativeBundleLicenseFiles } from '../src/lib/native-ocr-bundle-metadata.js'
 
 const installer = resolve('scripts/install-native-ocr.mjs')
 const target = process.platform + '-' + process.arch
@@ -15,6 +16,18 @@ const invoke = archive => spawnSync(process.execPath, [installer, '--bundle', ar
   encoding: 'utf8', timeout: 45_000,
 })
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
+
+test('Windows runtime attribution is required for new bundles, while prior member sets stay explicit', () => {
+  const names = opts => nativeBundleLicenseFiles('win32', opts).map(([,name]) => name)
+  const old = names({includeSourceNotices:false,includeRuntimeNotices:false})
+  const source = names({includeSourceNotices:true,includeRuntimeNotices:false})
+  const current = names()
+  assert.ok(!old.includes('MINGW-SOURCE-NOTICES.txt'))
+  assert.deepEqual(source.filter(name => !old.includes(name)), ['MINGW-SOURCE-NOTICES.txt'])
+  assert.deepEqual(current.filter(name => !source.includes(name)), ['WINDOWS-RUNTIME-NOTICES.txt'])
+  for (const name of ['LLVM-LICENSE.txt','MINGW-RUNTIME-COPYING.txt']) assert.ok(old.includes(name))
+  assert.ok(!nativeBundleLicenseFiles('darwin').some(([,name]) => name === 'WINDOWS-RUNTIME-NOTICES.txt'))
+})
 
 test('bundle member validation rejects extra files without extracting them', { skip: !isApprovedNativePlatform }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'dvr-ocr-malformed-bundle-'))
@@ -76,6 +89,8 @@ test('v2 metadata is verified, installed, and cannot be replaced by archive-supp
   if (process.platform === 'win32') {
     assert.ok(existsSync(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
     assert.equal(manifest.files['MINGW-SOURCE-NOTICES.txt'].sha256, hash(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
+    assert.equal(manifest.files['WINDOWS-RUNTIME-NOTICES.txt'].sha256, hash(join(installed.root, 'WINDOWS-RUNTIME-NOTICES.txt')))
+    for (const name of ['libcxx','libcxxabi','libunwind','compiler-rt']) assert.ok(sbom.components.some(c => c['bom-ref'] === 'llvm:' + name))
   }
   const dir = mkdtempSync(join(tmpdir(),'dvr-ocr-notice-tamper-'))
   try {

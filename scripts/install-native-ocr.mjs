@@ -99,15 +99,17 @@ async function install() {
     ...Object.keys(EXPERIMENTAL_OCR_MODEL_FILES).map(x => 'models/' + x),
   ].map(x => prefix + x).sort()
   const previousV2Members = [...legacyMembers, ...NATIVE_BUNDLE_METADATA_FILES.map(x => prefix + x)].sort()
-  const v2Members = [...previousV2Members, ...(onWindows ? [prefix + 'MINGW-SOURCE-NOTICES.txt'] : [])].sort()
+  const sourceV2Members = [...previousV2Members, ...(onWindows ? [prefix + 'MINGW-SOURCE-NOTICES.txt'] : [])].sort()
+  const v2Members = [...sourceV2Members, ...(onWindows ? [prefix + 'WINDOWS-RUNTIME-NOTICES.txt'] : [])].sort()
   const listed = spawnSync('tar', ['-tzf', archive], { encoding:'utf8', timeout:30_000, maxBuffer: 64 * 1024 })
   const actualMembers = listed.stdout?.trim().split(/\r?\n/).sort()
-  const hasSourceNotices = onWindows && isDeepStrictEqual(actualMembers, v2Members)
-  const isV2 = isDeepStrictEqual(actualMembers, v2Members) || isDeepStrictEqual(actualMembers, previousV2Members)
+  const hasRuntimeNotices = onWindows && isDeepStrictEqual(actualMembers, v2Members)
+  const hasSourceNotices = onWindows && (hasRuntimeNotices || isDeepStrictEqual(actualMembers, sourceV2Members))
+  const isV2 = isDeepStrictEqual(actualMembers, v2Members) || isDeepStrictEqual(actualMembers, sourceV2Members) || isDeepStrictEqual(actualMembers, previousV2Members)
   if (listed.status !== 0 || (!isV2 && !isDeepStrictEqual(actualMembers, legacyMembers))) {
     throw Error('native OCR bundle has unknown/missing entries')
   }
-  const members = isV2 ? (hasSourceNotices ? v2Members : previousV2Members) : legacyMembers
+  const members = isV2 ? (hasRuntimeNotices ? v2Members : hasSourceNotices ? sourceV2Members : previousV2Members) : legacyMembers
   // Read ONLY individually named entries into memory. Never call 'tar -x':
   // traversal, links and metadata from an external archive cannot write files.
   const tmp = await mkdtemp(join(tmpdir(), 'dvr-ocr-unpack-'))
@@ -137,7 +139,7 @@ async function install() {
     }
     // Compare canonical notices rather than trusting arbitrary archive text.
     const project = fileURLToPath(new URL('../', import.meta.url))
-    for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices })) {
+    for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices })) {
       if (!isV2 && name === 'PROJECT-LICENSE.txt') continue
       const expected = await readFile(join(project, source))
       const supplied = await readFile(join(tmp, name))
@@ -148,7 +150,7 @@ async function install() {
       if (!expected.equals(supplied) && !legacyApache) throw Error('native OCR bundle license integrity mismatch: ' + name)
     }
     if (isV2) {
-      const expected = await nativeBundleMetadata({ root: tmp, includeSourceNotices: hasSourceNotices })
+      const expected = await nativeBundleMetadata({ root: tmp, includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices })
       for (const [name, value] of Object.entries(expected)) {
         if (!Buffer.from(value).equals(await readFile(join(tmp, name)))) {
           throw Error('native OCR bundle metadata integrity mismatch: ' + name)

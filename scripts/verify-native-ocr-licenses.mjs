@@ -26,6 +26,10 @@ assert.match(mingwRuntimeLicense, /Headers and IDLs imported from Wine/)
 const mingwSourceNotice = read('assets/licenses/mingw-w64-source-NOTICES.txt')
 assert.equal(sha256(mingwSourceNotice), '3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4')
 assert.match(mingwSourceNotice, /Upstream DISCLAIMER\.PD/)
+const runtimeNotice = read('assets/licenses/windows-native-runtime-NOTICES.txt')
+assert.equal(sha256(runtimeNotice), 'ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006')
+for (const name of ['libcxx','libcxxabi','libunwind','compiler-rt']) assert.ok(runtimeNotice.includes('LLVM '+name+' LICENSE.TXT'))
+assert.ok(runtimeNotice.includes('mingw-w64-crt/gdtoa/gdtoaimp.h'))
 const notice = read('THIRD_PARTY_NOTICES.md')
 const provenance = JSON.parse(read('quality/native-ocr-provenance-LAB.json'))
 for (const key of ['detector','recognizer']) {
@@ -71,7 +75,7 @@ const files = JSON.parse(npm.stdout)[0].files.map(f=>f.path)
 for (const required of [
   'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt',
   'assets/licenses/llvm-mingw-LICENSE.txt','assets/licenses/mingw-w64-runtime-COPYING.txt',
-  'assets/licenses/mingw-w64-source-NOTICES.txt',
+  'assets/licenses/mingw-w64-source-NOTICES.txt', 'assets/licenses/windows-native-runtime-NOTICES.txt',
   'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',
 ]) assert.ok(files.includes(required), 'missing license/installer from package: '+required)
 assert.equal(files.some(p=>/\.ncnn\.(?:bin|param)$|inference\.onnx|chemistry_user|native-ocr-lab(?:$|\.)|\.exe$|\.dylib$|\.so(?:\.|$)/.test(p)), false,
