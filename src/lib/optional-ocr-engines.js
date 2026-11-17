@@ -223,43 +223,61 @@ export async function mutateOptionalOcr({ engine, action, archive, adapters = {}
 export async function runManagedTesseractOcr(bytes, { timeoutMs = 12000, signal } = {}) {
   const dest = managedTesseractPaths()
   if (!await verifyManaged(dest.root)) throw Error('managed Tesseract unavailable')
-  if (activeManagedRuns >= 2) throw Error('managed Tesseract busy')
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 8 || bytes.byteLength > 24 * 1024 * 1024)
+    throw Error('OCR image outside managed Tesseract bounds')
   if (signal?.aborted) throw Error('OCR aborted')
+  if (activeManagedRuns >= 2) throw Error('managed Tesseract busy')
   activeManagedRuns++
-  let worker
-  let expired = false
-  let alarm
-  let abortListener
   try {
-    const task = (async () => {
-      const entry = pathToFileURL(join(dest.root, 'node_modules', 'tesseract.js', 'src', 'index.js')).href
-      const mod = await import(entry)
-      const createWorker = mod.createWorker ?? mod.default?.createWorker
-      if (typeof createWorker !== 'function') throw Error('managed Tesseract worker unavailable')
-      const created = await createWorker(['chi_sim', 'eng'], 1, {
-        langPath: dest.models, gzip: true, cacheMethod: 'none', logger: () => {},
+    const script = fileURLToPath(new URL('./managed-tesseract-child.js', import.meta.url))
+    return await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [script, dest.root], {
+        shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, DVR_OCR_CHILD: '1' },
       })
-      worker = created
-      if (expired || signal?.aborted) throw Error('OCR aborted')
-      const recognized = await worker.recognize(Buffer.from(bytes))
-      if (expired || signal?.aborted) throw Error('OCR aborted')
-      return {
-        engine: 'tesseract', text: String(recognized?.data?.text ?? '').trim(),
-        confidence: Number.isFinite(recognized?.data?.confidence) ? recognized.data.confidence : 0,
+      let output = ''
+      let expired = false
+      let done = false
+      const finish = (error, result) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        if (error) reject(error)
+        else resolve(result)
       }
-    })()
-    const timer = new Promise((_, reject) => {
-      alarm = setTimeout(() => { expired = true; void worker?.terminate?.(); reject(Error('managed Tesseract timeout')) },
-        Math.max(1, Math.min(120000, timeoutMs)))
-      abortListener = () => { expired = true; void worker?.terminate?.(); reject(Error('OCR aborted')) }
-      signal?.addEventListener('abort', abortListener, { once: true })
+      const onAbort = () => {
+        expired = true
+        child.kill()
+        finish(Error('OCR aborted'))
+      }
+      const timer = setTimeout(() => {
+        expired = true
+        child.kill()
+        finish(Error('managed Tesseract timeout'))
+      }, Math.max(1, Math.min(120000, timeoutMs)))
+      timer.unref?.()
+      signal?.addEventListener('abort', onAbort, { once: true })
+      child.stdout.on('data', part => {
+        output += String(part)
+        if (output.length > 128 * 1024) {
+          child.kill()
+          finish(Error('managed Tesseract output too large'))
+        }
+      })
+      child.stderr.resume()
+      child.on('error', () => finish(Error('managed Tesseract could not start')))
+      child.on('close', code => {
+        if (expired || done) return
+        if (code !== 0) return finish(Error('managed Tesseract worker failed'))
+        try {
+          const data = JSON.parse(output)
+          if (typeof data?.text !== 'string' || !Number.isFinite(data.confidence)) throw Error('invalid result')
+          finish(null, { engine: 'tesseract', text: data.text.trim(), confidence: data.confidence })
+        } catch { finish(Error('managed Tesseract output invalid')) }
+      })
+      child.stdin.on('error', () => {})
+      child.stdin.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
     })
-    return await Promise.race([task, timer])
-  } finally {
-    expired = true
-    clearTimeout(alarm)
-    if (abortListener) signal?.removeEventListener('abort', abortListener)
-    if (worker) await worker.terminate().catch(() => {})
-    activeManagedRuns--
-  }
+  } finally { activeManagedRuns-- }
 }
