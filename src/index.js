@@ -120,6 +120,7 @@ import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
 import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
+import { managedTesseractPaths, runManagedTesseractOcr } from './lib/optional-ocr-engines.js'
 import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
 
 import { pathToFileURL } from 'node:url'
@@ -4492,15 +4493,37 @@ ctx.logger?.info(
           let localAttempted = false
           try {
             localAttempted = true
-            const local = await ocrWithTesseractAdaptive(
-              bytes,
-              tesseractSlice,
-              {
-                signal: taskSignal,
-                preprocess: (source, context) =>
-                  prepareTesseractSubtitleRetry(source, { ...context, loadSharp }),
-              },
-            )
+            const managed = existsSync(managedTesseractPaths().manifest)
+            let local
+            if (managed) {
+              try {
+                const result = await runManagedTesseractOcr(bytes, {
+                  timeoutMs: Math.min(tesseractSlice, deadline.remaining()), signal: taskSignal,
+                })
+                const quality = Math.min(100, Math.max(0, result.confidence))
+                local = {
+                  text: result.text, quality,
+                  uncertain: quality < 85 || /[0-9OIlL]{3,}/.test(result.text),
+                  psm: 6, attemptedPsms: [6],
+                  riskyTokens: [], variant: 'tesseract-js-wasm',
+                }
+              } catch (error) {
+                throwIfVisionTaskAborted(taskSignal, error)
+                ctx.logger?.warn('vision-router: managed Tesseract failed; trying system Tesseract')
+              }
+            }
+            if (!local || !local.text.trim()) {
+              const native = await ocrWithTesseractAdaptive(
+                bytes,
+                Math.min(tesseractSlice, deadline.remaining()),
+                {
+                  signal: taskSignal,
+                  preprocess: (source, context) =>
+                    prepareTesseractSubtitleRetry(source, { ...context, loadSharp }),
+                },
+              )
+              if (!local || native.text.trim()) local = native
+            }
             if (local.text.trim() !== '') {
               if (session) {
                 visionTurnMemory.recordLocalOcr(
@@ -4704,12 +4727,25 @@ ctx.logger?.info(
           let used = 'none'
           if (engine !== 'vision') {
             try {
-              const out = await ocrWithTesseract(
-                chunk,
-                Math.min(12000, deadline.remaining()),
-                { signal: taskSignal },
-              )
-              text = out.trim()
+              if (existsSync(managedTesseractPaths().manifest)) {
+                try {
+                  const managed = await runManagedTesseractOcr(chunk, {
+                    timeoutMs: Math.min(12000, deadline.remaining()), signal: taskSignal,
+                  })
+                  text = managed.text.trim()
+                } catch (error) {
+                  throwIfVisionTaskAborted(taskSignal, error)
+                  ctx.logger?.warn('vision-router: managed Tesseract chunk failed; trying system binary')
+                }
+              }
+              if (!text) {
+                const out = await ocrWithTesseract(
+                  chunk,
+                  Math.min(12000, deadline.remaining()),
+                  { signal: taskSignal },
+                )
+                text = out.trim()
+              }
               used = 'tesseract'
             } catch (error) {
               throwIfVisionTaskAborted(taskSignal, error)
