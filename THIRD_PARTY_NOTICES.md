@@ -171,3 +171,5 @@ Earlier DVR versions used `potrace@2.1.8`, which declares GPL-2.0.
 This change removes it. Historical distribution legal obligations need separate review.
 
 Windows native OCR supplemental runtime attribution: `assets/licenses/windows-native-runtime-NOTICES.txt` contains full pinned LLVM libc++, libc++abi, libunwind and compiler-rt license texts plus private MinGW CRT header notices. This extends the existing runtime and translation-unit notices; it is not a declaration of public redistribution approval.
+
+PaddleOCR dictionary: the exact upstream root license at revision dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf (Apache-2.0, Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.) is preserved in `assets/licenses/paddleocr-LICENSE.txt` and native archive schema v3. The generic Apache-2.0 text is retained for model weights. Earlier valid bundle formats remain importable and are installed with current notices.

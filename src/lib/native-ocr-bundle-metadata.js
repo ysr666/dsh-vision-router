@@ -8,10 +8,11 @@ const recognizer = 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/
 const dictionary = 'https://github.com/PaddlePaddle/PaddleOCR/tree/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf'
 const runtime = 'https://github.com/Tencent/ncnn/tree/d1f6ac67e9fc91390cc70f7168573fd2626f1d66'
 export const NATIVE_BUNDLE_METADATA_FILES = Object.freeze(['SOURCE-NOTICE.md', 'SBOM.cdx.json', 'PROJECT-LICENSE.txt'])
-export function nativeBundleLicenseFiles(platform = process.platform, { includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices } = {}) {
+export function nativeBundleLicenseFiles(platform = process.platform, { includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices, includePaddleLicense = true } = {}) {
   return [
     ['assets/licenses/ncnn-LICENSE.txt', 'NCNN-LICENSE.txt'],
     ['assets/licenses/apache-2.0.txt', 'APACHE-2.0.txt'],
+    ...(includePaddleLicense ? [['assets/licenses/paddleocr-LICENSE.txt', 'PADDLEOCR-LICENSE.txt']] : []),
     ...(platform === 'win32' ? [
       ['assets/licenses/llvm-mingw-LICENSE.txt', 'LLVM-LICENSE.txt'],
       ['assets/licenses/mingw-w64-runtime-COPYING.txt', 'MINGW-RUNTIME-COPYING.txt'],
@@ -26,6 +27,7 @@ const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 // created before .gitattributes was tightened can retain stale CRLF files.
 const LICENSE_SOURCE_SHA256 = Object.freeze({
   'assets/licenses/ncnn-LICENSE.txt': '7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255',
+  'assets/licenses/paddleocr-LICENSE.txt': '3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e',
   'assets/licenses/apache-2.0.txt': 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
   'assets/licenses/llvm-mingw-LICENSE.txt': '8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee',
   'assets/licenses/mingw-w64-runtime-COPYING.txt': '1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f',
@@ -48,7 +50,7 @@ const component = (ref, name, version, source, id, extra = {}) => ({
   type: 'library', 'bom-ref': ref, name, version,
   licenses: license(id), externalReferences: [{ type: 'vcs', url: source }], ...extra,
 })
-export async function nativeBundleMetadata({ root, platform = process.platform, arch = process.arch, includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices }) {
+export async function nativeBundleMetadata({ root, platform = process.platform, arch = process.arch, includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices, includePaddleLicense = true }) {
   const win = platform === 'win32'
   const workerName = win ? 'worker.exe' : 'worker'
   const worker = await readFile(join(root, workerName))
@@ -85,7 +87,7 @@ export async function nativeBundleMetadata({ root, platform = process.platform, 
   ]
   const payload = Object.fromEntries(await Promise.all([
     workerName, ...modelFiles.map(([name]) => 'models/' + name),
-    ...nativeBundleLicenseFiles(platform, { includeSourceNotices, includeRuntimeNotices }).map(([, name]) => name),
+    ...nativeBundleLicenseFiles(platform, { includeSourceNotices, includeRuntimeNotices, includePaddleLicense }).map(([, name]) => name),
   ].map(async name => {
     const bytes = await readFile(join(root, name))
     return [name, { bytes: bytes.length, sha256: digest(bytes) }]
@@ -99,6 +101,7 @@ export async function nativeBundleMetadata({ root, platform = process.platform, 
     'Source: ' + recognizer,
     'Dictionary: PaddlePaddle/PaddleOCR ppocrv6_dict.txt, Apache-2.0.',
     'Source: ' + dictionary,
+    ...(includePaddleLicense ? ['PaddleOCR original root license including upstream copyright: PADDLEOCR-LICENSE.txt. Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.'] : []),
     'Modification: detector and recognizer ONNX models converted to ncnn param/bin with pnnx 20261020, fp16=0, optlevel=2; dictionary unchanged.',
     'Runtime: Tencent/ncnn @ d1f6ac67e9fc91390cc70f7168573fd2626f1d66, BSD-3-Clause',
     'Source: ' + runtime,
@@ -125,7 +128,7 @@ export async function nativeBundleMetadata({ root, platform = process.platform, 
   }
   const stringify = value => JSON.stringify(value,null,2)+'\n'
   const files = { 'SOURCE-NOTICE.md':notice, 'SBOM.cdx.json':stringify(sbom) }
-  const manifest = { schemaVersion:2, platform, arch, worker:{sha256:workerSha,bytes:worker.length},
+  const manifest = { schemaVersion:includePaddleLicense ? 3 : 2, platform, arch, worker:{sha256:workerSha,bytes:worker.length},
     models:EXPERIMENTAL_OCR_MODEL_FILES, modelLicense:'Apache-2.0',
     ncnnSource:'Tencent/ncnn@d1f6ac67e9fc91390cc70f7168573fd2626f1d66',
     distributionReady:false,

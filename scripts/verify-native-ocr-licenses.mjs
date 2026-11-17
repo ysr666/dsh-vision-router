@@ -18,6 +18,9 @@ assert.equal(sha256(apache), 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb
 assert.equal(sha256(read('LICENSE')), '8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93', 'MIT license bytes must match canonical Git blob')
 assert.match(apache, /Apache License/)
 assert.match(apache, /Version 2\.0, January 2004/)
+const paddleLicense = read('assets/licenses/paddleocr-LICENSE.txt')
+assert.equal(sha256(paddleLicense), '3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e')
+assert.ok(paddleLicense.includes('Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.'))
 const llvmLicense = read('assets/licenses/llvm-mingw-LICENSE.txt')
 assert.equal(sha256(llvmLicense), '8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee')
 assert.match(llvmLicense, /LLVM Exceptions to the Apache 2\.0 License/)
@@ -75,7 +78,7 @@ assert.equal(npm.status, 0,
   String(npm.error?.message ?? npm.stderr ?? 'npm pack failed').slice(-400))
 const files = JSON.parse(npm.stdout)[0].files.map(f=>f.path)
 for (const required of [
-  'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt',
+  'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt','assets/licenses/paddleocr-LICENSE.txt',
   'assets/licenses/llvm-mingw-LICENSE.txt','assets/licenses/mingw-w64-runtime-COPYING.txt',
   'assets/licenses/mingw-w64-source-NOTICES.txt', 'assets/licenses/windows-native-runtime-NOTICES.txt',
   'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',

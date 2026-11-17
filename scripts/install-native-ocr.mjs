@@ -101,15 +101,18 @@ async function install() {
   const previousV2Members = [...legacyMembers, ...NATIVE_BUNDLE_METADATA_FILES.map(x => prefix + x)].sort()
   const sourceV2Members = [...previousV2Members, ...(onWindows ? [prefix + 'MINGW-SOURCE-NOTICES.txt'] : [])].sort()
   const v2Members = [...sourceV2Members, ...(onWindows ? [prefix + 'WINDOWS-RUNTIME-NOTICES.txt'] : [])].sort()
+  const v3Members = [...v2Members, prefix + 'PADDLEOCR-LICENSE.txt'].sort()
   const listed = spawnSync('tar', ['-tzf', archive], { encoding:'utf8', timeout:30_000, maxBuffer: 64 * 1024 })
   const actualMembers = listed.stdout?.trim().split(/\r?\n/).sort()
-  const hasRuntimeNotices = onWindows && isDeepStrictEqual(actualMembers, v2Members)
+  const hasPaddleLicense = isDeepStrictEqual(actualMembers, v3Members)
+  const hasRuntimeNotices = onWindows && (hasPaddleLicense || isDeepStrictEqual(actualMembers, v2Members))
   const hasSourceNotices = onWindows && (hasRuntimeNotices || isDeepStrictEqual(actualMembers, sourceV2Members))
   const isV2 = isDeepStrictEqual(actualMembers, v2Members) || isDeepStrictEqual(actualMembers, sourceV2Members) || isDeepStrictEqual(actualMembers, previousV2Members)
-  if (listed.status !== 0 || (!isV2 && !isDeepStrictEqual(actualMembers, legacyMembers))) {
+  const hasMetadata = hasPaddleLicense || isV2
+  if (listed.status !== 0 || (!hasMetadata && !isDeepStrictEqual(actualMembers, legacyMembers))) {
     throw Error('native OCR bundle has unknown/missing entries')
   }
-  const members = isV2 ? (hasRuntimeNotices ? v2Members : hasSourceNotices ? sourceV2Members : previousV2Members) : legacyMembers
+  const members = hasPaddleLicense ? v3Members : isV2 ? (hasRuntimeNotices ? v2Members : hasSourceNotices ? sourceV2Members : previousV2Members) : legacyMembers
   // Read ONLY individually named entries into memory. Never call 'tar -x':
   // traversal, links and metadata from an external archive cannot write files.
   const tmp = await mkdtemp(join(tmpdir(), 'dvr-ocr-unpack-'))
@@ -127,7 +130,7 @@ async function install() {
       await writeFile(destPath, data.stdout, { mode: 0o600 })
     }
     const manifest = JSON.parse(await readFile(join(tmp,'MANIFEST.json'),'utf8'))
-    if (manifest.schemaVersion !== (isV2 ? 2 : 1) ||
+    if (manifest.schemaVersion !== (hasPaddleLicense ? 3 : isV2 ? 2 : 1) ||
       manifest.platform !== process.platform || manifest.arch !== process.arch) {
       throw Error('unsupported native OCR bundle manifest')
     }
@@ -139,18 +142,18 @@ async function install() {
     }
     // Compare canonical notices rather than trusting arbitrary archive text.
     const project = fileURLToPath(new URL('../', import.meta.url))
-    for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices })) {
-      if (!isV2 && name === 'PROJECT-LICENSE.txt') continue
+    for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices, includePaddleLicense: hasPaddleLicense })) {
+      if (!hasMetadata && name === 'PROJECT-LICENSE.txt') continue
       const expected = await readVerifiedNativeBundleLicense(project, source)
       const supplied = await readFile(join(tmp, name))
       // Older Windows v1 archives may contain the canonical Apache text with
       // checkout CRLF. Do not accept changed content or relax v2 byte identity.
-      const legacyApache = !isV2 && name === 'APACHE-2.0.txt' &&
+      const legacyApache = !hasMetadata && name === 'APACHE-2.0.txt' &&
         supplied.toString('utf8').replace(/\r\n/g, '\n') === expected.toString('utf8').replace(/\r\n/g, '\n')
       if (!expected.equals(supplied) && !legacyApache) throw Error('native OCR bundle license integrity mismatch: ' + name)
     }
-    if (isV2) {
-      const expected = await nativeBundleMetadata({ root: tmp, includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices })
+    if (hasMetadata) {
+      const expected = await nativeBundleMetadata({ root: tmp, includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices, includePaddleLicense: hasPaddleLicense })
       for (const [name, value] of Object.entries(expected)) {
         if (!Buffer.from(value).equals(await readFile(join(tmp, name)))) {
           throw Error('native OCR bundle metadata integrity mismatch: ' + name)

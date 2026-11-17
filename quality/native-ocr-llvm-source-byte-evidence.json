@@ -1,0 +1,913 @@
+{
+  "sourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+  "worker": {
+    "bytes": 21843456,
+    "sha256": "4f7ad042349239baca6a654d8ca31937c2c49886f6f51413c8447071ff80bfa8"
+  },
+  "selectedObjects": [
+    {
+      "archive": "libc++.a",
+      "member": "abort_message.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/abort_message.cpp",
+          "gitBlobSha1": "d51d9d87d35e021005023fca158085502b7805cb",
+          "bytes": 1939
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "call_once.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/call_once.cpp",
+          "gitBlobSha1": "015b874cffa44ca3bd1ba9c467e8f0af61a1d300",
+          "bytes": 2341
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "chrono.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/chrono.cpp",
+          "gitBlobSha1": "af5fe7c01fb8b7fa619ea92e96a3232d5f68f4c2",
+          "bytes": 8626
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_default_handlers.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_default_handlers.cpp",
+          "gitBlobSha1": "5daf78b34ee542c98360c1e4ff98366240c13d93",
+          "bytes": 4697
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_demangle.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_demangle.cpp",
+          "gitBlobSha1": "4756d8343630b96355cecc2929cdc42788380a0e",
+          "bytes": 11615
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_exception.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_exception.cpp",
+          "gitBlobSha1": "f56ecc248eefb7f1e11518cf54fd4c0229b965dd",
+          "bytes": 33673
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_exception_storage.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_exception_storage.cpp",
+          "gitBlobSha1": "05da6a48e313cf619e21964d463f8ba1068185d9",
+          "bytes": 3507
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_guard.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_guard.cpp",
+          "gitBlobSha1": "514fa962e3daa8364beced766a3bde5117f4be37",
+          "bytes": 1722
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_handlers.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_handlers.cpp",
+          "gitBlobSha1": "0abdc740486b8a04e7c1f4da911a3eba05138bab",
+          "bytes": 2495
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_personality.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_personality.cpp",
+          "gitBlobSha1": "c5050e46c0e85c30190b4dc54c8e49987b11daac",
+          "bytes": 61275
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_virtual.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/cxa_virtual.cpp",
+          "gitBlobSha1": "1d3f4c63cf2dea4efe5cecb1f5fb97b12e3aa0c4",
+          "bytes": 724
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "error_category.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/error_category.cpp",
+          "gitBlobSha1": "941ca659b9d097e32fa0a8162d17f24a62d23c2b",
+          "bytes": 1456
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "exception.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/exception.cpp",
+          "gitBlobSha1": "9932141006591338626cba60ba10a70d42de33e5",
+          "bytes": 1223
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "fallback_malloc.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/fallback_malloc.cpp",
+          "gitBlobSha1": "81195c9a4dc1743ddc609e0d9bce4be3a75dd730",
+          "bytes": 9860
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "filesystem_error.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/filesystem/filesystem_error.cpp",
+          "gitBlobSha1": "43752aa7ac3bd88d46ac03566f8f2008ea056c4b",
+          "bytes": 1355
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "functional.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/functional.cpp",
+          "gitBlobSha1": "737b6e0931ad66e17e0b68b7587a17c7ab739a86",
+          "bytes": 803
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "ios.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/ios.cpp",
+          "gitBlobSha1": "db6ca50f7f6ca0b5a94ee8235e9f1776ba1efb8d",
+          "bytes": 11840
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "ios.instantiations.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/ios.instantiations.cpp",
+          "gitBlobSha1": "a50d3b745944a4ac1e563471a83455d895a5b9b2",
+          "bytes": 2957
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "iostream.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/iostream.cpp",
+          "gitBlobSha1": "03939823614560b07079c34c1b455e47aa6fce47",
+          "bytes": 5571
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "locale.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/locale.cpp",
+          "gitBlobSha1": "b0a69ab74f94c5523bd7a4441b100a5e80d7cbf8",
+          "bytes": 189344
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "locale_win32.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/support/win32/locale_win32.cpp",
+          "gitBlobSha1": "c5117564438a5c70aad6cb4f4cefaea665e1e3c8",
+          "bytes": 11636
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "memory.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/memory.cpp",
+          "gitBlobSha1": "94a90cd3b9f0f5096be509c15ab380e52b49e794",
+          "bytes": 6268
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "new_helpers.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/new_helpers.cpp",
+          "gitBlobSha1": "2119d82b3e00f94063d8010a51037996fbcf35f5",
+          "bytes": 745
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "path.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/filesystem/path.cpp",
+          "gitBlobSha1": "faa7b4f1fbab7ba70e104b8d7277a7973685320a",
+          "bytes": 13108
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "private_typeinfo.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/private_typeinfo.cpp",
+          "gitBlobSha1": "ba3da519238b7afd28965cab4ea63ab7ad1b4cfa",
+          "bytes": 67395
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdexcept.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/stdexcept.cpp",
+          "gitBlobSha1": "31f60d5a5ac5b6258873b381a90161e7d77ce95b",
+          "bytes": 949
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_exception.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/stdlib_exception.cpp",
+          "gitBlobSha1": "b1fc21f412aa941b35394f8224d703650b8fcd8f",
+          "bytes": 1122
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_new_delete.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/stdlib_new_delete.cpp",
+          "gitBlobSha1": "164a26335eb38276feaa0c3bac9e612f26cc806e",
+          "bytes": 9336
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_stdexcept.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/stdlib_stdexcept.cpp",
+          "gitBlobSha1": "92f7a6e076c0f0a467208feb95f0f25a3fd4d3a1",
+          "bytes": 1239
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_typeinfo.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxxabi/src/stdlib_typeinfo.cpp",
+          "gitBlobSha1": "6e5499628d130d186a8ed36c45d1d506221b203f",
+          "bytes": 793
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "string.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/string.cpp",
+          "gitBlobSha1": "b55f9ff5c9a43982132957353c8a2148470a139d",
+          "bytes": 13558
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "support.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/support/win32/support.cpp",
+          "gitBlobSha1": "7ac508301b526ca970e0c0168f0ad9951fd32a91",
+          "bytes": 5087
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "system_error.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/system_error.cpp",
+          "gitBlobSha1": "cf3d2c2926861c69c2d58739f2fc9b00ac5e3deb",
+          "bytes": 11632
+        }
+      ]
+    },
+    {
+      "archive": "libc++.a",
+      "member": "thread_win32.cpp.obj",
+      "candidates": [
+        {
+          "path": "libcxx/src/support/win32/thread_win32.cpp",
+          "gitBlobSha1": "606104e32b45328796c03b95f572ac177775c190",
+          "bytes": 7028
+        }
+      ]
+    },
+    {
+      "archive": "libclang_rt.builtins-x86_64.a",
+      "member": "chkstk.S.obj",
+      "candidates": [
+        {
+          "path": "compiler-rt/lib/builtins/x86_64/chkstk.S",
+          "gitBlobSha1": "ad7953a116ac7e782777daf6c419eb18417fb330",
+          "bytes": 1009
+        }
+      ]
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "Unwind-seh.cpp.obj",
+      "candidates": [
+        {
+          "path": "libunwind/src/Unwind-seh.cpp",
+          "gitBlobSha1": "0b1930b44d1c648b89099b6f2f796b4233f1c877",
+          "bytes": 23265
+        }
+      ]
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "UnwindLevel1.c.obj",
+      "candidates": [
+        {
+          "path": "libunwind/src/UnwindLevel1.c",
+          "gitBlobSha1": "834fdae6a76d3e28bde5ece20c45f367a47b1f12",
+          "bytes": 27308
+        }
+      ]
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "UnwindRegistersSave.S.obj",
+      "candidates": [
+        {
+          "path": "libunwind/src/UnwindRegistersSave.S",
+          "gitBlobSha1": "f44f6a1331968cf75de46a3cf64a0cc5c8f485b2",
+          "bytes": 33184
+        }
+      ]
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "libunwind.cpp.obj",
+      "candidates": [
+        {
+          "path": "libunwind/src/libunwind.cpp",
+          "gitBlobSha1": "0b9d56ec805bca92f0ed4b93be549c8cf982e809",
+          "bytes": 21695
+        }
+      ]
+    }
+  ],
+  "selectedObjectCount": 39,
+  "unambiguousCount": 39,
+  "scope": "Exact pinned source bytes and names of all selected LLVM objects. Source-to-object correspondence is name-based, not independent LLVM build or verified preprocessor closure.",
+  "distributionReady": false,
+  "sourceFiles": [
+    {
+      "archive": "libc++.a",
+      "member": "abort_message.cpp.obj",
+      "source": "libcxxabi/src/abort_message.cpp",
+      "gitBlobSha1": "d51d9d87d35e021005023fca158085502b7805cb",
+      "sha256": "93b1415fedb1c74486e888446c17b0a65bb93f26d74fc2f6329734e94e735ee7",
+      "bytes": 1939,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "call_once.cpp.obj",
+      "source": "libcxx/src/call_once.cpp",
+      "gitBlobSha1": "015b874cffa44ca3bd1ba9c467e8f0af61a1d300",
+      "sha256": "2f5d820cff3b1b7acebf8b2746e486f216aefb1f65d865482ce49981fc3c5913",
+      "bytes": 2341,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "chrono.cpp.obj",
+      "source": "libcxx/src/chrono.cpp",
+      "gitBlobSha1": "af5fe7c01fb8b7fa619ea92e96a3232d5f68f4c2",
+      "sha256": "f1559dc47b5a39e370fef4776adafb8ca4f9ac8221f9901ee4f65d999b04c2a4",
+      "bytes": 8626,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_default_handlers.cpp.obj",
+      "source": "libcxxabi/src/cxa_default_handlers.cpp",
+      "gitBlobSha1": "5daf78b34ee542c98360c1e4ff98366240c13d93",
+      "sha256": "1984e226dbc2de1d42a5f6b4fd54669f1acec09ce7234e3c547014b2c767e92d",
+      "bytes": 4697,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_demangle.cpp.obj",
+      "source": "libcxxabi/src/cxa_demangle.cpp",
+      "gitBlobSha1": "4756d8343630b96355cecc2929cdc42788380a0e",
+      "sha256": "2693c9d841b50fa60a5d92b265d59faa32e675de7c947b6c0e6f3ed62551188f",
+      "bytes": 11615,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_exception.cpp.obj",
+      "source": "libcxxabi/src/cxa_exception.cpp",
+      "gitBlobSha1": "f56ecc248eefb7f1e11518cf54fd4c0229b965dd",
+      "sha256": "0acb03590a416db189c6ebef789e25233ac4bc54de92a273e7cfed4bc345f77a",
+      "bytes": 33673,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_exception_storage.cpp.obj",
+      "source": "libcxxabi/src/cxa_exception_storage.cpp",
+      "gitBlobSha1": "05da6a48e313cf619e21964d463f8ba1068185d9",
+      "sha256": "7de17cefbedbf94d7282fe3cde0e23e592b90c1d5e50db5d63009d7cfc877721",
+      "bytes": 3507,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_guard.cpp.obj",
+      "source": "libcxxabi/src/cxa_guard.cpp",
+      "gitBlobSha1": "514fa962e3daa8364beced766a3bde5117f4be37",
+      "sha256": "97dbc2a48acb2233301bd7c11717cda173b23c73e7da64eb1710332c3b19f54d",
+      "bytes": 1722,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_handlers.cpp.obj",
+      "source": "libcxxabi/src/cxa_handlers.cpp",
+      "gitBlobSha1": "0abdc740486b8a04e7c1f4da911a3eba05138bab",
+      "sha256": "8f531efff0a8231177f53e5e048c4ede2d58a80e15bbefdb07f4874a0d0321fa",
+      "bytes": 2495,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_personality.cpp.obj",
+      "source": "libcxxabi/src/cxa_personality.cpp",
+      "gitBlobSha1": "c5050e46c0e85c30190b4dc54c8e49987b11daac",
+      "sha256": "e9ca51bc955252e66aed6961b1d353c034845817dcfd4e03983dd0d5640e4967",
+      "bytes": 61275,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "cxa_virtual.cpp.obj",
+      "source": "libcxxabi/src/cxa_virtual.cpp",
+      "gitBlobSha1": "1d3f4c63cf2dea4efe5cecb1f5fb97b12e3aa0c4",
+      "sha256": "79320f7033e714cd03c705755fb6f87ef2a6608adde5f18a11943d09b46511a4",
+      "bytes": 724,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "error_category.cpp.obj",
+      "source": "libcxx/src/error_category.cpp",
+      "gitBlobSha1": "941ca659b9d097e32fa0a8162d17f24a62d23c2b",
+      "sha256": "06dff42f4f4dbb2d143b5e677f8bec24cc33bfd3f828562d53765f088a3e5fad",
+      "bytes": 1456,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "exception.cpp.obj",
+      "source": "libcxx/src/exception.cpp",
+      "gitBlobSha1": "9932141006591338626cba60ba10a70d42de33e5",
+      "sha256": "12de42099ce0f312bca06cf693b04388ede3bc67decc6f9b2bd16489b1de6e70",
+      "bytes": 1223,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "fallback_malloc.cpp.obj",
+      "source": "libcxxabi/src/fallback_malloc.cpp",
+      "gitBlobSha1": "81195c9a4dc1743ddc609e0d9bce4be3a75dd730",
+      "sha256": "ac2ff206a123d31b0c89012c944c8ba374bc300a74e93928c31d63c15a8e503e",
+      "bytes": 9860,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "filesystem_error.cpp.obj",
+      "source": "libcxx/src/filesystem/filesystem_error.cpp",
+      "gitBlobSha1": "43752aa7ac3bd88d46ac03566f8f2008ea056c4b",
+      "sha256": "1f17f5f17b835e43746faf2b42c0147fe0c5c26f455b830130a023993279e13b",
+      "bytes": 1355,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "functional.cpp.obj",
+      "source": "libcxx/src/functional.cpp",
+      "gitBlobSha1": "737b6e0931ad66e17e0b68b7587a17c7ab739a86",
+      "sha256": "82e910930c4298c85c5d0fab76c8c9e236d59d7239ea2b06f79dcd0e31486ac1",
+      "bytes": 803,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "ios.cpp.obj",
+      "source": "libcxx/src/ios.cpp",
+      "gitBlobSha1": "db6ca50f7f6ca0b5a94ee8235e9f1776ba1efb8d",
+      "sha256": "9db3978f625f6daa63fac79bf0057982a1b0d5b638762337f5d45805d62dcb65",
+      "bytes": 11840,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "ios.instantiations.cpp.obj",
+      "source": "libcxx/src/ios.instantiations.cpp",
+      "gitBlobSha1": "a50d3b745944a4ac1e563471a83455d895a5b9b2",
+      "sha256": "124f5c5a75ae94415c233c5e3fdb58dab2be3943af52b8f744b67c49e11a5d44",
+      "bytes": 2957,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "iostream.cpp.obj",
+      "source": "libcxx/src/iostream.cpp",
+      "gitBlobSha1": "03939823614560b07079c34c1b455e47aa6fce47",
+      "sha256": "48067e743ca39210e8c2f7ea8ea5946675df3dbff542b49b6dd2b2cbcdcd431e",
+      "bytes": 5571,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "locale.cpp.obj",
+      "source": "libcxx/src/locale.cpp",
+      "gitBlobSha1": "b0a69ab74f94c5523bd7a4441b100a5e80d7cbf8",
+      "sha256": "dbcfd5b05dd0c7b670659a1aed1c4af89d9fbc6dea765589a336ecc76cd0ca5c",
+      "bytes": 189344,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "locale_win32.cpp.obj",
+      "source": "libcxx/src/support/win32/locale_win32.cpp",
+      "gitBlobSha1": "c5117564438a5c70aad6cb4f4cefaea665e1e3c8",
+      "sha256": "a30085dc8f0bcda7d371a390036a3670f4075f688d461d323c620448c98c64d7",
+      "bytes": 11636,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "memory.cpp.obj",
+      "source": "libcxx/src/memory.cpp",
+      "gitBlobSha1": "94a90cd3b9f0f5096be509c15ab380e52b49e794",
+      "sha256": "9851834bf11c8010ac7e02d4fc2669c52b957e72bd013d90df8f09db3eed3c56",
+      "bytes": 6268,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "new_helpers.cpp.obj",
+      "source": "libcxx/src/new_helpers.cpp",
+      "gitBlobSha1": "2119d82b3e00f94063d8010a51037996fbcf35f5",
+      "sha256": "82b6b57506edc48dcbb13eaa5bf533e680167f983a2a2cf85064c003cb8cdb38",
+      "bytes": 745,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "path.cpp.obj",
+      "source": "libcxx/src/filesystem/path.cpp",
+      "gitBlobSha1": "faa7b4f1fbab7ba70e104b8d7277a7973685320a",
+      "sha256": "9f9f22f0188b04026149ec9371ba0d19ccf82a1c919fba9641f41a46969df607",
+      "bytes": 13108,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "private_typeinfo.cpp.obj",
+      "source": "libcxxabi/src/private_typeinfo.cpp",
+      "gitBlobSha1": "ba3da519238b7afd28965cab4ea63ab7ad1b4cfa",
+      "sha256": "18b2e539c812b48dec7ef6105af9c33a529d4883858012339091181a7993bae2",
+      "bytes": 67395,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdexcept.cpp.obj",
+      "source": "libcxx/src/stdexcept.cpp",
+      "gitBlobSha1": "31f60d5a5ac5b6258873b381a90161e7d77ce95b",
+      "sha256": "af6a2e2aea77ebf269f858d1056e50aff8aa572fd82f7750c32a4069fb76e063",
+      "bytes": 949,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_exception.cpp.obj",
+      "source": "libcxxabi/src/stdlib_exception.cpp",
+      "gitBlobSha1": "b1fc21f412aa941b35394f8224d703650b8fcd8f",
+      "sha256": "d609597f8f536fec59f7afa2dbd352c69a9b50ce8aaf85082fd1fbad08c79a25",
+      "bytes": 1122,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_new_delete.cpp.obj",
+      "source": "libcxxabi/src/stdlib_new_delete.cpp",
+      "gitBlobSha1": "164a26335eb38276feaa0c3bac9e612f26cc806e",
+      "sha256": "d92ec2d7aa9e2e2151f9092560ee9e352cb8716700b222f588826775569c654b",
+      "bytes": 9336,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_stdexcept.cpp.obj",
+      "source": "libcxxabi/src/stdlib_stdexcept.cpp",
+      "gitBlobSha1": "92f7a6e076c0f0a467208feb95f0f25a3fd4d3a1",
+      "sha256": "8539fc8929cd9a166a74fe04ef81472e7a6d507f4422f991963867fbda1f256a",
+      "bytes": 1239,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "stdlib_typeinfo.cpp.obj",
+      "source": "libcxxabi/src/stdlib_typeinfo.cpp",
+      "gitBlobSha1": "6e5499628d130d186a8ed36c45d1d506221b203f",
+      "sha256": "5d0b584b9341eb49ea5e640a475dc690d44b0770712222e2667185b1e814367f",
+      "bytes": 793,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "string.cpp.obj",
+      "source": "libcxx/src/string.cpp",
+      "gitBlobSha1": "b55f9ff5c9a43982132957353c8a2148470a139d",
+      "sha256": "e05765b4f39ebd6357cf47358ca7745acbc3eaac47455f59b88f33cd5ac4bc33",
+      "bytes": 13558,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "support.cpp.obj",
+      "source": "libcxx/src/support/win32/support.cpp",
+      "gitBlobSha1": "7ac508301b526ca970e0c0168f0ad9951fd32a91",
+      "sha256": "6a009882655599f104ca8b8380889fa7f63c11ca7f20d723d462a9e844fd3fc1",
+      "bytes": 5087,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "system_error.cpp.obj",
+      "source": "libcxx/src/system_error.cpp",
+      "gitBlobSha1": "cf3d2c2926861c69c2d58739f2fc9b00ac5e3deb",
+      "sha256": "32dea8edfe92738c0d35f1edc9fcd6088a30fb9861b57d728674ef23c7b919fe",
+      "bytes": 11632,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libc++.a",
+      "member": "thread_win32.cpp.obj",
+      "source": "libcxx/src/support/win32/thread_win32.cpp",
+      "gitBlobSha1": "606104e32b45328796c03b95f572ac177775c190",
+      "sha256": "195880870eccda5cb97ec21a7c3704b6948d448c1e14721f8568b18b273f1fa2",
+      "bytes": 7028,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libclang_rt.builtins-x86_64.a",
+      "member": "chkstk.S.obj",
+      "source": "compiler-rt/lib/builtins/x86_64/chkstk.S",
+      "gitBlobSha1": "ad7953a116ac7e782777daf6c419eb18417fb330",
+      "sha256": "eadb9b028c8fc2ea1c685c61f61a84bd3defe82f8441a6845b14123de3b478c5",
+      "bytes": 1009,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "Unwind-seh.cpp.obj",
+      "source": "libunwind/src/Unwind-seh.cpp",
+      "gitBlobSha1": "0b1930b44d1c648b89099b6f2f796b4233f1c877",
+      "sha256": "058ae089c7d42ade35b730f87443b34018b21bea75a4ea2226e9fffdf7500160",
+      "bytes": 23265,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "UnwindLevel1.c.obj",
+      "source": "libunwind/src/UnwindLevel1.c",
+      "gitBlobSha1": "834fdae6a76d3e28bde5ece20c45f367a47b1f12",
+      "sha256": "16e16fbc0c85873df1a445d7b204fb363e46c68d6a2815dc68257108b5c944c8",
+      "bytes": 27308,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "UnwindRegistersSave.S.obj",
+      "source": "libunwind/src/UnwindRegistersSave.S",
+      "gitBlobSha1": "f44f6a1331968cf75de46a3cf64a0cc5c8f485b2",
+      "sha256": "c5d0da824062363be10dc33bcd1156f16cd69811e71603c667f931a91fab5eb1",
+      "bytes": 33184,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    },
+    {
+      "archive": "libunwind.a",
+      "member": "libunwind.cpp.obj",
+      "source": "libunwind/src/libunwind.cpp",
+      "gitBlobSha1": "0b9d56ec805bca92f0ed4b93be549c8cf982e809",
+      "sha256": "51ccb27829d15988ca5678541b1b32bb3c2bdea87e02be31bf4faca48a0ee2ad",
+      "bytes": 21695,
+      "spdx": [
+        "Apache-2.0 WITH LLVM-exception"
+      ],
+      "attributionClues": []
+    }
+  ],
+  "sourceBytesVerifiedCount": 39
+}
