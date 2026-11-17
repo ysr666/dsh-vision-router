@@ -31,6 +31,15 @@ export const managedTesseractPaths = ({ home = homedir() } = {}) => {
   return Object.freeze({ root, manifest: join(root, 'DVR-MANAGED.json'), models: join(root, 'models') })
 }
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+function installedLockRow(lock, name) {
+  const key = 'node_modules/' + name
+  // npm --prefix <absolute staging directory> can write canonicalized,
+  // prefix-relative lockfile keys (not just 'node_modules/...'). The package
+  // lock is moved atomically with the staged tree; resolve by exact suffix.
+  const rows = Object.entries(lock?.packages ?? {}).filter(([path]) =>
+    path === key || path.endsWith('/' + key))
+  return rows.length === 1 ? rows[0][1] : undefined
+}
 const readJSON = async path => JSON.parse(await readFile(path, 'utf8'))
 async function regularFile(path, maxBytes = 20 * 1024 * 1024) {
   try {
@@ -60,7 +69,7 @@ async function verifyManaged(root) {
   const lock = await readJSON(join(root, 'package-lock.json')).catch(() => null)
   if (!lock?.packages) return false
   for (const [name, [version, integrity]] of Object.entries(OPTIONAL_TESSERACT_PACKAGES)) {
-    const row = lock.packages['node_modules/' + name]
+    const row = installedLockRow(lock, name)
     if (row?.version !== version || row?.integrity !== integrity) return false
   }
   for (const [name, expected] of Object.entries(TESS_LANGUAGES)) {
@@ -157,7 +166,7 @@ export async function installTesseract({ home = homedir(), npm = npmCommand, exe
     }
     const packagesLock = await readJSON(join(stage, 'package-lock.json'))
     for (const [name, [version, integrity]] of Object.entries(OPTIONAL_TESSERACT_PACKAGES)) {
-      const row = packagesLock?.packages?.['node_modules/' + name]
+      const row = installedLockRow(packagesLock, name)
       if (row?.version !== version || row?.integrity !== integrity) throw Error('untrusted npm package identity: ' + name)
     }
     await writeFile(join(stage, 'DVR-MANAGED.json'), JSON.stringify({
