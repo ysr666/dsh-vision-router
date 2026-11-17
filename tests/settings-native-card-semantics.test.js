@@ -369,7 +369,7 @@ function localOcrReactState(tesseractState) {
     { status: 'idle' }, // self-update
     { status: 'idle' }, // general action state
     { status: 'ready', value: {
-      ok: true, token: 'local-test',
+      ok: true, // rendering does not require a mutation token
       tesseract: tesseractState,
       ppocrv6: { installed: false, supported: true, canUninstall: false },
     } }, // local OCR
