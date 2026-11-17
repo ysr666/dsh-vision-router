@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.3.0 minor release — confirm publication through GitHub Releases/npm:** Brings the v3.2.2 attachment/Session timeout and security fixes, bounded VTracer subprocess isolation, Windows portability, and a SHA-verified **owner-installed** PP-OCRv6/ncnn OCR preference on supported Mac ARM64/Windows x64. Native model weights and executables are **not included in npm**; optional native archive redistribution remains separately gated. Without an installed native worker, auto can still use local Tesseract, which also remains explicitly selectable. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required; no profile auto-migration. The default cloud vision fallback may transmit images externally unless strict local-only is enabled. Back up, run read-only `doctor --upgrade-preflight`, and keep a rollback option. See [v3.3.0 release notes](docs/releases/v3.3.0.md).
+> **v3.4.0 minor release — confirm publication through GitHub Releases/npm:** Local OCR is now strictly **opt-in**. In Settings → Local & device → Optional local OCR, a working system Tesseract with `chi_sim` + `eng` is reused without another installation; otherwise you can install/remove a plugin-owned, SHA-verified Tesseract.js/WASM engine and Chinese/English models on demand. PP-OCRv6/ncnn can be installed or removed only from a user-provided, SHA-verified offline bundle on supported macOS ARM64/Windows x64; **public native binary/model redistribution remains NOT cleared**, with no automatic download. Most users need install neither engine: the existing consent/policy-governed vision-model fallback remains unchanged, including cloud image egress unless strict local-only is enabled. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required. No automatic profile migration. Back up your profile, run read-only `doctor --upgrade-preflight`, and retain v3.3.0 for rollback. See [v3.4.0 release notes](docs/releases/v3.4.0.md).
 
 ## Start here
 
@@ -612,7 +612,7 @@ exploration (LLM7.io and OVHcloud anonymous tiers) by
 
 ## Release notes and community
 
-Release details: [v3.3.0 notes](docs/releases/v3.3.0.md). Check GitHub Releases or npm for the actually published version.
+Release details: [v3.4.0 notes](docs/releases/v3.4.0.md). Check GitHub Releases or npm for the actually published version.
 
 <p align="center">
   <sub>Ecosystem:</sub>
