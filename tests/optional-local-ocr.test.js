@@ -170,8 +170,12 @@ test('corrupted installed PP-OCRv6 worker/model can still be removed by owner', 
     await writeFile(join(root, 'SOURCE-NOTICE.md'),
       '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
     // The worker and models are deliberately absent/corrupted.
-    const result = await uninstallNative({ home,
-      resolvePaths: () => ({ root, binaryPath: join(root,'worker'), modelDir: join(root,'models') }) })
+    const resolveNativePaths = () => ({ root, binaryPath: join(root,'worker'), modelDir: join(root,'models') })
+    const before = await optionalOcrStatus({ home, probeSystem: async () => false, resolveNativePaths })
+    assert.equal(before.ppocrv6.installed, false)
+    assert.equal(before.ppocrv6.damaged, true)
+    assert.equal(before.ppocrv6.canUninstall, true)
+    const result = await uninstallNative({ home, resolvePaths: resolveNativePaths })
     assert.equal(result.installed, false)
     await assert.rejects(lstat(root), { code: 'ENOENT' })
   } finally { await rm(home, { recursive: true, force: true }) }
