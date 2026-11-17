@@ -361,7 +361,7 @@ test('guide replay button is disabled while any card has staged edits', () => {
   assert.equal(guide.props.disabled, true)
 })
 
-function localOcrReactState(tesseractState) {
+function localOcrReactState(tesseractState, nativeState = { installed: false, supported: true, canUninstall: false }) {
   const state = stateValues({ cardsOpen: { local: true } })
   state.push(
     { status: 'idle' }, // connection test
@@ -371,7 +371,7 @@ function localOcrReactState(tesseractState) {
     { status: 'ready', value: {
       ok: true, // rendering does not require a mutation token
       tesseract: tesseractState,
-      ppocrv6: { installed: false, supported: true, canUninstall: false },
+      ppocrv6: nativeState,
     } }, // local OCR
     undefined, // archive selection
     false, // egress notice
@@ -409,4 +409,20 @@ test('Local settings offers private Tesseract install only when no usable system
   assert.equal(buttonWithText(tree, '卸载插件版').props.disabled, true)
   assert.equal(buttonWithText(tree, '安装所选离线包').props.disabled, true,
     'PP-OCRv6 may only install after explicit local archive selection')
+})
+
+test('Local settings offers PP-OCRv6 removal if owner-installed files are damaged', () => {
+  const React = reactStub(localOcrReactState({
+    installed: false, systemInstalled: false, managedInstalled: false,
+    canInstall: true, canUninstall: false,
+  }, { installed: false, damaged: true, supported: true, canUninstall: true }))
+  const harness = createHarness(React)
+  const tree = harness.registeredComponent({ scope: harness.scope })
+  assert.equal(buttonWithText(tree, '卸载 PP-OCRv6').props.disabled, false)
+  const warnings = []
+  walk(tree, node => {
+    for (const child of node.children ?? []) if (typeof child === 'string' &&
+      child.includes('检测到插件管理的安装文件损坏')) warnings.push(child)
+  })
+  assert.equal(warnings.length, 1)
 })
