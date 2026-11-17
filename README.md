@@ -427,7 +427,8 @@ ollama pull qwen2.5vl
 - No API key for the default free chain; a credential reference (`apiKeyEnv`) only for paid `httpProviders`.
 - Chrome / Chromium / Edge is needed only for `vision_html_screenshot`; every other tool works without a browser.
 - Desktop capture is opt-in. Windows and macOS use OS-provided capture facilities; Linux needs ImageMagick `import` or `scrot` and a capturable desktop session (Wayland support depends on the environment).
-- Tesseract is optional. `vision_ocr` defaults to `ocrEngine: auto` (local Tesseract first, vision fallback), and Settings → Advanced → **Default OCR engine** can force Tesseract-only or vision-model-only behavior without uninstalling Tesseract. An explicit per-call `engine=tesseract|vision` always overrides the default.
+- Local OCR engines are **optional**. `vision_ocr` defaults to `ocrEngine: auto`: verified owner-installed PP-OCRv6/ncnn on supported Mac ARM64 / Windows x64 → managed or system Tesseract → authorized vision-model fallback. Settings → Advanced → **Default OCR engine** can force Tesseract-only or vision-model-only behavior; per-call `engine=tesseract|vision` overrides it.
+- **On-demand setup (new optional feature):** Settings → Local & device → Optional local OCR shows independent installation states and controls. A system Tesseract with both `chi_sim` and `eng` is reused automatically, without a redundant download or a system uninstall option. If missing, the user can install or remove a private Tesseract.js/WASM with Chinese and English models; installation happens only after a click. PP-OCRv6 can be imported and removed from a user-supplied verified offline archive. Public PP-OCRv6 binary distribution remains unapproved; **there is no automatic native download** yet. Most users can continue with the authorized vision-model fallback without installing either engine.
 
 ## Install and lifecycle
 
