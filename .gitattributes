@@ -11,3 +11,5 @@ quality/native-ocr-lab.cpp -text
 assets/licenses/apache-2.0.txt -text -whitespace
 
 LICENSE -text -whitespace
+
+assets/licenses/mingw-w64-source-NOTICES.txt -text -whitespace

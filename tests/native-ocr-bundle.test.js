@@ -73,6 +73,10 @@ test('v2 metadata is verified, installed, and cannot be replaced by archive-supp
   assert.equal(sbom.bomFormat, 'CycloneDX')
   assert.equal(sbom.compositions[0].aggregate, 'incomplete')
   assert.ok(existsSync(join(installed.root, 'PROJECT-LICENSE.txt')))
+  if (process.platform === 'win32') {
+    assert.ok(existsSync(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
+    assert.equal(manifest.files['MINGW-SOURCE-NOTICES.txt'].sha256, hash(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
+  }
   const dir = mkdtempSync(join(tmpdir(),'dvr-ocr-notice-tamper-'))
   try {
     const listing = spawnSync('tar',['-tzf',archive],{encoding:'utf8'})

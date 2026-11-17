@@ -8,13 +8,14 @@ const recognizer = 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/
 const dictionary = 'https://github.com/PaddlePaddle/PaddleOCR/tree/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf'
 const runtime = 'https://github.com/Tencent/ncnn/tree/d1f6ac67e9fc91390cc70f7168573fd2626f1d66'
 export const NATIVE_BUNDLE_METADATA_FILES = Object.freeze(['SOURCE-NOTICE.md', 'SBOM.cdx.json', 'PROJECT-LICENSE.txt'])
-export function nativeBundleLicenseFiles(platform = process.platform) {
+export function nativeBundleLicenseFiles(platform = process.platform, { includeSourceNotices = true } = {}) {
   return [
     ['assets/licenses/ncnn-LICENSE.txt', 'NCNN-LICENSE.txt'],
     ['assets/licenses/apache-2.0.txt', 'APACHE-2.0.txt'],
     ...(platform === 'win32' ? [
       ['assets/licenses/llvm-mingw-LICENSE.txt', 'LLVM-LICENSE.txt'],
       ['assets/licenses/mingw-w64-runtime-COPYING.txt', 'MINGW-RUNTIME-COPYING.txt'],
+      ...(includeSourceNotices ? [['assets/licenses/mingw-w64-source-NOTICES.txt', 'MINGW-SOURCE-NOTICES.txt']] : []),
     ] : []),
     ['LICENSE', 'PROJECT-LICENSE.txt'],
   ]
@@ -26,7 +27,7 @@ const component = (ref, name, version, source, id, extra = {}) => ({
   type: 'library', 'bom-ref': ref, name, version,
   licenses: license(id), externalReferences: [{ type: 'vcs', url: source }], ...extra,
 })
-export async function nativeBundleMetadata({ root, platform = process.platform, arch = process.arch }) {
+export async function nativeBundleMetadata({ root, platform = process.platform, arch = process.arch, includeSourceNotices = true }) {
   const win = platform === 'win32'
   const workerName = win ? 'worker.exe' : 'worker'
   const worker = await readFile(join(root, workerName))
@@ -56,7 +57,7 @@ export async function nativeBundleMetadata({ root, platform = process.platform, 
   ]
   const payload = Object.fromEntries(await Promise.all([
     workerName, ...modelFiles.map(([name]) => 'models/' + name),
-    ...nativeBundleLicenseFiles(platform).map(([, name]) => name),
+    ...nativeBundleLicenseFiles(platform, { includeSourceNotices }).map(([, name]) => name),
   ].map(async name => {
     const bytes = await readFile(join(root, name))
     return [name, { bytes: bytes.length, sha256: digest(bytes) }]
@@ -76,6 +77,7 @@ export async function nativeBundleMetadata({ root, platform = process.platform, 
     'Additional BSD-2-Clause and zlib notices are in NCNN-LICENSE.txt.',
     win ? 'Windows: embedded LLVM runtime with Apache-2.0 WITH LLVM exceptions and MinGW-w64 runtime notices; OS UCRT and KERNEL32 are not bundled.'
       : 'macOS: system libc++ and libSystem are not bundled.',
+    ...(win && includeSourceNotices ? ['Supplemental MinGW-w64 source notices and public-domain disclaimer: MINGW-SOURCE-NOTICES.txt (source revision 0d6dfbc348dfad714761c0a7151615767f96bcb5).'] : []),
     'Build-only converter: pnnx 20261020; converter executable is not included.',
     'Worker SHA-256: ' + workerSha,
     'This owner-installed inventory does not constitute public redistribution approval. See SBOM.cdx.json and applicable license texts.', '',

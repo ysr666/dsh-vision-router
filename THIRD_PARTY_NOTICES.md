@@ -36,6 +36,10 @@ and explicitly `-static` to statically link `libc++`, `libunwind`, and
 compiler runtime. Full original Apache-2.0 WITH LLVM Exceptions license is
 `assets/licenses/llvm-mingw-LICENSE.txt` and the exact mingw-w64 runtime
 notice is `assets/licenses/mingw-w64-runtime-COPYING.txt`.
+The supplemental source-specific notices and upstream public-domain disclaimer
+are in `assets/licenses/mingw-w64-source-NOTICES.txt` (MinGW-w64 revision
+0d6dfbc348dfad714761c0a7151615767f96bcb5; selected Windows candidate translation units).
+These supplement rather than replace the runtime notice; no full distribution clearance is claimed.
 Windows ncnn binary's actual PE import table lists only KERNEL32 and OS UCRT
 API-set DLLs; no additional GNU/LLVM runtime DLLs. The mingw-w64 runtime notice contains a general disclosure about LGPL
 Wine-imported headers/IDLs. The **actual** Windows build's Ninja dependency
