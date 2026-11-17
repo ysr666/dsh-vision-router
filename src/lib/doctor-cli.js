@@ -274,7 +274,7 @@ function runSessionRepair(dshHome, io) {
   return report.ok ? 0 : 1
 }
 
-export async function run(argv = process.argv.slice(2), io = console, env = process.env) {
+export async function run(argv = process.argv.slice(2), io = console, env = process.env, { onPlatform } = {}) {
   let options
   try {
     options = parseArgs(argv)
@@ -325,7 +325,8 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
   const applicableDirs = profileReport.profiles
     .filter((item) => item.installation?.applicable && item.profileDir)
     .map((item) => item.profileDir)
-  const platform = inspectPlatform({ profileDirs: applicableDirs })
+  const platform = inspectPlatform({ profileDirs: applicableDirs, env })
+  onPlatform?.(platform)
   const visionLimits = inspectDoctorVisionLimits(profileReport.log?.file)
   let sessions
   if (options.sessions) sessions = repairLegacySessionLogs({ dshHome, fix: false })

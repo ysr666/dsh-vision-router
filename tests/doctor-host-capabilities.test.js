@@ -1,7 +1,7 @@
 import { readFileSync as readDvrManifest } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { probeDoctorHostCapabilities, run } from '../lib/doctor-cli-p0.js'
@@ -159,4 +159,55 @@ test('Doctor JSON keeps public support policy separate from verification evidenc
   assert.notEqual(report.hostSupportAdvice.level, 'ok')
   assert.equal(Object.hasOwn(report.hostSupportWindow, 'canary'), false)
   assert.equal(Object.hasOwn(report.hostSupportWindow, 'preview'), false)
+})
+
+
+test('Doctor text, JSON and issue template use the same installed Host version evidence without live version inference', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dvr-doctor-version-'))
+  function profile(name, hostVersion, manifestName = '@deepseek-ai/dsh') {
+    const dir = path.join(home, 'profiles', name)
+    const plugin = path.join(dir, 'node_modules', 'dsh-vision-router')
+    const host = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh')
+    mkdirSync(plugin, { recursive: true })
+    mkdirSync(host, { recursive: true })
+    writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-vision-router': '3.4.0' }, dsh: { profile: { bundles: ['dsh-vision-router'] } },
+    }))
+    writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({
+      name: 'dsh-vision-router', version: '3.4.0', main: 'entry.js', dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(path.join(plugin, 'entry.js'), 'export default {}')
+    writeFileSync(path.join(plugin, 'cordis.patch.yml'), '- insert: []\n')
+    writeFileSync(path.join(host, 'package.json'), JSON.stringify({ name: manifestName, version: hostVersion }))
+  }
+  async function doctor(args) {
+    const out = []
+    const code = await run(['doctor', '--no-runtime', ...args], {
+      log: value => out.push(String(value)), error: () => {},
+    }, { DSH_HOME: home })
+    return { code, text: out.join('\n') }
+  }
+  try {
+    profile('web', '0.2.1-rc.2')
+    const json = await doctor(['--profile', 'web', '--json'])
+    const report = JSON.parse(json.text)
+    assert.deepEqual(report.hostSupportVersionEvidence, { source: 'installed-profile-package', version: '0.2.1-rc.2' })
+    assert.equal(report.hostSupportAdvice.code, 'HOST_BELOW_CURRENT_FLOOR_VERSION')
+    for (const args of [[], ['--issue-template']]) {
+      const result = await doctor(['--profile', 'web', ...args])
+      assert.equal(result.code, json.code)
+      assert.match(result.text, /installed Host version: 0\.2\.1-rc\.2/)
+      assert.match(result.text, /HOST_BELOW_CURRENT_FLOOR_VERSION/)
+      assert.match(result.text, /not running-process identity/)
+    }
+    profile('desktop', '0.2.2-rc.3')
+    const mixed = JSON.parse((await doctor(['--json'])).text)
+    assert.deepEqual(mixed.hostSupportVersionEvidence, { source: 'unverified', version: null })
+    profile('desktop', 'TOKEN-PRIVATE-NONVERSION')
+    const malformed = await doctor(['--profile', 'desktop', '--json'])
+    assert.doesNotMatch(malformed.text, /TOKEN-PRIVATE-NONVERSION/)
+    assert.equal(JSON.parse(malformed.text).hostSupportVersionEvidence.source, 'unverified')
+    profile('desktop', '0.2.2-rc.3', 'different-package')
+    assert.equal(JSON.parse((await doctor(['--profile', 'desktop', '--json'])).text).hostSupportVersionEvidence.source, 'unverified')
+  } finally { rmSync(home, { recursive: true, force: true }) }
 })

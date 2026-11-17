@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import os, { homedir } from 'node:os'
+import semver from 'semver'
 import path from 'node:path'
 import { CURRENT_VERSION } from './update-check.js'
 import { DOCTOR_RESPONSE_MAX_BYTES, readResponseTextBounded } from './http-body-limit.js'
@@ -170,7 +171,10 @@ function resolvePackageVersion(profileDir, packageName) {
   if (!existsSync(file)) return undefined
   try {
     const value = JSON.parse(readFileSync(file, 'utf8'))
-    if (typeof value?.version === 'string') return { version: value.version, file }
+    if (typeof value?.version === 'string') {
+      if (packageName.startsWith('@deepseek-ai/') && (value.name !== packageName || value.version.length > 64 || !semver.valid(value.version))) return undefined
+      return { version: value.version, file }
+    }
   } catch { /* advisory only */ }
   return undefined
 }
