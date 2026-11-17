@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 
+const moduleFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined
+
 // A platform entry requires reviewed exact archive identity, notices/SBOM,
 // and release provenance. Deliberately empty until that audit is complete
 // AND the repository owner explicitly authorizes native asset publication.
@@ -20,7 +22,7 @@ function trustedRedirect(url) {
     !url.hash && (trustedReleaseUrl(url) || url.hostname === 'release-assets.githubusercontent.com' || url.hostname === 'objects.githubusercontent.com')
 }
 export async function downloadVerifiedNativeArchive(entry, {
-  fetchImpl = globalThis.fetch,
+  fetchImpl = moduleFetch,
   signal = AbortSignal.timeout(120_000),
 } = {}) {
   if (!entry || !Number.isSafeInteger(entry.bytes) || entry.bytes < 128 ||

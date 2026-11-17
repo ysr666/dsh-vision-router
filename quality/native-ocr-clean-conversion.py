@@ -1,4 +1,4 @@
-"""Reacquire public inputs and reproduce the pinned PP-OCRv6 model bytes.
+"""Reacquire public inputs and verify platform-specific conversion identities.
 Windows x64 and macOS ARM64. No upload, installation, private images or release.
 """
 import argparse
@@ -14,6 +14,7 @@ import zipfile
 
 REPO = Path(__file__).resolve().parent.parent
 LEDGER = json.loads((REPO / 'quality/native-ocr-provenance-LAB.json').read_text())
+CANDIDATE = json.loads((REPO / 'quality/native-ocr-candidate-models.json').read_text())
 WINDOWS_WHEEL = {
     'url': 'https://files.pythonhosted.org/packages/e8/51/1b30523f85f9482f55f3f4f11ad8f4a37db7c8773d66625cceb2973c5c60/pnnx-20261020-py3-none-win_amd64.whl',
     'bytes': 18662314,
@@ -35,6 +36,34 @@ def verify(path, expected):
     if any(actual[k] != expected[k] for k in ('bytes', 'sha256') if k in expected):
         raise RuntimeError(f'IDENTITY_MISMATCH: {path.name}: {actual}')
     return actual
+
+def graph_fingerprint(path):
+    # Preserve operator order, parameter values, producer/consumer edges,
+    # non-Split output order and the exact worker protocol endpoints.
+    # Only layer names and equivalent Split aliases are immaterial.
+    lines = path.read_text(encoding='utf-8').splitlines()
+    n, m = map(int, lines[1].split())
+    if lines[0] != '7767517' or len(lines) != n + 2:
+        raise RuntimeError('INVALID_NCNN_GRAPH_HEADER')
+    blobs, graph = {}, []
+    for index, line in enumerate(lines[2:]):
+        typ, name, ni, no, *tail = line.split()
+        ni, no = int(ni), int(no)
+        inputs, outputs, params = tail[:ni], tail[ni:ni+no], tail[ni+no:]
+        if len(outputs) != no or any(x not in blobs for x in inputs):
+            raise RuntimeError('INVALID_NCNN_GRAPH_EDGE')
+        if typ == 'Split' and (ni != 1 or params):
+            raise RuntimeError('INVALID_SPLIT_ALIAS')
+        graph.append([typ, [blobs[x] for x in inputs], no, params])
+        for j, blob in enumerate(outputs):
+            if blob in blobs:
+                raise RuntimeError('DUPLICATE_NCNN_BLOB')
+            blobs[blob] = [index, 0 if typ == 'Split' else j]
+    if len(blobs) != m or not {'in0','out0'} <= blobs.keys():
+        raise RuntimeError('INVALID_NCNN_GRAPH_ENDPOINTS')
+    endpoints = {x:blobs[x] for x in ('in0','out0')}
+    return hashlib.sha256(json.dumps([graph,endpoints],separators=(',',':')).encode()).hexdigest()
+
 
 def acquire(url, dest, expected):
     request = urllib.request.Request(url, headers={'User-Agent': 'DVR-native-OCR-clean-audit/1'})
@@ -74,13 +103,15 @@ def main():
         with archive.open(candidates[0]) as source, exe.open('xb') as dest:
             shutil.copyfileobj(source, dest)
     # The exact official-wheel digest is required before any code extraction.
-    # Windows also has the prior standalone executable pin; record the Mac
-    # member identity separately without pretending it equals Windows bytes.
-    exe_id = verify(exe, {'sha256': LEDGER['conversionReproduction']['standaloneWindowsExeSha256']}) if win else identity(exe)
+    # Both extracted converter executables have independent exact pins.
+    exe_id = verify(exe, {'sha256': LEDGER['conversionReproduction']['standaloneWindowsExeSha256'] if win else CANDIDATE['macConverterExeSha256']})
     if mac: exe.chmod(0o700)
+    expected_assets = dict(LEDGER['nativeAssets'])
+    if mac: expected_assets.update(CANDIDATE['macParameterOverrides'])
     report = {'sourceCommit': subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip(),
               'environment': platform.platform(), 'converterWheel': wheel_id, 'converterExe': exe_id,
-              'inputs': {}, 'outputs': {}, 'distributionReady': False}
+              'inputs': {}, 'outputs': {}, 'graphFingerprints': {},
+              'modelOrigin': 'windows-canonical' if win else 'mac-audit-only', 'distributionReady': False}
     for key, name in [('detector', 'det'), ('recognizer', 'rec')]:
         row = LEDGER['modelSources'][key]
         target = root / name
@@ -97,15 +128,21 @@ def main():
             source = target / f'inference.ncnn.{suffix}'
             dest = models / output_name
             shutil.copyfile(source, dest)
-            report['outputs'][output_name] = verify(dest, LEDGER['nativeAssets'][output_name])
+            report['outputs'][output_name] = verify(dest, expected_assets[output_name])
+            if suffix == 'param':
+                fingerprint = graph_fingerprint(dest)
+                if fingerprint != CANDIDATE['graphFingerprints'][output_name]:
+                    raise RuntimeError('MODEL_GRAPH_MISMATCH: ' + output_name)
+                report['graphFingerprints'][output_name] = fingerprint
     row = LEDGER['dictionary']
     name = 'ppocrv6_dict.txt'
     report['outputs'][name] = acquire(
         f"https://raw.githubusercontent.com/{row['source']}/{row['revision']}/{row['file']}",
         models / name, row)
-    report['allFiveAssetsMatch'] = True
+    report['allFivePlatformAssetsMatch'] = True
+    report['allFiveCanonicalAssetsMatch'] = win
     (root / 'conversion-evidence.json').write_text(json.dumps(report, indent=2) + '\n')
-    print('CLEAN_MODEL_CONVERSION_MATCH 5/5 (candidate evidence only; no distribution clearance)')
+    print('CLEAN_MODEL_CONVERSION_MATCH 5/5 origin=' + report['modelOrigin'] + ' graphs=2/2 (no distribution clearance)')
 
 if __name__ == '__main__':
     main()

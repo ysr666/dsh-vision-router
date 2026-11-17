@@ -35,12 +35,17 @@ def main():
     parser.add_argument('--models', type=Path, required=True)
     parser.add_argument('--bmp', type=Path, required=True)
     parser.add_argument('--expected', default='HELLO 123')
+    parser.add_argument('--model-origin', choices=['windows-canonical','mac-audit-only'], default='windows-canonical')
     parser.add_argument('--report', type=Path, required=True)
     args = parser.parse_args()
     worker, models = args.worker.resolve(), args.models.resolve()
     root = Path(__file__).resolve().parent
     ledger = json.loads((root / 'native-ocr-provenance-LAB.json').read_text())
-    for name, entry in ledger['nativeAssets'].items():
+    expected_assets = dict(ledger['nativeAssets'])
+    if args.model_origin == 'mac-audit-only':
+        candidate = json.loads((root / 'native-ocr-candidate-models.json').read_text())
+        expected_assets.update(candidate['macParameterOverrides'])
+    for name, entry in expected_assets.items():
         f = models / name
         assert f.stat().st_size == entry['bytes']
         assert hashlib.sha256(f.read_bytes()).hexdigest() == entry['sha256']
@@ -68,7 +73,7 @@ def main():
               'expected': args.expected, 'actual': result['text'],
               'confidence': result['confidence'], 'blankPass': True,
               'malformedPass': True, 'recoveryPass': True,
-              'distributionReady': False}
+              'modelOrigin': args.model_origin, 'distributionReady': False}
     args.report.write_text(json.dumps(report, indent=2) + '\n')
     print('NATIVE_CANDIDATE_SMOKE_PASS ' + json.dumps(report, ensure_ascii=True))
 

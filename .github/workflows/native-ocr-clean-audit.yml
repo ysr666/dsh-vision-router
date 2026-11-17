@@ -4,6 +4,7 @@ on:
     paths:
       - 'quality/native-ocr-clean-conversion.py'
       - 'quality/native-ocr-candidate-*.py'
+      - 'quality/native-ocr-candidate-models.json'
       - 'quality/native-ocr-candidate-*.ps1'
       - 'quality/native-ocr-*-build-LAB.*'
       - '.github/workflows/native-ocr-clean-audit.yml'
@@ -15,7 +16,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: native-ocr-clean-${{ github.event.pull_request.number }}
+  group: native-ocr-clean-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
   conversion:
@@ -69,7 +70,7 @@ jobs:
           # binaries/weights between jobs or uploading them to artifacts.
           python3 -I quality/native-ocr-clean-conversion.py --work-dir "$root/conversion"
           python3 -I quality/native-ocr-candidate-fixture.py --output "$root/synthetic.bmp"
-          python3 -I quality/native-ocr-candidate-smoke.py --worker "$root/build-a/worker" --models "$root/conversion/models" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --report "$root/smoke-evidence.json"
+          python3 -I quality/native-ocr-candidate-smoke.py --worker "$root/build-a/worker" --models "$root/conversion/models" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --model-origin mac-audit-only --report "$root/smoke-evidence.json"
       - name: Save Mac evidence only (no worker, models or images)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

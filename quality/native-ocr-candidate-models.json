@@ -1,0 +1,20 @@
+{
+  "status": "validation-only; never selected by production runtime",
+  "macConverterExeSha256": "c52e4512a99158ebeee26875b997e9ece535f9fc95bdeaf100d97524064328cc",
+  "macParameterOverrides": {
+    "det.ncnn.param": {
+      "bytes": 18868,
+      "sha256": "32ecb68607897bf482eae5a31d92e9e19d790407430caeb3d157d7d30651eb4a"
+    },
+    "rec.ncnn.param": {
+      "bytes": 13845,
+      "sha256": "70526085ef82c9998bb9f3367423c5aaf61fbf8f5cb834f3653399056a0bee38"
+    }
+  },
+  "graphFingerprints": {
+    "det.ncnn.param": "a8145abb045a3a9b18eb6bd27e48f3210d1dde348a54fdd93dae8bf4ddfa1b1d",
+    "rec.ncnn.param": "0215ad465a1375307ba3d8aba4d168f2b17820a5e4471fcbdcb3640cec3d5fc4"
+  },
+  "canonicalDistributionOrigin": "windows-pnnx-20261020",
+  "distributionReady": false
+}
