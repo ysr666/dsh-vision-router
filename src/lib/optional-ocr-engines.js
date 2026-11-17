@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { lstat, mkdir, readFile, writeFile, copyFile, rename, rm, chmod } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { localNativeOcrInstallPaths } from './native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from './native-ocr-canary.js'
@@ -102,16 +102,30 @@ export async function optionalOcrStatus({ home = homedir(), probeSystem = system
     ppocrv6: { installed: nativeReady, supported: !!pp, canInstallFromFile: !mutating && !!pp, canUninstall: !mutating && nativeReady },
   }
 }
+export function nodeChildEnvironment({ env = process.env, electron = process.versions?.electron } = {}) {
+  // Electron's process.execPath is the app executable. It must be launched
+  // with the supported Node mode; never inherit Host runtime preload flags.
+  return {
+    ...env, NODE_OPTIONS: '',
+    ...(electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+  }
+}
 async function npmCommand() {
   if (process.platform !== 'win32') return { exe: 'npm', prefix: [] }
-  const candidate = join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-  if (!await regularFile(candidate, 100_000)) throw Error('npm CLI unavailable for portable Tesseract installation')
-  return { exe: process.execPath, prefix: [candidate] }
+  const searchDirs = [dirname(process.execPath),
+    ...String(process.env.PATH ?? '').split(delimiter)
+      .map(path => path.replace(/^["']|["']$/g, '').trim()).filter(Boolean)]
+  for (const base of [...new Set(searchDirs)]) {
+    const candidate = join(base, 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    if (await regularFile(candidate, 100_000))
+      return { exe: process.execPath, prefix: [candidate] }
+  }
+  throw Error('npm CLI unavailable for portable Tesseract installation')
 }
 function execBounded(exe, args, { cwd, timeout = TESS_INSTALL_TIMEOUT_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, { cwd, shell: false, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, npm_config_update_notifier: 'false', npm_config_audit: 'false' } })
+      env: { ...nodeChildEnvironment({ electron: exe === process.execPath ? process.versions?.electron : undefined }), npm_config_update_notifier: 'false', npm_config_audit: 'false' } })
     let log = ''
     let settled = false
     const finish = (error) => {
@@ -255,7 +269,7 @@ export async function runManagedTesseractOcr(bytes, { timeoutMs = 12000, signal 
     return await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [script, dest.root], {
         shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, DVR_OCR_CHILD: '1' },
+        env: { ...nodeChildEnvironment(), DVR_OCR_CHILD: '1' },
       })
       let output = ''
       let expired = false
