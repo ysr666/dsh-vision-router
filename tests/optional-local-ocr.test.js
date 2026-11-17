@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Readable } from 'node:stream'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, lstat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract,
+  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallNative,
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
@@ -160,4 +160,29 @@ test('Tesseract install reuses complete system binary without npm or filesystem 
     assert.equal(managed.tesseract.systemInstalled, true)
     assert.equal(managed.tesseract.managedInstalled, false)
   } finally { await rm(home, { recursive:true, force:true }) }
+})
+
+test('corrupted installed PP-OCRv6 worker/model can still be removed by owner', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-native-delete-'))
+  const root = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
+  try {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'SOURCE-NOTICE.md'),
+      '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    // The worker and models are deliberately absent/corrupted.
+    const result = await uninstallNative({ home,
+      resolvePaths: () => ({ root, binaryPath: join(root,'worker'), modelDir: join(root,'models') }) })
+    assert.equal(result.installed, false)
+    await assert.rejects(lstat(root), { code: 'ENOENT' })
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+test('PP-OCRv6 uninstall refuses unowned directories and symlinks', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-native-unowned-'))
+  const root = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
+  try {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'unrelated-owner-file'), 'keep')
+    await assert.rejects(uninstallNative({ home, resolvePaths: () => ({ root }) }), /unowned/)
+    assert.equal((await lstat(join(root, 'unrelated-owner-file'))).isFile(), true)
+  } finally { await rm(home, { recursive: true, force: true }) }
 })
