@@ -67,6 +67,13 @@ jobs:
           python3 -I quality/native-ocr-candidate-fixture.py --output "$root/synthetic.bmp"
           python3 -I quality/native-ocr-candidate-smoke.py --worker "$root/build/worker" --models "$root/canonical" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --report "$root/smoke-canonical-evidence.json"
           node quality/native-ocr-release-stage.mjs --stage --target darwin-arm64 --binary "$root/build/worker" --models "$root/canonical" --out "$root/release-stage"
+      - name: Exact archive settings route, actual install, OCR and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/dvr-native-worker"
+          node --test quality/test-native-ocr-staged-acceptance.mjs
+          node quality/native-ocr-staged-acceptance.mjs --stage "$root/release-stage" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --report "$root/release-stage/acceptance-evidence.json"
       - name: Save evidence only (never the staged archive, models or worker)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -75,4 +82,5 @@ jobs:
           path: |
             ${{ runner.temp }}/dvr-native-worker/smoke-canonical-evidence.json
             ${{ runner.temp }}/dvr-native-worker/release-stage/staging-evidence.json
+            ${{ runner.temp }}/dvr-native-worker/release-stage/acceptance-evidence.json
           if-no-files-found: ignore
