@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "scope": "Independent recheck of pinned upstream notice files and combined LLVM notices using GitHub repository source blobs. Does not prove complete compiler preprocessor closure, retained-section licensing or redistribution permission.",
+  "checkedRepositoryHead": "0a606081051ac4cee8577666bbd1fe5f17ec9479",
+  "exactLicenseBlobs": [
+    {
+      "localPath": "assets/licenses/ncnn-LICENSE.txt",
+      "upstream": "Tencent/ncnn",
+      "upstreamRevision": "d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+      "upstreamPath": "LICENSE.txt",
+      "gitBlobSha1": "cb24570a4f0f63336942566e45dc2049f9d28756",
+      "exactBlobMatch": true
+    },
+    {
+      "localPath": "assets/licenses/paddleocr-LICENSE.txt",
+      "upstream": "PaddlePaddle/PaddleOCR",
+      "upstreamRevision": "dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf",
+      "upstreamPath": "LICENSE",
+      "gitBlobSha1": "430edfa0cfcb59f15b7aa5457427d0faf2e40dac",
+      "exactBlobMatch": true
+    },
+    {
+      "localPath": "assets/licenses/mingw-w64-runtime-COPYING.txt",
+      "upstream": "mingw-w64/mingw-w64",
+      "upstreamRevision": "0d6dfbc348dfad714761c0a7151615767f96bcb5",
+      "upstreamPath": "COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt",
+      "gitBlobSha1": "776d5f1034240f6dae0ce59d592f9c6f4ad29e7d",
+      "exactBlobMatch": true
+    }
+  ],
+  "combinedLlvmNotice": {
+    "localPath": "assets/licenses/windows-native-runtime-NOTICES.txt",
+    "gitBlobSha1": "16bc8e8cfcc2ecc491dabeb22e6eab228bcccf6f",
+    "upstream": "llvm/llvm-project",
+    "components": [
+      {
+        "component": "libcxx",
+        "upstreamRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+        "upstreamPath": "libcxx/LICENSE.TXT",
+        "upstreamGitBlobSha1": "e159d283443f92ac78b964d2bccebe8f95d5d445",
+        "fullTrimmedTextInCombinedNotice": true
+      },
+      {
+        "component": "libcxxabi",
+        "upstreamRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+        "upstreamPath": "libcxxabi/LICENSE.TXT",
+        "upstreamGitBlobSha1": "b75c0441bcd5be32b5a07e2a1ffc7e67b6d99f16",
+        "fullTrimmedTextInCombinedNotice": true
+      },
+      {
+        "component": "libunwind",
+        "upstreamRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+        "upstreamPath": "libunwind/LICENSE.TXT",
+        "upstreamGitBlobSha1": "1e3120621caeb62648745a42f7a9a25d1e2731ab",
+        "fullTrimmedTextInCombinedNotice": true
+      },
+      {
+        "component": "compiler-rt",
+        "upstreamRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+        "upstreamPath": "compiler-rt/LICENSE.TXT",
+        "upstreamGitBlobSha1": "5a79a1b9d5cb0af9a779751f07033e44ca3b14d8",
+        "fullTrimmedTextInCombinedNotice": true
+      }
+    ]
+  },
+  "linkedWindowsEvidence": {
+    "run": 44344901052,
+    "job": 134949290215,
+    "stockWorkerSha256": "4f7ad042349239baca6a654d8ca31937c2c49886f6f51413c8447071ff80bfa8",
+    "remediatedWorkerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+    "selectedArchives": 8,
+    "selectedStaticMembers": 640,
+    "stockBuildToolchainHeaderCount": 850,
+    "stockBuildCopyleftTextFlags": 0,
+    "independentReplacementObjectsMatched": 68,
+    "crtDependencyPaths": 419,
+    "crtLegacyStdargPaths": 0,
+    "llvmSourceAttributionMode": "39 selected LLVM objects mapped to pinned exact source bytes by name, not independently reproduced LLVM object files or fully traced preprocessor closure",
+    "remainingLicenseWork": [
+      "verify retained LLVM code from compile-time headers, not merely selected translation units",
+      "review exact final archive notices and SBOM against all linked components and applicable obligations",
+      "review remaining math.h Cephes declaration comment against actual retained implementation provenance",
+      "do not convert text-signature scanning or source-name mapping into a claim of complete legal clearance"
+    ]
+  },
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false
+}
