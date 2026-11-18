@@ -646,6 +646,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 let desktopOutputBuffer = ''
 let lastCoreProbe
 let runtimePackageEvidence
+let exactNativeOcr
 const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
@@ -655,6 +656,13 @@ try {
   reportPhase('initialize-fixture')
   mkdirSync(home)
   mkdirSync(userData)
+  if (process.env.DVR_NATIVE_OCR_STAGE) {
+    const { prepareExactDesktopOcr } = await import('../quality/native-ocr-desktop-acceptance.mjs')
+    assert.ok(process.env.DVR_NATIVE_OCR_DESKTOP_REPORT, 'exact OCR report path required')
+    exactNativeOcr = prepareExactDesktopOcr({ source: dvrRoot, root, home,
+      stage: process.env.DVR_NATIVE_OCR_STAGE, bmp: process.env.DVR_NATIVE_OCR_BMP,
+      expected: process.env.DVR_NATIVE_OCR_EXPECTED })
+  }
 
   textServer = await listenHttp(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
@@ -755,7 +763,7 @@ try {
   const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
-  manifest.dependencies['dsh-vision-router'] = `file:${dvrRoot}`
+  manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
   manifest.dependencies[coreProbeFixture.name] = `file:${coreProbeFixture.directory}`
   if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
   manifest.dsh.profile.bundles.push(coreProbeFixture.name)
@@ -827,6 +835,7 @@ try {
   const hostPort = await freePort()
   const environment = {
     ...process.env,
+    ...exactNativeOcr?.isolatedEnv,
     DSH_HOME: home,
     DSH_DESKTOP_DEV_APP: '1',
     DSH_DESKTOP_DSH_DIR: project,
@@ -1128,6 +1137,11 @@ try {
   const restoredToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
   await restoredToggle.waitFor({ state: 'visible', timeout: 5000 })
   if (await restoredToggle.isChecked() !== originalChecked) throw new Error('Desktop Settings restore did not survive save readback')
+  if (exactNativeOcr) {
+    const { exerciseExactDesktopOcr } = await import('../quality/native-ocr-desktop-acceptance.mjs')
+    await exerciseExactDesktopOcr(page, exactNativeOcr)
+    reportPhase('exact-native-ocr-gui-passed')
+  }
   await page.getByRole('button', { name: /关闭|Close/i }).first().click()
 
   reportPhase('settings-roundtrip-passed')
