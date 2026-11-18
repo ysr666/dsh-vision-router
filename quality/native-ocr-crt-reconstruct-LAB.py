@@ -101,7 +101,7 @@ def normalized_coff(data):
 def read_ledger(repo):
     data = (repo / 'quality/native-ocr-mingw-source-evidence.json').read_bytes()
     blob = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-    require(blob == LEDGER_BLOB, 'SOURCE_LEDGER_CHANGED')
+    require(blob == LEDGER_BLOB, 'SOURCE_LEDGER_CHANGED: actual Git blob ' + blob + '; expected ' + LEDGER_BLOB + '; use exact checkout bytes')
     ledger = json.loads(data)
     require(ledger['sourceRevision'] == MINGW_REV and ledger['worker']['sha256'] == OLD_WORKER_SHA,
             'LEDGER_IDENTITY_MISMATCH')
