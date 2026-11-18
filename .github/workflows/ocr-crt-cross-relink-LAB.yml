@@ -1,0 +1,53 @@
+name: Native OCR CRT cross-host exact-worker diagnostic
+
+on:
+  push:
+    branches: [diagnostic/ocr-crt-cross-relink]
+    paths:
+      - 'quality/native-ocr-crt-cross-relink-LAB.py'
+      - '.github/workflows/ocr-crt-cross-relink-LAB.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dvr-crt-cross-relink-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-relink:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Syntax and reconstruction helper tests
+        run: |
+          python3 -I -m py_compile quality/native-ocr-crt-cross-relink-LAB.py
+          python3 -I quality/test-native-ocr-crt-reconstruction.py
+      - name: Rebuild reviewed CRT inputs from pinned official archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/dvr-crt-cross-inputs"
+          mkdir -p "$root"
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/mingw-source.tar.gz" https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/0d6dfbc348dfad714761c0a7151615767f96bcb5
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/llvm-mac.tar.xz" https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-macos-universal.tar.xz
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/llvm-win.zip" https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-x86_64.zip
+          python3 -I quality/native-ocr-crt-reconstruct-LAB.py --repo "$PWD" --source-tar "$root/mingw-source.tar.gz" --compiler-tar "$root/llvm-mac.tar.xz" --stock-windows-zip "$root/llvm-win.zip" --out "$RUNNER_TEMP/dvr-crt-cross-reconstruction"
+      - name: Cross-build Windows x64 baseline and remediated worker without uploading binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I quality/native-ocr-crt-cross-relink-LAB.py --repo "$PWD" --reconstruction "$RUNNER_TEMP/dvr-crt-cross-reconstruction" --stock-windows-zip "$RUNNER_TEMP/dvr-crt-cross-inputs/llvm-win.zip" --out "$RUNNER_TEMP/dvr-crt-cross-worker"
+      - name: Retain evidence only
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-crt-cross-relink-evidence
+          path: |
+            ${{ runner.temp }}/dvr-crt-cross-reconstruction/crt-reconstruction-evidence.json
+            ${{ runner.temp }}/dvr-crt-cross-worker/cross-relink-evidence.json
+          if-no-files-found: ignore
