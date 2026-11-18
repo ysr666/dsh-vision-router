@@ -154,7 +154,14 @@ def find_targets(makefile, rows):
         targets = sorted(set(re.findall(r'(?m)^([^\s:#]+/' + member + r'|' + member + r')\s*:', makefile)))
         require(len(targets) == 1, 'AMBIGUOUS_MAKE_TARGET: ' + x['member'])
         target = targets[0]
-        require(re.fullmatch(r'lib64/[A-Za-z0-9_.-]+\.o', target), 'BAD_MAKE_TARGET: ' + target)
+        # Automake places archive members under their source subdirectory,
+        # while the startup object is generated in lib64. Bind the full
+        # target to the reviewed ledger, not an arbitrary Makefile path.
+        source_parent = Path(x['source']).parent.relative_to('mingw-w64-crt')
+        expected = ('lib64/' if x['archive'] == 'startup' else source_parent.as_posix() + '/') + x['member']
+        require(target == expected and all(re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*', part)
+                                          for part in target.split('/')),
+                'BAD_MAKE_TARGET: ' + target)
         result.append(dict(x, target=target))
     require(len(result) == 68 and len({x['target'] for x in result}) == 68, 'TARGET_SET_MISMATCH')
     return result

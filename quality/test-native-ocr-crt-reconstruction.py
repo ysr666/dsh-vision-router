@@ -17,6 +17,14 @@ class Cases(unittest.TestCase):
         subprocess.run(['clang','--target=x86_64-w64-windows-gnu','-O2','-gdwarf-4','-c',str(p),'-o',str(obj)],check=True)
         subprocess.run(['clang','--target=x86_64-w64-windows-gnu','-O2','-gdwarf-4','-c',str(p),'-o',str(rebuild)],check=True)
         self.assertEqual(m.normalized_coff(obj.read_bytes()),m.normalized_coff(rebuild.read_bytes()))
+    def test_targets_match_all_reviewed_source_directories(self):
+        repo=pathlib.Path(__file__).resolve().parent.parent
+        rows=[x for x in m.read_ledger(repo)['sourceFiles'] if x['member'] not in ('crtbegin.o','crtend.o')]
+        targets=[('lib64/' if x['archive']=='startup' else pathlib.Path(x['source']).parent.relative_to('mingw-w64-crt').as_posix()+'/')+x['member'] for x in rows]
+        makefile='\n'.join(t+': source' for t in targets)
+        self.assertEqual([x['target'] for x in m.find_targets(makefile,rows)],targets)
+        with self.assertRaisesRegex(RuntimeError,'BAD_MAKE_TARGET'):m.find_targets(makefile.replace(targets[0]+':','../'+targets[0]+':'),rows)
+        with self.assertRaisesRegex(RuntimeError,'AMBIGUOUS_MAKE_TARGET'):m.find_targets(makefile+'\nwrong/'+rows[0]['member']+':',rows)
     def test_recipe_requires_exact_sysroot(self):
         tool=self.root/'tool';src=self.root/'src';build=self.root/'build';overlay=self.root/'overlay.json';output=self.root/'output.o'
         row={'target':'lib64/crt2.o','source':'mingw-w64-crt/crt/crtexe.c'}
