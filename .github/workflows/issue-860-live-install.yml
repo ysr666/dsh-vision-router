@@ -1,27 +1,27 @@
-name: Issue 860 actual Shop RPC diagnostic
+name: Issue 860 Windows Desktop Shop diagnostic
 on:
   push:
-    branches: [diagnostic/issue-860-shop-rpc]
+    branches: [diagnostic/issue-860-desktop-shop]
     paths:
-      - 'scripts/dsh-issue-860-live-install.mjs'
+      - 'scripts/dsh-issue-860-desktop-shop.mjs'
       - '.github/workflows/issue-860-live-install.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: issue-860-shop-rpc-${{ github.ref }}
+  group: issue-860-desktop-shop-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   shop-present-live-install:
     name: Shop 0.9.4 installStart / ${{ matrix.version }}
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - version: '0.2.2-rc.4'
             sha: 3f321d32bfe382212a8ed8785c1d47a5a300aa23
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -55,4 +55,4 @@ jobs:
           DSH_EXPECTED_VERSION: ${{ matrix.version }}
           DVR_860_WITH_SHOP: '1'
           DVR_860_THROUGH_SHOP: '1'
-        run: node ../dvr/scripts/dsh-issue-860-live-install.mjs
+        run: node --import tsx ../dvr/scripts/dsh-issue-860-desktop-shop.mjs
