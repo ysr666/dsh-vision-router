@@ -5,6 +5,9 @@ on:
       - 'quality/native-ocr-clean-conversion.py'
       - 'quality/test-native-ocr-clean-download.py'
       - 'quality/native-ocr-crt-reconstruct-LAB.py'
+      - 'quality/native-ocr-crt-cross-relink-LAB.py'
+      - 'quality/native-ocr-crt-relink-LAB.py'
+      - 'quality/native-ocr-crt-ci-reconstruction-evidence.json'
       - 'quality/test-native-ocr-crt-reconstruction.py'
       - 'quality/native-ocr-mingw-source-evidence.json'
       - 'quality/native-ocr-candidate-*.py'
@@ -150,13 +153,15 @@ jobs:
 
   crt-reconstruction:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Verify CRT reconstruction helpers
-        run: python3 -I quality/test-native-ocr-crt-reconstruction.py
+        run: |
+          python3 -I quality/test-native-ocr-crt-reconstruction.py
+          python3 -I -m py_compile quality/native-ocr-crt-cross-relink-LAB.py
       - name: Verify exact reconstruction input and delivery preflight helpers
         run: |
           python3 -I quality/test-native-ocr-crt-relink-input.py
@@ -179,3 +184,15 @@ jobs:
             ${{ runner.temp }}/dvr-crt-source-reconstruction/crt-reconstruction-evidence.json
             ${{ runner.temp }}/dvr-crt-source-reconstruction/stock-crt/stock-crt-normalized-coff.json
           if-no-files-found: error
+      - name: Link exact stock and remediated Windows x64 workers in the same runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I quality/native-ocr-crt-cross-relink-LAB.py --repo "$PWD" --reconstruction "$RUNNER_TEMP/dvr-crt-source-reconstruction" --stock-windows-zip "$RUNNER_TEMP/dvr-crt-inputs/llvm-win.zip" --out "$RUNNER_TEMP/dvr-crt-cross-worker"
+      - name: Save cross-relink evidence only (no object archives or executables)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-crt-cross-relink-evidence
+          path: ${{ runner.temp }}/dvr-crt-cross-worker/cross-relink-evidence.json
+          if-no-files-found: ignore
