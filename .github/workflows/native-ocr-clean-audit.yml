@@ -7,6 +7,9 @@ on:
       - 'quality/native-ocr-canonical-labels.py'
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'
+      - 'quality/native-ocr-desktop-acceptance.mjs'
+      - 'scripts/dsh-desktop-renderer-e2e.mjs'
+      - '.github/actions/native-ocr-desktop-acceptance/action.yml'
       - 'quality/native-ocr-delivery-preflight.py'
       - 'quality/test-native-ocr-delivery-preflight.py'
       - 'quality/test-native-ocr-staged-acceptance.mjs'
@@ -69,7 +72,7 @@ jobs:
   mac-worker:
     needs: conversion
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -136,10 +139,17 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/release-stage/archive-audit-evidence.json
           if-no-files-found: error
 
+      - name: Real RC4 Desktop acceptance of this exact Mac archive
+        uses: ./.github/actions/native-ocr-desktop-acceptance
+        with:
+          stage: ${{ runner.temp }}/dvr-native-worker/release-stage
+          bmp: ${{ runner.temp }}/dvr-native-worker/synthetic.bmp
+          expected: TEST 123
+
   windows-worker:
     needs: crt-reconstruction
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -239,6 +249,13 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/candidate-link-trace.txt
             ${{ runner.temp }}/dvr-native-worker/link-inventory.json
           if-no-files-found: error
+
+      - name: Real RC4 Desktop acceptance of this exact Windows archive
+        uses: ./.github/actions/native-ocr-desktop-acceptance
+        with:
+          stage: ${{ runner.temp }}/dvr-win-release-stage
+          bmp: ${{ runner.temp }}/dvr-native-worker/synthetic.bmp
+          expected: HELLO 123
 
   crt-reconstruction:
     runs-on: macos-15

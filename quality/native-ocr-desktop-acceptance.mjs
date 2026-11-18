@@ -2,7 +2,7 @@
 // receives the candidate catalog and a Host-side HTTPS response fixture.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, parse } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { decodeBmp, replaceOnce } from './native-ocr-staged-acceptance.mjs'
@@ -45,8 +45,10 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   const catalog = join(copied, 'lib/native-ocr-download.js')
   const mode = join(root, 'ocr-payload-mode.txt')
   const requests = join(root, 'ocr-requests.txt')
+  const release = join(root, 'ocr-release.txt')
   writeFileSync(mode, 'corrupt')
   writeFileSync(requests, '')
+  writeFileSync(release, '')
   const pinSource = readFileSync(canary, 'utf8')
   const old = target === 'darwin-arm64'
     ? '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204'
@@ -70,8 +72,13 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
     await fs.appendFile(${JSON.stringify(requests)}, mode + '\\n')
     const bytes = await fs.readFile(${JSON.stringify(archive)})
     if (mode === 'corrupt') bytes[Math.floor(bytes.length / 2)] ^= 255
-    // Keep the request observably in flight so the real Renderer can prove its busy state.
-    await new Promise(resolve => setTimeout(resolve, 1200))
+    // The Renderer must observe busy and release this actual pending request.
+    const deadline = Date.now() + 45000
+    while (await fs.readFile(${JSON.stringify(release)}, 'utf8') !== mode) {
+      if (Date.now() >= deadline) throw Error('Desktop OCR busy-state observation timed out')
+      options.signal?.throwIfAborted()
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
     return new Response(bytes, { headers: { 'content-length': String(bytes.length) } })
   }`
   altered = replaceOnce(altered,
@@ -84,7 +91,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   }
   const installation = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
   const worker = join(installation, process.platform === 'win32' ? 'worker.exe' : 'worker')
-  return { copied, isolatedEnv, info, mode, requests, installation, worker, bmp, expected }
+  return { copied, isolatedEnv, info, mode, requests, release, installation, worker, bmp, expected }
 }
 
 async function waitEnabled(button) {
@@ -94,7 +101,7 @@ async function waitEnabled(button) {
 }
 
 export async function exerciseExactDesktopOcr(page, context) {
-  const { info, mode, requests, installation, worker, bmp, expected } = context
+  const { info, mode, requests, release, installation, worker, bmp, expected } = context
   const nav = page.locator('.vr-ia-nav')
   await nav.getByRole('button', { name: /本地与设备|Local & device/ }).click()
   const panel = page.locator('.vr-ia-main')
@@ -109,6 +116,7 @@ export async function exerciseExactDesktopOcr(page, context) {
   await download.click()
   await busy.waitFor({ state: 'visible', timeout: 15000 })
   assert.equal(await download.isDisabled(), true)
+  writeFileSync(release, 'corrupt')
   await failed.waitFor({ state: 'visible', timeout: 210000 })
   assert.equal(existsSync(installation), false)
   assert.equal(readFileSync(requests, 'utf8'), 'corrupt\n')
@@ -117,6 +125,8 @@ export async function exerciseExactDesktopOcr(page, context) {
   await waitEnabled(download)
   await download.click()
   await busy.waitFor({ state: 'visible', timeout: 15000 })
+  assert.equal(await download.isDisabled(), true)
+  writeFileSync(release, 'good')
   await ready.waitFor({ state: 'visible', timeout: 210000 })
   await waitEnabled(remove)
   assert.equal(await download.isDisabled(), true)
