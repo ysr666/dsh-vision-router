@@ -36,6 +36,8 @@ The recommended/current Host concurrency groups are distinct from CI to prevent 
 This is a CI scheduling policy, not a withdrawal of RC2, RC3 or RC4 compatibility evidence. Doctor's exactVerified list now includes RC4 using the recorded successful candidate evidence; this is not a claim about every published DVR artifact.
 When the latest RC advances, update the immutable pin and reuse the existing current Host gate and its existing tests. Do not add version-specific gates or tests solely because upstream released a new version. Add a regression only when a new DVR-owned contract or a reproduced defect requires it.
 
+The retired pre-floor Host and obsolete 2.3 branch qualification workflows are preserved in [the historical checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). They are not maintained or tested as live DVR 3.2 gates; historical replay targets the historical source, not current HEAD. Current minimum, recommended, current Host, Alpha, and runtime/security contracts remain active.
+
 ## Core Host ownership
 
 The verified DSH 0.2.1-rc.5 and DSH 0.2.2 release candidates own webStartup trustedHosts and all Connection authorization. DVR 3.2 retires the cross-generation Connection config override and private readiness provider. However, a real Windows six-order foreign-plugin test caught HTTP 405 from generic connection.rpc.handle() when the Connection provider Fiber omitted a webServer injection. Thus DVR retains one **minimal ordering-only patch**: Connection inject: [webStartup, webServer], with **no config/trustedHosts override**. DSH still exclusively owns cookies, /api, WebSocket, trust authority and all other Connection config. Never extend, guess or bypass the official trust list.

@@ -1,5 +1,7 @@
 # DeepSeek Harness 0.2.1-rc.2 next-channel compatibility qualification
 
+> Historical record, not current support or CI policy. Exact historical workflow files remain in [this DVR checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). The retired Host versions are outside the current support floor; see the current support-window policy for live qualification.
+
 - **Channel:** `next` / RC; independent of stable and alpha. Do not conflate with historical DSH `0.2.0-rc.2`.
 - **Upstream immutable release commit:** `687f282e8625c6b8d11ff58211a90524be2e4317` (`dsh-v0.2.1-rc.2`).
 - **Released:** 2026-10-17 08:16:33 UTC (16:16:33 China Standard Time).

@@ -1,5 +1,7 @@
 # DVR 3.1 historical support window (not applicable to DVR 3.2)
 
+> Historical record, not current support or CI policy. Exact historical workflow files remain in [this DVR checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). The retired Host versions are outside the current support floor; see the current support-window policy for live qualification.
+
 # DSH Host support window
 
 Status: normative for the current DVR 3.x compatibility program.

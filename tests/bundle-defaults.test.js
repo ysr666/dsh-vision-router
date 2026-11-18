@@ -571,9 +571,6 @@ test('DSH build caches retain native JS entrypoints and binaries as one complete
   const workflows = [
     'dsh-preview-browser-smoke.yml',
     'alpha-browser-cold-toggle-smoke.yml',
-    'dsh-017-browser-smoke.yml',
-    'dsh-017-real-host-smoke.yml',
-    'dsh-020-rc2-validation.yml',
   ]
 
   for (const name of workflows) {
@@ -588,9 +585,6 @@ test('DSH build caches retain native JS entrypoints and binaries as one complete
     }
   }
 
-  const rc17 = await readFile(new URL('../.github/workflows/dsh-017-real-host-smoke.yml', import.meta.url), 'utf8')
-  assert.match(rc17, /dsh-desktop-renderer-v2-/,
-    'renderer cache schema must invalidate the old cache that omitted native JS entrypoints')
 })
 
 test('Desktop renderer E2E drives the Vision onboarding through the account-owned Settings launcher', async () => {
@@ -739,7 +733,7 @@ test('heavy Host classifier skips only version-only curated release metadata', a
   const peerChanged = { ...release, peerDependencies: { dsh: '>=0.2.0-rc.1 <0.3.0-0' } }
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json'], basePackage: base, headPackage: peerChanged }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: ['package.json', 'src/lib/dsh-settings-017-compat.js'], basePackage: base, headPackage: release }).heavy, true)
-  assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-020-rc2-validation.yml'], basePackage: base, headPackage: release }).heavy, true)
+  assert.equal(classifyHeavyHostImpact({ changedPaths: ['.github/workflows/dsh-current-host-gate.yml'], basePackage: base, headPackage: release }).heavy, true)
   assert.equal(classifyHeavyHostImpact({ changedPaths: [], basePackage: base, headPackage: release }).heavy, true)
 })
 
