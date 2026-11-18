@@ -17,6 +17,20 @@ class Cases(unittest.TestCase):
         subprocess.run(['clang','--target=x86_64-w64-windows-gnu','-O2','-gdwarf-4','-c',str(p),'-o',str(obj)],check=True)
         subprocess.run(['clang','--target=x86_64-w64-windows-gnu','-O2','-gdwarf-4','-c',str(p),'-o',str(rebuild)],check=True)
         self.assertEqual(m.normalized_coff(obj.read_bytes()),m.normalized_coff(rebuild.read_bytes()))
+    def test_coff_nonincremental_replay_zero_timestamp(self):
+        import struct, time
+        p=self.root/'timestamp.c';p.write_text('int f(int x){return x+3;}')
+        outputs=[]
+        for i in (0,1):
+            dst=self.root/f'copy{i}';dst.mkdir();obj=dst/'x.o'
+            subprocess.run(['clang','--target=x86_64-w64-windows-gnu','-mno-incremental-linker-compatible','-O2','-gdwarf-4','-c',str(p),'-o',str(obj)],check=True)
+            data=obj.read_bytes()
+            self.assertEqual(struct.unpack_from('<I',data,4)[0],0)
+            outputs.append(data)
+            if i==0:time.sleep(1.05)
+        # Unstripped debug data may contain the output path; compare the same
+        # normalized contents here. The real pinned build compares stripped bytes.
+        self.assertEqual(m.normalized_coff(outputs[0]),m.normalized_coff(outputs[1]))
     def test_targets_match_all_reviewed_source_directories(self):
         repo=pathlib.Path(__file__).resolve().parent.parent
         rows=[x for x in m.read_ledger(repo)['sourceFiles'] if x['member'] not in ('crtbegin.o','crtend.o')]
@@ -30,6 +44,7 @@ class Cases(unittest.TestCase):
         row={'target':'lib64/crt2.o','source':'mingw-w64-crt/crt/crtexe.c'}
         line=f'x86_64-w64-mingw32-gcc -I{tool}/x86_64-w64-mingw32/include -MD -MF old.d -c source.c -o lib64/crt1.o'
         args,d=m.compile_recipe([line],row,src,tool,build,overlay,output)
+        self.assertEqual(args[-1],'-mno-incremental-linker-compatible')
         self.assertEqual(args[1:3],['-ivfsoverlay',str(overlay)]);self.assertNotIn('-I'+str(tool/'x86_64-w64-mingw32/include'),args);self.assertEqual(args[args.index('-o')+1],str(output));self.assertEqual(args[args.index('-MF')+1],str(d))
         with self.assertRaisesRegex(RuntimeError,'SYSROOT'):m.compile_recipe([line.replace(f'-I{tool}/x86_64-w64-mingw32/include','')],row,src,tool,build,overlay,output)
     def test_zip_deterministic(self):

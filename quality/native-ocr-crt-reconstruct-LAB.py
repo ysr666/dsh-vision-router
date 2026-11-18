@@ -190,6 +190,9 @@ def compile_recipe(lines, row, source, tool, build, overlay, output):
         args[args.index('-MF')+1] = str(dependency)
     else:
         args += ['-MD', '-MF', str(dependency)]
+    # Clang's COFF incremental-linker compatibility writes wall-clock timestamps.
+    # Disable it only for the remediated objects, leaving the historical rebuild unchanged.
+    args.append('-mno-incremental-linker-compatible')
     return args, dependency
 
 
@@ -288,20 +291,31 @@ def run(a):
         'roots': [{'type': 'file', 'name': n, 'external-contents': str(replacement)} for n in sorted(aliases)]}, indent=2)+'\n')
     lines = (lab/'stock-rebuild.log').read_text().splitlines()
     output = lab/'replacement-objects'
+    replay_output = lab/'replacement-objects-replay'
+    replacement_env = dict(env, SOURCE_DATE_EPOCH='1794700800')
     roots = [(tool.resolve(), 'toolchain'), (source.resolve(), 'source'), (build.resolve(), 'build'), (lab.resolve(), 'private-overlay')]
-    def compile_one(row):
-        target = output/row['target']
+    def compile_one(row, directory):
+        target = directory/row['target']
         target.parent.mkdir(parents=True, exist_ok=True)
         args, dep = compile_recipe(lines, row, source, tool, build, overlay, target)
         with target.with_suffix('.log').open('wb') as f:
-            subprocess.run(args, cwd=build, env=env, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=60)
+            subprocess.run(args, cwd=build, env=replacement_env, stdout=f, stderr=subprocess.STDOUT, check=True, timeout=60)
         require(normalized_coff(target.read_bytes()) == row['expectedNormalized'], 'REMEDIATED_COFF_MISMATCH: ' + row['member'])
         deps = dependencies(dep, build, roots)
         stripped = target.with_suffix('.stripped.o')
         subprocess.run([str(tool/'bin/llvm-objcopy'), '--strip-debug', str(target), str(stripped)], check=True, timeout=30)
-        return row, stripped.read_bytes(), deps
+        data = stripped.read_bytes()
+        require(struct.unpack_from('<H', data, 0)[0] == 0x8664 and
+                struct.unpack_from('<I', data, 4)[0] == 0,
+                'NONDETERMINISTIC_COFF_TIMESTAMP: ' + row['member'])
+        return row, data, deps
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        built = list(pool.map(compile_one, rows))
+        built = list(pool.map(lambda row: compile_one(row, output), rows))
+        replayed = list(pool.map(lambda row: compile_one(row, replay_output), rows))
+    for (row, data, deps), (other, again, again_deps) in zip(built, replayed):
+        require(row == other and data == again and deps == again_deps,
+                'NONDETERMINISTIC_STRIPPED_COFF: ' + row['member'])
+    print('REMEDIATED_STRIPPED_OBJECT_REPLAY_MATCH 68/68; COFF timestamps zero', flush=True)
     aggregate, per_object, members, manifest = {}, {}, {}, []
     for x, data, deps in built:
         for key, entry in deps.items():
@@ -316,10 +330,17 @@ def run(a):
     require(file_sha(header) == LEGACY_HEADER_SHA and file_sha(llvm) == LLVM_HEADER_SHA, 'STOCK_HEADERS_CHANGED')
     z = lab/'crt-reconstructed.zip'
     deterministic_zip(z, members, manifest)
+    replay_zip = lab/'crt-reconstructed-replay.zip'
+    deterministic_zip(replay_zip, {row['archive'] + '/' + row['member']: data for row, data, _ in replayed}, manifest)
+    require(file_sha(z) == file_sha(replay_zip) and z.read_bytes() == replay_zip.read_bytes(),
+            'NONDETERMINISTIC_RECONSTRUCTED_ZIP')
     report = {'schemaVersion': 1, 'sourceRevision': MINGW_REV, 'compilerArchiveSha256': TOOL_SHA,
               'stockWindowsZipSha256': WINDOWS_ZIP_SHA, 'stockInventorySha256': STOCK_INVENTORY_SHA,
-              'normalizedMatches': 68, 'dependencies': aggregate, 'perObject': per_object,
+              'normalizedMatches': 68, 'exactStrippedObjectReplayMatches': 68,
+              'zeroCoffTimestamps': True, 'sourceDateEpoch': 1794700800,
+              'dependencies': aggregate, 'perObject': per_object,
               'replacementManifest': manifest, 'replacementArchiveSha256': file_sha(z),
+              'exactArchiveReplayMatch': True,
               'distributionReady': False,
               'scope': 'Source-to-object output only. Fresh Windows relink and exact worker identity acceptance required.'}
     (lab/'crt-reconstruction-evidence.json').write_text(json.dumps(report, indent=2)+'\n')
