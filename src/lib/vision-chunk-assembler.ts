@@ -104,7 +104,13 @@ export function createChunkAssembler(): VisionChunkAssembler {
     },
 
     finish(): string {
-      if (failure) throw new Error(failureMessage(failure))
+      if (failure) {
+        const error = new Error(failureMessage(failure))
+        const code = propertyBag(failure)?.code
+        // Preserve the Host's machine-readable failure, not just prose.
+        // The field is optional for historical or malformed adapters.
+        throw typeof code === 'string' ? Object.assign(error, { code }) : error
+      }
       if (
         finishKind !== undefined
         && finishKind !== 'stop'

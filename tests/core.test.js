@@ -175,7 +175,7 @@ test('chunk assembler throws the failure message carried by the finish chunk', (
     type: 'finish',
     reason: { kind: 'error', failure: { message: 'Insufficient credits', code: 'QUOTA' } },
   })
-  assert.throws(() => a.finish(), /Insufficient credits/)
+  assert.throws(() => a.finish(), { message: 'Insufficient credits', code: 'QUOTA' })
 })
 
 test('chunk assembler throws on unexpected finish kinds', () => {

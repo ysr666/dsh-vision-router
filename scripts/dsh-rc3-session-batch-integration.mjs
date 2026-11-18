@@ -164,7 +164,7 @@ try {
   assert.equal(logReads, 0, 'large batch must never request a whole-log clone')
   console.log(JSON.stringify({
     ok: true,
-    dsh: '0.2.2-rc.3',
+    dsh: process.env.DSH_EXPECTED_VERSION || '0.2.2-rc.3',
     hostSha: expected,
     batchEvents: batch.length,
     finalSurfaceObserved: true,

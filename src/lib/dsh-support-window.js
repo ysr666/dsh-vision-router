@@ -11,7 +11,7 @@ export const DSH_VERIFICATION_EVIDENCE = Object.freeze({
   exactFloor: '0.2.1-rc.5',
   exactRecommended: '0.2.2-rc.1',
   // Qualified exact-host evidence is distinct from the recommended upgrade target.
-  exactVerified: Object.freeze(['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3']),
+  exactVerified: Object.freeze(['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4']),
   stableCanaryDistTag: 'latest',
   nextCanaryDistTag: 'next',
   previewCanaryDistTag: 'alpha',
