@@ -147,6 +147,7 @@ import {
   createVisionCircuitBreaker,
   createVisionTurnMemory,
   buildVisionFailure,
+  buildVisionContentRefused,
   ensureSentencePunctuation,
   resultCodeForKinds,
   VISION_FAILURE_KINDS,
@@ -1120,8 +1121,10 @@ export function apply(ctx, config = {}, runtime = {}) {
           // consumers and the agent see the machine-routable code, not prose.
           const classification = classifyVisionFailure(error)
           const failureCode =
-            classification.kind === VISION_FAILURE_KINDS.AUTH
-              ? 'AUTH'
+            classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED
+              ? 'CONTENT_REFUSED'
+              : classification.kind === VISION_FAILURE_KINDS.AUTH
+                ? 'AUTH'
               : classification.kind === VISION_FAILURE_KINDS.RATE_LIMIT
                 ? 'RATE_LIMIT'
                 : classification.kind === VISION_FAILURE_KINDS.TIMEOUT
@@ -1908,6 +1911,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       return await callVisionPair(pair, messages, options)
     } catch (error) {
       const classification = classifyVisionFailure(error)
+      if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) throw error
       const capability =
         options.capability ?? (await resolveVisionBackendCapability(pair.provider, pair.model))
       if (
@@ -2228,6 +2232,7 @@ export function apply(ctx, config = {}, runtime = {}) {
               if (chunk && chunk.type === 'finish') {
                 const kind = chunk.reason && chunk.reason.kind
                 if (kind === 'error' || kind === 'aborted') {
+                  failCode = chunk.reason?.failure?.code
                   failMessage =
                     (chunk.reason && chunk.reason.failure && chunk.reason.failure.message) || kind
                   failed = true
@@ -2284,12 +2289,30 @@ export function apply(ctx, config = {}, runtime = {}) {
             }
           } catch (error) {
             failed = true
+            failCode = failCode ?? error?.code
             failMessage = error && error.message ? error.message : String(error)
           }
           if (failed) {
             const classification = classifyVisionFailure(
               failCode ? { code: failCode, message: failMessage } : failMessage,
             )
+            if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) {
+              // A refusal is terminal for this request, not a failed provider.
+              // Preserve billed usage but never publish staged partial evidence.
+              if (holdCandidateEvents) {
+                for (const event of heldEvents) {
+                  if (event?.type === 'usage') yield event
+                }
+              }
+              yield {
+                type: 'finish',
+                reason: { kind: 'error', failure: {
+                  code: 'CONTENT_REFUSED',
+                  message: 'The vision provider declined this request under its content policy.',
+                } },
+              }
+              return
+            }
             visionBreaker.record(backendKey, fingerprint, classification, 'chain')
             failures.push(`${pair.provider}/${pair.model}: ${failMessage}`)
             ctx.logger?.warn('vision-router: chain fallback (%s) -> %s', classification.kind, failMessage)
@@ -2865,6 +2888,7 @@ export function apply(ctx, config = {}, runtime = {}) {
         'the vision backends are unavailable this turn. Do NOT call vision_describe again with a reworded ' +
         'question — rephrasing cannot fix an auth, rate-limit or outage problem. Answer from the information ' +
         'you already have and continue the text task, telling the user vision is temporarily unavailable. ' +
+        'VISION_CONTENT_REFUSED means the provider declined this request, not that the backend is unavailable. Do not automatically retry or forward the same request. ' +
         'Only content-level uncertainty in a SUCCESSFUL answer justifies a second look (vision_crop, ' +
         'vision_ground or another vision_describe). If infrastructure failure leaves a file_path-only OCR/parser as the fallback, ' +
         'use vision_materialize on the uploaded attachment id; never guess a same-named local file or private attachment-store path.',
@@ -3186,6 +3210,9 @@ ctx.logger?.info(
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
             throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
+            if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) {
+              return JSON.stringify(buildVisionContentRefused(backendKey))
+            }
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
             visionBreaker.record(backendKey, fingerprint, classification, scope)
@@ -3342,6 +3369,9 @@ ctx.logger?.info(
             // a healthy retry returns BACKEND_UNAVAILABLE_THIS_TURN.
             throwIfVisionTaskAborted(hostSignal, error)
             const classification = classifyVisionFailure(error)
+            if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) {
+              return JSON.stringify(buildVisionContentRefused(backendKey))
+            }
             consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
               ? consecutiveServerFailures + 1 : 0
             visionBreaker.record(backendKey, fingerprint, classification, scope)
@@ -3784,6 +3814,9 @@ ctx.logger?.info(
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) {
+            return buildVisionContentRefused(pairKey)
+          }
           consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
             ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(pairKey, fingerprint, classification, scope)
@@ -3848,6 +3881,9 @@ ctx.logger?.info(
         } catch (error) {
           throwIfVisionTaskAborted(taskSignal, error)
           const classification = classifyVisionFailure(error)
+          if (classification.kind === VISION_FAILURE_KINDS.CONTENT_REFUSED) {
+            return buildVisionContentRefused(backendKey)
+          }
           consecutiveServerFailures = classification.kind === VISION_FAILURE_KINDS.SERVER
             ? consecutiveServerFailures + 1 : 0
           visionBreaker.record(backendKey, fingerprint, classification, scope)
@@ -5217,6 +5253,7 @@ ctx.logger?.info(
                 '7. 失败语义（必须遵守）：`vision_ocr` 只用于读取图片文字，绝不能当作 `vision_describe` 无法识别人/物/场景后的通用重试（“这是谁”“这是什么东西”应由 vision_describe 回答）。' +
                 '当视觉工具返回 `ok:false` + 后端不可用代码（VISION_AUTH_FAILED / VISION_RATE_LIMITED / VISION_TIMEOUT / VISION_BACKEND_UNAVAILABLE / VISION_BACKEND_UNAVAILABLE_THIS_TURN，`retryable:false`）时，' +
                 '说明认证、限流或基础设施故障——改换问题重新调用无法修复，本轮停止视觉请求，基于已有信息继续回答文本任务，并告诉用户视觉服务暂时不可用。' +
+                'VISION_CONTENT_REFUSED 表示提供方拒绝本次请求，而非后端故障；不得自动重试或转发相同请求。\n' +
                 '只有“成功返回但内容不确定”才允许用 vision_crop / vision_ground / 再次 describe 细看。\n' +
                 '   FAILURE SEMANTICS (must obey): vision_ocr reads TEXT ONLY — never a generic retry after vision_describe fails to identify a person/object/scene. ' +
                 'When a vision tool returns ok:false with a backend-unavailable code (retryable:false), rephrasing the question cannot fix an auth/rate-limit/outage — stop vision calls this turn, answer from existing information, continue the text task, and tell the user vision is temporarily unavailable. ' +

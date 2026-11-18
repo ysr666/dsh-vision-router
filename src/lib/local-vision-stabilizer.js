@@ -285,8 +285,10 @@ export function installLocalVisionStabilizer(ctx, config = {}, core, installOpti
             const classification = core.classifyVisionFailure(error)
             const kinds = core.VISION_FAILURE_KINDS || {}
             const code =
-              classification.kind === kinds.AUTH
-                ? 'AUTH'
+              classification.kind === kinds.CONTENT_REFUSED && kinds.CONTENT_REFUSED !== undefined
+                ? 'CONTENT_REFUSED'
+                : classification.kind === kinds.AUTH
+                  ? 'AUTH'
                 : classification.kind === kinds.RATE_LIMIT
                   ? 'RATE_LIMIT'
                   : classification.kind === kinds.TIMEOUT
