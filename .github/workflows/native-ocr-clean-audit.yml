@@ -17,6 +17,8 @@ on:
       - 'quality/test-native-ocr-staged-acceptance.mjs'
       - 'quality/test-native-ocr-release-stage.mjs'
       - 'quality/native-ocr-windows-reproduce-crt.py'
+      - 'quality/native-ocr-final-link-audit.py'
+      - 'quality/test-native-ocr-final-link-audit.py'
       - 'quality/test-native-ocr-clean-download.py'
       - 'quality/native-ocr-crt-reconstruct-LAB.py'
       - 'quality/native-ocr-crt-cross-relink-LAB.py'
@@ -225,6 +227,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'STAGED_ACCEPTANCE_FAILED' }
           python -I quality/native-ocr-delivery-preflight.py --target win32-x64 --archive "$env:RUNNER_TEMP/dvr-win-release-stage/ppocrv6-small-win32-x64.tar.gz" --staging-evidence "$env:RUNNER_TEMP/dvr-win-release-stage/staging-evidence.json" --report "$env:RUNNER_TEMP/dvr-win-release-stage/archive-audit-evidence.json"
           if ($LASTEXITCODE -ne 0) { throw 'STAGED_ARCHIVE_AUDIT_FAILED' }
+      - name: Inspect exact final PE selected members and named OS imports
+        shell: pwsh
+        run: |
+          python -I quality/test-native-ocr-final-link-audit.py
+          if ($LASTEXITCODE -ne 0) { throw 'FINAL_LINK_AUDIT_TEST_FAILED' }
+          python -I quality/native-ocr-final-link-audit.py --repo (Get-Location).Path --root "$env:RUNNER_TEMP/dvr-remediated-windows" --report "$env:RUNNER_TEMP/dvr-remediated-windows/final-link-audit-evidence.json"
+          if ($LASTEXITCODE -ne 0) { throw 'FINAL_LINK_AUDIT_FAILED' }
       - name: Save final Windows staging evidence only
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -232,6 +241,7 @@ jobs:
           name: native-ocr-windows-remediated-stage-evidence
           path: |
             ${{ runner.temp }}/dvr-remediated-windows/native-replay-evidence.json
+            ${{ runner.temp }}/dvr-remediated-windows/final-link-audit-evidence.json
             ${{ runner.temp }}/dvr-remediated-windows/smoke-evidence.json
             ${{ runner.temp }}/dvr-win-release-stage/staging-evidence.json
             ${{ runner.temp }}/dvr-win-release-stage/acceptance-evidence.json
