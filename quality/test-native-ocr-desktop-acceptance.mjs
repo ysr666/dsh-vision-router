@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readNativeOcrToolResult, OCR_TOOL_CALL_ID } from './native-ocr-desktop-acceptance.mjs'
+import { readNativeOcrToolResult, OCR_TOOL_CALL_ID } from './native-ocr-desktop-tool-evidence.mjs'
 
 const result = { engine: 'ncnn', text: 'TEST 123', uncertain: false }
 const row = (value, id = OCR_TOOL_CALL_ID) => ({ role: 'tool', tool_call_id: id, content: JSON.stringify(value) })

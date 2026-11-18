@@ -84,5 +84,14 @@
     ]
   },
   "distributionReady": false,
-  "ownerPublicationAuthorized": false
+  "ownerPublicationAuthorized": false,
+  "cephesDeclarationReview": {
+    "upstreamRevision": "0d6dfbc348dfad714761c0a7151615767f96bcb5",
+    "path": "mingw-w64-headers/crt/math.h",
+    "gitBlobSha1": "cb4d134e8128c14328f225476fe69b45633c343f",
+    "line": 822,
+    "observedContext": "Comment immediately precedes extern cbrt, cbrtf, cbrtl declarations; no inline implementation in that block.",
+    "selectedTranslationUnitNamesWithCephesMoshierOrCbrt": 0,
+    "limitation": "Not proof of symbol-level retained implementation provenance. The old and final PE/link evidence still requires an explicit symbol-level check."
+  }
 }

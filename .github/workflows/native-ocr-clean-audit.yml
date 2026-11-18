@@ -8,6 +8,8 @@ on:
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'
       - 'quality/native-ocr-desktop-acceptance.mjs'
+      - 'quality/native-ocr-desktop-tool-evidence.mjs'
+      - 'quality/test-native-ocr-desktop-acceptance.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - '.github/actions/native-ocr-desktop-acceptance/action.yml'
       - 'quality/native-ocr-delivery-preflight.py'

@@ -693,9 +693,9 @@ try {
           return
         }
         assert.equal(exactNativeToolCalls, 0, 'expected actual tool response after OCR call')
-        const latestUser = [...body.messages].reverse().find(row => row?.role === 'user')
-        const userText = JSON.stringify(latestUser ?? {})
-        assert.ok(userText.includes(OCR_PROMPT_MARKER), 'OCR prompt not found in most recent user message')
+        const promptRows = body.messages.filter(row => row?.role === 'user' && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
+        assert.equal(promptRows.length, 1, 'unique OCR user message required')
+        const userText = JSON.stringify(promptRows[0])
         const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(userText)?.[1]
           ?? /\bsha256:[a-f0-9]{64}\b/i.exec(userText)?.[0]
         assert.ok(attachment && attachment !== textEvidence.attachmentId, 'new actual image attachment required')
@@ -883,6 +883,7 @@ try {
   const environment = {
     ...process.env,
     ...exactNativeOcr?.isolatedEnv,
+    ...(exactNativeOcr ? { DVR_NCNN_OCR_CANARY: '', DVR_NCNN_OCR_EXECUTABLE: '', DVR_NCNN_OCR_MODELS: '' } : {}),
     DSH_HOME: home,
     DSH_DESKTOP_DEV_APP: '1',
     DSH_DESKTOP_DSH_DIR: project,
