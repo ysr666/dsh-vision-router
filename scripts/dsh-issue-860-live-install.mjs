@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -20,6 +21,8 @@ const version = process.env.DSH_EXPECTED_VERSION || '0.2.2-rc.4'
 const expected = versions[version]
 assert.ok(expected,'unreviewed Host version')
 const withShop = process.env.DVR_860_WITH_SHOP === '1'
+const throughShop = process.env.DVR_860_THROUGH_SHOP === '1'
+assert.ok(!throughShop || withShop,'Shop RPC requires installed Shop')
 assert.equal(execFileSync('git', ['-C',root,'rev-parse','HEAD'], {encoding:'utf8'}).trim(), expected)
 const spec = 'dsh-vision-router@3.4.0'
 const name = 'dsh-vision-router'
@@ -47,6 +50,35 @@ if (withShop) {
     rmSync(temp,{recursive:true,force:true})
     process.exit(1)
   }
+}
+// Fixed test catalog, not a claim about today's public Shop catalog. The
+// actual Shop validates this pointer and downloads the real npm release.
+let catalog
+if (throughShop) {
+  const routes = new Map()
+  function data(prefix, value) {
+    const body=JSON.stringify(value)
+    const sha256=createHash('sha256').update(body).digest('hex')
+    const url=prefix+'.'+sha256+'.json'
+    routes.set('/v1/'+url,body)
+    return {url,sha256}
+  }
+  const plugins=data('plugins',{schemaVersion:6,plugins:[{
+    name,version:'3.4.0',source:'npm',integrity:null,
+    publishedAt:'2026-11-17T00:00:00.000Z',
+    repository:'https://github.com/ysr666/dsh-vision-router',
+    license:null,tier:'community',metadata:'derived',added:'2026-11-17'
+  }],denied:[]})
+  const stars=data('stars',{stars:{}})
+  const icons=data('icons',{icons:{}})
+  routes.set('/v1/index.json',JSON.stringify({schemaVersion:6,builtAt:new Date().toISOString(),count:1,plugins,stars,icons}))
+  catalog=createServer((request,response)=>{
+    const body=routes.get(request.url)
+    if (body===undefined) return response.writeHead(404).end()
+    response.writeHead(200,{'content-type':'application/json'}).end(body)
+  })
+  await new Promise((resolveListen,reject)=>{catalog.once('error',reject);catalog.listen(0,'127.0.0.1',resolveListen)})
+  env.DSH_SHOP_CATALOG_URL='http://127.0.0.1:'+catalog.address().port+'/v1/'
 }
 child = spawn(process.execPath, ['--import',loader,join(root,'apps/cli/src/bin.ts'),'web','--no-open','--port','0'],
   { cwd: temp, env, stdio: ['ignore','pipe','pipe'] })
@@ -142,14 +174,34 @@ try {
   assert.notEqual((await bundles())?.installed,true,'DVR must start absent')
   assert.notEqual((await route('/_dsh/vision-router/logs')).status,200,'DVR route must start absent')
   phase='hot-install'
-  const operation=await rpc('pluginManager/installBundle',{spec,options:{requestId:randomUUID()}},480_000)
-  console.log('DVR_860_INSTALL='+JSON.stringify(packageState(operation)))
-  assert.equal(operation?.application,'applied','live install did not apply')
-  assert.equal(operation?.stage,'enable','expected enable stage')
-  assert.equal(operation?.version,'3.4.0','wrong installed version')
+  if (throughShop) {
+    // Same real Remote entrypoints as Shop's browser client. The exact
+    // user profile and original catalog snapshot are still unknown.
+    const started=await rpc('shop/installStart',{args:{name,version:'3.4.0',source:'npm',acknowledged:true}},60_000)
+    console.log('DVR_860_SHOP_START='+JSON.stringify({ok:started?.ok,state:started?.state,code:started?.code,detail:redact(started?.detail??'')}))
+    assert.equal(started?.ok,true,'Shop did not accept the install')
+    assert.ok(started.installId,'missing Shop install ID')
+    let status
+    const deadline=Date.now()+480_000
+    do {
+      status=await rpc('shop/installStatus',{args:{installId:started.installId}})
+      assert.equal(status?.found,true,'Shop lost installation record')
+      if (['done','failed'].includes(status.state)) break
+      await delay(1000)
+    } while(Date.now()<deadline)
+    console.log('DVR_860_SHOP_TERMINAL='+redact(JSON.stringify(status)).slice(-16000))
+    assert.equal(status?.state,'done','Shop install did not settle successfully')
+  } else {
+    const operation=await rpc('pluginManager/installBundle',{spec,options:{requestId:randomUUID()}},480_000)
+    console.log('DVR_860_INSTALL='+JSON.stringify(packageState(operation)))
+    assert.equal(operation?.application,'applied','live install did not apply')
+    assert.equal(operation?.stage,'enable','expected enable stage')
+    assert.equal(operation?.version,'3.4.0','wrong installed version')
+  }
   const installed=await bundles()
   assert.equal(installed?.installed,true)
   assert.equal(installed?.enabled,true)
+  assert.equal(installed?.version,'3.4.0')
   await assertHealthy()
   phase='disable'
   const off=await rpc('pluginManager/setBundleEnabled',{name,enabled:false},90_000)
@@ -163,7 +215,7 @@ try {
   assert.equal(on?.application,'applied')
   assert.equal((await bundles())?.enabled,true)
   await assertHealthy()
-  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,shop:withShop?'0.9.4':null,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
+  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,shop:withShop?'0.9.4':null,throughShop,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
 } catch (error) {
   console.error('DVR_860_FAILURE='+JSON.stringify({phase,message:redact(error?.stack ?? error)}))
   console.error(logs.join('\n'))
@@ -175,5 +227,6 @@ try {
     const force=setTimeout(()=>child.kill('SIGKILL'),10_000)
     try { await closed } finally { clearTimeout(force) }
   }
+  if (catalog) { catalog.closeAllConnections(); await new Promise(resolveClose=>catalog.close(resolveClose)) }
   rmSync(temp,{recursive:true,force:true})
 }

@@ -1,7 +1,7 @@
-name: Issue 860 real Host live install diagnostic
+name: Issue 860 actual Shop RPC diagnostic
 on:
   push:
-    branches: [diagnostic/issue-860-live-install]
+    branches: [diagnostic/issue-860-shop-rpc]
     paths:
       - 'scripts/dsh-issue-860-live-install.mjs'
       - '.github/workflows/issue-860-live-install.yml'
@@ -9,18 +9,16 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: issue-860-live-install-${{ github.ref }}
+  group: issue-860-shop-rpc-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   shop-present-live-install:
-    name: Shop 0.9.4 present / ${{ matrix.version }}
+    name: Shop 0.9.4 installStart / ${{ matrix.version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - version: '0.2.2-rc.1'
-            sha: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
           - version: '0.2.2-rc.4'
             sha: 3f321d32bfe382212a8ed8785c1d47a5a300aa23
     timeout-minutes: 40
@@ -56,4 +54,5 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
           DSH_EXPECTED_VERSION: ${{ matrix.version }}
           DVR_860_WITH_SHOP: '1'
+          DVR_860_THROUGH_SHOP: '1'
         run: node ../dvr/scripts/dsh-issue-860-live-install.mjs
