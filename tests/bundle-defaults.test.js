@@ -514,7 +514,7 @@ test('branch-protected CI qualifies minimum, recommended, and latest real Host b
   assert.match(ci, /\n  pull_request:/)
   assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-021-rc5-validation\.yml/)
   assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc1-host-gate\.yml/)
-  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc4-host-gate\.yml/)
+  assert.match(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc5-host-gate\.yml/)
   assert.doesNotMatch(ci, /uses: \.\/\.github\/workflows\/dsh-022-rc3-host-gate\.yml/)
   const rc3 = await readFile(new URL('../.github/workflows/dsh-022-rc3-host-gate.yml', import.meta.url), 'utf8')
   const rc4 = await readFile(new URL('../.github/workflows/dsh-022-rc4-host-gate.yml', import.meta.url), 'utf8')
