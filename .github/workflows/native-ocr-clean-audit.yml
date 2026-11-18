@@ -157,6 +157,10 @@ jobs:
           persist-credentials: false
       - name: Verify CRT reconstruction helpers
         run: python3 -I quality/test-native-ocr-crt-reconstruction.py
+      - name: Verify exact reconstruction input and delivery preflight helpers
+        run: |
+          python3 -I quality/test-native-ocr-crt-relink-input.py
+          python3 -I quality/test-native-ocr-delivery-preflight.py
       - name: Regenerate historical stock evidence and reconstruct selected CRT objects
         shell: bash
         run: |
