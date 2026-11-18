@@ -191,6 +191,7 @@ def dependencies(dep, build, roots):
     require(bool(lines) and ':' in lines[0], 'EMPTY_DEPFILE')
     paths = shlex.split(lines[0].split(':', 1)[1])
     require(bool(paths), 'EMPTY_DEPENDENCY_SET')
+    roots = [(Path(root).resolve(), label) for root, label in roots]
     result = {}
     for token in paths:
         p = Path(token)

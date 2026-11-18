@@ -28,6 +28,14 @@ class Cases(unittest.TestCase):
         member={'lib/a.o':b'x','lib/b.o':b'y'};manifest=[{'archive':'lib','member':'a.o','sha256':m.sha(b'x'),'bytes':1}]
         a=self.root/'a.zip';b=self.root/'b.zip';m.deterministic_zip(a,member,manifest);m.deterministic_zip(b,dict(reversed(list(member.items()))),manifest)
         self.assertEqual(a.read_bytes(),b.read_bytes());self.assertEqual(zipfile.ZipFile(a).read('lib/a.o'),b'x')
+    def test_depfile_canonicalizes_root_alias(self):
+        real=self.root/'real';real.mkdir();alias=self.root/'alias';alias.symlink_to(real,target_is_directory=True)
+        d=alias/'toolchain';d.mkdir();h=d/'ok.h';h.write_text('header');p=self.root/'x.d';p.write_text(f'x.o: {h}\n')
+        self.assertEqual(set(m.dependencies(p,self.root,[(d,'toolchain')])),{'toolchain/ok.h'})
+    def test_depfile_symlink_escape_rejected(self):
+        d=self.root/'toolchain';d.mkdir();outside=self.root/'outside.h';outside.write_text('header')
+        h=d/'escape.h';h.symlink_to(outside);p=self.root/'x.d';p.write_text(f'x.o: {h}\n')
+        with self.assertRaisesRegex(RuntimeError,'UNEXPECTED_DEPENDENCY_PATH'):m.dependencies(p,self.root,[(d,'toolchain')])
     def test_depfile_legacy_rejected(self):
         d=self.root/'toolchain';d.mkdir();h=d/'stdarg.h';h.write_text('header');p=self.root/'x.d';p.write_text(f'x.o: {h}\n')
         with self.assertRaisesRegex(RuntimeError,'LEGACY_STDARG'):m.dependencies(p,self.root,[(d,'toolchain')])
