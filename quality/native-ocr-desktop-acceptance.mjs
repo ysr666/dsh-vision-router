@@ -147,6 +147,40 @@ export async function exerciseExactDesktopOcr(page, context) {
   })
   assert.equal(recognized.engine, 'ncnn')
   assert.equal(recognized.text.replace(/\s+/g, ''), expected.replace(/\s+/g, ''))
+  return recognized
+}
+
+// Correlate only the actual tool response with the requested call, never a
+// matching string in the user's prompt or a previous assistant message.
+export const OCR_TOOL_CALL_ID = 'desktop-e2e-native-ocr-call'
+export const OCR_PROMPT_MARKER = 'DVR_EXACT_NATIVE_OCR_PROBE'
+export const OCR_RENDERED_MARKER = 'DESKTOP_NATIVE_OCR_E2E_OK'
+
+export function readNativeOcrToolResult(messages, expected) {
+  const matches = messages.filter(row => row?.role === 'tool' && row.tool_call_id === OCR_TOOL_CALL_ID)
+  if (!matches.length) return null
+  assert.equal(matches.length, 1, 'expected one correlated native OCR result')
+  const content = matches[0].content
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.filter(block => block?.type === 'text').map(block => block.text).join('') : ''
+  const result = JSON.parse(text)
+  assert.equal(result.engine, 'ncnn', 'Host tool must select installed ncnn, not a fallback')
+  assert.equal(typeof result.text, 'string')
+  assert.equal(result.text.replace(/\s+/g, ''), expected.replace(/\s+/g, ''))
+  return { engine: result.engine, text: result.text, uncertain: result.uncertain === true }
+}
+
+export async function finishExactDesktopOcr(page, context, recognized, agentEvidence) {
+  assert.equal(agentEvidence.engine, 'ncnn')
+  const { info, installation, expected } = context
+  assert.equal(agentEvidence.text.replace(/\s+/g, ''), expected.replace(/\s+/g, ''))
+  assert.equal(agentEvidence.visionRequestsDuringOcr, 0)
+  assert.equal(agentEvidence.toolCalls, 1)
+  await page.locator('.vr-ia-nav').getByRole('button', { name: /本地与设备|Local & device/ }).click()
+  const panel = page.locator('.vr-ia-main')
+  const download = panel.getByRole('button', { name: /下载并安装 PP-OCRv6|Download and install PP-OCRv6/ })
+  const remove = panel.getByRole('button', { name: /卸载 PP-OCRv6|Remove PP-OCRv6/ })
+  await waitEnabled(remove)
   page.once('dialog', dialog => dialog.accept())
   await remove.click()
   await waitEnabled(download)
@@ -155,10 +189,11 @@ export async function exerciseExactDesktopOcr(page, context) {
     schemaVersion: 1, target, archiveSha256: info.archive.sha256, workerSha256: info.workerSha256,
     realDesktopHost: true, realElectronRenderer: true, actualGuiClicks: true,
     injectedHttps: true, actualPublicHttps: false, realInstaller: true, realWorker: true,
-    installedWorkerSupervisorOcr: true, hostAgentOcrToolVerified: false,
+    installedWorkerSupervisorOcr: true, hostAgentOcrToolVerified: true,
+    agentEvidence,
     actualRecognition: recognized.text, confidence: recognized.confidence,
     phases: ['fresh-home', 'download-busy', 'corrupt-download-error', 'refresh-retry',
-      'verified-install-status', 'installed-payload-readback', 'installed-worker-ocr', 'gui-uninstall'],
+      'verified-install-status', 'installed-payload-readback', 'installed-worker-ocr', 'agent-vision-ocr-returned-ncnn', 'gui-uninstall'],
     distributionReady: false, ownerPublicationAuthorized: false
   }
   writeFileSync(process.env.DVR_NATIVE_OCR_DESKTOP_REPORT, JSON.stringify(evidence, null, 2) + '\n', { flag: 'wx' })

@@ -48,7 +48,10 @@ runs:
         test "$(git rev-parse HEAD)" = "${{ steps.pin.outputs.sha }}"
         pnpm install --frozen-lockfile
         pnpm run build
-    - name: Exact native OCR through real Desktop settings and worker
+    - name: Verify exact OCR tool evidence discrimination
+      shell: bash
+      run: node --test quality/test-native-ocr-desktop-acceptance.mjs
+    - name: Exact native OCR through real Desktop settings and Agent tool
       working-directory: dsh-ocr-host
       shell: bash
       env:
