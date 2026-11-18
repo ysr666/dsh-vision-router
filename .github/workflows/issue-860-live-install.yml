@@ -12,8 +12,17 @@ concurrency:
   group: issue-860-live-install-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  rc4-live-install:
+  shop-present-live-install:
+    name: Shop 0.9.4 present / ${{ matrix.version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '0.2.2-rc.1'
+            sha: 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
+          - version: '0.2.2-rc.4'
+            sha: 3f321d32bfe382212a8ed8785c1d47a5a300aa23
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -23,7 +32,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: 3f321d32bfe382212a8ed8785c1d47a5a300aa23
+          ref: ${{ matrix.sha }}
           persist-credentials: false
           path: dsh
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
@@ -45,4 +54,6 @@ jobs:
         working-directory: dsh
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
+          DSH_EXPECTED_VERSION: ${{ matrix.version }}
+          DVR_860_WITH_SHOP: '1'
         run: node ../dvr/scripts/dsh-issue-860-live-install.mjs

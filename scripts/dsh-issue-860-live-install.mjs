@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -12,7 +12,14 @@ import { setTimeout as delay } from 'node:timers/promises'
 // No Shop UI, mocked pnpm, source install, existing user profile or restart.
 const root = resolve(process.env.DSH_SOURCE_ROOT || '')
 assert.ok(process.env.DSH_SOURCE_ROOT, 'DSH_SOURCE_ROOT required')
-const expected = '3f321d32bfe382212a8ed8785c1d47a5a300aa23'
+const versions = Object.freeze({
+  '0.2.2-rc.1': '66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db',
+  '0.2.2-rc.4': '3f321d32bfe382212a8ed8785c1d47a5a300aa23',
+})
+const version = process.env.DSH_EXPECTED_VERSION || '0.2.2-rc.4'
+const expected = versions[version]
+assert.ok(expected,'unreviewed Host version')
+const withShop = process.env.DVR_860_WITH_SHOP === '1'
 assert.equal(execFileSync('git', ['-C',root,'rev-parse','HEAD'], {encoding:'utf8'}).trim(), expected)
 const spec = 'dsh-vision-router@3.4.0'
 const name = 'dsh-vision-router'
@@ -28,7 +35,20 @@ const env = {
   DEEPSEEK_API_KEY: 'keyless-dvr-860-no-call',
   TSX_TSCONFIG_PATH: join(root,'tsconfig.json'),
 }
-const child = spawn(process.execPath, ['--import',loader,join(root,'apps/cli/src/bin.ts'),'web','--no-open','--port','0'],
+let child
+if (withShop) {
+  // The Shop is a pre-existing bundle in the reporter's configuration.
+  // The live RPC still targets the Host manager, not a mocked Shop UI.
+  const setup = spawnSync(process.execPath, ['--import',loader,join(root,'apps/cli/src/bin.ts'),'plugin','--profile','web','add','dsh-plugin-shop@0.9.4'],
+    {cwd:root,env,encoding:'utf8',timeout:480_000})
+  if (setup.status !== 0) {
+    console.error('DVR_860_SHOP_SETUP_FAILURE='+JSON.stringify({status:setup.status,signal:setup.signal,message:redact(setup.error?.message ?? '')}))
+    console.error(redact((setup.stdout ?? '')+'\n'+(setup.stderr ?? '')).slice(-16000))
+    rmSync(temp,{recursive:true,force:true})
+    process.exit(1)
+  }
+}
+child = spawn(process.execPath, ['--import',loader,join(root,'apps/cli/src/bin.ts'),'web','--no-open','--port','0'],
   { cwd: temp, env, stdio: ['ignore','pipe','pipe'] })
 const logs = []
 let launchUrl
@@ -109,6 +129,16 @@ try {
   await auth.body?.cancel()
   origin=url.origin
   phase='initial-state'
+  if (withShop) {
+    const installed = await rpc('pluginManager/listBundles',{})
+    const shop=installed.find(row=>row.name==='dsh-plugin-shop')
+    assert.equal(shop?.version,'0.9.4','Shop version')
+    assert.equal(shop?.installed,true,'Shop must be installed')
+    assert.equal(shop?.enabled,true,'Shop must be enabled')
+    assert.ok(!shop.error,'Shop must load without a bundle error')
+    assert.ok(shop.rows?.some(row=>row.rowId==='shop' && row.entryId),'Shop must have a real loader entry')
+    console.log('DVR_860_SHOP='+JSON.stringify({version:shop.version,installed:shop.installed,enabled:shop.enabled}))
+  }
   assert.notEqual((await bundles())?.installed,true,'DVR must start absent')
   assert.notEqual((await route('/_dsh/vision-router/logs')).status,200,'DVR route must start absent')
   phase='hot-install'
@@ -133,7 +163,7 @@ try {
   assert.equal(on?.application,'applied')
   assert.equal((await bundles())?.enabled,true)
   await assertHealthy()
-  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:'0.2.2-rc.4',hostSha:expected,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
+  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,shop:withShop?'0.9.4':null,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
 } catch (error) {
   console.error('DVR_860_FAILURE='+JSON.stringify({phase,message:redact(error?.stack ?? error)}))
   console.error(logs.join('\n'))
