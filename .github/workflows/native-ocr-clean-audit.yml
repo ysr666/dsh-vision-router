@@ -7,6 +7,8 @@ on:
       - 'quality/native-ocr-canonical-labels.py'
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'
+      - 'quality/native-ocr-delivery-preflight.py'
+      - 'quality/test-native-ocr-delivery-preflight.py'
       - 'quality/test-native-ocr-staged-acceptance.mjs'
       - 'quality/test-native-ocr-release-stage.mjs'
       - 'quality/native-ocr-windows-reproduce-crt.py'
@@ -121,6 +123,7 @@ jobs:
           root="$RUNNER_TEMP/dvr-native-worker"
           node --test quality/test-native-ocr-staged-acceptance.mjs
           node quality/native-ocr-staged-acceptance.mjs --stage "$root/release-stage" --bmp "$root/synthetic.bmp" --expected 'TEST 123' --report "$root/release-stage/acceptance-evidence.json"
+          python3 -I quality/native-ocr-delivery-preflight.py --target darwin-arm64 --archive "$root/release-stage/ppocrv6-small-darwin-arm64.tar.gz" --staging-evidence "$root/release-stage/staging-evidence.json" --report "$root/release-stage/archive-audit-evidence.json"
       - name: Save Mac evidence only (no worker, models or images)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -130,6 +133,7 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/conversion/conversion-evidence.json
             ${{ runner.temp }}/dvr-native-worker/release-stage/staging-evidence.json
             ${{ runner.temp }}/dvr-native-worker/release-stage/acceptance-evidence.json
+            ${{ runner.temp }}/dvr-native-worker/release-stage/archive-audit-evidence.json
           if-no-files-found: error
 
   windows-worker:
@@ -207,6 +211,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'STAGED_ACCEPTANCE_TEST_FAILED' }
           node quality/native-ocr-staged-acceptance.mjs --stage "$env:RUNNER_TEMP/dvr-win-release-stage" --bmp "$env:RUNNER_TEMP/dvr-native-worker/synthetic.bmp" --expected 'HELLO 123' --report "$env:RUNNER_TEMP/dvr-win-release-stage/acceptance-evidence.json"
           if ($LASTEXITCODE -ne 0) { throw 'STAGED_ACCEPTANCE_FAILED' }
+          python -I quality/native-ocr-delivery-preflight.py --target win32-x64 --archive "$env:RUNNER_TEMP/dvr-win-release-stage/ppocrv6-small-win32-x64.tar.gz" --staging-evidence "$env:RUNNER_TEMP/dvr-win-release-stage/staging-evidence.json" --report "$env:RUNNER_TEMP/dvr-win-release-stage/archive-audit-evidence.json"
+          if ($LASTEXITCODE -ne 0) { throw 'STAGED_ARCHIVE_AUDIT_FAILED' }
       - name: Save final Windows staging evidence only
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -217,6 +223,7 @@ jobs:
             ${{ runner.temp }}/dvr-remediated-windows/smoke-evidence.json
             ${{ runner.temp }}/dvr-win-release-stage/staging-evidence.json
             ${{ runner.temp }}/dvr-win-release-stage/acceptance-evidence.json
+            ${{ runner.temp }}/dvr-win-release-stage/archive-audit-evidence.json
           if-no-files-found: ignore
       - name: Verify canonical staging models
         shell: pwsh

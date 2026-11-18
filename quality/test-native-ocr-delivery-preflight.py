@@ -80,6 +80,39 @@ class Cases(unittest.TestCase):
     def test_ledger_promotion(self):
         args=self.fixture('darwin-arm64');args[2]['gates']['ownerPublicationAuthorized']=True
         with self.assertRaisesRegex(ValueError,'UNEXPECTED_GATE_PROMOTION'):m.verify(*args)
+    def test_current_stage_ledger_rejects_wrong_mac_archive_or_gate(self):
+        target = 'darwin-arm64'
+        stage = {'schemaVersion': 1, 'target': target, 'workerSha256': m.STAGED_WORKERS[target],
+                 'archive': {'name': 'ppocrv6-small-darwin-arm64.tar.gz', 'bytes': 27917268, 'sha256': m.MAC_REPLAY_SHA},
+                 'members': 13, 'archiveReplayMatch': True, 'modelOrigin': 'windows-canonical',
+                 'distributionReady': False, 'ownerPublicationAuthorized': False,
+                 'exactArchiveDesktopGuiVerified': False, 'minimumOsRuntimeVerified': False,
+                 'manifest': {'worker': {'sha256': m.STAGED_WORKERS[target]}, 'distributionReady': False},
+                 'sbomSha256': 'a'*64}
+        self.assertEqual(m.staged_ledger(target, stage)['platforms'][target]['sha256'], m.MAC_REPLAY_SHA)
+        wrong = copy.deepcopy(stage); wrong['archive']['sha256'] = 'b'*64
+        with self.assertRaisesRegex(ValueError, 'STAGE_MAC_REPLAY_IDENTITY'): m.staged_ledger(target, wrong)
+        wrong = copy.deepcopy(stage); wrong['distributionReady'] = True
+        with self.assertRaisesRegex(ValueError, 'STAGE_UNEXPECTED_GATE'): m.staged_ledger(target, wrong)
+
+    def test_stage_checks_independent_crt_evidence_not_just_manifest(self):
+        def fixture(old):
+            stage = {}
+            def mutate(data, ledger, manifest, sbom):
+                values = dict(m.INDEPENDENT_CRT_PROPERTIES)
+                if old:
+                    values['dvr:crt-replacement-archive-sha256'] = '0'*64
+                sbom['components'] = [{'bom-ref': 'mingw', 'properties': [{'name': k, 'value': v} for k,v in values.items()]}]
+                data['SBOM.cdx.json'] = json.dumps(sbom).encode()
+                manifest['files']['SBOM.cdx.json'] = {'bytes': len(data['SBOM.cdx.json']), 'sha256': m.sha(data['SBOM.cdx.json'])}
+                data['MANIFEST.json'] = json.dumps(manifest).encode()
+                stage.update(manifest=manifest, sbomSha256=m.sha(data['SBOM.cdx.json']))
+            return self.fixture('win32-x64', mutate), stage
+        args, stage = fixture(False)
+        self.assertTrue(m.verify(*args, stage=stage)['independentTarReader'])
+        args, stage = fixture(True)
+        with self.assertRaisesRegex(ValueError, 'STAGE_CRT_EVIDENCE'): m.verify(*args, stage=stage)
+
     def test_duplicate_json_key(self):
         with self.assertRaisesRegex(ValueError,'DUPLICATE_JSON_KEY'):m.json_unique(b'{"x": 1, "x": 2}')
 
