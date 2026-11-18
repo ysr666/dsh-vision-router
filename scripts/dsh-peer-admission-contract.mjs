@@ -45,6 +45,7 @@ const admitted = [
   '0.2.2-rc.1',
   '0.2.2-rc.2',
   '0.2.2-rc.3',
+  '0.2.2-rc.4',
   '0.2.99-rc.1',
   '0.2.99',
 ]
@@ -80,7 +81,7 @@ const conflictingPeerManifest = {
   },
 }
 for (const version of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2',
-  '0.2.2-rc.3', '0.2.2-alpha.3']) {
+  '0.2.2-rc.3', '0.2.2-rc.4', '0.2.2-alpha.3']) {
   assert.equal(evaluatePluginCompatibility(conflictingPeerManifest, {}, version), undefined,
     'supported Host ' + version + ' must prefer engines.dsh over synthetic peers')
   const badEngineManifest = {

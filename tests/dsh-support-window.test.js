@@ -18,7 +18,7 @@ test('DVR 3.2 declares a new DSH/Node floor without confusing rc and stable', ()
   assert.equal(DSH_SUPPORTED_RANGE, '>=0.2.1-rc.5 <0.3.0-0')
   assert.deepEqual(DSH_VERIFICATION_EVIDENCE, {
     exactFloor: '0.2.1-rc.5', exactRecommended: '0.2.2-rc.1',
-    exactVerified: ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3'],
+    exactVerified: ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4'],
     stableCanaryDistTag: 'latest', nextCanaryDistTag: 'next',
     previewCanaryDistTag: 'alpha',
   })
@@ -45,14 +45,14 @@ test('Doctor excludes retired DSH releases even if attachment capabilities are p
     assert.equal(r.code, 'HOST_BELOW_CURRENT_FLOOR_VERSION', hostVersion)
     assert.equal(r.level, 'required')
   }
-  for (const hostVersion of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3']) {
+  for (const hostVersion of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4']) {
     assert.equal(supportWindowUpgradeAdvice(fullCapabilities,
       { ...verified, hostVersion }).level, 'ok', hostVersion)
   }
 })
 
 test('admitted future or preview releases are unknown until exact Host/Node gates run', () => {
-  for (const hostVersion of ['0.2.1', '0.2.2-alpha.1', '0.2.2-alpha.3', '0.2.2-rc.4', '0.2.3-rc.1', '0.2.99']) {
+  for (const hostVersion of ['0.2.1', '0.2.2-alpha.1', '0.2.2-alpha.3', '0.2.2-rc.5', '0.2.3-rc.1', '0.2.99']) {
     const value = supportWindowUpgradeAdvice(fullCapabilities, { ...verified, hostVersion })
     assert.equal(value.level, 'unknown', hostVersion)
     assert.equal(value.code, 'HOST_FORWARD_RELEASE_UNVERIFIED', hostVersion)
@@ -84,7 +84,7 @@ test('Doctor text distinguishes published recommended RC from stable host', () =
   const lines = formatDshSupportWindowLines(fullCapabilities, verified)
   assert.ok(lines.some((line) => line.includes('minimum supported Host: 0.2.1-rc.5')))
   assert.ok(lines.some((line) => line.includes('current recommended Host: 0.2.2-rc.1')))
-  assert.ok(lines.some((line) => line.includes('verified exact Host releases: 0.2.1-rc.5, 0.2.2-rc.1, 0.2.2-rc.2, 0.2.2-rc.3')))
+  assert.ok(lines.some((line) => line.includes('verified exact Host releases: 0.2.1-rc.5, 0.2.2-rc.1, 0.2.2-rc.2, 0.2.2-rc.3, 0.2.2-rc.4')))
   assert.ok(lines.some((line) => line.includes('minimum supported Node.js: 24.9.0')))
   assert.ok(lines.some((line) => line.includes('HOST_CURRENT_FLOOR_CAPABLE')))
   assert.equal(Object.isFrozen(lines), true)

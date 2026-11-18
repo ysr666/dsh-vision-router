@@ -15,7 +15,7 @@ const tsxLoader = pathToFileURL(dshRequire.resolve('tsx')).href
 const cli = join(dshRoot, 'apps/cli/src/bin.ts')
 const candidateSpec = String(process.env.DVR_SMOKE_PACKAGE_SPEC ?? '').trim()
 const publishedVersion = String(process.env.DVR_SMOKE_PUBLISHED_VERSION ?? '').trim()
-const reviewedPublishedVersions = new Set(['3.2.0', '3.2.1'])
+const reviewedPublishedVersions = new Set(['3.2.0', '3.2.1', '3.4.0'])
 if (publishedVersion && !reviewedPublishedVersions.has(publishedVersion)) {
   throw new Error('DVR_SMOKE_PUBLISHED_VERSION must be an explicitly reviewed immutable published version')
 }

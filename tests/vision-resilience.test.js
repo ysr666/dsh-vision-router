@@ -379,6 +379,15 @@ function mockVisionCtx({ key = 'sk-first', behaviors = {}, channelProfiles = DEF
         })
         return
       }
+      if (behavior === 'refusal-finish' || behavior === 'refusal-throw') {
+        const failure = { code: 'CONTENT_REFUSED', message: 'Content policy declined' }
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'text-delta', index: 0, text: 'UNCOMMITTED_PARTIAL' }
+        yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17 } }
+        if (behavior === 'refusal-throw') throw Object.assign(new Error(failure.message), failure)
+        yield { type: 'finish', reason: { kind: 'error', failure } }
+        return
+      }
       if (behavior.startsWith('fail:')) {
         const message = behavior.slice('fail:'.length)
         const code = /\b401\b/.test(message) ? 'AUTH' : /\b429\b/.test(message) ? 'RATE_LIMIT' : 'SERVER'
@@ -1495,3 +1504,63 @@ test('whole-turn text-only remote route retains its existing long first-provider
   assert.equal(parts.filter(x => x.type === 'text-delta').map(x => x.text).join(''), 'TEXT_ROUTE_NOT_PREMATURELY_ABORTED')
   assert.equal(parts.at(-1)?.reason?.kind, 'stop')
 })
+
+test('RC4 content refusal is nonretryable, not an outage or circuit trip', () => {
+  const failure = Object.assign(new Error('HTTP 503 service unavailable'), { code: 'CONTENT_REFUSED' })
+  const classified = classifyVisionFailure(failure)
+  assert.equal(classified.kind, 'CONTENT_REFUSED')
+  assert.equal(classified.retryableProvider, false)
+  const breaker = createVisionCircuitBreaker()
+  breaker.record('provider/model', 'key', classified, 'turn-1')
+  assert.equal(breaker.inspect('provider/model', 'key', 'turn-1').blocked, false)
+  assert.equal(breaker.inspect('provider/model', 'key', 'turn-2').blocked, false)
+  assert.equal(resultCodeForKinds(['CONTENT_REFUSED']), 'VISION_CONTENT_REFUSED')
+})
+
+for (const behavior of ['refusal-finish', 'refusal-throw']) {
+  test('RC4 describe preserves ' + behavior + ' without bridge or model fallback', async () => {
+    const behaviors = {
+      'qwen-a/qwen3.6-flash': behavior,
+      'qwen-b/qwen3.6-plus': 'text:SHOULD_NOT_RUN',
+    }
+    const mock = await applyAndMount(visionConfig(), { behaviors })
+    const refused = JSON.parse(await runDescribe(mock))
+    assert.equal(refused.code, 'VISION_CONTENT_REFUSED')
+    assert.equal(refused.ok, false)
+    assert.equal(refused.retryable, false)
+    assert.equal(refused.attemptedProviders[0].kind, 'CONTENT_REFUSED')
+    assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+    assert.equal(mock.calls.get('qwen-b/qwen3.6-plus') ?? 0, 0)
+    assert.doesNotMatch(JSON.stringify(refused), /UNCOMMITTED_PARTIAL/)
+    // A subsequent independent request must not inherit an outage or cache.
+    behaviors['qwen-a/qwen3.6-flash'] = 'text:RECOVERED'
+    assert.match(await runDescribe(mock, { question: 'Different image question' }, 2), /RECOVERED/)
+  })
+
+  test('RC4 whole-turn chain preserves ' + behavior + ' and billed usage without fallback', async () => {
+    const mock = await applyAndMount(visionConfig({ routing: true }), {
+      behaviors: {
+        'qwen-a/qwen3.6-flash': behavior,
+        'qwen-b/qwen3.6-plus': 'text:SHOULD_NOT_RUN',
+      },
+    })
+    const chain = mock.adapters.get('vision-chain')
+    assert.ok(chain)
+    const chunks = []
+    for await (const chunk of chain.stream({
+      provider: 'vision-chain',
+      model: 'qwen-a/qwen3.6-flash',
+      messages: [{ role: 'user', content: [
+        { type: 'image', attachment: { attachmentId: IMG_ID, mediaType: 'image/png' } },
+        { type: 'text', text: 'Recognize this image' },
+      ] }],
+      signal: AbortSignal.timeout(3000),
+    })) chunks.push(chunk)
+    assert.equal(mock.calls.get('qwen-a/qwen3.6-flash'), 1)
+    assert.equal(mock.calls.get('qwen-b/qwen3.6-plus') ?? 0, 0)
+    assert.equal(chunks.filter(chunk => chunk.type === 'finish').length, 1)
+    assert.equal(chunks.at(-1).reason.failure.code, 'CONTENT_REFUSED')
+    assert.equal(chunks.filter(chunk => chunk.type === 'usage').length, 1)
+    assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').length, 0)
+  })
+}

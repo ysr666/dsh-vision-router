@@ -35,6 +35,7 @@ export const VISION_FAILURE_KINDS = {
   TOS: 'TOS',
   NO_ADAPTER: 'NO_ADAPTER',
   REPETITION: 'REPETITION',
+  CONTENT_REFUSED: 'CONTENT_REFUSED',
   OTHER: 'OTHER',
 }
 
@@ -46,6 +47,7 @@ export const VISION_RESULT_CODES = {
   BACKEND_UNAVAILABLE: 'VISION_BACKEND_UNAVAILABLE',
   BACKEND_UNAVAILABLE_THIS_TURN: 'VISION_BACKEND_UNAVAILABLE_THIS_TURN',
   UNSUPPORTED_BACKEND: 'VISION_UNSUPPORTED_BACKEND',
+  CONTENT_REFUSED: 'VISION_CONTENT_REFUSED',
 }
 
 export const VISION_DO_NOT_RETRY_ADVICE =
@@ -121,6 +123,7 @@ const CODE_KIND_MAP = {
   TRANSPORT: VISION_FAILURE_KINDS.NETWORK,
   SERVER: VISION_FAILURE_KINDS.SERVER,
   EMPTY_RESPONSE: VISION_FAILURE_KINDS.SERVER,
+  CONTENT_REFUSED: VISION_FAILURE_KINDS.CONTENT_REFUSED,
   INVALID_REQUEST: VISION_FAILURE_KINDS.INVALID_REQUEST,
   NO_ADAPTER: VISION_FAILURE_KINDS.NO_ADAPTER,
 }
@@ -647,6 +650,17 @@ export function buildVisionFailure({
   }
 }
 
+/** A refusal is request-specific, not evidence of a backend outage. */
+export function buildVisionContentRefused(backend) {
+  const reason = 'The vision provider declined this request under its content policy.'
+  return buildVisionFailure({
+    code: VISION_RESULT_CODES.CONTENT_REFUSED,
+    reason,
+    attempted: [{ backend, kind: VISION_FAILURE_KINDS.CONTENT_REFUSED, error: reason }],
+    advice: 'Tell the user the provider declined this request. Do not automatically retry, rephrase or forward the same request to another model.',
+  })
+}
+
 /** Pick the result code that best explains a set of per-backend failure kinds. */
 export function resultCodeForKinds(kinds) {
   const set = new Set(kinds)
@@ -655,6 +669,7 @@ export function resultCodeForKinds(kinds) {
     if (only === VISION_FAILURE_KINDS.AUTH) return VISION_RESULT_CODES.AUTH_FAILED
     if (only === VISION_FAILURE_KINDS.RATE_LIMIT) return VISION_RESULT_CODES.RATE_LIMITED
     if (only === VISION_FAILURE_KINDS.TIMEOUT) return VISION_RESULT_CODES.TIMEOUT
+    if (only === VISION_FAILURE_KINDS.CONTENT_REFUSED) return VISION_RESULT_CODES.CONTENT_REFUSED
   }
   return VISION_RESULT_CODES.BACKEND_UNAVAILABLE
 }

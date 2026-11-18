@@ -16,7 +16,7 @@ The published `engines.dsh` train allows later 0.2.x releases, including
 prereleases, as a compatibility *admission policy*; it cannot guarantee their
 runtime behavior. Doctor distinguishes **admitted**, **exact-release verified** and **recommended** Hosts.
 The exact-source/real-Host gates have verified `0.2.1-rc.5`, `0.2.2-rc.1`,
-`0.2.2-rc.2` and `0.2.2-rc.3` on the exercised Node 24 matrix. The conservative
+`0.2.2-rc.2`, `0.2.2-rc.3` and `0.2.2-rc.4` on the exercised Node 24 matrix (see [RC4 exact-source evidence](../compatibility/dsh-0.2.2-rc4-audit.md)). The conservative
 **recommended** Host remains `0.2.2-rc.1`: verification of a newer prerelease
 is not, by itself, a recommendation to upgrade. Future/unpinned 0.2.x Hosts
 and Node 25+ are marked `unknown`, not `ok`, until separately validated. This does not rewrite the Host admission range
@@ -24,18 +24,18 @@ or block a user whose separately reviewed deployment works.
 
 The active compatibility CI is organized by responsibility: the **minimum Host**
 (`0.2.1-rc.5`), the **recommended Host** (`0.2.2-rc.1`) and the **latest
-qualified RC** (`0.2.2-rc.3`) retain normal automated gates. The RC2 full
-matrix is preserved for explicit `workflow_dispatch` replay, with its prior
-immutable verification recorded; it no longer duplicates every PR/main run.
+qualified RC** (`0.2.2-rc.4`) retain normal automated gates. The RC2 and RC3 full
+matrices are preserved for explicit `workflow_dispatch` replay, with their prior
+immutable verification recorded; they no longer duplicate every PR/main run.
 All three Host gates now run as reusable workflows inside the branch-protected
-`CI` for **Host-impacting changes**: minimum RC5, recommended RC1, and latest RC3.
+`CI` for **Host-impacting changes**: minimum RC5, recommended RC1, and latest RC4.
 Both mandatory `contract` checks wait for their aggregate results and explicitly
 reject failure, cancellation, skipped Host verification, or failed classification.
 A reviewed trusted-base classifier alone can exempt Markdown-only documentation
 or a version-only package change, and in that case all three heavy gates must be
 skipped, never faked as passed. An unexpected/unknown path fails closed to heavy.
-The RC1/RC3 concurrency groups are distinct from CI to prevent self-cancellation.
-This is a CI scheduling policy, not a withdrawal of RC2 compatibility evidence.
+The RC1/RC4 concurrency groups are distinct from CI to prevent self-cancellation.
+This is a CI scheduling policy, not a withdrawal of RC2 or RC3 compatibility evidence. Doctor's exactVerified list now includes RC4 using the recorded successful candidate evidence; this is not a claim about every published DVR artifact.
 When the recommendation or latest RC advances, move the active lane instead
 of permanently adding another full automatic historical matrix.
 
