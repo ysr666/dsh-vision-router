@@ -3,12 +3,16 @@ Windows x64 and macOS ARM64. No upload, installation, private images or release.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import platform
 import shutil
 import subprocess
+import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -65,18 +69,47 @@ def graph_fingerprint(path):
     return hashlib.sha256(json.dumps([graph,endpoints],separators=(',',':')).encode()).hexdigest()
 
 
+def retryable_download_error(error):
+    # Retry only transient transport failures, never a trust/integrity error.
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in (408, 429, 500, 502, 503, 504)
+    if isinstance(error, urllib.error.URLError):
+        error = error.reason
+    return isinstance(error, (TimeoutError, ConnectionError, http.client.IncompleteRead))
+
+
 def acquire(url, dest, expected):
+    if not url.startswith('https://'):
+        raise RuntimeError('NON_HTTPS_SOURCE')
+    if dest.exists() or dest.is_symlink():
+        raise FileExistsError(dest)
     request = urllib.request.Request(url, headers={'User-Agent': 'DVR-native-OCR-clean-audit/1'})
-    with urllib.request.urlopen(request, timeout=60) as response, dest.open('xb') as output:
-        if not response.geturl().startswith('https://'):
-            raise RuntimeError('NON_HTTPS_SOURCE')
-        size = 0
-        while chunk := response.read(1024 * 1024):
-            size += len(chunk)
-            if size > expected['bytes']:
-                raise RuntimeError('SOURCE_SIZE_EXCEEDED')
-            output.write(chunk)
-    return verify(dest, expected)
+    for attempt in range(1, 4):
+        # Fresh temporary file for every attempt; never reuse partial bytes.
+        # It is on the destination filesystem for no-clobber promotion.
+        with tempfile.TemporaryDirectory(prefix='.dvr-download-', dir=dest.parent) as staging:
+            partial = Path(staging) / 'input'
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response, partial.open('xb') as output:
+                    if not response.geturl().startswith('https://'):
+                        raise RuntimeError('NON_HTTPS_SOURCE')
+                    size = 0
+                    while chunk := response.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > expected['bytes']:
+                            raise RuntimeError('SOURCE_SIZE_EXCEEDED')
+                        output.write(chunk)
+            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as error:
+                if attempt == 3 or not retryable_download_error(error):
+                    raise
+                print(f'SOURCE_DOWNLOAD_RETRY attempt={attempt} error={type(error).__name__}', flush=True)
+            else:
+                actual = verify(partial, expected)
+                # Atomic publication without overwriting an existing file.
+                # Failure is explicit on filesystems without hardlink support.
+                os.link(partial, dest)
+                return actual
+        time.sleep(2 ** attempt)
 
 def main():
     parser = argparse.ArgumentParser()

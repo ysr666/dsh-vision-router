@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'quality/native-ocr-clean-conversion.py'
+      - 'quality/test-native-ocr-clean-download.py'
       - 'quality/native-ocr-candidate-*.py'
       - 'quality/native-ocr-candidate-models.json'
       - 'quality/native-ocr-candidate-*.ps1'
@@ -26,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Verify bounded native input downloads
+        run: python -I quality/test-native-ocr-clean-download.py
       - name: Reacquire and match all five native model assets
         shell: pwsh
         run: python -I quality/native-ocr-clean-conversion.py --work-dir "$env:RUNNER_TEMP/dvr-ocr-conversion"
@@ -42,6 +45,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Verify bounded native input downloads
+        run: python3 -I quality/test-native-ocr-clean-download.py
       - name: Build from pinned ncnn source on clean Apple Silicon
         shell: bash
         run: |
