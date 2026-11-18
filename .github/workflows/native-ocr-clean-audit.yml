@@ -4,6 +4,9 @@ on:
     paths:
       - 'quality/native-ocr-clean-conversion.py'
       - 'quality/test-native-ocr-clean-download.py'
+      - 'quality/native-ocr-crt-reconstruct-LAB.py'
+      - 'quality/test-native-ocr-crt-reconstruction.py'
+      - 'quality/native-ocr-mingw-source-evidence.json'
       - 'quality/native-ocr-candidate-*.py'
       - 'quality/native-ocr-candidate-models.json'
       - 'quality/native-ocr-candidate-*.ps1'
@@ -143,4 +146,32 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/candidate-link-map.txt
             ${{ runner.temp }}/dvr-native-worker/candidate-link-trace.txt
             ${{ runner.temp }}/dvr-native-worker/link-inventory.json
+          if-no-files-found: error
+
+  crt-reconstruction:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify CRT reconstruction helpers
+        run: python3 -I quality/test-native-ocr-crt-reconstruction.py
+      - name: Regenerate historical stock evidence and reconstruct selected CRT objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/dvr-crt-inputs"
+          mkdir -p "$root"
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/mingw-source.tar.gz" https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/0d6dfbc348dfad714761c0a7151615767f96bcb5
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/llvm-mac.tar.xz" https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-macos-universal.tar.xz
+          curl --fail --location --silent --show-error --retry 2 --max-time 300 --output "$root/llvm-win.zip" https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/llvm-mingw-20261020-ucrt-x86_64.zip
+          python3 -I quality/native-ocr-crt-reconstruct-LAB.py --repo "$PWD" --source-tar "$root/mingw-source.tar.gz" --compiler-tar "$root/llvm-mac.tar.xz" --stock-windows-zip "$root/llvm-win.zip" --out "$RUNNER_TEMP/dvr-crt-source-reconstruction"
+      - name: Save reconstructed CRT evidence only (no object archives or binaries)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-crt-reconstruction-evidence
+          path: |
+            ${{ runner.temp }}/dvr-crt-source-reconstruction/crt-reconstruction-evidence.json
+            ${{ runner.temp }}/dvr-crt-source-reconstruction/stock-crt/stock-crt-normalized-coff.json
           if-no-files-found: error
