@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, mkdir, writeFile, readFile, rm, utimes, chmod, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, truncate, rm, utimes, chmod, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -43,9 +43,19 @@ test('native OCR archive is byte-identical across paths, order, modes and times'
       await assert.rejects(deterministicNativeOcrArchive(join(root, '0'), [bad]), /member name/)
     }
     await assert.rejects(deterministicNativeOcrArchive(root, ['ppocrv6-small']), /member name/)
+    const tooBig = join(root, '0', 'ppocrv6-small', 'too-big')
+    await writeFile(tooBig, '')
+    await truncate(tooBig, 32 * 1024 * 1024 + 1)
+    await assert.rejects(deterministicNativeOcrArchive(join(root, '0'), ['ppocrv6-small/too-big']), /size or type/)
     if (process.platform !== 'win32') {
       await symlink(join(root, '0', names[0]), join(root, '0', 'ppocrv6-small/link'))
-      await assert.rejects(deterministicNativeOcrArchive(join(root, '0'), ['ppocrv6-small/link']), /size or type/)
+      await assert.rejects(deterministicNativeOcrArchive(join(root, '0'), ['ppocrv6-small/link']))
+      await mkdir(join(root, 'linked'))
+      await symlink(join(root, '0', 'ppocrv6-small'), join(root, 'linked', 'ppocrv6-small'), 'dir')
+      await assert.rejects(deterministicNativeOcrArchive(join(root, 'linked'), names), /directory size or type/)
+      const fifo = join(root, '0', 'ppocrv6-small', 'fifo')
+      assert.equal(spawnSync('mkfifo', [fifo]).status, 0)
+      await assert.rejects(deterministicNativeOcrArchive(join(root, '0'), ['ppocrv6-small/fifo']), /size or type/)
     }
   } finally { await rm(root, { recursive: true, force: true }) }
 })

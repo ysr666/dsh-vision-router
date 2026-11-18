@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { localNativeOcrInstallPaths, isOwnedNativeOcrDirectory } from './native-ocr-installation.js'
+import { localNativeOcrInstallPaths, isOwnedNativeOcrDirectory, moveOwnedNativeOcrDirectory } from './native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from './native-ocr-canary.js'
 import { verifyNativeOcrAssets } from './native-ocr-integrity.js'
 import { approvedNativeArchive, downloadVerifiedNativeArchive } from './native-ocr-download.js'
@@ -242,10 +242,8 @@ export async function uninstallNative({
   // to remove an optional installation. Require the installer-created
   // owner notice and exact managed directory instead of full model hashes.
   // Never mutate a system binary, a symlink, or an arbitrary caller path.
-  if (!await isOwnedNativeOcrDirectory(dest.root))
-    throw Error('refusing to remove unowned PP-OCRv6 installation')
   const tomb = dest.root + '.removing-' + randomUUID()
-  await rename(dest.root, tomb)
+  await moveOwnedNativeOcrDirectory(dest.root, tomb)
   await rm(tomb, { recursive: true, force: true })
   return { ok: true, installed: false, engine: 'ppocrv6' }
 }

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { localNativeOcrInstallPaths, isOwnedNativeOcrDirectory } from '../lib/native-ocr-installation.js'
+import { localNativeOcrInstallPaths, moveOwnedNativeOcrDirectory } from '../lib/native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
 import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
@@ -62,8 +62,7 @@ async function installFromSources(binary, sourceModels) {
     try {
       const existing = await lstat(dest.root)
       if (!existing.isDirectory() || existing.isSymbolicLink()) throw Error('unsafe existing OCR install directory')
-      if (!await isOwnedNativeOcrDirectory(dest.root)) throw Error('refusing to overwrite unowned OCR directory')
-      await rename(dest.root, previous)
+      await moveOwnedNativeOcrDirectory(dest.root, previous)
       movedPrevious = true
     } catch (err) {
       if (err?.code !== 'ENOENT') throw err

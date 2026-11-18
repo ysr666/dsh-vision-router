@@ -1,4 +1,5 @@
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
+import { readNativeOcrRegularFile, sameNativeOcrDirectory } from './native-ocr-installation.js'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
 
@@ -34,20 +35,27 @@ export async function deterministicNativeOcrArchive(workspace, names) {
     new Set(names).size !== names.length) throw Error('invalid native OCR tar member set')
   const parts = []
   let total = 0
+  const roots = new Map()
   for (const name of [...names].sort()) {
     if (typeof name !== 'string' || !/^ppocrv6-small\/(?:models\/)?[A-Za-z0-9._-]+$/.test(name) ||
       name.split('/').some(part => part === '.' || part === '..') || name.length > 100) {
       throw Error('invalid native OCR tar member name')
     }
-    const file = join(workspace, ...name.split('/'))
-    const info = await lstat(file)
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_MEMBER || total + info.size > MAX_TOTAL) {
-      throw Error('invalid native OCR tar member size or type')
+    const segments = name.split('/')
+    for (let i = 0; i < segments.length; i++) {
+      const dir = join(workspace, ...segments.slice(0, i))
+      const snapshot = await lstat(dir)
+      if (!sameNativeOcrDirectory(roots.get(dir) ?? snapshot, snapshot))
+        throw Error('invalid native OCR tar directory size or type')
+      roots.set(dir, snapshot)
     }
-    const bytes = await readFile(file)
-    if (bytes.length !== info.size) throw Error('native OCR tar member changed during read')
+    const file = join(workspace, ...segments)
+    const bytes = await readNativeOcrRegularFile(file, Math.min(MAX_MEMBER, MAX_TOTAL - total))
     total += bytes.length
     parts.push(header(name, bytes.length), bytes, Buffer.alloc((BLOCK - bytes.length % BLOCK) % BLOCK))
+  }
+  for (const [dir, snapshot] of roots) {
+    if (!sameNativeOcrDirectory(snapshot, await lstat(dir))) throw Error('native OCR tar directory changed during read')
   }
   parts.push(Buffer.alloc(BLOCK * 2))
   const result = gzipSync(Buffer.concat(parts), { level: 9 })
