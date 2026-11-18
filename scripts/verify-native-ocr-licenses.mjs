@@ -14,8 +14,13 @@ assert.match(ncnn, /BSD 3-Clause License/)
 assert.match(ncnn, /zlib License/)
 assert.match(ncnn, /BSD 2-Clause License/)
 const apache = read('assets/licenses/apache-2.0.txt')
+assert.equal(sha256(apache), 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30', 'Apache license bytes must match canonical Git blob')
+assert.equal(sha256(read('LICENSE')), '8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93', 'MIT license bytes must match canonical Git blob')
 assert.match(apache, /Apache License/)
 assert.match(apache, /Version 2\.0, January 2004/)
+const paddleLicense = read('assets/licenses/paddleocr-LICENSE.txt')
+assert.equal(sha256(paddleLicense), '3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e')
+assert.ok(paddleLicense.includes('Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.'))
 const llvmLicense = read('assets/licenses/llvm-mingw-LICENSE.txt')
 assert.equal(sha256(llvmLicense), '8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee')
 assert.match(llvmLicense, /LLVM Exceptions to the Apache 2\.0 License/)
@@ -23,6 +28,16 @@ const mingwRuntimeLicense = read('assets/licenses/mingw-w64-runtime-COPYING.txt'
 assert.equal(sha256(mingwRuntimeLicense), '1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f')
 assert.match(mingwRuntimeLicense, /MinGW-w64 runtime licensing/)
 assert.match(mingwRuntimeLicense, /Headers and IDLs imported from Wine/)
+const mingwSourceNotice = read('assets/licenses/mingw-w64-source-NOTICES.txt')
+assert.equal(sha256(mingwSourceNotice), '3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4')
+assert.match(mingwSourceNotice, /Upstream DISCLAIMER\.PD/)
+const runtimeNotice = read('assets/licenses/windows-native-runtime-NOTICES.txt')
+assert.equal(sha256(runtimeNotice), 'ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006')
+for (const name of ['libcxx','libcxxabi','libunwind','compiler-rt']) assert.ok(runtimeNotice.includes('LLVM '+name+' LICENSE.TXT'))
+assert.ok(runtimeNotice.includes('mingw-w64-crt/gdtoa/gdtoaimp.h'))
+const pthreadNotice = read('assets/licenses/mingw-pthread-signal-NOTICE.txt')
+assert.equal(sha256(pthreadNotice), 'fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802')
+assert.ok(pthreadNotice.includes('Copyright (c) 2013-2016  mingw-w64 project'))
 const notice = read('THIRD_PARTY_NOTICES.md')
 const provenance = JSON.parse(read('quality/native-ocr-provenance-LAB.json'))
 for (const key of ['detector','recognizer']) {
@@ -66,9 +81,10 @@ assert.equal(npm.status, 0,
   String(npm.error?.message ?? npm.stderr ?? 'npm pack failed').slice(-400))
 const files = JSON.parse(npm.stdout)[0].files.map(f=>f.path)
 for (const required of [
-  'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt',
+  'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt','assets/licenses/paddleocr-LICENSE.txt',
   'assets/licenses/llvm-mingw-LICENSE.txt','assets/licenses/mingw-w64-runtime-COPYING.txt',
-  'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',
+  'assets/licenses/mingw-w64-source-NOTICES.txt', 'assets/licenses/windows-native-runtime-NOTICES.txt',
+  'assets/licenses/mingw-pthread-signal-NOTICE.txt', 'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',
 ]) assert.ok(files.includes(required), 'missing license/installer from package: '+required)
 assert.equal(files.some(p=>/\.ncnn\.(?:bin|param)$|inference\.onnx|chemistry_user|native-ocr-lab(?:$|\.)|\.exe$|\.dylib$|\.so(?:\.|$)/.test(p)), false,
   'unexpected binary, model or private fixture in npm package')

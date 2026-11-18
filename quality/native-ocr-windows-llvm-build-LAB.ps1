@@ -1,7 +1,8 @@
 # Isolated Windows x64 LLVM-MinGW/PP-OCRv6 build. No download,
 # publishing, DSH installation, or modification of any system compiler.
 param([Parameter(Mandatory=$true)][string]$LabRoot,
-      [Parameter(Mandatory=$true)][string]$RepoRoot)
+      [Parameter(Mandatory=$true)][string]$RepoRoot,
+      [switch]$Candidate)
 $ErrorActionPreference='Stop'
 $tool=Join-Path $LabRoot 'toolchain\llvm-mingw-20261020-ucrt-x86_64'
 $zip=Join-Path $LabRoot 'llvm-mingw-20261020-ucrt-x86_64.zip'
@@ -56,13 +57,35 @@ $flags=@('-DCMAKE_BUILD_TYPE=Release',"-DCMAKE_C_COMPILER=$cc", "-DCMAKE_CXX_COM
  '-DNCNN_OPENMP=OFF','-DNCNN_VULKAN=OFF','-DNCNN_SHARED_LIB=OFF',
  '-DNCNN_PIXEL=ON','-DNCNN_BUILD_TOOLS=OFF','-DNCNN_BUILD_EXAMPLES=OFF',
  '-DNCNN_BUILD_TESTS=OFF','-DNCNN_BUILD_BENCHMARK=OFF')
+if($Candidate) {
+  # A candidate intentionally has a different identity from past owner-built
+  # workers. Suppress PE wall-clock timestamps and absolute build paths.
+  $env:SOURCE_DATE_EPOCH='1794700800'
+  $prefixFlags="-ffile-prefix-map=$LabRoot=/dvr-native -ffile-prefix-map=$RepoRoot=/dvr-src"
+  $flags+=@("-DCMAKE_C_FLAGS=$prefixFlags","-DCMAKE_CXX_FLAGS=$prefixFlags")
+}
 & $cmake -S $ncnn -B $build -G Ninja @flags *> (Join-Path $LabRoot 'llvm-cmake-private.log')
 if($LASTEXITCODE -ne 0){throw 'NCNN_CMAKE_FAILED'}
 & $cmake --build $build --target ncnn -j 6 *> (Join-Path $LabRoot 'llvm-build-private.log')
 if($LASTEXITCODE -ne 0){throw 'NCNN_BUILD_FAILED'}
 $out=Join-Path $LabRoot 'worker-llvm-header-static.exe'
-& $cxx -O2 -std=c++17 -static "-I$(Join-Path $ncnn 'src')" "-I$(Join-Path $build 'src')" $cpp (Join-Path $build 'src\libncnn.a') -o $out
-if($LASTEXITCODE -ne 0){throw 'WORKER_LINK_FAILED'}
+$linkFlags=@()
+if($Candidate){
+  $map=Join-Path $LabRoot 'candidate-link-map.txt'
+  $linkFlags+=@("-ffile-prefix-map=$LabRoot=/dvr-native","-ffile-prefix-map=$RepoRoot=/dvr-src",
+    '-Wl,--no-insert-timestamp',"-Wl,-Map,$map",'-v','-Wl,--verbose','-H')
+}
+& $cxx -O2 -std=c++17 -static @linkFlags "-I$(Join-Path $ncnn 'src')" "-I$(Join-Path $build 'src')" $cpp (Join-Path $build 'src\libncnn.a') -o $out > (Join-Path $LabRoot 'candidate-link-trace.txt') 2> (Join-Path $LabRoot 'candidate-wrapper-headers.txt')
+if($LASTEXITCODE -ne 0){Get-Content (Join-Path $LabRoot 'candidate-wrapper-headers.txt') -Tail 30 | Write-Output; throw 'WORKER_LINK_FAILED'}
+if($Candidate){
+  # Clang -v writes its full linker invocation to stderr, alongside -H.
+  # Keep the actual input command/diagnostics as evidence, not empty stdout.
+  $tracePath=Join-Path $LabRoot 'candidate-link-trace.txt'
+  $traceLines=@(Get-Content -LiteralPath $tracePath)+@(Get-Content -LiteralPath (Join-Path $LabRoot 'candidate-wrapper-headers.txt'))
+  $traceLines | Set-Content -Encoding utf8 -LiteralPath $tracePath
+  & $ninja -C $build -t deps | Set-Content -Encoding utf8 (Join-Path $LabRoot 'candidate-ninja-deps.txt')
+  if($LASTEXITCODE -ne 0){throw 'HEADER_INVENTORY_FAILED'}
+}
 $dump=& (Join-Path $bin 'llvm-objdump.exe') -p $out
 $imports=@($dump|Select-String 'DLL Name:'|ForEach-Object {$_.Line.Trim().Substring(10).Trim()})
 if($imports.Count -eq 0 -or @($imports|Where-Object {$_ -notmatch '^(KERNEL32\.dll|api-ms-win-crt-[a-z0-9-]+\.dll)$'}).Count -ne 0){throw 'UNEXPECTED_NON_SYSTEM_DLL'}

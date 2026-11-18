@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "scope": "Clean Apple Silicon CI source-to-object reconstruction; identity evidence only, not distribution approval.",
+  "head": "80a2387585211b000e4324164991302f42ec739b",
+  "run": 44237813756,
+  "job": 134578135292,
+  "artifact": 14398576584,
+  "evidenceZipSha256": "ef5dfaaa71350245bc00cd694794358b2defc8943e4c100dc80e13b2502b750c",
+  "reportSha256": "b10a66e205a299770237b042c20a5df2b49a3b5d5100c8b1eb0f12a68ca4a331",
+  "stockInventorySha256": "02a0118858bad374d4abb3f104c86b6a4ec737f8b559109eb74be61c4756e941",
+  "regeneratedStockObjects": 70,
+  "matchedReconstructedObjects": 68,
+  "helperTestsPassed": 12,
+  "uniqueDependencyPaths": 419,
+  "dependencyPathsByRoot": {
+    "toolchain": 340,
+    "source": 77,
+    "private-overlay": 1,
+    "build": 1
+  },
+  "legacyStdargPaths": [],
+  "riskHints": {
+    "toolchain/generic-w64-mingw32/include/math.h": [
+      {
+        "line": 822,
+        "text": "/* Implementations adapted from Cephes versions */"
+      }
+    ]
+  },
+  "replacementZipSha256": "4352197dadef779a8a6cc5cff0126a31d9f5968c43a09f273aa9fdd58f1dcf24",
+  "replacementManifestSha256": "ab1b59aafd377be81eaa738a5f3fa02ecb84647d1702f0d5794b046868315c41",
+  "replacementMemberBytes": 157851,
+  "artifactContainsBinaries": false,
+  "independentEvidenceReadback": true,
+  "sourceReconstructedZipRelinkVerified": false,
+  "distributionReady": false,
+  "exactStrippedObjectReplayMatches": 68,
+  "zeroCoffTimestamps": true,
+  "exactArchiveReplayMatch": true,
+  "sourceDateEpoch": 1794700800,
+  "independentRunnerArchiveReplayVerified": false,
+  "supersededNonDeterministicArchives": [
+    {
+      "head": "2efaa35502058f3a7dfe4c9dee8e8ced375e3424",
+      "sha256": "98923cb3f9e63aa9d72c3b06828799217e6bbef87b6f85e1c4195a157bc057b8"
+    },
+    {
+      "head": "46f6ede096f6770817e688ba926dc4b040fe730e",
+      "sha256": "a0a39c0a43af7ee7ebafbf7a37e2abd589a2f4a3ccf3418e6e64ca3e300bef56"
+    }
+  ]
+}

@@ -43,3 +43,43 @@ test('installer denies missing or unsupported artifacts before modifying local s
   ], { encoding: 'utf8' })
   assert.notEqual(output.status, 0)
 })
+
+test('native ownership check refuses unrelated directories and symbolic links', async () => {
+  const { isOwnedNativeOcrDirectory, moveOwnedNativeOcrDirectory, readNativeOcrRegularFile } = await import('../src/lib/native-ocr-installation.js')
+  const { mkdtemp, mkdir, writeFile, rm, symlink, readFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const dir = await mkdtemp(join(tmpdir(), 'dvr-native-owned-'))
+  try {
+    await writeFile(join(dir, 'unrelated'), 'must survive')
+    assert.equal(await isOwnedNativeOcrDirectory(dir), false)
+    await writeFile(join(dir, 'SOURCE-NOTICE.md'), '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    assert.equal(await isOwnedNativeOcrDirectory(dir), true)
+    const notice = join(dir, 'SOURCE-NOTICE.md')
+    const content = await readFile(notice)
+    assert.deepEqual(await readNativeOcrRegularFile(notice, content.length), content)
+    await assert.rejects(readNativeOcrRegularFile(notice, content.length - 1), /size or type/)
+    await writeFile(notice, Buffer.alloc(32 * 1024 + 1))
+    assert.equal(await isOwnedNativeOcrDirectory(dir), false)
+    await assert.rejects(moveOwnedNativeOcrDirectory(dir, dir + '-moved'), /unowned/)
+    assert.equal((await readFile(join(dir, 'unrelated'), 'utf8')), 'must survive')
+    if (process.platform !== 'win32') {
+      await rm(notice)
+      await writeFile(join(dir, 'other-notice'), content)
+      await symlink(join(dir, 'other-notice'), notice)
+      assert.equal(await isOwnedNativeOcrDirectory(dir), false)
+      await assert.rejects(readNativeOcrRegularFile(notice, 32 * 1024))
+      await rm(notice)
+    }
+    const sub = join(dir, 'owned')
+    await mkdir(sub)
+    await writeFile(join(sub, 'SOURCE-NOTICE.md'), content)
+    const moved = join(dir, 'moved')
+    await moveOwnedNativeOcrDirectory(sub, moved)
+    assert.equal(await isOwnedNativeOcrDirectory(sub), false)
+    assert.equal(await isOwnedNativeOcrDirectory(moved), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+    await rm(dir + '-moved', { recursive: true, force: true })
+  }
+})

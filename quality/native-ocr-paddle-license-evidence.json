@@ -1,0 +1,14 @@
+{
+  "revision": "dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf",
+  "rootLicenseNoticeFiles": [
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "430edfa0cfcb59f15b7aa5457427d0faf2e40dac",
+      "size": 11376,
+      "url": "https://api.github.com/repos/PaddlePaddle/PaddleOCR/git/blobs/430edfa0cfcb59f15b7aa5457427d0faf2e40dac"
+    }
+  ],
+  "licenseSha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e"
+}

@@ -1,7 +1,20 @@
 import semver from 'semver'
+import { readFileSync } from 'node:fs'
+
+// Source and packed lib layouts differ. Read only this plugin's own manifest.
+function currentDvrTrain() {
+  for (const rel of ['../package.json', '../../package.json']) {
+    try {
+      const pkg = JSON.parse(readFileSync(new URL(rel, import.meta.url), 'utf8'))
+      const version = pkg.name === 'dsh-vision-router' && semver.parse(pkg.version)
+      if (version) return version.major + '.' + version.minor + '.x'
+    } catch {}
+  }
+  return 'unknown'
+}
 
 export const DSH_SUPPORT_WINDOW = Object.freeze({
-  dvrTrain: '3.2.x',
+  dvrTrain: currentDvrTrain(),
   minimum: '0.2.1-rc.5',
   currentRecommended: '0.2.2-rc.1',
   nodeMinimum: '24.9.0',
@@ -55,7 +68,7 @@ export function supportWindowUpgradeAdvice(capabilities = {}, {
   if (capabilities?.batchAttachments === false || capabilities?.maxImageDimension === false) {
     return Object.freeze({
       level: 'required', code: 'HOST_BELOW_CURRENT_FLOOR_CAPABILITIES',
-      message: 'Host lacks the attachment capabilities required for DVR 3.2',
+      message: 'Host lacks required attachment capabilities for this DVR release',
     })
   }
   if (!hostVersion) {
@@ -88,7 +101,7 @@ export function supportWindowUpgradeAdvice(capabilities = {}, {
   }
   return Object.freeze({
     level: 'ok', code: 'HOST_CURRENT_FLOOR_CAPABLE',
-    message: `DSH ${hostVersion} and required attachment capabilities satisfy the DVR 3.2 floor`,
+    message: `DSH ${hostVersion} and required attachment capabilities satisfy the current DVR support floor`,
   })
 }
 

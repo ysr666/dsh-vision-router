@@ -36,6 +36,10 @@ and explicitly `-static` to statically link `libc++`, `libunwind`, and
 compiler runtime. Full original Apache-2.0 WITH LLVM Exceptions license is
 `assets/licenses/llvm-mingw-LICENSE.txt` and the exact mingw-w64 runtime
 notice is `assets/licenses/mingw-w64-runtime-COPYING.txt`.
+The supplemental source-specific notices and upstream public-domain disclaimer
+are in `assets/licenses/mingw-w64-source-NOTICES.txt` (MinGW-w64 revision
+0d6dfbc348dfad714761c0a7151615767f96bcb5; selected Windows candidate translation units).
+These supplement rather than replace the runtime notice; no full distribution clearance is claimed.
 Windows ncnn binary's actual PE import table lists only KERNEL32 and OS UCRT
 API-set DLLs; no additional GNU/LLVM runtime DLLs. The mingw-w64 runtime notice contains a general disclosure about LGPL
 Wine-imported headers/IDLs. The **actual** Windows build's Ninja dependency
@@ -165,3 +169,9 @@ This summary does not waive upstream attribution, notice or source obligations.
 
 Earlier DVR versions used `potrace@2.1.8`, which declares GPL-2.0.
 This change removes it. Historical distribution legal obligations need separate review.
+
+Windows native OCR supplemental runtime attribution: `assets/licenses/windows-native-runtime-NOTICES.txt` contains full pinned LLVM libc++, libc++abi, libunwind and compiler-rt license texts plus private MinGW CRT header notices. This extends the existing runtime and translation-unit notices; it is not a declaration of public redistribution approval.
+
+PaddleOCR dictionary: the exact upstream root license at revision dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf (Apache-2.0, Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.) is preserved in `assets/licenses/paddleocr-LICENSE.txt` and native archive schema v3. The generic Apache-2.0 text is retained for model weights. Earlier valid bundle formats remain importable and are installed with current notices.
+
+Windows native OCR supplementary notice: `assets/licenses/mingw-pthread-signal-NOTICE.txt` preserves the copyright and MIT permission text for the actual reconstructed MinGW-w64 winpthreads header dependency. This is not a claim of a separately linked winpthreads library.

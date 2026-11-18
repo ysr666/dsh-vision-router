@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { realpathSync } from 'node:fs'
+import semver from 'semver'
 import { fileURLToPath } from 'node:url'
 import { run as runBaseDoctor } from './doctor-cli.js'
 import {
@@ -113,7 +114,21 @@ export async function probeDoctorHostCapabilities({ baseUrl, fetchImpl = globalT
   }
 }
 
-function capabilityLines(probe) {
+// Local profile metadata establishes an installed version, not the identity of
+// an arbitrary running Desktop process. Missing, malformed or conflicting
+// profile manifests must not be converted into a version guess.
+function installedHostVersionEvidence(platform) {
+  const rows = platform?.hostPackages ?? []
+  const versions = rows.map(row => {
+    const value = row.packages?.['@deepseek-ai/dsh']
+    return typeof value === 'string' && value.length <= 64 ? semver.valid(value) : null
+  })
+  const version = versions.length > 0 && versions[0] &&
+    versions.every(value => value === versions[0]) ? versions[0] : null
+  return { source: version ? 'installed-profile-package' : 'unverified', version }
+}
+
+function capabilityLines(probe, evidence = installedHostVersionEvidence()) {
   const c = probe.capabilities
   return [
     'DSH Host capabilities:',
@@ -129,7 +144,8 @@ function capabilityLines(probe) {
     `  tool registration: ${formatDshHostCapability(c.toolRegistration)}`,
     `  tool execution: ${formatDshHostCapability(c.toolExecution)}`,
     `  source: ${probe.source}`,
-    ...formatDshSupportWindowLines(c),
+    `  installed Host version: ${evidence.version ?? "unknown"} (${evidence.source}; not running-process identity)`,
+    ...formatDshSupportWindowLines(c, { hostVersion: evidence.version ?? undefined }),
   ]
 }
 
@@ -157,9 +173,11 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
     ? await probeDoctorHostCapabilities({ baseUrl: runtime.baseUrl })
     : { ok: false, source: 'runtime-probe-disabled', capabilities: unknownSnapshot() }
 
+  let evidence = installedHostVersionEvidence()
+  const hooks = { onPlatform(platform) { evidence = installedHostVersionEvidence(platform) } }
   if (!isJsonRequest(argv)) {
-    const code = await runBaseDoctor(argv, io, env)
-    for (const line of capabilityLines(probe)) io.log(line)
+    const code = await runBaseDoctor(argv, io, env, hooks)
+    if (code !== 2) for (const line of capabilityLines(probe, evidence)) io.log(line)
     return code
   }
 
@@ -169,7 +187,7 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
     log(...values) { logs.push(values.map(String).join(' ')) },
     error(...values) { errors.push(values.map(String).join(' ')) },
   }
-  const code = await runBaseDoctor(argv, capture, env)
+  const code = await runBaseDoctor(argv, capture, env, hooks)
   for (const line of errors) io.error(line)
 
   if (logs.length === 1) {
@@ -181,15 +199,8 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
       report.hostVerificationEvidence = DSH_VERIFICATION_EVIDENCE
       // An old feature-rich Host must not be admitted based on attachments alone.
       // Multiple profiles with mismatched or absent Host versions stay unknown.
-      const rows = report.platform?.hostPackages ?? []
-      const detected = rows.map((row) => row.packages?.['@deepseek-ai/dsh'])
-      const hostVersion = detected.length > 0 && detected.every((value) =>
-        typeof value === 'string' && value === detected[0])
-        ? detected[0] : undefined
-      report.hostSupportVersionEvidence = {
-        source: hostVersion ? 'installed-profile-package' : 'unverified',
-        version: hostVersion ?? null,
-      }
+      const hostVersion = evidence.version ?? undefined
+      report.hostSupportVersionEvidence = evidence
       report.hostSupportAdvice = supportWindowUpgradeAdvice(probe.capabilities, {
         nodeVersion: process.versions.node, hostVersion,
       })

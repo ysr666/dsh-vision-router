@@ -579,7 +579,7 @@ export function classifyProfileInstallation(profile, { requested = false } = {})
     warnings.push('Profile-owned Connection override detected: DSH 0.2.1+ owns this Host row. Review/remove the obsolete override manually after backing up your profile; Doctor does not modify authentication or trustedHosts.')
   }
   if (profile?.patch?.retiredReadyBridgeRows > 0 || profile?.patch?.retiredReadyInjectionRows > 0) {
-    warnings.push('Profile still references retired visionRouterWebConnectionReady bridge: verify and migrate this custom overlay manually. DVR 3.2 no longer provides that service; Doctor changes no profile data.')
+    warnings.push('Profile still references retired visionRouterWebConnectionReady bridge: verify and migrate this custom overlay manually. Current DVR no longer provides that service; Doctor changes no profile data.')
   }
   for (const item of profile?.hostCore?.advisories ?? []) {
     if (item.kind === 'profile-local-host-core') {

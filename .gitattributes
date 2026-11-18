@@ -4,3 +4,18 @@
 assets/licenses/ncnn-LICENSE.txt -text -whitespace
 assets/licenses/llvm-mingw-LICENSE.txt -text -whitespace
 assets/licenses/mingw-w64-runtime-COPYING.txt -text -whitespace
+
+# Preserve exact audited worker source bytes on Windows.
+quality/native-ocr-lab.cpp -text
+
+assets/licenses/apache-2.0.txt -text -whitespace
+
+LICENSE -text -whitespace
+
+assets/licenses/mingw-w64-source-NOTICES.txt -text -whitespace
+
+assets/licenses/windows-native-runtime-NOTICES.txt -text -whitespace
+
+assets/licenses/paddleocr-LICENSE.txt -text -whitespace
+
+assets/licenses/mingw-pthread-signal-NOTICE.txt -text -whitespace

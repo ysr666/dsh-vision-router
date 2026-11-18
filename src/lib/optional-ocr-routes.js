@@ -64,7 +64,7 @@ export function installOptionalOcrRoutes(ctx, {
         catch { return respond(res, 400, { ok: false, error: 'invalid request' }) }
         const engine = url.searchParams.get('engine')
         const action = url.searchParams.get('action')
-        if (!['tesseract', 'ppocrv6'].includes(engine) || !['install', 'uninstall'].includes(action))
+        if (!['tesseract', 'ppocrv6'].includes(engine) || !['install', 'uninstall', 'download'].includes(action) || (action === 'download' && engine !== 'ppocrv6'))
           return respond(res, 400, { ok: false, error: 'unsupported OCR operation' })
         if (inFlight) return respond(res, 409, { ok: false, error: 'OCR installation already running' })
         inFlight = true

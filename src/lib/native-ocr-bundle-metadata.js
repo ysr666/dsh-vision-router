@@ -1,0 +1,155 @@
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { EXPERIMENTAL_OCR_MODEL_FILES } from './native-ocr-integrity.js'
+
+const detector = 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/tree/28fe5895c24fd108c19eb3e8479f4ab385fbfc62'
+const recognizer = 'https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/tree/b8f84f0b80c529de40b4fbb3544b84fa7233a513'
+const dictionary = 'https://github.com/PaddlePaddle/PaddleOCR/tree/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf'
+const runtime = 'https://github.com/Tencent/ncnn/tree/d1f6ac67e9fc91390cc70f7168573fd2626f1d66'
+export const NATIVE_BUNDLE_METADATA_FILES = Object.freeze(['SOURCE-NOTICE.md', 'SBOM.cdx.json', 'PROJECT-LICENSE.txt'])
+export function nativeBundleLicenseFiles(platform = process.platform, { includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices, includePaddleLicense = true, includeCrtNotice = includePaddleLicense } = {}) {
+  return [
+    ['assets/licenses/ncnn-LICENSE.txt', 'NCNN-LICENSE.txt'],
+    ['assets/licenses/apache-2.0.txt', 'APACHE-2.0.txt'],
+    ...(includePaddleLicense ? [['assets/licenses/paddleocr-LICENSE.txt', 'PADDLEOCR-LICENSE.txt']] : []),
+    ...(platform === 'win32' ? [
+      ['assets/licenses/llvm-mingw-LICENSE.txt', 'LLVM-LICENSE.txt'],
+      ['assets/licenses/mingw-w64-runtime-COPYING.txt', 'MINGW-RUNTIME-COPYING.txt'],
+      ...(includeSourceNotices ? [['assets/licenses/mingw-w64-source-NOTICES.txt', 'MINGW-SOURCE-NOTICES.txt']] : []),
+      ...(includeRuntimeNotices ? [['assets/licenses/windows-native-runtime-NOTICES.txt', 'WINDOWS-RUNTIME-NOTICES.txt']] : []),
+      ...(includeCrtNotice ? [['assets/licenses/mingw-pthread-signal-NOTICE.txt', 'MINGW-PTHREAD-SIGNAL-NOTICE.txt']] : []),
+    ] : []),
+    ['LICENSE', 'PROJECT-LICENSE.txt'],
+  ]
+}
+const digest = bytes => createHash('sha256').update(bytes).digest('hex')
+// Pin the canonical source bytes as well as payload bytes. A Windows worktree
+// created before .gitattributes was tightened can retain stale CRLF files.
+const LICENSE_SOURCE_SHA256 = Object.freeze({
+  'assets/licenses/ncnn-LICENSE.txt': '7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255',
+  'assets/licenses/paddleocr-LICENSE.txt': '3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e',
+  'assets/licenses/apache-2.0.txt': 'cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30',
+  'assets/licenses/llvm-mingw-LICENSE.txt': '8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee',
+  'assets/licenses/mingw-w64-runtime-COPYING.txt': '1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f',
+  'assets/licenses/mingw-w64-source-NOTICES.txt': '3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4',
+  'assets/licenses/windows-native-runtime-NOTICES.txt': 'ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006',
+  'assets/licenses/mingw-pthread-signal-NOTICE.txt': 'fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802',
+  'LICENSE': '8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93',
+})
+export async function readVerifiedNativeBundleLicense(project, source) {
+  const expected = Object.hasOwn(LICENSE_SOURCE_SHA256, source) ? LICENSE_SOURCE_SHA256[source] : undefined
+  if (!expected) throw Error('unknown native OCR license source: ' + source)
+  const bytes = await readFile(join(project, source))
+  if (digest(bytes) !== expected)
+    throw Error('native OCR canonical license source mismatch: ' + source + '; use a clean checkout with exact Git blob bytes')
+  return bytes
+}
+
+const hash = sha256 => [{ alg: 'SHA-256', content: sha256 }]
+const license = id => [{ license: { id } }]
+const component = (ref, name, version, source, id, extra = {}) => ({
+  type: 'library', 'bom-ref': ref, name, version,
+  licenses: license(id), externalReferences: [{ type: 'vcs', url: source }], ...extra,
+})
+export async function nativeBundleMetadata({ root, platform = process.platform, arch = process.arch, includeSourceNotices = true, includeRuntimeNotices = includeSourceNotices, includePaddleLicense = true, includeCrtNotice = includePaddleLicense }) {
+  const win = platform === 'win32'
+  const workerName = win ? 'worker.exe' : 'worker'
+  const worker = await readFile(join(root, workerName))
+  const workerSha = digest(worker)
+  const crtNotice = win && includeCrtNotice
+  const remediatedCrt = crtNotice && workerSha === 'd1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166'
+  const modelFiles = Object.entries(EXPERIMENTAL_OCR_MODEL_FILES)
+  const components = [
+    component('ncnn', 'ncnn', 'd1f6ac67e9fc91390cc70f7168573fd2626f1d66', runtime, 'BSD-3-Clause', {
+      description: 'CPU-only static runtime; additional zlib and BSD notices in NCNN-LICENSE.txt.',
+    }),
+    ...modelFiles.map(([name, entry]) => ({
+      ...component('model:' + name, name,
+        name.startsWith('det.') ? '28fe5895c24fd108c19eb3e8479f4ab385fbfc62'
+          : name.startsWith('rec.') ? 'b8f84f0b80c529de40b4fbb3544b84fa7233a513'
+            : 'dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf',
+        name.startsWith('det.') ? detector : name.startsWith('rec.') ? recognizer : dictionary, 'Apache-2.0'),
+      type: 'file', hashes: hash(entry.sha256),
+    })),
+    ...(win ? [...(includeRuntimeNotices ? [
+      ...[['libcxx', 'LLVM libc++'], ['libcxxabi', 'LLVM libc++abi'], ['libunwind', 'LLVM libunwind'], ['compiler-rt', 'LLVM compiler-rt']].map(([name, label]) =>
+        component('llvm:' + name, label, '7a941dfb2877a0b8cf30323fefa85ad019e0b0f5',
+          'https://github.com/llvm/llvm-project/tree/7a941dfb2877a0b8cf30323fefa85ad019e0b0f5/' + name, 'Apache-2.0', {
+            licenses: [{ expression: 'Apache-2.0 WITH LLVM-exception' }],
+            description: 'Pinned LLVM-MinGW runtime family; component license and legacy notices in WINDOWS-RUNTIME-NOTICES.txt.',
+          }))
+    ] : [component('llvm', 'LLVM embedded runtime / compiler-rt, libc++, unwind', 'LLVM-MinGW 20261020',
+      'https://github.com/mstorsjo/llvm-mingw/releases/tag/20261020', 'Apache-2.0', {
+        licenses: [{ expression: 'Apache-2.0 WITH LLVM-exception' }],
+      })]), {
+        type:'library', 'bom-ref':'mingw', name:'MinGW-w64 runtime/header objects',
+        version:'LLVM-MinGW 20261020',
+        description: includeRuntimeNotices ? 'Pinned MinGW-w64 runtime family; mixed source and CRT header notices in MINGW-RUNTIME-COPYING.txt, MINGW-SOURCE-NOTICES.txt and WINDOWS-RUNTIME-NOTICES.txt. Final review remains outstanding.' : 'Mixed notices: see MINGW-RUNTIME-COPYING.txt. Exact candidate link/header review must precede redistribution.',
+        ...(crtNotice ? { properties: [
+          { name:'dvr:compile-header-notice', value:'MINGW-PTHREAD-SIGNAL-NOTICE.txt' },
+          { name:'dvr:compile-header-source-sha256', value:'46915f25fb94f61ac4bdfa9b38736e6524a5b36bc42b00f7e87526fbc24287a6' },
+          ...(remediatedCrt ? [
+            { name:'dvr:crt-remediation', value:'68 reconstructed nonempty objects; 419 dependency paths; no legacy stdarg dependency' },
+            { name:'dvr:crt-remediation-evidence-sha256', value:'0d7525fe29814f1e84d5a32ead468487e33f55309285981e59b1341d46416df9' },
+            { name:'dvr:crt-replacement-archive-sha256', value:'011c1d2777f991641afb8373fd2ab5dcec4a98da0441251bd7fef7bb75349b0b' },
+          ] : []),
+        ] } : {}),
+        externalReferences:[{type:'vcs',url:includeRuntimeNotices ? 'https://github.com/mingw-w64/mingw-w64/tree/0d6dfbc348dfad714761c0a7151615767f96bcb5' : 'https://github.com/mstorsjo/llvm-mingw/releases/tag/20261020'}],
+      }] : []),
+  ]
+  const payload = Object.fromEntries(await Promise.all([
+    workerName, ...modelFiles.map(([name]) => 'models/' + name),
+    ...nativeBundleLicenseFiles(platform, { includeSourceNotices, includeRuntimeNotices, includePaddleLicense, includeCrtNotice }).map(([, name]) => name),
+  ].map(async name => {
+    const bytes = await readFile(join(root, name))
+    return [name, { bytes: bytes.length, sha256: digest(bytes) }]
+  })))
+  const notice = [
+    '# Locally installed native OCR assets', '',
+    'Native wrapper: dsh-vision-router contributors (MIT; PROJECT-LICENSE.txt).',
+    'Detector: PaddlePaddle/PP-OCRv6_small_det_onnx, Apache-2.0.',
+    'Source: ' + detector,
+    'Recognizer: PaddlePaddle/PP-OCRv6_small_rec_onnx, Apache-2.0.',
+    'Source: ' + recognizer,
+    'Dictionary: PaddlePaddle/PaddleOCR ppocrv6_dict.txt, Apache-2.0.',
+    'Source: ' + dictionary,
+    ...(includePaddleLicense ? ['PaddleOCR original root license including upstream copyright: PADDLEOCR-LICENSE.txt. Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.'] : []),
+    'Modification: detector and recognizer ONNX models converted to ncnn param/bin with pnnx 20261020, fp16=0, optlevel=2; dictionary unchanged.',
+    'Runtime: Tencent/ncnn @ d1f6ac67e9fc91390cc70f7168573fd2626f1d66, BSD-3-Clause',
+    'Source: ' + runtime,
+    'Additional BSD-2-Clause and zlib notices are in NCNN-LICENSE.txt.',
+    win ? 'Windows: embedded LLVM runtime with Apache-2.0 WITH LLVM exceptions and MinGW-w64 runtime notices; OS UCRT and KERNEL32 are not bundled.'
+      : 'macOS: system libc++ and libSystem are not bundled.',
+    ...(win && includeSourceNotices ? ['Supplemental MinGW-w64 source notices and public-domain disclaimer: MINGW-SOURCE-NOTICES.txt (source revision 0d6dfbc348dfad714761c0a7151615767f96bcb5).'] : []),
+    ...(win && includeRuntimeNotices ? ['Supplemental LLVM libc++, libc++abi, libunwind, compiler-rt license texts at revision 7a941dfb2877a0b8cf30323fefa85ad019e0b0f5 and private MinGW CRT header notices: WINDOWS-RUNTIME-NOTICES.txt.'] : []),
+    ...(crtNotice ? ['Supplemental MinGW-w64 winpthreads compile-time header copyright and MIT permission notice: MINGW-PTHREAD-SIGNAL-NOTICE.txt. This is not a claim that the winpthreads library is linked.'] : []),
+    ...(remediatedCrt ? ['This worker uses privately reconstructed MinGW CRT objects; selected dependency evidence excludes the legacy GCC stdarg header. Exact source/relocation and replacement archive evidence is tracked in the repository.'] : []),
+    'Build-only converter: pnnx 20261020; converter executable is not included.',
+    'Worker SHA-256: ' + workerSha,
+    'This owner-installed inventory does not constitute public redistribution approval. See SBOM.cdx.json and applicable license texts.', '',
+  ].join('\n')
+  const sbom = {
+    bomFormat: 'CycloneDX', specVersion: '1.6', version: 1,
+    metadata: { component: { type:'application', 'bom-ref':'worker', name:'dsh-vision-router native OCR worker',
+      version:workerSha, hashes: hash(workerSha), licenses:license('MIT'),
+      description:'MIT-licensed project wrapper; the listed statically incorporated third-party components retain their own licenses.' },
+      properties: [{name:'dvr:target',value:platform+'-'+arch},
+        {name:'dvr:distribution-ready',value:'false'},
+        {name:'dvr:scope',value:'Owner-installed payload inventory; build-only tools and OS-provided libraries excluded; final exact link/header review outstanding'}] },
+    components,
+    dependencies: [{ref:'worker', dependsOn:components.map(c=>c['bom-ref'])}],
+    compositions: [{aggregate:'incomplete', assemblies:['worker']}],
+  }
+  const stringify = value => JSON.stringify(value,null,2)+'\n'
+  const files = { 'SOURCE-NOTICE.md':notice, 'SBOM.cdx.json':stringify(sbom) }
+  const manifest = { schemaVersion:crtNotice ? 4 : includePaddleLicense ? 3 : 2, platform, arch, worker:{sha256:workerSha,bytes:worker.length},
+    models:EXPERIMENTAL_OCR_MODEL_FILES, modelLicense:'Apache-2.0',
+    ncnnSource:'Tencent/ncnn@d1f6ac67e9fc91390cc70f7168573fd2626f1d66',
+    distributionReady:false,
+    files:{ ...payload, ...Object.fromEntries(Object.entries(files).map(([name, value]) => [name, {
+      bytes:Buffer.byteLength(value), sha256:digest(value)
+    }]))},
+  }
+  return {...files,'MANIFEST.json':stringify(manifest)}
+}

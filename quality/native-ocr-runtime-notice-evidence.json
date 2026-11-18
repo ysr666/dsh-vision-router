@@ -1,0 +1,108 @@
+{
+  "llvmSourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+  "mingwSourceRevision": "0d6dfbc348dfad714761c0a7151615767f96bcb5",
+  "llvmLicenses": {
+    "libcxx": {
+      "sourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+      "gitBlobSha1": "e159d283443f92ac78b964d2bccebe8f95d5d445",
+      "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b",
+      "bytes": 16703
+    },
+    "libcxxabi": {
+      "sourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+      "gitBlobSha1": "b75c0441bcd5be32b5a07e2a1ffc7e67b6d99f16",
+      "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c",
+      "bytes": 16706
+    },
+    "libunwind": {
+      "sourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+      "gitBlobSha1": "1e3120621caeb62648745a42f7a9a25d1e2731ab",
+      "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d",
+      "bytes": 16706
+    },
+    "compiler-rt": {
+      "sourceRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+      "gitBlobSha1": "5a79a1b9d5cb0af9a779751f07033e44ca3b14d8",
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d",
+      "bytes": 16708
+    }
+  },
+  "mingwPrivateHeaders": [
+    {
+      "source": "mingw-w64-crt/crt/seh_signal_dispatcher.h",
+      "sha256": "b396e22243191c81d39d161f27f16f086974951a9277590bfaf87c3383e88af3",
+      "gitBlobSha1": "7eb58b91096b02f2ebcf8f9fdcc741539a961c66",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/gdtoa/gd_arith.h",
+      "sha256": "8e48f40166e36a6366ac8e3d57209a4493e30a6957820e6cc5a3473350534771",
+      "gitBlobSha1": "f86e633b374334ca54dffac8a0ccb4bb577da16a",
+      "noticeCount": 0
+    },
+    {
+      "source": "mingw-w64-crt/gdtoa/gd_qnan.h",
+      "sha256": "5d2b71897cd06129c73d067b7fe0ec8f6ba303f7985d8603c8bd5030e79347ce",
+      "gitBlobSha1": "bd324f0f6f0878c3a81ce0b83e9481c03b86ac89",
+      "noticeCount": 0
+    },
+    {
+      "source": "mingw-w64-crt/gdtoa/gdtoa.h",
+      "sha256": "9ea503624739483d5a981d426a9b7a74fd2ee2e04599594e74b886d09beb0403",
+      "gitBlobSha1": "b2b4c54151a0da327338210940e5470cbca33f11",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/gdtoa/gdtoa_fltrnds.h",
+      "sha256": "64b660d3bd34f299dbbfa094b5fc6a2fbf33a66bc060aaa79603e9b2123aae04",
+      "gitBlobSha1": "28c474e2c29f4b934a3e2b11d4fabfc10bfea3e2",
+      "noticeCount": 0
+    },
+    {
+      "source": "mingw-w64-crt/gdtoa/gdtoaimp.h",
+      "sha256": "cd4e3796364b4eb9d9c5cf3ff00d3abc8e114102376454bc1d2413183ca3e44d",
+      "gitBlobSha1": "cc2007cd5fa3f0654b14acee99db363d515c44ad",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/include/internal.h",
+      "sha256": "862e7c001b31867db98eefabd82a751f5c3809aee22cca1faee6d6f57cd361b9",
+      "gitBlobSha1": "78896eb89f06b1220b1825bda23c522fcb3a853d",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/include/sect_attribs.h",
+      "sha256": "2bb9e4ceee95a88cf6e97301319d5d3b78d57d12c57ec9f830af5d510a82fadc",
+      "gitBlobSha1": "7621e0494d1b744da0b1dc0e8b053a6bc85a8ab5",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/math/DFP/dfp_internal.h",
+      "sha256": "54ac7566dd8e465ff57ac73e3297a0957e014f6c6db352c278f83d6105fad8ca",
+      "gitBlobSha1": "44080373903b03c28b652028fe391ab1c7c1925c",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/stdio/mingw_pformat.h",
+      "sha256": "24a351f16f4b7a3a70a3daa244cf8c9703ebafdd284d5894ef4674ad0547b968",
+      "gitBlobSha1": "3381ff8ba9088f317dcf437729942d577c0a9126",
+      "noticeCount": 1
+    },
+    {
+      "source": "mingw-w64-crt/stdio/mingw_sformat.h",
+      "sha256": "3bbfce7c097c95e405162b99d76b60d8cd6105630e4f94dca726edc74c8ddb10",
+      "gitBlobSha1": "7d133dd7f29ba26c08aafbd4aeed5dc75e4808d0",
+      "noticeCount": 1
+    }
+  ],
+  "noticeSha256": "ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006",
+  "distributionReady": false,
+  "reconstructedCrtHeaderNotice": {
+    "source": "mingw-w64-libraries/winpthreads/include/pthread_signal.h",
+    "sourceSha256": "46915f25fb94f61ac4bdfa9b38736e6524a5b36bc42b00f7e87526fbc24287a6",
+    "gitBlobSha1": "42a50ae06cda74d7d61933a25272105d247ff1b1",
+    "noticeFile": "assets/licenses/mingw-pthread-signal-NOTICE.txt",
+    "noticeSha256": "fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802",
+    "scope": "Exact copyright and permission block from pinned source; actual reconstructed dependency file, not a separately linked winpthreads library."
+  }
+}

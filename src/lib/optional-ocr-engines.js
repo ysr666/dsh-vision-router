@@ -5,9 +5,10 @@ import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { localNativeOcrInstallPaths } from './native-ocr-installation.js'
+import { localNativeOcrInstallPaths, isOwnedNativeOcrDirectory, moveOwnedNativeOcrDirectory } from './native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from './native-ocr-canary.js'
 import { verifyNativeOcrAssets } from './native-ocr-integrity.js'
+import { approvedNativeArchive, downloadVerifiedNativeArchive } from './native-ocr-download.js'
 
 // Optional by design. Do not modify the DSH profile or global system packages.
 // npm downloads happen only after a local user explicitly selects Install.
@@ -51,15 +52,10 @@ async function directory(path) {
   try { const st = await lstat(path); return st.isDirectory() && !st.isSymbolicLink() }
   catch { return false }
 }
-async function ownedNativeDirectory(root) {
-  if (!await directory(root)) return false
-  const notice = join(root, 'SOURCE-NOTICE.md')
-  if (!await regularFile(notice, 32 * 1024)) return false
-  try {
-    const contents = await readFile(notice, 'utf8')
-    return contents.startsWith('# Locally installed native OCR assets\n') &&
-      contents.includes('Runtime: Tencent/ncnn @')
-  } catch { return false }
+async function ownedManagedTesseract(root) {
+  if (!await directory(root) || !await regularFile(join(root, 'DVR-MANAGED.json'), 4096)) return false
+  const marker = await readJSON(join(root, 'DVR-MANAGED.json')).catch(() => null)
+  return marker?.kind === MANAGED_MARK
 }
 async function verifyManaged(root) {
   const manifest = join(root, 'DVR-MANAGED.json')
@@ -102,19 +98,20 @@ export async function optionalOcrStatus({
 } = {}) {
   const tess = managedTesseractPaths({ home })
   const pp = resolveNativePaths({ home })
-  const [managedTesseract, nativeReady, systemReady, nativeOwned] = await Promise.all([
+  const [managedTesseract, nativeReady, systemReady, nativeOwned, tessOwned] = await Promise.all([
     verifyManaged(tess.root).catch(() => false),
     pp && await directory(pp.root)
       ? Promise.all([verifyExperimentalNativeOcrBinary(pp.binaryPath), verifyNativeOcrAssets(pp.modelDir)]).then(() => true, () => false)
       : false,
     Promise.resolve().then(() => probeSystem()).catch(() => false),
-    pp ? ownedNativeDirectory(pp.root) : false,
+    pp ? isOwnedNativeOcrDirectory(pp.root) : false,
+    ownedManagedTesseract(tess.root),
   ])
   return {
     ok: true,
     busy: mutating,
-    tesseract: { managedInstalled: managedTesseract, systemInstalled: !!systemReady, installed: managedTesseract || !!systemReady, canInstall: !mutating && !managedTesseract && !systemReady, canUninstall: !mutating && managedTesseract && activeManagedRuns === 0 },
-    ppocrv6: { installed: nativeReady, damaged: nativeOwned && !nativeReady, supported: !!pp, canInstallFromFile: !mutating && !!pp, canUninstall: !mutating && nativeOwned },
+    tesseract: { managedInstalled: managedTesseract, damaged: tessOwned && !managedTesseract, systemInstalled: !!systemReady, installed: managedTesseract || !!systemReady, canInstall: !mutating && !managedTesseract && !systemReady && !tessOwned, canUninstall: !mutating && tessOwned && activeManagedRuns === 0 },
+    ppocrv6: { installed: nativeReady, damaged: nativeOwned && !nativeReady, supported: !!pp, canInstallFromFile: !mutating && !!pp, onlineAvailable: !!pp && !!approvedNativeArchive(), canDownload: !mutating && !nativeReady && !!pp && !!approvedNativeArchive(), canUninstall: !mutating && nativeOwned },
   }
 }
 export function nodeChildEnvironment({ env = process.env, electron = process.versions?.electron } = {}) {
@@ -245,16 +242,21 @@ export async function uninstallNative({
   // to remove an optional installation. Require the installer-created
   // owner notice and exact managed directory instead of full model hashes.
   // Never mutate a system binary, a symlink, or an arbitrary caller path.
-  if (!await ownedNativeDirectory(dest.root))
-    throw Error('refusing to remove unowned PP-OCRv6 installation')
   const tomb = dest.root + '.removing-' + randomUUID()
-  await rename(dest.root, tomb)
+  await moveOwnedNativeOcrDirectory(dest.root, tomb)
   await rm(tomb, { recursive: true, force: true })
   return { ok: true, installed: false, engine: 'ppocrv6' }
 }
+export async function downloadAndInstallNative({
+  entry = approvedNativeArchive(), fetchImpl, install = installNativeBundle,
+} = {}) {
+  if (!entry) throw Error('native OCR download unavailable: no approved public archive')
+  const archive = await downloadVerifiedNativeArchive(entry, { fetchImpl })
+  return install(archive)
+}
 export async function mutateOptionalOcr({ engine, action, archive, adapters = {} }) {
   if (mutating) throw Error('another OCR installation operation is already running')
-  if (!['tesseract', 'ppocrv6'].includes(engine) || !['install', 'uninstall'].includes(action)) throw Error('invalid OCR operation')
+  if (!['tesseract', 'ppocrv6'].includes(engine) || !['install', 'uninstall', 'download'].includes(action) || (action === 'download' && engine !== 'ppocrv6')) throw Error('invalid OCR operation')
   if (engine === 'ppocrv6' && action === 'install' && !Buffer.isBuffer(archive)) throw Error('a local PP-OCRv6 bundle is required')
   mutating = true
   try {
@@ -262,6 +264,7 @@ export async function mutateOptionalOcr({ engine, action, archive, adapters = {}
       return action === 'install' ? await (adapters.installTesseract ?? installTesseract)()
         : await (adapters.uninstallTesseract ?? uninstallTesseract)()
     }
+    if (action === 'download') return await (adapters.downloadAndInstallNative ?? downloadAndInstallNative)()
     return action === 'install'
       ? await (adapters.installNativeBundle ?? installNativeBundle)(archive)
       : await (adapters.uninstallNative ?? uninstallNative)()

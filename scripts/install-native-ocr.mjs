@@ -2,14 +2,16 @@
 // Installs owner-provided, already license-reviewed PP-OCRv6/ncnn artifacts.
 // It does not download, build, or publish any native executable/model.
 import { copyFile, chmod, mkdir, rename, rm, lstat, writeFile, mkdtemp, readFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { localNativeOcrInstallPaths } from '../lib/native-ocr-installation.js'
+import { localNativeOcrInstallPaths, moveOwnedNativeOcrDirectory } from '../lib/native-ocr-installation.js'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
+import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -47,35 +49,20 @@ async function installFromSources(binary, sourceModels) {
       await copyFile(join(sourceModels, name), join(staged, 'models', name))
       await chmod(join(staged, 'models', name), 0o600)
     }
-    const assetBase = fileURLToPath(new URL('../assets/licenses/', import.meta.url))
-    await copyFile(join(assetBase, 'ncnn-LICENSE.txt'), join(staged, 'NCNN-LICENSE.txt'))
-    await copyFile(join(assetBase, 'apache-2.0.txt'), join(staged, 'APACHE-2.0.txt'))
-    for (const [name, destName] of [
-      ['llvm-mingw-LICENSE.txt', 'LLVM-LICENSE.txt'],
-      ['mingw-w64-runtime-COPYING.txt', 'MINGW-RUNTIME-COPYING.txt'],
-    ].filter(() => onWindows)) {
-      await copyFile(join(assetBase, name), join(staged, destName))
+    const project = fileURLToPath(new URL('../', import.meta.url))
+    for (const [name, destination] of nativeBundleLicenseFiles()) {
+      await writeFile(join(staged, destination), await readVerifiedNativeBundleLicense(project, name), { mode: 0o600 })
     }
-    await writeFile(join(staged, 'SOURCE-NOTICE.md'), [
-      '# Locally installed native OCR assets',
-      '',
-      'Detector: PaddlePaddle/PP-OCRv6_small_det_onnx, Apache-2.0.',
-      'Recognizer: PaddlePaddle/PP-OCRv6_small_rec_onnx, Apache-2.0.',
-      'Dictionary: PaddlePaddle/PaddleOCR ppocrv6_dict.txt, Apache-2.0.',
-      'Runtime: Tencent/ncnn @ d1f6ac67e9fc91390cc70f7168573fd2626f1d66, BSD-3-Clause',
-      'with its stated BSD-2-Clause and zlib components.',
-      'Models are owner-provided and checksum-gated, never bundled in the npm package.',
-      onWindows
-        ? 'This Windows build statically links LLVM libc++/unwind, with Apache-2.0 WITH LLVM exceptions and MinGW-w64 runtime notices.'
-        : 'This Mac build links only OS-supplied libc++ and libSystem; no platform CRT is redistributed.',
-      '',
-    ].join('\n'), { mode: 0o600 })
+    const metadata = await nativeBundleMetadata({ root: staged })
+    for (const [name, value] of Object.entries(metadata)) {
+      await writeFile(join(staged, name), value, { mode: 0o600 })
+    }
     await verifyExperimentalNativeOcrBinary(join(staged, workerName))
     await verifyNativeOcrAssets(join(staged, 'models'))
     try {
       const existing = await lstat(dest.root)
       if (!existing.isDirectory() || existing.isSymbolicLink()) throw Error('unsafe existing OCR install directory')
-      await rename(dest.root, previous)
+      await moveOwnedNativeOcrDirectory(dest.root, previous)
       movedPrevious = true
     } catch (err) {
       if (err?.code !== 'ENOENT') throw err
@@ -105,15 +92,28 @@ async function install() {
     throw Error('unsafe native OCR bundle')
   }
   const prefix = 'ppocrv6-small/'
-  const members = [
+  const legacyMembers = [
     workerName, 'MANIFEST.json', 'NCNN-LICENSE.txt', 'APACHE-2.0.txt',
     ...additionalNotices,
     ...Object.keys(EXPERIMENTAL_OCR_MODEL_FILES).map(x => 'models/' + x),
   ].map(x => prefix + x).sort()
+  const previousV2Members = [...legacyMembers, ...NATIVE_BUNDLE_METADATA_FILES.map(x => prefix + x)].sort()
+  const sourceV2Members = [...previousV2Members, ...(onWindows ? [prefix + 'MINGW-SOURCE-NOTICES.txt'] : [])].sort()
+  const v2Members = [...sourceV2Members, ...(onWindows ? [prefix + 'WINDOWS-RUNTIME-NOTICES.txt'] : [])].sort()
+  const v3Members = [...v2Members, prefix + 'PADDLEOCR-LICENSE.txt'].sort()
+  const v4Members = [...v3Members, ...(onWindows ? [prefix + 'MINGW-PTHREAD-SIGNAL-NOTICE.txt'] : [])].sort()
   const listed = spawnSync('tar', ['-tzf', archive], { encoding:'utf8', timeout:30_000, maxBuffer: 64 * 1024 })
-  if (listed.status !== 0 || JSON.stringify(listed.stdout.trim().split(/\r?\n/).sort()) !== JSON.stringify(members)) {
+  const actualMembers = listed.stdout?.trim().split(/\r?\n/).sort()
+  const hasCrtNotice = onWindows && isDeepStrictEqual(actualMembers, v4Members)
+  const hasPaddleLicense = hasCrtNotice || isDeepStrictEqual(actualMembers, v3Members)
+  const hasRuntimeNotices = onWindows && (hasPaddleLicense || isDeepStrictEqual(actualMembers, v2Members))
+  const hasSourceNotices = onWindows && (hasRuntimeNotices || isDeepStrictEqual(actualMembers, sourceV2Members))
+  const isV2 = isDeepStrictEqual(actualMembers, v2Members) || isDeepStrictEqual(actualMembers, sourceV2Members) || isDeepStrictEqual(actualMembers, previousV2Members)
+  const hasMetadata = hasPaddleLicense || isV2
+  if (listed.status !== 0 || (!hasMetadata && !isDeepStrictEqual(actualMembers, legacyMembers))) {
     throw Error('native OCR bundle has unknown/missing entries')
   }
+  const members = hasCrtNotice ? v4Members : hasPaddleLicense ? v3Members : isV2 ? (hasRuntimeNotices ? v2Members : hasSourceNotices ? sourceV2Members : previousV2Members) : legacyMembers
   // Read ONLY individually named entries into memory. Never call 'tar -x':
   // traversal, links and metadata from an external archive cannot write files.
   const tmp = await mkdtemp(join(tmpdir(), 'dvr-ocr-unpack-'))
@@ -131,9 +131,35 @@ async function install() {
       await writeFile(destPath, data.stdout, { mode: 0o600 })
     }
     const manifest = JSON.parse(await readFile(join(tmp,'MANIFEST.json'),'utf8'))
-    if (manifest.schemaVersion !== 1 ||
+    if (manifest.schemaVersion !== (hasCrtNotice ? 4 : hasPaddleLicense ? 3 : isV2 ? 2 : 1) ||
       manifest.platform !== process.platform || manifest.arch !== process.arch) {
       throw Error('unsupported native OCR bundle manifest')
+    }
+    await verifyExperimentalNativeOcrBinary(join(tmp, workerName))
+    await verifyNativeOcrAssets(join(tmp, 'models'))
+    const actualWorkerSha = createHash('sha256').update(await readFile(join(tmp, workerName))).digest('hex')
+    if (manifest.worker?.sha256 !== actualWorkerSha || !isDeepStrictEqual(manifest.models, EXPERIMENTAL_OCR_MODEL_FILES)) {
+      throw Error('native OCR bundle manifest integrity mismatch')
+    }
+    // Compare canonical notices rather than trusting arbitrary archive text.
+    const project = fileURLToPath(new URL('../', import.meta.url))
+    for (const [source, name] of nativeBundleLicenseFiles(process.platform, { includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices, includePaddleLicense: hasPaddleLicense, includeCrtNotice: hasCrtNotice })) {
+      if (!hasMetadata && name === 'PROJECT-LICENSE.txt') continue
+      const expected = await readVerifiedNativeBundleLicense(project, source)
+      const supplied = await readFile(join(tmp, name))
+      // Older Windows v1 archives may contain the canonical Apache text with
+      // checkout CRLF. Do not accept changed content or relax v2 byte identity.
+      const legacyApache = !hasMetadata && name === 'APACHE-2.0.txt' &&
+        supplied.toString('utf8').replace(/\r\n/g, '\n') === expected.toString('utf8').replace(/\r\n/g, '\n')
+      if (!expected.equals(supplied) && !legacyApache) throw Error('native OCR bundle license integrity mismatch: ' + name)
+    }
+    if (hasMetadata) {
+      const expected = await nativeBundleMetadata({ root: tmp, includeSourceNotices: hasSourceNotices, includeRuntimeNotices: hasRuntimeNotices, includePaddleLicense: hasPaddleLicense, includeCrtNotice: hasCrtNotice })
+      for (const [name, value] of Object.entries(expected)) {
+        if (!Buffer.from(value).equals(await readFile(join(tmp, name)))) {
+          throw Error('native OCR bundle metadata integrity mismatch: ' + name)
+        }
+      }
     }
     return await installFromSources(join(tmp,workerName), join(tmp,'models'))
   } finally { await rm(tmp, { recursive:true, force:true }) }

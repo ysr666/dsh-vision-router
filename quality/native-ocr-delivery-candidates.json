@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "scope": "Exact previously tested private delivery candidates; never a download catalog or authorization.",
+  "packageSourceHead": "97ca6a57ac8f6f31fb90f3b535948d096bb84e48",
+  "acceptanceRecord": "https://github.com/ysr666/dsh-vision-router/pull/858#issuecomment-6967567492",
+  "platforms": {
+    "darwin-arm64": {
+      "archive": "ppocrv6-small-darwin-arm64.tar.gz",
+      "bytes": 28216921,
+      "sha256": "2a89cda50cbd74aea80c5551ad600de01963b01f0c4cd85e5cef30a605b21e15",
+      "workerSha256": "2d7442c967708fe7e2802f89ce940f43c381d46565008e85cf9cfd5c6472e42c",
+      "manifestSchema": 3,
+      "memberCount": 13,
+      "experimentalPinAtSourceHead": "71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204",
+      "acceptance": {
+        "repeatedArchiveByteMatch": true,
+        "nativeBundleTestsPassed": 7,
+        "settingsBackend": true,
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "hostOs": "macOS 27.0",
+        "exactFinalArchiveDesktopGui": false
+      }
+    },
+    "win32-x64": {
+      "archive": "ppocrv6-small-win32-x64.tar.gz",
+      "bytes": 35313875,
+      "sha256": "a08b8b5822f52a49b17d23306745db5fbf1475f99071a5741321a6ef7c7d8bcb",
+      "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+      "manifestSchema": 4,
+      "memberCount": 18,
+      "experimentalPinAtSourceHead": "2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33",
+      "supersededWorkerSha256": "4f7ad042349239baca6a654d8ca31937c2c49886f6f51413c8447071ff80bfa8",
+      "acceptance": {
+        "repeatedArchiveByteMatch": true,
+        "nativeBundleTestsPassed": 7,
+        "settingsBackend": true,
+        "actualRecognition": "HELLO 123",
+        "confidence": 0.97396,
+        "hostOs": "Windows 11",
+        "exactFinalArchiveDesktopGui": false
+      }
+    }
+  },
+  "gates": {
+    "productionPinsPromoted": false,
+    "exactFinalArchiveDesktopGui": false,
+    "macMinimumOsValidated": false,
+    "independentRemediatedWorkerCleanRebuild": false,
+    "distributionReviewComplete": false,
+    "publicHttpsVerified": false,
+    "ownerPublicationAuthorized": false
+  },
+  "distributionReady": false
+}
