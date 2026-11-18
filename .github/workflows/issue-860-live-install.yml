@@ -48,7 +48,7 @@ jobs:
       - name: Build real Host
         working-directory: dsh
         run: pnpm run build
-      - name: Observe real Shop install and Host operation settlement
+      - name: Official Desktop Manager seeded Shop then real Shop install
         working-directory: dsh
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
@@ -56,7 +56,7 @@ jobs:
           DVR_860_WITH_SHOP: '1'
           DVR_860_THROUGH_SHOP: '1'
         run: node --import tsx ../dvr/scripts/dsh-issue-860-desktop-shop.mjs
-      - name: Direct Manager control with Shop present in fresh Desktop profile
+      - name: Same official Shop seed then direct Manager control
         if: always() && !cancelled()
         working-directory: dsh
         env:

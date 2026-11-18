@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { spawnSync, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { randomUUID, createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -123,6 +123,10 @@ async function snapshot(label) {
   if (profilePath) {
     try {
       const manifest=readJson(join(profilePath,'package.json'))
+      result.packagePaths=Object.fromEntries(['dsh-plugin-shop',name].map(n=>[n,{
+        installedManifest:existsSync(join(profilePath,'node_modules',n,'package.json')),
+        ignoredManifest:existsSync(join(profilePath,'node_modules','.ignored',n,'package.json')),
+      }]))
       result.disk=Object.fromEntries(['dsh-plugin-shop',name].map(n=>[n,{dependency:manifest.dependencies?.[n]??null,selected:manifest.dsh?.profile?.bundles?.includes(n)??false}]))
     } catch (error) {result.diskError=redact(error.message)}
   }
@@ -136,7 +140,7 @@ async function snapshot(label) {
     } catch(error){result.bundleError=redact(error.message)}
     try {
       const rows=await rpc('pluginManager/listPlugins',{},5000)
-      if(Array.isArray(rows)) result.plugins=rows.filter(row=>/vision-router|shop/i.test(JSON.stringify(row))).map(row=>redact(JSON.stringify(row)).slice(0,2500))
+      if(Array.isArray(rows)) result.plugins=rows.filter(row=>/vision-router|shop/i.test(row.moduleName??'')).map(row=>({entryId:row.entryId,moduleName:row.moduleName,enabled:row.enabled,fiberPhase:row.fiberPhase,error:row.error&&redact(JSON.stringify(row.error))}))
     } catch(error){result.pluginError=redact(error.message)}
     for(const [key,path] of [['logs','/_dsh/vision-router/logs'],['settings','/_dsh/vision-router/local-settings']]){
       try{result[key]=await route(path)}catch(error){result[key]=redact(error.message)}
@@ -146,6 +150,17 @@ async function snapshot(label) {
   return result
 }
 const startedAt=Date.now()
+async function assertShopHealthy() {
+  const list=await rpc('pluginManager/listBundles',{})
+  const shop=list.find(row=>row.name==='dsh-plugin-shop')
+  assert.equal(shop?.version,'0.9.4','Shop version')
+  assert.equal(shop?.installed,true,'Shop installed')
+  assert.equal(shop?.enabled,true,'Shop enabled')
+  assert.ok(!shop.error,'Shop bundle must remain resolvable')
+  assert.ok(shop.rows?.some(row=>row.rowId==='shop' && row.entryId),'Shop loader entry')
+  // A real remote call, not just the disk manifest.
+  await rpc('shop/installedSpecs',{})
+}
 async function assertHealthy() {
   assert.ok(!hostFailure,'Host must remain alive: '+redact(hostFailure?.message??''))
   for (const path of ['/_dsh/vision-router/logs','/_dsh/vision-router/local-settings']) {
@@ -172,33 +187,43 @@ try {
   profilePath=paths.profile
   const manager=new DesktopProjectManager(paths,{dsh:project})
   await manager.applyRelease()
-  // Desktop owns its profile: only Shop is preinstalled, not DVR.
-  const manifestPath=join(paths.profile,'package.json')
-  const manifest=readJson(manifestPath)
-  manifest.dependencies['dsh-plugin-shop']='0.9.4'
-  manifest.dsh.profile.bundles.push('dsh-plugin-shop')
-  writeFileSync(manifestPath,JSON.stringify(manifest,null,2)+'\n')
+  // Do not manually populate node_modules or invoke an unscoped pnpm: it
+  // produced an inconsistent install layout in the previous experiment.
+  // Seed Shop using the same official Desktop PluginManager/pnpm as DVR.
   const pnpmEntry=join(root,'apps/desktop/node_modules/pnpm/bin/pnpm.mjs')
-  const setup=spawnSync(process.execPath,[pnpmEntry,'install','--dir',paths.profile,'--ignore-scripts'],
-    {env,encoding:'utf8',timeout:480_000})
-  assert.equal(setup.status,0,'Shop profile setup failed: '+redact((setup.stdout??'')+'\n'+(setup.stderr??'')).slice(-16000))
   writeFileSync(join(paths.profile,'cordis.patch.yml'),'- id: webserver\n  config:\n    host: 127.0.0.1\n    port: 19681\n')
-  phase='desktop-start'
-  host=new DesktopHostProcess(process.execPath,project,paths.profile,undefined,env,
-    error=>{hostFailure=error;console.error('DVR_860_DESKTOP_HOST_ERROR='+redact(error.diagnostic??error.message))},
-    undefined,{pnpm:pnpmEntry,nodeBin:bundledNodeDir},undefined,record=>{
-      operations.push(record)
-      console.log('DVR_860_HOST_OPERATION='+JSON.stringify(record))
-    })
-  const ready=await host.start()
-  const url=new URL(ready.url)
-  assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname),'only isolated loopback Host allowed')
-  const auth=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(15_000)})
-  assert.equal(auth.status,303,'Host authentication')
-  cookie=auth.headers.get('set-cookie')?.split(';',1)[0]
-  assert.ok(cookie,'missing authentication cookie')
-  await auth.body?.cancel()
-  origin=url.origin
+  const launch=async()=>{
+    hostFailure=undefined
+    host=new DesktopHostProcess(process.execPath,project,paths.profile,undefined,env,
+      error=>{hostFailure=error;console.error('DVR_860_DESKTOP_HOST_ERROR='+redact(error.diagnostic??error.message))},
+      undefined,{pnpm:pnpmEntry,nodeBin:bundledNodeDir},undefined,record=>{
+        operations.push(record)
+        console.log('DVR_860_HOST_OPERATION='+JSON.stringify(record))
+      })
+    const ready=await host.start()
+    const url=new URL(ready.url)
+    assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname),'only isolated loopback Host allowed')
+    const auth=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(15_000)})
+    assert.equal(auth.status,303,'Host authentication')
+    cookie=auth.headers.get('set-cookie')?.split(';',1)[0]
+    assert.ok(cookie,'missing authentication cookie')
+    await auth.body?.cancel()
+    origin=url.origin
+  }
+  phase='desktop-seed-start'
+  await launch()
+  const seedBefore=await rpc('pluginManager/listBundles',{})
+  assert.notEqual(seedBefore.find(row=>row.name==='dsh-plugin-shop')?.installed,true,'Shop must start absent')
+  phase='desktop-seed-shop'
+  const seed=await rpc('pluginManager/installBundle',{spec:'dsh-plugin-shop@0.9.4',options:{requestId:randomUUID()}},480_000)
+  console.log('DVR_860_SHOP_SEED='+JSON.stringify(packageState(seed)))
+  assert.equal(seed?.application,'applied','official Desktop Shop seeding failed')
+  assert.equal(seed?.version,'0.9.4')
+  await assertShopHealthy()
+  await snapshot('official-shop-seed')
+  phase='desktop-restart-after-seed'
+  await host.stop()
+  await launch()
   phase='initial-state'
   if (withShop) {
     const installed = await rpc('pluginManager/listBundles',{})
@@ -260,6 +285,8 @@ try {
   assert.equal(installed?.enabled,true)
   assert.equal(installed?.version,'3.4.0')
   await assertHealthy()
+  await snapshot('dvr-active-and-shop-check')
+  await assertShopHealthy()
   phase='disable'
   const off=await rpc('pluginManager/setBundleEnabled',{name,enabled:false},90_000)
   console.log('DVR_860_DISABLE='+JSON.stringify(packageState(off)))
@@ -272,7 +299,8 @@ try {
   assert.equal(on?.application,'applied')
   assert.equal((await bundles())?.enabled,true)
   await assertHealthy()
-  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,profile:'desktop',platform:process.platform,shop:'0.9.4',throughShop,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
+  await assertShopHealthy()
+  console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,profile:'desktop',platform:process.platform,shopSeed:'official-desktop-manager-and-restart',shop:'0.9.4',throughShop,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
 } catch (error) {
   console.error('DVR_860_FAILURE='+JSON.stringify({phase,message:redact(error?.stack ?? error)}))
   await snapshot('failure').catch(error=>console.error('snapshot failed: '+redact(error.message)))
