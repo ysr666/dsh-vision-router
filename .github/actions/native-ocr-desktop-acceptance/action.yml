@@ -26,7 +26,9 @@ runs:
         path: dsh-ocr-host
     - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
       with:
-        version: 11.28.5
+        # This checkout has two different packageManager declarations. Read
+        # the immutable RC4 Host manifest, not the DVR workspace root.
+        package_json_file: dsh-ocr-host/package.json
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: 24.21.0
@@ -46,6 +48,7 @@ runs:
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "${{ steps.pin.outputs.sha }}"
+        test "pnpm@$(pnpm --version)" = "$(node -p 'require("./package.json").packageManager')"
         pnpm install --frozen-lockfile
         pnpm run build
     - name: Verify exact OCR tool evidence discrimination
@@ -65,6 +68,7 @@ runs:
         DVR_NATIVE_OCR_DESKTOP_REPORT: ${{ inputs.stage }}/desktop-acceptance-evidence.json
       run: node --import tsx ../scripts/dsh-desktop-renderer-e2e.mjs
     - name: Preserve the production pins and source
+      if: always()
       shell: bash
       run: git diff --exit-code -- src/lib/native-ocr-canary.js src/lib/native-ocr-download.js src/lib/native-ocr-bundle-metadata.js
     - name: Upload Desktop evidence JSON only
