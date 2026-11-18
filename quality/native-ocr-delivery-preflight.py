@@ -52,6 +52,7 @@ STAGED_WORKERS = {
     'win32-x64': 'd1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166',
 }
 MAC_REPLAY_SHA = 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd'
+WINDOWS_REPLAY_SHA = 'fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0'
 INDEPENDENT_CRT_PROPERTIES = {
     'dvr:crt-remediation-evidence-sha256': 'b10a66e205a299770237b042c20a5df2b49a3b5d5100c8b1eb0f12a68ca4a331',
     'dvr:crt-replacement-archive-sha256': '4352197dadef779a8a6cc5cff0126a31d9f5968c43a09f273aa9fdd58f1dcf24',
@@ -69,6 +70,7 @@ def staged_ledger(target, report):
     require(entry['name'] == 'ppocrv6-small-' + target + '.tar.gz' and
             type(entry['bytes']) is int and 128 <= entry['bytes'] <= 64 * 1024 * 1024 and
             re.fullmatch(r'[0-9a-f]{64}', entry['sha256']), 'STAGE_ARCHIVE_IDENTITY')
+    require(not win or (entry['sha256'] == WINDOWS_REPLAY_SHA and entry['bytes'] == 35313963), 'STAGE_WINDOWS_REPLAY_IDENTITY')
     require(win or (entry['sha256'] == MAC_REPLAY_SHA and entry['bytes'] == 27917268), 'STAGE_MAC_REPLAY_IDENTITY')
     require(report['members'] == (18 if win else 13), 'STAGE_MEMBER_COUNT')
     require(report['manifest']['worker']['sha256'] == STAGED_WORKERS[target] and

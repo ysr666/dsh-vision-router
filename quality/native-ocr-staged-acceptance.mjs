@@ -18,7 +18,15 @@ const workerName = process.platform==='win32'?'worker.exe':'worker'
 const here = fileURLToPath(import.meta.url)
 const digest = async path => sha(await readFile(path))
 const maxArchive = 64*1024*1024
-const macArchive = 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd'
+const exactArchives = Object.freeze({
+  'darwin-arm64': { sha256: 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd', bytes: 27917268 },
+  'win32-x64': { sha256: 'fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0', bytes: 35313963 },
+})
+export function assertExactStagedArchive(target, archive) {
+  assert.ok(exactArchives[target], 'unsupported staged target')
+  assert.equal(archive.sha256, exactArchives[target].sha256, 'must replay exact reviewed staged archive')
+  assert.equal(archive.bytes, exactArchives[target].bytes, 'must replay exact staged size')
+}
 
 export function replaceOnce(source, previous, next) {
   assert.equal(source.split(previous).length,2,'expected unique scratch pin')
@@ -66,7 +74,7 @@ async function loadStage(dir) {
   const archive=await readFile(archivePath)
   assert.equal(archive.length,info.archive.bytes)
   assert.equal(sha(archive),info.archive.sha256)
-  if(target==='darwin-arm64')assert.equal(info.archive.sha256,macArchive,'must replay previously staged exact Mac archive')
+  assertExactStagedArchive(target, info.archive)
   return {info,archive}
 }
 const fixtureUrl = name => 'https://github.com/ysr666/dsh-vision-router/releases/download/native-ocr-staging-test/'+name

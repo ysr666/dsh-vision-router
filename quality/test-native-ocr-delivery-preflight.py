@@ -95,6 +95,21 @@ class Cases(unittest.TestCase):
         wrong = copy.deepcopy(stage); wrong['distributionReady'] = True
         with self.assertRaisesRegex(ValueError, 'STAGE_UNEXPECTED_GATE'): m.staged_ledger(target, wrong)
 
+    def test_windows_current_staging_identity_is_pinned(self):
+        target = 'win32-x64'
+        stage = {'schemaVersion': 1, 'target': target, 'workerSha256': m.STAGED_WORKERS[target],
+                 'archive': {'name': 'ppocrv6-small-win32-x64.tar.gz', 'bytes': 35313963, 'sha256': m.WINDOWS_REPLAY_SHA},
+                 'members': 18, 'archiveReplayMatch': True, 'modelOrigin': 'windows-canonical',
+                 'distributionReady': False, 'ownerPublicationAuthorized': False,
+                 'exactArchiveDesktopGuiVerified': False, 'minimumOsRuntimeVerified': False,
+                 'manifest': {'worker': {'sha256': m.STAGED_WORKERS[target]}, 'distributionReady': False},
+                 'sbomSha256': 'a'*64}
+        self.assertEqual(m.staged_ledger(target, stage)['platforms'][target]['sha256'], m.WINDOWS_REPLAY_SHA)
+        wrong = copy.deepcopy(stage); wrong['archive']['bytes'] -= 1
+        with self.assertRaisesRegex(ValueError, 'STAGE_WINDOWS_REPLAY_IDENTITY'): m.staged_ledger(target, wrong)
+        wrong = copy.deepcopy(stage); wrong['archive']['sha256'] = 'b'*64
+        with self.assertRaisesRegex(ValueError, 'STAGE_WINDOWS_REPLAY_IDENTITY'): m.staged_ledger(target, wrong)
+
     def test_stage_checks_independent_crt_evidence_not_just_manifest(self):
         def fixture(old):
             stage = {}

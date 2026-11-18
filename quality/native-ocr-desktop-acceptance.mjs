@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, parse } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { decodeBmp, replaceOnce } from './native-ocr-staged-acceptance.mjs'
+import { decodeBmp, replaceOnce, assertExactStagedArchive } from './native-ocr-staged-acceptance.mjs'
 import { candidates } from './native-ocr-release-stage.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -21,6 +21,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   assert.equal(info.target, target)
   assert.equal(info.workerSha256, candidates[target].workerSha256)
   assert.equal(info.archive.name, 'ppocrv6-small-' + target + '.tar.gz')
+  assertExactStagedArchive(target, info.archive)
   assert.equal(info.distributionReady, false)
   assert.equal(info.ownerPublicationAuthorized, false)
   assert.equal(audit.identityVerified, true)
