@@ -237,6 +237,15 @@ def deterministic_zip(dest, members, manifest):
             z.writestr(info, content, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
+def write_portable_recipe(path, recipe):
+    # Validate the actual serialized bytes before the downstream runner
+    # spends time building the Windows toolchain and worker.
+    with path.open('x', encoding='utf8', newline='\n') as stream:
+        json.dump(recipe, stream, indent=2)
+        stream.write('\n')
+    require(json.loads(path.read_text(encoding='utf8')) == recipe, 'PORTABLE_RECIPE_ROUNDTRIP_FAILED')
+
+
 def run(a):
     require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'APPLE_SILICON_REQUIRED')
     repo, source_archive, tool_archive, windows_zip, lab = [getattr(a, k).resolve() for k in
@@ -377,7 +386,7 @@ def run(a):
     recipe = {'schemaVersion': 1, 'scope':'Public-source compile recipe and generated header only; no binary/model payload',
               'sourceRevision': MINGW_REV, 'replacementArchiveSha256': report['replacementArchiveSha256'],
               'recipes': recipes, 'generatedHeaders': headers, 'distributionReady': False}
-    (lab/'crt-portable-source-recipe.json').write_text(json.dumps(recipe, indent=2)+'\\n')
+    write_portable_recipe(lab/'crt-portable-source-recipe.json', recipe)
     print('CRT_SOURCE_RECONSTRUCTION_MATCH', report['replacementArchiveSha256'], 'distributionReady=false')
 
 
