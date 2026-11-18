@@ -24,7 +24,7 @@ or block a user whose separately reviewed deployment works.
 
 The active compatibility CI is organized by responsibility: the **minimum Host**
 (`0.2.1-rc.5`), the **recommended Host** (`0.2.2-rc.1`) and the **latest
-RC candidate** (`0.2.2-rc.5`, qualification pending) retain normal automated gates. RC2 and RC3 retain existing manual replay; RC4's exact gate and pin remain reproducible at [the historical DVR commit](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633), not as another permanent workflow/test suite.
+RC candidate** (`0.2.2-rc.5`, qualification pending) retain normal automated gates. RC2, RC3 and RC4 exact gates, pins and regression evidence remain reproducible at [the historical DVR commit](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633), not as permanent duplicate workflow/test suites. Historical replay reconstructs the historical checkout, not qualification of the new candidate on those versions. The shared Agent order and Session batch integration remain in the current gate.
 All three Host gates now run as reusable workflows inside the branch-protected
 `CI` for **Host-impacting changes**: minimum 0.2.1-rc.5, recommended 0.2.2-rc.1, and the current RC candidate.
 Both mandatory `contract` checks wait for their aggregate results and explicitly
