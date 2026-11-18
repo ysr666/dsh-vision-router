@@ -48,11 +48,19 @@ jobs:
       - name: Build real Host
         working-directory: dsh
         run: pnpm run build
-      - name: Reproduce live PluginManager installation of published DVR 3.4.0
+      - name: Observe real Shop install and Host operation settlement
         working-directory: dsh
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
           DSH_EXPECTED_VERSION: ${{ matrix.version }}
           DVR_860_WITH_SHOP: '1'
           DVR_860_THROUGH_SHOP: '1'
+        run: node --import tsx ../dvr/scripts/dsh-issue-860-desktop-shop.mjs
+      - name: Direct Manager control with Shop present in fresh Desktop profile
+        if: always() && !cancelled()
+        working-directory: dsh
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh
+          DSH_EXPECTED_VERSION: ${{ matrix.version }}
+          DVR_860_DIRECT_CONTROL: '1'
         run: node --import tsx ../dvr/scripts/dsh-issue-860-desktop-shop.mjs

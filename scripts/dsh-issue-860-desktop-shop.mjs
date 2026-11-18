@@ -20,7 +20,7 @@ const version = process.env.DSH_EXPECTED_VERSION || '0.2.2-rc.4'
 const expected = versions[version]
 assert.ok(expected,'unreviewed Host version')
 const withShop = true
-const throughShop = true
+const throughShop = process.env.DVR_860_DIRECT_CONTROL !== '1'
 assert.equal(process.platform,'win32')
 assert.equal(execFileSync('git', ['-C',root,'rev-parse','HEAD'], {encoding:'utf8'}).trim(), expected)
 const spec = 'dsh-vision-router@3.4.0'
@@ -45,7 +45,9 @@ const {DesktopProjectManager}=await importDsh('apps/desktop/src/project-manager.
 const {resolveDesktopPaths}=await importDsh('apps/desktop/src/paths.ts')
 const {DesktopHostProcess}=await importDsh('apps/desktop/src/host-process.ts')
 const {DESKTOP_HOST_PROTOCOL_VERSION}=await importDsh('apps/desktop/src/host-protocol.ts')
-let host, hostFailure
+let host, hostFailure, profilePath
+const operations=[]
+const shopDisruptions=[]
 // Fixed test catalog, not a claim about today's public Shop catalog. The
 // actual Shop validates this pointer and downloads the real npm release.
 let catalog
@@ -98,7 +100,11 @@ async function rpc(method, args, timeout = 20_000) {
   const message = await response.json()
   assert.equal(message.type,'server-response')
   assert.equal(message.rpcId,rpcId)
-  assert.equal(message.result?.ok,true,method+' RPC failure '+redact(JSON.stringify(message.result?.error)))
+  if (message.result?.ok!==true) {
+    const error=new Error(method+' RPC failure '+redact(JSON.stringify(message.result?.error)))
+    error.code=message.result?.error?.code
+    throw error
+  }
   return message.result.value
 }
 async function route(path) {
@@ -112,6 +118,34 @@ async function bundles() {
   assert.ok(Array.isArray(list),'listBundles must return an array')
   return list.find(row=>row.name===name)
 }
+async function snapshot(label) {
+  const result={label,elapsedMs:Date.now()-startedAt,operations:operations.map(r=>r.operation)}
+  if (profilePath) {
+    try {
+      const manifest=readJson(join(profilePath,'package.json'))
+      result.disk=Object.fromEntries(['dsh-plugin-shop',name].map(n=>[n,{dependency:manifest.dependencies?.[n]??null,selected:manifest.dsh?.profile?.bundles?.includes(n)??false}]))
+    } catch (error) {result.diskError=redact(error.message)}
+  }
+  if (origin && cookie) {
+    try {
+      const rows=await rpc('pluginManager/listBundles',{},5000)
+      result.bundles=rows.filter(row=>[name,'dsh-plugin-shop'].includes(row.name)).map(row=>({
+        name:row.name,version:row.version,enabled:row.enabled,installed:row.installed,
+        error:row.error&&redact(JSON.stringify(row.error)),rows:row.rows?.map(r=>({id:r.rowId,entry:!!r.entryId}))
+      }))
+    } catch(error){result.bundleError=redact(error.message)}
+    try {
+      const rows=await rpc('pluginManager/listPlugins',{},5000)
+      if(Array.isArray(rows)) result.plugins=rows.filter(row=>/vision-router|shop/i.test(JSON.stringify(row))).map(row=>redact(JSON.stringify(row)).slice(0,2500))
+    } catch(error){result.pluginError=redact(error.message)}
+    for(const [key,path] of [['logs','/_dsh/vision-router/logs'],['settings','/_dsh/vision-router/local-settings']]){
+      try{result[key]=await route(path)}catch(error){result[key]=redact(error.message)}
+    }
+  }
+  console.log('DVR_860_SNAPSHOT='+JSON.stringify(result))
+  return result
+}
+const startedAt=Date.now()
 async function assertHealthy() {
   assert.ok(!hostFailure,'Host must remain alive: '+redact(hostFailure?.message??''))
   for (const path of ['/_dsh/vision-router/logs','/_dsh/vision-router/local-settings']) {
@@ -135,6 +169,7 @@ try {
   mkdirSync(bundledNodeDir,{recursive:true})
   cpSync(process.execPath,join(bundledNodeDir,'node.exe'))
   const paths=resolveDesktopPaths(home)
+  profilePath=paths.profile
   const manager=new DesktopProjectManager(paths,{dsh:project})
   await manager.applyRelease()
   // Desktop owns its profile: only Shop is preinstalled, not DVR.
@@ -151,7 +186,10 @@ try {
   phase='desktop-start'
   host=new DesktopHostProcess(process.execPath,project,paths.profile,undefined,env,
     error=>{hostFailure=error;console.error('DVR_860_DESKTOP_HOST_ERROR='+redact(error.diagnostic??error.message))},
-    undefined,{pnpm:pnpmEntry,nodeBin:bundledNodeDir})
+    undefined,{pnpm:pnpmEntry,nodeBin:bundledNodeDir},undefined,record=>{
+      operations.push(record)
+      console.log('DVR_860_HOST_OPERATION='+JSON.stringify(record))
+    })
   const ready=await host.start()
   const url=new URL(ready.url)
   assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname),'only isolated loopback Host allowed')
@@ -184,14 +222,32 @@ try {
     assert.ok(started.installId,'missing Shop install ID')
     let status
     const deadline=Date.now()+480_000
+    let firstDisruption
     do {
-      status=await rpc('shop/installStatus',{args:{installId:started.installId}})
-      assert.equal(status?.found,true,'Shop lost installation record')
-      if (['done','failed'].includes(status.state)) break
+      try {
+        status=await rpc('shop/installStatus',{args:{installId:started.installId}},10000)
+        if(status?.found===true && ['done','failed'].includes(status.state)) break
+        if(status?.found!==true) {
+          shopDisruptions.push({time:Date.now()-startedAt,kind:'lost-record'})
+          firstDisruption??=Date.now()
+        }
+      } catch(error) {
+        if(error.code!=='gateway/service-unavailable') throw error
+        shopDisruptions.push({time:Date.now()-startedAt,kind:error.code})
+        firstDisruption??=Date.now()
+      }
+      if(firstDisruption && shopDisruptions.length===1) await snapshot('first-shop-disruption')
+      // A temporary HMR outage and permanent loss of operation identity are
+      // different failures. Observe independently of the Shop receipt.
+      if(firstDisruption && Date.now()-firstDisruption>=30_000) break
       await delay(1000)
     } while(Date.now()<deadline)
-    console.log('DVR_860_SHOP_TERMINAL='+redact(JSON.stringify(status)).slice(-16000))
+    console.log('DVR_860_SHOP_TERMINAL='+redact(JSON.stringify(status??null)).slice(-16000))
+    if(shopDisruptions.length) console.log('DVR_860_SHOP_DISRUPTIONS='+JSON.stringify(shopDisruptions))
+    await snapshot('after-shop-operation')
+    assert.equal(status?.found,true,'Shop lost installation record')
     assert.equal(status?.state,'done','Shop install did not settle successfully')
+    assert.equal(shopDisruptions.length,0,'Shop became unavailable or lost record during installation')
   } else {
     const operation=await rpc('pluginManager/installBundle',{spec,options:{requestId:randomUUID()}},480_000)
     console.log('DVR_860_INSTALL='+JSON.stringify(packageState(operation)))
@@ -219,6 +275,7 @@ try {
   console.log('DVR_860_RESULT='+JSON.stringify({ok:true,host:version,hostSha:expected,profile:'desktop',platform:process.platform,shop:'0.9.4',throughShop,package:spec,liveInstall:true,liveDisableEnable:true,processStable:true}))
 } catch (error) {
   console.error('DVR_860_FAILURE='+JSON.stringify({phase,message:redact(error?.stack ?? error)}))
+  await snapshot('failure').catch(error=>console.error('snapshot failed: '+redact(error.message)))
   process.exitCode=1
 } finally {
   try { await host?.stop() } catch(error) {console.error('Desktop stop failed: '+redact(error.message));process.exitCode=1}
