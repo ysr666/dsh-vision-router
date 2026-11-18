@@ -12,6 +12,8 @@ import subprocess
 import zipfile
 
 REPLACEMENT_SHA256 = '011c1d2777f991641afb8373fd2ab5dcec4a98da0441251bd7fef7bb75349b0b'
+SOURCE_RECONSTRUCTED_SHA256 = '98923cb3f9e63aa9d72c3b06828799217e6bbef87b6f85e1c4195a157bc057b8'
+SOURCE_RECONSTRUCTED_MANIFEST_SHA256 = '8b5fbbcda9a35a765956b84a3d9f7845c37a8b12e10371beb70dd32b953ce7c7'
 OLD_WORKER_SHA256 = '4f7ad042349239baca6a654d8ca31937c2c49886f6f51413c8447071ff80bfa8'
 NEW_WORKER_SHA256 = 'd1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166'
 NCNN_ARCHIVE_SHA256 = '1346fc6c0728de98a0f198a75898f428a15f2ea6208bfd1e90ddbc1d4c041dd2'
@@ -28,10 +30,22 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def replacement_identity(archive, source_reconstructed):
+    expected = SOURCE_RECONSTRUCTED_SHA256 if source_reconstructed else REPLACEMENT_SHA256
+    require(sha(archive) == expected, 'Private replacement archive identity mismatch')
+    if source_reconstructed:
+        with zipfile.ZipFile(archive) as z:
+            require(z.namelist().count('manifest.json') == 1, 'Unexpected reconstruction manifest count')
+            require(hashlib.sha256(z.read('manifest.json')).hexdigest() == SOURCE_RECONSTRUCTED_MANIFEST_SHA256,
+                    'Source-reconstructed member manifest identity mismatch')
+    return expected
+
+
 def run():
     p = argparse.ArgumentParser(description=__doc__)
     for arg in ('lab-root', 'repo-root', 'replacement-zip', 'out'):
         p.add_argument('--' + arg, required=True, type=Path)
+    p.add_argument('--source-reconstructed', action='store_true', help='Select the exact reviewed clean-CI reconstruction ZIP; final worker must still match')
     a = p.parse_args()
     root, repo, archive, out = (a.lab_root.resolve(), a.repo_root.resolve(),
                                a.replacement_zip.resolve(), a.out.resolve())
@@ -39,7 +53,7 @@ def run():
     require(not out.exists() and not out.is_relative_to(root) and not root.is_relative_to(out)
             and not out.is_relative_to(repo) and not repo.is_relative_to(out),
             'Use a fresh, separate private output directory')
-    require(sha(archive) == REPLACEMENT_SHA256, 'Private replacement archive identity mismatch')
+    replacement_sha = replacement_identity(archive, a.source_reconstructed)
     require(sha(root / (TOOLCHAIN + '.zip')) ==
             'fd5462b7f5d93b2ff981fcd3f9c7e427e47f3203c64ea91c27bcc444eebd74cd',
             'Original toolchain archive identity mismatch')
@@ -141,7 +155,8 @@ def run():
     report = {'originalWorkerSha256': OLD_WORKER_SHA256, 'workerSha256': sha(worker),
               'expectedPrivateWorkerSha256': NEW_WORKER_SHA256,
               'exactWorkerMatch': sha(worker) == NEW_WORKER_SHA256,
-              'replacementArchiveSha256': REPLACEMENT_SHA256, 'replacementMembers': manifest,
+              'replacementArchiveSha256': replacement_sha, 'sourceReconstructedInput': a.source_reconstructed,
+              'replacementMembers': manifest,
               'ncnnSha256': NCNN_ARCHIVE_SHA256, 'selectedStaticMembers': inv['staticMemberCount'],
               'imports': imports, 'stockUnchanged': True, 'distributionReady': False}
     (out / 'new-link-inventory.json').write_text(json.dumps(inv, indent=2) + '\n', encoding='utf8')
