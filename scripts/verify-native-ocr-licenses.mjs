@@ -35,6 +35,9 @@ const runtimeNotice = read('assets/licenses/windows-native-runtime-NOTICES.txt')
 assert.equal(sha256(runtimeNotice), 'ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006')
 for (const name of ['libcxx','libcxxabi','libunwind','compiler-rt']) assert.ok(runtimeNotice.includes('LLVM '+name+' LICENSE.TXT'))
 assert.ok(runtimeNotice.includes('mingw-w64-crt/gdtoa/gdtoaimp.h'))
+const pthreadNotice = read('assets/licenses/mingw-pthread-signal-NOTICE.txt')
+assert.equal(sha256(pthreadNotice), 'fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802')
+assert.ok(pthreadNotice.includes('Copyright (c) 2013-2016  mingw-w64 project'))
 const notice = read('THIRD_PARTY_NOTICES.md')
 const provenance = JSON.parse(read('quality/native-ocr-provenance-LAB.json'))
 for (const key of ['detector','recognizer']) {
@@ -81,7 +84,7 @@ for (const required of [
   'assets/licenses/ncnn-LICENSE.txt','assets/licenses/apache-2.0.txt','assets/licenses/paddleocr-LICENSE.txt',
   'assets/licenses/llvm-mingw-LICENSE.txt','assets/licenses/mingw-w64-runtime-COPYING.txt',
   'assets/licenses/mingw-w64-source-NOTICES.txt', 'assets/licenses/windows-native-runtime-NOTICES.txt',
-  'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',
+  'assets/licenses/mingw-pthread-signal-NOTICE.txt', 'scripts/install-native-ocr.mjs','THIRD_PARTY_NOTICES.md',
 ]) assert.ok(files.includes(required), 'missing license/installer from package: '+required)
 assert.equal(files.some(p=>/\.ncnn\.(?:bin|param)$|inference\.onnx|chemistry_user|native-ocr-lab(?:$|\.)|\.exe$|\.dylib$|\.so(?:\.|$)/.test(p)), false,
   'unexpected binary, model or private fixture in npm package')

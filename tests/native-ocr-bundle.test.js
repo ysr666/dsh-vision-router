@@ -42,11 +42,14 @@ test('Windows runtime attribution is required for new bundles, while prior membe
   const old = names({includeSourceNotices:false,includeRuntimeNotices:false,includePaddleLicense:false})
   const source = names({includeSourceNotices:true,includeRuntimeNotices:false,includePaddleLicense:false})
   const v2 = names({includePaddleLicense:false})
+  const v3 = names({includeCrtNotice:false})
   const current = names()
   assert.ok(!old.includes('MINGW-SOURCE-NOTICES.txt'))
   assert.deepEqual(source.filter(name => !old.includes(name)), ['MINGW-SOURCE-NOTICES.txt'])
   assert.deepEqual(v2.filter(name => !source.includes(name)), ['WINDOWS-RUNTIME-NOTICES.txt'])
-  assert.deepEqual(current.filter(name => !v2.includes(name)), ['PADDLEOCR-LICENSE.txt'])
+  assert.deepEqual(v3.filter(name => !v2.includes(name)), ['PADDLEOCR-LICENSE.txt'])
+  assert.deepEqual(current.filter(name => !v3.includes(name)), ['MINGW-PTHREAD-SIGNAL-NOTICE.txt'])
+  assert.ok(!nativeBundleLicenseFiles('darwin').some(([,name]) => name === 'MINGW-PTHREAD-SIGNAL-NOTICE.txt'))
   assert.ok(nativeBundleLicenseFiles('darwin').some(([,name]) => name === 'PADDLEOCR-LICENSE.txt'))
   for (const name of ['LLVM-LICENSE.txt','MINGW-RUNTIME-COPYING.txt']) assert.ok(old.includes(name))
   assert.ok(!nativeBundleLicenseFiles('darwin').some(([,name]) => name === 'WINDOWS-RUNTIME-NOTICES.txt'))
@@ -96,14 +99,14 @@ test('tampered bundles fail closed and do not modify an installed worker', {
   } finally { rmSync(dir, { force:true, recursive:true }) }
 })
 
-test('bundle metadata is verified and upgraded to v3, and cannot be replaced by archive-supplied claims', {
+test('bundle metadata is verified and upgraded to current schema, and cannot be replaced by archive-supplied claims', {
   skip: !isApprovedNativePlatform || !process.env.DVR_OCR_PRIVATE_BUNDLE,
 }, () => {
   const archive = process.env.DVR_OCR_PRIVATE_BUNDLE
   const installed = localNativeOcrInstallPaths()
   const before = hash(installed.binaryPath)
   const manifest = JSON.parse(readFileSync(join(installed.root, 'MANIFEST.json'), 'utf8'))
-  assert.equal(manifest.schemaVersion, 3)
+  assert.equal(manifest.schemaVersion, process.platform === 'win32' ? 4 : 3)
   assert.equal(manifest.files['PADDLEOCR-LICENSE.txt'].sha256, hash(join(installed.root, 'PADDLEOCR-LICENSE.txt')))
   assert.equal(manifest.distributionReady, false)
   const sbom = JSON.parse(readFileSync(join(installed.root, 'SBOM.cdx.json'), 'utf8'))
@@ -111,6 +114,8 @@ test('bundle metadata is verified and upgraded to v3, and cannot be replaced by 
   assert.equal(sbom.compositions[0].aggregate, 'incomplete')
   assert.ok(existsSync(join(installed.root, 'PROJECT-LICENSE.txt')))
   if (process.platform === 'win32') {
+    assert.ok(existsSync(join(installed.root, 'MINGW-PTHREAD-SIGNAL-NOTICE.txt')))
+    assert.equal(manifest.files['MINGW-PTHREAD-SIGNAL-NOTICE.txt'].sha256, hash(join(installed.root, 'MINGW-PTHREAD-SIGNAL-NOTICE.txt')))
     assert.ok(existsSync(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
     assert.equal(manifest.files['MINGW-SOURCE-NOTICES.txt'].sha256, hash(join(installed.root, 'MINGW-SOURCE-NOTICES.txt')))
     assert.equal(manifest.files['WINDOWS-RUNTIME-NOTICES.txt'].sha256, hash(join(installed.root, 'WINDOWS-RUNTIME-NOTICES.txt')))
@@ -144,14 +149,14 @@ test('bundle metadata is verified and upgraded to v3, and cannot be replaced by 
   } finally { rmSync(dir,{recursive:true,force:true}) }
 })
 
-test('a valid legacy v2 archive imports with the pinned v3 PaddleOCR copyright', {
+test('a valid legacy archive imports with current pinned copyright notices', {
   skip: !isApprovedNativePlatform || !process.env.DVR_OCR_PREVIOUS_BUNDLE,
 }, () => {
   const result = invoke(process.env.DVR_OCR_PREVIOUS_BUNDLE)
   assert.equal(result.status, 0, result.stderr)
   const installed = localNativeOcrInstallPaths()
   const manifest = JSON.parse(readFileSync(join(installed.root, 'MANIFEST.json'), 'utf8'))
-  assert.equal(manifest.schemaVersion, 3)
+  assert.equal(manifest.schemaVersion, process.platform === 'win32' ? 4 : 3)
   assert.equal(hash(installed.binaryPath), EXPERIMENTAL_OCR_BINARY_SHA256[target])
   assert.equal(hash(join(installed.root, 'PADDLEOCR-LICENSE.txt')), '3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e')
 })

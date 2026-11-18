@@ -17,3 +17,5 @@ assets/licenses/mingw-w64-source-NOTICES.txt -text -whitespace
 assets/licenses/windows-native-runtime-NOTICES.txt -text -whitespace
 
 assets/licenses/paddleocr-LICENSE.txt -text -whitespace
+
+assets/licenses/mingw-pthread-signal-NOTICE.txt -text -whitespace

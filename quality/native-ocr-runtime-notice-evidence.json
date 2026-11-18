@@ -96,5 +96,13 @@
     }
   ],
   "noticeSha256": "ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006",
-  "distributionReady": false
+  "distributionReady": false,
+  "reconstructedCrtHeaderNotice": {
+    "source": "mingw-w64-libraries/winpthreads/include/pthread_signal.h",
+    "sourceSha256": "46915f25fb94f61ac4bdfa9b38736e6524a5b36bc42b00f7e87526fbc24287a6",
+    "gitBlobSha1": "42a50ae06cda74d7d61933a25272105d247ff1b1",
+    "noticeFile": "assets/licenses/mingw-pthread-signal-NOTICE.txt",
+    "noticeSha256": "fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802",
+    "scope": "Exact copyright and permission block from pinned source; actual reconstructed dependency file, not a separately linked winpthreads library."
+  }
 }

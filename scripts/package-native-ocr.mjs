@@ -7,6 +7,7 @@ import { join, resolve, dirname } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { deterministicNativeOcrArchive } from '../lib/native-ocr-archive.js'
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
 import { nativeBundleMetadata, nativeBundleLicenseFiles, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
@@ -55,11 +56,7 @@ async function main() {
     }
     files.sort()
     await mkdir(dirname(output), { recursive: true })
-    const archive = spawnSync('tar', ['-czf', output, '-C', workspace, ...files], {
-      encoding: 'utf8', timeout: 60_000,
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-    })
-    if (archive.status !== 0) throw Error('tar packaging failed: ' + String(archive.stderr).slice(0,300))
+    await writeFile(output, await deterministicNativeOcrArchive(workspace, files), { mode: 0o600 })
     const names = spawnSync('tar', ['-tzf', output], { encoding: 'utf8', timeout: 30_000 })
     if (names.status !== 0 ||
       JSON.stringify(names.stdout.trim().split(/\r?\n/).sort()) !== JSON.stringify(files)) {
