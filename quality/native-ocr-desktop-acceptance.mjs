@@ -101,11 +101,24 @@ async function waitEnabled(button) {
   await button.click({ trial: true, timeout: 30000 })
 }
 
+// The production settings layout assembles the actual folding plugin cards;
+// do not act on the old nav/main template that gets replaced during injection.
+async function openNativeOcrCard(page) {
+  const card = page.locator('.vr-ia-plugin-card').filter({
+    has: page.locator('.vr-ia-plugin-card-name').filter({ hasText: /^(?:本地与设备|Local & device)$/ }),
+  })
+  const header = card.locator('.vr-ia-plugin-card-header')
+  await header.waitFor({ state: 'visible', timeout: 30000 })
+  if (await header.getAttribute('aria-expanded') !== 'true') await header.click()
+  const body = card.locator('.vr-ia-plugin-card-body')
+  await body.waitFor({ state: 'visible', timeout: 30000 })
+  assert.equal(await header.getAttribute('aria-expanded'), 'true')
+  return body
+}
+
 export async function exerciseExactDesktopOcr(page, context) {
   const { info, mode, requests, release, installation, worker, bmp, expected } = context
-  const nav = page.locator('.vr-ia-nav')
-  await nav.getByRole('button', { name: /本地与设备|Local & device/ }).click()
-  const panel = page.locator('.vr-ia-main')
+  const panel = await openNativeOcrCard(page)
   const download = panel.getByRole('button', { name: /下载并安装 PP-OCRv6|Download and install PP-OCRv6/ })
   const refresh = panel.getByRole('button', { name: /刷新安装状态|Refresh installation status/ })
   const remove = panel.getByRole('button', { name: /卸载 PP-OCRv6|Remove PP-OCRv6/ })
@@ -159,8 +172,7 @@ export async function finishExactDesktopOcr(page, context, recognized, agentEvid
   assert.equal(agentEvidence.text.replace(/\s+/g, ''), expected.replace(/\s+/g, ''))
   assert.equal(agentEvidence.visionRequestsDuringOcr, 0)
   assert.equal(agentEvidence.toolCalls, 1)
-  await page.locator('.vr-ia-nav').getByRole('button', { name: /本地与设备|Local & device/ }).click()
-  const panel = page.locator('.vr-ia-main')
+  const panel = await openNativeOcrCard(page)
   const download = panel.getByRole('button', { name: /下载并安装 PP-OCRv6|Download and install PP-OCRv6/ })
   const remove = panel.getByRole('button', { name: /卸载 PP-OCRv6|Remove PP-OCRv6/ })
   await waitEnabled(remove)
