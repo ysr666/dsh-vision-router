@@ -344,6 +344,40 @@ def run(a):
               'distributionReady': False,
               'scope': 'Source-to-object output only. Fresh Windows relink and exact worker identity acceptance required.'}
     (lab/'crt-reconstruction-evidence.json').write_text(json.dumps(report, indent=2)+'\n')
+    # Transport source-level compilation instructions only, not the ZIP,
+    # compiled objects, worker or model payloads. Paths are relative tokens.
+    # This is evidence for an independent native Windows reproduction.
+    source_roots = [(source, '@SOURCE@'), (tool, '@TOOL@'), (build, '@BUILD@'),
+                    (overlay, '@OVERLAY@')]
+    def portable(arg, dest, dep):
+        for p, token in [(dest, '@OUTPUT@'), (dep, '@DEPFILE@'), *source_roots]:
+            arg = arg.replace(str(p), token)
+        require(str(lab) not in arg and '/Users/' not in arg and '/private/var/' not in arg,
+                'ABSOLUTE_RECIPE_PATH')
+        return arg
+    recipes = []
+    for row, data, _ in built:
+        dest = output / row['target']
+        args, dep = compile_recipe(lines, row, source, tool, build, overlay, dest)
+        recipes.append({'archive': row['archive'], 'member': row['member'],
+                        'source': row['source'], 'target': row['target'],
+                        'args': [portable(x, dest, dep) for x in args[1:]],
+                        'sha256': sha(data), 'bytes': len(data),
+                        'normalizedSha256': row['expectedNormalized']})
+    headers = {}
+    for key, fact in aggregate.items():
+        if key.startswith('build/'):
+            relative = key[len('build/'):]
+            payload = (build / relative).read_bytes()
+            require(len(payload) <= 65536 and relative.endswith('.h') and
+                    str(lab).encode() not in payload and sha(payload) == fact['sha256'],
+                    'UNEXPECTED_GENERATED_HEADER')
+            headers[relative] = {'text': payload.decode('utf8'), 'sha256': fact['sha256']}
+    require(len(headers) == 1 and len(recipes) == 68, 'RECIPE_SOURCE_COUNT')
+    recipe = {'schemaVersion': 1, 'scope':'Public-source compile recipe and generated header only; no binary/model payload',
+              'sourceRevision': MINGW_REV, 'replacementArchiveSha256': report['replacementArchiveSha256'],
+              'recipes': recipes, 'generatedHeaders': headers, 'distributionReady': False}
+    (lab/'crt-portable-source-recipe.json').write_text(json.dumps(recipe, indent=2)+'\\n')
     print('CRT_SOURCE_RECONSTRUCTION_MATCH', report['replacementArchiveSha256'], 'distributionReady=false')
 
 
