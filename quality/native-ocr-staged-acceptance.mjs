@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { cp, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -110,12 +111,12 @@ async function parent(args) {
       env.HOMEDRIVE=parse(home).root.replace(/[\\/]$/,'')
       env.HOMEPATH=home.slice(env.HOMEDRIVE.length)
     }
-    const run=spawnSync(process.execPath,[join(root,'run.mjs'),'--child',stage,bmp,opts['--expected']],{
+    const run=spawnSync(process.execPath,[await realpath(join(root,'run.mjs')),'--child',stage,bmp,opts['--expected']],{
       cwd:root,env,encoding:'utf8',timeout:420000,maxBuffer:2*1024*1024
     })
     assert.equal(run.status,0,run.error?.message??run.stderr??'child failed')
     const marker=run.stdout.split(/\r?\n/).filter(line=>line.startsWith('DVR_STAGED_ACCEPTANCE='))
-    assert.equal(marker.length,1)
+    assert.equal(marker.length,1,'child did not return one acceptance marker; stdout='+run.stdout.slice(-2000)+'; stderr='+run.stderr.slice(-2000))
     const result=JSON.parse(marker[0].slice('DVR_STAGED_ACCEPTANCE='.length))
     assert.equal(result.archiveSha256,info.archive.sha256)
     assert.equal(result.workerSha256,info.workerSha256)
@@ -228,8 +229,8 @@ async function child(stage,bmp,expected) {
   }
 }
 
-if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){
+if(process.argv[1]&&import.meta.url===pathToFileURL(realpathSync(resolve(process.argv[1]))).href){
   const args=process.argv.slice(2)
   const flow=args[0]==='--child'?child(...args.slice(1)):parent(args)
-  flow.catch(error=>{console.error('DVR_STAGED_ACCEPTANCE_FAILED:',error.message);process.exitCode=1})
+  flow.catch(error=>{console.error('DVR_STAGED_ACCEPTANCE_FAILED:',error.stack??error.message);process.exitCode=1})
 }
