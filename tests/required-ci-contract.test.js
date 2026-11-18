@@ -52,7 +52,7 @@ test('branch protection requires trusted impact and all three real Host results'
   for (const [name, target] of [
     ['floor_qualification', 'dsh-021-rc5-validation.yml'],
     ['recommended_qualification', 'dsh-022-rc1-host-gate.yml'],
-    ['host_qualification', 'dsh-022-rc5-host-gate.yml'],
+    ['host_qualification', 'dsh-current-host-gate.yml'],
   ]) {
     const job = workflow.split('\n  ' + name + ':\n')[1]?.split(/\n  [a-z][a-z_-]*:\n/)[0]
     assert.ok(job, name + ' must be a real called workflow')

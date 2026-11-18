@@ -24,20 +24,17 @@ or block a user whose separately reviewed deployment works.
 
 The active compatibility CI is organized by responsibility: the **minimum Host**
 (`0.2.1-rc.5`), the **recommended Host** (`0.2.2-rc.1`) and the **latest
-qualified RC** (`0.2.2-rc.4`) retain normal automated gates. The RC2 and RC3 full
-matrices are preserved for explicit `workflow_dispatch` replay, with their prior
-immutable verification recorded; they no longer duplicate every PR/main run.
+RC candidate** (`0.2.2-rc.5`, qualification pending) retain normal automated gates. RC2 and RC3 retain existing manual replay; RC4's exact gate and pin remain reproducible at [the historical DVR commit](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633), not as another permanent workflow/test suite.
 All three Host gates now run as reusable workflows inside the branch-protected
-`CI` for **Host-impacting changes**: minimum RC5, recommended RC1, and latest RC4.
+`CI` for **Host-impacting changes**: minimum 0.2.1-rc.5, recommended 0.2.2-rc.1, and the current RC candidate.
 Both mandatory `contract` checks wait for their aggregate results and explicitly
 reject failure, cancellation, skipped Host verification, or failed classification.
 A reviewed trusted-base classifier alone can exempt Markdown-only documentation
 or a version-only package change, and in that case all three heavy gates must be
 skipped, never faked as passed. An unexpected/unknown path fails closed to heavy.
-The RC1/RC4 concurrency groups are distinct from CI to prevent self-cancellation.
-This is a CI scheduling policy, not a withdrawal of RC2 or RC3 compatibility evidence. Doctor's exactVerified list now includes RC4 using the recorded successful candidate evidence; this is not a claim about every published DVR artifact.
-When the recommendation or latest RC advances, move the active lane instead
-of permanently adding another full automatic historical matrix.
+The recommended/current Host concurrency groups are distinct from CI to prevent self-cancellation.
+This is a CI scheduling policy, not a withdrawal of RC2, RC3 or RC4 compatibility evidence. Doctor's exactVerified list now includes RC4 using the recorded successful candidate evidence; this is not a claim about every published DVR artifact.
+When the latest RC advances, update the immutable pin and reuse the existing current Host gate and its existing tests. Do not add version-specific gates or tests solely because upstream released a new version. Add a regression only when a new DVR-owned contract or a reproduced defect requires it.
 
 ## Core Host ownership
 

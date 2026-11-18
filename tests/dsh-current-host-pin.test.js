@@ -5,45 +5,45 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { RC4_RELEASE_SHA, RC4_PIN_PATH, readRc4Pin, validateRc4Pin } from '../scripts/dsh-rc4-pin.mjs'
+import { CURRENT_HOST_RELEASE_SHA, CURRENT_HOST_PIN_PATH, readCurrentHostPin, validateCurrentHostPin } from '../scripts/dsh-current-host-pin.mjs'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
-const source = '3f321d32bfe382212a8ed8785c1d47a5a300aa23'
-test('RC4 gate source is exact, immutable, and independent of Alpha', () => {
-  assert.equal(RC4_PIN_PATH, path.join(root, 'config/dsh-rc4-settings-pin.json'))
-  assert.deepEqual(readRc4Pin(), {version:'0.2.2-rc.4',sha:source})
-  assert.equal(RC4_RELEASE_SHA,source)
+const source = '9c2670d3bce5275e0d1610272958121af87787bb'
+test('Current Host gate source is exact, immutable, and independent of Alpha', () => {
+  assert.equal(CURRENT_HOST_PIN_PATH, path.join(root, 'config/dsh-current-host-pin.json'))
+  assert.deepEqual(readCurrentHostPin(), {version:'0.2.2-rc.5',sha:source})
+  assert.equal(CURRENT_HOST_RELEASE_SHA,source)
   const alpha=JSON.parse(readFileSync(path.join(root,'config/dsh-alpha-settings-pin.json'),'utf8'))
   assert.match(alpha.version, /^\d+\.\d+\.\d+-alpha\.\d+$/)
-  assert.notEqual(alpha.sha, source, 'fixed RC4 pin must not track the moving Alpha SHA')
+  assert.notEqual(alpha.sha, source, 'fixed Current Host pin must not track the moving Alpha SHA')
 })
-test('RC4 pin strictly rejects version drift and malicious or malformed inputs', () => {
-  for (const invalid of [null,[],{}, {version:'0.2.2-alpha.3',sha:source},{version:'0.2.2-rc.1',sha:source},{version:'0.2.2-rc.4\nfoo=1',sha:source},{version:'0.2.2-rc.4',sha:source+'\nfoo=1'},{version:'0.2.2-rc.4',sha:'f'.repeat(40)},{version:'0.2.2-rc.4',sha:'f'.repeat(40),other:true}]){
-    assert.throws(()=>validateRc4Pin(invalid))
+test('Current Host pin strictly rejects version drift and malicious or malformed inputs', () => {
+  for (const invalid of [null,[],{}, {version:'0.2.2-alpha.3',sha:source},{version:'0.2.2-rc.1',sha:source},{version:'0.2.2-rc.5\nfoo=1',sha:source},{version:'0.2.2-rc.5',sha:source+'\nfoo=1'},{version:'0.2.2-rc.5',sha:'f'.repeat(40)},{version:'0.2.2-rc.5',sha:'f'.repeat(40),other:true}]){
+    assert.throws(()=>validateCurrentHostPin(invalid))
   }
 })
-test('RC4 read command creates exact GitHub step output and rejects writes', () => {
-  const temp = mkdtempSync(path.join(tmpdir(), 'dvr-rc4-pin-'))
+test('Current Host read command creates exact GitHub step output and rejects writes', () => {
+  const temp = mkdtempSync(path.join(tmpdir(), 'dvr-current-host-pin-'))
   try {
     const out=path.join(temp,'out')
-    const script=path.join(root,'scripts/dsh-rc4-pin.mjs')
+    const script=path.join(root,'scripts/dsh-current-host-pin.mjs')
     const run=(args)=>spawnSync(process.execPath,[script,...args],{env:{...process.env,GITHUB_OUTPUT:out},encoding:'utf8'})
     assert.equal(run(['read']).status,0)
-    assert.equal(readFileSync(out,'utf8'), 'version=0.2.2-rc.4\nsha='+source+'\n')
+    assert.equal(readFileSync(out,'utf8'), 'version=0.2.2-rc.5\nsha='+source+'\n')
     assert.notEqual(run(['update',source]).status,0)
   }finally{rmSync(temp,{recursive:true,force:true})}
 })
-test('RC4 Host Gate validates exactly pinned source across all supported platforms', () => {
-  const gate=readFileSync(path.join(root,'.github/workflows/dsh-022-rc4-host-gate.yml'),'utf8')
+test('Current Host Host Gate validates exactly pinned source across all supported platforms', () => {
+  const gate=readFileSync(path.join(root,'.github/workflows/dsh-current-host-gate.yml'),'utf8')
   const alpha=readFileSync(path.join(root,'.github/workflows/dsh-alpha-settings-host-gate.yml'),'utf8')
   const count=(str,needle)=>str.split(needle).length-1
-  assert.equal(count(gate,'run: node dvr/scripts/dsh-rc4-pin.mjs read'),3)
-  assert.equal(count(gate, 'ref: '+source+' # dsh-v0.2.2-rc.4 immutable reviewed release'),3)
+  assert.equal(count(gate,'run: node dvr/scripts/dsh-current-host-pin.mjs read'),3)
+  assert.equal(count(gate, 'ref: '+source+' # dsh-v0.2.2-rc.5 immutable reviewed release'),3)
   assert.equal(count(gate, 'ref: '+ '$'+'{{ steps.pin.outputs.sha }}'),0)
   assert.match(gate,/permissions:\n  contents: read/)
   assert.equal(count(gate,'persist-credentials: false'),6)
   assert.doesNotMatch(gate, /actions\/cache\/|dsh-build-cache|hashFiles\(/,
-    'RC4 checkout and build must not restore or seed privileged Actions caches')
+    'Current Host checkout and build must not restore or seed privileged Actions caches')
   assert.match(gate,/node: \[24\.9\.0, 24\.21\.0\]/)
   assert.equal(count(gate,'node-version: 24.9.0'),2)
   assert.match(gate,/DSH_EXPECTED_COMMIT: /)
@@ -52,14 +52,14 @@ test('RC4 Host Gate validates exactly pinned source across all supported platfor
   assert.match(gate,/dsh017-desktop-multiplugin-smoke\.mjs/)
   assert.match(gate,/dsh-rc3-agent-order-contract\.mjs/)
   assert.match(gate, /dsh-rc3-session-batch-integration\.mjs/)
-  assert.match(gate, /Verify DVR feed integration with real RC4 Session atomic batches/)
-  assert.match(gate, /Verify upstream RC4 DeepSeek refusal terminal-code contract/)
+  assert.match(gate, /Verify DVR feed integration with real Current Host Session atomic batches/)
+  assert.match(gate, /Verify upstream Current Host DeepSeek refusal terminal-code contract/)
   assert.match(gate, /packages\/llm\/llm-deepseek\/tests\/stream\.spec\.ts/)
-  assert.match(gate, /Verify packed candidate install and recompose on real RC4 Host/)
+  assert.match(gate, /Verify packed candidate install and recompose on real Current Host Host/)
   assert.match(gate, /DVR_SMOKE_PACKAGE_SPEC: file:/)
   assert.match(gate, /verify-packed-public-api\.mjs/)
   assert.match(gate, /DVR_SMOKE_PUBLISHED_VERSION: '3\.4\.0'/, 'historical npm version must be immutable')
-  assert.match(gate, /Diagnose immutable published npm 3\.4\.0 on RC4 \(advisory\)/)
+  assert.match(gate, /Diagnose immutable published npm 3\.4\.0 on Current Host \(advisory\)/)
   assert.match(gate, /continue-on-error: true/, 'historical immutable artifact must not block current head qualification')
   assert.match(gate, /Record published npm 3\.4\.0 diagnostic separately from candidate/)
   const triggers = gate.split('\njobs:\n')[0]
@@ -67,12 +67,12 @@ test('RC4 Host Gate validates exactly pinned source across all supported platfor
     'latest RC is called from branch-protected CI and retains manual replay')
   assert.doesNotMatch(triggers, /^  (?:pull_request|push):/m,
     'standalone triggers must not duplicate the required CI Host run')
-  assert.match(gate, /group: dvr-rc4-qualification-/,
+  assert.match(gate, /group: dvr-current-host-qualification-/,
     'reusable Host gate must not cancel its own CI caller')
   assert.equal((gate.match(/DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'/g) ?? []).length, 2)
-  assert.match(gate,/Run default tool-only image conversation on RC4/)
+  assert.match(gate,/Run default tool-only image conversation on Current Host/)
   assert.match(gate,/if: matrix.node == '24\.9\.0'/)
-  assert.match(gate,/dsh-rc4-windows-desktop-diagnostics-\$\{\{ matrix.node \}\}/)
+  assert.match(gate,/dsh-current-host-windows-desktop-diagnostics-\$\{\{ matrix.node \}\}/)
 
   const desktop = readFileSync(path.join(root,'scripts/dsh-desktop-renderer-e2e.mjs'),'utf8')
   assert.match(desktop,/DESKTOP_DYNAMIC_IMAGE_E2E_OK/)
