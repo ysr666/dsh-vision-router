@@ -9,6 +9,7 @@ import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } fro
 import { installNativeVisionControlRemote, NATIVE_VISION_REMOTE } from '../lib/native-vision-control-remote.js'
 import { createSessionVisionPolicyRuntimeStore } from '../lib/session-vision-policy-domain.js'
 import { nativeVisionControlViewSchema } from '../lib/native-vision-control-wire.js'
+import { createNativeVisionClientBridge, startNativeVisionClientObservation } from '../lib/native-vision-control-client.js'
 
 const root = process.env.DSH_SOURCE_ROOT
 assert.ok(root, 'DSH_SOURCE_ROOT required')
@@ -19,7 +20,7 @@ const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: SystemPrompt }, { default: ToolRuntime },
   { default: AgentRegistry }, { default: AgentLoop }, Commands,
-  { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
+  { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway }, ClientGateway,
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -33,6 +34,7 @@ const [
   host('packages/typert/registry/src/index.ts'),
   host('packages/api/remote-access/src/index.ts'),
   host('packages/api/gateway/src/index.ts'),
+  host('packages/api/gateway/src/client/index.ts'),
 ])
 class SyntheticSource extends llm.LlmAdapter {
   providerInfo(provider) { return { id: provider, name: provider } }
@@ -150,6 +152,90 @@ try {
   assert.equal(store.get(agent.id)?.enabled, false)
   assert.equal(agent.model.current()?.provider, 'native-test')
   assert.equal((await invoke('/vision-router status')).kind, 'success')
+  // Actual DSH ClientRemote, namespace mount and codec consumption in a
+  // distinct Cordis root. Only the local carrier is synthetic: its calls
+  // enter the real Host Gateway and its stream uses the real wireStream.
+  // No Chromium, credentials, input data or network are involved.
+  const client = new Context()
+  let clientObservation
+  const wait = async (predicate, label) => {
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline) {
+      const value = predicate()
+      if (value) return value
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    throw Error('Client Remote failed to settle: ' + label)
+  }
+  try {
+    await client.plugin(TypertRegistry)
+    const remoteRequest = (endpoint, payload, signal) => {
+      const [namespace, method] = endpoint.split('/')
+      return { peer: owner, namespace, method, args: payload.args, signal }
+    }
+    client.provide('connection', {
+      interactions: 'none', isLoopback: true,
+      generation: { getSnapshot: () => undefined, subscribe: () => () => {} },
+      state: { getSnapshot: () => undefined, subscribe: () => () => {} },
+      start: () => ({ stop() {} }),
+      reconnect() {},
+      registerGenerationSource: () => () => {},
+      openWebSocket() { throw Error('loopback fixture must not open a socket') },
+      rpc: {
+        async call(channel, endpoint, payload, signal) {
+          assert.equal(channel, '/api')
+          try {
+            const value = await ctx.typertGateway.invoke(remoteRequest(endpoint, payload, signal))
+            return { ok: true, value: JSON.parse(JSON.stringify(value)) }
+          } catch (error) {
+            return { ok: false, error: ctx.typertGateway.wireStream.failure(error) }
+          }
+        },
+        async *open(channel, endpoint, payload, signal, uplink) {
+          assert.equal(channel, '/api')
+          const result = await ctx.typertGateway.wireStream.open(endpoint, payload,
+            uplink ?? (async function* () {})(), owner, signal)
+          for await (const value of result) yield JSON.parse(JSON.stringify(value))
+        },
+      },
+    })
+    await client.plugin({ inject: ClientGateway.inject, apply: ClientGateway.apply })
+    let bridge
+    const mount = client.plugin({
+      inject: ['remote', 'typert'],
+      apply(scope) { bridge = createNativeVisionClientBridge(scope) },
+    })
+    await mount
+    const ready = await wait(() => bridge?.getSnapshot().kind === 'ready' && bridge.getSnapshot(), 'mount')
+    let state
+    const start = snapshot => startNativeVisionClientObservation(snapshot.api, agent.id, next => { state = next })
+    clientObservation = start(ready)
+    const baseline = await wait(() => state?.kind === 'value' && state.view, 'OFF baseline')
+    assert.equal(baseline.kind, 'native', JSON.stringify(baseline))
+    assert.equal(baseline.enabled, false)
+    assert.equal(await clientObservation.set(baseline, selection), true, 'real ClientRemote setter admitted')
+    const enabled = await wait(() => state?.kind === 'value' && state.view.enabled && state.view, 'ON baseline')
+    assert.equal(enabled.kind, 'native')
+    client.emit('connection/reset')
+    const replacement = await wait(() => bridge.getSnapshot() !== ready && bridge.getSnapshot().kind === 'ready' && bridge.getSnapshot(), 'connection reset')
+    const previous = clientObservation
+    previous.stop()
+    assert.equal(await previous.set(enabled, selection), false)
+    state = undefined
+    clientObservation = start(replacement)
+    const recovered = await wait(() => state?.kind === 'value' && state.view, 'reconnected baseline')
+    assert.equal(recovered.enabled, true, 'reconnect must rehydrate actual existing ON')
+    assert.equal(await clientObservation.set(recovered, selection), true)
+    await wait(() => state?.kind === 'value' && state.view.enabled === false, 'OFF after reconnect')
+    assert.equal(store.get(agent.id)?.enabled, false)
+    clientObservation.stop()
+    clientObservation = undefined
+    await mount.dispose()
+    await wait(() => client.get('remote.dvrNativeVision') === undefined, 'namespace retirement')
+  } finally {
+    clientObservation?.stop()
+    await client.fiber.dispose()
+  }
   const logged = agent.session.snapshotEvents()
   assert.equal(logged.filter(event => event.type === 'model/selection').length,
     modelSelectionsBefore, 'Vision policy commands must not change selected provider or model')
@@ -165,6 +251,7 @@ try {
     observedPolicyTransitions: [false, true, false], readStreamAddsNoEvents: true,
     realGatewayLookup: true, ungrantedGuestDenied: true, wrongSessionGrantDenied: true,
     malformedArgsDenied: true, carrierAbort: true, sharedWriteAuthority: true, staleUiRejected: true,
+    actualClientRemoteMount: true, clientSetterRoundTrip: true, reconnectBaseline: true, namespaceRetired: true,
   }))
 } finally {
   await observer?.return?.()

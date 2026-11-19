@@ -205,3 +205,14 @@ selection on a supported Host, denied access and other metadata failures
 remain fail-closed. The chip exposes a bounded, non-sensitive diagnostic
 state attribute and separates native-state errors from absent twins. The
 synthetic reasoning-effort fixture now declares the actual supported efforts.
+
+### Actual ClientRemote loopback contract
+
+The exact Host permission test additionally mounts the production client bridge
+on a distinct real Cordis ClientRemote instance. A fixture in-process carrier
+passes the actual named args into the real Gateway; stream frames pass through
+its wireStream and JSON copying. It observes OFF, writes ON through the mounted
+namespace, reconnects and reads the actual ON baseline, writes OFF, and
+retires the namespace. This independently tests mounting and stream/set
+transport interaction without requiring Chromium dependencies. Physical
+browser/desktop carrier tests remain required.

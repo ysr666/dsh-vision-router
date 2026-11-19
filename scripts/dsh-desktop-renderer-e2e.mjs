@@ -647,6 +647,8 @@ let desktopOutputBuffer = ''
 let lastCoreProbe
 let runtimePackageEvidence
 const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
+// The reviewed current Host, unlike the supported old floor, has Agent.model.current.
+const checkNativePolicy = dshVersion === '0.2.2-rc.5' && !checkWholeTurnRouting
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -788,6 +790,12 @@ try {
     // never a fabricated context-window size in their adapter manifest.
     checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
     '            maxTokens: 2048',
+    ...(checkNativePolicy ? [
+      '          - id: desktop-native',
+      '            input: [text, image]',
+      '            contextWindow: 131072',
+      '            maxTokens: 2048',
+    ] : []),
     '- id: agent-default-model',
     '  config:',
     '    provider: desktop-e2e',
@@ -1266,6 +1274,55 @@ try {
   }
 
   reportPhase('session-source-verified')
+  let nativePolicyToggle
+  if (checkNativePolicy) {
+    // Drive the official model picker and the actual DVR button, not a test
+    // command or direct mutation of the model directory. The chat already
+    // contains an image, so select a genuinely image-capable fixture model.
+    const modelTrigger = page.getByRole('button', { name: /^(?:Select model|选择模型)/i }).last()
+    await modelTrigger.click()
+    await page.getByRole('menuitem', { name: /^(?:Model|模型)/i }).first().click()
+    await page.locator('button[role="menuitemradio"]').filter({
+      has: page.locator('[data-provider-id="desktop-e2e"][data-model-id="desktop-native"]'),
+    }).click()
+    reportPhase('native-model-selected')
+    const waitNative = async (pressed) => {
+      await page.waitForFunction((expected) => {
+        const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+        return node?.getAttribute('data-native-vision-state') === 'native'
+          && node.getAttribute('aria-pressed') === expected
+          && node.getAttribute('aria-busy') !== 'true' && !node.disabled
+      }, pressed, { timeout: 30_000 })
+      await waitForSettledVisionState(pressed, 'native policy ' + pressed)
+    }
+    const readNativeSelection = async () => {
+      const snapshot = await readHostModelSelections(authenticatedHostUrl)
+      const matching = snapshot.sessions.filter(session =>
+        session.projected?.next?.provider === 'desktop-e2e'
+        && session.projected?.next?.model === 'desktop-native')
+      assert.equal(matching.length, 1, 'expected exactly one native fixture Session')
+      return matching[0]
+    }
+    await waitNative('false')
+    const before = await readNativeSelection()
+    assert.equal(before.latest.at(-1)?.model, 'desktop-native')
+    const requestsBefore = textEvidence.requests
+    await toggle.click()
+    await waitNative('true')
+    const enabled = await readNativeSelection()
+    assert.deepEqual(enabled, before, 'native ON may not append a model/selection event')
+    await toggle.click()
+    await waitNative('false')
+    const disabled = await readNativeSelection()
+    assert.deepEqual(disabled, before, 'native OFF may not append a model/selection event')
+    const nativeDirectory = await readClientModelDirectory(page)
+    assert.equal(nativeDirectory.current?.provider, 'desktop-e2e')
+    assert.equal(nativeDirectory.current?.model, 'desktop-native')
+    assert.equal(textEvidence.requests, requestsBefore, 'policy changes must not call the LLM')
+    nativePolicyToggle = { actualDesktopClicks: 2, modelIdentityUnchanged: true,
+      selectionEventsAdded: 0, modelRequestsAdded: 0, restored: true }
+    reportPhase('native-policy-toggle-verified')
+  }
   await assertDesktopHtmlRendering('after vision turn')
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {
@@ -1276,6 +1333,7 @@ try {
     electronNode,
     structuredMarkers: markers.length,
     toggle: { initial: initialPressed, exercised: true, restored: true },
+    ...(nativePolicyToggle ? { nativePolicyToggle } : {}),
     onboarding: { settingsPath: true },
     settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
     functionalVisionTurn: {
@@ -1295,6 +1353,7 @@ try {
       arch: process.arch,
       structuredMarkers: markers.length,
       toggle: result.toggle,
+      ...(nativePolicyToggle ? { nativePolicyToggle } : {}),
       settings: result.settings,
       functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
     }
