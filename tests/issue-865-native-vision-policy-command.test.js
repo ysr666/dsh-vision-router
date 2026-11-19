@@ -130,6 +130,46 @@ test('issue #865: command discloses when Session policy is not durable', async (
   assert.match(response.text, /no durable policy store/)
 })
 
+test('issue #865: late ON capability response cannot overwrite the newer OFF request', async () => {
+  const f = fixture()
+  const lookups = []
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { lookups.push(resolve) })
+  const older = f.call('on')
+  const newer = f.call('off')
+  assert.equal(lookups.length, 2)
+  lookups[1]({ inputModalities: ['text', 'image'] })
+  assert.equal((await newer).kind, 'success')
+  assert.equal(f.policies.get('test-session-A').enabled, false)
+  lookups[0]({ inputModalities: ['text', 'image'] })
+  assert.equal((await older).kind, 'error')
+  assert.equal(f.policies.get('test-session-A').enabled, false,
+    'last user intent wins even when the old capability response arrives last')
+  assert.equal(f.selectCount(), 0)
+})
+
+test('issue #865: status hydrates a persisted Vision setting before reporting', async () => {
+  const f = fixture()
+  let handler
+  let hydrateCalls = 0
+  const backing = new Map()
+  installNativeVisionPolicyCommand({
+    inject(_deps, install) { install({ commands: { register(def) { handler = def.handler } } }) },
+    llm: f.ctx.llm,
+  }, {
+    get(id) { return backing.get(id) },
+    async hydrate(id) {
+      hydrateCalls++
+      backing.set(id, { source: 'user', enabled: false })
+    },
+    async set() { throw new Error('unexpected status write') },
+  })
+  const response = await handler({ agent: f.agent, rawInput: 'status', attachments: [] })
+  assert.equal(response.kind, 'success')
+  assert.match(response.text, /tools: off/)
+  assert.equal(hydrateCalls, 1)
+  assert.equal(f.selectCount(), 0)
+})
+
 test('issue #865: separate authorized Sessions cannot write another Session policy', async () => {
   const f = fixture()
   const b = {
