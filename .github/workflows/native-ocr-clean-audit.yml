@@ -49,6 +49,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Preflight Desktop scripts without native build or network
+        shell: pwsh
+        run: |
+          node --check scripts/dsh-desktop-renderer-e2e.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_SYNTAX_INVALID' }
+          node --check quality/native-ocr-desktop-acceptance.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_FIXTURE_SYNTAX_INVALID' }
+          node --test quality/test-native-ocr-desktop-acceptance.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_EVIDENCE_TEST_FAILED' }
       - name: Verify bounded native input downloads
         run: python -I quality/test-native-ocr-clean-download.py
       - name: Reacquire and match all five native model assets
