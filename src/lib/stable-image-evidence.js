@@ -38,12 +38,15 @@ function evidenceMessageId(originMessageId, attachmentId, description) {
  * Project current vision knowledge as new, ID-deduplicated model messages.
  *
  * The input's previously committed messages are never rewritten here.
- * DSH's agent/pre-step admission logs returned synthetic user/message entries
- * before dispatch. Subsequent steps and cold resume can find the same IDs
- * inside the durable Session surface, independently of an in-memory Map.
+ * DSH's agent/pre-step admission commits returned synthetic user/message
+ * entries before dispatch. Its input is the CURRENT inbox claim, not the
+ * full Session history: normal continuation never reclaims a committed
+ * picture, and a later distinct image occurrence receives a distinct ID.
+ * If a caller supplies previously emitted messages, their IDs are also
+ * deduplicated. We do NOT claim this helper itself can scan durable history.
  *
- * This intentionally does not claim the Host persisted anything; callers
- * must use the existing durable pre-step path and verify that contract.
+ * Cross-process recovery must be verified separately using a real Session
+ * log, not inferred from a process-local imageMemory Map.
  */
 export function planAppendOnlyImageEvidence(
   observedMessages, currentMessages, descriptions, source,
