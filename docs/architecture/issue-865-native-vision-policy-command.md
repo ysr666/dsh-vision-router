@@ -46,6 +46,15 @@ cold resume, concurrent commands, another-tab updates and model-picker changes.
 Only then can the UI replace route switching on native models; keep the
 existing pair selection for text-only models.
 
+**Do not poll `/vision-router status` from the browser.** DSH Commands is a
+mutation/interaction protocol: even a read-only command execution produces
+`command/run` and `command/done` Session events. Repeating it on renders,
+focus changes, or timers would inflate durable Session logs, interfere with
+source-prefix accounting and introduce needless concurrency. Phase B2 needs
+an authenticated **read-only state projection with change notifications**
+(and a separately authorized mutation entry), not a slash-command-as-polling
+shortcut. This is why the browser button is deliberately unchanged in B1.
+
 This Stage B1 command does not yet guarantee zero extra provider cache misses:
 Vision OFF/ON still changes the DVR-owned model-facing tools and may force a
 new tool history baseline on models that support addition-only but not removal.
