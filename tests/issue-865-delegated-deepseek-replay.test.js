@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
-import { rebindDelegatedReplaySources } from '../lib/replay-delegation.js'
 import {
   stampDelegatedDeepSeekReplayChunk,
   hasDelegatedDeepSeekReplayProvenance,
+  rebindStampedDeepSeekTwinMessages,
 } from '../lib/delegated-deepseek-replay-provenance.js'
 
 const nativeReplay = () => ({
@@ -47,14 +47,23 @@ test('issue #865: only a provider-stamped native twin replay may rebind its sour
   const stamped = stampDelegatedDeepSeekReplayChunk(success(), 'account', 'deepseek-flash').replayState
   const old = assistant(native)
   const proven = assistant(stamped)
-  assert.equal(rebindDelegatedReplaySources([old], 'account')[0], old,
+  assert.equal(rebindStampedDeepSeekTwinMessages([old], 'account-vision', 'account', 'deepseek-flash')[0], old,
     'unknown older replay cannot be inferred from the alias name')
-  const rebound = rebindDelegatedReplaySources([proven], 'account')[0]
+  const rebound = rebindStampedDeepSeekTwinMessages(
+    [proven], 'account-vision', 'account', 'deepseek-flash',
+  )[0]
   assert.equal(rebound.source.provider, 'account')
   assert.equal(proven.source.provider, 'account-vision', 'durable history remains immutable')
   assert.deepEqual(rebound.source.replayState, proven.source.replayState)
-  assert.equal(rebindDelegatedReplaySources([proven], 'other')[0], proven,
-    'never project a signature to a different real provider')
+  assert.equal(rebindStampedDeepSeekTwinMessages(
+    [proven], 'account-vision', 'other', 'deepseek-flash',
+  )[0], proven, 'never project a signature to a different real provider')
+  assert.equal(rebindStampedDeepSeekTwinMessages(
+    [proven], 'other-vision', 'account', 'deepseek-flash',
+  )[0], proven, 'a different selected twin is not authority')
+  assert.equal(rebindStampedDeepSeekTwinMessages(
+    [proven], 'account-vision', 'account', 'different-model',
+  )[0], proven, 'cross-model replay is never rebound')
 })
 
 test('issue #865: wrapper stamps real delegated native replay without changing stream order', async () => {
