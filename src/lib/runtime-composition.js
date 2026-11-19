@@ -16,6 +16,7 @@ import { installSessionVisionIndexBoundary } from './session-vision-index.js'
 import { createSessionVisionRuntime } from './session-vision-runtime.js'
 import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
+import { installSessionCacheUsageCommand } from './session-cache-usage-command.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
 import { installSessionVisionDelegationBoundary } from './session-vision-delegation-boundary.js'
@@ -227,6 +228,7 @@ function createRuntimeOwners(host) {
   // Session mode owns per-Agent visibility and execution authority from
   // DSH's modelSelection projection. The retired identity-only bridge is gone.
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
+  installSessionCacheUsageCommand(sessionIndexCtx)
   sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(
       agentsCtx,
