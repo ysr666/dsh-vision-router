@@ -120,7 +120,7 @@ export function createNativeVisionClientBridge(scope) {
 // Each active composer Session owns one observation. Never reuse a previous
 // Session or connection's value; retirement is synchronous even if the
 // transport refuses cancellation. No polling or optimistic toggle state.
-export function startNativeVisionClientObservation(api, sessionId, publish) {
+export function startNativeVisionClientObservation(api, sessionId, publish, { retryDelays = [100, 350, 1000] } = {}) {
   const schemas = createNativeVisionClientSchemas()
   const ctl = new AbortController()
   let active = true
@@ -129,32 +129,68 @@ export function startNativeVisionClientObservation(api, sessionId, publish) {
   let latest
   let writing = false
   let snapshot
+  let generation = 0
+  let resumeRetry
   const stop = () => {
     if (!active) return
     active = false
     ctl.abort()
+    resumeRetry?.()
     try { stream?.dispose() } catch {}
   }
   const update = state => { if (active) { snapshot = state; publish(state) } }
   update({ kind: 'waiting' })
+  const pause = ms => new Promise(resolve => {
+    const timer = setTimeout(finish, ms)
+    function finish() {
+      clearTimeout(timer)
+      if (resumeRetry === finish) resumeRetry = undefined
+      resolve()
+    }
+    resumeRetry = finish
+  })
   void (async () => {
-    try {
-      stream = api.observe(schemas.id.parse(sessionId), ctl.signal)
-      for await (const value of stream) {
-        if (!active) break
-        latest = schemas.view.parse(value)
-        seen = true
-        update({ kind: 'value', view: latest, writing })
+    for (let attempt = 0; active; attempt++) {
+      const epoch = ++generation
+      let reason = 'stream-ended'
+      let retryable = true
+      try {
+        stream = api.observe(schemas.id.parse(sessionId), ctl.signal)
+        for await (const value of stream) {
+          if (!active || epoch !== generation) break
+          try { latest = schemas.view.parse(value) }
+          catch { reason = 'invalid-frame'; retryable = false; break }
+          seen = true
+          update({ kind: 'value', view: latest, writing })
+        }
+      } catch (error) {
+        reason = typeof error?.code === 'string' && /^[a-z0-9/-]{1,80}$/.test(error.code)
+          ? error.code : 'transport-failed'
+        if (!active) return
+        // Only a positively absent endpoint BEFORE any valid frame is old-
+        // Host compatibility. A retired or denied namespace never is.
+        if (!seen && reason === 'gateway/invocation-unavailable') {
+          latest = undefined
+          update({ kind: 'legacy', reason })
+          return
+        }
+        retryable = ['transport-failed', 'gateway/internal', 'session/not-found'].includes(reason)
+      } finally {
+        try { stream?.dispose() } catch {}
+        stream = undefined
       }
-      if (active) { latest = undefined; update({ kind: 'failed' }) }
-    } catch (error) {
+      if (!active) return
       latest = undefined
-      // Only an explicitly absent endpoint before its first frame permits
-      // compatibility with a Host that predates the DVR native contract.
-      // Access denial, malformed data, withdrawn definitions and disconnect
-      // never fall through to a legacy route mutation.
-      const reason = typeof error?.code === 'string' && /^[a-z0-9/-]{1,80}$/.test(error.code) ? error.code : 'transport-failed'
-      update({ kind: !seen && reason === 'gateway/invocation-unavailable' ? 'legacy' : 'failed', reason })
+      ++generation
+      // A model selection can retire its live Agent or interrupt the carrier.
+      // Retry ONLY the read subscription, with a bounded budget. No write is
+      // replayed, no stale frame stays actionable, denial/malformed data stops.
+      if (!retryable || attempt >= retryDelays.length) {
+        update({ kind: 'failed', reason })
+        return
+      }
+      update({ kind: 'waiting', reason })
+      await pause(retryDelays[attempt])
     }
   })()
   return {
@@ -163,13 +199,14 @@ export function startNativeVisionClientObservation(api, sessionId, publish) {
     async set(view, expected) {
       if (!active || writing || latest !== view || view?.kind !== 'native' ||
           !nativeVisionSameRoute(view.selection, expected) || !view.canEnable) return false
+      const epoch = generation
       writing = true
       update({ kind: 'value', view: latest, writing })
       let accepted = false
       try {
         const request = schemas.request.parse({ enabled: !view.enabled, selection: view.selection })
         const result = await api.set(sessionId, request, ctl.signal)
-        accepted = active && result?.ok === true && schemas.receipt.parse(result.value).kind === 'success'
+        accepted = active && epoch === generation && result?.ok === true && schemas.receipt.parse(result.value).kind === 'success'
       } catch {}
       writing = false
       if (active && latest) update({ kind: 'value', view: latest, writing })

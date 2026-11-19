@@ -977,6 +977,7 @@ try {
       disabled: node.disabled === true,
       label: node.getAttribute('aria-label'),
       title: node.title,
+      nativeState: node.getAttribute('data-native-vision-state'),
     }
   })
   // Observe every relevant mutation, not only the state at two timestamps.

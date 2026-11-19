@@ -1169,9 +1169,14 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var nativeView = nativeState[0];
         var setNativeView = nativeState[1];
         var nativeObservation = React.useRef(null);
+        // A new selected route can replace the Host Agent even if the Session
+        // ID and client namespace stay the same. Re-resolve through Gateway.
+        var nativeProvider = state.current && state.current.provider;
+        var nativeModel = state.current && state.current.model;
         React.useEffect(function(){
           if (nativeMount.kind !== 'ready' || props.available !== true || !props.sessionId || (props.session && props.session.removed)) return undefined;
-          var ticket = { mount: nativeMount, sessionId: props.sessionId, controller: null };
+          var ticket = { mount: nativeMount, sessionId: props.sessionId, directory: directory,
+            provider: nativeProvider, model: nativeModel, controller: null };
           nativeObservation.current = ticket;
           ticket.controller = startNativeVisionClientObservation(nativeMount.api, props.sessionId, function(value){
             if (nativeObservation.current === ticket) setNativeView({ ticket: ticket, value: value });
@@ -1180,9 +1185,12 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             if (nativeObservation.current === ticket) nativeObservation.current = null;
             ticket.controller.stop();
           };
-        }, [nativeMount, props.sessionId, props.available, props.session && props.session.removed]);
+        }, [nativeMount, props.sessionId, props.available, props.session && props.session.removed,
+          directory, nativeProvider, nativeModel]);
         var observationCurrent = nativeView && nativeView.ticket === nativeObservation.current &&
-          nativeView.ticket.mount === nativeMount && nativeView.ticket.sessionId === props.sessionId;
+          nativeView.ticket.mount === nativeMount && nativeView.ticket.sessionId === props.sessionId &&
+          nativeView.ticket.directory === directory && nativeView.ticket.provider === nativeProvider &&
+          nativeView.ticket.model === nativeModel;
         var read = observationCurrent ? nativeView.value : null;
         var nativePending = nativeMount.kind === 'waiting' || (nativeMount.kind === 'ready' && (!read || read.kind === 'waiting'));
         var unsupportedHost = read && read.kind === 'value' &&
