@@ -189,6 +189,7 @@ test('issue #865: composed Host registration binds command lifetime to DVR effec
   const installed = []
   let disposed = 0
   let effectCount = 0
+  let cleanup
   installNativeVisionPolicyCommand({
     get(service) {
       assert.equal(service, 'commands')
@@ -201,9 +202,8 @@ test('issue #865: composed Host registration binds command lifetime to DVR effec
     },
     effect(callback) {
       effectCount++
-      const cleanup = callback()
+      cleanup = callback()
       assert.equal(typeof cleanup, 'function')
-      this.cleanup = cleanup
     },
     inject() { throw new Error('direct service already mounted: never double register') },
   }, {
@@ -213,6 +213,9 @@ test('issue #865: composed Host registration binds command lifetime to DVR effec
   assert.equal(effectCount, 1)
   assert.equal(installed.length, 1)
   assert.equal(installed[0].name, 'vision-router')
+  assert.equal(disposed, 0)
+  cleanup()
+  assert.equal(disposed, 1, 'unload must release the registration exactly once')
 })
 
 test('issue #865: store errors do not advertise successful mode switch', async () => {
