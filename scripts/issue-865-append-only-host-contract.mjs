@@ -140,8 +140,13 @@ try {
   assert.equal(persisted.length, 1, 'evidence must survive cold resume with an empty in-memory Map')
   assert.equal(persisted[0].id, evidence[0].id, 'replayed evidence identity must be stable')
   assert.deepEqual(persisted[0].content, evidence[0].content)
-  assert.equal(secondWire.find(message => message?.id === firstMarker.id)?.content[0].text,
-    firstMarker.content[0].text, 'old prefix marker remains stable')
+  const firstMarkerBlock = firstMarker.content.find(block =>
+    block.type === 'text' && block.text.includes(ref.attachmentId))
+  const restoredOriginal = secondWire.find(message => message?.id === firstMarker.id)
+  const restoredMarkerBlock = restoredOriginal?.content.find(block =>
+    block.type === 'text' && block.text.includes(ref.attachmentId))
+  assert.equal(restoredMarkerBlock?.text, firstMarkerBlock?.text,
+    'old model-visible image marker remains identical after cold resume')
   await resumed.dispose()
   await reopened.ctx.fiber.dispose()
   console.log(JSON.stringify({
