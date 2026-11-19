@@ -17,6 +17,11 @@ export function installOwnedTwinStreamBoundary(ctx, resolveOwnedTwin) {
   }
   return ctx.on('llm/stream', (options, next) => {
     const provider = options?.provider
+    // The waterfall runs before adapterStream's normal prepareCall() check.
+    // A pre-aborted request must stay on the Host's native dispatch path,
+    // where cancellation is normalized to its standard aborted finish.
+    // Never let a transparent twin short-circuit that validation boundary.
+    if (options?.signal?.aborted) return next()
     if (typeof provider !== 'string' || !provider.endsWith('-vision')) return next()
 
     let adapter
