@@ -1,4 +1,21 @@
-import { readVisionRouterAdapterOwner } from './adapter-ownership.js'
+// Core creates this identity before the FIRST composition wrapper. The
+// native-image ownership token is minted later, on a facade's independent
+// shell, so it cannot prove a relationship to the original Core object.
+// This private symbol is only an identity witness for transparent dispatch,
+// not another Session policy, provider authority, or public ownership marker.
+const TWIN_STREAM_ID = Symbol('vision-router.generated-twin-stream')
+
+export function identifyOwnedTwinStream(adapter) {
+  Object.defineProperty(adapter, TWIN_STREAM_ID, {
+    configurable: false, enumerable: false, writable: false,
+    value: Object.freeze({}),
+  })
+  return adapter
+}
+
+function streamIdentity(adapter) {
+  try { return adapter?.[TWIN_STREAM_ID] } catch { return undefined }
+}
 
 /**
  * Issue #865: intercept only active, DVR-owned generated twin routes at the
@@ -43,13 +60,10 @@ export function installOwnedTwinStreamBoundary(ctx, resolveOwnedTwin) {
       return next()
     }
     if (registered !== adapter) {
-      // The public entry's native-image ownership boundary mints a unique
-      // registration token before the lower adapter layers install proxies.
-      // Those layers intentionally retain that token but not object identity.
-      // Match the SAME token, never just a truthy marker or a provider suffix.
-      const expected = readVisionRouterAdapterOwner(adapter)
-      if (typeof expected !== 'object' || expected === null ||
-          readVisionRouterAdapterOwner(registered) !== expected) return next()
+      // Match the exact Core-generated identity forwarded by the composed
+      // facade/proxies, never the generic ownership marker or route suffix.
+      const expected = streamIdentity(adapter)
+      if (expected === undefined || streamIdentity(registered) !== expected) return next()
     }
     if (typeof registered?.stream !== 'function') return next()
     // Execute the live registered adapter, NOT the raw Core instance:

@@ -119,7 +119,7 @@ import z from '@deepseek-ai/schemastery'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
-import { installOwnedTwinStreamBoundary } from './lib/owned-twin-stream-boundary.js'
+import { identifyOwnedTwinStream, installOwnedTwinStreamBoundary } from './lib/owned-twin-stream-boundary.js'
 import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
 import { managedTesseractPaths, runManagedTesseractOcr, systemTesseract } from './lib/optional-ocr-engines.js'
 import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
@@ -1541,7 +1541,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const adapter = makeTwinAdapter(provider, state)
+        const adapter = identifyOwnedTwinStream(makeTwinAdapter(provider, state))
         const registration = ctx.llm.registerAdapter([twinRoute], adapter)
         twinHandles.set(provider, {
           registration,
