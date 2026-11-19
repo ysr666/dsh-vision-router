@@ -676,3 +676,16 @@ test('issue #865: route epoch rejects A-B-A capability result and retired Agent 
   assert.equal((await mutate(f.agent, { selection, enabled: true })).kind, 'error')
   assert.equal(f.policies.size, 0)
 })
+
+
+test('issue #865: minimum Host Agent lacking model.current reports explicit compatibility reason', async () => {
+  const f = fixture()
+  delete f.agent.model
+  const state = await readNativeVisionControlState(f.ctx, { get() {} }, f.agent)
+  assert.deepEqual(state, { kind: 'unavailable', reason: 'host-control-unsupported' })
+  assert.equal(nativeVisionControlViewSchema.safeParse(state).success, true)
+  assert.equal(createNativeVisionClientSchemas().view.parse(state), state)
+  f.agent.model = { current: () => undefined }
+  assert.deepEqual(await readNativeVisionControlState(f.ctx, { get() {} }, f.agent),
+    { kind: 'unavailable', reason: 'no-selection' }, 'new Host missing selection is not old-Host compatibility')
+})

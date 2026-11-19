@@ -1252,3 +1252,32 @@ test('issue #865: shipping composer chip uses observed native permission, not th
   h.render({ available: false, sessionId: 'session-two' })
   assert.equal(streams[2].retired, true)
 })
+
+
+test('issue #865: old Host Agent API restores standard picker but unavailable current Host does not', async () => {
+  const route = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const turn = () => new Promise(setImmediate)
+  for (const reason of ['host-control-unsupported', 'metadata-unavailable']) {
+    let next
+    const nativeApi = {
+      observe() { return {
+        [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { next = resolve }) },
+        dispose() { next?.({ done: true }) },
+      } },
+      set() { throw Error('native write must not occur') },
+    }
+    const h = createBrowserHarness({ nativeApi, current: route })
+    await turn()
+    h.render()
+    next({ done: false, value: { kind: 'unavailable', reason } })
+    await turn()
+    const button = buttonOf(h.render())
+    assert.equal(button.props['data-native-vision-state'], reason)
+    assert.equal(button.props.disabled, reason !== 'host-control-unsupported')
+    button.props.onClick()
+    await turn()
+    assert.equal(h.selections.length, reason === 'host-control-unsupported' ? 1 : 0)
+    h.render({ available: false })
+  }
+})

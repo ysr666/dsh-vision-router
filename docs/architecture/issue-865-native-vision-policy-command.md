@@ -192,3 +192,16 @@ registered adapter identity, rejects A-B-A during discovery, and rejects retired
 Agents. Exact public-plugin test changes only effort while enhancement is ON
 before testing the real agent request. The one deliberate picker event is
 counted separately from the Remote/command calls.
+
+### Minimum Host regression / effort fixture
+
+The 0.2.1-rc.5 source uses ApiSessionAgentController.selectionFor(agent)
+instead of the current Agent.model.current() API. Exact minimum Chromium and
+Windows Desktop failed with the new chip's generic unavailable state. The
+server now explicitly reports host-control-unsupported when the Agent shape
+lacks the new accessor, and only that positive capability signal permits
+the original model-picker route on an otherwise mounted Remote. Missing
+selection on a supported Host, denied access and other metadata failures
+remain fail-closed. The chip exposes a bounded, non-sensitive diagnostic
+state attribute and separates native-state errors from absent twins. The
+synthetic reasoning-effort fixture now declares the actual supported efforts.

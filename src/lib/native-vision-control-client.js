@@ -59,7 +59,7 @@ export function createNativeVisionClientSchemas() {
       if (v.kind === 'legacy') return exact(v, ['kind', 'reason', 'selection']) &&
         selection(v.selection) && ['dvr-wrapper', 'text-only'].includes(v.reason)
       return v.kind === 'unavailable' && exact(v, ['kind', 'reason']) &&
-        ['inactive-session', 'no-selection', 'no-registration', 'metadata-unavailable',
+        ['inactive-session', 'host-control-unsupported', 'no-selection', 'no-registration', 'metadata-unavailable',
           'stale-selection', 'policy-store-unavailable', 'policy-read-failed', 'observer-unavailable'].includes(v.reason)
     }),
   }
@@ -153,7 +153,8 @@ export function startNativeVisionClientObservation(api, sessionId, publish) {
       // compatibility with a Host that predates the DVR native contract.
       // Access denial, malformed data, withdrawn definitions and disconnect
       // never fall through to a legacy route mutation.
-      update({ kind: !seen && error?.code === 'gateway/invocation-unavailable' ? 'legacy' : 'failed' })
+      const reason = typeof error?.code === 'string' && /^[a-z0-9/-]{1,80}$/.test(error.code) ? error.code : 'transport-failed'
+      update({ kind: !seen && reason === 'gateway/invocation-unavailable' ? 'legacy' : 'failed', reason })
     }
   })()
   return {

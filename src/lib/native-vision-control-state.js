@@ -42,6 +42,12 @@ export async function resolveNativeControlTarget(ctx, agent, signal) {
   const sessionId = session?.id
   if (signal?.aborted || typeof sessionId !== 'string' || !sessionId ||
       agent.id !== sessionId) return { kind: 'unavailable', reason: 'inactive-session' }
+  // DSH 0.2.1-rc.5 owns the selection in ApiSessionAgentController,
+  // and its Agent has no model.current API. Preserve the old picker ONLY for
+  // this positive unsupported-Host shape, not arbitrary metadata failures.
+  if (typeof agent?.model?.current !== 'function') {
+    return { kind: 'unavailable', reason: 'host-control-unsupported' }
+  }
   const selection = nativeControlSelection(agent)
   if (!selection) return { kind: 'unavailable', reason: 'no-selection' }
   const adapter = registeredControlAdapter(ctx, selection.provider)
