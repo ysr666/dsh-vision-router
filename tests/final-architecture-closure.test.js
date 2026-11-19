@@ -124,7 +124,6 @@ test('Architecture Closure permanently carries every final ownership gate', asyn
   for (const gate of [
     'tests/architecture-contract-baseline.test.js',
     'tests/compat-inventory-completeness.test.js',
-    'tests/settings-impersonation-closure.test.js',
     'tests/presentation-switch.test.js',
     'tests/capability-shadow-retirement.test.js',
     'tests/session-runtime-core-wiring.test.js',

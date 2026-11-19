@@ -14,7 +14,6 @@ import {
   resolveSessionVisionModeAuthority,
 } from '../lib/session-vision-mode-authority.js'
 import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-boundary.js'
-import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { installStructuredFlowHardening } from '../lib/structured-flow-hardening.js'
 import { createVisionRouterRemoteSettingsHandler } from '../lib/remote-settings-bridge.js'
 
@@ -180,9 +179,8 @@ function boot() {
 
 function compose(harness) {
   const native = contextWithNativeImageCoexistence(harness.ctx, harness.persisted)
-  const legacy = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
-  const mode = installSessionVisionModeBoundary(legacy.ctx, legacy.config)
-  return { native, legacy, mode }
+  const mode = installSessionVisionModeBoundary(native.ctx, native.config)
+  return { native, mode }
 }
 
 async function runPreStep(harness, mode, agent, turn = 1, observe) {

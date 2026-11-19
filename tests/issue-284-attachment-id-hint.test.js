@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { contextWithNativeImageCoexistence } from '../lib/native-image-coexistence.js'
 
 function imageMessage(id) {
@@ -91,9 +90,7 @@ function harness({ inputModalities = ['text'] } = {}) {
 }
 
 function installPreStep(h, native) {
-  const bridge = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
-  bridge.ctx.on('agent/pre-step', async (_payload, next) => next())
-  return bridge
+  native.ctx.on('agent/pre-step', async (_payload, next) => next())
 }
 
 test('issue #284 Vision Router-owned image route keeps the exact durable user message and adds no synthetic hint', async () => {

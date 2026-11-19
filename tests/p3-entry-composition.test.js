@@ -38,7 +38,6 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'createCoreVisionSurfaceRuntime({',
     'createSessionVisionRuntime({',
     'installSessionVisionIndexBoundary(',
-    'installLegacyCoreVisionPolicyBridge(',
     'installSessionVisionModeBoundary(',
     'installVisionLimitDiagnostics(',
     'installStructuredFlowHardening(',
