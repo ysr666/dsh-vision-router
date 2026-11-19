@@ -6,6 +6,8 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
+import { observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
+import { createSessionVisionPolicyRuntimeStore } from '../lib/session-vision-policy-domain.js'
 
 const root = process.env.DSH_SOURCE_ROOT
 assert.ok(root, 'DSH_SOURCE_ROOT required')
@@ -45,13 +47,12 @@ await ctx.plugin(AgentRegistry)
 await ctx.plugin(AgentLoop, { agents: [] })
 await ctx.plugin(Commands.default)
 const registered = ctx.llm.registerAdapter(['native-test'], new SyntheticSource())
-const rows = new Map()
-const store = {
-  get(sessionId) { return rows.get(sessionId) },
-  async set(sessionId, policy) { rows.set(sessionId, policy); return policy },
-}
+// The actual DVR store is volatile on this fixture without storageDomain.
+// Its durable behavior has separate domain tests; observe the same authority.
+const store = createSessionVisionPolicyRuntimeStore(ctx)
 installNativeVisionPolicyCommand(ctx, store)
 let handle
+let observer
 try {
   handle = await ctx.agents.create({
     sessionId: 'dvr-865-native-policy',
@@ -67,10 +68,26 @@ try {
     assert.ok(outcome, 'the command must be admitted by Host')
     return outcome.result
   }
+  observer = observeNativeVisionControlState(ctx, store, agent, { signal: AbortSignal.timeout(15000) })
+  const initial = await observer.next()
+  assert.equal(initial.done, false)
+  assert.equal(initial.value.kind, 'native')
+  assert.equal(initial.value.enabled, false)
+  assert.equal(agent.session.snapshotEvents().length, beforeEvents.length,
+    'opening the live read stream must not log commands or history')
+  const liveOn = observer.next()
   assert.equal((await invoke('/vision-router on')).kind, 'success')
+  const onView = await liveOn
+  assert.equal(onView.done, false)
+  assert.equal(onView.value.enabled, true)
   assert.equal(store.get(agent.id)?.enabled, true)
   assert.equal(agent.model.current()?.provider, 'native-test')
+  const liveOff = observer.next()
   assert.equal((await invoke('/vision-router off')).kind, 'success')
+  const offView = await liveOff
+  assert.equal(offView.done, false)
+  assert.equal(offView.value.enabled, false)
+  await observer.return()
   assert.equal(store.get(agent.id)?.enabled, false)
   assert.equal(agent.model.current()?.provider, 'native-test')
   assert.equal((await invoke('/vision-router status')).kind, 'success')
@@ -86,8 +103,10 @@ try {
   console.log(JSON.stringify({
     ok: true, kind: 'real Host authorized command without model selection',
     commands: 3, modelSelectionEventsAdded: 0, nativePolicyFinal: false,
+    observedPolicyTransitions: [false, true, false], readStreamAddsNoEvents: true,
   }))
 } finally {
+  await observer?.return()
   if (handle) await handle.dispose()
   registered?.dispose?.()
   await ctx.fiber.dispose()

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
-import { readNativeVisionControlState } from '../lib/native-vision-control-state.js'
+import { readNativeVisionControlState, observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
 import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
 
 function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
@@ -307,4 +307,191 @@ test('issue #865 B2: unsupported and stale control views are not interpreted as 
   f.changeSelected({ provider: 'new-provider', model: 'new-model' })
   done({ inputModalities: ['text', 'image'] })
   assert.equal((await pending).kind, 'unavailable')
+})
+
+
+function observerFixture() {
+  const f = fixture()
+  const listeners = new Map()
+  const effects = new Set()
+  const subscriptions = new Map()
+  f.ctx.on = (name, fn) => {
+    const set = listeners.get(name) ?? new Set()
+    listeners.set(name, set)
+    set.add(fn)
+    return () => { set.delete(fn) }
+  }
+  f.ctx.effect = (install) => {
+    const cleanup = install()
+    const dispose = () => {
+      if (effects.delete(dispose)) cleanup()
+    }
+    effects.add(dispose)
+    return dispose
+  }
+  const emit = (name, ...args) => {
+    for (const fn of [...(listeners.get(name) ?? [])]) fn(...args)
+  }
+  const store = {
+    durable: true,
+    get: id => f.policies.get(id),
+    subscribe(id, fn) {
+      const set = subscriptions.get(id) ?? new Set()
+      subscriptions.set(id, set)
+      set.add(fn)
+      return () => { set.delete(fn) }
+    },
+    change(id, enabled) {
+      f.policies.set(id, userSessionVisionPolicy(enabled))
+      for (const fn of [...(subscriptions.get(id) ?? [])]) fn()
+    },
+  }
+  const activeCount = () => [
+    ...listeners.values(), ...subscriptions.values(), effects,
+  ].reduce((count, set) => count + set.size, 0)
+  return { ...f, store, emit, effects, activeCount }
+}
+
+test('issue #865 B2: observe live policy, ignore another Session and duplicate views', { timeout: 3000 }, async () => {
+  const f = observerFixture()
+  let enabled = true
+  let reads = 0
+  const resolve = f.ctx.llm.resolveModelInfo
+  f.ctx.llm.resolveModelInfo = (...args) => { reads++; return resolve(...args) }
+  const stream = observeNativeVisionControlState(f.ctx, f.store, f.agent, {
+    toolEnabled: () => enabled,
+  })
+  try {
+    assert.equal((await stream.next()).value.enabled, false)
+    const baseline = reads
+    let delivered = false
+    const next = stream.next().then(result => { delivered = true; return result })
+    f.store.change('foreign-session', true)
+    f.emit('session/event', { id: f.agent.id }, { type: 'model/selection' })
+    f.emit('session/event', f.agent.session, { type: 'request/header' })
+    await new Promise(setImmediate)
+    assert.equal(reads, baseline, 'unrelated Session and unchanged request header cannot trigger discovery')
+    assert.equal(delivered, false)
+    f.store.change(f.agent.id, true)
+    assert.equal((await next).value.enabled, true)
+    const disabled = stream.next()
+    enabled = false
+    f.emit('settings/updated', 'vision-router')
+    const view = (await disabled).value
+    assert.equal(view.enabled, false)
+    assert.equal(view.requestedEnabled, true)
+    assert.equal(view.canEnable, false)
+    const reopened = stream.next()
+    // Neither a no-op write nor a duplicate settings notification emits another value.
+    f.store.change(f.agent.id, true)
+    f.emit('settings/document-updated', 'vision-router')
+    await new Promise(setImmediate)
+    enabled = true
+    f.emit('settings/updated', 'vision-router')
+    assert.equal((await reopened).value.enabled, true)
+    assert.equal(f.selectCount(), 0)
+  } finally {
+    await stream.return()
+  }
+  assert.equal(f.activeCount(), 0)
+})
+
+test('issue #865 B2: a slow obsolete model read cannot publish over a later selection', { timeout: 3000 }, async () => {
+  const f = observerFixture()
+  let started
+  const waiting = new Promise(resolve => { started = resolve })
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  let calls = 0
+  f.ctx.llm.resolveModelInfo = async (provider, model) => {
+    if (++calls === 1) { started(); await gate }
+    return { provider, id: model, inputModalities: ['text', 'image'] }
+  }
+  const stream = observeNativeVisionControlState(f.ctx, f.store, f.agent)
+  try {
+    const pending = stream.next()
+    await waiting
+    f.changeSelected({ provider: 'replacement', model: 'next-model' })
+    f.emit('session/event', f.agent.session, { type: 'model/selection' })
+    f.store.change(f.agent.id, true)
+    release()
+    const view = (await pending).value
+    assert.equal(view.kind, 'native')
+    assert.deepEqual(view.selection, { provider: 'replacement', model: 'next-model' })
+    assert.equal(view.enabled, true)
+    assert.equal(calls, 2, 'coalesced invalidation must cause only one replacement read')
+  } finally {
+    release()
+    await stream.return()
+  }
+  assert.equal(f.activeCount(), 0)
+})
+
+test('issue #865 B2: return interrupts a provider read even if discovery ignores cancellation', { timeout: 3000 }, async () => {
+  const f = observerFixture()
+  let entered
+  const started = new Promise(resolve => { entered = resolve })
+  let release
+  let receivedSignal
+  f.ctx.llm.resolveModelInfo = (_provider, _model, signal) => new Promise(resolve => {
+    receivedSignal = signal
+    release = resolve
+    entered()
+  })
+  const stream = observeNativeVisionControlState(f.ctx, f.store, f.agent)
+  const pending = stream.next()
+  await started
+  assert.equal((await stream.return()).done, true)
+  assert.equal((await pending).done, true)
+  assert.equal(receivedSignal.aborted, true)
+  assert.equal(f.activeCount(), 0)
+  release({ inputModalities: ['text', 'image'] })
+})
+
+test('issue #865 B2: closing one Agent or carrier releases only its observer', { timeout: 3000 }, async () => {
+  const f = observerFixture()
+  const controller = new AbortController()
+  const a = observeNativeVisionControlState(f.ctx, f.store, f.agent)
+  const b = observeNativeVisionControlState(f.ctx, f.store, f.agent, { signal: controller.signal })
+  await a.next()
+  await b.next()
+  const nextA = a.next()
+  const nextB = b.next()
+  controller.abort()
+  assert.equal((await nextB).done, true)
+  assert.ok(f.activeCount() > 0)
+  f.emit('agent/disposed', { agent: { ...f.agent } })
+  f.store.change(f.agent.id, true)
+  assert.equal((await nextA).value.enabled, true)
+  const retired = a.next()
+  f.emit('agent/disposed', { agent: f.agent })
+  assert.equal((await retired).done, true)
+  assert.equal(f.activeCount(), 0)
+
+  const c = observeNativeVisionControlState(f.ctx, f.store, f.agent)
+  await c.next()
+  const waiting = c.next()
+  for (const dispose of [...f.effects]) dispose()
+  assert.equal((await waiting).done, true, 'owning Host fiber retirement closes idle observers')
+  assert.equal(f.activeCount(), 0)
+})
+
+test('issue #865 B2: observe adapter topology changes without selecting a model', { timeout: 3000 }, async () => {
+  const f = observerFixture()
+  const stream = observeNativeVisionControlState(f.ctx, f.store, f.agent)
+  try {
+    assert.equal((await stream.next()).value.kind, 'native')
+    const unavailable = stream.next()
+    f.ctx.llm.registration = () => undefined
+    f.emit('llm/adapters-updated')
+    assert.equal((await unavailable).value.kind, 'unavailable')
+    const legacy = stream.next()
+    const wrapper = { [Symbol.for('dsh-vision-router.adapter-owner')]: Object.freeze({ route: 'native-account' }) }
+    f.ctx.llm.registration = () => ({ adapter: wrapper })
+    f.emit('llm/adapters-updated')
+    assert.equal((await legacy).value.kind, 'legacy')
+    assert.equal(f.selectCount(), 0)
+  } finally {
+    await stream.return()
+  }
 })

@@ -88,3 +88,29 @@ durable queue admission precedes notifications even for reentrant listeners.
 Dispose subscriptions on Session/connection retirement. Adapter/model/settings
 changes and authenticated browser transport still have to be wired and tested;
 this feed alone is not a browser endpoint or an authorization mechanism.
+
+### B2 Host-side live read stream (carrier still pending)
+
+The exact Host projection seam folds committed events synchronously; it
+cannot faithfully mirror an async, sidecar-owned permission or model
+capability lookup. Do not synthesize Session events or consult mutable
+external state from a pure projection fold. The official typed Remote
+stream is a transport candidate, subject to Loader artifact generation,
+Gateway Session lookup/peer authorization, and a real Browser test.
+
+`observeNativeVisionControlState()` is the internal read-only stream for an
+already-authorized live Agent. It uses the existing policy invalidation feed
+and the exact Host model selection, adapter topology and DVR settings events.
+It coalesces invalidations, drops stale asynchronous reads, suppresses
+identical views and releases observers on iterator return, carrier abort,
+Agent disposal or owning fiber retirement. It never writes a policy, runs
+a status command, accepts a client-supplied Session ID or selects a model.
+The exact Host Commands fixture also consumes this stream with the actual
+DVR policy store in volatile mode and checks OFF→ON→OFF without extra Session
+events. This is not yet a Remote registration, a Client contribution, or an
+authorization/packaging acceptance test.
+
+References (pinned DSH 0.2.2-rc.5):
+- [Projection definition and snapshot rules](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/docs/subsystems/session-projection.md)
+- [Remote method and gateway contract](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/docs/api-gateway.md)
+- [Exact Agent model-selection fold](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/packages/core/agent/src/model-selection.ts)
