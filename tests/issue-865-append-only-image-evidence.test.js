@@ -97,6 +97,55 @@ test('issue #865: evidence only originates from attached image and is bounded', 
   assert.deepEqual(planAppendOnlyImageEvidence(nested, nested, new Map(), source), [])
 })
 
+test('issue #865: delayed OCR tool evidence appends without rewriting the earlier image prefix', () => {
+  const original = history()
+  const empty = new Map()
+  const before = rewriteHistoryImages(original, empty, { stable: true }).messages
+  const oldPrefix = JSON.stringify(before)
+  const lateToolResult = {
+    id: 'late-ocr-tool-result',
+    role: 'tool',
+    source: { kind: 'tool' },
+    content: [{
+      type: 'tool-result',
+      toolCallId: 'ocr-call-1',
+      content: [{ type: 'text', text: 'OCR result from a later vision_ocr call: DSH_865_LATE_TEXT' }],
+    }],
+  }
+  empty.set(id, 'new summary written after the first image was admitted')
+  const after = rewriteHistoryImages([...original, lateToolResult], empty, { stable: true }).messages
+  assert.equal(JSON.stringify(after.slice(0, original.length)), oldPrefix,
+    'all previously admitted messages must serialize identically after delayed OCR')
+  assert.match(JSON.stringify(after.at(-1)), /DSH_865_LATE_TEXT/,
+    'the already durable tool result must remain visible as appended evidence')
+  assert.equal(original[0].content[0].type, 'image')
+  // The delayed tool result is already an append-only model-facing event.
+  // No duplicate copy should be planned when the new inbox has no image.
+  assert.deepEqual(planAppendOnlyImageEvidence(
+    [lateToolResult], [lateToolResult], empty, source,
+  ), [])
+})
+
+test('issue #865: nested tool-result images stay fixed after OCR memory changes', () => {
+  const nested = [{
+    id: 'read-image-tool-result',
+    role: 'tool',
+    source: { kind: 'tool' },
+    content: [{ type: 'tool-result', toolCallId: 'read-call-1', content: [
+      { type: 'text', text: 'result metadata' },
+      { type: 'image', attachment: { attachmentId: id, name: 'rendered-output.png' } },
+    ] }],
+  }]
+  const memory = new Map()
+  const before = rewriteHistoryImages(nested, memory, { stable: true }).messages
+  memory.set(id, 'delayed interpretation')
+  const after = rewriteHistoryImages(nested, memory, { stable: true }).messages
+  assert.deepEqual(after, before)
+  assert.match(JSON.stringify(after), /result metadata/,
+    'nested tool-result metadata must survive image sanitization')
+  assert.match(JSON.stringify(after), /sha256:synthetic-865-image/)
+})
+
 test('issue #865: text-only wrapper stops changing historical image text under stable mode', async () => {
   const requests = []
   const memory = new Map()
