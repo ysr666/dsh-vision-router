@@ -34,6 +34,22 @@ jobs:
           cat > "$RUNNER_TEMP/windows-report.json" <<'JSON'
           {"schemaVersion":1,"target":"win32-x64","name":"dsh-vision-router-ocr-win32-x64","version":"1.0.0","filename":"dsh-vision-router-ocr-win32-x64-1.0.0.tgz","entry":{"url":"https://registry.npmjs.org/dsh-vision-router-ocr-win32-x64/-/dsh-vision-router-ocr-win32-x64-1.0.0.tgz","bytes":35313963,"sha256":"fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0","npmBytes":35312250,"npmSha256":"acca7abc14b92b8d6441ce84e02cb67b18535cc29a57c299425fe16260229c75"},"distributionReady":false,"ownerPublicationAuthorized":false}
           JSON
+          # Diagnose public availability independently of the fail-closed downloader.
+          for target in darwin-arm64 win32-x64; do
+            name="dsh-vision-router-ocr-$target"
+            echo "Public npm metadata: $name@1.0.0"
+            curl --silent --show-error --max-time 20 --output "$RUNNER_TEMP/$target-meta.json" \
+              --write-out 'metadata HTTP %{http_code}\n' "https://registry.npmjs.org/$name/1.0.0" || true
+            node --input-type=module - "$RUNNER_TEMP/$target-meta.json" <<'NODE'
+          import {readFileSync} from 'node:fs'
+          try {
+            const p=JSON.parse(readFileSync(process.argv[2],'utf8'))
+            console.log(JSON.stringify({name:p.name,version:p.version,dist:p.dist,error:p.error,reason:p.reason}))
+          } catch(e) { console.log('Metadata not readable: '+e.message) }
+          NODE
+            curl --silent --show-error --max-time 20 --head \
+              --write-out 'tarball HEAD HTTP %{http_code}\n' "https://registry.npmjs.org/$name/-/$name-1.0.0.tgz" || true
+          done
           for attempt in 1 2 3 4; do
             if node quality/native-ocr-npm-handoff.mjs --verify-registry \
               --mac-report "$RUNNER_TEMP/mac-report.json" \
