@@ -75,6 +75,23 @@ class FixtureFileSessionPersistence extends SessionPersistence {
   constructor(ctx) {
     super(ctx)
     this.writer = false
+    this.activeHandle = undefined
+    this.pendingWrite = Promise.resolve()
+    // The real JSONL backend routes post-commit Session events into the
+    // active writer through JsonlBackendTracker. Implement exactly that
+    // missing fixture responsibility: a Service interface alone never
+    // subscribes to events. Preserve order via one serialized write chain.
+    ctx.on('session/event', (session, event) => {
+      if (this.activeHandle?.id !== session.id) return
+      const task = this.activeHandle.append([event])
+      void task.catch(error => {
+        this.writeFailure = error
+      })
+    })
+    ctx.on('session/flush', session => {
+      if (this.activeHandle?.id !== session.id) return undefined
+      return this.activeHandle.flush()
+    })
   }
   async load() {
     return JSON.parse(await readFile(persistedPath, 'utf8'))
@@ -88,7 +105,9 @@ class FixtureFileSessionPersistence extends SessionPersistence {
     this.writer = true
     const record = { header: structuredClone(header), inheritedEventCount, events: [] }
     await this.save(record)
-    return this.handle(record, 'write')
+    const handle = this.handle(record, 'write')
+    this.activeHandle = handle
+    return handle
   }
   async open(id, access) {
     const record = await this.load()
@@ -97,7 +116,9 @@ class FixtureFileSessionPersistence extends SessionPersistence {
       assert.equal(this.writer, false, 'one active writer for a Session')
       this.writer = true
     }
-    return this.handle(record, access)
+    const handle = this.handle(record, access)
+    if (access === 'write') this.activeHandle = handle
+    return handle
   }
   handle(record, access) {
     let closed = false
@@ -115,27 +136,36 @@ class FixtureFileSessionPersistence extends SessionPersistence {
           events: structuredClone(record.events.slice(offset, offset + length)),
         }
       },
-      async append(events) {
+      append(events) {
         check()
         assert.equal(access, 'write')
         const committed = structuredClone([...events])
-        for (const event of committed) {
-          assert.equal(event.seq, record.events.length, 'only append contiguous Host events')
-          record.events.push(event)
-        }
-        await owner.save(record)
+        const pending = owner.pendingWrite.then(async () => {
+          for (const event of committed) {
+            assert.equal(event.seq, record.events.length, 'only append contiguous Host events')
+            record.events.push(event)
+          }
+          await owner.save(record)
+        })
+        owner.pendingWrite = pending
+        return pending
       },
       async flush() {
         check()
         assert.equal(access, 'write')
+        await owner.pendingWrite
+        if (owner.writeFailure) throw owner.writeFailure
         await owner.save(record)
       },
       async close() {
         if (closed) return
+        await owner.pendingWrite
+        if (owner.writeFailure) throw owner.writeFailure
         closed = true
         if (access === 'write') {
           await owner.save(record)
           owner.writer = false
+          if (owner.activeHandle === handle) owner.activeHandle = undefined
         }
       },
       async [Symbol.asyncDispose]() { await this.close() },
@@ -143,7 +173,9 @@ class FixtureFileSessionPersistence extends SessionPersistence {
     return handle
   }
   async flush() {
-    // Every handle append is already persisted to disk by this test backend.
+    await this.pendingWrite
+    if (this.writeFailure) throw this.writeFailure
+    await this.activeHandle?.flush()
   }
   async stat(id) {
     try {
