@@ -1,5 +1,5 @@
-// Maintainer-only exact-stage Desktop acceptance. Only the disposable package
-// receives the candidate catalog and a Host-side HTTPS response fixture.
+// Maintainer-only exact-stage Desktop acceptance. The fixture run changes
+// only a disposable package; the public run uses the unmodified built package.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -7,12 +7,15 @@ import { join, dirname, resolve, parse } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { decodeBmp, replaceOnce, assertExactStagedArchive, replaceScratchCatalog, replaceScratchWorkerPin } from './native-ocr-staged-acceptance.mjs'
 import { candidates } from './native-ocr-release-stage.mjs'
+import { APPROVED_NATIVE_OCR_ARCHIVES } from '../src/lib/native-ocr-download.js'
+import { EXPERIMENTAL_OCR_BINARY_SHA256 } from '../src/lib/native-ocr-canary.js'
+import { assertNativePromotionState } from './native-ocr-staged-acceptance.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = path => JSON.parse(readFileSync(path, 'utf8'))
 const target = process.platform + '-' + process.arch
 
-export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expected }) {
+export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expected, publicRegistry = process.env.DVR_NATIVE_OCR_PUBLIC_REGISTRY === '1' }) {
   assert.ok(candidates[target] && bmp && expected, 'exact native Desktop fixture required')
   const info = json(join(stage, 'staging-evidence.json'))
   const audit = json(join(stage, 'archive-audit-evidence.json'))
@@ -61,8 +64,17 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   writeFileSync(requests, '')
   writeFileSync(release, '')
   const pinSource = readFileSync(canary, 'utf8')
-  writeFileSync(canary, replaceScratchWorkerPin(pinSource, target, info.workerSha256))
   const original = readFileSync(catalog, 'utf8')
+  if (publicRegistry) {
+    assert.equal(assertNativePromotionState(APPROVED_NATIVE_OCR_ARCHIVES, EXPERIMENTAL_OCR_BINARY_SHA256, candidates), 'promoted')
+    const entry = APPROVED_NATIVE_OCR_ARCHIVES[target]
+    assertExactStagedArchive(target, entry)
+    assert.equal(replaceScratchCatalog(original, APPROVED_NATIVE_OCR_ARCHIVES), original, 'built public catalog differs from source')
+    for (const [platform, sha] of Object.entries(EXPERIMENTAL_OCR_BINARY_SHA256))
+      assert.equal(replaceScratchWorkerPin(pinSource, platform, sha), pinSource, 'built public worker pin differs from source')
+    info.npm = { ...info.npm, entry }
+  } else {
+  writeFileSync(canary, replaceScratchWorkerPin(pinSource, target, info.workerSha256))
   const entry = info.npm.entry
   let altered = replaceScratchCatalog(original, { [target]: entry })
   // Only substitute the external HTTPS transport; the real Host route,
@@ -91,6 +103,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   altered = replaceOnce(altered,
     "const moduleFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined", fixture)
   writeFileSync(catalog, altered)
+  }
   const isolatedEnv = { HOME: home, USERPROFILE: home }
   if (process.platform === 'win32') {
     isolatedEnv.HOMEDRIVE = parse(home).root.replace(/[\\\\/]$/, '')
@@ -98,7 +111,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   }
   const installation = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
   const worker = join(installation, process.platform === 'win32' ? 'worker.exe' : 'worker')
-  return { copied, isolatedEnv, info, mode, requests, release, installation, worker, bmp, expected }
+  return { copied, isolatedEnv, info, mode, requests, release, installation, worker, bmp, expected, publicRegistry }
 }
 
 async function waitEnabled(button) {
@@ -123,7 +136,7 @@ async function openNativeOcrCard(page) {
 }
 
 export async function exerciseExactDesktopOcr(page, context) {
-  const { info, mode, requests, release, installation, worker, bmp, expected } = context
+  const { info, mode, requests, release, installation, worker, bmp, expected, publicRegistry } = context
   const panel = await openNativeOcrCard(page)
   const download = panel.getByRole('button', { name: /下载并安装 PP-OCRv6|Download and install PP-OCRv6/ })
   const refresh = panel.getByRole('button', { name: /刷新安装状态|Refresh installation status/ })
@@ -133,22 +146,26 @@ export async function exerciseExactDesktopOcr(page, context) {
   const ready = panel.getByText(/已经安装且完整性校验通过|Installed and integrity-verified/)
   await waitEnabled(download)
   assert.equal(existsSync(installation), false)
-  await download.click()
-  await busy.waitFor({ state: 'visible', timeout: 15000 })
-  assert.equal(await download.isDisabled(), true)
-  writeFileSync(release, 'corrupt')
-  await errorAlert.waitFor({ state: 'visible', timeout: 60000 })
-  assert.match(await errorAlert.innerText(), /native OCR npm tarball integrity mismatch/i,
-    'unexpected Host rejection; report the actual error rather than timing out')
-  assert.equal(existsSync(installation), false)
-  assert.equal(readFileSync(requests, 'utf8'), 'corrupt\n')
-  writeFileSync(mode, 'good')
-  await refresh.click()
-  await waitEnabled(download)
-  await download.click()
-  await busy.waitFor({ state: 'visible', timeout: 15000 })
-  assert.equal(await download.isDisabled(), true)
-  writeFileSync(release, 'good')
+  if (publicRegistry) {
+    await download.click()
+  } else {
+    await download.click()
+    await busy.waitFor({ state: 'visible', timeout: 15000 })
+    assert.equal(await download.isDisabled(), true)
+    writeFileSync(release, 'corrupt')
+    await errorAlert.waitFor({ state: 'visible', timeout: 60000 })
+    assert.match(await errorAlert.innerText(), /native OCR npm tarball integrity mismatch/i,
+      'unexpected Host rejection; report the actual error rather than timing out')
+    assert.equal(existsSync(installation), false)
+    assert.equal(readFileSync(requests, 'utf8'), 'corrupt\n')
+    writeFileSync(mode, 'good')
+    await refresh.click()
+    await waitEnabled(download)
+    await download.click()
+    await busy.waitFor({ state: 'visible', timeout: 15000 })
+    assert.equal(await download.isDisabled(), true)
+    writeFileSync(release, 'good')
+  }
   await Promise.race([
     ready.waitFor({ state: 'visible', timeout: 210000 }),
     errorAlert.waitFor({ state: 'visible', timeout: 210000 })
@@ -156,7 +173,7 @@ export async function exerciseExactDesktopOcr(page, context) {
   ])
   await waitEnabled(remove)
   assert.equal(await download.isDisabled(), true)
-  assert.equal(readFileSync(requests, 'utf8'), 'corrupt\ngood\n')
+  if (!publicRegistry) assert.equal(readFileSync(requests, 'utf8'), 'corrupt\ngood\n')
   assert.equal(hash(readFileSync(worker)), info.workerSha256)
   for (const [name, fact] of Object.entries(info.manifest.files)) {
     assert.match(name, /^(?:models\/)?[A-Za-z0-9._-]+$/)
@@ -180,7 +197,7 @@ export { OCR_TOOL_CALL_ID, OCR_PROMPT_MARKER, OCR_RENDERED_MARKER, readNativeOcr
 
 export async function finishExactDesktopOcr(page, context, recognized, agentEvidence) {
   assert.equal(agentEvidence.engine, 'ncnn')
-  const { info, installation, expected } = context
+  const { info, installation, expected, publicRegistry } = context
   assert.equal(agentEvidence.text.replace(/\s+/g, ''), expected.replace(/\s+/g, ''))
   assert.equal(agentEvidence.visionRequestsDuringOcr, 0)
   assert.equal(agentEvidence.toolCalls, 1)
@@ -196,11 +213,11 @@ export async function finishExactDesktopOcr(page, context, recognized, agentEvid
     schemaVersion: 1, target, archiveSha256: info.archive.sha256, workerSha256: info.workerSha256,
     npmSha256: info.npm.entry.npmSha256, npmBytes: info.npm.entry.npmBytes,
     realDesktopHost: true, realElectronRenderer: true, actualGuiClicks: true,
-    injectedHttps: true, actualPublicHttps: false, realInstaller: true, realWorker: true,
+    injectedHttps: !publicRegistry, actualPublicHttps: publicRegistry, realInstaller: true, realWorker: true,
     installedWorkerSupervisorOcr: true, hostAgentOcrToolVerified: true,
     agentEvidence,
     actualRecognition: recognized.text, confidence: recognized.confidence,
-    phases: ['fresh-home', 'download-busy', 'corrupt-download-error', 'refresh-retry',
+    phases: ['fresh-home', ...(publicRegistry ? ['public-registry-gui-download'] : ['download-busy', 'corrupt-download-error', 'refresh-retry']),
       'verified-install-status', 'installed-payload-readback', 'installed-worker-ocr', 'agent-vision-ocr-returned-ncnn', 'gui-uninstall'],
     distributionReady: false, ownerPublicationAuthorized: false
   }

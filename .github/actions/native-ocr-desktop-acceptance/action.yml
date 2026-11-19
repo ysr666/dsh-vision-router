@@ -75,6 +75,33 @@ runs:
         DVR_NATIVE_OCR_EXPECTED: ${{ inputs.expected }}
         DVR_NATIVE_OCR_DESKTOP_REPORT: ${{ inputs.stage }}/desktop-acceptance-evidence.json
       run: node --import tsx ../scripts/dsh-desktop-renderer-e2e.mjs
+    - name: Detect promoted resource pair
+      id: public-ocr
+      shell: bash
+      run: |
+        node --input-type=module -e 'import {APPROVED_NATIVE_OCR_ARCHIVES as c} from "./src/lib/native-ocr-download.js"; console.log("enabled="+String(Object.keys(c).length===2))' >> "$GITHUB_OUTPUT"
+    - name: Public npm download through unmodified Desktop settings and Agent tool
+      if: steps.public-ocr.outputs.enabled == 'true'
+      working-directory: dsh-ocr-host
+      shell: bash
+      env:
+        DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-ocr-host
+        DVR_SOURCE_ROOT: ${{ github.workspace }}
+        DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+        DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '0'
+        DVR_NATIVE_OCR_PUBLIC_REGISTRY: '1'
+        DVR_NATIVE_OCR_STAGE: ${{ inputs.stage }}
+        DVR_NATIVE_OCR_BMP: ${{ inputs.bmp }}
+        DVR_NATIVE_OCR_EXPECTED: ${{ inputs.expected }}
+        DVR_NATIVE_OCR_DESKTOP_REPORT: ${{ inputs.stage }}/public-desktop-acceptance-evidence.json
+      run: node --import tsx ../scripts/dsh-desktop-renderer-e2e.mjs
+    - name: Upload public Desktop evidence JSON only
+      if: steps.public-ocr.outputs.enabled == 'true'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: native-ocr-public-desktop-evidence-${{ runner.os }}
+        path: ${{ inputs.stage }}/public-desktop-acceptance-evidence.json
+        if-no-files-found: error
     - name: Preserve the production pins and source
       if: always()
       shell: bash

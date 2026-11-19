@@ -3,12 +3,11 @@ import { readNativeOcrNpmTarball } from './native-ocr-tar-reader.js'
 
 const moduleFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined
 
-// A platform entry requires reviewed exact archive identity, notices/SBOM,
-// and release provenance. Deliberately empty until that audit is complete
-// AND the repository owner explicitly authorizes native asset publication.
+// Owner-published 1.0.0 resource pair; genuine public HTTPS readback passed
+// in run 44545420734 (job 135660956937). Both exact inner archives retain their
+// original audit metadata. Admission is not legal certification or lowest-OS proof.
 // Never substitute a lab bundle, a mutable npm dist-tag or a user URL.
-// An admitted entry pins both the npm tarball and its exact reviewed inner bundle.
-export const APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze({})
+export const APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze({"darwin-arm64":{"url":"https://registry.npmjs.org/dsh-vision-router-ocr-darwin-arm64/-/dsh-vision-router-ocr-darwin-arm64-1.0.0.tgz","bytes":27917268,"sha256":"a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd","npmBytes":27915270,"npmSha256":"905085d59e9daa1dc6c6f9be377f47d59c99aafb82924baff2325a4b9cc17aaa"},"win32-x64":{"url":"https://registry.npmjs.org/dsh-vision-router-ocr-win32-x64/-/dsh-vision-router-ocr-win32-x64-1.0.0.tgz","bytes":35313963,"sha256":"fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0","npmBytes":35312250,"npmSha256":"acca7abc14b92b8d6441ce84e02cb67b18535cc29a57c299425fe16260229c75"}})
 const MAX_BYTES = 64 * 1024 * 1024
 export function approvedNativeArchive(platform = process.platform, arch = process.arch) {
   return APPROVED_NATIVE_OCR_ARCHIVES[platform + '-' + arch] ?? null
