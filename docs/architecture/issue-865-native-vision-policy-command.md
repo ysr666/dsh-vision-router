@@ -128,3 +128,17 @@ raw store rows or adapters. This is a real in-process Gateway contract, not a
 WebSocket/browser test. The explicit fixture descriptor is intentionally NOT
 an npm production endpoint or a generated Loader artifact. Production package
 and browser contributions remain pending; no unverified custom HTTP route.
+
+### B2.2 production Host registration
+
+DSH's pinned typert-loader source explicitly supports manual registry
+contributions for hand-written wire schemas. DVR uses that documented option
+instead of adding a dependency on the Host's workspace-only generator or
+publishing an untyped HTTP route. A plain Cordis service exposes the public
+Typert binding; strict descriptors name the exact Session-scoped Agent lookup.
+Registration is conditional on the live lookup's resource, wire field and type
+symbol, and is retired with its owning fiber. Existing Commands and legacy UI
+remain available on older Hosts. The same production registration replaces the
+probe-only Service in the permission contract test; the public-apply fixture
+also asserts OFF/ON/OFF over the real Gateway. Browser contribution mounting,
+peer reconnect, and UI control are still separate acceptance gates.

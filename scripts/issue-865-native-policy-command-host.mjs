@@ -6,22 +6,20 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
-import { observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
+import { installNativeVisionControlRemote, NATIVE_VISION_REMOTE } from '../lib/native-vision-control-remote.js'
 import { createSessionVisionPolicyRuntimeStore } from '../lib/session-vision-policy-domain.js'
-import { nativeVisionControlViewSchema, nativeVisionControlSessionIdSchema } from '../lib/native-vision-control-wire.js'
+import { nativeVisionControlViewSchema } from '../lib/native-vision-control-wire.js'
 
 const root = process.env.DSH_SOURCE_ROOT
 assert.ok(root, 'DSH_SOURCE_ROOT required')
 const absolute = resolve(root)
 const host = path => import(pathToFileURL(join(absolute, path)).href)
 const hostRequire = createRequire(join(absolute, 'packages/llm/llm/package.json'))
-const { z } = hostRequire('zod')
 const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: SystemPrompt }, { default: ToolRuntime },
   { default: AgentRegistry }, { default: AgentLoop }, Commands,
   { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
-  { TypertRemoteService }, { createTypertRemoteInfo },
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -35,8 +33,6 @@ const [
   host('packages/typert/registry/src/index.ts'),
   host('packages/api/remote-access/src/index.ts'),
   host('packages/api/gateway/src/index.ts'),
-  host('packages/typert/protocol/src/index.ts'),
-  host('packages/typert/protocol/src/remote-info.ts'),
 ])
 class SyntheticSource extends llm.LlmAdapter {
   providerInfo(provider) { return { id: provider, name: provider } }
@@ -64,39 +60,15 @@ const registered = ctx.llm.registerAdapter(['native-test'], new SyntheticSource(
 const store = createSessionVisionPolicyRuntimeStore(ctx)
 installNativeVisionPolicyCommand(ctx, store)
 
-// Test-only registration. The descriptor is explicit here to prove the real
-// Gateway/lookup/authorization contract BEFORE changing the npm build and
-// client Loader. Production must use matching Host and Client artifacts.
-const namespace = 'dvrNativeVisionProbe'
-const wireId = { mode: 'strict', typeSymbol: '@deepseek-ai/dsh-session/types#SessionId',
-  create: () => nativeVisionControlSessionIdSchema }
-const wireView = { mode: 'strict', typeSymbol: 'dsh-vision-router#NativeVisionControlView',
-  create: () => nativeVisionControlViewSchema }
-const contribution = createTypertRemoteInfo({
-  package: 'dsh-vision-router-native-control-test',
-  methods: {
-    [namespace + '/observe']: {
-      service: namespace, mode: 'stream', invocation: { kind: 'direct' },
-      parameters: [{ name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent',
-        codec: wireId, strictCodec: wireId }],
-      cancellation: { parameter: 'signal' }, result: wireView,
-    },
-  },
-}, z)
-let opens = 0
-class NativeControlProbe extends TypertRemoteService {
-  constructor(scope) { super(scope, namespace) }
-  observe(agent, signal) {
-    opens++
-    // Keep observation bound to the owning plugin scope.
-    return observeNativeVisionControlState(ctx, store, agent, { signal })
-  }
-}
-await ctx.plugin(NativeControlProbe)
-const unregister = ctx.typert.register({
-  package: contribution.package, face: 'host', schemas: [],
-  model: { services: [], events: [], objects: [] }, invocations: contribution.descriptors,
-})
+// Exercise the production registration, not a fixture-only Service.
+const namespace = NATIVE_VISION_REMOTE
+const mounted = installNativeVisionControlRemote(ctx, store)
+await mounted?.await?.()
+assert.ok(ctx.typert.local.get(namespace + '/observe'), 'production descriptor registered')
+let modelReads = 0
+const source = ctx.llm.registration('native-test').adapter
+const resolveModel = source.resolveModel.bind(source)
+source.resolveModel = (...args) => { modelReads++; return resolveModel(...args) }
 const makePeer = (principal, ctl = new AbortController()) => ({
   id: 'dvr-865-' + principal.kind, ctx, principal, interactions: 'answer',
   signal: ctl.signal, dispose: async () => ctl.abort(),
@@ -125,6 +97,7 @@ try {
     assert.ok(outcome, 'the command must be admitted by Host')
     return outcome.result
   }
+  const readsBeforeDenied = modelReads
   // Bad wire data and ungranted callers must not reach the observer.
   const args = { agentId: agent.id }
   await assert.rejects(openRemote(owner, { ...args, policy: true }), error =>
@@ -133,11 +106,10 @@ try {
   bindings.push({ role: { name: 'other-session', resource: 'session',
     actions: [namespace + '/observe'] }, resource: { kind: 'session', id: 'not-this-session' } })
   await assert.rejects(openRemote(guest, args), error => error?.code === 'remote-access/denied')
-  assert.equal(opens, 0, 'denial must precede observer service invocation')
+  assert.equal(modelReads, readsBeforeDenied, 'denial must not trigger model discovery')
   const control = new AbortController()
   const remoteStream = await openRemote(owner, args, AbortSignal.any([control.signal, AbortSignal.timeout(15000)]))
   observer = remoteStream[Symbol.asyncIterator]()
-  assert.equal(opens, 1, 'owner read uses the actual DSH Gateway and Agent lookup')
   const initial = await observer.next()
   assert.equal(initial.done, false)
   assert.equal(nativeVisionControlViewSchema.parse(initial.value).kind, 'native')
@@ -188,7 +160,6 @@ try {
   }))
 } finally {
   await observer?.return?.()
-  await unregister()
   if (handle) await handle.dispose()
   registered?.dispose?.()
   await ctx.fiber.dispose()

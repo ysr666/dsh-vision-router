@@ -1,6 +1,7 @@
 import { currentSessionVisionPolicy } from './native-image-coexistence.js'
 import { userSessionVisionPolicy } from './session-vision-policy.js'
 import { installNativeVisionPolicyCommand } from './native-vision-policy-command.js'
+import { installNativeVisionControlRemote } from './native-vision-control-remote.js'
 import {
   clearSessionVisionModeAuthorityForAgent,
   rememberSessionVisionModeAssemblyAuthorityForAgent,
@@ -342,9 +343,9 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   // The Host Commands API is Session-authorized; native-multimodal enhancement
   // can be selected without touching Agent.model or selecting a twin provider.
   // The browser continues its legacy picker until a policy-aware view exists.
-  installNativeVisionPolicyCommand(ctx, sessionVisionPolicyStore, {
-    toolEnabled: () => liveConfig(ctx, config).tool !== false,
-  })
+  const nativeControlOptions = { config, toolEnabled: () => liveConfig(ctx, config).tool !== false }
+  installNativeVisionPolicyCommand(ctx, sessionVisionPolicyStore, nativeControlOptions)
+  installNativeVisionControlRemote(ctx, sessionVisionPolicyStore, nativeControlOptions)
   let toolsView
 
   // This boundary can install Agent-scoped restrictions whose lifetime exceeds

@@ -14,6 +14,7 @@ const [
   { default: SystemPrompt }, { default: Tools },
   { default: AgentRegistry }, { default: AgentLoop }, { default: Commands },
   { default: AttachmentLocal }, dvr,
+  { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -29,6 +30,9 @@ const [
   // implementation index.js. Testing Core directly bypasses runtime
   // composition and would produce a false missing-command diagnosis.
   import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
+  host('packages/typert/registry/src/index.ts'),
+  host('packages/api/remote-access/src/index.ts'),
+  host('packages/api/gateway/src/index.ts'),
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
@@ -47,6 +51,8 @@ class NativeImageModel extends llm.LlmAdapter {
 
 const requests = []
 const ctx = new Context()
+await ctx.plugin(TypertRegistry)
+await ctx.plugin(RemoteAccess)
 await ctx.plugin(llm.default)
 await ctx.plugin(Sessions)
 await ctx.plugin(Projection)
@@ -67,8 +73,10 @@ ctx.tools.setExecutor({
 await ctx.plugin(AgentRegistry)
 await ctx.plugin(AgentLoop, { agents: [] })
 await ctx.plugin(Commands)
+await ctx.plugin(Gateway)
 const adapter = ctx.llm.registerAdapter(['native-proof'], new NativeImageModel())
-let handle
+let handle, observer
+const carrier = new AbortController()
 try {
   await dvr.apply(ctx, dvr.Config({
     tool: true, routing: false, progressiveTools: false,
@@ -80,6 +88,13 @@ try {
     agentOptions: { provider: 'native-proof', model: 'test-mm' },
   })
   const agent = handle.agent
+  assert.ok(ctx.typert.local.get('dvrNativeVision/observe'), 'public apply registered strict Remote')
+  const owner = { id: 'dvr-real-plugin-owner', ctx, principal: { kind: 'owner' },
+    interactions: 'answer', signal: carrier.signal, dispose: async () => carrier.abort() }
+  const stream = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
+    method: 'observe', args: { agentId: agent.id }, signal: AbortSignal.timeout(30000) })
+  observer = stream[Symbol.asyncIterator]()
+  assert.equal((await observer.next()).value.enabled, false)
   const visible = ctx.commands.list(agent)
   assert.equal(visible.filter(def => def.name === 'vision-router').length, 1,
     'DVR plugin.apply must install exactly one model-preserving command')
@@ -116,16 +131,22 @@ try {
   }
   const firstOff = await turn('First text turn: Vision initially off')
   assert.equal(firstOff.active.length, 0, 'OFF must not admit owned DVR definitions')
+  const onView = observer.next()
   const on = await invoke('/vision-router on')
   assert.equal(on.kind, 'success', on.text)
+  assert.equal((await onView).value.enabled, true)
   assert.equal(agent.model.current().provider, 'native-proof')
   const statusOn = await invoke('/vision-router status')
   assert.equal(statusOn.kind, 'success')
   assert.match(statusOn.text, /tools: on/)
   const enabled = await turn('Second text turn: Vision now on')
   assert.ok(enabled.active.includes('vision_describe'), 'ON must admit precision vision tools to the real Agent request')
+  const offView = observer.next()
   const off = await invoke('/vision-router off')
   assert.equal(off.kind, 'success', off.text)
+  assert.equal((await offView).value.enabled, false)
+  await observer.return()
+  observer = undefined
   const statusOff = await invoke('/vision-router status')
   assert.match(statusOff.text, /tools: off/)
   const lastOff = await turn('Third text turn: Vision off again')
@@ -145,9 +166,11 @@ try {
     sessionCommandCount: 4, selectionEventsAdded: 0,
     modelIdentityUnchanged: true, finalPolicy: 'off',
     activeOwnedToolCounts: [firstOff.active.length, enabled.active.length, lastOff.active.length],
-    nativeRequests: requests.length,
+    nativeRequests: requests.length, productionRemoteTransitions: [false, true, false],
   }))
 } finally {
+  carrier.abort()
+  await observer?.return?.().catch(() => {})
   if (handle) await handle.dispose()
   adapter?.dispose?.()
   await ctx.fiber.dispose()
