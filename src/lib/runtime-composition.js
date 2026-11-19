@@ -200,7 +200,7 @@ function installHostAndSecurityBoundaries(ctx, config, core, providerTransport) 
   }
 }
 
-function createRuntimeOwners(host, core) {
+function createRuntimeOwners(host) {
   const { attachmentCompatCtx, logging, runtimeConfig, runtimeI18nCore } = host
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
@@ -478,7 +478,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
 export function applyVisionRuntimeComposition(ctx, config = {}, core, runtime = {}) {
   const providerTransport = runtime?.providerTransport
   const host = installHostAndSecurityBoundaries(ctx, config, core, providerTransport)
-  const owners = createRuntimeOwners(host, core)
+  const owners = createRuntimeOwners(host)
   const routing = installRoutingAndHostProducts(host, owners, core, providerTransport)
   const execution = installExecutionBoundaries(host, owners, routing, core, providerTransport)
   return applyMatureCoreBridge(host, owners, routing, execution, core, runtime)
