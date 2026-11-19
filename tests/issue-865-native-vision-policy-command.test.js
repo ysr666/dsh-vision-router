@@ -147,6 +147,46 @@ test('issue #865: late ON capability response cannot overwrite the newer OFF req
   assert.equal(f.selectCount(), 0)
 })
 
+test('issue #865: slow durable writes are serialized; last Session intent wins', async () => {
+  const agent = {
+    id: 'test-session-write-race',
+    session: { id: 'test-session-write-race' },
+    model: { current: () => ({ provider: 'native-account', model: 'mm' }) },
+  }
+  const persisted = new Map()
+  const started = []
+  let releaseFirst
+  let handler
+  installNativeVisionPolicyCommand({
+    inject(_names, mount) { mount({ commands: { register(def) { handler = def.handler } } }) },
+    llm: {
+      registration() { return { adapter: {} } },
+      async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
+    },
+  }, {
+    get: id => persisted.get(id),
+    async set(id, policy) {
+      started.push(policy.enabled)
+      if (started.length === 1) {
+        await new Promise(resolve => { releaseFirst = resolve })
+      }
+      persisted.set(id, policy)
+    },
+  })
+  const older = handler({ agent, rawInput: 'on', attachments: [] })
+  for (let i = 0; i < 100 && releaseFirst === undefined; i++) await Promise.resolve()
+  assert.equal(typeof releaseFirst, 'function', 'the earlier permission write has started')
+  const newer = handler({ agent, rawInput: 'off', attachments: [] })
+  for (let i = 0; i < 10; i++) await Promise.resolve()
+  assert.deepEqual(started, [true], 'the later OFF write must wait for the prior durable mutation')
+  releaseFirst()
+  assert.equal((await older).kind, 'success')
+  assert.equal((await newer).kind, 'success')
+  assert.deepEqual(started, [true, false])
+  assert.equal(persisted.get(agent.id)?.enabled, false,
+    'late completion of the older ON write cannot overwrite newer OFF')
+})
+
 test('issue #865: status hydrates a persisted Vision setting before reporting', async () => {
   const f = fixture()
   let handler
