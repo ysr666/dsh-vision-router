@@ -43,7 +43,10 @@ import {
 import { stripTrailingSlashes } from './string-normalization.js'
 import { isOffloadedImageBlock, offloadedImagePlaceholder } from './image-offload-compat.js'
 import { proxyHostMatchesAny } from './proxy-routing.js'
-import { stampDelegatedDeepSeekReplayChunk } from './delegated-deepseek-replay-provenance.js'
+import {
+  stampDelegatedDeepSeekReplayChunk,
+  rebindStampedDeepSeekTwinMessages,
+} from './delegated-deepseek-replay-provenance.js'
 
 import { loadSharp } from './sharp-runtime.js'
 export const IMAGE_EXTENSIONS = {
@@ -2589,7 +2592,9 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       const delegated = ctx.llm.stream({
         ...(effort === undefined ? options : { ...options, reasoningEffort: effort }),
         provider: currentDelegateProvider,
-        messages: rewritten,
+        messages: rebindStampedDeepSeekTwinMessages(
+          rewritten, options.provider, currentDelegateProvider, options.model,
+        ),
       })
       // DeepSeek Messages v1 does not carry its provider in native replay
       // metadata. Preserve the delegate provenance observed at this trusted
