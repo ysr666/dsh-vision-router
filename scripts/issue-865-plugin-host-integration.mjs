@@ -13,7 +13,7 @@ const hostRequire = createRequire(join(root, 'packages/llm/llm/package.json'))
 const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: SystemPrompt }, { default: ToolRuntime }, { default: AgentRegistry },
-  { default: AgentLoop }, { default: JsonlPersistence },
+  { default: AgentLoop }, JsonlPersistence,
   { default: AttachmentLocal }, plugin,
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
