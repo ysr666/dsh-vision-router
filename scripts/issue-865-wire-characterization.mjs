@@ -46,6 +46,10 @@ class SourceAdapter extends LlmAdapter {
   async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
   async resolveModel(provider, model) {
     return { provider, id: model, name: model, inputModalities: ['text', 'image'],
+      reasoning: { efforts: [
+        { id: 'off', name: 'Off' }, { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High' }, { id: 'max', name: 'Max' },
+      ], defaultEffort: 'high' },
       toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
