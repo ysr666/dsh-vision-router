@@ -39,8 +39,8 @@ function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
   installNativeVisionPolicyCommand(ctx, store, { toolEnabled: () => enabled })
   assert.equal(registered.length, 1)
   assert.equal(registered[0].name, 'vision-router')
-  const call = (rawInput, who = agent, attachments = []) =>
-    registered[0].handler({ agent: who, rawInput, attachments })
+  const call = (rawInput, who = agent, attachments = [], signal = undefined) =>
+    registered[0].handler({ agent: who, rawInput, attachments, signal })
   return { agent, policies, ctx, registered, call,
     changeSelected: (next) => { selected = next },
     selectCount: () => selectCount }
@@ -81,6 +81,37 @@ test('issue #865: async provider discovery cannot apply stale model policy', asy
   assert.equal((await pending).kind, 'error')
   assert.equal(f.policies.size, 0)
   assert.equal(f.selectCount(), 0)
+})
+
+test('issue #865: cancelled command cannot mutate vision policy after late metadata response', async () => {
+  const f = fixture()
+  let resolveMetadata
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { resolveMetadata = resolve })
+  const controller = new AbortController()
+  const pending = f.call('on', f.agent, [], controller.signal)
+  controller.abort(new Error('user cancelled permission request'))
+  resolveMetadata({ inputModalities: ['text', 'image'] })
+  assert.equal((await pending).kind, 'error')
+  assert.equal(f.policies.size, 0)
+  assert.equal(f.selectCount(), 0)
+})
+
+test('issue #865: command discloses when Session policy is not durable', async () => {
+  const f = fixture()
+  let handler
+  installNativeVisionPolicyCommand({
+    inject(_deps, install) {
+      install({ commands: { register(def) { handler = def.handler } } })
+    },
+    llm: f.ctx.llm,
+  }, {
+    durable: false,
+    get() { return undefined },
+    async set() { return { enabled: true } },
+  })
+  const response = await handler({ agent: f.agent, rawInput: 'on', attachments: [] })
+  assert.equal(response.kind, 'success')
+  assert.match(response.text, /no durable policy store/)
 })
 
 test('issue #865: separate authorized Sessions cannot write another Session policy', async () => {
