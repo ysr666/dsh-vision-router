@@ -119,6 +119,7 @@ import z from '@deepseek-ai/schemastery'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
+import { installOwnedTwinStreamBoundary } from './lib/owned-twin-stream-boundary.js'
 import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
 import { managedTesseractPaths, runManagedTesseractOcr, systemTesseract } from './lib/optional-ocr-engines.js'
 import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
@@ -1365,7 +1366,15 @@ export function apply(ctx, config = {}, runtime = {}) {
   // replaced without changing its route. The registration itself, however,
   // is reconciled against live topology so a dormant configured provider does
   // not publish a ghost `*-vision` route.
-  const twinHandles = new Map() // provider -> { handle, state, key }
+  const twinHandles = new Map() // provider -> { registration, adapter, state, key }
+  // Route ownership is validated AGAINST the live Host registry by the
+  // waterfall seam. This keeps first-party generated twins transparent without
+  // hijacking a foreign adapter that happens to use the same *-vision suffix.
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    const provider = route.slice(0, -'-vision'.length)
+    const held = twinHandles.get(provider)
+    return held && route === `${provider}-vision` ? held.adapter : undefined
+  })
   const twinModelsKey = (models) => models.slice().sort().join('\u0000')
   const twinSpecKey = (models, sourceName) => JSON.stringify([twinModelsKey(models), sourceName])
   const makeTwinAdapter = (provider, state) => {
@@ -1517,12 +1526,11 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const registration = ctx.llm.registerAdapter(
-          [twinRoute],
-          makeTwinAdapter(provider, state),
-        )
+        const adapter = makeTwinAdapter(provider, state)
+        const registration = ctx.llm.registerAdapter([twinRoute], adapter)
         twinHandles.set(provider, {
           registration,
+          adapter,
           state,
           key: twinSpecKey(spec.models, spec.sourceName),
         })
