@@ -77,7 +77,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     /configureAgentRequestRouteAuthority/,
     'production composition must pass request-authority options explicitly instead of staging generation state in a module WeakMap',
   )
-  assert.match(source, /function createRuntimeOwners\(host, core\)/)
+  assert.match(source, /function createRuntimeOwners\(host\)/)
   assert.match(source, /function installRoutingAndHostProducts\(host, owners, core, providerTransport\)/)
   assert.match(source, /function installExecutionBoundaries\(host, owners, routing, core, providerTransport\)/)
   assert.match(source, /function applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)/)
@@ -93,7 +93,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
   )
   assert.match(
     source,
-    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const providerTransport = runtime\?\.providerTransport\s*const host = installHostAndSecurityBoundaries\(ctx, config, core, providerTransport\)\s*const owners = createRuntimeOwners\(host, core\)\s*const routing = installRoutingAndHostProducts\(host, owners, core, providerTransport\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core, providerTransport\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
+    /export function applyVisionRuntimeComposition\(ctx, config = \{\}, core, runtime = \{\}\) \{\s*const providerTransport = runtime\?\.providerTransport\s*const host = installHostAndSecurityBoundaries\(ctx, config, core, providerTransport\)\s*const owners = createRuntimeOwners\(host\)\s*const routing = installRoutingAndHostProducts\(host, owners, core, providerTransport\)\s*const execution = installExecutionBoundaries\(host, owners, routing, core, providerTransport\)\s*return applyMatureCoreBridge\(host, owners, routing, execution, core, runtime\)\s*\}/s,
     'the public composition entry must expose the five lifecycle phases directly',
   )
   assert.doesNotMatch(source, /Config\.set\(|rankVisionCandidates\(|callOpenAICompatible\(|imageMemorySet\(/)
