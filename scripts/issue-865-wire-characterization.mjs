@@ -7,6 +7,8 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
+import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
+import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
 
 const root = resolve(process.env.DSH_SOURCE_ROOT ?? '')
 assert.ok(process.env.DSH_SOURCE_ROOT, 'DSH_SOURCE_ROOT is required')
@@ -59,9 +61,11 @@ class SourceAdapter extends LlmAdapter {
 }
 const sourceAdapter = new SourceAdapter()
 ctx.llm.registerAdapter([sourceRoute], sourceAdapter)
-const bridge = createWrapperStreamBody(ctx, {
+const privateContext = contextWithDelegatedReplay(ctx, { wrapperRoute: 'synthetic-not-used' })
+const bridge = createWrapperStreamBody(privateContext, {
   imageMemory: new Map(),
   delegateProvider: sourceRoute,
+  ownedTwinProvider: twinRoute,
   preserveImageInput: true,
 })
 class TwinAdapter extends LlmAdapter {
@@ -72,7 +76,8 @@ class TwinAdapter extends LlmAdapter {
   }
   async *stream(options) { yield* bridge.stream(options) }
 }
-ctx.llm.registerAdapter([twinRoute], new TwinAdapter())
+const twinAdapter = new TwinAdapter()
+ctx.llm.registerAdapter([twinRoute], twinAdapter)
 
 async function request(provider, messages, opts = {}) {
   const before = requests.length
@@ -160,16 +165,16 @@ try {
   assert.notEqual(fingerprint(directTools.wire), fingerprint(viaTwinTools.wire))
 
   // Candidate fix seam: the Host's documented llm/stream waterfall runs BEFORE
-  // adapterStream's projection. Short-circuit only our synthetic twin so
-  // createWrapperStreamBody delegates directly to the real source Runtime.
+  // adapterStream's projection. Capture only our synthetic twin's inputs;
+  // the Host still dispatches its pinned generation before source delegation.
   // The source Runtime must then project and filter history exactly once.
   // This characterizes correctness, not retry/usage/middleware ordering.
   let delegatedAtWaterfall = 0
-  ctx.on('llm/stream', (options, next) => {
-    if (options.provider !== twinRoute) return next()
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    if (route !== twinRoute) return undefined
     delegatedAtWaterfall += 1
-    return bridge.stream(options)
-  }, { global: true, prepend: true })
+    return twinAdapter
+  })
   const transparentReplay = await request(twinRoute, fixed)
   const transparentTools = await request(twinRoute, toolMessages, config)
   assert.equal(delegatedAtWaterfall, 2)
@@ -181,6 +186,45 @@ try {
     'waterfall delegation must not lose tool-update blocks')
   assert.equal(fingerprint(transparentTools.wire), fingerprint(directTools.wire),
     'waterfall delegation must produce identical native tool history wire')
+
+  // Known residual gap: a successfully streamed source response is persisted
+  // with the *twin* public route as its source identity. Native DeepSeek
+  // replayState v1 carries a model id but no separate provider ownership proof.
+  // The subsequent source dispatch cannot safely replay that signature until
+  // an explicit alias-provenance contract is introduced. This must be covered
+  // by a separate fix, not hidden by claiming complete prefix transparency.
+  const twinAuthored = [
+    createSystemMessage('stable synthetic system'),
+    user('first twin conversation turn'),
+    createAssistantMessage({
+      content: [{ type: 'reasoning', text: 'synthetic private thinking' }],
+      source: { provider: twinRoute, model: modelId, replayState },
+    }),
+    user('next twin conversation turn'),
+  ]
+  const twinContinuation = await request(twinRoute, twinAuthored)
+  assert.equal(extractSignatures(twinContinuation.wire).length, 0,
+    'unstamped old twin replay must not be inferred from an alias name')
+
+  const provenTwinAuthored = twinAuthored.map(message => {
+    if (message.role !== 'assistant') return message
+    return {
+      ...message,
+      source: {
+        ...message.source,
+        replayState: {
+          ...message.source.replayState,
+          response: {
+            ...message.source.replayState.response,
+            provider: sourceRoute,
+          },
+        },
+      },
+    }
+  })
+  const trustedTwinContinuation = await request(twinRoute, provenTwinAuthored)
+  assert.equal(extractSignatures(trustedTwinContinuation.wire).length, 1,
+    'provider-stamped native twin replay must survive private DVR source rebinding')
 
   console.log(JSON.stringify({
     ok: true,
@@ -206,8 +250,59 @@ try {
       preservedReplaySignatureCount: extractSignatures(transparentReplay.wire).length,
       sameReplayWire: fingerprint(transparentReplay.wire) === fingerprint(direct.wire),
       sameToolWire: fingerprint(transparentTools.wire) === fingerprint(directTools.wire),
+      twinAuthoredReplaySignatureCount: extractSignatures(twinContinuation.wire).length,
+      provenTwinReplaySignatureCount: extractSignatures(trustedTwinContinuation.wire).length,
     },
   }))
+  // A prepared call is bound to its original registered generation by DSH.
+  // Verify the real Host positive control, then the DVR waterfall shortcut
+  // against exactly the same synchronous route replacement.
+  async function preparedGenerationProbe(route, intercept) {
+    const calls = []
+    class Generation extends LlmAdapter {
+      constructor(label) { super(); this.label = label }
+      providerInfo(provider) { return { id: provider, name: 'Offline generation ' + this.label } }
+      async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: model, inputModalities: ['text'] }
+      }
+      async *stream() {
+        calls.push(this.label)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    let current = identifyOwnedTwinStream(new Generation('prepared-old'))
+    const old = ctx.llm.registerAdapter([route], current)
+    const removeBoundary = intercept
+      ? installOwnedTwinStreamBoundary(ctx, provider => provider === route ? current : undefined)
+      : undefined
+    let replacement
+    try {
+      const prepared = await ctx.llm.prepareCall({ provider: route, model: modelId, maxTokens: 128 })
+      old.replace([])
+      current = identifyOwnedTwinStream(new Generation('replacement-new'))
+      replacement = ctx.llm.registerAdapter([route], current)
+      const chunks = []
+      for await (const chunk of prepared.stream({
+        ...prepared.config, messages: [user('synthetic generation contract')],
+        sessionId: 'synthetic-generation-fence',
+      })) chunks.push(chunk)
+      assert.equal(chunks.at(-1)?.reason?.kind, 'stop')
+      return calls
+    } finally {
+      removeBoundary?.()
+      replacement?.()
+      old()
+    }
+  }
+  const baselineGeneration = await preparedGenerationProbe('baseline-prepared-vision', false)
+  assert.deepEqual(baselineGeneration, ['prepared-old'], 'positive control: DSH pins its prepared registration')
+  const candidateGeneration = await preparedGenerationProbe('candidate-prepared-vision', true)
+  console.log(JSON.stringify({ scenario: 'issue-865 pinned prepared registration across HMR',
+    baselineGeneration, candidateGeneration,
+    candidatePreservesGeneration: candidateGeneration.length === 1 && candidateGeneration[0] === 'prepared-old' }))
+  assert.deepEqual(candidateGeneration, ['prepared-old'],
+    'DVR transparent dispatch must not replace the Host-pinned adapter generation')
 } finally {
   await ctx.fiber.dispose()
 }

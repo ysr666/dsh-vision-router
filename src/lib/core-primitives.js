@@ -43,7 +43,12 @@ import {
 import { stripTrailingSlashes } from './string-normalization.js'
 import { isOffloadedImageBlock, offloadedImagePlaceholder } from './image-offload-compat.js'
 import { proxyHostMatchesAny } from './proxy-routing.js'
+import {
+  stampDelegatedDeepSeekReplayChunk,
+  rebindStampedDeepSeekTwinMessages,
+} from './delegated-deepseek-replay-provenance.js'
 
+import { restoreOwnedTwinStreamInput } from './owned-twin-stream-boundary.js'
 import { loadSharp } from './sharp-runtime.js'
 export const IMAGE_EXTENSIONS = {
   png: 'image/png',
@@ -2473,7 +2478,7 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
  * 标记；provider/style/timeout 也可以是 getter，让设置页保存后下一次 stream
  * 立即读取新值，无需重启或重建 adapter。
  */
-export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport }) {
+export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport, ownedTwinProvider }) {
   // issue #103: the reasoning level is a per-session picker choice (the chat
   // page's bottom-right selector), but the host can drop reasoningEffort from
   // the later steps of a multi-step turn once the twin metadata lacks a
@@ -2486,6 +2491,7 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
   const liveValue = (value) => (typeof value === 'function' ? value() : value)
   return {
     async *stream(options) {
+      options = restoreOwnedTwinStreamInput(options, ownedTwinProvider)
       const messages = options.messages ?? []
       let keepOriginalImages = preserveImageInput === true
       if (!keepOriginalImages && typeof preserveImageInput === 'function') {
@@ -2585,11 +2591,20 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       } else {
         effort = lastReasoningEffort.get(effortKey)
       }
-      yield* ctx.llm.stream({
+      const delegated = ctx.llm.stream({
         ...(effort === undefined ? options : { ...options, reasoningEffort: effort }),
         provider: currentDelegateProvider,
-        messages: rewritten,
+        messages: rebindStampedDeepSeekTwinMessages(
+          rewritten, options.provider, currentDelegateProvider, options.model,
+        ),
       })
+      // DeepSeek Messages v1 does not carry its provider in native replay
+      // metadata. Preserve the delegate provenance observed at this trusted
+      // stream boundary so a future twin-authored answer can safely be rebound
+      // to its actual source adapter without inventing a signature.
+      for await (const chunk of delegated) {
+        yield stampDelegatedDeepSeekReplayChunk(chunk, currentDelegateProvider, options.model)
+      }
     },
   }
 }

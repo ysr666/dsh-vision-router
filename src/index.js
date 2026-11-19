@@ -119,6 +119,7 @@ import z from '@deepseek-ai/schemastery'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
+import { identifyOwnedTwinStream, installOwnedTwinStreamBoundary } from './lib/owned-twin-stream-boundary.js'
 import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
 import { managedTesseractPaths, runManagedTesseractOcr, systemTesseract } from './lib/optional-ocr-engines.js'
 import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
@@ -1365,7 +1366,15 @@ export function apply(ctx, config = {}, runtime = {}) {
   // replaced without changing its route. The registration itself, however,
   // is reconciled against live topology so a dormant configured provider does
   // not publish a ghost `*-vision` route.
-  const twinHandles = new Map() // provider -> { handle, state, key }
+  const twinHandles = new Map() // provider -> { registration, adapter, state, key }
+  // Route ownership is validated AGAINST the live Host registry by the
+  // waterfall seam. This keeps first-party generated twins transparent without
+  // hijacking a foreign adapter that happens to use the same *-vision suffix.
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    const provider = route.slice(0, -'-vision'.length)
+    const held = twinHandles.get(provider)
+    return held && route === `${provider}-vision` ? held.adapter : undefined
+  })
   const twinModelsKey = (models) => models.slice().sort().join('\u0000')
   const twinSpecKey = (models, sourceName) => JSON.stringify([twinModelsKey(models), sourceName])
   const makeTwinAdapter = (provider, state) => {
@@ -1427,9 +1436,25 @@ export function apply(ctx, config = {}, runtime = {}) {
         const base = await original.resolveModel(provider, model)
         return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
       },
+      // DSH 0.2.1+ binds the exact registered adapter generation through
+      // llm.prepareCall() BEFORE the llm/stream waterfall is reached. The
+      // owner-checked transparent delegation cannot skip this validation.
+      // Provide the official prepareCall contract on the twin itself, while
+      // deferring actual dispatch to the same registered stream body. The Host
+      // still owns picker defaults, reasoning validation and cancellation.
+      async prepareCall(_provider, model, signal) {
+        signal?.throwIfAborted()
+        const resolved = await this.resolveModel(twinRoute, model)
+        signal?.throwIfAborted()
+        return {
+          model: resolved,
+          stream: (options) => this.stream(options),
+        }
+      },
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
+        ownedTwinProvider: twinRoute,
         // A native multimodal source already knows how to consume the image.
         // Keep that direct path intact and expose vision-router as optional
         // precision tools instead of forcing an image -> text detour.
@@ -1517,12 +1542,11 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const registration = ctx.llm.registerAdapter(
-          [twinRoute],
-          makeTwinAdapter(provider, state),
-        )
+        const adapter = identifyOwnedTwinStream(makeTwinAdapter(provider, state))
+        const registration = ctx.llm.registerAdapter([twinRoute], adapter)
         twinHandles.set(provider, {
           registration,
+          adapter,
           state,
           key: twinSpecKey(spec.models, spec.sourceName),
         })
