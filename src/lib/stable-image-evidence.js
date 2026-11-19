@@ -6,26 +6,30 @@ const PREFIX = 'vision-router-image-evidence-v1-'
 const MAX_EVIDENCE_PER_STEP = 4
 const MAX_EVIDENCE_CHARS = 2000
 
-function observedImageIds(messages) {
-  const ids = new Set()
-  const walk = blocks => {
+function observedImageOccurrences(messages) {
+  const occurrences = new Map()
+  const walk = (blocks, originMessageId) => {
     if (!Array.isArray(blocks)) return
     for (const block of blocks) {
       if (!block || typeof block !== 'object') continue
       if (block.type === 'image') {
         const id = block.attachment?.attachmentId ?? block.attachment?.id
-        if (typeof id === 'string' && id.trim() !== '') ids.add(id)
+        if (typeof id === 'string' && id.trim() !== '' &&
+            typeof originMessageId === 'string' && originMessageId !== '') {
+          const key = JSON.stringify([originMessageId, id])
+          if (!occurrences.has(key)) occurrences.set(key, { originMessageId, attachmentId: id })
+        }
       }
-      if (Array.isArray(block.content)) walk(block.content)
+      if (Array.isArray(block.content)) walk(block.content, originMessageId)
     }
   }
-  for (const message of messages ?? []) walk(message?.content)
-  return ids
+  for (const message of messages ?? []) walk(message?.content, message?.id)
+  return occurrences.values()
 }
 
-function evidenceMessageId(attachmentId, description) {
+function evidenceMessageId(originMessageId, attachmentId, description) {
   return PREFIX + createHash('sha256')
-    .update(JSON.stringify([attachmentId, description]))
+    .update(JSON.stringify([originMessageId, attachmentId, description]))
     .digest('hex')
     .slice(0, 32)
 }
@@ -53,11 +57,11 @@ export function planAppendOnlyImageEvidence(
     ? Math.min(maxMessages, MAX_EVIDENCE_PER_STEP) : MAX_EVIDENCE_PER_STEP
   const charCap = Number.isSafeInteger(maxChars) && maxChars > 0
     ? Math.min(maxChars, MAX_EVIDENCE_CHARS) : MAX_EVIDENCE_CHARS
-  for (const attachmentId of observedImageIds(observedMessages)) {
+  for (const { originMessageId, attachmentId } of observedImageOccurrences(observedMessages)) {
     const description = descriptions.get(attachmentId)
     if (typeof description !== 'string' || description.trim() === '') continue
     const bounded = description.trim().slice(0, charCap)
-    const id = evidenceMessageId(attachmentId, bounded)
+    const id = evidenceMessageId(originMessageId, attachmentId, bounded)
     if (existing.has(id)) continue
     existing.add(id)
     output.push({
