@@ -98,54 +98,95 @@ def one_header(key: str, fact: dict, root: Path) -> dict:
 
 
 def scan_generated_idl_sources(report: dict, source_root: Path) -> dict:
-    """Read direct WIDL source IDLs (not their recursive imported closure).
+    """Bounded source-IDL import/include and direct source-header notice closure.
 
-    Generated C headers may omit the Wine/LGPL source notice entirely. A source
-    IDL claim must be considered separately from its header's comment text.
+    WIDL-generated output can omit LGPL or Wine-origin copyright statements.
+    Follow source imports and textual IDL includes from the exact upstream tree;
+    do not infer that they were emitted or retained by the final compiler/linker.
     """
     base = source_root.resolve(strict=True) / 'mingw-w64-headers/include'
     need(base.is_dir(), 'PINNED_IDL_SOURCE_ROOT_MISSING')
-    origins = sorted({fact['widlSourceIdl'] for fact in report['headers'].values()
-                      if fact['widlSourceIdl'] is not None})
-    need(len(origins) <= 128, 'TOO_MANY_IDL_ORIGINS')
-    catalog = {}
-    for name in origins:
-        need(re.fullmatch(r'[A-Za-z0-9_.-]+\.idl', name) is not None,
+    roots = sorted({fact['widlSourceIdl'] for fact in report['headers'].values()
+                    if fact['widlSourceIdl'] is not None})
+    need(len(roots) <= 128, 'TOO_MANY_IDL_ORIGINS')
+    pending = list(roots)
+    idl_catalog, included_headers = {}, {}
+    scanned_bytes = 0
+
+    def read_source(name: str, ext: str) -> tuple[bytes, str]:
+        nonlocal scanned_bytes
+        need(re.fullmatch(r'[A-Za-z0-9_.-]+\.' + ext, name) is not None,
              'UNSAFE_WIDL_SOURCE_NAME')
+        root = base.resolve(strict=True)
         candidate = base / name
         path = candidate.resolve(strict=True)
-        need(path.is_relative_to(base.resolve(strict=True)) and path.is_file(),
+        need(path.is_relative_to(root) and path.is_file(),
              'UNSAFE_WIDL_SOURCE_PATH: ' + name)
         content = path.read_bytes()
-        need(0 < len(content) <= 2_000_000, 'OVERSIZE_IDL_SOURCE: ' + name)
-        text = content.decode('utf-8', 'replace')
+        scanned_bytes += len(content)
+        need(0 < len(content) <= 2_000_000 and scanned_bytes <= 16_000_000,
+             'WIDL_SOURCE_SIZE_BUDGET')
+        return content, content.decode('utf-8', 'replace')
+
+    def source_notice(name: str, content: bytes, text: str) -> dict:
         comments = [m.group() for m in COMMENT.finditer(text)]
         notices = [block for block in comments if NOTICE_WORDS.search(block)]
-        # Some LGPL grants split the licence name across C-comment lines with
-        # leading '*' decoration (GNU Lesser General Public / * License).
-        # Normalize only comment decorations; never infer grants from code.
-        normalized_comments = '\n'.join(re.sub(r'(?m)^[ \t]*\*[ \t]?', '', block)
-                                        for block in comments)
-        catalog[name] = {
+        # LGPL grants sometimes split the name across comment lines, e.g.
+        # "GNU Lesser General Public" followed by " * License".
+        normalized = '\n'.join(re.sub(r'(?m)^[ \t]*\*[ \t]?', '', block)
+                               for block in comments)
+        return {
             'sourcePath': 'mingw-w64-headers/include/' + name,
             'sha256': digest(content),
             'bytes': len(content),
             'noticeCommentCount': len(notices),
             'noticeExcerpts': [x[:2048] for x in notices[:8]],
             'noticeCaptureTruncated': len(notices) > 8 or any(len(x) > 2048 for x in notices[:8]),
-            'sourceContainsLgplText': LGPL.search(normalized_comments) is not None,
+            'sourceContainsLgplText': LGPL.search(normalized) is not None,
             'spdxTextObserved': sorted({m.group(1).strip() for m in SPDX.finditer(text)}),
             'humanLicenseReview': 'required',
         }
+
+    while pending:
+        need(len(idl_catalog) < 64, 'WIDL_IDL_DEPTH_OR_COUNT_BUDGET')
+        name = pending.pop(0)
+        if name in idl_catalog:
+            continue
+        content, text = read_source(name, 'idl')
+        code = COMMENT.sub(' ', text)
+        imports = {m.group(1) for m in re.finditer(r'\bimport[ \t]+"([A-Za-z0-9_.-]+\.idl)"[ \t]*;', code)}
+        includes = {m.group(1) for m in re.finditer(r'(?m)^[ \t]*#[ \t]*include[ \t]+[<"]([A-Za-z0-9_.-]+\.(?:idl|h))[>"]', code)}
+        refs_idl = sorted(imports | {x for x in includes if x.endswith('.idl')})
+        refs_h = sorted(x for x in includes if x.endswith('.h'))
+        idl_catalog[name] = dict(source_notice(name, content, text),
+                                 referencedIdlFiles=refs_idl, referencedHeaderFiles=refs_h,
+                                 directGeneratedHeaderOrigin=name in roots)
+        for ref in refs_idl:
+            if ref not in idl_catalog and ref not in pending:
+                pending.append(ref)
+        for ref in refs_h:
+            if ref in included_headers:
+                continue
+            need(len(included_headers) < 128, 'WIDL_INCLUDED_HEADER_COUNT_BUDGET')
+            raw, txt = read_source(ref, 'h')
+            included_headers[ref] = source_notice(ref, raw, txt)
+
     return {
-        'schemaVersion': 1,
+        'schemaVersion': 2,
         'generatedToolchainHeadersWithOriginIdl': sum(x['widlSourceIdl'] is not None for x in report['headers'].values()),
-        'uniqueIdlSources': len(catalog),
-        'idlSourcesWithLgplText': sum(v['sourceContainsLgplText'] for v in catalog.values()),
-        'sources': catalog,
+        'uniqueIdlSources': len(idl_catalog),
+        'directIdlSources': len(roots),
+        'transitiveIdlSources': len(idl_catalog) - len(roots),
+        'directlyIncludedSourceHeaders': len(included_headers),
+        'idlSourcesWithLgplText': sum(v['sourceContainsLgplText'] for v in idl_catalog.values()),
+        'includedSourceHeadersWithLgplText': sum(v['sourceContainsLgplText'] for v in included_headers.values()),
+        'lgplSourcePaths': sorted([x['sourcePath'] for x in list(idl_catalog.values()) + list(included_headers.values())
+                                   if x['sourceContainsLgplText']]),
+        'sources': {k: idl_catalog[k] for k in sorted(idl_catalog)},
+        'includedHeaders': {k: included_headers[k] for k in sorted(included_headers)},
         'limitations': [
-            'Only direct WIDL source-IDL identities are scanned; import/include source closure is not established.',
-            'LGPL source text in an IDL is a redistribution risk flag, not proof its generated declarations survive in final machine code.',
+            'Only syntactic WIDL import/include closure is scanned; macro-conditional execution and other compiler input families are not proven.',
+            'LGPL in an upstream input is a redistribution risk flag, not proof of emitted or retained machine code.',
             'Source copyrights may be absent from generated headers, so headers without notice text cannot be presumed ZPL.',
         ],
         'humanLicenseReviewRequired': True,
