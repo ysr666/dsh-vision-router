@@ -745,8 +745,11 @@ export function replaceImageBlocksWithMemory(messages, memory) {
  * when history images are present), and keeps later turns working after an
  * image entered the conversation.
  */
-export function rewriteHistoryImages(messages, memory) {
-  const mem = memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
+export function rewriteHistoryImages(messages, memory, { stable = false } = {}) {
+  // In append-only mode the original image occurrence is projected into the
+  // same marker regardless of later imageMemory entries. Recognition evidence
+  // is instead added as a distinct durable pre-step message.
+  const mem = stable ? new Map() : memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
   const attachments = []
   let anyChanged = false
   const rewritten = (messages ?? []).map((message) => {
@@ -2473,7 +2476,7 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
  * 标记；provider/style/timeout 也可以是 getter，让设置页保存后下一次 stream
  * 立即读取新值，无需重启或重建 adapter。
  */
-export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport }) {
+export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport, stableImageHistory }) {
   // issue #103: the reasoning level is a per-session picker choice (the chat
   // page's bottom-right selector), but the host can drop reasoningEffort from
   // the later steps of a multi-step turn once the twin metadata lacks a
@@ -2498,9 +2501,13 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
           keepOriginalImages = false
         }
       }
-      // Native multimodal delegates already consume the original image. Do
-      // not add a local captioning round whose output would be discarded.
-      const currentInstantLocal = keepOriginalImages ? undefined : liveValue(instantLocal)
+      // Native multimodal delegates already consume the original image.
+      // In experimental stable-history mode, instant local evidence must run
+      // in the durable pre-step instead of being silently synthesized at this
+      // adapter-only boundary. Otherwise its content could not be replayed
+      // from the Session event log after a cold resume.
+      const stableHistory = liveValue(stableImageHistory) === true
+      const currentInstantLocal = keepOriginalImages || stableHistory ? undefined : liveValue(instantLocal)
       const instantMap =
         currentInstantLocal !== undefined
           ? await buildInstantLocalMap(ctx, messages, currentInstantLocal, {
@@ -2540,7 +2547,7 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
               },
             ]
           }
-          const entry = id !== 'unknown' ? imageMemory.get(id) : undefined
+          const entry = !stableHistory && id !== 'unknown' ? imageMemory.get(id) : undefined
           if (entry && typeof entry === 'string' && entry.trim()) {
             return [
               {
