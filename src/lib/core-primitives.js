@@ -48,6 +48,7 @@ import {
   rebindStampedDeepSeekTwinMessages,
 } from './delegated-deepseek-replay-provenance.js'
 
+import { restoreOwnedTwinStreamInput } from './owned-twin-stream-boundary.js'
 import { loadSharp } from './sharp-runtime.js'
 export const IMAGE_EXTENSIONS = {
   png: 'image/png',
@@ -2480,7 +2481,7 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
  * 标记；provider/style/timeout 也可以是 getter，让设置页保存后下一次 stream
  * 立即读取新值，无需重启或重建 adapter。
  */
-export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport, stableImageHistory }) {
+export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport, stableImageHistory, ownedTwinProvider }) {
   // Issue #103: preserve picker effort on later Host steps that omit it.
   // A twin adapter is shared by Sessions: remembering only provider/model
   // leaks one conversation's effort into another (issue #865). Remember only
@@ -2492,6 +2493,7 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
   const liveValue = (value) => (typeof value === 'function' ? value() : value)
   return {
     async *stream(options) {
+      options = restoreOwnedTwinStreamInput(options, ownedTwinProvider)
       const messages = options.messages ?? []
       let keepOriginalImages = preserveImageInput === true
       if (!keepOriginalImages && typeof preserveImageInput === 'function') {

@@ -62,3 +62,13 @@ and retain the existing same-provider legacy semantics. The earlier scoped
 Host regression independently verifies the actual ordinary-route reset and
 is kept. D3 independently passed on job 135631632894 with 685402 serialized
 bytes, exact header and prefix across JSONL restart and late memory refresh.
+
+### Host-pinned prepared dispatch integration
+
+Adopt #868 `e7fac2d1a066cfd92b1b4d57ce405c1875d6f743` after its current-host exact source job
+135639479192 passed both same-wire assertions and the old-generation probe
+(`baselineGeneration=["prepared-old"]`, `candidateGeneration=["prepared-old"]`).
+The previous combined Desktop positive control also passed actual native
+clicks with zero new model-selection events or model requests. This change
+retains D3 and #866 in the shared Core declaration; changes to the projection
+boundary require a fresh joint acceptance run. No release or default change.

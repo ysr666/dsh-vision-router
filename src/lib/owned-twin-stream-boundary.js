@@ -1,3 +1,7 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
+const twinInputScope = new AsyncLocalStorage()
+
 // Core creates this identity before the FIRST composition wrapper. The
 // native-image ownership token is minted later, on a facade's independent
 // shell, so it cannot prove a relationship to the original Core object.
@@ -22,10 +26,10 @@ function streamIdentity(adapter) {
  * documented Host llm/stream waterfall, before LlmRuntime.adapterStream()
  * performs per-adapter replay filtering and tool-history projection.
  *
- * The selected twin remains registered for model discovery/admission and
- * session model selection. Its existing stream body still delegates through
- * the normal source LlmRuntime, so the source adapter's normal projection
- * happens exactly once.
+ * Always invoke Host next(): prepareCall pins an adapter generation that
+ * is not exposed in this public waterfall. Only the actual DVR twin body
+ * restores the pre-projection input; source Runtime projects it once again
+ * for the source adapter. Never dispatch the live registry adapter here.
  *
  * This does NOT grant vision tools to an OFF Session, mutate session history,
  * or intercept a similarly named route owned by another plugin.
@@ -66,8 +70,43 @@ export function installOwnedTwinStreamBoundary(ctx, resolveOwnedTwin) {
       if (expected === undefined || streamIdentity(registered) !== expected) return next()
     }
     if (typeof registered?.stream !== 'function') return next()
-    // Execute the live registered adapter, NOT the raw Core instance:
-    // its stream wrappers own local stabilization and other runtime behavior.
-    return registered.stream(options)
+    const scope = { raw: options }
+    const downstream = twinInputScope.run(scope, next)
+    return (async function* () {
+      let iterator
+      let done = false
+      try {
+        iterator = twinInputScope.run(scope, () => downstream[Symbol.asyncIterator]())
+        while (true) {
+          const step = await twinInputScope.run(scope, () => iterator.next())
+          if (step.done) { done = true; return step.value }
+          yield step.value
+        }
+      } finally {
+        scope.raw = undefined
+        if (!done && typeof iterator?.return === 'function') {
+          await twinInputScope.run(scope, () => iterator.return())
+        }
+      }
+    })()
   }, { global: true })
+}
+
+// Called exclusively by generated DVR twin bodies/facades, not by the
+// waterfall itself. Keep all Host-resolved execution controls. A prepared old
+// generation may consume this input; it is the Host that selected that body.
+export function restoreOwnedTwinStreamInput(options, expectedProvider) {
+  const scope = twinInputScope.getStore()
+  const raw = scope?.raw
+  if (!raw || !expectedProvider || options?.provider !== expectedProvider ||
+      raw.provider !== expectedProvider || raw.model !== options.model ||
+      raw.sessionId !== options.sessionId || raw.signal !== options.signal) return options
+  scope.raw = undefined
+  if (options.signal?.aborted) return options
+  const restored = { ...options, messages: raw.messages }
+  for (const key of ['tools', 'toolHistory']) {
+    if (Object.hasOwn(raw, key)) restored[key] = raw[key]
+    else delete restored[key]
+  }
+  return restored
 }
