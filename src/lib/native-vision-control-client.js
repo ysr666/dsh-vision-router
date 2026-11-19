@@ -83,9 +83,9 @@ export function createNativeVisionClientBridge(scope) {
     subscribe(notify) { listeners.add(notify); return () => listeners.delete(notify) },
     getSnapshot() { return snapshot },
   }
-  let remote
-  try { remote = scope.get?.('remote') } catch {}
-  if (typeof remote?.$mount !== 'function' || !scope.get?.('typert') ||
+  let remote, typert
+  try { remote = scope.get?.('remote'); typert = scope.get?.('typert') } catch {}
+  if (typeof remote?.$mount !== 'function' || !typert ||
       typeof scope.inject !== 'function' || typeof scope.effect !== 'function') return bridge
   publish({ kind: 'waiting' })
   scope.inject(['remote', 'typert'], owner => {
@@ -128,13 +128,14 @@ export function startNativeVisionClientObservation(api, sessionId, publish) {
   let seen = false
   let latest
   let writing = false
+  let snapshot
   const stop = () => {
     if (!active) return
     active = false
     ctl.abort()
     try { stream?.dispose() } catch {}
   }
-  const update = state => { if (active) publish(state) }
+  const update = state => { if (active) { snapshot = state; publish(state) } }
   update({ kind: 'waiting' })
   void (async () => {
     try {
@@ -157,6 +158,7 @@ export function startNativeVisionClientObservation(api, sessionId, publish) {
   })()
   return {
     stop,
+    isCurrent(state) { return active && snapshot === state },
     async set(view, expected) {
       if (!active || writing || latest !== view || view?.kind !== 'native' ||
           !nativeVisionSameRoute(view.selection, expected) || !view.canEnable) return false

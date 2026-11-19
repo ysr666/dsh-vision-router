@@ -1182,7 +1182,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var observationCurrent = nativeView && nativeView.ticket === nativeObservation.current &&
           nativeView.ticket.mount === nativeMount && nativeView.ticket.sessionId === props.sessionId;
         var read = observationCurrent ? nativeView.value : null;
-        var nativePending = nativeMount.kind !== 'legacy' && (!read || read.kind === 'waiting');
+        var nativePending = nativeMount.kind === 'waiting' || (nativeMount.kind === 'ready' && (!read || read.kind === 'waiting'));
         var nativeLegacy = nativeMount.kind === 'legacy' || (read && (read.kind === 'legacy' ||
           (read.kind === 'value' && read.view.kind === 'legacy' && nativeVisionSameRoute(read.view.selection, state.current))));
         var nativeControl = read && read.kind === 'value' && read.view.kind === 'native' &&
@@ -1230,7 +1230,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           toggleTransition.current = null;
         }
         var pair = ownSettling ? { mode: settledMode.current.mode } : livePair;
-        var active = nativeControl ? nativeControl.enabled : nativeLegacy && pair.mode === 'on';
+        var active = nativeControl ? nativeControl.enabled : !!(nativeLegacy && pair.mode === 'on');
         var toastState = React.useState(null);
         var toast = toastState[0];
         var setToast = toastState[1];
@@ -1248,7 +1248,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           state.routable !== false;
         var blockingLoad = nativePending || (loading && (!refreshWithPair || !nativeLegacy));
         var removed = props.session && props.session.removed === true;
-        var unavailable = nativeUnavailable || (nativeControl ? !nativeControl.canEnable : livePair.mode === 'unavailable');
+        var unavailable = nativeUnavailable || (nativeControl ? (!nativeControl.canEnable || state.routable === false || state.status === 'error') : livePair.mode === 'unavailable');
         var disabled = props.available !== true || removed || busy || blockingLoad || unavailable;
         var t = typeof props.t === 'function' ? props.t : fallbackTranslate(active);
         var title = busy || ownSettling
@@ -1288,7 +1288,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           'data-active': active ? 'true' : 'false',
           'data-dimmed': disabled && !ownSettling && (unavailable || blockingLoad) ? 'true' : 'false',
           onClick: function() {
-            if (disabled) return;
+            if (disabled || nativeBridge.getSnapshot() !== nativeMount) return;
+            if (nativeMount.kind === 'ready' && (!observationCurrent ||
+                nativeObservation.current !== nativeView.ticket || !nativeObservation.current.controller.isCurrent(read))) return;
             if (nativeControl) {
               var owner = nativeObservation.current;
               if (!owner || !observationCurrent || owner !== nativeView.ticket) return;
@@ -1297,7 +1299,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               if (!nativeVisionSameRoute(nativeControl.selection, current)) return;
               setToast(null);
               void owner.controller.set(nativeControl, current).then(function(accepted){
-                if (!accepted && nativeObservation.current === owner) announceRejectedSelection();
+                if (!accepted && nativeObservation.current === owner && nativeBridge.getSnapshot() === nativeMount) announceRejectedSelection();
               });
               return;
             }
