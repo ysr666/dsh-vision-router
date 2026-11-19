@@ -100,7 +100,7 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         return result('success',
           (enabled
             ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
-            : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote
+            : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
       },
     })
   })
