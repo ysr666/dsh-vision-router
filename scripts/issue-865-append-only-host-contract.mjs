@@ -4,7 +4,7 @@
 // context continuity and offline cold resume without external network.
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -19,7 +19,7 @@ const hostRequire = createRequire(path.join(root, 'packages/llm/llm/package.json
 const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: AttachmentLocal }, { default: SystemPrompt }, { default: ToolRuntime },
-  { default: AgentRegistry }, { default: AgentLoop }, JsonlPersistence,
+  { default: AgentRegistry }, { default: AgentLoop }, { default: SessionPersistence },
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -30,7 +30,7 @@ const [
   host('packages/core/tools/src/index.ts'),
   host('packages/core/agent/src/index.ts'),
   host('packages/core/agent-loop/src/index.ts'),
-  host('packages/session/session-persistence-jsonl/src/index.ts'),
+  host('packages/session/session-persistence/src/index.ts'),
 ])
 const { LlmAdapter, createUserMessage } = llm
 const samplePng = Buffer.from(
@@ -60,6 +60,108 @@ class TextAdapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
+
+// An intentionally tiny TEST-ONLY file backend for the real DSH
+// SessionPersistence service interface. The DSH source checkout in this
+// CI gate omits the independent native POSIX flock addon used by the
+// production JSONL backend. We still exercise real Agent/Session admission,
+// on-disk event serialization and cold resume through the standard API,
+// without forging or downloading an unaudited native system.node binary.
+//
+// This backend is single-process, single-writer only and MUST NOT ship as
+// product code or count as a JSONL production backend qualification.
+const persistedPath = path.join(home, 'session-fixture.json')
+class FixtureFileSessionPersistence extends SessionPersistence {
+  constructor(ctx) {
+    super(ctx)
+    this.writer = false
+  }
+  async load() {
+    return JSON.parse(await readFile(persistedPath, 'utf8'))
+  }
+  async save(record) {
+    await mkdir(path.dirname(persistedPath), { recursive: true })
+    await writeFile(persistedPath, JSON.stringify(record), 'utf8')
+  }
+  async create(header, { inheritedEventCount = 0 } = {}) {
+    assert.equal(this.writer, false)
+    this.writer = true
+    const record = { header: structuredClone(header), inheritedEventCount, events: [] }
+    await this.save(record)
+    return this.handle(record, 'write')
+  }
+  async open(id, access) {
+    const record = await this.load()
+    assert.equal(record.header.id, id)
+    if (access === 'write') {
+      assert.equal(this.writer, false, 'one active writer for a Session')
+      this.writer = true
+    }
+    return this.handle(record, access)
+  }
+  handle(record, access) {
+    let closed = false
+    const owner = this
+    const check = () => assert.equal(closed, false, 'SessionHandle already closed')
+    const handle = {
+      id: record.header.id,
+      header: structuredClone(record.header),
+      inheritedEventCount: record.inheritedEventCount,
+      access,
+      async read(offset = 0, length = Infinity) {
+        check()
+        return {
+          eventState: 'detached',
+          events: structuredClone(record.events.slice(offset, offset + length)),
+        }
+      },
+      async append(events) {
+        check()
+        assert.equal(access, 'write')
+        const committed = structuredClone([...events])
+        for (const event of committed) {
+          assert.equal(event.seq, record.events.length, 'only append contiguous Host events')
+          record.events.push(event)
+        }
+        await owner.save(record)
+      },
+      async flush() {
+        check()
+        assert.equal(access, 'write')
+        await owner.save(record)
+      },
+      async close() {
+        if (closed) return
+        closed = true
+        if (access === 'write') {
+          await owner.save(record)
+          owner.writer = false
+        }
+      },
+      async [Symbol.asyncDispose]() { await this.close() },
+    }
+    return handle
+  }
+  async flush() {
+    // Every handle append is already persisted to disk by this test backend.
+  }
+  async stat(id) {
+    try {
+      const record = await this.load()
+      if (record.header.id !== id) return undefined
+      return { header: record.header, revision: String(record.events.length),
+        eventCount: record.events.length }
+    } catch (error) {
+      if (error?.code === 'ENOENT') return undefined
+      throw error
+    }
+  }
+  async list() {
+    const record = await this.stat(sessionId)
+    return record === undefined ? [] : [record]
+  }
+}
+
 async function mount(memory) {
   process.env.DSH_HOME = home
   const ctx = new Context()
@@ -77,7 +179,7 @@ async function mount(memory) {
     async execute() { throw new Error('tool execution is outside this contract') },
   })
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(JsonlPersistence, { root: path.join(home, 'sessions') })
+  await ctx.plugin(FixtureFileSessionPersistence)
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new TextAdapter()
   ctx.llm.registerAdapter(['synthetic-text'], adapter)
@@ -157,7 +259,7 @@ try {
   await resumed.dispose()
   await reopened.ctx.fiber.dispose()
   console.log(JSON.stringify({
-    ok: true, scenario: 'actual DSH pre-step persisted evidence and cold resume',
+    ok: true, scenario: 'actual DSH pre-step + standard SessionPersistence interface cold resume using test-only disk backend',
     savedEvidenceCount: storedEvidence.length, reopenedEvidenceCount: persisted.length,
     restoredWithoutVisionMemory: true,
   }))
