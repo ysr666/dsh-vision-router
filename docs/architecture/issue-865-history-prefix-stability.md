@@ -31,3 +31,15 @@ This matters separately from #868's adapter replay and double-projection fixes. 
 - `src/lib/session-vision-state.ts`: bounded process-local per-Session description map.
 
 This characterization is intentionally separate from the adapter fix in #868; a subsequent implementation PR should flip the regression from a *known drift* assertion to a *stable prefix* assertion.
+
+## Experimental opt-in implementation
+
+Branch `feat/865-append-only-image-evidence` implements the first version of
+`stableImageHistory: true` (default **false**).
+
+- `rewriteHistoryImages(..., { stable: true })` writes a static marker for each original image occurrence regardless of later OCR memory.
+- Text-only wrappers keep their image markers stable and do not perform **unlogged** local description directly at the adapter boundary in this mode. A configured `instantDescribe` at the normal Session pre-step remains available and appends the result.
+- `planAppendOnlyImageEvidence()` scans only image IDs actually present in this Session's request inputs; known descriptions become bounded, explicitly untrusted plugin-owned user messages with deterministic IDs. The existing `agent/pre-step` stream publishes them through the Host's durable message admission. When that same ID is already in model-visible history it is not added twice. Later improved descriptions append new IDs.
+- The normal route is unchanged by default until Host integration demonstrates persistence, source attribution and context recovery, including when no local OCR backend is enabled.
+
+**Outstanding**: exact Host real Session append/replay integration, model-visible request inspection, native multimodal fidelity, UI toggle and permissions, legacy migration behavior, retries after failed pre-step, image memory eviction/cold reopen, 100k+ token prefix and prompt-quality tests. Do not enable this setting globally or publish it before those gates pass.
