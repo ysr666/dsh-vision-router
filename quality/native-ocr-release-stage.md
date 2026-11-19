@@ -104,3 +104,35 @@ publish and no production pin changes. The package names are proposed until
 registry ownership/Trusted Publishing is confirmed. Do not publish the staging
 version; the formal two-package resource promotion and main-plugin release
 remain independently authorized. Public CI must upload only evidence JSON.
+
+### Owner-authorized export and public readback
+
+The native audit workflow retains the evidence-only behavior for every PR.
+Its manual dispatch path requires the repository owner, the exact selected
+commit SHA, a separately authorized stable resource version, and the literal
+confirmation `EXPORT BOTH NPM OCR PACKAGES`. The guard fails before builds if
+any value is missing or wrong. This is **only** authorization to export the
+two npm tarballs as short-retention Actions artifacts in a public repository;
+it does not authorize an npm publish, tag, release, catalog change or merger.
+Only export after the final redistribution scope has been approved.
+Each platform must pass its genuine staged installer and Desktop/Agent test
+and the exact local npm dry run before its resource tarball can be exported.
+Both platform jobs must succeed before a maintainer treats the pair as ready.
+Depending on GitHub's dispatch availability, the workflow definition may first
+need to be present with its dispatch trigger on the default branch; do not
+merge merely to bypass the independent approval boundary.
+
+After a maintainer explicitly publishes the exact exported tarballs through
+the authenticated npm account (initial package ownership needs its own setup),
+verify both public bytes without publishing or activating them:
+
+```sh
+node quality/native-ocr-npm-handoff.mjs --verify-registry \
+  --mac-report /private/mac/npm-package-evidence.json \
+  --windows-report /private/windows/npm-package-evidence.json \
+  --out /private/npm-registry-readback.json
+```
+
+The output supplies both immutable catalog entries and worker pins as
+candidates **only** after real HTTPS SHA/size/inner-archive checks. The
+production catalog remains closed until separately approved promotion.

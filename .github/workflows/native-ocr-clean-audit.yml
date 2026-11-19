@@ -1,10 +1,26 @@
 name: Native OCR clean candidate audit
 on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed commit SHA; must equal the selected ref
+        required: true
+        type: string
+      resource_version:
+        description: Separately authorized stable npm resource version
+        required: true
+        type: string
+      confirmation:
+        description: Type EXPORT BOTH NPM OCR PACKAGES to authorize public-repository artifact handoff
+        required: true
+        type: string
   pull_request:
     paths:
       - 'quality/native-ocr-clean-conversion.py'
       - 'quality/native-ocr-release-stage.mjs'
       - 'quality/native-ocr-npm-package.mjs'
+      - 'quality/native-ocr-npm-handoff.mjs'
+      - 'quality/test-native-ocr-npm-handoff.mjs'
       - 'src/lib/native-ocr-archive.js'
       - 'quality/native-ocr-canonical-labels.py'
       - 'quality/test-native-ocr-canonical-labels.py'
@@ -55,7 +71,32 @@ concurrency:
   group: native-ocr-clean-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  export-authorization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Deny unapproved resource exports before any build
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RESOURCE_VERSION: ${{ inputs.resource_version }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            echo 'Pull request: evidence only, no native resource export'
+            exit 0
+          fi
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REPOSITORY" == ysr666/dsh-vision-router ]]
+          [[ "$GITHUB_ACTOR" == ysr666 && "$GITHUB_TRIGGERING_ACTOR" == ysr666 ]]
+          [[ "$GITHUB_REF" == refs/heads/main || "$GITHUB_REF" == refs/heads/feat/native-ocr-release-staging ]]
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ && "$SOURCE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$RESOURCE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ && "$RESOURCE_VERSION" != 0.0.0 ]]
+          [[ "$CONFIRMATION" == 'EXPORT BOTH NPM OCR PACKAGES' ]]
+          echo 'Owner explicitly authorized export only; no npm publish, GitHub Release or tag'
   windows-uninstall-probe:
+    needs: export-authorization
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -68,9 +109,10 @@ jobs:
       - name: Exercise genuine Windows owner-bound uninstall and retry safety
         shell: pwsh
         run: |
-          node --test tests/optional-local-ocr.test.js tests/native-ocr-tar-reader.test.js
+          node --test tests/optional-local-ocr.test.js tests/native-ocr-tar-reader.test.js quality/test-native-ocr-npm-handoff.mjs
           if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NATIVE_UNINSTALL_PROBE_FAILED' }
   conversion:
+    needs: [export-authorization, windows-uninstall-probe]
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -190,6 +232,30 @@ jobs:
           stage: ${{ runner.temp }}/dvr-native-worker/release-stage
           bmp: ${{ runner.temp }}/dvr-native-worker/synthetic.bmp
           expected: TEST 123
+      - name: Prepare exact owner-authorized npm resource package (darwin-arm64)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'ysr666' && github.triggering_actor == 'ysr666' && inputs.confirmation == 'EXPORT BOTH NPM OCR PACKAGES' && inputs.source_sha == github.sha
+        shell: bash
+        env:
+          RESOURCE_VERSION: ${{ inputs.resource_version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/dvr-native-worker/release-stage"
+          out="$RUNNER_TEMP/dvr-npm-export-darwin-arm64"
+          node quality/native-ocr-npm-package.mjs --stage "$stage" --version "$RESOURCE_VERSION" --out "$out"
+          tarball="$out/dsh-vision-router-ocr-darwin-arm64-$RESOURCE_VERSION.tgz"
+          (cd "$out" && npm pack --dry-run --offline --ignore-scripts --json "$tarball" > npm-pack-dry-run.json)
+          node quality/native-ocr-npm-handoff.mjs --export --stage "$stage" --package-dir "$out" --version "$RESOURCE_VERSION"
+      - name: Export authorized npm darwin-arm64 resources (not npm publication)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'ysr666' && github.triggering_actor == 'ysr666' && inputs.confirmation == 'EXPORT BOTH NPM OCR PACKAGES' && inputs.source_sha == github.sha
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-npm-export-darwin-arm64-${{ inputs.resource_version }}
+          path: |
+            ${{ runner.temp }}/dvr-npm-export-darwin-arm64/dsh-vision-router-ocr-darwin-arm64-${{ inputs.resource_version }}.tgz
+            ${{ runner.temp }}/dvr-npm-export-darwin-arm64/npm-package-evidence.json
+            ${{ runner.temp }}/dvr-npm-export-darwin-arm64/npm-export-evidence.json
+          if-no-files-found: error
+          retention-days: 3
 
   windows-worker:
     needs: crt-reconstruction
@@ -309,8 +375,33 @@ jobs:
           stage: ${{ runner.temp }}/dvr-win-release-stage
           bmp: ${{ runner.temp }}/dvr-native-worker/synthetic.bmp
           expected: HELLO 123
+      - name: Prepare exact owner-authorized npm resource package (win32-x64)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'ysr666' && github.triggering_actor == 'ysr666' && inputs.confirmation == 'EXPORT BOTH NPM OCR PACKAGES' && inputs.source_sha == github.sha
+        shell: bash
+        env:
+          RESOURCE_VERSION: ${{ inputs.resource_version }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/dvr-win-release-stage"
+          out="$RUNNER_TEMP/dvr-npm-export-win32-x64"
+          node quality/native-ocr-npm-package.mjs --stage "$stage" --version "$RESOURCE_VERSION" --out "$out"
+          tarball="$out/dsh-vision-router-ocr-win32-x64-$RESOURCE_VERSION.tgz"
+          (cd "$out" && npm pack --dry-run --offline --ignore-scripts --json "$tarball" > npm-pack-dry-run.json)
+          node quality/native-ocr-npm-handoff.mjs --export --stage "$stage" --package-dir "$out" --version "$RESOURCE_VERSION"
+      - name: Export authorized npm win32-x64 resources (not npm publication)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'ysr666' && github.triggering_actor == 'ysr666' && inputs.confirmation == 'EXPORT BOTH NPM OCR PACKAGES' && inputs.source_sha == github.sha
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-ocr-npm-export-win32-x64-${{ inputs.resource_version }}
+          path: |
+            ${{ runner.temp }}/dvr-npm-export-win32-x64/dsh-vision-router-ocr-win32-x64-${{ inputs.resource_version }}.tgz
+            ${{ runner.temp }}/dvr-npm-export-win32-x64/npm-package-evidence.json
+            ${{ runner.temp }}/dvr-npm-export-win32-x64/npm-export-evidence.json
+          if-no-files-found: error
+          retention-days: 3
 
   crt-reconstruction:
+    needs: [export-authorization, windows-uninstall-probe]
     runs-on: macos-15
     timeout-minutes: 50
     steps:
