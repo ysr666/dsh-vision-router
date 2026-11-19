@@ -119,7 +119,13 @@ def scan_generated_idl_sources(report: dict, source_root: Path) -> dict:
         content = path.read_bytes()
         need(0 < len(content) <= 2_000_000, 'OVERSIZE_IDL_SOURCE: ' + name)
         text = content.decode('utf-8', 'replace')
-        notices = [m.group() for m in COMMENT.finditer(text) if NOTICE_WORDS.search(m.group())]
+        comments = [m.group() for m in COMMENT.finditer(text)]
+        notices = [block for block in comments if NOTICE_WORDS.search(block)]
+        # Some LGPL grants split the licence name across C-comment lines with
+        # leading '*' decoration (GNU Lesser General Public / * License).
+        # Normalize only comment decorations; never infer grants from code.
+        normalized_comments = '\n'.join(re.sub(r'(?m)^[ \t]*\*[ \t]?', '', block)
+                                        for block in comments)
         catalog[name] = {
             'sourcePath': 'mingw-w64-headers/include/' + name,
             'sha256': digest(content),
@@ -127,7 +133,7 @@ def scan_generated_idl_sources(report: dict, source_root: Path) -> dict:
             'noticeCommentCount': len(notices),
             'noticeExcerpts': [x[:2048] for x in notices[:8]],
             'noticeCaptureTruncated': len(notices) > 8 or any(len(x) > 2048 for x in notices[:8]),
-            'sourceContainsLgplText': LGPL.search(text) is not None,
+            'sourceContainsLgplText': LGPL.search(normalized_comments) is not None,
             'spdxTextObserved': sorted({m.group(1).strip() for m in SPDX.finditer(text)}),
             'humanLicenseReview': 'required',
         }

@@ -67,7 +67,7 @@ class NoticeCases(unittest.TestCase):
         source.mkdir()
         folder = source / 'mingw-w64-headers/include'
         folder.mkdir(parents=True)
-        (folder / 'msxml.idl').write_bytes(b'/* Copyright 2005 Author\n * GNU Lesser General Public License v2.1\n */\n')
+        (folder / 'msxml.idl').write_bytes(b'/* Copyright 2005 Author\n * GNU Lesser General Public\n * License v2.1\n */\n')
         reviewed = mod.scan_generated_idl_sources({'headers': {key: header}}, source)
         self.assertEqual(reviewed['generatedToolchainHeadersWithOriginIdl'], 1)
         self.assertEqual(reviewed['uniqueIdlSources'], 1)
