@@ -1,5 +1,6 @@
-"""Read-only identity check for the two exact privately tested native OCR packages.
+"""Read-only identity check for historical and actual staged native OCR packages.
 Never extracts files, executes a worker, changes pins, or approves redistribution.
+A staged report supplies an observed archive digest, not a production approval.
 """
 import argparse
 import hashlib
@@ -46,7 +47,42 @@ def json_unique(data):
     return json.loads(data, object_pairs_hook=pairs)
 
 
-def verify(path, target, ledger, provenance, notices):
+STAGED_WORKERS = {
+    'darwin-arm64': '56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de',
+    'win32-x64': 'd1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166',
+}
+MAC_REPLAY_SHA = 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd'
+WINDOWS_REPLAY_SHA = 'fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0'
+INDEPENDENT_CRT_PROPERTIES = {
+    'dvr:crt-remediation-evidence-sha256': 'b10a66e205a299770237b042c20a5df2b49a3b5d5100c8b1eb0f12a68ca4a331',
+    'dvr:crt-replacement-archive-sha256': '4352197dadef779a8a6cc5cff0126a31d9f5968c43a09f273aa9fdd58f1dcf24',
+}
+
+
+def staged_ledger(target, report):
+    require(target in STAGED_WORKERS and report['target'] == target, 'STAGE_TARGET')
+    require(report['schemaVersion'] == 1 and report['workerSha256'] == STAGED_WORKERS[target], 'STAGE_WORKER_IDENTITY')
+    require(report['archiveReplayMatch'] is True and report['modelOrigin'] == 'windows-canonical', 'STAGE_REPLAY_OR_MODEL_ORIGIN')
+    for gate in ('distributionReady', 'ownerPublicationAuthorized', 'exactArchiveDesktopGuiVerified', 'minimumOsRuntimeVerified'):
+        require(report[gate] is False, 'STAGE_UNEXPECTED_GATE: ' + gate)
+    win = target == 'win32-x64'
+    entry = report['archive']
+    require(entry['name'] == 'ppocrv6-small-' + target + '.tar.gz' and
+            type(entry['bytes']) is int and 128 <= entry['bytes'] <= 64 * 1024 * 1024 and
+            re.fullmatch(r'[0-9a-f]{64}', entry['sha256']), 'STAGE_ARCHIVE_IDENTITY')
+    require(not win or (entry['sha256'] == WINDOWS_REPLAY_SHA and entry['bytes'] == 35313963), 'STAGE_WINDOWS_REPLAY_IDENTITY')
+    require(win or (entry['sha256'] == MAC_REPLAY_SHA and entry['bytes'] == 27917268), 'STAGE_MAC_REPLAY_IDENTITY')
+    require(report['members'] == (18 if win else 13), 'STAGE_MEMBER_COUNT')
+    require(report['manifest']['worker']['sha256'] == STAGED_WORKERS[target] and
+            report['manifest']['distributionReady'] is False, 'STAGE_MANIFEST_IDENTITY')
+    require(re.fullmatch(r'[0-9a-f]{64}', report['sbomSha256']), 'STAGE_SBOM_IDENTITY')
+    return {'distributionReady': False, 'gates': {'ownerPublicationAuthorized': False},
+            'platforms': {target: {'archive': entry['name'], 'bytes': entry['bytes'],
+                                   'sha256': entry['sha256'], 'workerSha256': STAGED_WORKERS[target],
+                                   'manifestSchema': 4 if win else 3, 'memberCount': 18 if win else 13}}}
+
+
+def verify(path, target, ledger, provenance, notices, *, stage=None):
     require(target in ('darwin-arm64', 'win32-x64'), 'UNSUPPORTED_TARGET')
     require(ledger['distributionReady'] is False and not any(ledger['gates'].values()), 'UNEXPECTED_GATE_PROMOTION')
     entry = ledger['platforms'][target]
@@ -96,22 +132,47 @@ def verify(path, target, ledger, provenance, notices):
     require(sbom['metadata']['component']['hashes'] == [{'alg': 'SHA-256', 'content': entry['workerSha256']}], 'SBOM_WORKER_IDENTITY')
     require(sbom['metadata']['properties'].count({'name': 'dvr:distribution-ready', 'value': 'false'}) == 1, 'SBOM_GATE')
     require(sbom['compositions'] == [{'aggregate': 'incomplete', 'assemblies': ['worker']}], 'SBOM_SCOPE')
-    return {'target': target, 'archiveSha256': entry['sha256'], 'workerSha256': entry['workerSha256'], 'members': len(facts), 'identityVerified': True, 'distributionReady': False}
+    result = {'target': target, 'archiveSha256': entry['sha256'], 'workerSha256': entry['workerSha256'], 'members': len(facts), 'identityVerified': True, 'distributionReady': False}
+    if stage is not None:
+        require(manifest == stage['manifest'] and facts['SBOM.cdx.json']['sha256'] == stage['sbomSha256'], 'STAGE_METADATA_READBACK')
+        if target == 'win32-x64':
+            mingw = [c for c in sbom.get('components', []) if c.get('bom-ref') == 'mingw']
+            require(len(mingw) == 1, 'STAGE_CRT_COMPONENT')
+            for name, expected_value in INDEPENDENT_CRT_PROPERTIES.items():
+                values = [p.get('value') for p in mingw[0].get('properties', []) if p.get('name') == name]
+                require(values == [expected_value], 'STAGE_CRT_EVIDENCE: ' + name)
+        result.update(archiveBytes=entry['bytes'], sbomSha256=facts['SBOM.cdx.json']['sha256'],
+                      stagedMetadataReadback=True, independentTarReader=True,
+                      distributionReviewComplete=False, ownerPublicationAuthorized=False)
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', required=True, choices=['darwin-arm64', 'win32-x64'])
     parser.add_argument('--archive', required=True, type=Path)
+    parser.add_argument('--staging-evidence', type=Path)
+    parser.add_argument('--report', type=Path)
     a = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    ledger = json_unique((root / 'quality/native-ocr-delivery-candidates.json').read_bytes())
+    stage = None
+    if a.staging_evidence is not None:
+        require(a.staging_evidence.is_file() and not a.staging_evidence.is_symlink() and
+                a.staging_evidence.stat().st_size <= 256 * 1024, 'STAGE_REPORT_TYPE_OR_SIZE')
+        stage = json_unique(a.staging_evidence.read_bytes())
+        ledger = staged_ledger(a.target, stage)
+    else:
+        ledger = json_unique((root / 'quality/native-ocr-delivery-candidates.json').read_bytes())
     provenance = json_unique((root / 'quality/native-ocr-provenance-LAB.json').read_bytes())
     notice_paths = dict(BASE_NOTICES)
     if a.target == 'win32-x64':
         notice_paths.update(WIN_NOTICES)
     notices = {name: sha((root / path).read_bytes()) for name, path in notice_paths.items()}
-    print(json.dumps(verify(a.archive, a.target, ledger, provenance, notices), indent=2))
+    report = json.dumps(verify(a.archive, a.target, ledger, provenance, notices, stage=stage), indent=2) + '\n'
+    if a.report is not None:
+        with a.report.open('x', encoding='utf-8') as f:
+            f.write(report)
+    print(report, end='')
 
 
 if __name__ == '__main__':

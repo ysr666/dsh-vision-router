@@ -20,10 +20,55 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Scan plugin source
+      # The published package entry is generated at lib/public-entry.js.
+      # Scan the actual installable runtime tree, not an unbuilt source checkout.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.21.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build canonical runtime for plugin scan
+        run: pnpm build
+      - name: Scan actual built plugin with the original security gates
         uses: hashgraph-online/ai-plugin-scanner-action@9b169fc65d09b24726b66d70b3563ab563158b58 # v1.2.816 / plugin-scanner 3.59.0
         with:
           plugin_dir: "."
+          format: json
+          output: ${{ runner.temp }}/hol-scanner-report.json
           min_score: 90
           fail_on_severity: high
           pr_comment: off
+      - name: Show only finding identities and file paths (never candidate secrets)
+        if: always()
+        env:
+          SCANNER_REPORT: ${{ runner.temp }}/hol-scanner-report.json
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          file = Path(os.environ['SCANNER_REPORT'])
+          if not file.is_file():
+              print('No scanner report was written.')
+              raise SystemExit(0)
+          report = json.loads(file.read_text(encoding='utf-8'))
+          print('Scanner score:', report.get('score', '?'))
+          for category in report.get('categories', []):
+              for check in category.get('checks', []):
+                  if check.get('passed') is False:
+                      print('FAILED CHECK', str(check.get('name', '?'))[:90],
+                            check.get('points'), '/', check.get('maxPoints'))
+          seen = set()
+          for finding in report.get('findings', []):
+              rule = finding.get('ruleId')
+              path = finding.get('filePath')
+              if isinstance(rule, str) and isinstance(path, str):
+                  identity = (rule, path)
+                  if identity not in seen:
+                      seen.add(identity)
+                      print('FINDING', rule, path[:180].replace(chr(10), '?').replace(chr(13), '?'))
+          print('Unique rule/path pairs:', len(seen))
+          PY

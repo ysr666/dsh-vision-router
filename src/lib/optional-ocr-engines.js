@@ -232,9 +232,32 @@ export async function installNativeBundle(bytes, { home = homedir(), exec = exec
     return { ok: true, installed: true, engine: 'ppocrv6' }
   } finally { await rm(archive, { force: true }) }
 }
+// Windows can temporarily hold a recently exited native worker's EXE and
+// directory during handle release or Defender scanning. Retry only known
+// transient filesystem errors, with a finite bound. All other errors fail
+// closed; the owner-check and managed-directory boundary are unchanged.
+export async function retryNativeOcrWindowsFs(operation, {
+  platform = process.platform, attempts = 7, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+} = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 12)
+    throw Error('invalid native OCR retry bound')
+  for (let i = 0; i < attempts; i++) {
+    try { return await operation() }
+    catch (error) {
+      if (platform !== 'win32' ||
+          !['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY'].includes(error?.code) ||
+          i === attempts - 1) throw error
+      await sleep(Math.min(1200, 180 * (i + 1)))
+    }
+  }
+}
+
 export async function uninstallNative({
   home = homedir(),
   resolvePaths = localNativeOcrInstallPaths,
+  moveOwned = moveOwnedNativeOcrDirectory,
+  remove = rm,
+  platform = process.platform,
 } = {}) {
   const dest = resolvePaths({ home })
   if (!dest || !await directory(dest.root)) throw Error('PP-OCRv6 is not installed')
@@ -243,8 +266,11 @@ export async function uninstallNative({
   // owner notice and exact managed directory instead of full model hashes.
   // Never mutate a system binary, a symlink, or an arbitrary caller path.
   const tomb = dest.root + '.removing-' + randomUUID()
-  await moveOwnedNativeOcrDirectory(dest.root, tomb)
-  await rm(tomb, { recursive: true, force: true })
+  await retryNativeOcrWindowsFs(() => moveOwned(dest.root, tomb), { platform })
+  await retryNativeOcrWindowsFs(() => remove(tomb, {
+    recursive: true, force: true,
+    maxRetries: platform === 'win32' ? 6 : 0, retryDelay: 150,
+  }), { platform })
   return { ok: true, installed: false, engine: 'ppocrv6' }
 }
 export async function downloadAndInstallNative({

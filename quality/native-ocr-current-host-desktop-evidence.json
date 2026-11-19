@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "scope": "Read-only pinned-host exact-archive Electron acceptance results. Host transport was a test-injected HTTPS response, not real public CDN; not permission to publish.",
+  "sourceHead": "6cd2dcbeb50e51aa5780a461ac0e68d90ef4f348",
+  "workflowRun": 44451773187,
+  "platforms": {
+    "darwin-arm64": {
+      "job": 135317614739,
+      "status": "passed",
+      "stageAcceptance": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "phases": [
+          "fresh-isolated-home",
+          "download-verification-real-install",
+          "manifest-model-license-sbom-readback",
+          "old-token-rejected",
+          "installed-worker-real-ocr",
+          "tampered-download-rejected-installed-worker-unchanged",
+          "wrong-size-download-rejected-installed-worker-unchanged",
+          "uninstall-and-empty-status"
+        ],
+        "downloadCalls": 3,
+        "localHttpRoute": true,
+        "realInstaller": true,
+        "realWorker": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realDesktopHost": false,
+        "exactArchiveDesktopGuiVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "desktopAcceptance": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "realDesktopHost": true,
+        "realElectronRenderer": true,
+        "actualGuiClicks": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realInstaller": true,
+        "realWorker": true,
+        "installedWorkerSupervisorOcr": true,
+        "hostAgentOcrToolVerified": true,
+        "agentEvidence": {
+          "engine": "ncnn",
+          "text": "TEST 123",
+          "uncertain": false,
+          "toolCalls": 1,
+          "visionRequestsDuringOcr": 0,
+          "dshVersion": "0.2.2-rc.5"
+        },
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "phases": [
+          "fresh-home",
+          "download-busy",
+          "corrupt-download-error",
+          "refresh-retry",
+          "verified-install-status",
+          "installed-payload-readback",
+          "installed-worker-ocr",
+          "agent-vision-ocr-returned-ncnn",
+          "gui-uninstall"
+        ],
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "artifact": {
+        "id": 14496656707,
+        "name": "native-ocr-real-desktop-evidence-macOS",
+        "bytes": 732,
+        "githubArtifactSha256": "94ab4236f3a2c8a7de3d52f8a501723fce6ddfebd2b8e3ee6f944d70482e9ec8"
+      }
+    },
+    "win32-x64": {
+      "job": 135320472558,
+      "status": "passed",
+      "stageAcceptance": {
+        "schemaVersion": 1,
+        "target": "win32-x64",
+        "archiveSha256": "fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0",
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "actualRecognition": "HELLO 123",
+        "confidence": 0.97396,
+        "phases": [
+          "fresh-isolated-home",
+          "download-verification-real-install",
+          "manifest-model-license-sbom-readback",
+          "old-token-rejected",
+          "installed-worker-real-ocr",
+          "tampered-download-rejected-installed-worker-unchanged",
+          "wrong-size-download-rejected-installed-worker-unchanged",
+          "uninstall-and-empty-status"
+        ],
+        "downloadCalls": 3,
+        "localHttpRoute": true,
+        "realInstaller": true,
+        "realWorker": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realDesktopHost": false,
+        "exactArchiveDesktopGuiVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "desktopAcceptance": {
+        "schemaVersion": 1,
+        "target": "win32-x64",
+        "archiveSha256": "fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0",
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "realDesktopHost": true,
+        "realElectronRenderer": true,
+        "actualGuiClicks": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realInstaller": true,
+        "realWorker": true,
+        "installedWorkerSupervisorOcr": true,
+        "hostAgentOcrToolVerified": true,
+        "agentEvidence": {
+          "engine": "ncnn",
+          "text": "HELLO 123",
+          "uncertain": false,
+          "toolCalls": 1,
+          "visionRequestsDuringOcr": 0,
+          "dshVersion": "0.2.2-rc.5"
+        },
+        "actualRecognition": "HELLO 123",
+        "confidence": 0.97396,
+        "phases": [
+          "fresh-home",
+          "download-busy",
+          "corrupt-download-error",
+          "refresh-retry",
+          "verified-install-status",
+          "installed-payload-readback",
+          "installed-worker-ocr",
+          "agent-vision-ocr-returned-ncnn",
+          "gui-uninstall"
+        ],
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "artifact": {
+        "id": 14496793561,
+        "name": "native-ocr-real-desktop-evidence-Windows",
+        "bytes": 733,
+        "githubArtifactSha256": "fb14d8592669bc2e5eb8f0147bbb729dc24704da612ccddd3ac0daf9f0704bba"
+      }
+    }
+  },
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false,
+  "actualPublicHttps": false,
+  "minimumOsRuntimeVerified": false,
+  "licenseClearanceComplete": false
+}

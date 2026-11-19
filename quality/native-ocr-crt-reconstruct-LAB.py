@@ -101,7 +101,7 @@ def normalized_coff(data):
 def read_ledger(repo):
     data = (repo / 'quality/native-ocr-mingw-source-evidence.json').read_bytes()
     blob = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-    require(blob == LEDGER_BLOB, 'SOURCE_LEDGER_CHANGED')
+    require(blob == LEDGER_BLOB, 'SOURCE_LEDGER_CHANGED: actual Git blob ' + blob + '; expected ' + LEDGER_BLOB + '; use exact checkout bytes')
     ledger = json.loads(data)
     require(ledger['sourceRevision'] == MINGW_REV and ledger['worker']['sha256'] == OLD_WORKER_SHA,
             'LEDGER_IDENTITY_MISMATCH')
@@ -237,6 +237,15 @@ def deterministic_zip(dest, members, manifest):
             z.writestr(info, content, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
 
 
+def write_portable_recipe(path, recipe):
+    # Validate the actual serialized bytes before the downstream runner
+    # spends time building the Windows toolchain and worker.
+    with path.open('x', encoding='utf8', newline='\n') as stream:
+        json.dump(recipe, stream, indent=2)
+        stream.write('\n')
+    require(json.loads(path.read_text(encoding='utf8')) == recipe, 'PORTABLE_RECIPE_ROUNDTRIP_FAILED')
+
+
 def run(a):
     require(platform.system() == 'Darwin' and platform.machine() == 'arm64', 'APPLE_SILICON_REQUIRED')
     repo, source_archive, tool_archive, windows_zip, lab = [getattr(a, k).resolve() for k in
@@ -344,6 +353,40 @@ def run(a):
               'distributionReady': False,
               'scope': 'Source-to-object output only. Fresh Windows relink and exact worker identity acceptance required.'}
     (lab/'crt-reconstruction-evidence.json').write_text(json.dumps(report, indent=2)+'\n')
+    # Transport source-level compilation instructions only, not the ZIP,
+    # compiled objects, worker or model payloads. Paths are relative tokens.
+    # This is evidence for an independent native Windows reproduction.
+    source_roots = [(source, '@SOURCE@'), (tool, '@TOOL@'), (build, '@BUILD@'),
+                    (overlay, '@OVERLAY@')]
+    def portable(arg, dest, dep):
+        for p, token in [(dest, '@OUTPUT@'), (dep, '@DEPFILE@'), *source_roots]:
+            arg = arg.replace(str(p), token)
+        require(str(lab) not in arg and '/Users/' not in arg and '/private/var/' not in arg,
+                'ABSOLUTE_RECIPE_PATH')
+        return arg
+    recipes = []
+    for row, data, _ in built:
+        dest = output / row['target']
+        args, dep = compile_recipe(lines, row, source, tool, build, overlay, dest)
+        recipes.append({'archive': row['archive'], 'member': row['member'],
+                        'source': row['source'], 'target': row['target'],
+                        'args': [portable(x, dest, dep) for x in args[1:]],
+                        'sha256': sha(data), 'bytes': len(data),
+                        'normalizedSha256': row['expectedNormalized']})
+    headers = {}
+    for key, fact in aggregate.items():
+        if key.startswith('build/'):
+            relative = key[len('build/'):]
+            payload = (build / relative).read_bytes()
+            require(len(payload) <= 65536 and relative.endswith('.h') and
+                    str(lab).encode() not in payload and sha(payload) == fact['sha256'],
+                    'UNEXPECTED_GENERATED_HEADER')
+            headers[relative] = {'text': payload.decode('utf8'), 'sha256': fact['sha256']}
+    require(len(headers) == 1 and len(recipes) == 68, 'RECIPE_SOURCE_COUNT')
+    recipe = {'schemaVersion': 1, 'scope':'Public-source compile recipe and generated header only; no binary/model payload',
+              'sourceRevision': MINGW_REV, 'replacementArchiveSha256': report['replacementArchiveSha256'],
+              'recipes': recipes, 'generatedHeaders': headers, 'distributionReady': False}
+    write_portable_recipe(lab/'crt-portable-source-recipe.json', recipe)
     print('CRT_SOURCE_RECONSTRUCTION_MATCH', report['replacementArchiveSha256'], 'distributionReady=false')
 
 

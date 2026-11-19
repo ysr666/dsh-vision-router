@@ -10,13 +10,13 @@ import { verifyNativeOcrAssets } from './native-ocr-integrity.js'
 const MAX_TIME_MS = 22_000
 const MAX_DECODE_INPUT_BYTES = 24 * 1024 * 1024
 const MAX_INPUT_PIXELS = 16_000_000
-// SHA-pinned experimental identities for owner-installed native OCR workers.
-// These hashes do NOT establish public redistribution clearance. A public
-// model/binary archive needs signed clean-CI builds, SBOM and all notices;
-// the JS/npm release must not silently bundle these native assets.
+// Runtime pins for the exact owner-published resource pair (npm 1.0.0).
+// Updated together with the verified public download catalog. The historical
+// LAB identities remain in the audit fixture; this is not legal certification
+// or minimum-OS runtime proof. Never bundle these assets in the main JS package.
 export const EXPERIMENTAL_OCR_BINARY_SHA256 = Object.freeze({
-  'darwin-arm64': '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204',
-  'win32-x64': '2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33',
+  'darwin-arm64': '56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de',
+  'win32-x64': 'd1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166',
 })
 
 function fail(code, description) {

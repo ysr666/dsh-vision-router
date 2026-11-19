@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "scope": "Exact upstream build recipe and original release toolchain stage1 log; does not establish the transitive preprocessor closure or independently reproduce LLVM runtime objects.",
+  "upstream": "mstorsjo/llvm-mingw",
+  "upstreamRevision": "e08a31fbfe5cfdad07b698299af22d66e5608383",
+  "llvmRevision": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5",
+  "llvmTag": "llvmorg-23.1.4",
+  "upstreamStage1": {
+    "run": 39448002486,
+    "job": 118715038768,
+    "observedCommand": "LLVM_CMAKEFLAGS=\"-DLLVM_ENABLE_LIBXML2=OFF -DLLDB_ENABLE_PYTHON=OFF\" ./build-all.sh $(pwd)/install/llvm-mingw --stage1",
+    "observedWindowsX64RuntimeInstallPaths": [
+      "lib/clang/23/lib/windows/libclang_rt.builtins-x86_64.a",
+      "x86_64-w64-mingw32/lib/libunwind.a",
+      "x86_64-w64-mingw32/lib/libc++.a"
+    ],
+    "observedBuildDirectories": [
+      "llvm-project/compiler-rt/build-x86_64",
+      "llvm-project/runtimes/build-x86_64"
+    ],
+    "stage1ArtifactBytesRetrieved": false,
+    "compileCommandsRetrieved": false
+  },
+  "upstreamBuildScripts": [
+    {
+      "path": "build-llvm.sh",
+      "gitBlobSha1": "aed7379022ede7743c4a5ff33bef76b6c1da07ee",
+      "observedDefaults": {
+        "LLVM_VERSION": "llvmorg-23.1.4"
+      }
+    },
+    {
+      "path": "build-libcxx.sh",
+      "gitBlobSha1": "f37cc9dea406dd5ffa54b1f3a8c0dfd306d562f4",
+      "observedOptions": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "Windows",
+        "CMAKE_CXX_COMPILER_TARGET": "x86_64-w64-windows-gnu",
+        "LLVM_ENABLE_RUNTIMES": "libunwind;libcxxabi;libcxx",
+        "LIBCXX_ENABLE_STATIC_ABI_LIBRARY": "TRUE",
+        "LIBCXX_CXX_ABI": "libcxxabi",
+        "LIBCXXABI_ENABLE_SHARED": "OFF",
+        "LIBCXXABI_USE_LLVM_UNWINDER": "ON",
+        "LIBCXX_USE_COMPILER_RT": "ON",
+        "LIBUNWIND_USE_COMPILER_RT": "TRUE"
+      }
+    },
+    {
+      "path": "build-compiler-rt.sh",
+      "gitBlobSha1": "b56aa489c8c6f6a2ef21b3290612ac48e9457f53",
+      "observedOptions": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_SYSTEM_NAME": "Windows",
+        "CMAKE_C_COMPILER_TARGET": "x86_64-w64-windows-gnu",
+        "COMPILER_RT_DEFAULT_TARGET_ONLY": "TRUE",
+        "COMPILER_RT_USE_BUILTINS_LIBRARY": "TRUE",
+        "COMPILER_RT_EXCLUDE_ATOMIC_BUILTIN": "FALSE"
+      }
+    }
+  ],
+  "remaining": "Reconstruct selected runtime translation units using the upstream version, target, and applicable flags; collect actual dependency files and compare selected archive objects before attributing included headers. Do not claim exact original build flags or header closure from the scripts and log alone.",
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false
+}
