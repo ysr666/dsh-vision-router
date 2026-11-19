@@ -49,3 +49,16 @@ shared Core implementation are replaced; C's provenance/delegation and D's
 stable image mode remain intact. Add D3 (`19089dc6f42c5a0a4f641b28869e2dd47cd80177`) long production JSONL
 serializer-prefix test and its architecture notes. The previous test results
 do not automatically qualify the additional delta.
+
+### Desktop positive-control correction
+
+Exact Desktop log (run 44543399083, job 135628379961) shows the original
+same-provider picker choice was intentionally mapped to desktop-e2e-vision /
+desktop-native by the frozen #284 presentation contract. The observed ON
+was a valid DVR wrapper state, NOT proof of an ordinary-route permission
+leak. Use a distinct offline native provider to positively exercise an
+ordinary route; require native state OFF and the two actual native clicks,
+and retain the existing same-provider legacy semantics. The earlier scoped
+Host regression independently verifies the actual ordinary-route reset and
+is kept. D3 independently passed on job 135631632894 with 685402 serialized
+bytes, exact header and prefix across JSONL restart and late memory refresh.

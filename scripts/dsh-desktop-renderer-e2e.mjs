@@ -791,6 +791,16 @@ try {
     checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
     '            maxTokens: 2048',
     ...(checkNativePolicy ? [
+      // A different provider is intentional. The existing picker preserves
+      // Vision ON when changing a model within its visible wrapper group (#284).
+      // A distinct native provider exercises an actual ordinary route, rather
+      // than accidentally testing the twin under its presentation label.
+      '      desktop-native-e2e:',
+      '        displayName: Desktop Native E2E',
+      '        api: openai-completions',
+      '        apiKeyEnv: DVR_DESKTOP_E2E_API_KEY',
+      `        baseURL: ${textServer.url}/v1`,
+      '        models:',
       '          - id: desktop-native',
       '            input: [text, image]',
       '            contextWindow: 131072',
@@ -1285,7 +1295,7 @@ try {
     await modelTrigger.click()
     await page.getByRole('menuitem', { name: /^(?:Model|模型)/i }).first().click()
     await page.locator('button[role="menuitemradio"]').filter({
-      has: page.locator('[data-provider-id="desktop-e2e"][data-model-id="desktop-native"]'),
+      has: page.locator('[data-provider-id="desktop-native-e2e"][data-model-id="desktop-native"]'),
     }).click()
     reportPhase('native-model-selected')
     const waitNative = async (pressed) => {
@@ -1309,7 +1319,7 @@ try {
     const readNativeSelection = async () => {
       const snapshot = await readHostModelSelections(authenticatedHostUrl)
       const matching = snapshot.sessions.filter(session =>
-        session.projected?.next?.provider === 'desktop-e2e'
+        session.projected?.next?.provider === 'desktop-native-e2e'
         && session.projected?.next?.model === 'desktop-native')
       assert.equal(matching.length, 1, 'expected exactly one native fixture Session')
       return matching[0]
@@ -1328,7 +1338,7 @@ try {
     const disabled = await readNativeSelection()
     assert.deepEqual(disabled, before, 'native OFF may not append a model/selection event')
     const nativeDirectory = await readClientModelDirectory(page)
-    assert.equal(nativeDirectory.current?.provider, 'desktop-e2e')
+    assert.equal(nativeDirectory.current?.provider, 'desktop-native-e2e')
     assert.equal(nativeDirectory.current?.model, 'desktop-native')
     assert.equal(textEvidence.requests, requestsBefore, 'policy changes must not call the LLM')
     const nativeClicksAfter = await page.evaluate(() => window.__dvrDesktopToggleAudit?.domClicks?.length ?? 0)
