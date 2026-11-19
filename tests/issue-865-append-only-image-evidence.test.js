@@ -62,6 +62,21 @@ test('issue #865: append-only evidence is once-per-version, replayable after col
     'cold restored durable event history must dedupe without an auxiliary Map of emitted ids')
 })
 
+test('issue #865: same attachment and text in separate turns never reuse a user/message ID', () => {
+  const first = history()
+  const second = [{
+    ...first[0],
+    id: 'next-turn-reused-image',
+  }]
+  const memory = new Map([[id, 'same OCR for identical attachment']])
+  const a = planAppendOnlyImageEvidence(first, first, memory, source)
+  const b = planAppendOnlyImageEvidence(second, second, memory, source)
+  assert.equal(a.length, 1)
+  assert.equal(b.length, 1)
+  assert.notEqual(a[0].id, b[0].id,
+    'DSH Session messages must have distinct identities even for repeat uploads')
+})
+
 test('issue #865: evidence only originates from attached image and is bounded', () => {
   const nested = [{
     id: 'tool-result',
