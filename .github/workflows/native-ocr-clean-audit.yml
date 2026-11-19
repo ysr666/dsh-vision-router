@@ -339,6 +339,15 @@ jobs:
             --evidence "$RUNNER_TEMP/dvr-crt-source-reconstruction/crt-reconstruction-evidence.json" \
             --lab "$RUNNER_TEMP/dvr-crt-source-reconstruction" \
             --output "$RUNNER_TEMP/dvr-crt-source-reconstruction/compiler-header-notices.json"
+      - name: Compare ten WIDL-including CRT objects against header-excluding recompiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I quality/test-native-ocr-widl-coff-differential.py
+          python3 -I quality/native-ocr-widl-coff-differential.py \
+            --repo "$PWD" \
+            --lab "$RUNNER_TEMP/dvr-crt-source-reconstruction" \
+            --report "$RUNNER_TEMP/dvr-crt-source-reconstruction/widl-coff-differential.json"
       - name: Save reconstructed CRT evidence only (no object archives or binaries)
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -346,6 +355,7 @@ jobs:
           path: |
             ${{ runner.temp }}/dvr-crt-source-reconstruction/crt-reconstruction-evidence.json
             ${{ runner.temp }}/dvr-crt-source-reconstruction/compiler-header-notices.json
+            ${{ runner.temp }}/dvr-crt-source-reconstruction/widl-coff-differential.json
             ${{ runner.temp }}/dvr-crt-source-reconstruction/stock-crt/stock-crt-normalized-coff.json
           if-no-files-found: error
       - name: Save source-only portable compile recipe
