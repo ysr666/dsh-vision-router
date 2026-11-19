@@ -38,15 +38,34 @@ node quality/native-ocr-release-stage.mjs --stage --target win32-x64 \
 
 The private output is the exact tar.gz plus an evidence JSON with per-file
 manifest, hash, byte size, SBOM hash and deterministic archive replay. It is
-NOT an installable production release: runtime pins still reject the new
-worker. The staging command verifies canonical source notices and keeps the
-SBOM incomplete/distributionReady false. CI verifies real worker and model
-inputs separately, uploads evidence only under the existing workflow policy,
-and does not claim to have assembled the final package when those artifacts
-are not co-located.
+NOT an installable production release: production runtime pins and approved
+download catalog still reject the new worker/archive. The staging command
+verifies canonical source notices and keeps the SBOM incomplete /
+distributionReady false. Public CI uploads evidence JSON only, never the
+worker, model parameters or installable archive.
 
-Next gates: stage actual archives privately; test the exact archives through
-the real Desktop installer and OCR on each supported target; minimum OS
-runtime; verify the final link/source/notice/SBOM inventory and provenance;
-owner review; explicit approval before hosting, pin/catalog promotion and
-any npm or GitHub publication. No private-lab archive is silently promoted.
+## Completed acceptance (2026-11-19; still not a release)
+
+Clean audit run [#44451773187](https://github.com/ysr666/dsh-vision-router/actions/runs/44451773187)
+built and staged the **actual exact deterministic archives** separately on
+both native systems, with genuine installer, tamper rejection and OCR.
+The same files passed actual Electron Settings and Agent tool execution under
+DSH 0.2.2-rc.5, using isolated test-only HTTPS injection:
+
+- **Mac ARM64:** worker `56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de`,
+  archive `a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd`,
+  Agent ncnn OCR `TEST 123`, no vision model fallback.
+- **Windows x64:** worker `d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166`,
+  archive `fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0`,
+  Agent ncnn OCR `HELLO 123`, no vision model fallback. The installer no
+  longer needs an external system `tar` executable.
+- Final proof and evidence-only artifact digests:
+  `quality/native-ocr-current-host-desktop-evidence.json`.
+
+**Remaining independent release gates:** complete *transitive compiler-header*
+and retained-code licensing/attribution review, actual lowest-supported OS
+runtime tests (the Mac Mach-O declares minos 13.0 but this is static),
+authorized publication of the archives followed by a genuinely public HTTPS
+download test, owner review and separate explicit approvals for PR merge,
+production catalog/hash promotion, formal version changes, npm or GitHub
+release. No public binary/model archive or production allowlist was created.
