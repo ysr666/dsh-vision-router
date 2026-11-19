@@ -216,10 +216,10 @@ export function observeNativeVisionControlState(ctx, store, agent, {
           if (current !== session) return
           if (event?.type === 'model/selection' ||
               (event?.type === 'request/header' && routeKey() !== lastRoute)) notify()
-        }))
+        }, { global: true }))
         own(ctx.on('agent/disposed', ({ agent: disposed }) => {
           if (disposed === agent) stop()
-        }))
+        }, { global: true }))
         own(ctx.on('llm/adapters-updated', notify))
         const settingsChanged = ns => { if (String(ns) === 'vision-router') notify() }
         own(ctx.on('settings/updated', settingsChanged))

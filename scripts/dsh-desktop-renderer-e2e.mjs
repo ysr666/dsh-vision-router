@@ -1277,6 +1277,7 @@ try {
   reportPhase('session-source-verified')
   let nativePolicyToggle
   if (checkNativePolicy) {
+    const nativeToggle = page.locator('[data-vision-router-mode-toggle="true"]')
     // Drive the official model picker and the actual DVR button, not a test
     // command or direct mutation of the model directory. The chat already
     // contains an image, so select a genuinely image-capable fixture model.
@@ -1288,13 +1289,22 @@ try {
     }).click()
     reportPhase('native-model-selected')
     const waitNative = async (pressed) => {
-      await page.waitForFunction((expected) => {
-        const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
-        return node?.getAttribute('data-native-vision-state') === 'native'
-          && node.getAttribute('aria-pressed') === expected
-          && node.getAttribute('aria-busy') !== 'true' && !node.disabled
-      }, pressed, { timeout: 30_000 })
-      await waitForSettledVisionState(pressed, 'native policy ' + pressed)
+      try {
+        await page.waitForFunction((expected) => {
+          const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+          return node?.getAttribute('data-native-vision-state') === 'native'
+            && node.getAttribute('aria-pressed') === expected
+            && node.getAttribute('aria-busy') !== 'true' && !node.disabled
+        }, pressed, { timeout: 30_000 })
+        await waitForSettledVisionState(pressed, 'native policy ' + pressed)
+      } catch (error) {
+        const observed = await inspectToggleState()
+        const selected = await readClientModelDirectory(page)
+        const host = await readHostModelSelections(authenticatedHostUrl)
+        throw Error('Native Desktop policy did not settle: expected=' + pressed +
+          '; observed=' + JSON.stringify(observed) + '; directory=' + JSON.stringify(selected) +
+          '; host=' + JSON.stringify(host), { cause: error })
+      }
     }
     const readNativeSelection = async () => {
       const snapshot = await readHostModelSelections(authenticatedHostUrl)
@@ -1308,11 +1318,12 @@ try {
     const before = await readNativeSelection()
     assert.equal(before.latest.at(-1)?.model, 'desktop-native')
     const requestsBefore = textEvidence.requests
-    await toggle.click()
+    const nativeClicksBefore = await page.evaluate(() => window.__dvrDesktopToggleAudit?.domClicks?.length ?? 0)
+    await nativeToggle.click()
     await waitNative('true')
     const enabled = await readNativeSelection()
     assert.deepEqual(enabled, before, 'native ON may not append a model/selection event')
-    await toggle.click()
+    await nativeToggle.click()
     await waitNative('false')
     const disabled = await readNativeSelection()
     assert.deepEqual(disabled, before, 'native OFF may not append a model/selection event')
@@ -1320,7 +1331,9 @@ try {
     assert.equal(nativeDirectory.current?.provider, 'desktop-e2e')
     assert.equal(nativeDirectory.current?.model, 'desktop-native')
     assert.equal(textEvidence.requests, requestsBefore, 'policy changes must not call the LLM')
-    nativePolicyToggle = { actualDesktopClicks: 2, modelIdentityUnchanged: true,
+    const nativeClicksAfter = await page.evaluate(() => window.__dvrDesktopToggleAudit?.domClicks?.length ?? 0)
+    assert.equal(nativeClicksAfter - nativeClicksBefore, 2, 'native positive control has exactly two actual DOM clicks')
+    nativePolicyToggle = { actualDesktopClicks: nativeClicksAfter - nativeClicksBefore, modelIdentityUnchanged: true,
       selectionEventsAdded: 0, modelRequestsAdded: 0, restored: true }
     reportPhase('native-policy-toggle-verified')
   }

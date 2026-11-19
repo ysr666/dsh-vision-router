@@ -220,3 +220,15 @@ browser/desktop carrier tests remain required.
 ### Desktop transition recovery
 
 Windows Desktop logs showed accepted Session model/selection events and ready model directories while the policy button remained unavailable. Re-resolve the authorized Agent on provider/model or directory replacement even under the same Session ID. A read subscription that cleanly ends or loses its carrier may reopen within a finite budget; no mutation replay, no stale frame, no fallback after denial/invalid data/withdrawal. This is a regression candidate; the exact Desktop matrix must establish the result.
+
+### Scoped Session-event acceptance
+
+The first combined Desktop native selection was observed as ON after leaving
+an ON text twin, rather than the ordinary-route OFF contract. The prior root
+apply fixture could not establish delivery of scoped Session events to a real
+plugin fiber; now use an actual injected Cordis plugin and require ON→different
+native route→OFF, including the following real request. The committed
+model-selection observer uses the Host's global event-observer option and
+strict Session identity; the read stream likewise observes only its exact
+Session/Agent. This is a candidate fix, not a confirmed root cause until the
+new real Host and Desktop assertions pass.

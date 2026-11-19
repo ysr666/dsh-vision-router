@@ -754,3 +754,13 @@ test('active rc5 Host gates fail closed on PR impact; rc1 uses isolated immutabl
   assert.doesNotMatch(rc1, /actions\/cache\/restore@/)
   assert.doesNotMatch(rc1, /actions\/cache\/save@/)
 })
+
+test('issue #865 separates additional native Desktop clicks from frozen legacy toggle diagnostic', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.equal((source.match(/await toggle\.click\(\)/g) ?? []).length, 2)
+  assert.equal((source.match(/await nativeToggle\.click\(\)/g) ?? []).length, 2)
+  assert.match(source, /nativeClicksAfter - nativeClicksBefore, 2/)
+  assert.match(source, /assert\.deepEqual\(enabled, before,/)
+  assert.match(source, /assert\.deepEqual\(disabled, before,/)
+  assert.match(source, /await waitNative\('false'\)/)
+})

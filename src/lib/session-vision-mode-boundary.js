@@ -501,7 +501,8 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     // Materialize the matching DVR Session authority from that exact durable
     // event so a delegated snapshot can always be overridden by a later user
     // choice. Route-derived compatibility remains the fallback until a Session
-    // has made an explicit selection.
+    // has made an explicit selection. This is a cross-Agent Session observer:
+    // a Host-owned scoped carrier must not filter out the plugin fiber.
     ctx.on?.('session/event', (session, event) => {
       if (!isObject(session) || event?.type !== 'model/selection') return
       const id = typeof session.id === 'string' ? session.id : ''
@@ -526,7 +527,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       void sessionVisionPolicyStore
         .set(id, userSessionVisionPolicy(authority.enabled))
         .catch(() => {})
-    })
+    }, { global: true })
   } catch {
     // Minimum Hosts may not expose every lifecycle event. Prompt assembly and
     // execution guards preserve the safety boundary without making apply fail.

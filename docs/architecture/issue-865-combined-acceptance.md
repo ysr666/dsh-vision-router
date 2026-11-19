@@ -31,3 +31,10 @@ joint check uses synthetic evidence and does not execute OCR or paid requests.
 
 - B ClientRemote production-bridge smoke from `4469ee0` is included unchanged.
 - Current exact Desktop lane additionally uses the stock model picker to select an image-capable fixture, then actuates the real native Vision policy button OFF→ON→OFF. Both transitions must preserve the session's complete model-selection projection and event count, preserve the client model identity, and generate zero model requests. Existing text-twin and minimum Host tests remain intact. This additional gate is pending execution, not claimed as passing.
+
+The first combined real Desktop run correctly selected desktop-native but
+reported ON. Keep the ordinary-route OFF baseline assertion (do not hide a
+permission leak by accepting either state); improve diagnostics and qualify
+scoped Session event delivery through the actual Cordis plugin fiber.
+The two additional native clicks now have a separate exact DOM click-count
+assertion from the frozen legacy two-click diagnostic.
