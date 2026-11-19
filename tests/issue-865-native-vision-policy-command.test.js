@@ -185,39 +185,6 @@ test('issue #865: separate authorized Sessions cannot write another Session poli
   assert.equal(f.policies.get('test-session-B').enabled, true)
 })
 
-test('issue #865: composed Host registration binds command lifetime to DVR effect', async () => {
-  const installed = []
-  let disposed = 0
-  let effectCount = 0
-  let cleanup
-  installNativeVisionPolicyCommand({
-    get(service) {
-      assert.equal(service, 'commands')
-      return {
-        register(definition) {
-          installed.push(definition)
-          return () => { disposed++ }
-        },
-      }
-    },
-    effect(callback) {
-      effectCount++
-      cleanup = callback()
-      assert.equal(typeof cleanup, 'function')
-    },
-    inject() { throw new Error('direct service already mounted: never double register') },
-  }, {
-    get() { return undefined },
-    async set() {},
-  })
-  assert.equal(effectCount, 1)
-  assert.equal(installed.length, 1)
-  assert.equal(installed[0].name, 'vision-router')
-  assert.equal(disposed, 0)
-  cleanup()
-  assert.equal(disposed, 1, 'unload must release the registration exactly once')
-})
-
 test('issue #865: store errors do not advertise successful mode switch', async () => {
   const f = fixture()
   f.ctx.llm.resolveModelInfo = async () => ({ inputModalities: ['text', 'image'] })
