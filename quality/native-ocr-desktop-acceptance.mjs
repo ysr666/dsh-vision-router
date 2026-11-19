@@ -123,7 +123,7 @@ export async function exerciseExactDesktopOcr(page, context) {
   const refresh = panel.getByRole('button', { name: /刷新安装状态|Refresh installation status/ })
   const remove = panel.getByRole('button', { name: /卸载 PP-OCRv6|Remove PP-OCRv6/ })
   const busy = panel.getByRole('status').filter({ hasText: /安装或卸载正在进行|Installation or removal in progress/ })
-  const failed = panel.getByRole('alert').filter({ hasText: /integrity mismatch/i })
+  const errorAlert = panel.getByRole('alert')
   const ready = panel.getByText(/已经安装且完整性校验通过|Installed and integrity-verified/)
   await waitEnabled(download)
   assert.equal(existsSync(installation), false)
@@ -131,7 +131,9 @@ export async function exerciseExactDesktopOcr(page, context) {
   await busy.waitFor({ state: 'visible', timeout: 15000 })
   assert.equal(await download.isDisabled(), true)
   writeFileSync(release, 'corrupt')
-  await failed.waitFor({ state: 'visible', timeout: 210000 })
+  await errorAlert.waitFor({ state: 'visible', timeout: 60000 })
+  assert.match(await errorAlert.innerText(), /native OCR archive integrity mismatch/i,
+    'unexpected Host rejection; report the actual error rather than timing out')
   assert.equal(existsSync(installation), false)
   assert.equal(readFileSync(requests, 'utf8'), 'corrupt\n')
   writeFileSync(mode, 'good')
@@ -141,7 +143,11 @@ export async function exerciseExactDesktopOcr(page, context) {
   await busy.waitFor({ state: 'visible', timeout: 15000 })
   assert.equal(await download.isDisabled(), true)
   writeFileSync(release, 'good')
-  await ready.waitFor({ state: 'visible', timeout: 210000 })
+  await Promise.race([
+    ready.waitFor({ state: 'visible', timeout: 210000 }),
+    errorAlert.waitFor({ state: 'visible', timeout: 210000 })
+      .then(async () => { throw new Error('native OCR installation failed: ' + await errorAlert.innerText()) }),
+  ])
   await waitEnabled(remove)
   assert.equal(await download.isDisabled(), true)
   assert.equal(readFileSync(requests, 'utf8'), 'corrupt\ngood\n')
