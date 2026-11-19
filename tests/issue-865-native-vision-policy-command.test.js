@@ -652,3 +652,27 @@ test('issue #865 B2.4: production registration shares descriptor lookup and expl
   await stream.return()
   for (const dispose of [...f.effects]) dispose()
 })
+
+
+test('issue #865: route epoch rejects A-B-A capability result and retired Agent write', async () => {
+  const f = fixture()
+  const store = { get: id => f.policies.get(id), async set(id, p) { f.policies.set(id, p) } }
+  const mutate = createNativeVisionPolicyMutator(f.ctx, store)
+  const selection = f.agent.model.current()
+  let release
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { release = resolve })
+  const old = mutate(f.agent, { selection, enabled: true })
+  f.changeSelected({ provider: 'other', model: 'other' })
+  mutate.invalidateSession(f.agent.session)
+  f.changeSelected(selection)
+  mutate.invalidateSession(f.agent.session)
+  release({ inputModalities: ['text', 'image'] })
+  assert.equal((await old).kind, 'error')
+  assert.equal(f.policies.size, 0)
+  const pending = mutate(f.agent, { selection, enabled: true })
+  mutate.retireAgent(f.agent)
+  release({ inputModalities: ['text', 'image'] })
+  assert.equal((await pending).kind, 'error')
+  assert.equal((await mutate(f.agent, { selection, enabled: true })).kind, 'error')
+  assert.equal(f.policies.size, 0)
+})

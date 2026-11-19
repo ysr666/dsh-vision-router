@@ -146,7 +146,11 @@ try {
   const statusOn = await invoke('/vision-router status')
   assert.equal(statusOn.kind, 'success')
   assert.match(statusOn.text, /tools: on/)
-  const enabled = await turn('Second text turn: Vision now on')
+  assert.equal(agent.session.snapshotEvents().filter(e => e.type === 'model/selection').length, before)
+  // Simulate the stock picker changing ONLY reasoning effort. This is the
+  // one intentional selection event; the Vision APIs still add none.
+  agent.model.select({ ...agent.model.current(), reasoningEffort: 'high' })
+  const enabled = await turn('Second text turn: Vision now on; reasoning effort changed')
   assert.ok(enabled.active.includes('vision_describe'), 'ON must admit precision vision tools to the real Agent request')
   const offView = observer.next()
   const off = await invoke('/vision-router off')
@@ -160,7 +164,7 @@ try {
   assert.equal(lastOff.active.length, 0, 'returning OFF must remove owned tools from the active header')
   assert.equal(lastOff.leadingOwned, 0, 'OFF must not leave owned declarations in the actual native request')
   const events = agent.session.snapshotEvents()
-  assert.equal(events.filter(e => e.type === 'model/selection').length, before)
+  assert.equal(events.filter(e => e.type === 'model/selection').length, before + 1)
   assert.equal(events.filter(e => e.type === 'command/run').length, 3)
   assert.equal(events.filter(e => e.type === 'command/done').length, 3)
   assert.equal(agent.model.current().provider, 'native-proof')
@@ -170,7 +174,7 @@ try {
       block.text.includes('/vision-router'))), false)
   console.log(JSON.stringify({
     ok: true, scenario: 'actual DVR apply + Host commands native permission',
-    sessionCommandCount: 3, selectionEventsAdded: 0,
+    sessionCommandCount: 3, selectionEventsAdded: 0, explicitEffortSelectionEvents: 1,
     modelIdentityUnchanged: true, finalPolicy: 'off',
     activeOwnedToolCounts: [firstOff.active.length, enabled.active.length, lastOff.active.length],
     nativeRequests: requests.length, productionRemoteTransitions: [false, true, false],

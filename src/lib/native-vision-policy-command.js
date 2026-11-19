@@ -32,12 +32,19 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
   // Serializes only writes for the same live Agent; different Sessions may
   // change modes concurrently. A weak key prevents retired Agent retention.
   const mutationTails = new WeakMap()
-  return async function mutate(agent, { enabled, selection: expected }, signal) {
+  const routeGenerations = new WeakMap()
+  const retiredAgents = new WeakSet()
+  const mutate = async function mutate(agent, { enabled, selection: expected }, signal) {
     if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
     const sessionId = agent?.session?.id
     if (typeof sessionId !== 'string' || !sessionId || agent?.id !== sessionId || typeof enabled !== 'boolean') {
       return result('error', 'Vision mode requires an authorized, active Session Agent.')
     }
+    if (retiredAgents.has(agent)) return result('error', 'Vision-mode Agent is no longer active.')
+    const session = agent.session
+    const generation = routeGenerations.get(session)
+    const routeStillCurrent = () => !retiredAgents.has(agent) && agent.session === session &&
+      routeGenerations.get(session) === generation
     const selection = modelSelection(agent)
     if (!isSameSelection(selection, expected)) {
       return result('error', 'Model changed before Vision-mode validation; refresh the control.')
@@ -57,7 +64,7 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
         : 'Cannot validate the current native model for this Vision-mode command.')
     }
     const { target } = resolved
-    if (!isSameSelection(selection, target.selection)) {
+    if (!routeStillCurrent() || !isSameSelection(selection, target.selection)) {
       return result('error', 'Model changed during Vision-mode validation; retry the command.')
     }
     if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
@@ -71,7 +78,7 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
       // finally takes the mutation slot, not merely on query completion.
       if (signal?.aborted) return false
       if (latestIntent.get(agent) !== intent) return false
-      if (!nativeControlTargetCurrent(ctx, agent, target)) return false
+      if (!routeStillCurrent() || !nativeControlTargetCurrent(ctx, agent, target)) return false
       if (enabled && !toolEnabled()) return false
       await store.set(sessionId, userSessionVisionPolicy(enabled))
       return true
@@ -94,6 +101,18 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
         ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
         : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
   }
+  // Only the owning Session lifecycle boundary may advance the route fence.
+  // A->B->A is not the original intent even if the final route strings match.
+  mutate.invalidateSession = session => {
+    if (session && typeof session === 'object') routeGenerations.set(session, {})
+  }
+  mutate.retireAgent = agent => {
+    if (agent && typeof agent === 'object') {
+      retiredAgents.add(agent)
+      mutate.invalidateSession(agent.session)
+    }
+  }
+  return mutate
 }
 
 /**

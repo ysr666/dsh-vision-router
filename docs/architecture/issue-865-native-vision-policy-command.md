@@ -180,3 +180,15 @@ SESSION_TYPE constant; the registration now derives the identity from the
 actual shared strict descriptor. A focused production-registration test uses
 a traced caller and checks lookup withdrawal cancels an active stream. The
 exact Host assertions include the unavailable reason if discovery fails again.
+
+### B lifecycle route fence and reasoning-effort control
+
+The lifecycle boundary seeds its last provider/model from live Agent creation
+and HMR reconciliation. A same-route committed effort-only event preserves a
+user-owned Session permission; a genuine route change keeps legacy route
+authority and supersedes delegation snapshots. The shared mutator fences its
+pending work by the Session's route generation in addition to the final
+registered adapter identity, rejects A-B-A during discovery, and rejects retired
+Agents. Exact public-plugin test changes only effort while enhancement is ON
+before testing the real agent request. The one deliberate picker event is
+counted separately from the Remote/command calls.
