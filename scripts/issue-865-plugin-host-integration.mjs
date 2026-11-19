@@ -26,7 +26,8 @@ const [
   host('packages/core/agent-loop/src/index.ts'),
   host('packages/session/session-persistence-jsonl/src/index.ts'),
   host('packages/attachment/attachment-local/src/index.ts'),
-  import(pathToFileURL(join(process.cwd(), '../dvr/index.js')).href),
+  // Exercise the actual package composition (npm exports), not the legacy Core.
+  import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
 ])
 const { LlmAdapter, createUserMessage, createAssistantMessage, createSystemMessage,
   createDeveloperMessage } = llm
