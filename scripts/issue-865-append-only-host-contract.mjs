@@ -19,7 +19,7 @@ const hostRequire = createRequire(path.join(root, 'packages/llm/llm/package.json
 const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: AttachmentLocal }, { default: SystemPrompt }, { default: ToolRuntime },
-  { default: AgentRegistry }, { default: AgentLoop }, JsonlPersistence,
+  NativeToolExecutor, { default: AgentRegistry }, { default: AgentLoop }, JsonlPersistence,
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -28,6 +28,7 @@ const [
   host('packages/attachment/attachment-local/src/index.ts'),
   host('packages/core/system-prompt/src/index.ts'),
   host('packages/core/tools/src/index.ts'),
+  host('packages/core/tool-executor-native/src/index.ts'),
   host('packages/core/agent/src/index.ts'),
   host('packages/core/agent-loop/src/index.ts'),
   host('packages/session/session-persistence-jsonl/src/index.ts'),
@@ -69,6 +70,7 @@ async function mount(memory) {
   await ctx.plugin(AttachmentLocal, { dshHome: home })
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(JsonlPersistence, { root: path.join(home, 'sessions') })
   await ctx.plugin(AgentLoop, { agents: [] })
