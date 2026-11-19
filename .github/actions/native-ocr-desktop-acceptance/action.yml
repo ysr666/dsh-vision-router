@@ -13,15 +13,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Resolve reviewed RC4 pin
+    - name: Resolve reviewed current Host pin
       id: pin
       shell: bash
-      run: node scripts/dsh-rc4-pin.mjs read
-    - name: Checkout immutable DSH RC4
+      run: node scripts/dsh-current-host-pin.mjs read
+    - name: Checkout immutable DSH current Host
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         repository: deepseek-ai/deepseek-harness
-        ref: 3f321d32bfe382212a8ed8785c1d47a5a300aa23
+        ref: 9c2670d3bce5275e0d1610272958121af87787bb
         persist-credentials: false
         path: dsh-ocr-host
     - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
@@ -47,7 +47,7 @@ runs:
         npm exec --yes --package=pnpm@11.20.0 -- pnpm install --frozen-lockfile --ignore-scripts
         node scripts/build-source-artifacts.mjs
         node scripts/build-source-artifacts.mjs --check
-    - name: Install and build real RC4 Desktop source
+    - name: Install and build real current Host Desktop source
       working-directory: dsh-ocr-host
       shell: bash
       env:

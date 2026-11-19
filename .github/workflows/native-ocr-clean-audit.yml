@@ -14,6 +14,8 @@ on:
       - 'quality/test-native-ocr-desktop-acceptance.mjs'
       - 'scripts/dsh-desktop-renderer-e2e.mjs'
       - '.github/actions/native-ocr-desktop-acceptance/action.yml'
+      - 'scripts/dsh-current-host-pin.mjs'
+      - 'config/dsh-current-host-pin.json'
       - 'quality/native-ocr-delivery-preflight.py'
       - 'quality/test-native-ocr-delivery-preflight.py'
       - 'quality/test-native-ocr-staged-acceptance.mjs'
@@ -169,7 +171,7 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/release-stage/archive-audit-evidence.json
           if-no-files-found: error
 
-      - name: Real RC4 Desktop acceptance of this exact Mac archive
+      - name: Real current Host Desktop acceptance of this exact Mac archive
         uses: ./.github/actions/native-ocr-desktop-acceptance
         with:
           stage: ${{ runner.temp }}/dvr-native-worker/release-stage
@@ -288,7 +290,7 @@ jobs:
             ${{ runner.temp }}/dvr-native-worker/link-inventory.json
           if-no-files-found: error
 
-      - name: Real RC4 Desktop acceptance of this exact Windows archive
+      - name: Real current Host Desktop acceptance of this exact Windows archive
         uses: ./.github/actions/native-ocr-desktop-acceptance
         with:
           stage: ${{ runner.temp }}/dvr-win-release-stage
