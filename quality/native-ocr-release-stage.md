@@ -62,6 +62,19 @@ DSH 0.2.2-rc.5, using isolated test-only HTTPS injection:
 - Final proof and evidence-only artifact digests:
   `quality/native-ocr-current-host-desktop-evidence.json`.
 
+### macOS compatibility boundary (static evidence, not an OS runtime pass)
+
+The native ARM64 Worker has Mach-O `LC_BUILD_VERSION minos 13.0` and the
+tested DSH Desktop uses Electron 44 (whose upstream platform policy covers
+macOS 13+). This is **not** proof that the *entire* installed stack executes
+on macOS 13.0. In particular, the official **standalone Node.js 24 binaries**
+require macOS **13.5+**; a CLI/system-Node installation may therefore have a
+different floor than a Desktop that embeds its own Electron Node runtime.
+See [Node v22-to-v24 migration](https://nodejs.org/en/blog/migrations/v22-to-v24)
+and [Electron 44 platform policy](https://www.electronjs.org/blog/electron-44-0).
+Test real minimum OS configurations before advertising 13.0 or changing the
+supported floor; no production minimum was changed here.
+
 **Remaining independent release gates:** complete *transitive compiler-header*
 and retained-code licensing/attribution review, actual lowest-supported OS
 runtime tests (the Mac Mach-O declares minos 13.0 but this is static),
