@@ -2,6 +2,7 @@
 // Uses real DVR evidence/wrapper helpers, synthetic admission/OCR and LLM.
 // Not a full public-plugin, real OCR or paid-provider test.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,6 +12,15 @@ import { spawnSync } from 'node:child_process'
 import { planAppendOnlyImageEvidence } from '../lib/stable-image-evidence.js'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
 
+const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+function assertWirePrefix(previous, later) {
+  assert.equal(later.headerHash, previous.headerHash,
+    'the complete serialized request header, including system and tool declarations, must stay identical')
+  assert.ok(later.messageHashes.length > previous.messageHashes.length,
+    'the resumed wire must contain a genuine appended suffix')
+  assert.deepEqual(later.messageHashes.slice(0, previous.messageHashes.length), previous.messageHashes,
+    'every previous serialized Messages API entry must remain byte-identical')
+}
 const [phase, temp] = process.argv.slice(2)
 if (!phase) {
   const dir = await mkdtemp(path.join(tmpdir(), 'dvr-865-jsonl-'))
@@ -29,9 +39,14 @@ if (!phase) {
     assert.deepEqual(second.marker, first.marker)
     assert.deepEqual(second.evidence, first.evidence)
     assert.equal(second.attachmentId, first.attachmentId)
+    assert.ok(first.wire.bytes >= 500_000, 'use at least 500 kB of synthetic serialized history')
+    assertWirePrefix(first.wire, second.wire)
+    assertWirePrefix(second.wire, second.lateWire)
     console.log(JSON.stringify({ ok: true, scenario: 'production JSONL cross-process cold resume',
       rawImageRetained: true, exactMarkerAndEvidenceReplay: true, evidenceCount: 1,
-      restoredWithoutVisionMemory: true }))
+      restoredWithoutVisionMemory: true, actualDeepSeekMessagesSerializer: true,
+      serializedBaselineBytes: first.wire.bytes, serializedPrefixMessages: first.wire.messageHashes.length,
+      coldResumeWirePrefixUnchanged: true, lateMemoryWirePrefixUnchanged: true }))
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -49,7 +64,7 @@ const hostRequire = createRequire(path.join(root, 'packages/llm/llm/package.json
 const [
   { Context }, llm, { default: SessionStore }, { default: SessionProjection },
   { default: AttachmentLocal }, { default: SystemPrompt }, { default: ToolRuntime },
-  { default: AgentRegistry }, { default: AgentLoop }, JsonlPersistence,
+  { default: AgentRegistry }, { default: AgentLoop }, JsonlPersistence, { serialize },
 ] = await Promise.all([
   import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -61,6 +76,7 @@ const [
   host('packages/core/agent/src/index.ts'),
   host('packages/core/agent-loop/src/index.ts'),
   host('packages/session/session-persistence-jsonl/src/index.ts'),
+  host('packages/llm/llm-deepseek/src/serialize.ts'),
 ])
 const { LlmAdapter, createUserMessage } = llm
 const samplePng = Buffer.from(
@@ -70,12 +86,26 @@ const samplePng = Buffer.from(
 const home = path.join(temp, 'home')
 const sessionId = 'issue-865-evidence-cold-resume'
 const SOURCE = { kind: 'plugin:dsh-vision-router' }
+// Deterministic large, non-private text; no provider tokenizer or billing
+// inference. Include the bulk AFTER the original image in its user message
+// so a changed image marker would invalidate a substantial historical prefix.
+const longText = Array.from({ length: 4096 }, (_, i) =>
+  `Synthetic archive record ${String(i).padStart(5, '0')}: stable mechanical fixture, attachment evidence, request history, independent process, unchanged projection and ordinary continuation.`
+).join('\n')
+const wireConnection = { models: [{ id: 'text', systemPromptUpdate: 'in-history' }],
+  defaults: { reasoningEffort: 'off' }, maxTokens: 1024 }
+const wireProof = request => {
+  const wire = serialize(request, wireConnection, request.messages, new Map(), () => undefined)
+  const { messages, ...header } = wire
+  return { headerHash: hash(header), messageHashes: messages.map(hash),
+    bytes: Buffer.byteLength(JSON.stringify(wire), 'utf8') }
+}
 class TextAdapter extends LlmAdapter {
   constructor() { super(); this.requests = [] }
   providerInfo(provider) { return { id: provider, name: 'Offline text-only model' } }
   async listModels(provider) { return [await this.resolveModel(provider, 'text')] }
   async resolveModel(provider, model) {
-    return { provider, id: model, name: model, inputModalities: ['text'] }
+    return { provider, id: model, name: model, inputModalities: ['text'], systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
     this.requests.push(options)
@@ -165,6 +195,7 @@ try {
     await runTurn(handle.agent, [
       { type: 'text', text: 'What does this image say?' },
       { type: 'image', attachment: ref },
+      { type: 'text', text: longText },
     ])
   } else {
     assert.equal(memory.size, 0)
@@ -176,6 +207,12 @@ try {
       event.type === 'user/message' && event.data?.id?.startsWith('vision-router-image-evidence-v1-'))
     assert.equal(restored.length, 1, 'production log must restore evidence before next turn')
     await runTurn(handle.agent, [{ type: 'text', text: 'Continue without loading OCR memory' }])
+    const originalImage = handle.agent.session.snapshotEvents().find(event =>
+      event.type === 'user/message' && event.data?.content?.some(block => block.type === 'image'))
+    const originalId = originalImage?.data?.content?.find(block => block.type === 'image')?.attachment?.attachmentId
+    assert.ok(originalId)
+    memory.set(originalId, 'LATE_RECOGNITION_NOT_A_NEW_DURABLE_EVENT')
+    await runTurn(handle.agent, [{ type: 'text', text: 'Continue after an unrelated volatile OCR memory refresh' }])
   }
   const events = handle.agent.session.snapshotEvents()
   const original = events.find(event => event.type === 'user/message' &&
@@ -188,8 +225,17 @@ try {
   const durableEvidence = events.filter(event => event.type === 'user/message' &&
     event.data?.id?.startsWith('vision-router-image-evidence-v1-'))
   assert.equal(durableEvidence.length, 1, 'no duplicate evidence in the real log')
-  assert.equal(adapter.requests.length, 1)
+  assert.equal(adapter.requests.length, phase === 'write' ? 1 : 2)
   const wire = adapter.requests[0].messages
+  const firstWireProof = wireProof(adapter.requests[0])
+  let lateWire
+  if (phase === 'resume') {
+    lateWire = wireProof(adapter.requests[1])
+    assertWirePrefix(firstWireProof, lateWire)
+    assert.equal(adapter.requests[1].messages.some(message => message.content.some(block =>
+      block.type === 'text' && block.text.includes('LATE_RECOGNITION_NOT_A_NEW_DURABLE_EVENT'))), false,
+      'volatile memory must not rewrite history or become a synthetic new event without an observed image')
+  }
   const marker = wire.find(message => message.id === original.id)
   assert.ok(marker?.content.some(block => block.type === 'text' && block.text.includes(durableId)))
   assert.ok(!marker.content.some(block => block.type === 'image'))
@@ -204,6 +250,8 @@ try {
     pid: process.pid, attachmentId: durableId,
     marker: { id: marker.id, content: marker.content },
     evidence: { id: evidence[0].id, content: evidence[0].content },
+    wire: firstWireProof,
+    ...(lateWire ? { lateWire } : {}),
   }))
 } finally {
   try { await handle?.dispose() } finally { await ctx.fiber.dispose() }

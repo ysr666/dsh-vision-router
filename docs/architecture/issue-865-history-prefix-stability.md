@@ -43,3 +43,16 @@ Branch `feat/865-append-only-image-evidence` implements the first version of
 - The normal route is unchanged by default until Host integration demonstrates persistence, source attribution and context recovery, including when no local OCR backend is enabled.
 
 **Outstanding**: exact Host real Session append/replay integration, model-visible request inspection, native multimodal fidelity, UI toggle and permissions, legacy migration behavior, retries after failed pre-step, image memory eviction/cold reopen, 100k+ token prefix and prompt-quality tests. Do not enable this setting globally or publish it before those gates pass.
+
+### D3 actual wire prefix across long cold resume
+
+The real production JSONL persistence fixture now submits a deterministic
+500 kB+ synthetic image-containing request through the exact DSH DeepSeek
+Messages serializer. In the second OS process, the next request must retain
+the complete ordered old serialized message entries and request header
+(including system and tools). A further continuation after changing volatile
+OCR memory must preserve the entire resumed prefix as well. Hashes are of
+synthetic serialized values only; the test does not claim paid-provider hits,
+actual tokenizer counts, OCR accuracy or full public-plugin execution. The
+existing original-attachment, one durable evidence event, and cold-replay
+checks remain mandatory. This increments evidence, not production defaults.
