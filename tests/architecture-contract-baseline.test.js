@@ -179,11 +179,10 @@ test('3.0 R7 package root exposes only the deliberate plugin and compatibility c
 test('cross-repository Host workflows materialize canonical DVR artifacts after checkout', async () => {
   const workflows = [
     '.github/workflows/alpha-browser-cold-toggle-smoke.yml',
-    '.github/workflows/dsh-017-browser-smoke.yml',
-    '.github/workflows/dsh-017-real-host-smoke.yml',
-    '.github/workflows/dsh-017-source-contract.yml',
-    '.github/workflows/dsh-020-rc2-validation.yml',
     '.github/workflows/dsh-alpha-source-contract.yml',
+    '.github/workflows/dsh-021-rc5-validation.yml',
+    '.github/workflows/dsh-022-rc1-host-gate.yml',
+    '.github/workflows/dsh-current-host-gate.yml',
     '.github/workflows/dsh-preview-browser-smoke.yml',
     '.github/workflows/dsh-upstream-web-modules-watch.yml',
   ]

@@ -1,5 +1,7 @@
 # DSH 0.2.2-rc.3 immutable-source compatibility audit
 
+> Historical audit: the RC3 workflow, pin and tests remain available at [the archived DVR checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). Current source reuses the current Host gate instead of keeping duplicate intermediate-RC workflows. The evidence below remains historical, not a claim of new-head qualification.
+
 ## Release identity
 
 - Official prerelease: [dsh-v0.2.2-rc.3](https://github.com/deepseek-ai/deepseek-harness/releases/tag/dsh-v0.2.2-rc.3), published **2026-11-13 07:56:55 UTC**.

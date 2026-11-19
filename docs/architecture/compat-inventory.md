@@ -73,16 +73,6 @@ P0 records why each major compatibility seam exists and the condition that permi
 - **Removal condition:** Host-owned adapter requests can receive the explicit DVR override through a scoped Host transport (or the override is intentionally retired under an announced product policy), and the direct whole-turn explicit-empty `chainRoute` state is migrated/retired by support-window policy.
 - **Tests:** `legacy-global-proxy-boundary`, `vision-provider-transport`, exact Host proxy egress contract, Benchmark/Exact Check coverage, P2 Data Boundary Node 22/24.
 
-## `lib/legacy-core-vision-policy-bridge.js`
-
-- **2.3 state:** `retain-host-gap`.
-- **Reason:** preserve the two remaining pre-step compatibility behaviors after Core policy ownership moved to explicit session/Core surfaces: reuse the exact `SessionMemoryView` for text-only image-history rewrite, and expose exact current-turn durable attachment IDs as read-only model context for Vision Router-owned wrappers.
-- **Host gap:** the supported Host pre-step path does not natively provide both an exact session-scoped visual-memory rewrite seam for text-only fallback and a model-readable durable attachment-reference seam for Router-owned image turns.
-- **First needed for:** the Core/session ownership migration that removed Settings/config impersonation while retaining these two real pre-step behaviors.
-- **Feature detection:** live `SessionSurfacePolicy` (`rewriteCurrentImages` and ownership), exact known session visual memory, and actual current-turn image attachment IDs. No Host version-string branch and no Settings/config projection.
-- **Removal condition:** the minimum supported Host exposes native pre-step/session-memory and durable attachment-reference capabilities that make both behaviors redundant, and contract/parity tests prove the bridge can be removed without reintroducing Settings impersonation or degrading text-only/native image turns.
-- **Tests:** `settings-impersonation-closure`, `session-surface-policy`, session/runtime parity and native cold-resume coverage.
-
 ## `lib/tesseract-exec-compat.js`
 
 - **2.3 state:** `product-compat`.

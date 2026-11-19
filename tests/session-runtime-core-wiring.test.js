@@ -30,7 +30,7 @@ test('Session Vision delegation binds to the Agent service through an explicit l
 
   assert.match(
     runtime,
-    /legacyCoreCompat\.ctx\.inject\?\.\(\['agents'\], \(agentsCtx\) => \{/,
+    /sessionIndexCtx\.inject\?\.\(\['agents'\], \(agentsCtx\) => \{/,
   )
   assert.match(
     runtime,
@@ -38,7 +38,7 @@ test('Session Vision delegation binds to the Agent service through an explicit l
   )
   assert.doesNotMatch(
     runtime,
-    /installSessionVisionDelegationBoundary\(\s*legacyCoreCompat\.ctx,/,
+    /installSessionVisionDelegationBoundary\(\s*sessionIndexCtx,/,
     'reading ctx.agents during root apply would turn optional timing into a hard Cordis dependency',
   )
 })

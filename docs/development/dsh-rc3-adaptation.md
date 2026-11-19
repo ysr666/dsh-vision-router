@@ -1,5 +1,7 @@
 # DSH 0.2.1-rc.3 next-channel compatibility qualification
 
+> Historical record, not current support or CI policy. Exact historical workflow files remain in [this DVR checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). The retired Host versions are outside the current support floor; see the current support-window policy for live qualification.
+
 - **Channel:** next / RC only; not stable, and not alpha.
 - **Exact upstream tag:** `dsh-v0.2.1-rc.3`.
 - **Immutable upstream commit:** `1f81c047fc48fa190a683e469daa699857e9afe8`.
