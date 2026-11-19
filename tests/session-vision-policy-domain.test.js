@@ -389,3 +389,66 @@ test('policy domain unload drains a mutation admitted behind an earlier same-Ses
   assert.equal(rows.get('session')?.enabled, false, 'the queued pre-unload mutation must reach durable storage')
   assert.equal(closes, 1)
 })
+
+test('issue #865 B2: subscribe to the same cache authority, isolate Sessions and dispose exactly', async () => {
+  const h = durableHarness()
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  const seen = []
+  const listener = () => seen.push(store.get('a')?.enabled)
+  const offA = store.subscribe('a', listener)
+  const offB = store.subscribe('b', () => seen.push('unexpected-b'))
+  const offA2 = store.subscribe('a', listener)
+  const offThrow = store.subscribe('a', () => { throw Error('broken observer') })
+  await store.set('a', userSessionVisionPolicy(true))
+  assert.deepEqual(seen, [true, true])
+  offA()
+  offA()
+  await store.set('a', userSessionVisionPolicy(false))
+  assert.deepEqual(seen, [true, true, false])
+  store.release('a')
+  assert.equal(seen.at(-1), undefined)
+  await store.hydrate('a')
+  assert.equal(seen.at(-1), false)
+  await store.delete('a')
+  assert.equal(seen.at(-1), undefined)
+  assert.equal(h.rows.has('a'), false)
+  offA2(); offB(); offThrow()
+  const count = seen.length
+  await store.set('a', userSessionVisionPolicy(true))
+  assert.equal(seen.length, count)
+  await h.ctx.cleanup()
+  const offClosed = store.subscribe('a', listener)
+  offClosed()
+  assert.equal(seen.length, count)
+})
+
+test('issue #865 B2: reentrant observers cannot reorder the durable policy queue', async () => {
+  const h = durableHarness()
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  let nested
+  const unsubscribe = store.subscribe('a', () => {
+    if (store.get('a')?.enabled === true) nested = store.set('a', userSessionVisionPolicy(false))
+  })
+  await store.set('a', userSessionVisionPolicy(true))
+  await nested
+  assert.equal(store.get('a')?.enabled, false)
+  assert.equal(h.rows.get('a')?.enabled, false)
+  unsubscribe()
+  await h.ctx.cleanup()
+})
+
+test('issue #865 B2: durability degradation invalidates all active views without clearing policy', async () => {
+  const store = createSessionVisionPolicyRuntimeStore({
+    get(name) { return name === 'storageDomain' ? { async open() { throw Error('offline') } } : undefined },
+    effect(setup) { this.cleanup = setup() },
+  })
+  const seenA = []
+  const seenB = []
+  const offA = store.subscribe('a', () => seenA.push([store.get('a')?.enabled, store.durable]))
+  const offB = store.subscribe('b', () => seenB.push(store.durable))
+  await store.set('a', userSessionVisionPolicy(true))
+  assert.deepEqual(seenA, [[true, true], [true, false]])
+  assert.deepEqual(seenB, [false])
+  assert.equal(store.get('a')?.enabled, true)
+  offA(); offB()
+})

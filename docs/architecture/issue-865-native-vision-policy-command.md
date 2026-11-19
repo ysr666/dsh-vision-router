@@ -77,3 +77,14 @@ invalidate both state reads and mutation authorization.
 The actual authenticated read/subscription carrier and composer binding
 remain separate work. The internal view is not a second state authority,
 an exposed Remote endpoint, or proof of browser authorization.
+
+### B2 policy invalidation feed
+
+The existing Session sidecar now exposes an internal per-Session invalidation
+subscription. It observes hot-authority writes, hydration, eviction, deletion,
+and degradation to volatile mode; it does not copy policy to another store or
+append a Session event. Observers cannot interrupt permission mutations;
+durable queue admission precedes notifications even for reentrant listeners.
+Dispose subscriptions on Session/connection retirement. Adapter/model/settings
+changes and authenticated browser transport still have to be wired and tested;
+this feed alone is not a browser endpoint or an authorization mechanism.
