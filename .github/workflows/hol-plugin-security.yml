@@ -55,22 +55,20 @@ jobs:
               print('No scanner report was written.')
               raise SystemExit(0)
           report = json.loads(file.read_text(encoding='utf-8'))
-          print('Scanner JSON top-level keys:', sorted(report) if isinstance(report, dict) else type(report).__name__)
+          print('Scanner score:', report.get('score', '?'))
+          for category in report.get('categories', []):
+              for check in category.get('checks', []):
+                  if check.get('passed') is False:
+                      print('FAILED CHECK', str(check.get('name', '?'))[:90],
+                            check.get('points'), '/', check.get('maxPoints'))
           seen = set()
-          def walk(value):
-              if isinstance(value, dict):
-                  rule = value.get('rule_id')
-                  path = value.get('file_path')
-                  if isinstance(rule, str) and isinstance(path, str):
-                      identity = (rule, path)
-                      if identity not in seen:
-                          seen.add(identity)
-                          print('FINDING', rule, path.replace('\n', '?').replace('\r', '?')[:180])
-                  for child in value.values():
-                      walk(child)
-              elif isinstance(value, list):
-                  for child in value:
-                      walk(child)
-          walk(report)
+          for finding in report.get('findings', []):
+              rule = finding.get('ruleId')
+              path = finding.get('filePath')
+              if isinstance(rule, str) and isinstance(path, str):
+                  identity = (rule, path)
+                  if identity not in seen:
+                      seen.add(identity)
+                      print('FINDING', rule, path[:180].replace(chr(10), '?').replace(chr(13), '?'))
           print('Unique rule/path pairs:', len(seen))
           PY
