@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
+import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
 import { installNativeVisionControlRemote, NATIVE_VISION_REMOTE } from '../lib/native-vision-control-remote.js'
 import { createSessionVisionPolicyRuntimeStore } from '../lib/session-vision-policy-domain.js'
 import { nativeVisionControlViewSchema } from '../lib/native-vision-control-wire.js'
@@ -58,11 +58,12 @@ const registered = ctx.llm.registerAdapter(['native-test'], new SyntheticSource(
 // The actual DVR store is volatile on this fixture without storageDomain.
 // Its durable behavior has separate domain tests; observe the same authority.
 const store = createSessionVisionPolicyRuntimeStore(ctx)
-installNativeVisionPolicyCommand(ctx, store)
+const mutate = createNativeVisionPolicyMutator(ctx, store)
+installNativeVisionPolicyCommand(ctx, store, { mutate })
 
 // Exercise the production registration, not a fixture-only Service.
 const namespace = NATIVE_VISION_REMOTE
-const mounted = installNativeVisionControlRemote(ctx, store)
+const mounted = installNativeVisionControlRemote(ctx, store, { mutate })
 await mounted?.await?.()
 assert.ok(ctx.typert.local.get(namespace + '/observe'), 'production descriptor registered')
 let modelReads = 0
@@ -106,7 +107,14 @@ try {
   bindings.push({ role: { name: 'other-session', resource: 'session',
     actions: [namespace + '/observe'] }, resource: { kind: 'session', id: 'not-this-session' } })
   await assert.rejects(openRemote(guest, args), error => error?.code === 'remote-access/denied')
+  const setRemote = (peer, request) => ctx.typertGateway.invoke({ peer, namespace, method: 'set',
+    args: { agentId: agent.id, request }, signal: AbortSignal.timeout(8000) })
+  const selection = { provider: 'native-test', model: 'test-mm' }
+  await assert.rejects(setRemote(guest, { enabled: true, selection }), error =>
+    error?.code === 'remote-access/denied')
   assert.equal(modelReads, readsBeforeDenied, 'denial must not trigger model discovery')
+  assert.equal((await setRemote(owner, { enabled: true, selection: { ...selection, model: 'stale' } })).kind, 'error')
+  assert.equal(store.get(agent.id), undefined, 'stale UI never writes')
   const control = new AbortController()
   const remoteStream = await openRemote(owner, args, AbortSignal.any([control.signal, AbortSignal.timeout(15000)]))
   observer = remoteStream[Symbol.asyncIterator]()
@@ -118,7 +126,7 @@ try {
   assert.equal(agent.session.snapshotEvents().length, beforeEvents.length,
     'opening the live read stream must not log commands or history')
   const liveOn = observer.next()
-  assert.equal((await invoke('/vision-router on')).kind, 'success')
+  assert.equal((await setRemote(owner, { enabled: true, selection })).kind, 'success')
   const onView = await liveOn
   assert.equal(onView.done, false)
   assert.equal(onView.value.enabled, true)
@@ -145,18 +153,18 @@ try {
   const logged = agent.session.snapshotEvents()
   assert.equal(logged.filter(event => event.type === 'model/selection').length,
     modelSelectionsBefore, 'Vision policy commands must not change selected provider or model')
-  assert.equal(logged.filter(event => event.type === 'command/run').length, 3)
-  assert.equal(logged.filter(event => event.type === 'command/done').length, 3)
+  assert.equal(logged.filter(event => event.type === 'command/run').length, 2)
+  assert.equal(logged.filter(event => event.type === 'command/done').length, 2)
   const rendered = agent.session.deriveMessages()
   assert.equal(rendered.some(message => message.content?.some(
     block => block.type === 'text' && block.text.includes('vision-router'))), false,
   'command text itself must never enter model-visible history')
   console.log(JSON.stringify({
     ok: true, kind: 'real Host authorized command without model selection',
-    commands: 3, modelSelectionEventsAdded: 0, nativePolicyFinal: false,
+    commands: 2, modelSelectionEventsAdded: 0, nativePolicyFinal: false,
     observedPolicyTransitions: [false, true, false], readStreamAddsNoEvents: true,
     realGatewayLookup: true, ungrantedGuestDenied: true, wrongSessionGrantDenied: true,
-    malformedArgsDenied: true, carrierAbort: true,
+    malformedArgsDenied: true, carrierAbort: true, sharedWriteAuthority: true, staleUiRejected: true,
   }))
 } finally {
   await observer?.return?.()

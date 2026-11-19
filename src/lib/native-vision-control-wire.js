@@ -32,3 +32,13 @@ export const nativeVisionControlViewSchema = z.discriminatedUnion('kind', [
 ])
 
 export const nativeVisionControlSessionIdSchema = z.string().min(1)
+
+export const nativeVisionMutationRequestSchema = z.strictObject({
+  enabled: z.boolean(),
+  selection,
+})
+
+export const nativeVisionMutationReceiptSchema = z.strictObject({
+  kind: z.enum(['success', 'error']),
+  text: z.string().max(1024),
+})

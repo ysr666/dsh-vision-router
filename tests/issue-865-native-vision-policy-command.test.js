@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
+import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
 import { readNativeVisionControlState, observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
 import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
 
@@ -494,4 +494,32 @@ test('issue #865 B2: observe adapter topology changes without selecting a model'
   } finally {
     await stream.return()
   }
+})
+
+
+test('issue #865 B2: shared command/Remote writes are ordered and stale UI route cannot mutate', async () => {
+  const f = fixture()
+  const store = {
+    get: id => f.policies.get(id),
+    async set(id, policy) { f.policies.set(id, policy) },
+  }
+  const mutator = createNativeVisionPolicyMutator(f.ctx, store)
+  installNativeVisionPolicyCommand(f.ctx, store, { mutate: mutator })
+  const command = f.registered.at(-1).handler
+  const selection = f.agent.model.current()
+  const lookups = []
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { lookups.push(resolve) })
+  const oldClick = mutator(f.agent, { enabled: true, selection })
+  const newerCommand = command({ agent: f.agent, rawInput: 'off' })
+  assert.equal(lookups.length, 2)
+  lookups[1]({ inputModalities: ['text', 'image'] })
+  assert.equal((await newerCommand).kind, 'success')
+  lookups[0]({ inputModalities: ['text', 'image'] })
+  assert.equal((await oldClick).kind, 'error')
+  assert.equal(f.policies.get(f.agent.id).enabled, false)
+  f.changeSelected({ provider: 'new', model: 'new' })
+  assert.equal((await mutator(f.agent, { enabled: true, selection })).kind, 'error')
+  assert.equal(lookups.length, 2, 'obsolete UI intent cannot start a capability lookup')
+  assert.equal(f.policies.get(f.agent.id).enabled, false)
+  assert.equal(f.selectCount(), 0)
 })

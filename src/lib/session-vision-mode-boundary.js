@@ -1,6 +1,6 @@
 import { currentSessionVisionPolicy } from './native-image-coexistence.js'
 import { userSessionVisionPolicy } from './session-vision-policy.js'
-import { installNativeVisionPolicyCommand } from './native-vision-policy-command.js'
+import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from './native-vision-policy-command.js'
 import { installNativeVisionControlRemote } from './native-vision-control-remote.js'
 import {
   clearSessionVisionModeAuthorityForAgent,
@@ -344,6 +344,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   // can be selected without touching Agent.model or selecting a twin provider.
   // The browser continues its legacy picker until a policy-aware view exists.
   const nativeControlOptions = { config, toolEnabled: () => liveConfig(ctx, config).tool !== false }
+  nativeControlOptions.mutate = createNativeVisionPolicyMutator(ctx, sessionVisionPolicyStore, nativeControlOptions)
   installNativeVisionPolicyCommand(ctx, sessionVisionPolicyStore, nativeControlOptions)
   installNativeVisionControlRemote(ctx, sessionVisionPolicyStore, nativeControlOptions)
   let toolsView

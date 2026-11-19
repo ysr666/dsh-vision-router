@@ -20,6 +20,82 @@ function result(kind, text) {
 }
 
 
+/** One mutation owner shared by slash commands and the Composer Remote.
+ * An expected route from the observed UI is checked before recording intent,
+ * so an obsolete click cannot change a newly selected model's policy.
+ */
+export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () => true } = {}) {
+  // A slow provider capability lookup from a previous command must not
+  // override a later ON/OFF intent on the same live Agent. Weak identity
+  // avoids per-Session memory growth and does not cross Session lifetimes.
+  const latestIntent = new WeakMap()
+  // Serializes only writes for the same live Agent; different Sessions may
+  // change modes concurrently. A weak key prevents retired Agent retention.
+  const mutationTails = new WeakMap()
+  return async function mutate(agent, { enabled, selection: expected }, signal) {
+    if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
+    const sessionId = agent?.session?.id
+    if (typeof sessionId !== 'string' || !sessionId || agent?.id !== sessionId || typeof enabled !== 'boolean') {
+      return result('error', 'Vision mode requires an authorized, active Session Agent.')
+    }
+    const selection = modelSelection(agent)
+    if (!isSameSelection(selection, expected)) {
+      return result('error', 'Model changed before Vision-mode validation; refresh the control.')
+    }
+    if (enabled && !toolEnabled()) {
+      return result('error', 'DVR tools are disabled in plugin settings.')
+    }
+    // Record the user's ordering *before* the first asynchronous model
+    // capability lookup. A late earlier lookup cannot overwrite a newer
+    // successful command, even if the provider ignores AbortSignal.
+    const intent = {}
+    latestIntent.set(agent, intent)
+    const resolved = await resolveNativeControlTarget(ctx, agent, signal)
+    if (resolved.kind !== 'native') {
+      return result('error', resolved.kind === 'legacy'
+        ? 'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.'
+        : 'Cannot validate the current native model for this Vision-mode command.')
+    }
+    const { target } = resolved
+    if (!isSameSelection(selection, target.selection)) {
+      return result('error', 'Model changed during Vision-mode validation; retry the command.')
+    }
+    if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
+    if (latestIntent.get(agent) !== intent) {
+      return result('error', 'A newer Vision-mode command superseded this request.')
+    }
+    const previous = mutationTails.get(agent) ?? Promise.resolve()
+    const committed = previous.catch(() => {}).then(async () => {
+      // One previous write may still be awaiting durable storage. Verify
+      // the actual current intent/model/registration when this command
+      // finally takes the mutation slot, not merely on query completion.
+      if (signal?.aborted) return false
+      if (latestIntent.get(agent) !== intent) return false
+      if (!nativeControlTargetCurrent(ctx, agent, target)) return false
+      if (enabled && !toolEnabled()) return false
+      await store.set(sessionId, userSessionVisionPolicy(enabled))
+      return true
+    })
+    mutationTails.set(agent, committed)
+    let applied
+    try {
+      applied = await committed
+    } catch {
+      return result('error', 'Vision-mode policy could not be stored for this Session.')
+    }
+    if (!applied) {
+      return result('error', 'Vision-mode command cancelled, superseded or model registration changed.')
+    }
+    const durabilityNote = store.durable === false
+      ? ' This Host has no durable policy store; the setting may reset after restart.'
+      : ''
+    return result('success',
+      (enabled
+        ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
+        : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
+  }
+}
+
 /**
  * The official DSH command plane is Session-authorized by the Host, unlike a
  * private unauthenticated HTTP endpoint. This is the Host half of a future
@@ -30,16 +106,10 @@ function result(kind, text) {
  * Native pixels remain available to the native model when enhancement is OFF.
  * Only DVR-owned precision tools and instructions follow this policy.
  */
-export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () => true } = {}) {
+export function installNativeVisionPolicyCommand(ctx, store, options = {}) {
   if (typeof ctx?.inject !== 'function' || typeof store?.get !== 'function' ||
       typeof store?.set !== 'function') return
-  // A slow provider capability lookup from a previous command must not
-  // override a later ON/OFF intent on the same live Agent. Weak identity
-  // avoids per-Session memory growth and does not cross Session lifetimes.
-  const latestIntent = new WeakMap()
-  // Serializes only writes for the same live Agent; different Sessions may
-  // change modes concurrently. A weak key prevents retired Agent retention.
-  const mutationTails = new WeakMap()
+  const mutate = options.mutate ?? createNativeVisionPolicyMutator(ctx, store, options)
   ctx.inject(['commands'], scope => {
     scope.commands.register({
       name: NAME,
@@ -79,58 +149,7 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
           return result('success', 'DVR precision tools: ' + description +
             '. Native model: ' + selection.provider + '/' + selection.model + '.')
         }
-        if (action === 'on' && !toolEnabled()) {
-          return result('error', 'DVR tools are disabled in plugin settings.')
-        }
-        // Record the user's ordering *before* the first asynchronous model
-        // capability lookup. A late earlier lookup cannot overwrite a newer
-        // successful command, even if the provider ignores AbortSignal.
-        const intent = {}
-        latestIntent.set(agent, intent)
-        const resolved = await resolveNativeControlTarget(ctx, agent, signal)
-        if (resolved.kind !== 'native') {
-          return result('error', resolved.kind === 'legacy'
-            ? 'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.'
-            : 'Cannot validate the current native model for this Vision-mode command.')
-        }
-        const { target } = resolved
-        if (!isSameSelection(selection, target.selection)) {
-          return result('error', 'Model changed during Vision-mode validation; retry the command.')
-        }
-        const enabled = action === 'on'
-        if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
-        if (latestIntent.get(agent) !== intent) {
-          return result('error', 'A newer Vision-mode command superseded this request.')
-        }
-        const previous = mutationTails.get(agent) ?? Promise.resolve()
-        const committed = previous.catch(() => {}).then(async () => {
-          // One previous write may still be awaiting durable storage. Verify
-          // the actual current intent/model/registration when this command
-          // finally takes the mutation slot, not merely on query completion.
-          if (signal?.aborted) return false
-          if (latestIntent.get(agent) !== intent) return false
-          if (!nativeControlTargetCurrent(ctx, agent, target)) return false
-          if (enabled && !toolEnabled()) return false
-          await store.set(sessionId, userSessionVisionPolicy(enabled))
-          return true
-        })
-        mutationTails.set(agent, committed)
-        let applied
-        try {
-          applied = await committed
-        } catch {
-          return result('error', 'Vision-mode policy could not be stored for this Session.')
-        }
-        if (!applied) {
-          return result('error', 'Vision-mode command cancelled, superseded or model registration changed.')
-        }
-        const durabilityNote = store.durable === false
-          ? ' This Host has no durable policy store; the setting may reset after restart.'
-          : ''
-        return result('success',
-          (enabled
-            ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
-            : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
+        return mutate(agent, { enabled: action === 'on', selection }, signal)
       },
     })
   })

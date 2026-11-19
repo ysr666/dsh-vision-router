@@ -132,7 +132,12 @@ try {
   const firstOff = await turn('First text turn: Vision initially off')
   assert.equal(firstOff.active.length, 0, 'OFF must not admit owned DVR definitions')
   const onView = observer.next()
-  const on = await invoke('/vision-router on')
+  const on = await ctx.typertGateway.invoke({
+    peer: owner, namespace: 'dvrNativeVision', method: 'set',
+    args: { agentId: agent.id, request: { enabled: true,
+      selection: { provider: 'native-proof', model: 'test-mm' } } },
+    signal: AbortSignal.timeout(8000),
+  })
   assert.equal(on.kind, 'success', on.text)
   assert.equal((await onView).value.enabled, true)
   assert.equal(agent.model.current().provider, 'native-proof')
@@ -154,8 +159,8 @@ try {
   assert.equal(lastOff.leadingOwned, 0, 'OFF must not leave owned declarations in the actual native request')
   const events = agent.session.snapshotEvents()
   assert.equal(events.filter(e => e.type === 'model/selection').length, before)
-  assert.equal(events.filter(e => e.type === 'command/run').length, 4)
-  assert.equal(events.filter(e => e.type === 'command/done').length, 4)
+  assert.equal(events.filter(e => e.type === 'command/run').length, 3)
+  assert.equal(events.filter(e => e.type === 'command/done').length, 3)
   assert.equal(agent.model.current().provider, 'native-proof')
   assert.equal(agent.model.current().model, 'test-mm')
   assert.equal(agent.session.deriveMessages().some(message =>
@@ -163,7 +168,7 @@ try {
       block.text.includes('/vision-router'))), false)
   console.log(JSON.stringify({
     ok: true, scenario: 'actual DVR apply + Host commands native permission',
-    sessionCommandCount: 4, selectionEventsAdded: 0,
+    sessionCommandCount: 3, selectionEventsAdded: 0,
     modelIdentityUnchanged: true, finalPolicy: 'off',
     activeOwnedToolCounts: [firstOff.active.length, enabled.active.length, lastOff.active.length],
     nativeRequests: requests.length, productionRemoteTransitions: [false, true, false],

@@ -1,8 +1,8 @@
-// Production read-only Remote registration. DSH's Typert Loader explicitly
+// Production Session-scoped Remote registration. DSH's Typert Loader explicitly
 // supports manual registry contributions for hand-written wire schemas.
 // No eager import of a Host package, private HTTP route, or SRC fallback.
 import { observeNativeVisionControlState } from './native-vision-control-state.js'
-import { nativeVisionControlSessionIdSchema, nativeVisionControlViewSchema } from './native-vision-control-wire.js'
+import { nativeVisionControlSessionIdSchema, nativeVisionControlViewSchema, nativeVisionMutationRequestSchema, nativeVisionMutationReceiptSchema } from './native-vision-control-wire.js'
 
 export const NATIVE_VISION_REMOTE = 'dvrNativeVision'
 const PACKAGE = 'dsh-vision-router-native-control'
@@ -23,6 +23,20 @@ export function createNativeVisionControlContribution() {
         codec: codec(SESSION_TYPE, nativeVisionControlSessionIdSchema) }],
       cancellation: { parameter: 'signal' },
       result: codec(PACKAGE + '#NativeVisionControlView', nativeVisionControlViewSchema),
+    }, {
+      id: PACKAGE + '#' + NATIVE_VISION_REMOTE + '/set',
+      service: NATIVE_VISION_REMOTE,
+      namespace: NATIVE_VISION_REMOTE,
+      method: 'set',
+      invocation: { kind: 'direct' },
+      parameters: [
+        { name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent',
+          codec: codec(SESSION_TYPE, nativeVisionControlSessionIdSchema) },
+        { name: 'request', wire: 'request', source: 'json',
+          codec: codec(PACKAGE + '#NativeVisionMutationRequest', nativeVisionMutationRequestSchema) },
+      ],
+      cancellation: { parameter: 'signal' },
+      result: codec(PACKAGE + '#NativeVisionMutationReceipt', nativeVisionMutationReceiptSchema),
     }],
   }
 }
@@ -33,7 +47,8 @@ export function createNativeVisionControlContribution() {
  * and legacy picker unchanged. No fallback to an unauthenticated carrier.
  */
 export function installNativeVisionControlRemote(ctx, store, options = {}) {
-  if (typeof ctx?.inject !== 'function' || typeof store?.subscribe !== 'function') return
+  if (typeof ctx?.inject !== 'function' || typeof store?.subscribe !== 'function' ||
+      typeof options.mutate !== 'function') return
   return ctx.inject(['typert', 'agents'], scope => {
     const registry = scope.typert
     if (typeof registry?.register !== 'function' ||
@@ -68,6 +83,12 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       // invocation-context receiver; the Gateway still validates the exact
       // binding, wire arguments, principal and lookup before invoking them.
       const receiver = {
+        async set(agent, request, signal) {
+          const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
+          const input = nativeVisionMutationRequestSchema.parse(request)
+          const receipt = await options.mutate(agent, input, liveSignal)
+          return nativeVisionMutationReceiptSchema.parse(receipt)
+        },
         observe(agent, signal) {
           const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
           if (liveSignal.aborted) return (async function* () {})()

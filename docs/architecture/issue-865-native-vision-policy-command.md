@@ -142,3 +142,14 @@ remain available on older Hosts. The same production registration replaces the
 probe-only Service in the permission contract test; the public-apply fixture
 also asserts OFF/ON/OFF over the real Gateway. Browser contribution mounting,
 peer reconnect, and UI control are still separate acceptance gates.
+
+### B2.2 shared mutation authority
+
+The strict Session-scoped dvrNativeVision/set Remote takes an explicit boolean
+and the provider/model identity last observed by the Client. It delegates to
+the same mutator instance as /vision-router on|off (one intent fence and one
+serialized mutation tail per live Agent). An obsolete Client route fails
+before capability resolution or state mutation. Remote writes create no
+command history; the subscription remains the source of UI truth. The
+production Gateway tests exercise a Remote ON followed by a command OFF,
+non-owner denial and stale selection rejection. No client UI is enabled yet.
