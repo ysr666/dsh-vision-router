@@ -71,6 +71,8 @@ jobs:
       - name: Preflight Desktop scripts without native build or network
         shell: pwsh
         run: |
+          node scripts/dsh-current-host-pin.mjs read
+          if ($LASTEXITCODE -ne 0) { throw 'CURRENT_HOST_PIN_UNAVAILABLE' }
           node --check scripts/dsh-desktop-renderer-e2e.mjs
           if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_SYNTAX_INVALID' }
           node --check quality/native-ocr-desktop-acceptance.mjs
