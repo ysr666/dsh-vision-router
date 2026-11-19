@@ -25,7 +25,10 @@ const [
   host('packages/core/agent-loop/src/index.ts'),
   host('packages/interaction/commands/src/index.ts'),
   host('packages/attachment/attachment-local/src/index.ts'),
-  import(pathToFileURL(join(process.cwd(), '../dvr/index.js')).href),
+  // The published npm root is lib/public-entry.js, not the legacy Core
+  // implementation index.js. Testing Core directly bypasses runtime
+  // composition and would produce a false missing-command diagnosis.
+  import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
