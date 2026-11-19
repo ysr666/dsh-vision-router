@@ -250,6 +250,8 @@ test('reviewed download verifies bounded archive bytes before invoking the exist
 })
 
 // Windows transient native-file locks: owner identity and safe bounded retries.
+// Unsupported CI platforms inject only the isolated fixture path; production
+// resolveNativePaths() remains unchanged and is checked on real Windows CI.
 const transient = code => Object.assign(new Error('temporary OS file lock'), { code })
 test('Windows owner-bound native OCR uninstall removes a realistic fresh directory', async () => {
   const home = await mkdtemp(join(tmpdir(), 'dvr-win-ocr-uninstall-'))
@@ -260,7 +262,7 @@ test('Windows owner-bound native OCR uninstall removes a realistic fresh directo
       '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
     await writeFile(join(root, 'worker.exe'), 'fake unit-test executable, never run')
     await writeFile(join(root, 'models', 'dummy.param'), 'fake model')
-    assert.equal((await uninstallNative({ home })).installed, false)
+    assert.equal((await uninstallNative({ home, resolvePaths: () => ({ root }) })).installed, false)
     await assert.rejects(lstat(root), { code: 'ENOENT' })
   } finally { await rm(home, { recursive: true, force: true, maxRetries: 5 }) }
 })
@@ -273,7 +275,7 @@ test('Windows retries bounded transient rename failures before the owned move', 
       '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
     const { moveOwnedNativeOcrDirectory } = await import('../src/lib/native-ocr-installation.js')
     let calls=0
-    const result=await uninstallNative({home,platform:'win32',moveOwned:async(from,to)=>{
+    const result=await uninstallNative({home,platform:'win32',resolvePaths:() => ({root}),moveOwned:async(from,to)=>{
       if(calls++<2)throw transient('EPERM')
       return moveOwnedNativeOcrDirectory(from,to)
     }})
@@ -291,7 +293,7 @@ test('Windows retries only transient bounded tomb cleanup and never touches unre
       '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
     await writeFile(unrelated,'must stay')
     let calls=0
-    const result=await uninstallNative({home,platform:'win32',remove:async(tomb,opts)=>{
+    const result=await uninstallNative({home,platform:'win32',resolvePaths:() => ({root}),remove:async(tomb,opts)=>{
       assert.ok(tomb.startsWith(root+'.removing-'))
       assert.equal(opts.recursive,true)
       if(calls++<2)throw transient('EBUSY')
