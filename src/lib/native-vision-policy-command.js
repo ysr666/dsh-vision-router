@@ -1,4 +1,5 @@
 import { userSessionVisionPolicy } from './session-vision-policy.js'
+import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
 
 const NAME = 'vision-router'
 
@@ -16,6 +17,21 @@ function isSameSelection(a, b) {
 
 function result(kind, text) {
   return { kind, text }
+}
+
+function sourceModelIsNative(ctx, provider) {
+  // A DVR twin advertises inputModalities:['text','image'] for *Host image
+  // admission*, even when its underlying source model is text-only. Metadata
+  // alone is therefore insufficient to authorize the model-preserving native
+  // command. Inspect the exact registered adapter, not the route name.
+  try {
+    const llm = ctx?.llm
+    if (typeof llm?.registration !== 'function') return false
+    const adapter = llm.registration(provider)?.adapter
+    return adapter && !isVisionRouterOwnedAdapter(adapter)
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -78,9 +94,10 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         // user permission after the cancel signal has fired.
         if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
         if (!Array.isArray(info?.inputModalities) ||
-            !info.inputModalities.includes('image')) {
+            !info.inputModalities.includes('image') ||
+            !sourceModelIsNative(ctx, selection.provider)) {
           return result('error',
-            'The selected model does not natively accept images. Keep the existing DVR vision wrapper for this provider.')
+            'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.')
         }
         // Model selection can change while an async provider metadata lookup
         // is pending. Never commit a decision authorized for a stale route.
