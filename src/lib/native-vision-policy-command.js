@@ -51,7 +51,8 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
   // override a later ON/OFF intent on the same live Agent. Weak identity
   // avoids per-Session memory growth and does not cross Session lifetimes.
   const latestIntent = new WeakMap()
-  const register = (commands) => commands.register({
+  ctx.inject(['commands'], scope => {
+    scope.commands.register({
       name: NAME,
       description: 'Control DVR precision vision tools on an image-capable model without changing the selected model',
       input: { hint: 'on|off|status' },
@@ -144,16 +145,5 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
             : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
       },
     })
-  // A composed DVR runtime receives a proxy context through several
-  // independent boundaries. Prefer the official non-owning Host service
-  // lookup when already mounted; bind its registration's disposer to DVR's
-  // own Cordis lifecycle. The deferred inject path remains for Hosts that
-  // install Commands after the plugin.
-  let commands
-  try { commands = ctx.get?.('commands') } catch {}
-  if (typeof commands?.register === 'function' && typeof ctx.effect === 'function') {
-    ctx.effect(() => register(commands), 'vision-router: native vision policy command')
-    return
-  }
-  ctx.inject(['commands'], scope => { register(scope.commands) })
+  })
 }
