@@ -91,7 +91,7 @@ function baseSettings(overrides = {}) {
   }
 }
 
-function createHarness(React, { value = baseSettings(), local = true, location, storage } = {}) {
+function createHarness(React, { value = baseSettings(), local = true, location, storage, fetchImpl } = {}) {
   let captured
   const loader = { load(spec) { captured = spec } }
   const sandbox = {
@@ -101,6 +101,7 @@ function createHarness(React, { value = baseSettings(), local = true, location, 
       localStorage: storage,
     },
     document: { documentElement: { lang: 'zh-CN' } },
+    ...(fetchImpl ? { fetch: fetchImpl } : {}),
     Object,
     Promise,
     Array,
@@ -615,4 +616,70 @@ test('a disconnected remote settings scope names its own channel rather than bla
   const output = textOf(harness.registeredComponent({ scope }))
   assert.match(output, /远程设置通道不可用/)
   assert.doesNotMatch(output, /本地设置不可用/)
+})
+
+test('stale OCR route token is refreshed only after exact 403 rejection and retried once', async () => {
+  const calls = []
+  let stateIndex = 0
+  const React = reactStub()
+  React.useState = initial => {
+    const index = stateIndex++
+    return [index === 0 ? 'local' : index === 13
+      ? { status: 'ready', value: { token: 'old-token', ppocrv6: { supported: true, onlineAvailable: true, canDownload: true } } }
+      : initial, () => {}]
+  }
+  const reply = (status, data) => ({ ok: status === 200, status, json: async () => data })
+  const fetchImpl = async (url, options = {}) => {
+    const token = options.headers?.['x-dsh-vision-router-ocr-token']
+    calls.push([options.method || 'GET', token || null, String(url)])
+    if (options.method === 'POST' && token === 'old-token')
+      return reply(403, { ok: false, error: 'invalid OCR operation token' })
+    if (options.method === 'POST' && token === 'fresh-token')
+      return reply(200, { ok: true, installed: true })
+    if (!options.method) return reply(200, {
+      ok: true, token: 'fresh-token', ppocrv6: { installed: true },
+    })
+    throw Error('unexpected request')
+  }
+  const { registeredComponent, scope } = createHarness(React, { fetchImpl })
+  const tree = registeredComponent({ scope })
+  let download
+  walk(tree, node => {
+    if (node?.type === 'button' && node.children?.includes('下载并安装 PP-OCRv6')) download = node
+  })
+  assert.ok(download, 'real local OCR settings button must exist')
+  download.props.onClick()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(calls.map(row => row.slice(0, 2)), [
+    ['POST', 'old-token'], ['GET', null], ['POST', 'fresh-token'], ['GET', null],
+  ])
+})
+
+test('OCR token rejection retry is bounded and never retries unrelated denial', async () => {
+  for (const [status, errorText, expectedCalls] of [
+    [403, 'cross-origin OCR operation rejected', 1],
+    [409, 'native OCR archive integrity mismatch', 1],
+    [403, 'invalid OCR operation token', 3],
+  ]) {
+    const React = reactStub()
+    let index = 0
+    React.useState = initial => [index++ === 0 ? 'local' : index === 14
+      ? { status: 'ready', value: { token: 'old-token', ppocrv6: { supported: true, onlineAvailable: true, canDownload: true } } } : initial, () => {}]
+    const calls = []
+    const fetchImpl = async (url, options = {}) => {
+      calls.push(options.method || 'GET')
+      if (options.method === 'POST') return { status, ok: false, json: async () => ({ error: errorText }) }
+      return { status: 200, ok: true, json: async () => ({ ok: true, token: 'fresh-token' }) }
+    }
+    const { registeredComponent, scope } = createHarness(React, { fetchImpl })
+    const tree = registeredComponent({ scope })
+    let download
+    walk(tree, node => {
+      if (node?.type === 'button' && node.children?.includes('下载并安装 PP-OCRv6')) download = node
+    })
+    assert.ok(download)
+    download.props.onClick()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(calls.length, expectedCalls, 'must not re-run mutation on unrelated denial or retry twice')
+  }
 })
