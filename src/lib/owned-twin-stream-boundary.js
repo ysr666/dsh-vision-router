@@ -1,3 +1,5 @@
+import { readVisionRouterAdapterOwner } from './adapter-ownership.js'
+
 /**
  * Issue #865: intercept only active, DVR-owned generated twin routes at the
  * documented Host llm/stream waterfall, before LlmRuntime.adapterStream()
@@ -40,7 +42,18 @@ export function installOwnedTwinStreamBoundary(ctx, resolveOwnedTwin) {
     } catch {
       return next()
     }
-    if (registered !== adapter) return next()
-    return adapter.stream(options)
+    if (registered !== adapter) {
+      // The public entry's native-image ownership boundary mints a unique
+      // registration token before the lower adapter layers install proxies.
+      // Those layers intentionally retain that token but not object identity.
+      // Match the SAME token, never just a truthy marker or a provider suffix.
+      const expected = readVisionRouterAdapterOwner(adapter)
+      if (typeof expected !== 'object' || expected === null ||
+          readVisionRouterAdapterOwner(registered) !== expected) return next()
+    }
+    if (typeof registered?.stream !== 'function') return next()
+    // Execute the live registered adapter, NOT the raw Core instance:
+    // its stream wrappers own local stabilization and other runtime behavior.
+    return registered.stream(options)
   }, { global: true })
 }

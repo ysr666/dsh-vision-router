@@ -73,3 +73,54 @@ test('issue #865: injected route resolver failures are inert and never block unr
   assert.deepEqual(await take(listener({ provider: 'a-vision' }, () => streamOf('continued'))), ['continued'])
   assert.throws(() => installOwnedTwinStreamBoundary(undefined, () => undefined), TypeError)
 })
+
+test('issue #865: public-entry proxies preserve exact registration token and composed stream', async () => {
+  let listener
+  let registered
+  const mark = Symbol.for('dsh-vision-router.adapter-owner')
+  const token = Object.freeze({})
+  const seen = []
+  const core = {
+    [mark]: token,
+    stream(options) {
+      seen.push(['core', options.provider])
+      return streamOf('core stream')
+    },
+  }
+  const ctx = {
+    on(_event, handler) { listener = handler },
+    llm: { registration() { return { adapter: registered } } },
+  }
+  installOwnedTwinStreamBoundary(ctx, route => route === 'account-vision' ? core : undefined)
+  const invoke = () => listener({ provider: 'account-vision', model: 'm', messages: [] }, () => streamOf('host'))
+  registered = new Proxy(core, {
+    get(target, prop, receiver) {
+      if (prop !== 'stream') return Reflect.get(target, prop, receiver)
+      return (opts) => {
+        seen.push(['composed stream', opts.provider])
+        return target.stream(opts)
+      }
+    },
+  })
+  assert.notEqual(registered, core)
+  assert.deepEqual(await take(invoke()), ['core stream'])
+  assert.deepEqual(seen, [['composed stream', 'account-vision'], ['core', 'account-vision']])
+  registered = { [mark]: Object.freeze({}), stream: () => streamOf('other DVR generation') }
+  assert.deepEqual(await take(invoke()), ['host'], 'distinct owner token cannot authorize replaced registration')
+  registered = { [mark]: true, stream: () => streamOf('foreign') }
+  assert.deepEqual(await take(invoke()), ['host'], 'truthy marker is not a registration token')
+  registered = { stream: () => streamOf('foreign') }
+  assert.deepEqual(await take(invoke()), ['host'])
+  assert.equal(seen.length, 2)
+})
+
+test('issue #865: missing matching token never permits proxy alias dispatch', async () => {
+  let listener
+  const core = { stream: () => streamOf('raw') }
+  const registered = new Proxy(core, {})
+  installOwnedTwinStreamBoundary({
+    on(_event, fn) { listener = fn },
+    llm: { registration() { return { adapter: registered } } },
+  }, () => core)
+  assert.deepEqual(await take(listener({ provider: 'a-vision' }, () => streamOf('fallback'))), ['fallback'])
+})
