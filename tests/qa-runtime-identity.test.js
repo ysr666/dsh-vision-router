@@ -111,9 +111,6 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const sessionIndexAt = source.indexOf(
     'const sessionIndexCtx = installSessionVisionIndexBoundary(',
   )
-  const bridgeAt = source.indexOf(
-    'const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(',
-  )
   const sessionModeAt = source.indexOf(
     'const sessionVisionModeCompat = installSessionVisionModeBoundary(',
   )
@@ -159,12 +156,8 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   )
   assert.ok(sessionIndexAt > sessionRuntimeAt, 'the session index boundary must receive the explicit runtime owner')
   assert.ok(
-    bridgeAt > sessionIndexAt,
-    'the retained pre-step compatibility boundary must consume the indexed session-scoped ownership policy',
-  )
-  assert.ok(
-    sessionModeAt > bridgeAt,
-    'Session Vision mode authority must remain outside the retired identity-only compatibility bridge',
+    sessionModeAt > sessionIndexAt,
+    'Session Vision mode authority must directly consume the indexed session-scoped ownership policy',
   )
   assert.ok(
     diagnosticsAt > sessionModeAt,
@@ -202,11 +195,6 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
     source.slice(failureLifecycleAt, coreApplyAt),
     /finishSchemaBootstrapOnce\(\)[\s\S]*?logging\.logger\.error\(/,
     'failure settlement must close schema bootstrap before logging and rethrowing the original error',
-  )
-  assert.equal(
-    source.includes('legacyCoreCompat.finishSchemaBootstrap()'),
-    false,
-    'the pre-step compatibility boundary must not regain schema-bootstrap authority',
   )
 
   const afterAdapterContract = source.slice(adapterContractAt + 1)

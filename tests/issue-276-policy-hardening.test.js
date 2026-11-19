@@ -1,8 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { rewriteHistoryImages } from '../index.js'
-import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import { contextWithNativeImageCoexistence } from '../lib/native-image-coexistence.js'
 import { installSessionVisionModeBoundary } from '../lib/session-vision-mode-boundary.js'
 import { currentSessionVisionModeAuthority } from '../lib/session-vision-mode-authority.js'
@@ -23,41 +21,6 @@ function imageMessage() {
     ],
   }
 }
-
-test('pre-step compatibility keeps frozen config exact instead of projecting internal policy', () => {
-  const frozen = Object.freeze({
-    tool: false,
-    rewriteImages: true,
-    instantDescribe: true,
-    autoActivateOnImage: true,
-  })
-  const settings = { marker: 'real-settings' }
-  const child = { settings }
-  const ctx = {
-    get(name) {
-      return name === 'settings' ? settings : undefined
-    },
-    inject(_dependencies, callback) {
-      return callback(child)
-    },
-    on() {
-      return () => {}
-    },
-  }
-  const bridge = installLegacyCoreVisionPolicyBridge(
-    ctx,
-    frozen,
-    { rewriteHistoryImages },
-  )
-
-  assert.equal(bridge.config, frozen)
-  assert.equal(bridge.config.tool, false)
-  assert.equal(bridge.ctx.get('settings'), settings)
-  let injected
-  bridge.ctx.inject(['settings'], (value) => { injected = value })
-  assert.equal(injected, child)
-  assert.equal(Object.hasOwn(bridge, 'finishSchemaBootstrap'), false)
-})
 
 test('text-only image policy preserves reject decisions by exact identity', async () => {
   const handlers = new Map()
@@ -81,13 +44,8 @@ test('text-only image policy preserves reject decisions by exact identity', asyn
   }
 
   const native = contextWithNativeImageCoexistence(ctx, config)
-  const bridge = installLegacyCoreVisionPolicyBridge(
-    native.ctx,
-    native.config,
-    { rewriteHistoryImages },
-  )
   const rejected = Object.freeze({ kind: 'reject', reason: 'host rejected the turn' })
-  bridge.ctx.on('agent/pre-step', async () => rejected)
+  native.ctx.on('agent/pre-step', async () => rejected)
 
   const messages = [imageMessage()]
   const result = await handlers.get('agent/pre-step')(

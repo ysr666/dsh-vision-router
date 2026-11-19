@@ -15,7 +15,6 @@ import { createCoreVisionSurfaceRuntime } from './core-vision-surface.js'
 import { installSessionVisionIndexBoundary } from './session-vision-index.js'
 import { createSessionVisionRuntime } from './session-vision-runtime.js'
 import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
-import { installLegacyCoreVisionPolicyBridge } from './legacy-core-vision-policy-bridge.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
@@ -201,7 +200,7 @@ function installHostAndSecurityBoundaries(ctx, config, core, providerTransport) 
   }
 }
 
-function createRuntimeOwners(host, core) {
+function createRuntimeOwners(host) {
   const { attachmentCompatCtx, logging, runtimeConfig, runtimeI18nCore } = host
   const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
@@ -225,30 +224,24 @@ function createRuntimeOwners(host, core) {
     runtimeI18nCore,
     { logger: logging.logger, index: sessionVisionRuntime.index },
   )
-  // The retired bridge stays identity-only. Session mode is a new explicit
-  // boundary because it owns a different concern: per-Agent visibility and
-  // execution authority derived from DSH's modelSelection projection.
-  const legacyCoreCompat = installLegacyCoreVisionPolicyBridge(
-    sessionIndexCtx,
-    nativeImageCompat.config,
-    { rewriteHistoryImages: core.rewriteHistoryImages },
-  )
-  const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(legacyCoreCompat.ctx)
-  legacyCoreCompat.ctx.inject?.(['agents'], (agentsCtx) => {
+  // Session mode owns per-Agent visibility and execution authority from
+  // DSH's modelSelection projection. The retired identity-only bridge is gone.
+  const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
+  sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(
       agentsCtx,
       sessionVisionPolicyStore,
       (parent) => resolveSessionVisionModeAuthority(
         agentsCtx,
         parent,
-        legacyCoreCompat.config,
+        nativeImageCompat.config,
         { sessionPolicy: sessionVisionPolicyStore.get(String(parent.id)) },
       ),
     )
   })
   const sessionVisionModeCompat = installSessionVisionModeBoundary(
-    legacyCoreCompat.ctx,
-    legacyCoreCompat.config,
+    sessionIndexCtx,
+    nativeImageCompat.config,
     { sessionVisionPolicyStore },
   )
 
@@ -485,7 +478,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
 export function applyVisionRuntimeComposition(ctx, config = {}, core, runtime = {}) {
   const providerTransport = runtime?.providerTransport
   const host = installHostAndSecurityBoundaries(ctx, config, core, providerTransport)
-  const owners = createRuntimeOwners(host, core)
+  const owners = createRuntimeOwners(host)
   const routing = installRoutingAndHostProducts(host, owners, core, providerTransport)
   const execution = installExecutionBoundaries(host, owners, routing, core, providerTransport)
   return applyMatureCoreBridge(host, owners, routing, execution, core, runtime)

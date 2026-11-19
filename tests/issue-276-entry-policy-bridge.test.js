@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { currentCoreVisionSurface } from '../lib/core-vision-surface.js'
-import { installLegacyCoreVisionPolicyBridge } from '../lib/legacy-core-vision-policy-bridge.js'
 import {
   IMAGE_OWNERSHIP,
   contextWithNativeImageCoexistence,
@@ -33,7 +32,7 @@ function imageMessage(id = 'sha256:test') {
   }
 }
 
-function bridgeHarness({ inputModalities = ['text'], resolveThrows = false, config = {} } = {}) {
+function nativeHarness({ inputModalities = ['text'], resolveThrows = false, config = {} } = {}) {
   const handlers = new Map()
   const adapters = new Map()
   const tools = new Map()
@@ -120,17 +119,16 @@ function bridgeHarness({ inputModalities = ['text'], resolveThrows = false, conf
   }
 }
 
-function composeBridge(harness, options = {}) {
+function composeNative(harness, options = {}) {
   const runtimeCtx = options.toolRuntime === true
     ? installVisionToolRuntimeBoundary(harness.ctx, harness.persisted)
     : harness.ctx
   const native = contextWithNativeImageCoexistence(runtimeCtx, harness.persisted)
-  const bridge = installLegacyCoreVisionPolicyBridge(native.ctx, native.config)
-  return { native, bridge }
+  return { native }
 }
 
-async function runCoreLikePreStep(harness, bridge, provider, messages, observe) {
-  bridge.ctx.on('agent/pre-step', async (payload) => {
+async function runCoreLikePreStep(harness, native, provider, messages, observe) {
+  native.ctx.on('agent/pre-step', async (payload) => {
     observe?.(payload)
     return { kind: 'continue', messages: payload.messages }
   })
@@ -143,14 +141,14 @@ async function runCoreLikePreStep(harness, bridge, provider, messages, observe) 
 }
 
 test('text-only session preserves the durable image even when a global wrapper exists', async () => {
-  const harness = bridgeHarness({ inputModalities: ['text'] })
+  const harness = nativeHarness({ inputModalities: ['text'] })
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-  const { bridge } = composeBridge(harness)
+  const { native } = composeNative(harness)
   const messages = [imageMessage('sha256:text-route')]
 
   const result = await runCoreLikePreStep(
     harness,
-    bridge,
+    native,
     'deepseek-official',
     messages,
     () => {
@@ -160,8 +158,8 @@ test('text-only session preserves the durable image even when a global wrapper e
       assert.equal(surface.preserveRawImages, true)
       assert.equal(surface.rewriteCurrentImages, false)
       assert.equal(surface.rewriteEnabled, false)
-      assert.equal(bridge.config, harness.persisted)
-      assert.equal(bridge.config.rewriteImages, true)
+      assert.equal(native.config, harness.persisted)
+      assert.equal(native.config.rewriteImages, true)
     },
   )
 
@@ -174,14 +172,14 @@ test('text-only session preserves the durable image even when a global wrapper e
 })
 
 test('text-only pre-step never substitutes cached descriptions into the durable user message', async () => {
-  const harness = bridgeHarness({ inputModalities: ['text'] })
+  const harness = nativeHarness({ inputModalities: ['text'] })
   harness.ctx.llm.registerAdapter(['deepseek-vision'], { stream() {} })
-  const { bridge } = composeBridge(harness)
+  const { native } = composeNative(harness)
   const messages = [imageMessage('sha256:cached')]
 
   const result = await runCoreLikePreStep(
     harness,
-    bridge,
+    native,
     'deepseek-official',
     messages,
   )
@@ -192,20 +190,20 @@ test('text-only pre-step never substitutes cached descriptions into the durable 
 })
 
 test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary', async () => {
-  const harness = bridgeHarness({ inputModalities: ['text'] })
-  const { native, bridge } = composeBridge(harness)
+  const harness = nativeHarness({ inputModalities: ['text'] })
+  const { native } = composeNative(harness)
   native.ctx.llm.registerAdapter(['owned-route'], { stream() {} })
   const messages = [imageMessage('sha256:owned')]
 
-  const result = await runCoreLikePreStep(harness, bridge, 'owned-route', messages, () => {
+  const result = await runCoreLikePreStep(harness, native, 'owned-route', messages, () => {
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.VISION_ROUTER)
     assert.equal(policy.preserveRawImages, true)
     assert.equal(surface.preserveRawImages, true)
     assert.equal(surface.rewriteEnabled, false)
-    assert.equal(bridge.config, harness.persisted)
-    assert.equal(bridge.config.rewriteImages, true)
+    assert.equal(native.config, harness.persisted)
+    assert.equal(native.config.rewriteImages, true)
   })
 
   assert.equal(result.messages, messages)
@@ -213,14 +211,14 @@ test('Vision Router-owned adapter keeps raw image blocks at the adapter boundary
 })
 
 test('native session preserves pixels, suppresses automatic orchestration, and keeps tools optional', async () => {
-  const harness = bridgeHarness({
+  const harness = nativeHarness({
     inputModalities: ['text', 'image'],
     config: { structuredVisionBootstrap: true },
   })
-  const { bridge } = composeBridge(harness)
+  const { native } = composeNative(harness)
   const messages = [imageMessage('sha256:native')]
 
-  const result = await runCoreLikePreStep(harness, bridge, 'deepseek-official', messages, () => {
+  const result = await runCoreLikePreStep(harness, native, 'deepseek-official', messages, () => {
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.NATIVE)
@@ -232,54 +230,53 @@ test('native session preserves pixels, suppresses automatic orchestration, and k
     assert.equal(surface.instantDescribe, false)
     assert.equal(surface.autoActivateOnImage, false)
     assert.equal(surface.structuredBootstrap, false)
-    assert.equal(bridge.config, harness.persisted)
-    assert.equal(bridge.config.rewriteImages, true)
-    assert.equal(bridge.config.instantDescribe, true)
-    assert.equal(bridge.config.autoActivateOnImage, true)
-    assert.equal(bridge.config.structuredVisionBootstrap, true)
-    assert.equal(bridge.config.tool, true)
+    assert.equal(native.config, harness.persisted)
+    assert.equal(native.config.rewriteImages, true)
+    assert.equal(native.config.instantDescribe, true)
+    assert.equal(native.config.autoActivateOnImage, true)
+    assert.equal(native.config.structuredVisionBootstrap, true)
+    assert.equal(native.config.tool, true)
   })
 
   assert.equal(result.messages, messages)
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('UNKNOWN capability preserves the existing Host image contract instead of forcing a text bridge', async () => {
-  const harness = bridgeHarness({ resolveThrows: true })
-  const { bridge } = composeBridge(harness)
+test('UNKNOWN capability preserves the existing Host image contract instead of forcing a text projection', async () => {
+  const harness = nativeHarness({ resolveThrows: true })
+  const { native } = composeNative(harness)
   const messages = [imageMessage('sha256:cold-resume')]
 
-  const result = await runCoreLikePreStep(harness, bridge, 'native-pi', messages, () => {
+  const result = await runCoreLikePreStep(harness, native, 'native-pi', messages, () => {
     const policy = currentSessionVisionPolicy()
     const surface = currentCoreVisionSurface(harness.persisted)
     assert.equal(policy.ownership, IMAGE_OWNERSHIP.UNKNOWN)
     assert.equal(policy.preserveRawImages, true)
     assert.equal(surface.preserveRawImages, true)
     assert.equal(surface.rewriteEnabled, false)
-    assert.equal(bridge.config, harness.persisted)
-    assert.equal(bridge.config.rewriteImages, true)
+    assert.equal(native.config, harness.persisted)
+    assert.equal(native.config.rewriteImages, true)
   })
 
   assert.equal(result.messages, messages)
   assert.equal(result.messages[0].content[0].content[0].type, 'image')
 })
 
-test('tool=false stays real through the retired bridge while execution follows live settings', async () => {
-  const harness = bridgeHarness({ config: { tool: false } })
-  const { bridge } = composeBridge(harness, { toolRuntime: true })
+test('tool=false stays real through native Session ownership while execution follows live settings', async () => {
+  const harness = nativeHarness({ config: { tool: false } })
+  const { native } = composeNative(harness, { toolRuntime: true })
 
   let liveScope
-  bridge.ctx.inject(['settings'], (child) => {
+  native.ctx.inject(['settings'], (child) => {
     liveScope = child.settings.register('vision-router')
   })
-  assert.equal(bridge.config, harness.persisted)
-  assert.equal(bridge.config.tool, false)
+  assert.equal(native.config, harness.persisted)
+  assert.equal(native.config.tool, false)
   assert.equal(liveScope.get(), harness.persisted)
   assert.equal(liveScope.get().tool, false)
-  assert.equal(Object.hasOwn(bridge, 'finishSchemaBootstrap'), false)
 
   let calls = 0
-  bridge.ctx.tools.register({
+  native.ctx.tools.register({
     name: 'vision_describe',
     async execute() {
       calls += 1

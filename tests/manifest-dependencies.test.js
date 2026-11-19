@@ -65,7 +65,6 @@ const DEFAULT_TEST_EXCLUSIONS = Object.freeze([
   { path: 'tests/presentation-switch.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
   { path: 'tests/session-runtime-core-wiring.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
   { path: 'tests/session-vision-runtime-parity.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
-  { path: 'tests/settings-impersonation-closure.test.js', owner: '.github/workflows/architecture-closure.yml', reason: 'architecture closure contract matrix' },
 
   { path: 'tests/vision-execution-order-apply.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },
   { path: 'tests/vision-execution-order-core-wiring.test.js', owner: '.github/workflows/p1-routing-parity.yml', reason: 'always-on PR routing/authority parity matrix' },

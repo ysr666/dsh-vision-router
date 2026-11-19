@@ -11,7 +11,6 @@ on:
       - 'src/lib/core-vision-surface.js'
       - 'src/lib/session-vision-*.js'
       - 'src/lib/session-surface-policy.js'
-      - 'src/lib/legacy-core-vision-policy-bridge.js'
       - 'src/lib/vision-provider-transport.ts'
       - 'src/lib/http-compat.js'
       - 'src/lib/pi-ai-bridge-wire-compat.js'
@@ -29,7 +28,6 @@ on:
       - 'tests/compat-inventory-completeness.test.js'
       - 'tests/final-architecture-closure.test.js'
       - 'tests/core-vision-surface-parity.test.js'
-      - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
       - 'tests/presentation-switch.test.js'
       - 'tests/capability-shadow-retirement.test.js'
@@ -54,7 +52,6 @@ on:
       - 'src/lib/core-vision-surface.js'
       - 'src/lib/session-vision-*.js'
       - 'src/lib/session-surface-policy.js'
-      - 'src/lib/legacy-core-vision-policy-bridge.js'
       - 'src/lib/vision-provider-transport.ts'
       - 'src/lib/http-compat.js'
       - 'src/lib/pi-ai-bridge-wire-compat.js'
@@ -72,7 +69,6 @@ on:
       - 'tests/compat-inventory-completeness.test.js'
       - 'tests/final-architecture-closure.test.js'
       - 'tests/core-vision-surface-parity.test.js'
-      - 'tests/settings-impersonation-closure.test.js'
       - 'tests/presentation-convergence-parity.test.js'
       - 'tests/presentation-switch.test.js'
       - 'tests/capability-shadow-retirement.test.js'
@@ -122,7 +118,6 @@ jobs:
           tests/compat-inventory-completeness.test.js
           tests/final-architecture-closure.test.js
           tests/core-vision-surface-parity.test.js
-          tests/settings-impersonation-closure.test.js
           tests/presentation-convergence-parity.test.js
           tests/presentation-switch.test.js
           tests/capability-shadow-retirement.test.js

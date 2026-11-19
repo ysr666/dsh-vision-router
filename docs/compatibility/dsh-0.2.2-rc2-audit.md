@@ -1,5 +1,7 @@
 # DSH 0.2.2-rc.2 exact-source compatibility audit
 
+> Historical audit: the RC2 workflow, pin and tests remain available at [the archived DVR checkout](https://github.com/ysr666/dsh-vision-router/tree/e278b7ca1f305d27b11cb987c004d0632bf43633). Current source reuses the current Host gate instead of keeping duplicate intermediate-RC workflows. The evidence below remains historical, not a claim of new-head qualification.
+
 ## Immutable basis
 
 - Host: `deepseek-ai/deepseek-harness@ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c` (`dsh-v0.2.2-rc.2`, published 2026-11-11 11:33:06 UTC).

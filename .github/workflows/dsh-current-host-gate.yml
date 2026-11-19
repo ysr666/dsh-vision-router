@@ -1,28 +1,30 @@
-name: DSH 0.2.2-rc.2 Exact-source Host Gate
+name: Current DSH Exact-source Host Gate
 
-# This is an immutable RC2 validation lane, independent of floating Alpha
-# surveillance. RC2 requires Node >=24.9; older DVR/Host compatibility remains
-# covered by the existing Node22 lanes and must not be silently redefined.
+# Immutable Current Host qualification, reused by protected CI; independent of Alpha
+# surveillance. Current Host requires Node >=24.9; older DVR/Host compatibility remains
+# covered by the existing minimum and recommended Host gates.
 # Run all three exact-source OS contracts, real Chromium Settings/save/reload,
 # native Desktop macOS, Windows Node24.9 and Node24.21, and multiplugin ordering.
 # No permission escalation, automated merge or release.
 # No shared Actions cache restore/save: newly executed upstream code never
 # receives a path to poison caches trusted by future default-branch jobs.
 
-# Historical immutable RC2 qualification: manual replay only. The supported
-# floor, recommended RC1 and latest RC3 retain automatic gates.
+# Called by protected CI; manual exact-source replay remains available.
 on:
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Reused workflows inherit github.workflow="CI"; sharing CI's group
+  # would cancel the very caller we must qualify.
+  group: dvr-current-host-qualification-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  rc2-exact-source:
-    name: exact rc2 source / ${{ matrix.os }}
+  current-host-exact-source:
+    name: exact current-host source / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -35,16 +37,16 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Resolve reviewed rc2 pin
+      - name: Resolve reviewed current-host pin
         id: pin
-        run: node dvr/scripts/dsh-rc2-pin.mjs read
-      - name: Checkout immutable reviewed DSH rc2 source
+        run: node dvr/scripts/dsh-current-host-pin.mjs read
+      - name: Checkout immutable reviewed DSH current-host source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c # dsh-v0.2.2-rc.2 immutable reviewed release
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb # dsh-v0.2.2-rc.5 immutable reviewed release
           persist-credentials: false
-          path: dsh-rc2
+          path: dsh-current-host
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
         with:
           version: 11.28.5
@@ -57,79 +59,91 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
           pnpm build:check
-      - name: Install exact rc2 Host workspace dependencies
-        working-directory: dsh-rc2
+      - name: Install exact current-host Host workspace dependencies
+        working-directory: dsh-current-host
         env:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
       - name: Run exact source and Host-owned Sharp contract
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
-      - name: Verify upstream RC2 Session batch append (atomic commit, post-commit per-event observers)
+      - name: Verify upstream Current Host Session batch append (atomic commit, post-commit per-event observers)
         if: matrix.os == 'ubuntu-latest'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         run: pnpm exec vitest run packages/core/session/tests/append.spec.ts
-      - name: Verify DVR feed integration with real RC2 Session atomic batches
-        working-directory: dsh-rc2
+      - name: Verify upstream Current Host DeepSeek refusal terminal-code contract
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        run: pnpm exec vitest run packages/llm/llm-deepseek/tests/stream.spec.ts
+      - name: Verify DVR feed integration with real Current Host Session atomic batches
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
-        run: pnpm exec tsx ../dvr/scripts/dsh-rc2-session-batch-integration.mjs
-      - name: Verify RC2 Agent model/inbox notification ordering
-        working-directory: dsh-rc2
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+        run: pnpm exec tsx ../dvr/scripts/dsh-rc3-session-batch-integration.mjs
+      - name: Verify Current Host Agent model/inbox notification ordering
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
-        run: node ../dvr/scripts/dsh-rc2-agent-order-contract.mjs
+        run: node ../dvr/scripts/dsh-rc3-agent-order-contract.mjs
       - name: Verify Host-owned trustedHosts and minimal webServer ordering without DVR ready bridge
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DSH_CONNECTION_ORDERING_EXPECTED: minimal-connection-ordering
         run: pnpm exec tsx ../dvr/scripts/dsh-web-connection-overlay-contract.mjs
       - name: Verify public 0.2 train peer admission
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-peer-admission-contract.mjs
       - name: Verify Host proxy egress authority
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
         run: pnpm exec tsx ../dvr/scripts/dsh-proxy-egress-contract.mjs
       - name: Build exact macOS Desktop runtime
         if: matrix.os == 'macos-latest'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         run: pnpm run build
+      - name: Native current-host VTracer child after built macOS Host
+        if: matrix.os == 'macos-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Run real macOS Desktop renderer lifecycle
         if: matrix.os == 'macos-latest'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-macos-desktop-renderer.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-macos-desktop-renderer.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-macos-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-macos-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
       - name: Upload macOS Desktop diagnostics on failure
         if: matrix.os == 'macos-latest' && failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-rc2-macos-desktop-diagnostics
-          path: ${{ runner.temp }}/dsh-rc2-macos-desktop-renderer.*
+          name: dsh-current-host-macos-desktop-diagnostics
+          path: ${{ runner.temp }}/dsh-current-host-macos-desktop-renderer.*
           if-no-files-found: ignore
 
-  rc2-settings-host:
-    name: real rc2 Host + Chromium lifecycle
+  current-host-settings-host:
+    name: real current-host Host + Chromium lifecycle
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -138,27 +152,27 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Resolve reviewed rc2 pin
+      - name: Resolve reviewed current-host pin
         id: pin
-        run: node dvr/scripts/dsh-rc2-pin.mjs read
-      - name: Checkout immutable reviewed DSH rc2 source
+        run: node dvr/scripts/dsh-current-host-pin.mjs read
+      - name: Checkout immutable reviewed DSH current-host source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c # dsh-v0.2.2-rc.2 immutable reviewed release
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb # dsh-v0.2.2-rc.5 immutable reviewed release
           persist-credentials: false
-          path: dsh-rc2
+          path: dsh-current-host
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
         with:
           version: 11.28.5
-      # Isolate RC2 dependency installation from shared cache state.
+      # Isolate Current Host dependency installation from shared cache state.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24.9.0
 
       - name: Read the Host version under test
         id: resolve
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         run: |
           set -euo pipefail
           VERSION="$(node -p "require('./package.json').version")"
@@ -166,7 +180,7 @@ jobs:
           echo "Testing @deepseek-ai/dsh $VERSION"
           printf 'version=%s\n' "$VERSION" >> "$GITHUB_OUTPUT"
           {
-            echo '### RC2 settings host gate'
+            echo '### Current Host settings host gate'
             echo
             echo "- DSH version: \`$VERSION\`"
             echo "- source commit: \`$(git rev-parse HEAD)\`"
@@ -178,24 +192,30 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
           pnpm build:check
-      - name: Install rc2 Host workspace dependencies
-        working-directory: dsh-rc2
+      - name: Install current-host Host workspace dependencies
+        working-directory: dsh-current-host
         env:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
-      - name: Build the rc2 Host runtime
-        working-directory: dsh-rc2
+      - name: Build the current-host Host runtime
+        working-directory: dsh-current-host
         run: pnpm run build
+      - name: Native current-host VTracer child after built Ubuntu Host
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: pnpm exec tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
       - name: Prefer official Ubuntu apt mirror for Chromium dependencies
         run: bash dvr/scripts/ci-prefer-ubuntu-archive.sh
       - name: Install Chromium
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         run: pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
       - name: Run bundle recompose stability
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
@@ -205,16 +225,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/dvr-rc2-packed"
-          pnpm pack --pack-destination "$RUNNER_TEMP/dvr-rc2-packed"
-          TARBALL="$(find "$RUNNER_TEMP/dvr-rc2-packed" -maxdepth 1 -type f -name 'dsh-vision-router-*.tgz' -print -quit)"
+          mkdir -p "$RUNNER_TEMP/dvr-current-host-packed"
+          pnpm pack --pack-destination "$RUNNER_TEMP/dvr-current-host-packed"
+          TARBALL="$(find "$RUNNER_TEMP/dvr-current-host-packed" -maxdepth 1 -type f -name 'dsh-vision-router-*.tgz' -print -quit)"
           test -n "$TARBALL"
           node scripts/verify-packed-public-api.mjs "$TARBALL"
           printf 'tarball=%s\n' "$TARBALL" >> "$GITHUB_OUTPUT"
-      - name: Verify packed candidate install and recompose on real RC2 Host
-        working-directory: dsh-rc2
+      - name: Verify packed candidate install and recompose on real Current Host Host
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
           DVR_SMOKE_PACKAGE_SPEC: file:${{ steps.packed-candidate.outputs.tarball }}
@@ -222,62 +242,62 @@ jobs:
       # Historical artifact only: a failure is reported visibly but cannot be
       # fixed retroactively by the current PR. Never count this as a candidate
       # release acceptance result, and never silently treat it as compatible.
-      - name: Diagnose immutable published npm 3.2.0 on RC2 (advisory)
+      - name: Diagnose immutable published npm 3.4.0 on Current Host (advisory)
         id: historical_npm
         continue-on-error: true
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
-          DVR_SMOKE_PUBLISHED_VERSION: '3.2.0'
+          DVR_SMOKE_PUBLISHED_VERSION: '3.4.0'
         run: node ../dvr/scripts/dsh017-bundle-recompose-smoke.mjs
-      - name: Record published npm 3.2.0 diagnostic separately from candidate
+      - name: Record published npm 3.4.0 diagnostic separately from candidate
         if: always()
         shell: bash
         env:
           HISTORICAL_OUTCOME: ${{ steps.historical_npm.outcome }}
         run: |
           {
-            echo '### Immutable published npm 3.2.0 × RC2 (historical diagnostic)'
+            echo '### Immutable published npm 3.4.0 × Current Host (historical diagnostic)'
             echo "Historical npm installation + settings bridge: \`$HISTORICAL_OUTCOME\`"
-            echo 'This is NOT current PR head qualification and is NOT the third-party Dataelem generation installer.'
+            echo 'This is NOT current PR head qualification and does not reproduce the third-party Shop activation path in #860.'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$HISTORICAL_OUTCOME" != success ]; then
-            echo '::warning::Immutable published npm 3.2.0 does not have a verified RC2 settings bridge; inspect the historical advisory log. This PR cannot rewrite a published tarball.'
+            echo '::warning::Immutable published npm 3.4.0 did not pass this Current Host install/recompose diagnostic; inspect the historical advisory log. This PR cannot rewrite a published tarball.'
           fi
       - name: Run cold Vision lifecycle
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-cold-toggle.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-cold-toggle.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-cold-toggle.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-cold-toggle.png
         run: node ../dvr/scripts/alpha-browser-cold-toggle-smoke.mjs
       - name: Run mixed attachment lifecycle
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-mixed.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-mixed.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-mixed.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-mixed.png
         run: node ../dvr/scripts/dsh-preview-mixed-attachment-paste-smoke.mjs
       - name: Run Settings mount/save/reload/readback lifecycle
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.resolve.outputs.version }}
           DVR_EXPECT_NATIVE_SETTINGS_ICON: '1'
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-settings.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-settings.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-settings.png
         run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
       - name: Run Desktop Host injection contract
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DVR_DESKTOP_BASE_PORT: '19410'
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
@@ -286,14 +306,14 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-rc2-settings-host-diagnostics
+          name: dsh-current-host-settings-host-diagnostics
           path: |
-            ${{ runner.temp }}/dsh-rc2-*.json
-            ${{ runner.temp }}/dsh-rc2-*.png
+            ${{ runner.temp }}/dsh-current-host-*.json
+            ${{ runner.temp }}/dsh-current-host-*.png
           if-no-files-found: ignore
 
-  rc2-windows-desktop:
-    name: Windows rc2 Desktop / Node ${{ matrix.node }}
+  current-host-windows-desktop:
+    name: Windows current-host Desktop / Node ${{ matrix.node }}
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -306,16 +326,16 @@ jobs:
         with:
           persist-credentials: false
           path: dvr
-      - name: Resolve reviewed rc2 pin
+      - name: Resolve reviewed current-host pin
         id: pin
-        run: node dvr/scripts/dsh-rc2-pin.mjs read
-      - name: Checkout immutable reviewed DSH rc2 source
+        run: node dvr/scripts/dsh-current-host-pin.mjs read
+      - name: Checkout immutable reviewed DSH current-host source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
-          ref: ddac96760b6edf8fa0fe17cbdcf0b512f4c12b2c # dsh-v0.2.2-rc.2 immutable reviewed release
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb # dsh-v0.2.2-rc.5 immutable reviewed release
           persist-credentials: false
-          path: dsh-rc2
+          path: dsh-current-host
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0
         with:
           version: 11.28.5
@@ -328,52 +348,58 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
           pnpm build:check
-      - name: Install exact rc2 Host workspace dependencies
-        working-directory: dsh-rc2
+      - name: Install exact current-host Host workspace dependencies
+        working-directory: dsh-current-host
         env:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
       - name: Build exact Desktop runtime
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         run: pnpm run build
-      - name: Run authenticated Desktop Host contract
-        working-directory: dsh-rc2
+      - name: Native current-host VTracer child after built Windows Host
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+        run: node --import tsx ../dvr/scripts/dsh-real-host-vtracer-smoke.mjs
+      - name: Run authenticated Desktop Host contract
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_BASE_PORT: '19410'
         run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
       - name: Run Node 24 Desktop renderer lifecycle
         if: matrix.node == '24.21.0'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING: '1'
           DVR_DESKTOP_BASE_PORT: '19510'
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-windows-desktop-renderer.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-windows-desktop-renderer.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-windows-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
-      - name: Run default tool-only image conversation on RC2
+      - name: Run default tool-only image conversation on Current Host
         if: matrix.node == '24.9.0'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_DESKTOP_BASE_PORT: '19510'
-          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-rc2-windows-desktop-renderer.json
-          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-rc2-windows-desktop-renderer.png
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/dsh-current-host-windows-desktop-renderer.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/dsh-current-host-windows-desktop-renderer.png
         run: node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
       - name: Run Node 24 multi-plugin ordering adversary
         if: matrix.node == '24.21.0'
-        working-directory: dsh-rc2
+        working-directory: dsh-current-host
         shell: bash
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-rc2
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
           DVR_MULTIPLUGIN_BASE_PORT: '19600'
@@ -387,6 +413,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: dsh-rc2-windows-desktop-diagnostics-${{ matrix.node }}
-          path: ${{ runner.temp }}/dsh-rc2-windows-desktop-renderer.*
+          name: dsh-current-host-windows-desktop-diagnostics-${{ matrix.node }}
+          path: ${{ runner.temp }}/dsh-current-host-windows-desktop-renderer.*
           if-no-files-found: ignore
