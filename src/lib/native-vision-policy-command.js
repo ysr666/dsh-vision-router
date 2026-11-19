@@ -36,7 +36,8 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
       name: NAME,
       description: 'Control DVR precision vision tools on an image-capable model without changing the selected model',
       input: { hint: 'on|off|status' },
-      handler: async ({ agent, rawInput, attachments }) => {
+      handler: async ({ agent, rawInput, attachments, signal }) => {
+        if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
         const action = typeof rawInput === 'string' ? rawInput.trim() : ''
         if (!['on', 'off', 'status'].includes(action)) {
           return result('error', 'Use /vision-router on, /vision-router off, or /vision-router status.')
@@ -68,10 +69,14 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         // Real Host model catalogs do not expose inputModalities to the UI.
         let info
         try {
-          info = await ctx.llm?.resolveModelInfo?.(selection.provider, selection.model)
+          info = await ctx.llm?.resolveModelInfo?.(selection.provider, selection.model, signal)
         } catch {
           return result('error', 'Cannot validate native image capability for the selected model.')
         }
+        // The official command registry may stop awaiting the handler on
+        // cancellation; never let a late capability response apply stale
+        // user permission after the cancel signal has fired.
+        if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
         if (!Array.isArray(info?.inputModalities) ||
             !info.inputModalities.includes('image')) {
           return result('error',
@@ -83,15 +88,19 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
           return result('error', 'Model changed during Vision-mode validation; retry the command.')
         }
         const enabled = action === 'on'
+        if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
         try {
           await store.set(sessionId, userSessionVisionPolicy(enabled))
         } catch {
           return result('error', 'Vision-mode policy could not be stored for this Session.')
         }
+        const durabilityNote = store.durable === false
+          ? ' This Host has no durable policy store; the setting may reset after restart.'
+          : ''
         return result('success',
-          enabled
+          (enabled
             ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
-            : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.')
+            : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote
       },
     })
   })
