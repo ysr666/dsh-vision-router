@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { normalizeRuntimeVisionConfig } from './runtime-config-normalizer.js'
 import { getOfficialDeepSeekCatalog } from './official-deepseek-catalog.js'
 import { localProvidersOf, providersOf } from './core-primitives.js'
+import { hasDelegatedDeepSeekReplayProvenance } from './delegated-deepseek-replay-provenance.js'
 
 const wrappedContexts = new WeakMap()
 const wrapperDelegateScope = new AsyncLocalStorage()
@@ -339,7 +340,15 @@ export function rebindDelegatedReplaySources(messages, delegateProvider) {
 
     const replayState = source.replayState
     if (!replayState || typeof replayState !== 'object' || Array.isArray(replayState)) return message
-    if (replayState.provider !== delegateProvider || replayState.model !== source.model) return message
+    const legacyProvenance = replayState.provider === delegateProvider &&
+      replayState.model === source.model
+    // DeepSeek Messages v1 keeps its original native replay metadata, plus a
+    // provider stamp added by DVR only while forwarding the real delegate's
+    // successful finish chunk. Unstamped legacy/foreign messages stay foreign.
+    const deepSeekProvenance = hasDelegatedDeepSeekReplayProvenance(
+      replayState, delegateProvider, source.model,
+    )
+    if (!legacyProvenance && !deepSeekProvenance) return message
 
     changed = true
     return {
