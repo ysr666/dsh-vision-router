@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
+import { readNativeVisionControlState } from '../lib/native-vision-control-state.js'
+import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
 
 function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
   const policies = new Map()
@@ -8,6 +10,7 @@ function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
   const model = { provider: 'native-account', model: 'multimodal' }
   let selected = { ...model }
   let selectCount = 0
+  const registeredAdapter = {}
   const agent = {
     id: 'test-session-A',
     session: { id: 'test-session-A' },
@@ -22,7 +25,7 @@ function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
       callback({ commands: { register(definition) { registered.push(definition) } } })
     },
     llm: {
-      registration() { return { adapter: {} } },
+      registration() { return { adapter: registeredAdapter } },
       async resolveModelInfo(provider, modelId) {
         assert.equal(provider, selected.provider)
         assert.equal(modelId, selected.model)
@@ -157,10 +160,11 @@ test('issue #865: slow durable writes are serialized; last Session intent wins',
   const started = []
   let releaseFirst
   let handler
+  const registeredAdapter = {}
   installNativeVisionPolicyCommand({
     inject(_names, mount) { mount({ commands: { register(def) { handler = def.handler } } }) },
     llm: {
-      registration() { return { adapter: {} } },
+      registration() { return { adapter: registeredAdapter } },
       async resolveModelInfo() { return { inputModalities: ['text', 'image'] } },
     },
   }, {
@@ -242,4 +246,65 @@ test('issue #865: store errors do not advertise successful mode switch', async (
   const outcome = await handler({ agent: f.agent, rawInput: 'on', attachments: [] })
   assert.equal(outcome.kind, 'error')
   assert.match(outcome.text, /could not be stored/)
+})
+
+test('issue #865: metadata from a replaced adapter cannot authorize the same named native route', async () => {
+  const f = fixture()
+  let finishLookup
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { finishLookup = resolve })
+  const pending = f.call('on')
+  const replacement = {}
+  f.ctx.llm.registration = () => ({ adapter: replacement })
+  finishLookup({ inputModalities: ['text', 'image'] })
+  assert.equal((await pending).kind, 'error')
+  assert.equal(f.policies.size, 0)
+  assert.equal(f.selectCount(), 0)
+})
+
+test('issue #865 B2: authorized read uses the actual policy after hydration without durable writes', async () => {
+  const f = fixture()
+  let writes = 0
+  let reads = 0
+  let cached
+  const store = {
+    durable: true,
+    get() { return cached },
+    async hydrate(id) {
+      assert.equal(id, f.agent.id)
+      reads++
+      cached = userSessionVisionPolicy(true)
+    },
+    async set() { writes++; throw new Error('read contract must not mutate policy') },
+  }
+  const view = await readNativeVisionControlState(f.ctx, store, f.agent)
+  assert.deepEqual(view, {
+    kind: 'native',
+    selection: { provider: 'native-account', model: 'multimodal' },
+    enabled: true, requestedEnabled: true, canEnable: true, durable: true,
+  })
+  const disabled = await readNativeVisionControlState(f.ctx, store, f.agent, {
+    toolEnabled: () => false,
+  })
+  assert.equal(disabled.kind, 'native')
+  assert.equal(disabled.enabled, false)
+  assert.equal(disabled.requestedEnabled, true, 'global disable does not erase user preference')
+  assert.equal(disabled.canEnable, false)
+  assert.equal(reads, 1)
+  assert.equal(writes, 0)
+  assert.equal(f.selectCount(), 0)
+})
+
+test('issue #865 B2: unsupported and stale control views are not interpreted as native OFF', async () => {
+  const f = fixture()
+  const store = { get() { return undefined }, async set() { throw Error('no writes') } }
+  const text = fixture({ inputModalities: ['text'] })
+  assert.equal((await readNativeVisionControlState(text.ctx, store, text.agent)).kind, 'legacy')
+  const malformed = { ...f.agent, id: 'not-the-authorized-session' }
+  assert.equal((await readNativeVisionControlState(f.ctx, store, malformed)).kind, 'unavailable')
+  let done
+  f.ctx.llm.resolveModelInfo = () => new Promise(resolve => { done = resolve })
+  const pending = readNativeVisionControlState(f.ctx, store, f.agent)
+  f.changeSelected({ provider: 'new-provider', model: 'new-model' })
+  done({ inputModalities: ['text', 'image'] })
+  assert.equal((await pending).kind, 'unavailable')
 })

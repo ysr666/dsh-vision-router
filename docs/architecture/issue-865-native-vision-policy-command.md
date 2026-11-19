@@ -61,3 +61,19 @@ new tool history baseline on models that support addition-only but not removal.
 
 Do not merge, tag, publish, change formal version or release without separate
 user authorization.
+
+### B2 internal read contract (not a browser transport)
+
+`readNativeVisionControlState` accepts a Host-authorized Agent, hydrates
+the existing Session policy store when necessary, and returns a narrow,
+discriminated `native | legacy | unavailable` view. It does not run a
+command, append a log event, select a model, expose the internal adapter,
+or write durable policy. It separates effective tool availability from
+the saved user preference. Native capability must be checked against the
+**same actual registered adapter object** before/after asynchronous
+metadata reads; a replacement under the same provider/model must
+invalidate both state reads and mutation authorization.
+
+The actual authenticated read/subscription carrier and composer binding
+remain separate work. The internal view is not a second state authority,
+an exposed Remote endpoint, or proof of browser authorization.

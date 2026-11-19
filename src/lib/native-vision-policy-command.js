@@ -1,5 +1,5 @@
 import { userSessionVisionPolicy } from './session-vision-policy.js'
-import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
+import { resolveNativeControlTarget, nativeControlTargetCurrent } from './native-vision-control-state.js'
 
 const NAME = 'vision-router'
 
@@ -19,20 +19,6 @@ function result(kind, text) {
   return { kind, text }
 }
 
-function sourceModelIsNative(ctx, provider) {
-  // A DVR twin advertises inputModalities:['text','image'] for *Host image
-  // admission*, even when its underlying source model is text-only. Metadata
-  // alone is therefore insufficient to authorize the model-preserving native
-  // command. Inspect the exact registered adapter, not the route name.
-  try {
-    const llm = ctx?.llm
-    if (typeof llm?.registration !== 'function') return false
-    const adapter = llm.registration(provider)?.adapter
-    return adapter && !isVisionRouterOwnedAdapter(adapter)
-  } catch {
-    return false
-  }
-}
 
 /**
  * The official DSH command plane is Session-authorized by the Host, unlike a
@@ -101,27 +87,14 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         // successful command, even if the provider ignores AbortSignal.
         const intent = {}
         latestIntent.set(agent, intent)
-        // Do not infer native modality from the provider or a route suffix.
-        // Real Host model catalogs do not expose inputModalities to the UI.
-        let info
-        try {
-          info = await ctx.llm?.resolveModelInfo?.(selection.provider, selection.model, signal)
-        } catch {
-          return result('error', 'Cannot validate native image capability for the selected model.')
+        const resolved = await resolveNativeControlTarget(ctx, agent, signal)
+        if (resolved.kind !== 'native') {
+          return result('error', resolved.kind === 'legacy'
+            ? 'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.'
+            : 'Cannot validate the current native model for this Vision-mode command.')
         }
-        // The official command registry may stop awaiting the handler on
-        // cancellation; never let a late capability response apply stale
-        // user permission after the cancel signal has fired.
-        if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
-        if (!Array.isArray(info?.inputModalities) ||
-            !info.inputModalities.includes('image') ||
-            !sourceModelIsNative(ctx, selection.provider)) {
-          return result('error',
-            'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.')
-        }
-        // Model selection can change while an async provider metadata lookup
-        // is pending. Never commit a decision authorized for a stale route.
-        if (!isSameSelection(selection, modelSelection(agent))) {
+        const { target } = resolved
+        if (!isSameSelection(selection, target.selection)) {
           return result('error', 'Model changed during Vision-mode validation; retry the command.')
         }
         const enabled = action === 'on'
@@ -136,8 +109,8 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
           // finally takes the mutation slot, not merely on query completion.
           if (signal?.aborted) return false
           if (latestIntent.get(agent) !== intent) return false
-          if (!isSameSelection(selection, modelSelection(agent))) return false
-          if (!sourceModelIsNative(ctx, selection.provider)) return false
+          if (!nativeControlTargetCurrent(ctx, agent, target)) return false
+          if (enabled && !toolEnabled()) return false
           await store.set(sessionId, userSessionVisionPolicy(enabled))
           return true
         })
