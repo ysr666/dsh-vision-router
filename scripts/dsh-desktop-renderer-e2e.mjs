@@ -700,8 +700,8 @@ try {
           && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
         assert.equal(promptRows.length, 1, 'unique OCR user message required')
         const userText = JSON.stringify(promptRows[0])
-        const attachment = /\\[attached image:\\s*([^\\]]+)\\]/i.exec(userText)?.[1]
-          ?? /\\bsha256:[a-f0-9]{64}\\b/i.exec(userText)?.[0]
+        const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(userText)?.[1]
+          ?? /\bsha256:[a-f0-9]{64}\b/i.exec(userText)?.[0]
         assert.ok(attachment && attachment !== textEvidence.attachmentId, 'new actual image attachment required')
         assert.ok(body.tools?.some(row => row?.function?.name === 'vision_ocr'), 'Host did not admit vision_ocr')
         exactNativeToolCalls++
