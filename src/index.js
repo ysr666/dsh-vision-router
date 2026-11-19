@@ -1436,6 +1436,21 @@ export function apply(ctx, config = {}, runtime = {}) {
         const base = await original.resolveModel(provider, model)
         return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
       },
+      // DSH 0.2.1+ binds the exact registered adapter generation through
+      // llm.prepareCall() BEFORE the llm/stream waterfall is reached. The
+      // owner-checked transparent delegation cannot skip this validation.
+      // Provide the official prepareCall contract on the twin itself, while
+      // deferring actual dispatch to the same registered stream body. The Host
+      // still owns picker defaults, reasoning validation and cancellation.
+      async prepareCall(_provider, model, signal) {
+        signal?.throwIfAborted()
+        const resolved = await this.resolveModel(twinRoute, model)
+        signal?.throwIfAborted()
+        return {
+          model: resolved,
+          stream: (options) => this.stream(options),
+        }
+      },
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
