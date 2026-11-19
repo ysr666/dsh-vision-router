@@ -216,3 +216,7 @@ namespace, reconnects and reads the actual ON baseline, writes OFF, and
 retires the namespace. This independently tests mounting and stream/set
 transport interaction without requiring Chromium dependencies. Physical
 browser/desktop carrier tests remain required.
+
+### Desktop transition recovery
+
+Windows Desktop logs showed accepted Session model/selection events and ready model directories while the policy button remained unavailable. Re-resolve the authorized Agent on provider/model or directory replacement even under the same Session ID. A read subscription that cleanly ends or loses its carrier may reopen within a finite budget; no mutation replay, no stale frame, no fallback after denial/invalid data/withdrawal. This is a regression candidate; the exact Desktop matrix must establish the result.

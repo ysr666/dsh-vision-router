@@ -142,6 +142,8 @@ function createBrowserHarness({
     Proxy,
     Reflect,
     AbortController,
+    setTimeout,
+    clearTimeout,
     console,
   })
 
@@ -1280,4 +1282,41 @@ test('issue #865: old Host Agent API restores standard picker but unavailable cu
     assert.equal(h.selections.length, reason === 'host-control-unsupported' ? 1 : 0)
     h.render({ available: false })
   }
+})
+
+test('issue #865: same-session route switch retires old observation and resolves fresh Host Agent', async () => {
+  const streams = []
+  const selection = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const nativeApi = {
+    observe(id) {
+      let pending
+      const record = { id, retired: false, send: value => pending?.({ done: false, value }) }
+      streams.push(record)
+      return { [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { pending = resolve }) },
+        dispose() { record.retired = true; pending?.({ done: true }) } }
+    },
+    set() { throw Error('legacy transition does not write native policy') },
+  }
+  const h = createBrowserHarness({ nativeApi })
+  const turn = () => new Promise(setImmediate)
+  await turn()
+  h.render()
+  streams[0].send({ kind: 'legacy', reason: 'text-only', selection })
+  await turn()
+  const first = buttonOf(h.render())
+  assert.equal(first.props.disabled, false)
+  first.props.onClick()
+  await turn()
+  assert.equal(buttonOf(h.render()).props.disabled, true, 'old Agent state cannot authorize the new route')
+  assert.equal(streams.length, 2)
+  assert.equal(streams[0].retired, true)
+  assert.equal(streams[1].id, streams[0].id, 'same Session must re-resolve Agent')
+  streams[1].send({ kind: 'legacy', reason: 'dvr-wrapper', selection: { ...selection, provider: 'opencode-go-vision' } })
+  await turn()
+  const restored = buttonOf(h.render())
+  assert.equal(restored.props.disabled, false)
+  assert.equal(restored.props['aria-pressed'], true)
+  assert.equal(h.selections.length, 1)
+  h.render({ available: false })
 })

@@ -689,3 +689,60 @@ test('issue #865: minimum Host Agent lacking model.current reports explicit comp
   assert.deepEqual(await readNativeVisionControlState(f.ctx, { get() {} }, f.agent),
     { kind: 'unavailable', reason: 'no-selection' }, 'new Host missing selection is not old-Host compatibility')
 })
+
+test('issue #865: read-only stream reconnects after Agent retirement, never replays a setter', async () => {
+  const selection = { provider: 'native', model: 'mm' }
+  const view = enabled => ({ kind: 'native', selection, enabled, requestedEnabled: enabled, canEnable: true, durable: true })
+  let calls = 0, writes = 0, releaseWrite, firstEnd, next
+  const states = []
+  const api = {
+    observe() {
+      calls++
+      let first = true
+      const attempt = calls
+      return {
+        [Symbol.asyncIterator]() { return this },
+        next() {
+          if (first) { first = false; return Promise.resolve({ value: view(attempt === 2), done: false }) }
+          return new Promise(resolve => { if (attempt === 1) firstEnd = resolve; else next = resolve })
+        },
+        dispose() { if (attempt === 1) firstEnd?.({ done: true }); else next?.({ done: true }) },
+      }
+    },
+    set() { writes++; return new Promise(resolve => { releaseWrite = resolve }) },
+  }
+  const watch = startNativeVisionClientObservation(api, 'one', state => states.push(state), { retryDelays: [0] })
+  try {
+    await new Promise(setImmediate)
+    const original = states.at(-1).view
+    const pending = watch.set(original, selection)
+    firstEnd({ done: true })
+    for (let n = 0; n < 50 && calls < 2; n++) await new Promise(resolve => setTimeout(resolve, 5))
+    assert.equal(calls, 2)
+    assert.ok(states.some(s => s.kind === 'waiting' && s.reason === 'stream-ended'))
+    releaseWrite({ ok: true, value: { kind: 'success', text: 'ok' } })
+    assert.equal(await pending, false, 'retired observation receipt is not actionable')
+    assert.equal(writes, 1, 'reconnection never replays mutations')
+    assert.equal(states.at(-1).view.enabled, true, 'only the replacement baseline decides')
+    assert.equal(await watch.set(original, selection), false)
+  } finally { watch.stop() }
+})
+
+test('issue #865: read reconnect budget is finite; invalid frames and access denial never re-open', async () => {
+  for (const scenario of ['ended', 'invalid', 'denied']) {
+    let calls = 0
+    const states = []
+    const watch = startNativeVisionClientObservation({
+      async *observe() {
+        calls++
+        if (scenario === 'denied') throw Object.assign(Error('denied'), { code: 'remote-access/denied' })
+        if (scenario === 'invalid') yield { kind: 'native' }
+      },
+    }, 'one', s => states.push(s), { retryDelays: [0, 0] })
+    try {
+      for (let n = 0; n < 50 && states.at(-1)?.kind !== 'failed'; n++) await new Promise(resolve => setTimeout(resolve, 5))
+      assert.equal(states.at(-1).kind, 'failed')
+      assert.equal(calls, scenario === 'ended' ? 3 : 1)
+    } finally { watch.stop() }
+  }
+})
