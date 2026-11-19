@@ -51,6 +51,9 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
   // override a later ON/OFF intent on the same live Agent. Weak identity
   // avoids per-Session memory growth and does not cross Session lifetimes.
   const latestIntent = new WeakMap()
+  // Serializes only writes for the same live Agent; different Sessions may
+  // change modes concurrently. A weak key prevents retired Agent retention.
+  const mutationTails = new WeakMap()
   ctx.inject(['commands'], scope => {
     scope.commands.register({
       name: NAME,
@@ -126,15 +129,27 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         if (latestIntent.get(agent) !== intent) {
           return result('error', 'A newer Vision-mode command superseded this request.')
         }
-        // Registration may have been replaced during the async capability
-        // query, so re-check ownership at the exact mutation boundary.
-        if (!sourceModelIsNative(ctx, selection.provider)) {
-          return result('error', 'The selected native model registration has changed.')
-        }
-        try {
+        const previous = mutationTails.get(agent) ?? Promise.resolve()
+        const committed = previous.catch(() => {}).then(async () => {
+          // One previous write may still be awaiting durable storage. Verify
+          // the actual current intent/model/registration when this command
+          // finally takes the mutation slot, not merely on query completion.
+          if (signal?.aborted) return false
+          if (latestIntent.get(agent) !== intent) return false
+          if (!isSameSelection(selection, modelSelection(agent))) return false
+          if (!sourceModelIsNative(ctx, selection.provider)) return false
           await store.set(sessionId, userSessionVisionPolicy(enabled))
+          return true
+        })
+        mutationTails.set(agent, committed)
+        let applied
+        try {
+          applied = await committed
         } catch {
           return result('error', 'Vision-mode policy could not be stored for this Session.')
+        }
+        if (!applied) {
+          return result('error', 'Vision-mode command cancelled, superseded or model registration changed.')
         }
         const durabilityNote = store.durable === false
           ? ' This Host has no durable policy store; the setting may reset after restart.'
