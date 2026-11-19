@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
+import { installOwnedTwinStreamBoundary } from '../lib/owned-twin-stream-boundary.js'
 
 const root = resolve(process.env.DSH_SOURCE_ROOT ?? '')
 assert.ok(process.env.DSH_SOURCE_ROOT, 'DSH_SOURCE_ROOT is required')
@@ -72,7 +73,8 @@ class TwinAdapter extends LlmAdapter {
   }
   async *stream(options) { yield* bridge.stream(options) }
 }
-ctx.llm.registerAdapter([twinRoute], new TwinAdapter())
+const twinAdapter = new TwinAdapter()
+ctx.llm.registerAdapter([twinRoute], twinAdapter)
 
 async function request(provider, messages, opts = {}) {
   const before = requests.length
@@ -165,11 +167,11 @@ try {
   // The source Runtime must then project and filter history exactly once.
   // This characterizes correctness, not retry/usage/middleware ordering.
   let delegatedAtWaterfall = 0
-  ctx.on('llm/stream', (options, next) => {
-    if (options.provider !== twinRoute) return next()
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    if (route !== twinRoute) return undefined
     delegatedAtWaterfall += 1
-    return bridge.stream(options)
-  }, { global: true, prepend: true })
+    return twinAdapter
+  })
   const transparentReplay = await request(twinRoute, fixed)
   const transparentTools = await request(twinRoute, toolMessages, config)
   assert.equal(delegatedAtWaterfall, 2)
@@ -181,6 +183,25 @@ try {
     'waterfall delegation must not lose tool-update blocks')
   assert.equal(fingerprint(transparentTools.wire), fingerprint(directTools.wire),
     'waterfall delegation must produce identical native tool history wire')
+
+  // Known residual gap: a successfully streamed source response is persisted
+  // with the *twin* public route as its source identity. Native DeepSeek
+  // replayState v1 carries a model id but no separate provider ownership proof.
+  // The subsequent source dispatch cannot safely replay that signature until
+  // an explicit alias-provenance contract is introduced. This must be covered
+  // by a separate fix, not hidden by claiming complete prefix transparency.
+  const twinAuthored = [
+    createSystemMessage('stable synthetic system'),
+    user('first twin conversation turn'),
+    createAssistantMessage({
+      content: [{ type: 'reasoning', text: 'synthetic private thinking' }],
+      source: { provider: twinRoute, model: modelId, replayState },
+    }),
+    user('next twin conversation turn'),
+  ]
+  const twinContinuation = await request(twinRoute, twinAuthored)
+  assert.equal(extractSignatures(twinContinuation.wire).length, 0,
+    'known residual: twin-authored native replay still fails the source identity check')
 
   console.log(JSON.stringify({
     ok: true,
@@ -206,6 +227,7 @@ try {
       preservedReplaySignatureCount: extractSignatures(transparentReplay.wire).length,
       sameReplayWire: fingerprint(transparentReplay.wire) === fingerprint(direct.wire),
       sameToolWire: fingerprint(transparentTools.wire) === fingerprint(directTools.wire),
+      twinAuthoredReplaySignatureCount: extractSignatures(twinContinuation.wire).length,
     },
   }))
 } finally {
