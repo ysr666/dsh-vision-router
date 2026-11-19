@@ -49,6 +49,14 @@ test('issue #865: only the active DVR-owned twin bypasses outer Host adapter pro
   assert.deepEqual(await take(invoke('account-vision')), ['delegated'], 'own matching adapter is intercepted')
   assert.equal(seen.length, 1)
 
+  const canceled = new AbortController()
+  canceled.abort(new Error('synthetic cancellation'))
+  assert.deepEqual(await take(listeners[0]({
+    provider: 'account-vision', model: 'm', messages: [], signal: canceled.signal,
+  }, () => streamOf('host-aborted-path'))), ['host-aborted-path'],
+  'already-aborted twin calls must return to Host cancellation validation')
+  assert.equal(seen.length, 1, 'canceled request never reaches the delegated adapter')
+
   registrations.delete('account-vision')
   assert.deepEqual(await take(invoke('account-vision')), ['next'], 'after unregistration Host remains authority')
   dispose()
