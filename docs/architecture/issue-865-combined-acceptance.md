@@ -38,3 +38,14 @@ permission leak by accepting either state); improve diagnostics and qualify
 scoped Session event delivery through the actual Cordis plugin fiber.
 The two additional native clicks now have a separate exact DOM click-count
 assertion from the frozen legacy two-click diagnostic.
+
+### Final integration source inventory
+
+Add independent #866 reasoning-effort isolation (`3eac5bc77d005edf38f6a5140673e99feb1a38b6`): the Core twin's
+cache is keyed by Session, delegate provider and model, bounded to 512 entries.
+Its two modified test files are byte-for-byte unchanged from base on the
+combined candidate before adoption. Only the two exact old sections of the
+shared Core implementation are replaced; C's provenance/delegation and D's
+stable image mode remain intact. Add D3 (`19089dc6f42c5a0a4f641b28869e2dd47cd80177`) long production JSONL
+serializer-prefix test and its architecture notes. The previous test results
+do not automatically qualify the additional delta.
