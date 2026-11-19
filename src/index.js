@@ -1454,6 +1454,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
+        ownedTwinProvider: twinRoute,
         // A native multimodal source already knows how to consume the image.
         // Keep that direct path intact and expose vision-router as optional
         // precision tools instead of forcing an image -> text detour.

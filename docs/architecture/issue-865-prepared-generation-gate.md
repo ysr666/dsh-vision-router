@@ -14,3 +14,14 @@ Until that assertion passes, do not treat the previous C wire/CI success as
 complete lifecycle qualification. If it fails, a safe solution must preserve
 Host registration binding, not introspect inaccessible preparation state
 or arbitrarily weaken the Host contract. No paid model call is involved.
+
+## Candidate correction
+
+The waterfall now delegates to Host next(), scopes pre-projection inputs to the
+actual generated twin body, and restores only messages/tools/toolHistory while
+retaining Host-resolved controls. The image fallback facade restores once
+before either attempt and keeps its prepared stream routed through the facade.
+The source adapter still goes through the normal Host runtime. The hard
+prepared-generation and exact wire assertions remain mandatory; check the new
+commit's results before promotion. Cross-plugin middleware interaction remains
+an explicit qualification boundary (not an assertion of universal transparency).

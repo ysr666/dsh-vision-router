@@ -65,6 +65,7 @@ const privateContext = contextWithDelegatedReplay(ctx, { wrapperRoute: 'syntheti
 const bridge = createWrapperStreamBody(privateContext, {
   imageMemory: new Map(),
   delegateProvider: sourceRoute,
+  ownedTwinProvider: twinRoute,
   preserveImageInput: true,
 })
 class TwinAdapter extends LlmAdapter {
@@ -164,8 +165,8 @@ try {
   assert.notEqual(fingerprint(directTools.wire), fingerprint(viaTwinTools.wire))
 
   // Candidate fix seam: the Host's documented llm/stream waterfall runs BEFORE
-  // adapterStream's projection. Short-circuit only our synthetic twin so
-  // createWrapperStreamBody delegates directly to the real source Runtime.
+  // adapterStream's projection. Capture only our synthetic twin's inputs;
+  // the Host still dispatches its pinned generation before source delegation.
   // The source Runtime must then project and filter history exactly once.
   // This characterizes correctness, not retry/usage/middleware ordering.
   let delegatedAtWaterfall = 0
