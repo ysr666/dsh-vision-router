@@ -78,11 +78,16 @@ const adapter = ctx.llm.registerAdapter(['native-proof'], new NativeImageModel()
 let handle, observer
 const carrier = new AbortController()
 try {
-  await dvr.apply(ctx, dvr.Config({
-    tool: true, routing: false, progressiveTools: false,
-    autoWrapProviders: false, wrappedProviders: [],
-    providers: [], freeFallback: false, downscale: false, cache: false,
-  }))
+  // Use the actual Cordis plugin fiber, not the root Context. Session-owned
+  // events use a scoped carrier on real Desktop; root apply could hide a
+  // missed observer that would leave a previous route's tools authorized.
+  await ctx.plugin({ inject: dvr.inject, apply(scope) {
+    return dvr.apply(scope, dvr.Config({
+      tool: true, routing: false, progressiveTools: false,
+      autoWrapProviders: false, wrappedProviders: [],
+      providers: [], freeFallback: false, downscale: false, cache: false,
+    }))
+  } })
   handle = await ctx.agents.create({
     sessionId: 'dvr-865-real-plugin-native-commands',
     agentOptions: { provider: 'native-proof', model: 'test-mm' },
@@ -112,7 +117,7 @@ try {
   ).map(definition => definition.name)
   assert.ok(allOwned.length > 0, 'the actual plugin must register owned tools')
   const known = new Set(allOwned)
-  const turn = async (text) => {
+  const turn = async (text, expectedModel = 'test-mm') => {
     const offset = requests.length
     agent.followup(llm.createUserMessage({
       source: { kind: 'user' }, content: [{ type: 'text', text }],
@@ -121,7 +126,7 @@ try {
     assert.equal(requests.length, offset + 1, 'exactly one native synthetic request; last turn: ' + JSON.stringify(agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')?.data))
     const request = requests.at(-1)
     assert.equal(request.provider, 'native-proof')
-    assert.equal(request.model, 'test-mm')
+    assert.equal(request.model, expectedModel)
     // DSH addition-only may keep a leading baseline plus developer activation
     // blocks. request/header records the complete assembled declaration set;
     // compare this alongside the actual provider-facing projection.
@@ -172,12 +177,35 @@ try {
   assert.equal(agent.session.deriveMessages().some(message =>
     message.content?.some(block => block.type === 'text' &&
       block.text.includes('/vision-router'))), false)
+  // Unlike effort-only changes, a deliberate provider/model change must
+  // recompute the route-derived authority, even in the real plugin fiber.
+  const routeObserver = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
+    method: 'observe', args: { agentId: agent.id }, signal: AbortSignal.timeout(20000) })
+  observer = routeObserver[Symbol.asyncIterator]()
+  assert.equal((await observer.next()).value.enabled, false)
+  const again = observer.next()
+  assert.equal((await ctx.typertGateway.invoke({ peer: owner, namespace: 'dvrNativeVision',
+    method: 'set', args: { agentId: agent.id, request: { enabled: true,
+      selection: { provider: 'native-proof', model: 'test-mm' } } },
+    signal: AbortSignal.timeout(8000) })).kind, 'success')
+  assert.equal((await again).value.enabled, true)
+  const changed = observer.next()
+  agent.model.select({ provider: 'native-proof', model: 'test-mm-other', reasoningEffort: 'high' })
+  const changedView = (await changed).value
+  assert.equal(changedView.kind, 'native', JSON.stringify(changedView))
+  assert.equal(changedView.selection.model, 'test-mm-other')
+  assert.equal(changedView.enabled, false, 'new ordinary route must not inherit explicit ON from the previous selection')
+  const changedTurn = await turn('Fourth text turn: new native route starts OFF', 'test-mm-other')
+  assert.equal(changedTurn.active.length, 0, 'route change must revoke previous DVR tools in actual request')
+  await observer.return()
+  observer = undefined
   console.log(JSON.stringify({
     ok: true, scenario: 'actual DVR apply + Host commands native permission',
     sessionCommandCount: 3, selectionEventsAdded: 0, explicitEffortSelectionEvents: 1,
     modelIdentityUnchanged: true, finalPolicy: 'off',
     activeOwnedToolCounts: [firstOff.active.length, enabled.active.length, lastOff.active.length],
     nativeRequests: requests.length, productionRemoteTransitions: [false, true, false],
+    scopedPluginFiber: true, explicitNewRouteReset: true, newRouteOwnedToolCount: changedTurn.active.length,
   }))
 } finally {
   carrier.abort()
