@@ -109,8 +109,9 @@ try {
     // blocks. request/header records the complete assembled declaration set;
     // compare this alongside the actual provider-facing projection.
     const header = agent.session.requestHeader()
-    assert.ok(header && Array.isArray(header.tools), 'Host committed assembled request header')
-    const active = header.tools.map(tool => tool.name).filter(name => known.has(name))
+    assert.ok(header && (header.tools === undefined || Array.isArray(header.tools)),
+      'Host committed assembled request header (empty tools are omitted)')
+    const active = (header.tools ?? []).map(tool => tool.name).filter(name => known.has(name))
     return { active, leadingOwned: (request.tools ?? []).filter(tool => known.has(tool.name)).length }
   }
   const firstOff = await turn('First text turn: Vision initially off')
