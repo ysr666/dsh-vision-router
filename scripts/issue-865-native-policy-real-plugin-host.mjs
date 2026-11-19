@@ -94,7 +94,9 @@ try {
   const stream = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
     method: 'observe', args: { agentId: agent.id }, signal: AbortSignal.timeout(30000) })
   observer = stream[Symbol.asyncIterator]()
-  assert.equal((await observer.next()).value.enabled, false)
+  const firstView = (await observer.next()).value
+  assert.equal(firstView.kind, 'native', JSON.stringify(firstView))
+  assert.equal(firstView.enabled, false)
   const visible = ctx.commands.list(agent)
   assert.equal(visible.filter(def => def.name === 'vision-router').length, 1,
     'DVR plugin.apply must install exactly one model-preserving command')

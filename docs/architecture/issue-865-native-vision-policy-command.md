@@ -169,3 +169,14 @@ older-Host compatibility, but access denial, malformed data, disconnect or
 withdrawal cannot silently become a legacy ON/OFF action. Browser codecs and
 Host Zod codecs are checked against the same representative cases. Real browser
 and Host integration gates remain mandatory before merge.
+
+### B2.4 correction after real Host CI
+
+The earlier production-read build returned unavailable on the exact current
+Host while the root-scoped probe had passed. The nested Remote registration
+now explicitly declares llm, rather than relying on inherited Cordis access.
+The subsequent browser-helper extraction accidentally removed the local
+SESSION_TYPE constant; the registration now derives the identity from the
+actual shared strict descriptor. A focused production-registration test uses
+a traced caller and checks lookup withdrawal cancels an active stream. The
+exact Host assertions include the unavailable reason if discovery fails again.

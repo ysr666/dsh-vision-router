@@ -16,12 +16,17 @@ export { NATIVE_VISION_REMOTE } from './native-vision-control-client.js'
 export function installNativeVisionControlRemote(ctx, store, options = {}) {
   if (typeof ctx?.inject !== 'function' || typeof store?.subscribe !== 'function' ||
       typeof options.mutate !== 'function') return
-  return ctx.inject(['typert', 'agents'], scope => {
+  return ctx.inject(['typert', 'agents', 'llm'], scope => {
     const registry = scope.typert
     if (typeof registry?.register !== 'function' ||
         typeof registry?.lookups?.get !== 'function' ||
         typeof registry?.lookups?.subscribe !== 'function' ||
         typeof scope.provide !== 'function' || typeof scope.effect !== 'function') return
+    const contribution = createNativeVisionControlContribution({
+      id: nativeVisionControlSessionIdSchema, view: nativeVisionControlViewSchema,
+      request: nativeVisionMutationRequestSchema, receipt: nativeVisionMutationReceiptSchema,
+    })
+    const agentParameter = contribution.descriptors[0].parameters[0]
     // Avoid the order race where the Host Agent Registry's own Typert
     // injection runs after our plugin. A checked lookup, not a version guess.
     let held
@@ -37,9 +42,9 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
     }
     const reconcile = () => {
       if (retired) return
-      const lookup = registry.lookups.get('agent')
-      if (lookup?.resource !== 'session' || lookup.wire !== 'agentId' ||
-          lookup.wireTypeSymbol !== SESSION_TYPE || typeof lookup.resolve !== 'function') {
+      const lookup = registry.lookups.get(agentParameter.lookup)
+      if (lookup?.resource !== 'session' || lookup.wire !== agentParameter.wire ||
+          lookup.wireTypeSymbol !== agentParameter.codec.typeSymbol || typeof lookup.resolve !== 'function') {
         release()
         return
       }
@@ -72,10 +77,6 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       let unprovide
       try {
         unprovide = scope.provide(NATIVE_VISION_REMOTE, receiver)
-        const contribution = createNativeVisionControlContribution({
-          id: nativeVisionControlSessionIdSchema, view: nativeVisionControlViewSchema,
-          request: nativeVisionMutationRequestSchema, receipt: nativeVisionMutationReceiptSchema,
-        })
         const withdraw = registry.register({
           package: contribution.package, face: 'host', schemas: [],
           model: { services: [], events: [], objects: [] },

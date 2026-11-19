@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
 import { readNativeVisionControlState, observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
 import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
+import { installNativeVisionControlRemote, NATIVE_VISION_REMOTE } from '../lib/native-vision-control-remote.js'
 import { createNativeVisionControlContribution, createNativeVisionClientSchemas, startNativeVisionClientObservation } from '../lib/native-vision-control-client.js'
 import { nativeVisionControlViewSchema, nativeVisionMutationRequestSchema, nativeVisionMutationReceiptSchema, nativeVisionControlSessionIdSchema } from '../lib/native-vision-control-wire.js'
 
@@ -605,4 +606,49 @@ test('issue #865 B2.4: missing old endpoint is distinct from permission denial o
     assert.equal(states.at(-1).kind, expected)
     observation.stop()
   }
+})
+
+
+test('issue #865 B2.4: production registration shares descriptor lookup and explicitly injects LLM', async () => {
+  const f = observerFixture()
+  const names = []
+  const services = new Map()
+  let manifest
+  let lookup = { resource: 'session', wire: 'agentId',
+    wireTypeSymbol: '@deepseek-ai/dsh-session/types#SessionId', resolve: () => f.agent }
+  let changed
+  const scope = {
+    ...f.ctx,
+    typert: {
+      lookups: { get: () => lookup, subscribe: cb => { changed = cb; return () => {} } },
+      register(value) { manifest = value; return () => { manifest = undefined } },
+    },
+    provide(name, value) { services.set(name, value); return () => services.delete(name) },
+  }
+  const ctx = {
+    inject(dependencies, activate) {
+      names.push(...dependencies)
+      const traced = new Proxy(scope, { get(target, key) {
+        if (key === 'llm' && !dependencies.includes('llm')) throw Error('undeclared LLM')
+        return Reflect.get(target, key)
+      } })
+      return activate(traced)
+    },
+  }
+  installNativeVisionControlRemote(ctx, f.store, { mutate: async () => ({ kind: 'success', text: 'ok' }) })
+  assert.ok(names.includes('llm'))
+  assert.equal(manifest.invocations[0].parameters[0].codec.typeSymbol, lookup.wireTypeSymbol)
+  const api = services.get(NATIVE_VISION_REMOTE)
+  assert.ok(api)
+  const stream = api.observe(f.agent)
+  const initial = await stream.next()
+  assert.equal(initial.value.kind, 'native', JSON.stringify(initial.value))
+  const pending = stream.next()
+  lookup = undefined
+  changed({ key: 'agent' })
+  assert.equal((await pending).done, true)
+  assert.equal(services.size, 0)
+  assert.equal(manifest, undefined)
+  await stream.return()
+  for (const dispose of [...f.effects]) dispose()
 })

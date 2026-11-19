@@ -120,7 +120,7 @@ try {
   observer = remoteStream[Symbol.asyncIterator]()
   const initial = await observer.next()
   assert.equal(initial.done, false)
-  assert.equal(nativeVisionControlViewSchema.parse(initial.value).kind, 'native')
+  assert.equal(nativeVisionControlViewSchema.parse(initial.value).kind, 'native', JSON.stringify(initial.value))
   assert.equal(nativeVisionControlViewSchema.safeParse({ ...initial.value, credentials: 'must-not-leak' }).success, false)
   assert.equal(initial.value.enabled, false)
   assert.equal(agent.session.snapshotEvents().length, beforeEvents.length,
