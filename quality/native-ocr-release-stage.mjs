@@ -8,6 +8,7 @@ import { readNativeOcrRegularFile } from '../src/lib/native-ocr-installation.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES } from '../src/lib/native-ocr-integrity.js'
 import { deterministicNativeOcrArchive } from '../src/lib/native-ocr-archive.js'
 import { nativeBundleMetadata, nativeBundleLicenseFiles, readVerifiedNativeBundleLicense } from '../src/lib/native-ocr-bundle-metadata.js'
+import { createNpmAssetPackage, stagingNpmVersion } from './native-ocr-npm-package.mjs'
 
 const project = fileURLToPath(new URL('../', import.meta.url))
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -87,7 +88,12 @@ export async function stageCandidate({ target, binary, models, out }) {
   if (!first.archive.equals(second.archive)) throw Error('candidate archive replay mismatch')
   const directory = resolve(out)
   const filename = 'ppocrv6-small-' + target + '.tar.gz'
+  const projectLicense = await readFile(join(project,'LICENSE'),'utf8')
+  const npm = createNpmAssetPackage({ target, version: stagingNpmVersion, archive:first.archive, projectLicense })
+  const npmReplay = createNpmAssetPackage({ target, version: stagingNpmVersion, archive:second.archive, projectLicense })
+  if (!npm.payload.equals(npmReplay.payload)) throw Error('npm resource package replay mismatch')
   const report = {
+    npm: npm.report,
     schemaVersion: 1, target, archive: { name: filename, bytes: first.archive.length, sha256: sha(first.archive) },
     workerSha256: info.workerSha256, buildEvidence: info.buildEvidence,
     archiveReplayMatch: true, modelOrigin: 'windows-canonical', members: first.members,
@@ -100,6 +106,7 @@ export async function stageCandidate({ target, binary, models, out }) {
   await mkdir(directory, { mode: 0o700 })
   try {
     await writeFile(join(directory, filename), first.archive, { flag: 'wx', mode: 0o600 })
+    await writeFile(join(directory, npm.report.filename), npm.payload, { flag:'wx', mode:0o600 })
     await writeFile(join(directory, 'staging-evidence.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
   } catch (error) {
     await rm(directory, { recursive: true, force: true })

@@ -11,7 +11,6 @@ import { candidates } from './native-ocr-release-stage.mjs'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = path => JSON.parse(readFileSync(path, 'utf8'))
 const target = process.platform + '-' + process.arch
-const fixtureUrl = name => 'https://github.com/ysr666/dsh-vision-router/releases/download/native-ocr-staging-test/' + name
 
 export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expected }) {
   assert.ok(candidates[target] && bmp && expected, 'exact native Desktop fixture required')
@@ -33,6 +32,15 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   const bytes = readFileSync(archive)
   assert.equal(bytes.length, info.archive.bytes)
   assert.equal(hash(bytes), info.archive.sha256)
+  assert.equal(info.npm.target,target)
+  assert.equal(info.npm.filename,'dsh-vision-router-ocr-'+target+'-0.0.0-staging.tgz')
+  assert.equal(info.npm.entry.url,'https://registry.npmjs.org/dsh-vision-router-ocr-'+target+'/-/'+info.npm.filename)
+  assert.equal(info.npm.entry.bytes, info.archive.bytes)
+  assert.equal(info.npm.entry.sha256, info.archive.sha256)
+  const npmPath=resolve(stage,info.npm.filename)
+  const npmBytes=readFileSync(npmPath)
+  assert.equal(npmBytes.length,info.npm.entry.npmBytes)
+  assert.equal(hash(npmBytes),info.npm.entry.npmSha256)
   const copied = join(root, 'native-ocr-package')
   mkdirSync(copied)
   const pkg = json(join(source, 'package.json'))
@@ -53,7 +61,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   const pinSource = readFileSync(canary, 'utf8')
   writeFileSync(canary, replaceScratchWorkerPin(pinSource, target, info.workerSha256))
   const original = readFileSync(catalog, 'utf8')
-  const entry = { url: fixtureUrl(info.archive.name), bytes: info.archive.bytes, sha256: info.archive.sha256 }
+  const entry = info.npm.entry
   let altered = replaceScratchCatalog(original, { [target]: entry })
   // Only substitute the external HTTPS transport; the real Host route,
   // downloader (including SHA and size checks), installer and UI are unchanged.
@@ -67,7 +75,7 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
     const mode = await fs.readFile(${JSON.stringify(mode)}, 'utf8')
     if (!['corrupt', 'good'].includes(mode)) throw Error('invalid OCR fixture mode')
     await fs.appendFile(${JSON.stringify(requests)}, mode + '\\n')
-    const bytes = await fs.readFile(${JSON.stringify(archive)})
+    const bytes = await fs.readFile(${JSON.stringify(npmPath)})
     if (mode === 'corrupt') bytes[Math.floor(bytes.length / 2)] ^= 255
     // The Renderer must observe busy and release this actual pending request.
     const deadline = Date.now() + 45000

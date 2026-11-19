@@ -22,18 +22,18 @@ function octal(header, start, length) {
   return number
 }
 
-function tarName(header) {
+function tarName(header, allowedName) {
   const raw = header.subarray(0, 100)
   const end = raw.indexOf(0)
   const name = raw.subarray(0, end < 0 ? raw.length : end).toString('latin1')
-  if (!NAME.test(name) || name.split('/').some(part => part === '.' || part === '..') ||
+  if (!allowedName(name) || name.split('/').some(part => part === '.' || part === '..') ||
       !header.subarray(345, 500).every(byte => byte === 0)) {
     fail('unreviewed tar member name')
   }
   return name
 }
 
-export function readNativeOcrTarArchive(compressed) {
+function readBoundedTarArchive(compressed, { allowedName, maxMemberBytes, maxMembers }) {
   if (!Buffer.isBuffer(compressed) || compressed.length < 128 ||
       compressed.length > MAX_ARCHIVE_BYTES) fail('compressed archive size')
   let raw
@@ -56,7 +56,7 @@ export function readNativeOcrTarArchive(compressed) {
       terminated = true
       break
     }
-    if (contents.size >= MAX_MEMBERS) fail('too many tar members')
+    if (contents.size >= maxMembers) fail('too many tar members')
     if (!header.subarray(257, 263).equals(Buffer.from('ustar\0')) ||
         !header.subarray(263, 265).equals(Buffer.from('00')))
       fail('unsupported tar format')
@@ -67,10 +67,10 @@ export function readNativeOcrTarArchive(compressed) {
     for (let i = 0; i < BLOCK; i++)
       computed += i >= 148 && i < 156 ? 32 : header[i]
     if (checksum !== computed) fail('tar header checksum mismatch')
-    const name = tarName(header)
+    const name = tarName(header, allowedName)
     if (contents.has(name)) fail('duplicate tar member')
     const size = octal(header, 124, 12)
-    if (size > MAX_MEMBER_BYTES) fail('tar member too large')
+    if (size > maxMemberBytes) fail('tar member too large')
     const start = offset + BLOCK
     const padded = Math.ceil(size / BLOCK) * BLOCK
     if (start + padded > raw.length - BLOCK * 2)
@@ -82,4 +82,40 @@ export function readNativeOcrTarArchive(compressed) {
   }
   if (!terminated || contents.size === 0) fail('empty or unterminated tar')
   return contents
+}
+
+export function readNativeOcrTarArchive(compressed) {
+  return readBoundedTarArchive(compressed, {
+    allowedName: name => NAME.test(name), maxMemberBytes: MAX_MEMBER_BYTES, maxMembers: MAX_MEMBERS,
+  })
+}
+
+// npm's standard tarball uses package/ paths. Read its exact four regular
+// members in memory; never run npm lifecycle hooks or extract package paths
+// to disk. The caller authenticates the compressed bytes and the inner bundle.
+export function readNativeOcrNpmTarball(compressed, { target, name, version }) {
+  if (!['darwin-arm64', 'win32-x64'].includes(target) ||
+      name !== 'dsh-vision-router-ocr-' + target)
+    fail('unsupported npm resource target')
+  const bundle = 'package/ppocrv6-small-' + target + '.tar.gz'
+  const expected = new Set(['package/package.json', 'package/LICENSE', 'package/README.md', bundle])
+  const contents = readBoundedTarArchive(compressed, {
+    allowedName: member => expected.has(member), maxMemberBytes: MAX_ARCHIVE_BYTES, maxMembers: 4,
+  })
+  if (contents.size !== expected.size || [...expected].some(member => !contents.has(member)))
+    fail('unexpected npm resource member set')
+  for (const member of ['package/package.json', 'package/LICENSE', 'package/README.md']) {
+    const size = contents.get(member).length
+    if (size < 1 || size > 128 * 1024) fail('invalid npm resource metadata size')
+  }
+  let pkg
+  try { pkg = JSON.parse(contents.get('package/package.json').toString('utf8')) }
+  catch { fail('invalid npm resource package.json') }
+  const [os, cpu] = target.split('-')
+  if (!pkg || pkg.name !== name || pkg.version !== version ||
+      JSON.stringify(pkg.os) !== JSON.stringify([os]) ||
+      JSON.stringify(pkg.cpu) !== JSON.stringify([cpu]) ||
+      ['scripts','dependencies','optionalDependencies','peerDependencies','bin'].some(k => Object.hasOwn(pkg,k)))
+    fail('npm resource package identity mismatch')
+  return contents.get(bundle)
 }

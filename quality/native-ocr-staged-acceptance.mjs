@@ -55,17 +55,18 @@ export function assertNativePromotionState(catalog, pins, reviewed) {
     return 'staged'
   }
   assert.deepEqual(keys, targets, 'both reviewed targets must be promoted together')
-  let tag
+  let version
   for (const target of targets) {
     const row = catalog[target]
-    assert.deepEqual(Object.keys(row).sort(), ['bytes', 'sha256', 'url'])
+    assert.deepEqual(Object.keys(row).sort(), ['bytes', 'npmBytes', 'npmSha256', 'sha256', 'url'])
     assertExactStagedArchive(target, row)
     assert.equal(pins[target], reviewed[target].workerSha256, 'catalog/worker pin mismatch')
-    const match = /^https:\/\/github\.com\/ysr666\/dsh-vision-router\/releases\/download\/([A-Za-z0-9._-]+)\/ppocrv6-small-(darwin-arm64|win32-x64)\.tar\.gz$/.exec(row.url)
-    assert.ok(match && match[0] === row.url && match[2] === target &&
-      !['latest', '.', '..', 'native-ocr-staging-test'].includes(match[1].toLowerCase()), 'invalid immutable release URL')
-    if (tag === undefined) tag = match[1]
-    else assert.equal(tag, match[1], 'catalog release tag mismatch')
+    assert.ok(Number.isSafeInteger(row.npmBytes) && row.npmBytes >= 128 && row.npmBytes <= 64*1024*1024)
+    assert.match(row.npmSha256, /^[a-f0-9]{64}$/)
+    const match = /^https:\/\/registry\.npmjs\.org\/(dsh-vision-router-ocr-(darwin-arm64|win32-x64))\/-\/\1-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\.tgz$/.exec(row.url)
+    assert.ok(match && match[0] === row.url && match[2] === target, 'invalid immutable npm resource URL')
+    if (version === undefined) version = match[3]
+    else assert.equal(version, match[3], 'catalog resource version mismatch')
   }
   return 'promoted'
 }
@@ -133,9 +134,18 @@ async function loadStage(dir) {
   assert.equal(archive.length,info.archive.bytes)
   assert.equal(sha(archive),info.archive.sha256)
   assertExactStagedArchive(target, info.archive)
-  return {info,archive}
+  const npm = info.npm
+  assert.equal(npm.target,target)
+  assert.equal(npm.version,'0.0.0-staging')
+  assert.equal(npm.filename,'dsh-vision-router-ocr-'+target+'-0.0.0-staging.tgz')
+  assert.equal(npm.entry.url,'https://registry.npmjs.org/dsh-vision-router-ocr-'+target+'/-/'+npm.filename)
+  assert.equal(npm.entry.bytes,info.archive.bytes)
+  assert.equal(npm.entry.sha256,info.archive.sha256)
+  const npmPayload=await readBoundedNativeOcrArchive(join(dir,npm.filename),{minBytes:128})
+  assert.equal(npmPayload.length,npm.entry.npmBytes)
+  assert.equal(sha(npmPayload),npm.entry.npmSha256)
+  return {info,archive,npmPayload}
 }
-const fixtureUrl = name => 'https://github.com/ysr666/dsh-vision-router/releases/download/native-ocr-staging-test/'+name
 
 async function parent(args) {
   const opts=argsFrom(args),stage=resolve(opts['--stage']),bmp=resolve(opts['--bmp']),report=resolve(opts['--report'])
@@ -163,7 +173,7 @@ async function parent(args) {
     await copyFile(here,join(root,'run.mjs'))
     const canary=join(root,'lib/native-ocr-canary.js'),catalog=join(root,'lib/native-ocr-download.js')
     await writeFile(canary,replaceScratchWorkerPin(await readFile(canary,'utf8'),target,info.workerSha256))
-    const entry={url:fixtureUrl(info.archive.name),bytes:info.archive.bytes,sha256:info.archive.sha256}
+    const entry=info.npm.entry
     await writeFile(catalog,replaceScratchCatalog(await readFile(catalog,'utf8'),{[target]:entry}))
     const env={}
     for(const [name,value] of Object.entries(process.env)){
@@ -195,11 +205,11 @@ async function child(stage,bmp,expected) {
   const root=fileURLToPath(new URL('.',import.meta.url))
   assert.equal(await realpath(process.cwd()),await realpath(root))
   assert.equal(await realpath(homedir()),await realpath(join(root,'home')),'non-isolated home; refusing installation')
-  const {info,archive}=await loadStage(stage)
+  const {info,npmPayload}=await loadStage(stage)
   const realFetch=globalThis.fetch.bind(globalThis)
-  let payload=archive,downloadCalls=0
+  let payload=npmPayload,downloadCalls=0
   globalThis.fetch=async (url,options)=>{
-    assert.equal(String(url),fixtureUrl(info.archive.name),'external network disabled')
+    assert.equal(String(url),info.npm.entry.url,'external network disabled')
     assert.equal(options.credentials,'omit')
     assert.equal(options.redirect,'manual')
     downloadCalls++
@@ -284,14 +294,14 @@ async function child(stage,bmp,expected) {
     assert.equal(result.engine,'ncnn')
     assert.equal(result.text.replace(/\s+/g,''),expected.replace(/\s+/g,''))
     phases.push('installed-worker-real-ocr')
-    payload=Buffer.from(archive);payload[Math.floor(payload.length/2)]^=0xff
+    payload=Buffer.from(npmPayload);payload[Math.floor(payload.length/2)]^=0xff
     const denied=await request('POST','download',state.token,409)
     assert.match(denied.error,/integrity mismatch/)
     assert.equal(await digest(paths.binaryPath),info.workerSha256)
     const after=await request()
     assert.equal(after.ppocrv6.installed,true);assert.equal(downloadCalls,2)
     phases.push('tampered-download-rejected-installed-worker-unchanged')
-    payload=archive.subarray(0,archive.length-1)
+    payload=npmPayload.subarray(0,npmPayload.length-1)
     const wrongSize=await request('POST','download',after.token,409)
     assert.match(wrongSize.error,/size mismatch/)
     assert.equal(await digest(paths.binaryPath),info.workerSha256)

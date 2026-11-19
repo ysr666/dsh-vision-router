@@ -4,6 +4,8 @@ on:
     paths:
       - 'quality/native-ocr-clean-conversion.py'
       - 'quality/native-ocr-release-stage.mjs'
+      - 'quality/native-ocr-npm-package.mjs'
+      - 'src/lib/native-ocr-archive.js'
       - 'quality/native-ocr-canonical-labels.py'
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'

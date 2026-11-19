@@ -82,3 +82,25 @@ authorized publication of the archives followed by a genuinely public HTTPS
 download test, owner review and separate explicit approvals for PR merge,
 production catalog/hash promotion, formal version changes, npm or GitHub
 release. No public binary/model archive or production allowlist was created.
+
+## npm resource delivery (development only)
+
+The optional download path targets exact, versioned npm Registry tarballs for
+`dsh-vision-router-ocr-darwin-arm64` and `dsh-vision-router-ocr-win32-x64`.
+The initial staging builder now also emits a deterministic `0.0.0-staging`
+resource package containing the unchanged native archive; it records both
+outer and inner SHA-256 and byte counts in staging-evidence.json. Runtime
+verifies both layers in memory and executes no npm lifecycle scripts. The
+Desktop and CLI staging tests inject the npm tarball, not a GitHub asset.
+To prepare a separately authorized resource-package version from the same
+canonical native archive, run:
+
+```sh
+node quality/native-ocr-npm-package.mjs --stage PRIVATE_STAGE_DIR --version RESOURCE_VERSION --out NEW_PRIVATE_DIR
+```
+
+This creates a standard npm-format `.tgz` and evidence only, with no network
+publish and no production pin changes. The package names are proposed until
+registry ownership/Trusted Publishing is confirmed. Do not publish the staging
+version; the formal two-package resource promotion and main-plugin release
+remain independently authorized. Public CI must upload only evidence JSON.
