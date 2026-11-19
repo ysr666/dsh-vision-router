@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
 import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
-import { installOwnedTwinStreamBoundary } from '../lib/owned-twin-stream-boundary.js'
+import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
 
 const root = resolve(process.env.DSH_SOURCE_ROOT ?? '')
 assert.ok(process.env.DSH_SOURCE_ROOT, 'DSH_SOURCE_ROOT is required')
@@ -253,6 +253,55 @@ try {
       provenTwinReplaySignatureCount: extractSignatures(trustedTwinContinuation.wire).length,
     },
   }))
+  // A prepared call is bound to its original registered generation by DSH.
+  // Verify the real Host positive control, then the DVR waterfall shortcut
+  // against exactly the same synchronous route replacement.
+  async function preparedGenerationProbe(route, intercept) {
+    const calls = []
+    class Generation extends LlmAdapter {
+      constructor(label) { super(); this.label = label }
+      providerInfo(provider) { return { id: provider, name: 'Offline generation ' + this.label } }
+      async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: model, inputModalities: ['text'] }
+      }
+      async *stream() {
+        calls.push(this.label)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    let current = identifyOwnedTwinStream(new Generation('prepared-old'))
+    const old = ctx.llm.registerAdapter([route], current)
+    const removeBoundary = intercept
+      ? installOwnedTwinStreamBoundary(ctx, provider => provider === route ? current : undefined)
+      : undefined
+    let replacement
+    try {
+      const prepared = await ctx.llm.prepareCall({ provider: route, model: modelId, maxTokens: 128 })
+      old.replace([])
+      current = identifyOwnedTwinStream(new Generation('replacement-new'))
+      replacement = ctx.llm.registerAdapter([route], current)
+      const chunks = []
+      for await (const chunk of prepared.stream({
+        ...prepared.config, messages: [user('synthetic generation contract')],
+        sessionId: 'synthetic-generation-fence',
+      })) chunks.push(chunk)
+      assert.equal(chunks.at(-1)?.reason?.kind, 'stop')
+      return calls
+    } finally {
+      removeBoundary?.()
+      replacement?.()
+      old()
+    }
+  }
+  const baselineGeneration = await preparedGenerationProbe('baseline-prepared-vision', false)
+  assert.deepEqual(baselineGeneration, ['prepared-old'], 'positive control: DSH pins its prepared registration')
+  const candidateGeneration = await preparedGenerationProbe('candidate-prepared-vision', true)
+  console.log(JSON.stringify({ scenario: 'issue-865 pinned prepared registration across HMR',
+    baselineGeneration, candidateGeneration,
+    candidatePreservesGeneration: candidateGeneration.length === 1 && candidateGeneration[0] === 'prepared-old' }))
+  assert.deepEqual(candidateGeneration, ['prepared-old'],
+    'DVR transparent dispatch must not replace the Host-pinned adapter generation')
 } finally {
   await ctx.fiber.dispose()
 }
