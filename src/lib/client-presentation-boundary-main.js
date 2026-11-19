@@ -1054,6 +1054,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
       enable: '开启识图模式',
       disable: '关闭识图模式',
       unavailable: '当前模型没有对应的「+ 自动识图」版本',
+      nativeUnavailable: '当前会话视觉权限状态不可用',
       loading: '正在读取模型信息…',
       switching: '正在切换识图模式…',
       failed: '模型操作失败：{message}',
@@ -1064,6 +1065,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
       enable: 'Enable Vision mode',
       disable: 'Disable Vision mode',
       unavailable: 'No matching “+ Auto Vision” model is available',
+      nativeUnavailable: 'Vision permission state is unavailable for this session',
       loading: 'Loading model information…',
       switching: 'Switching Vision mode…',
       failed: 'Model action failed: {message}',
@@ -1183,7 +1185,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           nativeView.ticket.mount === nativeMount && nativeView.ticket.sessionId === props.sessionId;
         var read = observationCurrent ? nativeView.value : null;
         var nativePending = nativeMount.kind === 'waiting' || (nativeMount.kind === 'ready' && (!read || read.kind === 'waiting'));
-        var nativeLegacy = nativeMount.kind === 'legacy' || (read && (read.kind === 'legacy' ||
+        var unsupportedHost = read && read.kind === 'value' &&
+          read.view.kind === 'unavailable' && read.view.reason === 'host-control-unsupported';
+        var nativeLegacy = nativeMount.kind === 'legacy' || unsupportedHost || (read && (read.kind === 'legacy' ||
           (read.kind === 'value' && read.view.kind === 'legacy' && nativeVisionSameRoute(read.view.selection, state.current))));
         var nativeControl = read && read.kind === 'value' && read.view.kind === 'native' &&
           nativeVisionSameRoute(read.view.selection, state.current) ? read.view : null;
@@ -1256,7 +1260,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           : blockingLoad
             ? t('loading')
             : unavailable
-              ? t('unavailable')
+              ? t(nativeUnavailable ? 'nativeUnavailable' : 'unavailable')
               : active ? t('disable') : t('enable');
         function announceRejectedSelection() {
           var latest;
@@ -1279,6 +1283,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var button = React.createElement('button', {
           type: 'button',
           'data-vision-router-mode-toggle': 'true',
+          'data-native-vision-state': read && read.kind === 'value'
+            ? (read.view.reason || read.view.kind) : (read && (read.reason || read.kind) || nativeMount.kind),
           'aria-pressed': active,
           'aria-label': title,
           'aria-busy': busy || blockingLoad,

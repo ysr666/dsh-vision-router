@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { planAppendOnlyImageEvidence } from '../lib/stable-image-evidence.js'
 
 const root = process.env.DSH_SOURCE_ROOT
 assert.ok(root, 'DSH_SOURCE_ROOT is required')
@@ -34,8 +35,9 @@ const { LlmAdapter, createUserMessage, createAssistantMessage, createSystemMessa
 const provider = 'synthetic-account'
 const twin = provider + '-vision'
 const model = 'synthetic-flash'
-const replay = () => ({
-  response: { kind: 'deepseek-messages', version: 1, model },
+const textModel = 'synthetic-text'
+const replay = (id = model) => ({
+  response: { kind: 'deepseek-messages', version: 1, model: id },
   blocks: [{ type: 'reasoning', signature: 'SYNTHETIC_HOST_SIGNATURE' }],
 })
 const user = message => createUserMessage({ source: { kind: 'user' },
@@ -55,9 +57,9 @@ await ctx.plugin(AgentLoop, { agents: [] })
 const received = []
 class SyntheticSource extends LlmAdapter {
   providerInfo(route) { return { id: route, name: 'Synthetic account' } }
-  async listModels(route) { return [await this.resolveModel(route, model)] }
+  async listModels(route) { return await Promise.all([model, textModel].map(id => this.resolveModel(route, id))) }
   async resolveModel(route, id) {
-    return { provider: route, id, name: id, inputModalities: ['text', 'image'],
+    return { provider: route, id, name: id, inputModalities: id === textModel ? ['text'] : ['text', 'image'],
       toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
@@ -68,7 +70,7 @@ class SyntheticSource extends LlmAdapter {
     yield { type: 'usage', usage: {
       inputTokens: 8, outputTokens: 2, cacheReadTokens: 34, totalTokens: 44,
     } }
-    yield { type: 'finish', reason: { kind: 'stop' }, replayState: replay() }
+    yield { type: 'finish', reason: { kind: 'stop' }, replayState: replay(options.model) }
   }
 }
 ctx.llm.registerAdapter([provider], new SyntheticSource())
@@ -76,7 +78,8 @@ try {
   await plugin.apply(ctx, plugin.Config({
     routing: false, tool: true, progressiveTools: false,
     autoWrapProviders: false,
-    wrappedProviders: [{ provider, models: [model] }],
+    wrappedProviders: [{ provider, models: [model, textModel] }],
+    stableImageHistory: true,
     providers: [], freeFallback: false, downscale: false, cache: false,
   }))
   assert.ok(ctx.llm.listProviders().some(row => row.id === twin), 'real DVR must mount the generated twin')
@@ -187,10 +190,50 @@ try {
   assert.equal(received.length, beforeAbort, 'aborted request must not reach the source transport')
   assert.equal(abortedChunks.at(-1)?.reason?.kind, 'aborted')
 
+  // Combined C+D contract: the same production plugin generation with stable
+  // history enabled must preserve native pixels and replay, while the text
+  // twin emits a stable historical marker and sees newly appended evidence.
+  // Synthetic evidence here; D2 separately proves real JSONL cold resume.
+  const attachment = await ctx.attachments.saveImage({
+    data: new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')),
+    mediaType: 'image/png', name: 'combined-865.png',
+  })
+  const image = createUserMessage({ source: { kind: 'user' }, content: [
+    { type: 'text', text: 'Inspect this fixture image.' },
+    { type: 'image', attachment },
+  ] })
+  const nativeHistory = [createSystemMessage('stable native system'), image]
+  const nativeCall = await call(twin, nativeHistory)
+  const nativeImage = nativeCall.requested.messages.find(m => m.id === image.id)?.content.find(b => b.type === 'image')
+  assert.equal(nativeImage?.attachment?.attachmentId, attachment.attachmentId,
+    'stable history must not rewrite native multimodal pixels')
+  const textHistory = [createSystemMessage('stable text system'), image]
+  const firstText = await call(twin, textHistory, { model: textModel })
+  const marker = firstText.requested.messages.find(m => m.id === image.id)
+  assert.ok(marker?.content.some(b => b.type === 'text' && b.text.includes(attachment.attachmentId)))
+  assert.ok(!marker.content.some(b => b.type === 'image'))
+  const evidence = planAppendOnlyImageEvidence([image], textHistory,
+    new Map([[attachment.attachmentId, 'COMBINED_SYNTHETIC_EVIDENCE']]),
+    { kind: 'plugin:dsh-vision-router' })
+  assert.equal(evidence.length, 1)
+  const savedReplay = firstText.chunks.findLast(c => c.type === 'finish')?.replayState
+  const assistant = createAssistantMessage({
+    content: [{ type: 'reasoning', text: 'synthetic reasoning' }],
+    source: { provider: twin, model: textModel, replayState: savedReplay },
+  })
+  const laterText = await call(twin, [...textHistory, assistant, ...evidence, user('Continue')], { model: textModel })
+  const laterMarker = laterText.requested.messages.find(m => m.id === image.id)
+  assert.deepEqual(laterMarker?.content, marker.content, 'existing image projection must remain immutable')
+  assert.equal(laterText.requested.messages.find(m => m.id === assistant.id)?.source?.provider, provider)
+  assert.ok(laterText.requested.messages.some(m => m.id === evidence[0].id &&
+    m.content.some(b => b.type === 'text' && b.text.includes('COMBINED_SYNTHETIC_EVIDENCE'))))
+  assert.ok(image.content.some(b => b.type === 'image'), 'original input must retain its attachment')
   console.log(JSON.stringify({ ok: true, kind: 'real DVR plugin+Host twin delegation',
     firstSignedReplay: true, twinOriginReplay: true,
     lateToolUpdates: survivingUpdates.length, sourceCalls: received.length,
-    preparedCall: true, usagePreserved: true, abortBeforeDispatch: true }))
+    preparedCall: true, usagePreserved: true, abortBeforeDispatch: true,
+    combinedStableHistory: true, nativeImagePreserved: true, textMarkerStable: true,
+    appendOnlyEvidenceVisible: true, textTwinReplayPreserved: true }))
 } finally {
   await ctx.fiber.dispose()
 }

@@ -24,7 +24,7 @@ export const nativeVisionControlViewSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('unavailable'),
     reason: z.enum([
-      'inactive-session', 'no-selection', 'no-registration',
+      'inactive-session', 'host-control-unsupported', 'no-selection', 'no-registration',
       'metadata-unavailable', 'stale-selection', 'policy-store-unavailable',
       'policy-read-failed', 'observer-unavailable',
     ]),

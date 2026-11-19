@@ -38,7 +38,7 @@ class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
   async listModels(provider) { return [await this.resolveModel(provider, 'test-mm')] }
   async resolveModel(provider, model) {
-    return { provider, id: model, name: model, inputModalities: ['text', 'image'], toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
+    return { provider, id: model, name: model, inputModalities: ['text', 'image'], reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }, toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
     requests.push(options)
@@ -118,7 +118,7 @@ try {
       source: { kind: 'user' }, content: [{ type: 'text', text }],
     }))
     await agent.whenIdle()
-    assert.equal(requests.length, offset + 1, 'exactly one native synthetic request')
+    assert.equal(requests.length, offset + 1, 'exactly one native synthetic request; last turn: ' + JSON.stringify(agent.session.snapshotEvents().findLast(event => event.type === 'turn/end')?.data))
     const request = requests.at(-1)
     assert.equal(request.provider, 'native-proof')
     assert.equal(request.model, 'test-mm')
