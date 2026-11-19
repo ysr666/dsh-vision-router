@@ -159,6 +159,29 @@ try {
     'CHARACTERIZATION: wrapper double projection strips a surviving developer update')
   assert.notEqual(fingerprint(directTools.wire), fingerprint(viaTwinTools.wire))
 
+  // Candidate fix seam: the Host's documented llm/stream waterfall runs BEFORE
+  // adapterStream's projection. Short-circuit only our synthetic twin so
+  // createWrapperStreamBody delegates directly to the real source Runtime.
+  // The source Runtime must then project and filter history exactly once.
+  // This characterizes correctness, not retry/usage/middleware ordering.
+  let delegatedAtWaterfall = 0
+  ctx.on('llm/stream', (options, next) => {
+    if (options.provider !== twinRoute) return next()
+    delegatedAtWaterfall += 1
+    return bridge.stream(options)
+  }, { global: true, prepend: true })
+  const transparentReplay = await request(twinRoute, fixed)
+  const transparentTools = await request(twinRoute, toolMessages, config)
+  assert.equal(delegatedAtWaterfall, 2)
+  assert.deepEqual(extractSignatures(transparentReplay.wire), extractSignatures(direct.wire),
+    'waterfall delegation must preserve source-owned signed history')
+  assert.equal(fingerprint(transparentReplay.wire), fingerprint(direct.wire),
+    'waterfall delegation must produce identical native DeepSeek replay wire')
+  assert.equal(countChanges(transparentTools.wire), countChanges(directTools.wire),
+    'waterfall delegation must not lose tool-update blocks')
+  assert.equal(fingerprint(transparentTools.wire), fingerprint(directTools.wire),
+    'waterfall delegation must produce identical native tool history wire')
+
   console.log(JSON.stringify({
     ok: true,
     host: process.env.DSH_EXPECTED_VERSION ?? 'pinned DSH',
@@ -173,8 +196,16 @@ try {
     toolHistory: {
       directChangeBlocks: countChanges(directTools.wire),
       wrappedChangeBlocks: countChanges(viaTwinTools.wire),
+      waterfallChangeBlocks: countChanges(transparentTools.wire),
       directPrefix: fingerprint(directTools.wire),
       wrappedPrefix: fingerprint(viaTwinTools.wire),
+      waterfallPrefix: fingerprint(transparentTools.wire),
+    },
+    waterfall: {
+      delegatedCalls: delegatedAtWaterfall,
+      preservedReplaySignatureCount: extractSignatures(transparentReplay.wire).length,
+      sameReplayWire: fingerprint(transparentReplay.wire) === fingerprint(direct.wire),
+      sameToolWire: fingerprint(transparentTools.wire) === fingerprint(directTools.wire),
     },
   }))
 } finally {
