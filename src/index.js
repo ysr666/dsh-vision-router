@@ -188,6 +188,7 @@ import {
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
+import { planAppendOnlyImageEvidence } from './lib/stable-image-evidence.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -725,6 +726,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const instantDescribeEnabled = () =>
     coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
+  const stableImageHistoryEnabled = () => current().stableImageHistory === true
   const autoActivateOnImageEnabled = () =>
     coreVisionFlag(
       'autoActivateOnImage',
@@ -1189,6 +1191,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     const officialStream = createWrapperStreamBody(ctx, {
       imageMemory,
       delegateProvider: wrapperDelegateRoute,
+      stableImageHistory: stableImageHistoryEnabled,
       instantLocal: instantLocalProvider,
       instantLocalStyle,
       instantLocalTimeoutMs: timeoutMs,
@@ -1430,6 +1433,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
+        stableImageHistory: stableImageHistoryEnabled,
         // A native multimodal source already knows how to consume the image.
         // Keep that direct path intact and expose vision-router as optional
         // precision tools instead of forcing an image -> text detour.
