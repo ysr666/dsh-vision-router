@@ -666,9 +666,12 @@ try {
     exactNativeOcrModule = await import('../quality/native-ocr-desktop-acceptance.mjs')
     assert.ok(process.env.DVR_NATIVE_OCR_DESKTOP_REPORT, 'exact OCR report path required')
     assert.equal(checkWholeTurnRouting, false, 'exact native OCR requires tool-only routing')
-    exactNativeOcr = exactNativeOcrModule.prepareExactDesktopOcr({ source: dvrRoot, root, home,
-      stage: process.env.DVR_NATIVE_OCR_STAGE, bmp: process.env.DVR_NATIVE_OCR_BMP,
-      expected: process.env.DVR_NATIVE_OCR_EXPECTED })
+    exactNativeOcr = exactNativeOcrModule.prepareExactDesktopOcr({
+      source: dvrRoot, root, home,
+      stage: process.env.DVR_NATIVE_OCR_STAGE,
+      bmp: process.env.DVR_NATIVE_OCR_BMP,
+      expected: process.env.DVR_NATIVE_OCR_EXPECTED,
+    })
   }
 
   textServer = await listenHttp(async (req, res) => {
@@ -693,11 +696,12 @@ try {
           return
         }
         assert.equal(exactNativeToolCalls, 0, 'expected actual tool response after OCR call')
-        const promptRows = body.messages.filter(row => row?.role === 'user' && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
+        const promptRows = body.messages.filter(row => row?.role === 'user'
+          && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
         assert.equal(promptRows.length, 1, 'unique OCR user message required')
         const userText = JSON.stringify(promptRows[0])
-        const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(userText)?.[1]
-          ?? /\bsha256:[a-f0-9]{64}\b/i.exec(userText)?.[0]
+        const attachment = /\\[attached image:\\s*([^\\]]+)\\]/i.exec(userText)?.[1]
+          ?? /\\bsha256:[a-f0-9]{64}\\b/i.exec(userText)?.[0]
         assert.ok(attachment && attachment !== textEvidence.attachmentId, 'new actual image attachment required')
         assert.ok(body.tools?.some(row => row?.function?.name === 'vision_ocr'), 'Host did not admit vision_ocr')
         exactNativeToolCalls++
@@ -1288,7 +1292,7 @@ try {
   reportPhase('vision-answer-rendered')
   if (exactNativeOcr) {
     const { OCR_PROMPT_MARKER, OCR_RENDERED_MARKER } = exactNativeOcrModule
-    const sharpModule = createRequire(join(dshRoot, 'package.json'))('sharp')
+    const sharpModule = createRequire(join(dvrRoot, 'package.json'))('sharp')
     const sharp = sharpModule.default ?? sharpModule
     const { decodeBmp } = await import('../quality/native-ocr-staged-acceptance.mjs')
     const { rgb, width, height } = decodeBmp(readFileSync(exactNativeOcr.bmp))
@@ -1300,262 +1304,14 @@ try {
     await composer.fill(OCR_PROMPT_MARKER + ': transcribe the attached image exactly using vision_ocr.')
     await send.click({ timeout: 30000 })
     try {
-      await page.getByRole('paragraph').filter({ hasText: new RegExp('^(?:' + OCR_RENDERED_MARKER + '|DESKTOP_NATIVE_OCR_E2E_FAILED) = await readHostSessionSources(authenticatedHostUrl)
-  const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
-  assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
-  const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
-  // Tool-driven vision produces DVR-authored notices/tool evidence. In the
-  // optional whole-turn route, the vision adapter handles the image directly
-  // and does not need to author a synthetic DVR message. Both paths already
-  // proved their real model requests above; require producer attribution only
-  // when DVR actually authored a durable Session message.
-  if (!checkWholeTurnRouting) {
-    assert.ok(
-      dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
-      `real tool-only Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
-    )
-  }
-  assert.equal(
-    dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
-    false,
-    `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
-  const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
-  if (!checkWholeTurnRouting) {
-    assert.ok(
-      dvrMessages.length > 0,
-      `real tool-only Session v4 log must expose a DVR-authored durable message: ${JSON.stringify(sessionSourceProbe)}`,
-    )
-  }
-  for (const message of dvrMessages) {
-    assert.equal(
-      message.source?.kind,
-      'plugin:dsh-vision-router',
-      `every DVR-authored Session v4 message must carry the producer-owned source: ${JSON.stringify(message)}`,
-    )
-    assert.equal(
-      message.source?.plugin,
-      undefined,
-      `DVR-authored Session v4 messages must not retain the legacy plugin field: ${JSON.stringify(message)}`,
-    )
-  }
-
-  reportPhase('session-source-verified')
-  await assertDesktopHtmlRendering('after vision turn')
-  if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
-  const result = {
-    ok: true,
-    dsh: dshVersion,
-    platform: process.platform,
-    arch: process.arch,
-    electronNode,
-    structuredMarkers: markers.length,
-    toggle: { initial: initialPressed, exercised: true, restored: true },
-    onboarding: { settingsPath: true },
-    settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
-    functionalVisionTurn: {
-      mode: checkWholeTurnRouting ? 'whole-turn' : 'tool-only',
-      textEvidence, visionEvidence,
-      rendered: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK + DESKTOP_TEXT_REVERSE_E2E_OK' : 'DESKTOP_VISION_E2E_OK',
-      durableDvrMessages: dvrMessages.length,
-    },
-  }
-  reportPhase('all-assertions-passed')
-  console.log(JSON.stringify(result))
-  if (diagnosticPath) {
-    const fileResult = {
-      ok: true,
-      dsh: dshVersion,
-      platform: process.platform,
-      arch: process.arch,
-      structuredMarkers: markers.length,
-      toggle: result.toggle,
-      settings: result.settings,
-      functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
-    }
-    writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
-  }
-} catch (error) {
-  if (page && screenshotPath) {
-    try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
-  }
-  const failureState = page ? await page.evaluate(() => ({
-    bodyText: (document.body?.innerText || '').slice(-12000),
-    composer: document.querySelector('[data-composer-card]')?.textContent || '',
-    composerButtons: [...document.querySelectorAll('[data-composer-card] button')].map((button) => ({
-      label: button.getAttribute('aria-label') || '', disabled: Boolean(button.disabled), hidden: Boolean(button.hidden),
-    })),
-    url: location.href,
-  })).catch(() => undefined) : undefined
-  const failure = {
-    ok: false,
-    error: String(error?.stack || error),
-    rendererErrors,
-    textEvidence,
-    visionEvidence,
-    coreProbe: lastCoreProbe,
-    runtimePackageEvidence,
-    failureState,
-  }
-  console.error(JSON.stringify(failure, undefined, 2))
-  if (diagnosticPath) {
-    const fileFailure = {
-      ok: false,
-      failureKind: lastCoreProbe !== undefined
-        && (lastCoreProbe?.services?.workspaceController?.active !== true
-          || lastCoreProbe?.services?.sessionController?.active !== true)
-        ? 'host-control-plane-unavailable'
-        : 'desktop-e2e-failed',
-      rendererErrorCount: rendererErrors.length,
-      functionalVisionTurn: fileSafeTurnEvidence(textEvidence, visionEvidence),
-      coreProbe: fileSafeCoreProbe(lastCoreProbe),
-      runtimePackageEvidence: fileSafeRuntimePackageEvidence(runtimePackageEvidence),
-      failureState: fileSafeFailureState(failureState),
-    }
-    try { writeFileSync(diagnosticPath, `${JSON.stringify(fileFailure, undefined, 2)}\n`) } catch {}
-  }
-  throw error
-} finally {
-  try { await browser?.close() } catch {}
-  await stopProcess(child)
-  await closeServer(textServer?.server)
-  await closeServer(visionServer?.server)
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try { rmSync(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); break }
-    catch { await new Promise((accept) => setTimeout(accept, 250)) }
-  }
-}
-) }).last()
-        .waitFor({ state: 'visible', timeout: 90000 })
+      await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^(?:' + OCR_RENDERED_MARKER + '|DESKTOP_NATIVE_OCR_E2E_FAILED)$') })
+        .last().waitFor({ state: 'visible', timeout: 90000 })
       assert.ok(exactNativeToolResult, exactNativeToolError ?? 'actual native OCR result did not arrive')
       assert.equal(visionEvidence.requests - beforeVisionRequests, 0, 'native OCR unexpectedly called visual model')
       assert.equal(exactNativeToolCalls, 1)
-      assert.equal(await page.getByRole('paragraph').filter({ hasText: new RegExp('^' + OCR_RENDERED_MARKER + ' = await readHostSessionSources(authenticatedHostUrl)
-  const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
-  assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
-  const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
-  // Tool-driven vision produces DVR-authored notices/tool evidence. In the
-  // optional whole-turn route, the vision adapter handles the image directly
-  // and does not need to author a synthetic DVR message. Both paths already
-  // proved their real model requests above; require producer attribution only
-  // when DVR actually authored a durable Session message.
-  if (!checkWholeTurnRouting) {
-    assert.ok(
-      dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
-      `real tool-only Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
-    )
-  }
-  assert.equal(
-    dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
-    false,
-    `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
-  )
-  const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
-  if (!checkWholeTurnRouting) {
-    assert.ok(
-      dvrMessages.length > 0,
-      `real tool-only Session v4 log must expose a DVR-authored durable message: ${JSON.stringify(sessionSourceProbe)}`,
-    )
-  }
-  for (const message of dvrMessages) {
-    assert.equal(
-      message.source?.kind,
-      'plugin:dsh-vision-router',
-      `every DVR-authored Session v4 message must carry the producer-owned source: ${JSON.stringify(message)}`,
-    )
-    assert.equal(
-      message.source?.plugin,
-      undefined,
-      `DVR-authored Session v4 messages must not retain the legacy plugin field: ${JSON.stringify(message)}`,
-    )
-  }
-
-  reportPhase('session-source-verified')
-  await assertDesktopHtmlRendering('after vision turn')
-  if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
-  const result = {
-    ok: true,
-    dsh: dshVersion,
-    platform: process.platform,
-    arch: process.arch,
-    electronNode,
-    structuredMarkers: markers.length,
-    toggle: { initial: initialPressed, exercised: true, restored: true },
-    onboarding: { settingsPath: true },
-    settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
-    functionalVisionTurn: {
-      mode: checkWholeTurnRouting ? 'whole-turn' : 'tool-only',
-      textEvidence, visionEvidence,
-      rendered: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK + DESKTOP_TEXT_REVERSE_E2E_OK' : 'DESKTOP_VISION_E2E_OK',
-      durableDvrMessages: dvrMessages.length,
-    },
-  }
-  reportPhase('all-assertions-passed')
-  console.log(JSON.stringify(result))
-  if (diagnosticPath) {
-    const fileResult = {
-      ok: true,
-      dsh: dshVersion,
-      platform: process.platform,
-      arch: process.arch,
-      structuredMarkers: markers.length,
-      toggle: result.toggle,
-      settings: result.settings,
-      functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
-    }
-    writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
-  }
-} catch (error) {
-  if (page && screenshotPath) {
-    try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
-  }
-  const failureState = page ? await page.evaluate(() => ({
-    bodyText: (document.body?.innerText || '').slice(-12000),
-    composer: document.querySelector('[data-composer-card]')?.textContent || '',
-    composerButtons: [...document.querySelectorAll('[data-composer-card] button')].map((button) => ({
-      label: button.getAttribute('aria-label') || '', disabled: Boolean(button.disabled), hidden: Boolean(button.hidden),
-    })),
-    url: location.href,
-  })).catch(() => undefined) : undefined
-  const failure = {
-    ok: false,
-    error: String(error?.stack || error),
-    rendererErrors,
-    textEvidence,
-    visionEvidence,
-    coreProbe: lastCoreProbe,
-    runtimePackageEvidence,
-    failureState,
-  }
-  console.error(JSON.stringify(failure, undefined, 2))
-  if (diagnosticPath) {
-    const fileFailure = {
-      ok: false,
-      failureKind: lastCoreProbe !== undefined
-        && (lastCoreProbe?.services?.workspaceController?.active !== true
-          || lastCoreProbe?.services?.sessionController?.active !== true)
-        ? 'host-control-plane-unavailable'
-        : 'desktop-e2e-failed',
-      rendererErrorCount: rendererErrors.length,
-      functionalVisionTurn: fileSafeTurnEvidence(textEvidence, visionEvidence),
-      coreProbe: fileSafeCoreProbe(lastCoreProbe),
-      runtimePackageEvidence: fileSafeRuntimePackageEvidence(runtimePackageEvidence),
-      failureState: fileSafeFailureState(failureState),
-    }
-    try { writeFileSync(diagnosticPath, `${JSON.stringify(fileFailure, undefined, 2)}\n`) } catch {}
-  }
-  throw error
-} finally {
-  try { await browser?.close() } catch {}
-  await stopProcess(child)
-  await closeServer(textServer?.server)
-  await closeServer(visionServer?.server)
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    try { rmSync(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); break }
-    catch { await new Promise((accept) => setTimeout(accept, 250)) }
-  }
-}
-) }).last().isVisible(), true)
+      assert.equal(await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^' + OCR_RENDERED_MARKER + '$') }).last().isVisible(), true)
     } finally {
       exactNativeToolPhase = false
     }
@@ -1563,8 +1319,10 @@ try {
     await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
     await page.getByText('Vision Router', { exact: true }).last().click()
     await exactNativeOcrModule.finishExactDesktopOcr(page, exactNativeOcr, exactNativeRecognition, {
-      ...exactNativeToolResult, toolCalls: exactNativeToolCalls,
-      visionRequestsDuringOcr: visionEvidence.requests - beforeVisionRequests, dshVersion,
+      ...exactNativeToolResult,
+      toolCalls: exactNativeToolCalls,
+      visionRequestsDuringOcr: visionEvidence.requests - beforeVisionRequests,
+      dshVersion,
     })
     await page.getByRole('button', { name: /关闭|Close/i }).first().click()
     reportPhase('exact-native-ocr-agent-and-gui-passed')

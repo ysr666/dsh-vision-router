@@ -32,13 +32,21 @@ runs:
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: 24.21.0
+    - name: Verify renderer E2E syntax before expensive Host dependencies
+      shell: bash
+      run: |
+        node --check scripts/dsh-desktop-renderer-e2e.mjs
+        node --check quality/native-ocr-desktop-acceptance.mjs
+        node --test quality/test-native-ocr-desktop-acceptance.mjs
     - name: Build unmodified plugin package
       shell: bash
       run: |
         set -euo pipefail
-        pnpm install --frozen-lockfile --ignore-scripts
-        pnpm build
-        pnpm build:check
+        # DVR has a different pinned pnpm than the immutable DSH Host.
+        # Install only DVR with its own exact pinned package manager.
+        npm exec --yes --package=pnpm@11.20.0 -- pnpm install --frozen-lockfile --ignore-scripts
+        node scripts/build-source-artifacts.mjs
+        node scripts/build-source-artifacts.mjs --check
     - name: Install and build real RC4 Desktop source
       working-directory: dsh-ocr-host
       shell: bash
