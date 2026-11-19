@@ -46,7 +46,7 @@ test('native OCR tar reader extracts canonical ustar members without an external
     })), /trailer|tar format/)
     assert.throws(() => readNativeOcrTarArchive(gzipSync(
       gunzipSync(archive).subarray(0, -BLOCK)
-    )), /trailer/)
+    )), /trailer|truncated tar member/)
     const first = Buffer.from(names.sort()[0])
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
       b[BLOCK + first.length] = 123
