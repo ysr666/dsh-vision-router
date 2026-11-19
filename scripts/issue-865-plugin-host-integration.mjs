@@ -64,6 +64,9 @@ class SyntheticSource extends LlmAdapter {
     yield { type: 'block-start', index: 0, blockType: 'reasoning' }
     yield { type: 'reasoning-delta', index: 0, text: 'synthetic reasoning' }
     yield { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'synthetic reasoning' } }
+    yield { type: 'usage', usage: {
+      inputTokens: 8, outputTokens: 2, cacheReadTokens: 34, totalTokens: 44,
+    } }
     yield { type: 'finish', reason: { kind: 'stop' }, replayState: replay() }
   }
 }
@@ -102,6 +105,11 @@ try {
     user('enable vision for the next turn'),
   ]
   const first = await call(twin, baseHistory)
+  assert.deepEqual(
+    first.chunks.find(chunk => chunk.type === 'usage')?.usage,
+    { inputTokens: 8, outputTokens: 2, cacheReadTokens: 34, totalTokens: 44 },
+    'usage must retain source adapter cache accounting and not be silently rewritten',
+  )
   assert.ok(first.requested.messages.some(message =>
     message.role === 'assistant' && message.source.replayState?.response?.kind === 'deepseek-messages'),
   'twin admission must not erase source-authored native replay')
@@ -150,9 +158,38 @@ try {
   const survivingUpdates = result.requested.messages.flatMap(message => message.content)
     .filter(block => block.type === 'tool-addition' || block.type === 'tool-removal')
   assert.equal(survivingUpdates.length, 1, 'source Host must receive exactly one unprojected late addition')
+
+  // The Host can bind provider/model/defaults before dispatch through
+  // prepareCall(). DVR must not bypass that validated registration generation.
+  const prepared = await ctx.llm.prepareCall({ provider: twin, model, maxTokens: 128 })
+  assert.equal(prepared.config.provider, twin)
+  const beforePrepared = received.length
+  const preparedChunks = []
+  for await (const chunk of prepared.stream({
+    ...prepared.config, messages: baseHistory, sessionId: 'synthetic-prepared-session',
+  })) preparedChunks.push(chunk)
+  assert.equal(received.length, beforePrepared + 1)
+  assert.equal(received.at(-1).provider, provider)
+  assert.equal(preparedChunks.find(chunk => chunk.type === 'usage')?.usage?.cacheReadTokens, 34)
+  assert.equal(preparedChunks.find(chunk => chunk.type === 'finish')?.replayState?.response?.provider, provider)
+
+  // Already-aborted calls cannot dispatch into the source adapter and must
+  // retain the Host's standard aborted terminal outcome.
+  const aborted = new AbortController()
+  aborted.abort(new Error('synthetic user cancellation'))
+  const beforeAbort = received.length
+  const abortedChunks = []
+  for await (const chunk of ctx.llm.stream({
+    provider: twin, model, messages: baseHistory, maxTokens: 128,
+    sessionId: 'synthetic-aborted-session', signal: aborted.signal,
+  })) abortedChunks.push(chunk)
+  assert.equal(received.length, beforeAbort, 'aborted request must not reach the source transport')
+  assert.equal(abortedChunks.at(-1)?.reason?.kind, 'aborted')
+
   console.log(JSON.stringify({ ok: true, kind: 'real DVR plugin+Host twin delegation',
     firstSignedReplay: true, twinOriginReplay: true,
-    lateToolUpdates: survivingUpdates.length, sourceCalls: received.length }))
+    lateToolUpdates: survivingUpdates.length, sourceCalls: received.length,
+    preparedCall: true, usagePreserved: true, abortBeforeDispatch: true }))
 } finally {
   await ctx.fiber.dispose()
 }
