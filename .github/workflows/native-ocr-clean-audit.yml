@@ -8,7 +8,7 @@ on:
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'
       - 'src/lib/optional-ocr-engines.js'
-      - 'tests/native-ocr-windows-uninstall.test.js'
+      - 'tests/optional-local-ocr.test.js'
       - 'quality/native-ocr-desktop-acceptance.mjs'
       - 'quality/native-ocr-desktop-tool-evidence.mjs'
       - 'quality/test-native-ocr-desktop-acceptance.mjs'
@@ -59,7 +59,7 @@ jobs:
       - name: Exercise genuine Windows owner-bound uninstall and retry safety
         shell: pwsh
         run: |
-          node --test tests/native-ocr-windows-uninstall.test.js
+          node --test tests/optional-local-ocr.test.js
           if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NATIVE_UNINSTALL_PROBE_FAILED' }
   conversion:
     runs-on: windows-latest
