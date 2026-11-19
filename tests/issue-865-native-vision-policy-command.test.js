@@ -22,6 +22,7 @@ function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
       callback({ commands: { register(definition) { registered.push(definition) } } })
     },
     llm: {
+      registration() { return { adapter: {} } },
       async resolveModelInfo(provider, modelId) {
         assert.equal(provider, selected.provider)
         assert.equal(modelId, selected.model)
@@ -69,6 +70,21 @@ test('issue #865: reject text-only model, disabled tools, malformed invocations 
   assert.equal((await disabled.call('on', disabled.agent, [{ type: 'image' }])).kind, 'error')
   assert.equal((await disabled.call('on', { ...disabled.agent, id: 'foreign-session' })).kind, 'error')
   assert.equal(disabled.selectCount(), 0)
+})
+
+test('issue #865: a DVR-owned wrapper cannot impersonate native multimodal via model metadata', async () => {
+  const f = fixture({ inputModalities: ['text', 'image'] })
+  f.ctx.llm.registration = () => ({
+    adapter: { [Symbol.for('dsh-vision-router.adapter-owner')]: Object.freeze({ route: 'text-vision' }) },
+  })
+  assert.equal((await f.call('on')).kind, 'error')
+  assert.equal((await f.call('off')).kind, 'error')
+  assert.equal(f.policies.size, 0, 'wrapped text-only sources must never enter the native command mode')
+  assert.equal(f.selectCount(), 0)
+  // Unknown adapter ownership is not proof of native capability.
+  f.ctx.llm.registration = undefined
+  assert.equal((await f.call('on')).kind, 'error')
+  assert.equal(f.policies.size, 0)
 })
 
 test('issue #865: async provider discovery cannot apply stale model policy', async () => {
