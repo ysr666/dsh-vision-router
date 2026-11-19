@@ -7,6 +7,8 @@ on:
       - 'quality/native-ocr-canonical-labels.py'
       - 'quality/test-native-ocr-canonical-labels.py'
       - 'quality/native-ocr-staged-acceptance.mjs'
+      - 'src/lib/optional-ocr-engines.js'
+      - 'tests/native-ocr-windows-uninstall.test.js'
       - 'quality/native-ocr-desktop-acceptance.mjs'
       - 'quality/native-ocr-desktop-tool-evidence.mjs'
       - 'quality/test-native-ocr-desktop-acceptance.mjs'
@@ -42,6 +44,21 @@ concurrency:
   group: native-ocr-clean-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  windows-uninstall-probe:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.21.0
+      - name: Exercise genuine Windows owner-bound uninstall and retry safety
+        shell: pwsh
+        run: |
+          node --test tests/native-ocr-windows-uninstall.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NATIVE_UNINSTALL_PROBE_FAILED' }
   conversion:
     runs-on: windows-latest
     timeout-minutes: 20

@@ -153,7 +153,7 @@ async function child(stage,bmp,expected) {
   // Import only after intercepting fetch, since the real download module
   // captures its default fetch at import time.
   const {installOptionalOcrRoutes,OPTIONAL_OCR_ROUTE}=await import('./lib/optional-ocr-routes.js')
-  const {optionalOcrStatus}=await import('./lib/optional-ocr-engines.js')
+  const {optionalOcrStatus,mutateOptionalOcr}=await import('./lib/optional-ocr-engines.js')
   const {localNativeOcrInstallPaths}=await import('./lib/native-ocr-installation.js')
   const {verifyNativeOcrAssets}=await import('./lib/native-ocr-integrity.js')
   const {verifyExperimentalNativeOcrBinary}=await import('./lib/native-ocr-canary.js')
@@ -163,7 +163,25 @@ async function child(stage,bmp,expected) {
   installOptionalOcrRoutes({inject(_deps,fn){fn({
     effect(f){return f()},
     webServer:{register(def){assert.equal(route,undefined);route=def;return ()=>{}}},
-  })}}, {statusReader:()=>optionalOcrStatus({probeSystem:async()=>false})})
+  })}}, {
+    statusReader:()=>optionalOcrStatus({probeSystem:async()=>false}),
+    // Test-only diagnostic around the *real* mutator, not a fake adapter.
+    // Never print filesystem paths, payloads or process environment to CI.
+    mutate:async args=>{
+      try{return await mutateOptionalOcr(args)}
+      catch(error){
+        if(args.action==='uninstall'){
+          const code=/^[A-Z_]{2,24}$/.test(String(error?.code??''))?error.code:'UNCLASSIFIED'
+          const message=String(error?.message??'')
+          const kind=message.includes('refusing to remove changed OCR directory')?'OWNERSHIP_CHANGED'
+            :message.includes('refusing to move unowned OCR directory')?'UNOWNED'
+            :message.includes('not installed')?'NOT_INSTALLED':'FILESYSTEM_OR_INTERNAL'
+          console.error('DVR_STAGED_UNINSTALL_DIAGNOSTIC='+JSON.stringify({code,kind,target}))
+        }
+        throw error
+      }
+    },
+  })
   assert.equal(route.path,OPTIONAL_OCR_ROUTE)
   const server=createServer((req,res)=>{
     if(req.url.split('?')[0]!==route.path){res.writeHead(404);res.end();return}
