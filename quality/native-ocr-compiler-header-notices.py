@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Inventory notice-bearing compiler headers from a fixed CRT reconstruction.
+
+This is bounded, read-only evidence gathering, not legal clearance. It never
+packages compiler bytes, models or executables and it does not enable delivery.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+import re
+
+SOURCE_REVISION = '0d6dfbc348dfad714761c0a7151615767f96bcb5'
+TOOL_ARCHIVE_SHA256 = 'e9c13e4ede38e715003ffc674d4d00a1088df8235439d1f0c16188ff0704c17e'
+TOOL_NAME = 'llvm-mingw-20261020-ucrt-macos-universal'
+HEADER_FAMILIES = {
+    'toolchain/generic-w64-mingw32/include/': ('mingw-w64-installed-header', 191),
+    'toolchain/lib/clang/23/include/': ('llvm-clang-builtin-header', 149),
+}
+# Deliberately a broad keyword inventory, not a determination of license grants.
+NOTICE_WORDS = re.compile(
+    r'\b(?:copyright|spdx-license-identifier|licen[sc]e|permission is hereby|'
+    r'redistribution and use|public domain|gnu (?:lesser |library )?general public|'
+    r'cephes|lucent|zpl|apache|mit license|free software foundation)\b', re.I,
+)
+INLINE_WORDS = re.compile(r'\b(?:static\s+(?:__inline__|__inline|inline)|'
+                          r'__attribute__\s*\(\(\s*always_inline|__forceinline)\b', re.I)
+COMMENT = re.compile(r'/\*[\s\S]*?\*/|(?m:^[ \t]*//[^\r\n]*)')
+SPDX = re.compile(r'\bSPDX-License-Identifier\s*:\s*([^\r\n*]+)', re.I)
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def need(value: bool, message: str) -> None:
+    if not value:
+        raise ValueError(message)
+
+
+def one_header(key: str, fact: dict, root: Path) -> dict:
+    need(isinstance(key, str) and all(x not in ('', '.', '..') for x in key.split('/'))
+         and '\\' not in key and '\x00' not in key, 'UNSAFE_HEADER_KEY')
+    need(isinstance(fact, dict) and isinstance(fact.get('sha256'), str)
+         and re.fullmatch('[0-9a-f]{64}', fact['sha256']) is not None
+         and type(fact.get('bytes')) is int and 0 < fact['bytes'] <= 2_000_000,
+         'INVALID_HEADER_FACT')
+    # Dependency keys use an abstract "toolchain/" root; the supplied root is
+    # already the extracted, pinned toolchain directory.
+    need(key.startswith('toolchain/'), 'UNSAFE_HEADER_KEY')
+    path = root / key.removeprefix('toolchain/')
+    resolved = path.resolve(strict=True)
+    need(resolved.is_relative_to(root.resolve(strict=True)) and resolved.is_file(),
+         'UNSAFE_HEADER_PATH: ' + key)
+    data = path.read_bytes()
+    need(len(data) == fact['bytes'] and digest(data) == fact['sha256'],
+         'HEADER_BYTES_CHANGED: ' + key)
+    text = data.decode('utf-8', 'replace')
+    notices = []
+    total = 0
+    # Capture only comment snippets. Source files remain on the ephemeral runner.
+    for found in COMMENT.finditer(text):
+        block = found.group()
+        if not NOTICE_WORDS.search(block):
+            continue
+        total += 1
+        if len(notices) < 24:
+            notices.append({
+                'line': text.count('\n', 0, found.start()) + 1,
+                'sha256': digest(block.encode('utf-8')),
+                'length': len(block),
+                'excerpt': block[:2048],
+                'truncated': len(block) > 2048,
+            })
+    spdx = sorted({m.group(1).strip() for m in SPDX.finditer(text)})
+    return {
+        'sha256': fact['sha256'],
+        'bytes': len(data),
+        'spdxTextObserved': spdx,
+        'noticeCommentCount': total,
+        'noticeCommentsCaptured': notices,
+        'noticeListTruncated': total > len(notices),
+        'possibleHeaderInlineDefinitions': bool(INLINE_WORDS.search(text)),
+        # Imported from the existing exact dependency evidence. Its risk pattern
+        # is intentionally narrower than the notice inventory above.
+        'originalRiskHints': fact.get('riskHints', []),
+        'humanLicenseReview': 'required',
+    }
+
+
+def inventory(evidence: dict, root: Path, expected_counts: dict | None = None) -> dict:
+    need(evidence.get('sourceRevision') == SOURCE_REVISION
+         and evidence.get('compilerArchiveSha256') == TOOL_ARCHIVE_SHA256
+         and evidence.get('normalizedMatches') == 68
+         and evidence.get('exactStrippedObjectReplayMatches') == 68
+         and evidence.get('distributionReady') is False, 'INCORRECT_CRT_EVIDENCE')
+    deps = evidence.get('dependencies')
+    need(isinstance(deps, dict) and len(deps) == 419 and
+         len(evidence.get('perObject', {})) == 68, 'INCOMPLETE_CRT_DEPENDENCIES')
+    expected = expected_counts if expected_counts is not None else {
+        prefix: count for prefix, (_, count) in HEADER_FAMILIES.items()
+    }
+    output = {}
+    summary = {}
+    for prefix, (family, _) in HEADER_FAMILIES.items():
+        keys = sorted(k for k in deps if k.startswith(prefix))
+        need(len(keys) == expected[prefix], 'UNEXPECTED_HEADER_FAMILY_COUNT: ' + family)
+        entries = {k: one_header(k, deps[k], root) for k in keys}
+        output.update(entries)
+        summary[family] = {
+            'files': len(entries),
+            'withSpdxText': sum(bool(v['spdxTextObserved']) for v in entries.values()),
+            'withNoticeComments': sum(bool(v['noticeCommentCount']) for v in entries.values()),
+            'noNoticeTextObserved': sum(not v['noticeCommentCount'] and not v['spdxTextObserved'] for v in entries.values()),
+            'potentialInlineDefinitions': sum(v['possibleHeaderInlineDefinitions'] for v in entries.values()),
+            'noticeCaptureTruncated': sum(v['noticeListTruncated'] for v in entries.values()),
+        }
+    need(len(output) == 340 and len(set(output)) == 340, 'INCOMPLETE_TOOLCHAIN_HEADER_SET')
+    return {
+        'schemaVersion': 1,
+        'scope': 'Source-matched notice/comment excerpts from the exact 340 toolchain headers transitively included by 68 rebuilt Windows CRT objects; no source code or binaries packaged',
+        'compilerArchiveSha256': TOOL_ARCHIVE_SHA256,
+        'sourceRevision': SOURCE_REVISION,
+        'inputSelectedCrtObjects': 68,
+        'inputUniqueDependencyPaths': 419,
+        'headerCount': len(output),
+        'families': summary,
+        'headers': output,
+        'limitations': [
+            'Notice keywords and SPDX text are evidence for human review, not automated legal classification.',
+            'A missing notice or license in a header does not establish public-domain status.',
+            'Header inclusion does not prove whether inline or macro implementations survive linking into the Windows PE.',
+            'Other separately linked LLVM runtime objects and ncnn source dependency closures remain independent obligations.',
+            'No minimum Windows/macOS runtime or actual public HTTPS distribution is tested here.',
+        ],
+        'humanLicenseReviewRequired': True,
+        'distributionReady': False,
+        'ownerPublicationAuthorized': False,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--evidence', type=Path, required=True)
+    parser.add_argument('--lab', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    a = parser.parse_args()
+    need(not a.output.exists(), 'OUTPUT_ALREADY_EXISTS')
+    evidence = json.loads(a.evidence.read_text(encoding='utf-8'))
+    root = a.lab.resolve(strict=True)
+    need((root / TOOL_NAME).is_dir(), 'PINNED_TOOLCHAIN_DIRECTORY_MISSING')
+    report = inventory(evidence, root / TOOL_NAME)
+    a.output.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    print('NATIVE_OCR_TOOLCHAIN_HEADER_NOTICE_EVIDENCE', report['headerCount'],
+          'humanLicenseReviewRequired=true distributionReady=false', flush=True)
+
+
+if __name__ == '__main__':
+    main()
