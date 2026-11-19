@@ -582,6 +582,82 @@ test('native multimodal wrapper preserves images without a discarded local capti
   }
 })
 
+
+test('issue #865: twin reasoning effort is isolated between Sessions, including anonymous calls', async () => {
+  const requests = []
+  const ctx = {
+    llm: {
+      async *stream(options) {
+        requests.push(options)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }
+  const adapter = createWrapperStreamBody(ctx, {
+    imageMemory: new Map(),
+    delegateProvider: 'deepseek-account',
+    preserveImageInput: true,
+  })
+  const run = async (sessionId, reasoningEffort) => {
+    const options = {
+      model: 'deepseek-flash',
+      messages: [],
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    }
+    for await (const _chunk of adapter.stream(options)) {}
+    return requests.at(-1)
+  }
+
+  assert.equal((await run('session-A', 'high')).reasoningEffort, 'high')
+  assert.equal((await run('session-B')).reasoningEffort, undefined, 'another Session must not borrow A')
+  assert.equal((await run('session-B', 'off')).reasoningEffort, 'off')
+  assert.equal((await run('session-A')).reasoningEffort, 'high', 'later step retains A choice')
+  assert.equal((await run('session-B')).reasoningEffort, 'off', 'later step retains B choice')
+  assert.equal((await run(undefined, 'max')).reasoningEffort, 'max')
+  assert.equal((await run(undefined)).reasoningEffort, undefined, 'anonymous calls are not shared')
+})
+
+test('issue #865: twin reasoning effort is isolated by delegate/model and has bounded retention', async () => {
+  const requests = []
+  let delegate = 'provider-A'
+  const adapter = createWrapperStreamBody({
+    llm: {
+      async *stream(options) {
+        requests.push(options)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }, {
+    imageMemory: new Map(),
+    delegateProvider: () => delegate,
+    preserveImageInput: true,
+  })
+  const run = async (sessionId, model, reasoningEffort) => {
+    for await (const _chunk of adapter.stream({
+      sessionId,
+      model,
+      messages: [],
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    })) {}
+    return requests.at(-1).reasoningEffort
+  }
+
+  assert.equal(await run('one', 'm1', 'high'), 'high')
+  assert.equal(await run('one', 'm2'), undefined)
+  delegate = 'provider-B'
+  assert.equal(await run('one', 'm1'), undefined)
+  delegate = 'provider-A'
+  assert.equal(await run('one', 'm1'), 'high')
+  // The adapter may live for days. Retaining an unbounded entry per Session
+  // would become a process-level leak, so verify LRU eviction after 512 entries.
+  for (let i = 0; i < 512; i++) {
+    await run('other-' + i, 'm1', 'low')
+  }
+  assert.equal(await run('one', 'm1'), undefined, 'oldest Session state is evicted')
+  assert.equal(await run('other-511', 'm1'), 'low', 'recent Session state remains')
+})
+
 // 进程级退出金丝雀：若 buildInstantLocalMap 内部回退为不清理的
 // AbortSignal.timeout(120s)，子进程会被悬挂计时器拖住 120s 无法退出，
 // 本用例会在 15s 判定线内把子进程判死并失败。
