@@ -4,7 +4,6 @@
 import { copyFile, chmod, mkdir, rename, rm, lstat, writeFile, mkdtemp, readFile } from 'node:fs/promises'
 import { randomUUID, createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +11,7 @@ import { localNativeOcrInstallPaths, moveOwnedNativeOcrDirectory } from '../lib/
 import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
 import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
+import { readNativeOcrTarArchive } from '../lib/native-ocr-tar-reader.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -102,33 +102,31 @@ async function install() {
   const v2Members = [...sourceV2Members, ...(onWindows ? [prefix + 'WINDOWS-RUNTIME-NOTICES.txt'] : [])].sort()
   const v3Members = [...v2Members, prefix + 'PADDLEOCR-LICENSE.txt'].sort()
   const v4Members = [...v3Members, ...(onWindows ? [prefix + 'MINGW-PTHREAD-SIGNAL-NOTICE.txt'] : [])].sort()
-  const listed = spawnSync('tar', ['-tzf', archive], { encoding:'utf8', timeout:30_000, maxBuffer: 64 * 1024 })
-  const actualMembers = listed.stdout?.trim().split(/\r?\n/).sort()
+  // Decode a constrained ustar archive in this dedicated installer process.
+  // Windows Desktop Hosts may not expose an external tar executable on PATH.
+  const memberBytes = readNativeOcrTarArchive(await readFile(archive))
+  const actualMembers = [...memberBytes.keys()].sort()
   const hasCrtNotice = onWindows && isDeepStrictEqual(actualMembers, v4Members)
   const hasPaddleLicense = hasCrtNotice || isDeepStrictEqual(actualMembers, v3Members)
   const hasRuntimeNotices = onWindows && (hasPaddleLicense || isDeepStrictEqual(actualMembers, v2Members))
   const hasSourceNotices = onWindows && (hasRuntimeNotices || isDeepStrictEqual(actualMembers, sourceV2Members))
   const isV2 = isDeepStrictEqual(actualMembers, v2Members) || isDeepStrictEqual(actualMembers, sourceV2Members) || isDeepStrictEqual(actualMembers, previousV2Members)
   const hasMetadata = hasPaddleLicense || isV2
-  if (listed.status !== 0 || (!hasMetadata && !isDeepStrictEqual(actualMembers, legacyMembers))) {
+  if (!hasMetadata && !isDeepStrictEqual(actualMembers, legacyMembers)) {
     throw Error('native OCR bundle has unknown/missing entries')
   }
   const members = hasCrtNotice ? v4Members : hasPaddleLicense ? v3Members : isV2 ? (hasRuntimeNotices ? v2Members : hasSourceNotices ? sourceV2Members : previousV2Members) : legacyMembers
-  // Read ONLY individually named entries into memory. Never call 'tar -x':
-  // traversal, links and metadata from an external archive cannot write files.
+  // Materialize ONLY exact allowlisted regular files. The strict reader has
+  // rejected links, traversal, duplicates, extra entries and malformed tar.
   const tmp = await mkdtemp(join(tmpdir(), 'dvr-ocr-unpack-'))
   try {
     for (const entry of members) {
       const suffix = entry.slice(prefix.length)
       const destPath = join(tmp, suffix)
       await mkdir(dirname(destPath), { recursive: true, mode: 0o700 })
-      const data = spawnSync('tar', ['-xOzf', archive, entry], {
-        timeout: 45_000, maxBuffer: 32 * 1024 * 1024,
-      })
-      if (data.status !== 0 || !Buffer.isBuffer(data.stdout)) {
-        throw Error('native OCR archive member unreadable: ' + suffix)
-      }
-      await writeFile(destPath, data.stdout, { mode: 0o600 })
+      const data = memberBytes.get(entry)
+      if (!Buffer.isBuffer(data)) throw Error('native OCR archive member unreadable: ' + suffix)
+      await writeFile(destPath, data, { mode: 0o600 })
     }
     const manifest = JSON.parse(await readFile(join(tmp,'MANIFEST.json'),'utf8'))
     if (manifest.schemaVersion !== (hasCrtNotice ? 4 : hasPaddleLicense ? 3 : isV2 ? 2 : 1) ||
