@@ -76,7 +76,9 @@ async function request(provider, messages, opts = {}) {
     provider, model: modelId, messages, maxTokens: 128, reasoningEffort: 'high',
     sessionId: 'issue-865-synthetic', signal: AbortSignal.timeout(10000), ...opts,
   })) {
-    if (chunk.type === 'error') throw new Error(JSON.stringify(chunk.failure ?? chunk))
+    if (chunk.type === 'finish' && chunk.reason?.kind !== 'stop') {
+      throw new Error('DSH request failed before source dispatch: ' + JSON.stringify(chunk.reason))
+    }
   }
   assert.equal(requests.length, before + 1, 'one source adapter dispatch per main call')
   const actual = requests.at(-1)
