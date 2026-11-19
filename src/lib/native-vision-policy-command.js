@@ -47,6 +47,10 @@ function sourceModelIsNative(ctx, provider) {
 export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () => true } = {}) {
   if (typeof ctx?.inject !== 'function' || typeof store?.get !== 'function' ||
       typeof store?.set !== 'function') return
+  // A slow provider capability lookup from a previous command must not
+  // override a later ON/OFF intent on the same live Agent. Weak identity
+  // avoids per-Session memory growth and does not cross Session lifetimes.
+  const latestIntent = new WeakMap()
   ctx.inject(['commands'], scope => {
     scope.commands.register({
       name: NAME,
@@ -71,6 +75,14 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
           return result('error', 'Select a model before changing Vision mode.')
         }
         if (action === 'status') {
+          if (store.get(sessionId) === undefined && typeof store.hydrate === 'function') {
+            try {
+              await store.hydrate(sessionId)
+            } catch {
+              return result('error', 'Cannot read the persisted Vision policy for this Session.')
+            }
+            if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
+          }
           const explicit = store.get(sessionId)
           const description = explicit?.source === 'user'
             ? (explicit.enabled ? 'on' : 'off')
@@ -81,6 +93,11 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         if (action === 'on' && !toolEnabled()) {
           return result('error', 'DVR tools are disabled in plugin settings.')
         }
+        // Record the user's ordering *before* the first asynchronous model
+        // capability lookup. A late earlier lookup cannot overwrite a newer
+        // successful command, even if the provider ignores AbortSignal.
+        const intent = {}
+        latestIntent.set(agent, intent)
         // Do not infer native modality from the provider or a route suffix.
         // Real Host model catalogs do not expose inputModalities to the UI.
         let info
@@ -106,6 +123,14 @@ export function installNativeVisionPolicyCommand(ctx, store, { toolEnabled = () 
         }
         const enabled = action === 'on'
         if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
+        if (latestIntent.get(agent) !== intent) {
+          return result('error', 'A newer Vision-mode command superseded this request.')
+        }
+        // Registration may have been replaced during the async capability
+        // query, so re-check ownership at the exact mutation boundary.
+        if (!sourceModelIsNative(ctx, selection.provider)) {
+          return result('error', 'The selected native model registration has changed.')
+        }
         try {
           await store.set(sessionId, userSessionVisionPolicy(enabled))
         } catch {
