@@ -45,5 +45,14 @@
     "Minimum OS runtime and owner-publication authorization"
   ],
   "distributionReady": false,
-  "ownerPublicationAuthorized": false
+  "ownerPublicationAuthorized": false,
+  "finalWorkerCbrtSymbolReview": {
+    "run": 44451773187,
+    "job": 135320472558,
+    "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+    "importSymbolMatches": 0,
+    "linkMapSymbolMatches": 0,
+    "source": "quality/native-ocr-final-link-audit.py read-only llvm-readobj+link-map scan",
+    "interpretation": "The suspect MinGW math.h comment sits before cbrt declarations; no directly named cbrt variants were observed in final PE import symbols or linker-map token scan. This narrows but cannot disprove inlined or unnamed retained code; it does not close transitive header provenance."
+  }
 }
