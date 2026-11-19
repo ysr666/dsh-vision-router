@@ -2474,15 +2474,14 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
  * 立即读取新值，无需重启或重建 adapter。
  */
 export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport }) {
-  // issue #103: the reasoning level is a per-session picker choice (the chat
-  // page's bottom-right selector), but the host can drop reasoningEffort from
-  // the later steps of a multi-step turn once the twin metadata lacks a
-  // reasoning.defaultEffort (only step 1 thinks). Remember the last explicit
-  // effort seen per delegate — whatever the user actually picked — and
-  // re-inject it when a later call arrives without one, so every step keeps
-  // the user's chosen level. The vision chain never flows through this body
-  // and keeps its own reasoningEffort: undefined.
-  const lastReasoningEffort = new Map() // "provider\0model" -> last explicit effort
+  // Issue #103: preserve picker effort on later Host steps that omit it.
+  // A twin adapter is shared by Sessions: remembering only provider/model
+  // leaks one conversation's effort into another (issue #865). Remember only
+  // calls with a durable Session id, with bounded per-session LRU storage.
+  // Anonymous/auxiliary calls must use the Host/provider default when omitted.
+  // The vision chain is separate and keeps reasoningEffort: undefined.
+  const lastReasoningEffort = new Map() // "sessionId\0delegateProvider\0model" -> explicit effort
+  const maxReasoningEffortEntries = 512
   const liveValue = (value) => (typeof value === 'function' ? value() : value)
   return {
     async *stream(options) {
@@ -2572,18 +2571,28 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       // Resolve it once per model call so metadata, reasoning memory and the
       // actual network dispatch all use one coherent delegate identity.
       const currentDelegateProvider = liveValue(delegateProvider)
-      // Remember per delegate+model rather than per delegate alone: the
-      // stream boundary carries no session id, so provider+model is the
-      // narrowest scope available and keeps two concurrent sessions on the
-      // same twin from sharing one memory slot.
-      const effortKey = `${currentDelegateProvider}\u0000${options.model ?? ''}`
+      const sessionId = typeof options.sessionId === 'string' && options.sessionId !== ''
+        ? options.sessionId
+        : undefined
+      const effortKey = sessionId === undefined
+        ? undefined
+        : `${sessionId}\u0000${currentDelegateProvider}\u0000${options.model ?? ''}`
       let effort = typeof options.reasoningEffort === 'string' && options.reasoningEffort !== ''
         ? options.reasoningEffort
         : undefined
-      if (effort !== undefined) {
-        lastReasoningEffort.set(effortKey, effort)
-      } else {
-        effort = lastReasoningEffort.get(effortKey)
+      if (effortKey !== undefined) {
+        if (effort === undefined && lastReasoningEffort.has(effortKey)) {
+          effort = lastReasoningEffort.get(effortKey)
+        }
+        if (effort !== undefined) {
+          // A read also refreshes recency; old sessions cannot grow the
+          // process-wide adapter state without bound.
+          lastReasoningEffort.delete(effortKey)
+          lastReasoningEffort.set(effortKey, effort)
+          if (lastReasoningEffort.size > maxReasoningEffortEntries) {
+            lastReasoningEffort.delete(lastReasoningEffort.keys().next().value)
+          }
+        }
       }
       yield* ctx.llm.stream({
         ...(effort === undefined ? options : { ...options, reasoningEffort: effort }),
