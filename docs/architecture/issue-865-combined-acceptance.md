@@ -72,3 +72,18 @@ The previous combined Desktop positive control also passed actual native
 clicks with zero new model-selection events or model requests. This change
 retains D3 and #866 in the shared Core declaration; changes to the projection
 boundary require a fresh joint acceptance run. No release or default change.
+
+### D4 — actual public-entry cold-resume proof
+
+Extend the existing D3 script with a separate production-plugin mode. It
+mounts the npm public entrypoint in a real Cordis fiber, creates a generated
+text twin, and runs a warm-up turn to acquire the actual Session-local
+recognition cache. Only the recognition text is synthetic and injected into
+that existing cache; **no test-only pre-step appends evidence** in this mode.
+The real DVR pre-step must retain the original image and commit exactly one
+producer-owned evidence message. The next process must have empty recognition
+memory but replay the evidence and all prior serialized wire entries; a late
+volatile memory refresh must not rewrite history. D3's isolated helper mode
+remains independently exercised. This is not real OCR accuracy or online
+provider-cache evidence. If the product path fails these assertions, do not
+weaken them to claim production readiness.

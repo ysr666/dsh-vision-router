@@ -1,6 +1,7 @@
 // #865 D2: production JSONL + upstream native lock + two separate processes.
-// Uses real DVR evidence/wrapper helpers, synthetic admission/OCR and LLM.
-// Not a full public-plugin, real OCR or paid-provider test.
+// D3 keeps the isolated real JSONL + serializer proof; D4 additionally
+// mounts the actual npm entrypoint and generated twin in separate processes.
+// Both use deterministic synthetic recognition text and LLM responses.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -21,13 +22,14 @@ function assertWirePrefix(previous, later) {
   assert.deepEqual(later.messageHashes.slice(0, previous.messageHashes.length), previous.messageHashes,
     'every previous serialized Messages API entry must remain byte-identical')
 }
-const [phase, temp] = process.argv.slice(2)
-if (!phase) {
+const [phase, temp, mode = 'helper'] = process.argv.slice(2)
+const fullPlugin = mode === 'plugin'
+async function verifyProcessPair(mode) {
   const dir = await mkdtemp(path.join(tmpdir(), 'dvr-865-jsonl-'))
   try {
     for (const child of ['write', 'resume']) {
       const run = spawnSync(process.execPath,
-        [...process.execArgv, fileURLToPath(import.meta.url), child, dir],
+        [...process.execArgv, fileURLToPath(import.meta.url), child, dir, mode],
         { cwd: process.cwd(), env: { ...process.env, DSH_HOME: path.join(dir, 'home') },
           stdio: 'inherit', timeout: 120_000 })
       if (run.error) throw run.error
@@ -45,13 +47,18 @@ if (!phase) {
     console.log(JSON.stringify({ ok: true, scenario: 'production JSONL cross-process cold resume',
       rawImageRetained: true, exactMarkerAndEvidenceReplay: true, evidenceCount: 1,
       restoredWithoutVisionMemory: true, actualDeepSeekMessagesSerializer: true,
+      entrypoint: mode === 'plugin' ? 'actual-public-plugin' : 'isolated-helper',
       serializedBaselineBytes: first.wire.bytes, serializedPrefixMessages: first.wire.messageHashes.length,
       coldResumeWirePrefixUnchanged: true, lateMemoryWirePrefixUnchanged: true }))
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+}
+if (!phase) {
+  await verifyProcessPair('helper')
+  await verifyProcessPair('plugin')
 } else {
-  assert.ok(['write', 'resume'].includes(phase) && temp)
+  assert.ok(['write', 'resume'].includes(phase) && temp && ['helper', 'plugin'].includes(mode))
   await runChild()
 }
 
@@ -79,6 +86,8 @@ const [
   host('packages/llm/llm-deepseek/src/serialize.ts'),
 ])
 const { LlmAdapter, createUserMessage } = llm
+const { knownSessionVisionMemory } = await import('../lib/session-vision-state.js')
+const route = fullPlugin ? 'synthetic-text-vision' : 'synthetic-admission'
 const samplePng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
@@ -141,6 +150,20 @@ async function mount(memory) {
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new TextAdapter()
   ctx.llm.registerAdapter(['synthetic-text'], adapter)
+  if (fullPlugin) {
+    const plugin = await import('../lib/public-entry.js')
+    await ctx.plugin({ inject: plugin.inject, apply(scope) {
+      return plugin.apply(scope, plugin.Config({
+        routing: false, tool: true, progressiveTools: false,
+        autoActivateOnImage: false, structuredVisionBootstrap: false,
+        autoWrapProviders: false, wrappedProviders: [{ provider: 'synthetic-text', models: ['text'] }],
+        stableImageHistory: true, providers: [], freeFallback: false,
+        downscale: false, cache: false,
+      }))
+    } })
+    assert.ok(ctx.llm.listProviders().some(row => row.id === route), 'actual DVR generates the twin')
+    return { ctx, adapter }
+  }
   const wrapper = createWrapperStreamBody({
     llm: ctx.llm,
   }, { imageMemory: memory, delegateProvider: 'synthetic-text',
@@ -188,10 +211,21 @@ try {
       data: new Uint8Array(samplePng), mediaType: 'image/png', name: 'synthetic.png',
     })
     attachmentId = ref.attachmentId
-    memory.set(attachmentId, 'SYNTHETIC_OCR_EVIDENCE_V1')
     handle = await ctx.agents.create({
-      sessionId, agentOptions: { provider: 'synthetic-admission', model: 'text' },
+      sessionId, agentOptions: { provider: route, model: 'text' },
     })
+    if (fullPlugin) {
+      // Establish the production Session-scoped memory through the real
+      // pre-step. Seed only its recognition result; the test must NOT add a
+      // separate evidence hook or write synthetic user/message events.
+      await runTurn(handle.agent, [{ type: 'text', text: 'Initialize the real DVR Session.' }])
+      const scoped = knownSessionVisionMemory(handle.agent.session)
+      assert.ok(scoped, 'production pre-step exposes the actual scoped recognition cache')
+      assert.equal(scoped.size, 0)
+      scoped.set(attachmentId, 'SYNTHETIC_OCR_EVIDENCE_V1')
+      assert.equal(scoped.get(attachmentId), 'SYNTHETIC_OCR_EVIDENCE_V1')
+      adapter.requests.length = 0 // Only the subsequent image turn is the comparison baseline.
+    } else memory.set(attachmentId, 'SYNTHETIC_OCR_EVIDENCE_V1')
     await runTurn(handle.agent, [
       { type: 'text', text: 'What does this image say?' },
       { type: 'image', attachment: ref },
@@ -201,7 +235,7 @@ try {
     assert.equal(memory.size, 0)
     handle = await ctx.agents.resume({
       resumeSessionId: sessionId,
-      agentOptions: { provider: 'synthetic-admission', model: 'text' },
+      agentOptions: { provider: route, model: 'text' },
     })
     const restored = handle.agent.session.snapshotEvents().filter(event =>
       event.type === 'user/message' && event.data?.id?.startsWith('vision-router-image-evidence-v1-'))
@@ -211,7 +245,10 @@ try {
       event.type === 'user/message' && event.data?.content?.some(block => block.type === 'image'))
     const originalId = originalImage?.data?.content?.find(block => block.type === 'image')?.attachment?.attachmentId
     assert.ok(originalId)
-    memory.set(originalId, 'LATE_RECOGNITION_NOT_A_NEW_DURABLE_EVENT')
+    const lateMemory = fullPlugin ? knownSessionVisionMemory(handle.agent.session) : memory
+    assert.ok(lateMemory, 'cold resume binds the actual recognition cache')
+    assert.equal(lateMemory.size, 0, 'durable evidence must not depend on restored volatile OCR state')
+    lateMemory.set(originalId, 'LATE_RECOGNITION_NOT_A_NEW_DURABLE_EVENT')
     await runTurn(handle.agent, [{ type: 'text', text: 'Continue after an unrelated volatile OCR memory refresh' }])
   }
   const events = handle.agent.session.snapshotEvents()
@@ -225,6 +262,8 @@ try {
   const durableEvidence = events.filter(event => event.type === 'user/message' &&
     event.data?.id?.startsWith('vision-router-image-evidence-v1-'))
   assert.equal(durableEvidence.length, 1, 'no duplicate evidence in the real log')
+  if (fullPlugin) assert.equal(durableEvidence[0].data.source?.kind, SOURCE.kind,
+    'production evidence must carry actual producer-owned source')
   assert.equal(adapter.requests.length, phase === 'write' ? 1 : 2)
   const wire = adapter.requests[0].messages
   const firstWireProof = wireProof(adapter.requests[0])
