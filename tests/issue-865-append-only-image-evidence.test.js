@@ -97,6 +97,35 @@ test('issue #865: evidence only originates from attached image and is bounded', 
   assert.deepEqual(planAppendOnlyImageEvidence(nested, nested, new Map(), source), [])
 })
 
+test('issue #865: 120k-character replay prefix keeps zero historical mutations after late OCR', () => {
+  const longHistory = [history()[0]]
+  for (let i = 0; i < 600; i++) {
+    longHistory.push({
+      id: 'historic-' + i,
+      role: i % 2 === 0 ? 'assistant' : 'user',
+      content: [{ type: 'text', text: 'stable-history-' + i + ':' + 'x'.repeat(200) }],
+    })
+  }
+  const beforeMemory = new Map()
+  const afterMemory = new Map([[id, 'OCR result learned in a later turn']])
+  const oldBefore = rewriteHistoryImages(longHistory, beforeMemory).messages
+  const oldAfter = rewriteHistoryImages(longHistory, afterMemory).messages
+  const stableBefore = rewriteHistoryImages(longHistory, beforeMemory, { stable: true }).messages
+  const stableAfter = rewriteHistoryImages(longHistory, afterMemory, { stable: true }).messages
+  const changedCount = (a, b) => a.reduce((n, msg, i) =>
+    n + Number(JSON.stringify(msg) !== JSON.stringify(b[i])), 0)
+  const legacyChanges = changedCount(oldBefore, oldAfter)
+  const stableChanges = changedCount(stableBefore, stableAfter)
+  assert.ok(JSON.stringify(stableBefore).length > 120_000,
+    'exercise a realistically long synthetic replay prefix, not a toy 2-turn chat')
+  assert.equal(legacyChanges, 1, 'legacy behavior mutates an older image occurrence')
+  assert.equal(stableChanges, 0, 'append-only behavior must mutate zero old messages')
+  assert.equal(JSON.stringify(stableBefore), JSON.stringify(stableAfter),
+    'full JSON prefix remains identical after a late image-memory write')
+  // 1→0 rewritten historic messages is a synthetic cache-prefix metric,
+  // NOT a prediction of real DeepSeek cache hit ratio or billed tokens.
+})
+
 test('issue #865: delayed OCR tool evidence appends without rewriting the earlier image prefix', () => {
   const original = history()
   const empty = new Map()
