@@ -39,3 +39,35 @@ export function hasDelegatedDeepSeekReplayProvenance(replayState, delegateProvid
     response.model === model &&
     Array.isArray(replayState.blocks)
 }
+
+/**
+ * Rebind only the selected DVR twin's own previous assistant responses.
+ *
+ * A generic Host llm/stream interceptor cannot safely trust a foreign
+ * provider's replayState.provider field. The wrapper body, however, knows
+ * both its exact public route and the actual delegate it just selected.
+ * Perform this transformation only at that narrow trusted boundary.
+ */
+export function rebindStampedDeepSeekTwinMessages(messages, twinProvider, delegateProvider, model) {
+  if (!Array.isArray(messages) ||
+      typeof twinProvider !== 'string' || twinProvider === '' ||
+      typeof delegateProvider !== 'string' || delegateProvider === '' ||
+      twinProvider === delegateProvider ||
+      typeof model !== 'string' || model === '') return messages
+  let changed = false
+  const result = messages.map(message => {
+    if (message?.role !== 'assistant' ||
+        message.source?.kind !== 'model' ||
+        message.source.provider !== twinProvider ||
+        message.source.model !== model ||
+        !hasDelegatedDeepSeekReplayProvenance(message.source.replayState, delegateProvider, model)) {
+      return message
+    }
+    changed = true
+    return {
+      ...message,
+      source: { ...message.source, provider: delegateProvider },
+    }
+  })
+  return changed ? result : messages
+}
