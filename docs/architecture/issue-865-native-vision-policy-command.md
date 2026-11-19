@@ -114,3 +114,17 @@ References (pinned DSH 0.2.2-rc.5):
 - [Projection definition and snapshot rules](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/docs/subsystems/session-projection.md)
 - [Remote method and gateway contract](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/docs/api-gateway.md)
 - [Exact Agent model-selection fold](https://github.com/deepseek-ai/deepseek-harness/blob/9c2670d3bce5275e0d1610272958121af87787bb/packages/core/agent/src/model-selection.ts)
+
+### B2.2 exact Gateway contract (test-only contribution)
+
+The pinned Host's official API requires an Agent lookup (agentId, not an
+arbitrary Session object) and matching strict Typert descriptors. Gateway
+checks peer access before resolving that lookup. The command fixture now
+registers a test-only read stream through the real Registry and Gateway,
+checks owner OFF/ON/OFF, rejects a non-owner without a grant, rejects a grant
+for another Session, rejects extra request fields, and cancels an idle stream.
+The shared wire schema rejects additional response fields and never transmits
+raw store rows or adapters. This is a real in-process Gateway contract, not a
+WebSocket/browser test. The explicit fixture descriptor is intentionally NOT
+an npm production endpoint or a generated Loader artifact. Production package
+and browser contributions remain pending; no unverified custom HTTP route.
