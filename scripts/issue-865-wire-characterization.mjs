@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
+import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
 import { installOwnedTwinStreamBoundary } from '../lib/owned-twin-stream-boundary.js'
 
 const root = resolve(process.env.DSH_SOURCE_ROOT ?? '')
@@ -60,7 +61,8 @@ class SourceAdapter extends LlmAdapter {
 }
 const sourceAdapter = new SourceAdapter()
 ctx.llm.registerAdapter([sourceRoute], sourceAdapter)
-const bridge = createWrapperStreamBody(ctx, {
+const privateContext = contextWithDelegatedReplay(ctx, { wrapperRoute: 'synthetic-not-used' })
+const bridge = createWrapperStreamBody(privateContext, {
   imageMemory: new Map(),
   delegateProvider: sourceRoute,
   preserveImageInput: true,
@@ -201,7 +203,27 @@ try {
   ]
   const twinContinuation = await request(twinRoute, twinAuthored)
   assert.equal(extractSignatures(twinContinuation.wire).length, 0,
-    'known residual: twin-authored native replay still fails the source identity check')
+    'unstamped old twin replay must not be inferred from an alias name')
+
+  const provenTwinAuthored = twinAuthored.map(message => {
+    if (message.role !== 'assistant') return message
+    return {
+      ...message,
+      source: {
+        ...message.source,
+        replayState: {
+          ...message.source.replayState,
+          response: {
+            ...message.source.replayState.response,
+            provider: sourceRoute,
+          },
+        },
+      },
+    }
+  })
+  const trustedTwinContinuation = await request(twinRoute, provenTwinAuthored)
+  assert.equal(extractSignatures(trustedTwinContinuation.wire).length, 1,
+    'provider-stamped native twin replay must survive private DVR source rebinding')
 
   console.log(JSON.stringify({
     ok: true,
@@ -228,6 +250,7 @@ try {
       sameReplayWire: fingerprint(transparentReplay.wire) === fingerprint(direct.wire),
       sameToolWire: fingerprint(transparentTools.wire) === fingerprint(directTools.wire),
       twinAuthoredReplaySignatureCount: extractSignatures(twinContinuation.wire).length,
+      provenTwinReplaySignatureCount: extractSignatures(trustedTwinContinuation.wire).length,
     },
   }))
 } finally {
