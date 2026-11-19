@@ -31,7 +31,7 @@ test('native OCR tar reader extracts canonical ustar members without an external
     assert.deepEqual([...members.keys()], [...names].sort())
     for (const name of names) assert.deepEqual(members.get(name), Buffer.from(name))
     assert.throws(() => readNativeOcrTarArchive(Buffer.from('not an archive')), /compressed archive size/)
-    assert.throws(() => readNativeOcrTarArchive(Buffer.concat([archive, Buffer.alloc(2)])), /compressed stream/)
+    assert.throws(() => readNativeOcrTarArchive(Buffer.concat([archive, Buffer.from([1, 2])])), /compressed stream/)
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => { b[148] ^= 1 })), /checksum/)
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
       b.write('../evil', 0, 'ascii')
@@ -44,9 +44,9 @@ test('native OCR tar reader extracts canonical ustar members without an external
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
       b.fill(1, b.length - BLOCK * 2, b.length - BLOCK)
     })), /trailer/)
-    assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
-      b[b.length - BLOCK * 3] = 1
-    })), /trailer|padding|checksum|tar member/)
+    assert.throws(() => readNativeOcrTarArchive(gzipSync(
+      gunzipSync(archive).subarray(0, -BLOCK)
+    )), /trailer/)
     const first = Buffer.from(names.sort()[0])
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
       b[BLOCK + first.length] = 123

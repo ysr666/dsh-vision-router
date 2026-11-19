@@ -39,6 +39,8 @@ on:
       - '.gitattributes'
       - 'scripts/package-native-ocr.mjs'
       - 'scripts/install-native-ocr.mjs'
+      - 'src/lib/native-ocr-tar-reader.js'
+      - 'tests/native-ocr-tar-reader.test.js'
       - 'src/lib/native-ocr-bundle-metadata.js'
 permissions:
   contents: read
@@ -59,7 +61,7 @@ jobs:
       - name: Exercise genuine Windows owner-bound uninstall and retry safety
         shell: pwsh
         run: |
-          node --test tests/optional-local-ocr.test.js
+          node --test tests/optional-local-ocr.test.js tests/native-ocr-tar-reader.test.js
           if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NATIVE_UNINSTALL_PROBE_FAILED' }
   conversion:
     runs-on: windows-latest
@@ -79,6 +81,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_FIXTURE_SYNTAX_INVALID' }
           node --test quality/test-native-ocr-desktop-acceptance.mjs
           if ($LASTEXITCODE -ne 0) { throw 'DESKTOP_EVIDENCE_TEST_FAILED' }
+          node --test tests/native-ocr-tar-reader.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'NATIVE_TAR_READER_TEST_FAILED' }
       - name: Verify bounded native input downloads
         run: python -I quality/test-native-ocr-clean-download.py
       - name: Reacquire and match all five native model assets
