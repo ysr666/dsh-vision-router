@@ -17,7 +17,12 @@ const target = process.platform+'-'+process.arch
 const workerName = process.platform==='win32'?'worker.exe':'worker'
 const here = fileURLToPath(import.meta.url)
 const digest = async path => sha(await readFile(path))
-const maxArchive = 64*1024*1024
+// This script is copied to a disposable root/run.mjs for the child process.
+// Resolve the same reader from its isolated lib/ in the child, src/lib otherwise.
+const boundedReaderPath = process.env.DVR_OCR_ACCEPTANCE_CHILD === '1'
+  ? './lib/native-ocr-bounded-file.js'
+  : '../src/lib/native-ocr-bounded-file.js'
+const { readBoundedNativeOcrArchive } = await import(boundedReaderPath)
 const exactArchives = Object.freeze({
   'darwin-arm64': { sha256: 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd', bytes: 27917268 },
   'win32-x64': { sha256: 'fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0', bytes: 35313963 },
@@ -69,9 +74,7 @@ async function loadStage(dir) {
   assert.equal(info.distributionReady,false)
   assert.equal(info.ownerPublicationAuthorized,false)
   const archivePath=join(dir,info.archive.name)
-  const stat=await lstat(archivePath)
-  assert.ok(stat.isFile()&&!stat.isSymbolicLink()&&stat.size>128&&stat.size<=maxArchive)
-  const archive=await readFile(archivePath)
+  const archive=await readBoundedNativeOcrArchive(archivePath,{minBytes:129})
   assert.equal(archive.length,info.archive.bytes)
   assert.equal(sha(archive),info.archive.sha256)
   assertExactStagedArchive(target, info.archive)

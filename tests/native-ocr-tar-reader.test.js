@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync, gzipSync } from 'node:zlib'
 import { deterministicNativeOcrArchive } from '../src/lib/native-ocr-archive.js'
 import { readNativeOcrTarArchive } from '../src/lib/native-ocr-tar-reader.js'
+import { readBoundedNativeOcrArchive } from '../src/lib/native-ocr-bounded-file.js'
 
 const BLOCK = 512
 function rehashHeader(bytes, offset = 0) {
@@ -51,6 +52,25 @@ test('native OCR tar reader extracts canonical ustar members without an external
     assert.throws(() => readNativeOcrTarArchive(mutateArchive(archive, b => {
       b[BLOCK + first.length] = 123
     })), /padding/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('native OCR archive reader rejects unsafe paths and enforces descriptor-bound size limits', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'native-ocr-fd-'))
+  try {
+    const archive = join(root, 'candidate.tar.gz')
+    const contents = Buffer.alloc(2048, 0x42)
+    await writeFile(archive, contents)
+    assert.deepEqual(await readBoundedNativeOcrArchive(archive), contents)
+    await assert.rejects(readBoundedNativeOcrArchive(archive, { maxBytes: 2047 }), /unsafe native OCR archive/)
+    await assert.rejects(readBoundedNativeOcrArchive(archive, { minBytes: 2049 }), /unsafe native OCR archive/)
+    if (process.platform !== 'win32') {
+      const alias = join(root, 'archive-link.tar.gz')
+      await symlink(archive, alias)
+      await assert.rejects(readBoundedNativeOcrArchive(alias), /ELOOP|unsafe native OCR archive/)
+    }
   } finally {
     await rm(root, { recursive: true, force: true })
   }

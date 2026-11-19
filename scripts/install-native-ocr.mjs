@@ -12,6 +12,7 @@ import { verifyExperimentalNativeOcrBinary } from '../lib/native-ocr-canary.js'
 import { EXPERIMENTAL_OCR_MODEL_FILES, verifyNativeOcrAssets } from '../lib/native-ocr-integrity.js'
 import { nativeBundleMetadata, nativeBundleLicenseFiles, NATIVE_BUNDLE_METADATA_FILES, readVerifiedNativeBundleLicense } from '../lib/native-ocr-bundle-metadata.js'
 import { readNativeOcrTarArchive } from '../lib/native-ocr-tar-reader.js'
+import { readBoundedNativeOcrArchive } from '../lib/native-ocr-bounded-file.js'
 
 const args = process.argv.slice(2)
 const target = process.platform + '-' + process.arch
@@ -87,10 +88,8 @@ async function install() {
   }
   if (!localNativeOcrInstallPaths()) throw Error('Only darwin-arm64 and win32-x64 are approved')
   const archive = resolve(args[1])
-  const info = await lstat(archive)
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 64 * 1024 * 1024) {
-    throw Error('unsafe native OCR bundle')
-  }
+  // Validate and read from one descriptor to prevent path-swap races.
+  const bundleBytes = await readBoundedNativeOcrArchive(archive)
   const prefix = 'ppocrv6-small/'
   const legacyMembers = [
     workerName, 'MANIFEST.json', 'NCNN-LICENSE.txt', 'APACHE-2.0.txt',
@@ -104,7 +103,7 @@ async function install() {
   const v4Members = [...v3Members, ...(onWindows ? [prefix + 'MINGW-PTHREAD-SIGNAL-NOTICE.txt'] : [])].sort()
   // Decode a constrained ustar archive in this dedicated installer process.
   // Windows Desktop Hosts may not expose an external tar executable on PATH.
-  const memberBytes = readNativeOcrTarArchive(await readFile(archive))
+  const memberBytes = readNativeOcrTarArchive(bundleBytes)
   const actualMembers = [...memberBytes.keys()].sort()
   const hasCrtNotice = onWindows && isDeepStrictEqual(actualMembers, v4Members)
   const hasPaddleLicense = hasCrtNotice || isDeepStrictEqual(actualMembers, v3Members)
