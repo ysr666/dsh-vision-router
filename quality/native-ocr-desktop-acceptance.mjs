@@ -27,6 +27,8 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   assert.equal(audit.archiveSha256, info.archive.sha256)
   assert.equal(acceptance.archiveSha256, info.archive.sha256)
   assert.equal(acceptance.workerSha256, info.workerSha256)
+  assert.equal(acceptance.npmSha256, info.npm.entry.npmSha256)
+  assert.equal(acceptance.npmBytes, info.npm.entry.npmBytes)
   assert.equal(acceptance.realInstaller, true)
   const archive = resolve(stage, info.archive.name)
   const bytes = readFileSync(archive)
@@ -136,7 +138,7 @@ export async function exerciseExactDesktopOcr(page, context) {
   assert.equal(await download.isDisabled(), true)
   writeFileSync(release, 'corrupt')
   await errorAlert.waitFor({ state: 'visible', timeout: 60000 })
-  assert.match(await errorAlert.innerText(), /native OCR archive integrity mismatch/i,
+  assert.match(await errorAlert.innerText(), /native OCR npm tarball integrity mismatch/i,
     'unexpected Host rejection; report the actual error rather than timing out')
   assert.equal(existsSync(installation), false)
   assert.equal(readFileSync(requests, 'utf8'), 'corrupt\n')
@@ -192,6 +194,7 @@ export async function finishExactDesktopOcr(page, context, recognized, agentEvid
   assert.equal(existsSync(installation), false)
   const evidence = {
     schemaVersion: 1, target, archiveSha256: info.archive.sha256, workerSha256: info.workerSha256,
+    npmSha256: info.npm.entry.npmSha256, npmBytes: info.npm.entry.npmBytes,
     realDesktopHost: true, realElectronRenderer: true, actualGuiClicks: true,
     injectedHttps: true, actualPublicHttps: false, realInstaller: true, realWorker: true,
     installedWorkerSupervisorOcr: true, hostAgentOcrToolVerified: true,

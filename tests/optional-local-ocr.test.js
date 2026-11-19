@@ -242,7 +242,7 @@ test('reviewed npm download verifies both archive layers before invoking the exi
   assert.equal(called,true)
   called=false
   const corrupt=Buffer.from(payload);corrupt[corrupt.length>>1]^=255
-  await assert.rejects(downloadAndInstallNative({entry,fetchImpl:async()=>new Response(corrupt),install:async()=>{called=true}}),/integrity mismatch/)
+  await assert.rejects(downloadAndInstallNative({entry,fetchImpl:async()=>new Response(corrupt),install:async()=>{called=true}}),/native OCR npm tarball integrity mismatch/)
   assert.equal(called,false)
   await assert.rejects(downloadVerifiedNativeArchive({...entry,sha256:'0'.repeat(64)},{fetchImpl:async()=>new Response(payload)}),/inner archive integrity mismatch/)
   await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(Buffer.concat([payload,Buffer.from([1])]))}),/exceeds reviewed size/)

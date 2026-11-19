@@ -193,6 +193,8 @@ async function parent(args) {
     const result=JSON.parse(marker[0].slice('DVR_STAGED_ACCEPTANCE='.length))
     assert.equal(result.archiveSha256,info.archive.sha256)
     assert.equal(result.workerSha256,info.workerSha256)
+    assert.equal(result.npmSha256,info.npm.entry.npmSha256)
+    assert.equal(result.npmBytes,info.npm.entry.npmBytes)
     assert.equal(result.distributionReady,false)
     assert.deepEqual([await digest(sourceCanary),await digest(sourceCatalog)],before)
     await writeFile(report,JSON.stringify(result,null,2)+'\n',{flag:'wx'})
@@ -296,7 +298,7 @@ async function child(stage,bmp,expected) {
     phases.push('installed-worker-real-ocr')
     payload=Buffer.from(npmPayload);payload[Math.floor(payload.length/2)]^=0xff
     const denied=await request('POST','download',state.token,409)
-    assert.match(denied.error,/integrity mismatch/)
+    assert.match(denied.error,/native OCR npm tarball integrity mismatch/)
     assert.equal(await digest(paths.binaryPath),info.workerSha256)
     const after=await request()
     assert.equal(after.ppocrv6.installed,true);assert.equal(downloadCalls,2)
@@ -316,6 +318,7 @@ async function child(stage,bmp,expected) {
     phases.push('uninstall-and-empty-status')
     console.log('DVR_STAGED_ACCEPTANCE='+JSON.stringify({
       schemaVersion:1,target,archiveSha256:info.archive.sha256,workerSha256:info.workerSha256,
+      npmSha256:info.npm.entry.npmSha256,npmBytes:info.npm.entry.npmBytes,
       actualRecognition:result.text,confidence:result.confidence,phases,downloadCalls,
       localHttpRoute:true,realInstaller:true,realWorker:true,injectedHttps:true,
       actualPublicHttps:false,realDesktopHost:false,exactArchiveDesktopGuiVerified:false,

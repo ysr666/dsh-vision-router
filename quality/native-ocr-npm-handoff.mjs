@@ -74,6 +74,10 @@ export async function verifyExport({ stage, packageDir, version }) {
     assert.equal(evidence.workerSha256,info.workerSha256)
     assert.equal(evidence.distributionReady,false)
   }
+  for (const evidence of [acceptance,desktop]) {
+    assert.equal(evidence.npmSha256,info.npm.entry.npmSha256)
+    assert.equal(evidence.npmBytes,info.npm.entry.npmBytes)
+  }
   assert.equal(audit.identityVerified,true)
   assert.equal(acceptance.realInstaller,true)
   assert.equal(acceptance.realWorker,true)

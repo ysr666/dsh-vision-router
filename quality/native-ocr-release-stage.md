@@ -136,3 +136,17 @@ node quality/native-ocr-npm-handoff.mjs --verify-registry \
 The output supplies both immutable catalog entries and worker pins as
 candidates **only** after real HTTPS SHA/size/inner-archive checks. The
 production catalog remains closed until separately approved promotion.
+
+The separate **Native OCR owner-authorized npm export** pull-request label
+workflow also allows the owner to export before merging the feature PR (when
+manual dispatch is not yet exposed by the default branch). The owner must
+apply the literal label `ocr-<stable-resource-version>-<full-40-character-PR-head-SHA>`
+to PR #862 from their own account. The label event, sender, repository, branch,
+PR number and exact head are verified; later commits or ordinary synchronization
+never reuse that authorization. For example a first resource version `1.0.0`
+fits GitHub's 50-character label limit with the full SHA. Do not add this label
+without explicit owner authorization. This is export only, not a Git tag or npm
+publication. Ordinary PR runs now perform real `npm pack --dry-run --offline`
+against a throwaway numeric version `0.0.1`, upload only JSON evidence, and
+never export the binary npm payload. Both acceptance reports bind the actual
+outer staging tarball SHA/size as well as the inner archive and worker.
