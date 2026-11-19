@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {test} from 'node:test'
-import {decodeBmp,replaceOnce} from './native-ocr-staged-acceptance.mjs'
+import { decodeBmp,replaceOnce,replaceScratchCatalog,replaceScratchWorkerPin,assertNativePromotionState,historicalWorkerPins } from './native-ocr-staged-acceptance.mjs'
+import { candidates } from './native-ocr-release-stage.mjs'
 
 test('scratch changes require unique exact source occurrence',()=>{
   assert.equal(replaceOnce('pin=old','old','new'),'pin=new')
@@ -34,4 +35,44 @@ test('entrypoint executes through symlinked path rather than exiting silently', 
     assert.equal(result.status,1,result.stderr)
     assert.match(result.stderr,/DVR_STAGED_ACCEPTANCE_FAILED:.*AssertionError/s)
   }finally{await rm(root,{recursive:true,force:true})}
+})
+
+test('promotion contract accepts only closed staging or exact paired release identities', () => {
+  const targets = Object.keys(candidates)
+  const pins = Object.fromEntries(targets.map(t => [t, candidates[t].workerSha256]))
+  const catalog = {
+    'darwin-arm64': { url: 'https://github.com/ysr666/dsh-vision-router/releases/download/test-promotion/ppocrv6-small-darwin-arm64.tar.gz',
+      bytes: 27917268, sha256: 'a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd' },
+    'win32-x64': { url: 'https://github.com/ysr666/dsh-vision-router/releases/download/test-promotion/ppocrv6-small-win32-x64.tar.gz',
+      bytes: 35313963, sha256: 'fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0' },
+  }
+  assert.equal(assertNativePromotionState({}, historicalWorkerPins, candidates), 'staged')
+  assert.equal(assertNativePromotionState(catalog, pins, candidates), 'promoted')
+  assert.throws(() => assertNativePromotionState({}, pins, candidates), /unapproved worker-pin/)
+  assert.throws(() => assertNativePromotionState(catalog, historicalWorkerPins, candidates), /catalog\/worker pin mismatch/)
+  assert.throws(() => assertNativePromotionState({'darwin-arm64': catalog['darwin-arm64']}, pins, candidates), /both reviewed targets/)
+  for (const change of [
+    { bytes: catalog['win32-x64'].bytes + 1 },
+    { sha256: 'a'.repeat(64) },
+    { url: catalog['win32-x64'].url.replace('test-promotion', 'latest') },
+    { url: catalog['win32-x64'].url.replace('test-promotion', 'native-ocr-staging-test') },
+    { url: catalog['win32-x64'].url.replace('test-promotion', 'other-release') },
+    { url: catalog['win32-x64'].url.replace('win32-x64', 'darwin-arm64') },
+    { url: 'https://example.org/ppocrv6-small-win32-x64.tar.gz' },
+  ]) {
+    assert.throws(() => assertNativePromotionState({...catalog, 'win32-x64': {...catalog['win32-x64'], ...change}}, pins, candidates))
+  }
+  const declaration = 'export const APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze('
+  const fixture = {'darwin-arm64': {url:'fixture', bytes:128, sha256:'a'.repeat(64)}}
+  const expected = declaration + JSON.stringify(fixture) + ')'
+  for (const shape of ['{}', JSON.stringify(catalog), JSON.stringify(catalog,null,2)]) {
+    assert.equal(replaceScratchCatalog(declaration+shape+')', fixture), expected)
+  }
+  assert.throws(() => replaceScratchCatalog('other', fixture))
+  assert.throws(() => replaceScratchCatalog(declaration+'{})\n'+declaration+'{})', fixture))
+  const target = 'win32-x64'
+  const line = sha => "  '" + target + "': '" + sha + "',"
+  assert.equal(replaceScratchWorkerPin(line(historicalWorkerPins[target]),target,pins[target]), line(pins[target]))
+  assert.equal(replaceScratchWorkerPin(line(pins[target]),target,pins[target]), line(pins[target]))
+  assert.throws(() => replaceScratchWorkerPin(line('a'.repeat(64)),target,pins[target]), /unknown scratch worker pin/)
 })

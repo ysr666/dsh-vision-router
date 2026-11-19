@@ -223,9 +223,9 @@ test('damaged plugin Tesseract is removable but cannot be silently overwritten',
 })
 
 test('online native installation stays unavailable without an approved public artifact', async () => {
-  assert.equal(approvedNativeArchive('darwin', 'arm64'), null)
-  assert.equal(approvedNativeArchive('win32', 'x64'), null)
-  await assert.rejects(downloadAndInstallNative(), /no approved public archive/)
+  assert.equal(approvedNativeArchive('linux', 'x64'), null)
+  assert.equal(approvedNativeArchive('darwin', 'x64'), null)
+  await assert.rejects(downloadAndInstallNative({ entry: null, fetchImpl: () => { throw Error('must not fetch') } }), /no approved public archive/)
   await assert.rejects(mutateOptionalOcr({ engine:'tesseract', action:'download' }), /invalid OCR operation/)
 })
 test('reviewed download verifies bounded archive bytes before invoking the existing installer', async () => {

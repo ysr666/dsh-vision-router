@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve, parse } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { decodeBmp, replaceOnce, assertExactStagedArchive } from './native-ocr-staged-acceptance.mjs'
+import { decodeBmp, replaceOnce, assertExactStagedArchive, replaceScratchCatalog, replaceScratchWorkerPin } from './native-ocr-staged-acceptance.mjs'
 import { candidates } from './native-ocr-release-stage.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -51,14 +51,10 @@ export function prepareExactDesktopOcr({ source, root, home, stage, bmp, expecte
   writeFileSync(requests, '')
   writeFileSync(release, '')
   const pinSource = readFileSync(canary, 'utf8')
-  const old = target === 'darwin-arm64'
-    ? '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204'
-    : '2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33'
-  writeFileSync(canary, replaceOnce(pinSource, old, info.workerSha256))
+  writeFileSync(canary, replaceScratchWorkerPin(pinSource, target, info.workerSha256))
   const original = readFileSync(catalog, 'utf8')
   const entry = { url: fixtureUrl(info.archive.name), bytes: info.archive.bytes, sha256: info.archive.sha256 }
-  let altered = replaceOnce(original, 'APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze({})',
-    'APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze(' + JSON.stringify({ [target]: entry }) + ')')
+  let altered = replaceScratchCatalog(original, { [target]: entry })
   // Only substitute the external HTTPS transport; the real Host route,
   // downloader (including SHA and size checks), installer and UI are unchanged.
   const fixture = `const moduleFetch = async (url, options) => {

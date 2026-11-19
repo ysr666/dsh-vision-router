@@ -37,6 +37,61 @@ export function replaceOnce(source, previous, next) {
   assert.equal(source.split(previous).length,2,'expected unique scratch pin')
   return source.replace(previous,next)
 }
+// An owner-approved release must promote the worker pin and exact archive
+// together. Historical lab provenance remains immutable; an empty catalog
+// continues to require the historical offline pins. This is only a test
+// contract, not permission to populate the production catalog or publish.
+export const historicalWorkerPins = Object.freeze({
+  'darwin-arm64': '71d535b86b0543e7408b41ed66f45d3bea46e09e0e3f38aa491a32a60085d204',
+  'win32-x64': '2e4b96a204c34eebe11f117049b1a3b966f43a8402a66065c28773528cd18a33',
+})
+export function assertNativePromotionState(catalog, pins, reviewed) {
+  const targets = Object.keys(exactArchives).sort()
+  assert.deepEqual(Object.keys(pins).sort(), targets, 'worker target set changed')
+  assert.deepEqual(Object.keys(reviewed).sort(), targets, 'reviewed target set changed')
+  const keys = Object.keys(catalog).sort()
+  if (!keys.length) {
+    assert.deepEqual(pins, historicalWorkerPins, 'unapproved worker-pin promotion')
+    return 'staged'
+  }
+  assert.deepEqual(keys, targets, 'both reviewed targets must be promoted together')
+  let tag
+  for (const target of targets) {
+    const row = catalog[target]
+    assert.deepEqual(Object.keys(row).sort(), ['bytes', 'sha256', 'url'])
+    assertExactStagedArchive(target, row)
+    assert.equal(pins[target], reviewed[target].workerSha256, 'catalog/worker pin mismatch')
+    const match = /^https:\/\/github\.com\/ysr666\/dsh-vision-router\/releases\/download\/([A-Za-z0-9._-]+)\/ppocrv6-small-(darwin-arm64|win32-x64)\.tar\.gz$/.exec(row.url)
+    assert.ok(match && match[0] === row.url && match[2] === target &&
+      !['latest', '.', '..', 'native-ocr-staging-test'].includes(match[1].toLowerCase()), 'invalid immutable release URL')
+    if (tag === undefined) tag = match[1]
+    else assert.equal(tag, match[1], 'catalog release tag mismatch')
+  }
+  return 'promoted'
+}
+
+// Replace only the unique literal catalog declaration in a scratch package.
+// A published catalog is also replaced with the isolated fixture, so CI
+// never accidentally downloads release content during a staging test.
+export function replaceScratchCatalog(source, catalog) {
+  const prefix = 'export const APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze('
+  assert.equal(source.split(prefix).length, 2, 'expected unique catalog declaration')
+  const matches = [...source.matchAll(/^export const APPROVED_NATIVE_OCR_ARCHIVES = Object\.freeze\(\{[\s\S]*?\}\)\r?$/gm)]
+  assert.equal(matches.length, 1, 'expected static catalog object')
+  return replaceOnce(source, matches[0][0],
+    prefix + JSON.stringify(catalog) + ')' + (matches[0][0].endsWith('\r') ? '\r' : ''))
+}
+export function replaceScratchWorkerPin(source, target, reviewedSha) {
+  assert.ok(Object.hasOwn(historicalWorkerPins, target))
+  assert.match(reviewedSha, /^[a-f0-9]{64}$/)
+  const prefix = "  '" + target + "': '"
+  const matches = source.split(/\r?\n/).filter(line => line.startsWith(prefix))
+  assert.equal(matches.length, 1, 'expected unique platform worker pin')
+  const old = /^  '[a-z0-9-]+': '([a-f0-9]{64})',$/.exec(matches[0])?.[1]
+  assert.ok(old === historicalWorkerPins[target] || old === reviewedSha, 'unknown scratch worker pin')
+  return replaceOnce(source, matches[0], prefix + reviewedSha + "',")
+}
+
 export function decodeBmp(raw) {
   assert.ok(Buffer.isBuffer(raw)&&raw.length>=54&&raw.subarray(0,2).toString()==='BM')
   const offset=raw.readUInt32LE(10),dib=raw.readUInt32LE(14)
@@ -91,8 +146,7 @@ async function parent(args) {
   assert.equal(info.workerSha256,candidates[target]?.workerSha256)
   assert.equal(info.manifest.worker.sha256,info.workerSha256)
   assert.equal(info.manifest.distributionReady,false)
-  assert.deepEqual(APPROVED_NATIVE_OCR_ARCHIVES,{})
-  assert.notEqual(EXPERIMENTAL_OCR_BINARY_SHA256[target],info.workerSha256)
+  assertNativePromotionState(APPROVED_NATIVE_OCR_ARCHIVES, EXPERIMENTAL_OCR_BINARY_SHA256, candidates)
   const project=fileURLToPath(new URL('../',import.meta.url))
   const root=await mkdtemp(join(tmpdir(),'dvr-staged-acceptance-'))
   const home=join(root,'home')
@@ -108,11 +162,9 @@ async function parent(args) {
     await writeFile(join(root,'package.json'),JSON.stringify({private:true,type:'module'}),{flag:'wx'})
     await copyFile(here,join(root,'run.mjs'))
     const canary=join(root,'lib/native-ocr-canary.js'),catalog=join(root,'lib/native-ocr-download.js')
-    await writeFile(canary,replaceOnce(await readFile(canary,'utf8'),EXPERIMENTAL_OCR_BINARY_SHA256[target],info.workerSha256))
+    await writeFile(canary,replaceScratchWorkerPin(await readFile(canary,'utf8'),target,info.workerSha256))
     const entry={url:fixtureUrl(info.archive.name),bytes:info.archive.bytes,sha256:info.archive.sha256}
-    await writeFile(catalog,replaceOnce(await readFile(catalog,'utf8'),
-      'APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze({})',
-      'APPROVED_NATIVE_OCR_ARCHIVES = Object.freeze('+JSON.stringify({[target]:entry})+')'))
+    await writeFile(catalog,replaceScratchCatalog(await readFile(catalog,'utf8'),{[target]:entry}))
     const env={}
     for(const [name,value] of Object.entries(process.env)){
       if(['path','systemroot','windir','temp','tmp','tmpdir','lang','lc_all','comspec','pathext'].includes(name.toLowerCase()))env[name]=value

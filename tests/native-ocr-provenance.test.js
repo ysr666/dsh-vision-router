@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { EXPERIMENTAL_OCR_MODEL_FILES } from '../src/lib/native-ocr-integrity.js'
 import { EXPERIMENTAL_OCR_BINARY_SHA256 } from '../src/lib/native-ocr-canary.js'
+import { APPROVED_NATIVE_OCR_ARCHIVES } from '../src/lib/native-ocr-download.js'
+import { candidates } from '../quality/native-ocr-release-stage.mjs'
+import { historicalWorkerPins, assertNativePromotionState } from '../quality/native-ocr-staged-acceptance.mjs'
 
 const fixture = fileURLToPath(new URL('../quality/native-ocr-provenance-LAB.json', import.meta.url))
 const sha = /^[0-9a-f]{64}$/
@@ -16,7 +19,8 @@ test('lab model/binary identities match the code integrity gates exactly', async
   assert.deepEqual(manifest.nativeAssets, EXPERIMENTAL_OCR_MODEL_FILES)
   const actualBinaries = Object.fromEntries(Object.entries(manifest.experimentalBinaries)
     .map(([target, info]) => [target, info.sha256]))
-  assert.deepEqual(actualBinaries, EXPERIMENTAL_OCR_BINARY_SHA256)
+  assert.deepEqual(actualBinaries, historicalWorkerPins, 'historical provenance must not be rewritten')
+  assertNativePromotionState(APPROVED_NATIVE_OCR_ARCHIVES, EXPERIMENTAL_OCR_BINARY_SHA256, candidates)
   // A buildable architecture is not automatically safe to advertise. In
   // particular Rosetta x64 ran dangerously close to the 21-second budget.
   for (const [target, prototype] of Object.entries(manifest.unadmittedPrototypes ?? {})) {

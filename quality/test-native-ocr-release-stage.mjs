@@ -6,13 +6,14 @@ import { join } from 'node:path'
 import { candidates, readCandidateWorker, readCanonicalModels, stageCandidate } from './native-ocr-release-stage.mjs'
 import { APPROVED_NATIVE_OCR_ARCHIVES } from '../src/lib/native-ocr-download.js'
 import { EXPERIMENTAL_OCR_BINARY_SHA256 } from '../src/lib/native-ocr-canary.js'
+import { assertNativePromotionState } from './native-ocr-staged-acceptance.mjs'
 
 test('staging pins cannot be confused with production admission', () => {
   assert.deepEqual(Object.keys(candidates).sort(), ['darwin-arm64', 'win32-x64'])
-  assert.deepEqual(APPROVED_NATIVE_OCR_ARCHIVES, {})
+  assertNativePromotionState(APPROVED_NATIVE_OCR_ARCHIVES, EXPERIMENTAL_OCR_BINARY_SHA256, candidates)
   for (const [target, candidate] of Object.entries(candidates)) {
     assert.match(candidate.workerSha256, /^[0-9a-f]{64}$/)
-    assert.notEqual(candidate.workerSha256, EXPERIMENTAL_OCR_BINARY_SHA256[target])
+    assert.ok(Object.hasOwn(EXPERIMENTAL_OCR_BINARY_SHA256, target))
     assert.equal(candidate.minimumOsRuntimeVerified, false)
   }
 })
