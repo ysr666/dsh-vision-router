@@ -4,42 +4,9 @@
 import { observeNativeVisionControlState } from './native-vision-control-state.js'
 import { nativeVisionControlSessionIdSchema, nativeVisionControlViewSchema, nativeVisionMutationRequestSchema, nativeVisionMutationReceiptSchema } from './native-vision-control-wire.js'
 
-export const NATIVE_VISION_REMOTE = 'dvrNativeVision'
-const PACKAGE = 'dsh-vision-router-native-control'
-const SESSION_TYPE = '@deepseek-ai/dsh-session/types#SessionId'
+import { NATIVE_VISION_REMOTE, createNativeVisionControlContribution } from './native-vision-control-client.js'
+export { NATIVE_VISION_REMOTE } from './native-vision-control-client.js'
 
-export function createNativeVisionControlContribution() {
-  const codec = (typeSymbol, schema) => ({ mode: 'strict', typeSymbol, create: () => schema })
-  return {
-    package: PACKAGE,
-    descriptors: [{
-      id: PACKAGE + '#' + NATIVE_VISION_REMOTE + '/observe',
-      service: NATIVE_VISION_REMOTE,
-      namespace: NATIVE_VISION_REMOTE,
-      method: 'observe',
-      mode: 'stream',
-      invocation: { kind: 'direct' },
-      parameters: [{ name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent',
-        codec: codec(SESSION_TYPE, nativeVisionControlSessionIdSchema) }],
-      cancellation: { parameter: 'signal' },
-      result: codec(PACKAGE + '#NativeVisionControlView', nativeVisionControlViewSchema),
-    }, {
-      id: PACKAGE + '#' + NATIVE_VISION_REMOTE + '/set',
-      service: NATIVE_VISION_REMOTE,
-      namespace: NATIVE_VISION_REMOTE,
-      method: 'set',
-      invocation: { kind: 'direct' },
-      parameters: [
-        { name: 'agent', wire: 'agentId', source: 'lookup', lookup: 'agent',
-          codec: codec(SESSION_TYPE, nativeVisionControlSessionIdSchema) },
-        { name: 'request', wire: 'request', source: 'json',
-          codec: codec(PACKAGE + '#NativeVisionMutationRequest', nativeVisionMutationRequestSchema) },
-      ],
-      cancellation: { parameter: 'signal' },
-      result: codec(PACKAGE + '#NativeVisionMutationReceipt', nativeVisionMutationReceiptSchema),
-    }],
-  }
-}
 
 /**
  * Register only on Hosts with the current strict Typert registry and the
@@ -105,7 +72,10 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       let unprovide
       try {
         unprovide = scope.provide(NATIVE_VISION_REMOTE, receiver)
-        const contribution = createNativeVisionControlContribution()
+        const contribution = createNativeVisionControlContribution({
+          id: nativeVisionControlSessionIdSchema, view: nativeVisionControlViewSchema,
+          request: nativeVisionMutationRequestSchema, receipt: nativeVisionMutationReceiptSchema,
+        })
         const withdraw = registry.register({
           package: contribution.package, face: 'host', schemas: [],
           model: { services: [], events: [], objects: [] },

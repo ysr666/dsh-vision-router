@@ -153,3 +153,19 @@ before capability resolution or state mutation. Remote writes create no
 command history; the subscription remains the source of UI truth. The
 production Gateway tests exercise a Remote ON followed by a command OFF,
 non-owner denial and stale selection rejection. No client UI is enabled yet.
+
+### B2.4 Composer binding
+
+The existing composer chip mounts the same strict descriptor over the official
+client Remote assembly once per plugin fiber. Each active Session owns its own
+stream; a connection reset or Session change retires the old observer. Native
+route identity must match the ModelDirectory before any native action is
+enabled; click sends set with the latest observed identity and never changes
+the picker. Native ON/OFF is rendered only from observed Host state, not the
+mutation receipt. Verified legacy routes continue using directory.select,
+preserving reasoning effort. A client without the mounting API retains the
+legacy path; an explicitly absent endpoint before the first frame permits
+older-Host compatibility, but access denial, malformed data, disconnect or
+withdrawal cannot silently become a legacy ON/OFF action. Browser codecs and
+Host Zod codecs are checked against the same representative cases. Real browser
+and Host integration gates remain mandatory before merge.

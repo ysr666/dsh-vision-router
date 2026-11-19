@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from '../lib/native-vision-policy-command.js'
 import { readNativeVisionControlState, observeNativeVisionControlState } from '../lib/native-vision-control-state.js'
 import { userSessionVisionPolicy } from '../lib/session-vision-policy.js'
+import { createNativeVisionControlContribution, createNativeVisionClientSchemas, startNativeVisionClientObservation } from '../lib/native-vision-control-client.js'
+import { nativeVisionControlViewSchema, nativeVisionMutationRequestSchema, nativeVisionMutationReceiptSchema, nativeVisionControlSessionIdSchema } from '../lib/native-vision-control-wire.js'
 
 function fixture({ inputModalities = ['text', 'image'], enabled = true } = {}) {
   const policies = new Map()
@@ -522,4 +524,85 @@ test('issue #865 B2: shared command/Remote writes are ordered and stale UI route
   assert.equal(lookups.length, 2, 'obsolete UI intent cannot start a capability lookup')
   assert.equal(f.policies.get(f.agent.id).enabled, false)
   assert.equal(f.selectCount(), 0)
+})
+
+
+test('issue #865 B2.4: Client and Host share the strict descriptor and compatible wire codecs', () => {
+  const host = { id: nativeVisionControlSessionIdSchema, view: nativeVisionControlViewSchema,
+    request: nativeVisionMutationRequestSchema, receipt: nativeVisionMutationReceiptSchema }
+  const client = createNativeVisionClientSchemas()
+  const selection = { provider: 'native', model: 'mm' }
+  const view = { kind: 'native', selection, enabled: false, requestedEnabled: false, canEnable: true, durable: null }
+  const cases = {
+    id: ['abc', '', null, {}],
+    view: [view, { ...view, credentials: 'unexpected' }, { ...view, enabled: 0 },
+      { kind: 'legacy', reason: 'text-only', selection }, { kind: 'unavailable', reason: 'stale-selection' },
+      { kind: 'unavailable', reason: 'foreign' }],
+    request: [{ enabled: true, selection }, { enabled: 'true', selection }, { enabled: false, selection, sessionId: 'other' }],
+    receipt: [{ kind: 'success', text: 'ok' }, { kind: 'error', text: '' }, { kind: 'unknown', text: 'bad' }],
+  }
+  for (const [key, values] of Object.entries(cases)) {
+    for (const value of values) {
+      let accepted = true
+      try { client[key].parse(value) } catch { accepted = false }
+      assert.equal(accepted, host[key].safeParse(value).success, key + ': ' + JSON.stringify(value))
+    }
+  }
+  const description = contribution => JSON.parse(JSON.stringify(contribution))
+  assert.deepEqual(description(createNativeVisionControlContribution(host)),
+    description(createNativeVisionControlContribution(client)))
+})
+
+test('issue #865 B2.4: native client waits for observation, never guesses and rejects obsolete clicks', async () => {
+  const selection = { provider: 'native', model: 'mm' }
+  const initial = { kind: 'native', selection, enabled: false, requestedEnabled: false, canEnable: true, durable: true }
+  let next, controller, retired = false, requests = []
+  const snapshots = []
+  const api = {
+    observe(id, signal) {
+      assert.equal(id, 'session-one')
+      controller = signal
+      return {
+        [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { next = resolve }) },
+        dispose() { retired = true; next?.({ done: true }) },
+      }
+    },
+    async set(id, request) {
+      requests.push({ id, request })
+      return { ok: true, value: { kind: 'success', text: 'stored' } }
+    },
+  }
+  const observation = startNativeVisionClientObservation(api, 'session-one', value => snapshots.push(value))
+  assert.equal(snapshots[0].kind, 'waiting')
+  assert.equal(await observation.set(initial, selection), false)
+  next({ value: initial, done: false })
+  await new Promise(setImmediate)
+  assert.equal(snapshots.at(-1).view.enabled, false)
+  assert.equal(await observation.set(initial, { provider: 'other', model: 'mm' }), false)
+  assert.equal(await observation.set(initial, selection), true)
+  assert.equal(snapshots.at(-1).view.enabled, false, 'receipt cannot optimistically change observed state')
+  next({ value: { ...initial, enabled: true, requestedEnabled: true }, done: false })
+  await new Promise(setImmediate)
+  assert.equal(snapshots.at(-1).view.enabled, true)
+  assert.equal(await observation.set(initial, selection), false, 'previous frame is not current')
+  observation.stop()
+  assert.equal(retired, true)
+  assert.equal(controller.aborted, true)
+  assert.equal(await observation.set(snapshots.at(-1).view, selection), false)
+  assert.equal(requests.length, 1)
+  assert.deepEqual(requests[0], { id: 'session-one', request: { enabled: true, selection } })
+})
+
+test('issue #865 B2.4: missing old endpoint is distinct from permission denial or malformed stream data', async () => {
+  for (const [code, expected] of [['gateway/invocation-unavailable','legacy'],
+    ['remote-access/denied','failed'], ['gateway/definition-unavailable','failed']]) {
+    const states = []
+    const observation = startNativeVisionClientObservation({
+      async *observe() { throw Object.assign(new Error('fixture'), { code }) },
+    }, 'session-one', state => states.push(state))
+    await new Promise(setImmediate)
+    assert.equal(states.at(-1).kind, expected)
+    observation.stop()
+  }
 })
