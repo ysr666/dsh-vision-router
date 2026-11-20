@@ -73,6 +73,56 @@ jobs:
           DSH_EXPECTED_COMMIT: ${{ steps.pin.outputs.sha }}
           DSH_EXPECTED_PNPM: '11.28.5'
         run: pnpm exec tsx ../dvr/scripts/dsh-alpha-source-contract.mjs
+      - name: Verify #865 native VisionPolicy command via exact Host Commands registry
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-native-policy-command-host.mjs
+
+      - name: Verify #865 native permission through real DVR plugin apply and Commands
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-native-policy-real-plugin-host.mjs
+
+      - name: Characterize #865 replay and tool projection at real DeepSeek wire serializer
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
+        run: pnpm exec tsx ../dvr/scripts/issue-865-wire-characterization.mjs
+      - name: Verify #865 actual DVR generated twin on exact Host
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-plugin-host-integration.mjs
+      - name: Verify #865 append-only image evidence on real Host across cold resume
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-append-only-host-contract.mjs
+      - name: Build pinned DSH native POSIX Session lock
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        run: pnpm run build:native-system
+      - name: Verify #865 production JSONL evidence across independent processes
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: node --import tsx ../dvr/scripts/issue-865-jsonl-host-contract.mjs
+
+      - name: Verify DVR cache report through actual Host Agent and Commands
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-cache-command-real-host.mjs
       - name: Verify upstream Current Host Session batch append (atomic commit, post-commit per-event observers)
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-current-host

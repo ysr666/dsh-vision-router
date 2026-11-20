@@ -27,8 +27,8 @@ test('runtime no longer owns cross-turn vision state in process-global raw Maps'
 test('session-visible paths use the bound memory view instead of the global compatibility facade', () => {
   assert.match(source, /const sessionImageMemory = visionState\.memoryForSession\(session\)/)
   assert.match(source, /memory: sessionImageMemory/)
-  assert.match(source, /rewriteHistoryImages\(messages, sessionImageMemory\)/)
-  assert.match(source, /rewriteHistoryImages\(base, sessionImageMemory\)/)
+  assert.match(source, /rewriteHistoryImages\(messages, sessionImageMemory(?:\s*[,)]\s*)/)
+  assert.match(source, /rewriteHistoryImages\(base, sessionImageMemory(?:\s*[,)]\s*)/)
   assert.match(source, /const scopedMemory = session \? visionState\.memoryForSession\(session\) : imageMemory/)
   assert.match(source, /for \(const id of ids\) scopedMemory\.set\(id, memory\)/)
 })

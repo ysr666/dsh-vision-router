@@ -478,3 +478,23 @@ test('HMR restoration respects pending durable model selections instead of initi
   assert.ok(initiallyOff.ctx.tools.get('vision_describe'), 'OFF->ON selection stays accessible after remount')
   assert.deepEqual(harness.restrictCalls, [['vision_describe']])
 })
+
+
+test('issue #865: effort-only model selection does not reset explicit Session Vision policy', async () => {
+  const rows = new Map()
+  let writes = 0
+  const store = { get: id => rows.get(id), async set(id, p) { writes++; rows.set(id, p) } }
+  const h = makeHarness({ sessionVisionPolicyStore: store })
+  const agent = h.makeAgent('deepseek-official', 'native-session')
+  agent.session.id = agent.id
+  rows.set(agent.id, { revision: 1, enabled: true, source: 'user' })
+  h.handlers.get('agent/created')({ agent })
+  h.handlers.get('session/event')(agent.session, { type: 'model/selection',
+    data: { provider: 'deepseek-official', model: 'model', reasoningEffort: 'high' } })
+  assert.equal(writes, 0, 'effort-only change must retain explicitly enabled tools')
+  assert.equal(rows.get(agent.id).enabled, true)
+  h.handlers.get('session/event')(agent.session, { type: 'model/selection',
+    data: { provider: 'deepseek-official', model: 'other' } })
+  assert.equal(writes, 1)
+  assert.equal(rows.get(agent.id).enabled, false, 'deliberate route change re-evaluates legacy policy')
+})

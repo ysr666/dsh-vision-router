@@ -63,13 +63,17 @@ function translate(key, params) {
     Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match)
 }
 
-function createHookReact() {
+function createHookReact(runEffects = false) {
+  const effects = []
+  const scheduled = []
+  let effectCursor = 0
   const states = []
   const refs = []
   let cursor = 0
   return {
     Fragment: Symbol('Fragment'),
-    begin() { cursor = 0 },
+    begin() { cursor = 0; effectCursor = 0 },
+    flushEffects() { for (const run of scheduled.splice(0)) run() },
     createElement(type, props, ...children) { return { type, props: props ?? {}, children } },
     useState(initial) {
       const at = cursor++
@@ -83,7 +87,13 @@ function createHookReact() {
       if (!(at in refs)) refs[at] = { current: initial }
       return refs[at]
     },
-    useEffect() {},
+    useEffect(run, deps) {
+      if (!runEffects) return
+      const at = effectCursor++
+      const previous = effects[at]
+      if (previous && deps?.length === previous.deps?.length && deps.every((v, i) => Object.is(v, previous.deps[i]))) return
+      scheduled.push(() => { previous?.cleanup?.(); effects[at] = { deps, cleanup: run() } })
+    },
     useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
   }
 }
@@ -110,6 +120,7 @@ function createBrowserHarness({
   deferSelection = false,
   deferSelectionAt = null,
   deferCompletion = false,
+  nativeApi,
 } = {}) {
   let registered
   const loader = {
@@ -130,6 +141,9 @@ function createBrowserHarness({
     WeakMap,
     Proxy,
     Reflect,
+    AbortController,
+    setTimeout,
+    clearTimeout,
     console,
   })
 
@@ -197,7 +211,7 @@ function createBrowserHarness({
     },
   }
 
-  const React = createHookReact()
+  const React = createHookReact(!!nativeApi)
   function NativeToast() {}
   function WarningIcon() {}
   const primitives = { Toast: NativeToast, IconWarningOutline16: WarningIcon }
@@ -280,6 +294,17 @@ function createBrowserHarness({
       },
     },
   }
+  let resetNative
+  if (nativeApi) {
+    const remote = { async $mount(contribution) {
+      assert.equal(contribution.descriptors.length, 2)
+      return async () => {}
+    }, dvrNativeVision: nativeApi }
+    scope.remote = remote
+    scope.get = name => name === 'remote' ? remote : name === 'typert' ? {} : undefined
+    scope.inject = (_deps, callback) => callback(scope)
+    scope.on = (name, callback) => { if (name === 'connection/reset') resetNative = callback; return () => {} }
+  }
   dependencyInjection.callback(scope)
   const props = registration.inject('session-1')
 
@@ -303,9 +328,12 @@ function createBrowserHarness({
     },
     resolveCompletion() { if (releaseCompletion) releaseCompletion() },
     setSettings(next) { settingsSnapshot = next },
+    resetNative() { resetNative?.() },
     render(extra = {}) {
       React.begin()
-      return Component({ ...props, session: {}, t: translate, ...extra })
+      const rendered = Component({ ...props, session: {}, t: translate, ...extra })
+      React.flushEffects()
+      return rendered
     },
   }
 }
@@ -1163,3 +1191,132 @@ test('issue #684 pointer audit detects press on Vision button retargeted to ance
     key => !/text|credential|token|prompt|provider|session|url|coordinate|clientX|clientY/i.test(key)
   )), true, 'pointer trace must not leak sensitive values or coordinates')
 });
+
+
+test('issue #865: shipping composer chip uses observed native permission, not the advertised twin', async () => {
+  const streams = []
+  const mutations = []
+  const selection = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const view = enabled => ({ kind: 'native', selection, enabled, requestedEnabled: enabled, canEnable: true, durable: true })
+  const nativeApi = {
+    observe(id, signal) {
+      let pending
+      const record = { id, signal, retired: false, send(value) { pending?.({ done: false, value }) } }
+      streams.push(record)
+      return {
+        [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { pending = resolve }) },
+        dispose() { record.retired = true; pending?.({ done: true }) },
+      }
+    },
+    async set(id, request) {
+      mutations.push({ id, request })
+      return { ok: true, value: { kind: 'success', text: 'stored' } }
+    },
+  }
+  const h = createBrowserHarness({ nativeApi })
+  const turn = () => new Promise(setImmediate)
+  await turn()
+  assert.equal(buttonOf(h.render()).props.disabled, true, 'unknown state is not OFF')
+  streams[0].send(view(false))
+  await turn()
+  const off = buttonOf(h.render())
+  assert.equal(off.props.disabled, false)
+  assert.equal(off.props['aria-pressed'], false)
+  off.props.onClick()
+  await turn()
+  assert.equal(mutations.length, 1)
+  assert.equal(mutations[0].id, 'session-1')
+  assert.equal(mutations[0].request.enabled, true)
+  assert.equal(h.selections.length, 0, 'native policy must not select a twin')
+  assert.equal(buttonOf(h.render()).props['aria-pressed'], false, 'receipt is not a state update')
+  streams[0].send(view(true))
+  await turn()
+  const on = buttonOf(h.render())
+  assert.equal(on.props['aria-pressed'], true)
+  h.resetNative()
+  on.props.onClick()
+  assert.equal(mutations.length, 1, 'stale connection click cannot write')
+  assert.equal(buttonOf(h.render()).props.disabled, true)
+  assert.equal(streams[0].retired, true)
+  streams[1].send({ kind: 'legacy', reason: 'text-only', selection })
+  await turn()
+  const legacy = buttonOf(h.render())
+  assert.equal(legacy.props.disabled, false)
+  legacy.props.onClick()
+  await turn()
+  assert.equal(h.selections.length, 1)
+  assert.equal(h.selections[0].provider, 'opencode-go-vision')
+  assert.equal(h.selections[0].reasoningEffort, 'high')
+  h.render({ sessionId: 'session-two' })
+  assert.equal(streams[1].retired, true)
+  assert.equal(streams[2].id, 'session-two')
+  h.render({ available: false, sessionId: 'session-two' })
+  assert.equal(streams[2].retired, true)
+})
+
+
+test('issue #865: old Host Agent API restores standard picker but unavailable current Host does not', async () => {
+  const route = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const turn = () => new Promise(setImmediate)
+  for (const reason of ['host-control-unsupported', 'metadata-unavailable']) {
+    let next
+    const nativeApi = {
+      observe() { return {
+        [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { next = resolve }) },
+        dispose() { next?.({ done: true }) },
+      } },
+      set() { throw Error('native write must not occur') },
+    }
+    const h = createBrowserHarness({ nativeApi, current: route })
+    await turn()
+    h.render()
+    next({ done: false, value: { kind: 'unavailable', reason } })
+    await turn()
+    const button = buttonOf(h.render())
+    assert.equal(button.props['data-native-vision-state'], reason)
+    assert.equal(button.props.disabled, reason !== 'host-control-unsupported')
+    button.props.onClick()
+    await turn()
+    assert.equal(h.selections.length, reason === 'host-control-unsupported' ? 1 : 0)
+    h.render({ available: false })
+  }
+})
+
+test('issue #865: same-session route switch retires old observation and resolves fresh Host Agent', async () => {
+  const streams = []
+  const selection = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const nativeApi = {
+    observe(id) {
+      let pending
+      const record = { id, retired: false, send: value => pending?.({ done: false, value }) }
+      streams.push(record)
+      return { [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { pending = resolve }) },
+        dispose() { record.retired = true; pending?.({ done: true }) } }
+    },
+    set() { throw Error('legacy transition does not write native policy') },
+  }
+  const h = createBrowserHarness({ nativeApi })
+  const turn = () => new Promise(setImmediate)
+  await turn()
+  h.render()
+  streams[0].send({ kind: 'legacy', reason: 'text-only', selection })
+  await turn()
+  const first = buttonOf(h.render())
+  assert.equal(first.props.disabled, false)
+  first.props.onClick()
+  await turn()
+  assert.equal(buttonOf(h.render()).props.disabled, true, 'old Agent state cannot authorize the new route')
+  assert.equal(streams.length, 2)
+  assert.equal(streams[0].retired, true)
+  assert.equal(streams[1].id, streams[0].id, 'same Session must re-resolve Agent')
+  streams[1].send({ kind: 'legacy', reason: 'dvr-wrapper', selection: { ...selection, provider: 'opencode-go-vision' } })
+  await turn()
+  const restored = buttonOf(h.render())
+  assert.equal(restored.props.disabled, false)
+  assert.equal(restored.props['aria-pressed'], true)
+  assert.equal(h.selections.length, 1)
+  h.render({ available: false })
+})

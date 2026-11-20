@@ -43,7 +43,12 @@ import {
 import { stripTrailingSlashes } from './string-normalization.js'
 import { isOffloadedImageBlock, offloadedImagePlaceholder } from './image-offload-compat.js'
 import { proxyHostMatchesAny } from './proxy-routing.js'
+import {
+  stampDelegatedDeepSeekReplayChunk,
+  rebindStampedDeepSeekTwinMessages,
+} from './delegated-deepseek-replay-provenance.js'
 
+import { restoreOwnedTwinStreamInput } from './owned-twin-stream-boundary.js'
 import { loadSharp } from './sharp-runtime.js'
 export const IMAGE_EXTENSIONS = {
   png: 'image/png',
@@ -745,8 +750,11 @@ export function replaceImageBlocksWithMemory(messages, memory) {
  * when history images are present), and keeps later turns working after an
  * image entered the conversation.
  */
-export function rewriteHistoryImages(messages, memory) {
-  const mem = memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
+export function rewriteHistoryImages(messages, memory, { stable = false } = {}) {
+  // In append-only mode the original image occurrence is projected into the
+  // same marker regardless of later imageMemory entries. Recognition evidence
+  // is instead added as a distinct durable pre-step message.
+  const mem = stable ? new Map() : memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
   const attachments = []
   let anyChanged = false
   const rewritten = (messages ?? []).map((message) => {
@@ -2473,19 +2481,19 @@ export async function buildInstantLocalMap(ctx, messages, provider, options = {}
  * 标记；provider/style/timeout 也可以是 getter，让设置页保存后下一次 stream
  * 立即读取新值，无需重启或重建 adapter。
  */
-export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport }) {
-  // issue #103: the reasoning level is a per-session picker choice (the chat
-  // page's bottom-right selector), but the host can drop reasoningEffort from
-  // the later steps of a multi-step turn once the twin metadata lacks a
-  // reasoning.defaultEffort (only step 1 thinks). Remember the last explicit
-  // effort seen per delegate — whatever the user actually picked — and
-  // re-inject it when a later call arrives without one, so every step keeps
-  // the user's chosen level. The vision chain never flows through this body
-  // and keeps its own reasoningEffort: undefined.
-  const lastReasoningEffort = new Map() // "provider\0model" -> last explicit effort
+export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, preserveImageInput, instantLocal, instantLocalStyle, instantLocalTimeoutMs, instantLocalMaxPixels, providerTransport, stableImageHistory, ownedTwinProvider }) {
+  // Issue #103: preserve picker effort on later Host steps that omit it.
+  // A twin adapter is shared by Sessions: remembering only provider/model
+  // leaks one conversation's effort into another (issue #865). Remember only
+  // calls with a durable Session id, with bounded per-session LRU storage.
+  // Anonymous/auxiliary calls must use the Host/provider default when omitted.
+  // The vision chain is separate and keeps reasoningEffort: undefined.
+  const lastReasoningEffort = new Map() // "sessionId\0delegateProvider\0model" -> explicit effort
+  const maxReasoningEffortEntries = 512
   const liveValue = (value) => (typeof value === 'function' ? value() : value)
   return {
     async *stream(options) {
+      options = restoreOwnedTwinStreamInput(options, ownedTwinProvider)
       const messages = options.messages ?? []
       let keepOriginalImages = preserveImageInput === true
       if (!keepOriginalImages && typeof preserveImageInput === 'function') {
@@ -2498,9 +2506,13 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
           keepOriginalImages = false
         }
       }
-      // Native multimodal delegates already consume the original image. Do
-      // not add a local captioning round whose output would be discarded.
-      const currentInstantLocal = keepOriginalImages ? undefined : liveValue(instantLocal)
+      // Native multimodal delegates already consume the original image.
+      // In experimental stable-history mode, instant local evidence must run
+      // in the durable pre-step instead of being silently synthesized at this
+      // adapter-only boundary. Otherwise its content could not be replayed
+      // from the Session event log after a cold resume.
+      const stableHistory = liveValue(stableImageHistory) === true
+      const currentInstantLocal = keepOriginalImages || stableHistory ? undefined : liveValue(instantLocal)
       const instantMap =
         currentInstantLocal !== undefined
           ? await buildInstantLocalMap(ctx, messages, currentInstantLocal, {
@@ -2540,7 +2552,7 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
               },
             ]
           }
-          const entry = id !== 'unknown' ? imageMemory.get(id) : undefined
+          const entry = !stableHistory && id !== 'unknown' ? imageMemory.get(id) : undefined
           if (entry && typeof entry === 'string' && entry.trim()) {
             return [
               {
@@ -2572,24 +2584,43 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       // Resolve it once per model call so metadata, reasoning memory and the
       // actual network dispatch all use one coherent delegate identity.
       const currentDelegateProvider = liveValue(delegateProvider)
-      // Remember per delegate+model rather than per delegate alone: the
-      // stream boundary carries no session id, so provider+model is the
-      // narrowest scope available and keeps two concurrent sessions on the
-      // same twin from sharing one memory slot.
-      const effortKey = `${currentDelegateProvider}\u0000${options.model ?? ''}`
+      const sessionId = typeof options.sessionId === 'string' && options.sessionId !== ''
+        ? options.sessionId
+        : undefined
+      const effortKey = sessionId === undefined
+        ? undefined
+        : `${sessionId}\u0000${currentDelegateProvider}\u0000${options.model ?? ''}`
       let effort = typeof options.reasoningEffort === 'string' && options.reasoningEffort !== ''
         ? options.reasoningEffort
         : undefined
-      if (effort !== undefined) {
-        lastReasoningEffort.set(effortKey, effort)
-      } else {
-        effort = lastReasoningEffort.get(effortKey)
+      if (effortKey !== undefined) {
+        if (effort === undefined && lastReasoningEffort.has(effortKey)) {
+          effort = lastReasoningEffort.get(effortKey)
+        }
+        if (effort !== undefined) {
+          // A read also refreshes recency; old sessions cannot grow the
+          // process-wide adapter state without bound.
+          lastReasoningEffort.delete(effortKey)
+          lastReasoningEffort.set(effortKey, effort)
+          if (lastReasoningEffort.size > maxReasoningEffortEntries) {
+            lastReasoningEffort.delete(lastReasoningEffort.keys().next().value)
+          }
+        }
       }
-      yield* ctx.llm.stream({
+      const delegated = ctx.llm.stream({
         ...(effort === undefined ? options : { ...options, reasoningEffort: effort }),
         provider: currentDelegateProvider,
-        messages: rewritten,
+        messages: rebindStampedDeepSeekTwinMessages(
+          rewritten, options.provider, currentDelegateProvider, options.model,
+        ),
       })
+      // DeepSeek Messages v1 does not carry its provider in native replay
+      // metadata. Preserve the delegate provenance observed at this trusted
+      // stream boundary so a future twin-authored answer can safely be rebound
+      // to its actual source adapter without inventing a signature.
+      for await (const chunk of delegated) {
+        yield stampDelegatedDeepSeekReplayChunk(chunk, currentDelegateProvider, options.model)
+      }
     },
   }
 }

@@ -2388,17 +2388,17 @@ test('twin wrapper re-injects the last explicit reasoningEffort on later steps (
   // step 1 carries the effort explicitly; the later steps arrive without it
   // (the agent drops it once the twin metadata lacks a default) and must
   // inherit the remembered value so every step keeps thinking.
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [], reasoningEffort: 'max' })
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [] })
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [], reasoningEffort: 'off' })
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [] })
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'same-session', messages: [], reasoningEffort: 'max' })
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'same-session', messages: [] })
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'same-session', messages: [], reasoningEffort: 'off' })
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'same-session', messages: [] })
   assert.equal(calls[0].reasoningEffort, 'max')
   assert.equal(calls[1].reasoningEffort, 'max')
   assert.equal(calls[2].reasoningEffort, 'off')
   assert.equal(calls[3].reasoningEffort, 'off')
-  // the memory is scoped per provider+model: a second model on the same
+  // the memory is scoped per Session+provider+model: a second model on the same
   // twin must not inherit the first model's remembered effort
-  await drain({ provider: 'opencode-go-vision', model: 'other', messages: [] })
+  await drain({ provider: 'opencode-go-vision', model: 'other', sessionId: 'same-session', messages: [] })
   assert.equal(calls[4].reasoningEffort, undefined)
 })
 
@@ -3659,9 +3659,9 @@ test('strict upstream: twin forwards only what the picker explicitly sent', asyn
     }
   }
   // the user picked 'max' in the bottom-right selector: the first step
-  // carries it, and the wrapper remembers it for the steps that follow
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [], reasoningEffort: 'max' })
-  await drain({ provider: 'opencode-go-vision', model: 'm', messages: [] })
+  // carries it, and the wrapper remembers it only within this Session
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'strict-session', messages: [], reasoningEffort: 'max' })
+  await drain({ provider: 'opencode-go-vision', model: 'm', sessionId: 'strict-session', messages: [] })
   assert.deepEqual(seen, ['max', 'max'])
 })
 
