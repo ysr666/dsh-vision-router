@@ -159,10 +159,34 @@ export const SETTINGS_IA_CLIENT_PRELUDE = String.raw`(function(){
         var headers={'x-dsh-vision-router-ocr-token':value.token};
         var file=engine==='ppocrv6'&&action==='install'?ocrFile:undefined;
         if(file)headers['content-type']='application/octet-stream';
-        return fetch('/_dsh/vision-router/local-ocr?engine='+encodeURIComponent(engine)+'&action='+encodeURIComponent(action),{
-          method:'POST',cache:'no-store',headers:headers,body:file
-        }).then(function(response){return response.json().then(function(body){if(!response.ok||!body||body.ok!==true)throw Error(body&&body.error?body.error:'HTTP '+response.status);return body;});})
-          .then(function(){if(action==='install')setOcrFile(undefined);return refreshOptionalOcr();},function(error){setOcrState({status:'error',value:value,error:error&&error.message?error.message:String(error)});});
+        // A Host/plugin lifecycle reload can replace the OCR route's random token
+        // while the settings card remains mounted. Retry only an explicit 403
+        // token rejection: the Host rejects it before reading or mutating data.
+        function postWithToken(token){
+          var nextHeaders=Object.assign({},headers,{'x-dsh-vision-router-ocr-token':token});
+          return fetch('/_dsh/vision-router/local-ocr?engine='+encodeURIComponent(engine)+'&action='+encodeURIComponent(action),{
+            method:'POST',cache:'no-store',headers:nextHeaders,body:file
+          }).then(function(response){return response.json().then(function(body){
+            if(!response.ok||!body||body.ok!==true){
+              var error=Error(body&&body.error?body.error:'HTTP '+response.status);
+              error.httpStatus=response.status;
+              throw error;
+            }
+            return body;
+          });});
+        }
+        return postWithToken(value.token).catch(function(error){
+          if(error.httpStatus!==403||error.message!=='invalid OCR operation token')throw error;
+          return fetch('/_dsh/vision-router/local-ocr',{cache:'no-store'}).then(function(response){
+            return response.json().then(function(body){
+              if(!response.ok||!body||body.ok!==true||typeof body.token!=='string'||!body.token)
+                throw Error('local OCR token refresh failed');
+              return postWithToken(body.token);
+            });
+          });
+        }).then(function(){if(action==='install')setOcrFile(undefined);return refreshOptionalOcr();},function(error){
+          setOcrState({status:'error',value:value,error:error&&error.message?error.message:String(error)});
+        });
       }
       function optionalOcrPanel(){
         var value=ocrState.value||{},tess=value.tesseract||{},pp=value.ppocrv6||{},busy=ocrState.status==='running'||value.busy===true;
