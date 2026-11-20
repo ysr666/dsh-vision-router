@@ -115,8 +115,11 @@ export function createSessionImageEvidencePlanner() {
   }
 
   function recordCommitted(state, message) {
-    if (message?.source?.kind !== 'plugin:dsh-vision-router' ||
-        typeof message.id !== 'string' || !message.id.startsWith(PREFIX)) return
+    const owner = message?.source
+    const trustedDvr = owner?.kind === 'plugin:dsh-vision-router' ||
+      (owner?.kind === 'plugin' && owner?.plugin === 'dsh-vision-router')
+    if (!trustedDvr || typeof message.id !== 'string' ||
+        !message.id.startsWith(PREFIX)) return
     state.committed.delete(message.id)
     state.committed.add(message.id)
     if (state.committed.size > MAX_COMMITTED_EVIDENCE_IDS) {
