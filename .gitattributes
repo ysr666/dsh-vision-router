@@ -19,3 +19,6 @@ assets/licenses/windows-native-runtime-NOTICES.txt -text -whitespace
 assets/licenses/paddleocr-LICENSE.txt -text -whitespace
 
 assets/licenses/mingw-pthread-signal-NOTICE.txt -text -whitespace
+
+# Exact Git-blob identity is checked by the CRT reconstruction/replay gates.
+quality/native-ocr-mingw-source-evidence.json -text

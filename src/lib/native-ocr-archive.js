@@ -9,7 +9,7 @@ const MAX_TOTAL = 128 * 1024 * 1024
 
 // Native OCR has a small, fixed set of ASCII regular-file names. Restrict
 // output to ordinary ustar records, avoiding PAX/ACL/mtime/owner variation.
-function header(name, size) {
+export function nativeOcrTarHeader(name, size) {
   const h = Buffer.alloc(BLOCK)
   const ascii = (value, at, width) => {
     if (Buffer.byteLength(value, 'ascii') > width) throw Error('native OCR tar field overflow')
@@ -52,7 +52,7 @@ export async function deterministicNativeOcrArchive(workspace, names) {
     const file = join(workspace, ...segments)
     const bytes = await readNativeOcrRegularFile(file, Math.min(MAX_MEMBER, MAX_TOTAL - total))
     total += bytes.length
-    parts.push(header(name, bytes.length), bytes, Buffer.alloc((BLOCK - bytes.length % BLOCK) % BLOCK))
+    parts.push(nativeOcrTarHeader(name, bytes.length), bytes, Buffer.alloc((BLOCK - bytes.length % BLOCK) % BLOCK))
   }
   for (const [dir, snapshot] of roots) {
     if (!sameNativeOcrDirectory(snapshot, await lstat(dir))) throw Error('native OCR tar directory changed during read')

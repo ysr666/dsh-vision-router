@@ -117,6 +117,12 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
         run: node --import tsx ../dvr/scripts/issue-865-jsonl-host-contract.mjs
 
+      - name: Verify DVR cache report through actual Host Agent and Commands
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-cache-command-real-host.mjs
       - name: Verify upstream Current Host Session batch append (atomic commit, post-commit per-event observers)
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-current-host

@@ -289,6 +289,18 @@ test('PR workflows cancel superseded heads and Windows screenshot avoids pnpm se
   for (const name of names.filter((entry) => entry.endsWith('.yml') || entry.endsWith('.yaml'))) {
     const source = await readFile(new URL(name, workflowDir), 'utf8')
     if (!source.includes('\n  pull_request:')) continue
+    if (name === 'native-ocr-owner-export.yml') {
+      // This is a label-only delegation, not a PR-head verification workflow.
+      // The reusable workflow owns cancellation, with separate export/verify groups.
+      assert.match(source, /\n  pull_request:\n    types: \[labeled\]\n/)
+      assert.match(source, /^\s+uses: \.\/\.github\/workflows\/native-ocr-clean-audit\.yml\s*$/m)
+      const audit = await readFile(new URL('native-ocr-clean-audit.yml', workflowDir), 'utf8')
+      assert.match(audit, /^concurrency:/m)
+      assert.match(audit, /github\.event\.pull_request\.number\s*\|\|\s*github\.ref/)
+      assert.match(audit, /github\.event\.action == 'labeled' \|\| github\.event_name == 'workflow_dispatch'\) && 'export' \|\| 'verify'/)
+      assert.match(audit, /^\s+cancel-in-progress: true$/m)
+      continue
+    }
     assert.match(source, /^concurrency:/m, `${name}: PR workflow must define concurrency`)
     assert.match(source, /github\.event\.pull_request\.number\s*\|\|\s*github\.ref/, `${name}: concurrency must be PR-scoped`)
     assert.match(source, /cancel-in-progress:\s*(?:true|\$\{\{\s*github\.event_name\s*==\s*['\"]pull_request['\"]\s*\}\})/, `${name}: superseded PR heads must actually cancel`)

@@ -87,3 +87,18 @@ volatile memory refresh must not rewrite history. D3's isolated helper mode
 remains independently exercised. This is not real OCR accuracy or online
 provider-cache evidence. If the product path fails these assertions, do not
 weaken them to claim production readiness.
+
+### Current-main joint acceptance candidate — 2026-11-20
+
+This disposable **DO NOT MERGE** candidate includes the prior #865 B/C/D/effort
+integration, owner-authorized main PP-OCRv6 commit `3b1bf425a015dc9fcd89b1d239c23cae8218aab0`,
+and independent diagnostic draft #874 at `f581950e6c437e8809d8b698982e76281b017c49`.
+The main tree is the base: PP-OCRv6 files remain unchanged except for *additive*
+compositions of package test list, Desktop renderer gate and bundle regression
+checks. The pinned current Host workflow includes all earlier checks plus
+an offline real public-plugin /vision-cache Command/Agent/Session fixture.
+All earlier success results are historical; this HEAD requires fresh gates.
+The diagnostic does not send prompts, does not provide billed cost data, and
+does not prove server cache hit rates. Stable image history is still opt-in.
+Original source PRs remain authoritative and unmerged; this combined PR is
+test-only and must never be merged into main.
