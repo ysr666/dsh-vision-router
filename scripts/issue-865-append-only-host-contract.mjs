@@ -17,7 +17,7 @@ const root = path.resolve(sourceRoot)
 const host = relative => import(pathToFileURL(path.join(root, relative)).href)
 const hostRequire = createRequire(path.join(root, 'packages/llm/llm/package.json'))
 const [
-  { Context }, llm, { default: SessionStore }, { default: SessionProjection },
+  { Context }, llm, { default: SessionStore, adoptSessionEvent }, { default: SessionProjection },
   { default: AttachmentLocal }, { default: SystemPrompt }, { default: ToolRuntime },
   { default: AgentRegistry }, { default: AgentLoop }, { default: SessionPersistence },
 ] = await Promise.all([
@@ -245,6 +245,34 @@ try {
   })
   // Simulate the successful recognized image returned by an offline OCR
   // backend *before* admission; no real HTTP request is performed.
+  // Host-qualified event schema: tool output is tool/result.data.message,
+  // not a top-level tool/message event. Use the Host constructors and
+  // adoptSessionEvent validator before invoking DVR's provenance tracker.
+  const outputImage = llm.createToolResultMessage({
+    callId: 'issue-865-tool-image',
+    content: [{ type: 'image', attachment: ref }],
+    isError: false,
+  })
+  const committedToolEvent = adoptSessionEvent({
+    type: 'tool/result', seq: 0, time: Date.now(),
+    data: { turn: 0, step: 0, message: outputImage },
+  })
+  const tracker = createSessionImageEvidencePlanner()
+  const preStep = [{ id: 'tool-image-next-text', role: 'user',
+    content: [{ type: 'text', text: 'follow up on generated image' }] }]
+  const indexSession = { snapshotEvents() { return [committedToolEvent] } }
+  const toolEvidence = tracker.plan(indexSession, preStep, preStep,
+    new Map([[ref.attachmentId, 'SYNTHETIC_TOOL_IMAGE_OCR']]), SOURCE)
+  assert.equal(toolEvidence.length, 1,
+    'real Host tool/result must restore tool-produced image provenance')
+  assert.match(toolEvidence[0].content[0].text, /SYNTHETIC_TOOL_IMAGE_OCR/)
+  tracker.onSessionEvent(indexSession, {
+    type: 'user/message', data: toolEvidence[0],
+  })
+  assert.deepEqual(tracker.plan(indexSession, preStep, preStep,
+    new Map([[ref.attachmentId, 'SYNTHETIC_TOOL_IMAGE_OCR']]), SOURCE), [],
+  'one committed tool-result image evidence must not repeat')
+
   const visionMemory = new Map([[ref.attachmentId, 'SYNTHETIC_OCR_EVIDENCE_V1']])
   await first.ctx.fiber.dispose()
   const ready = await mount(visionMemory)
@@ -310,7 +338,7 @@ try {
   console.log(JSON.stringify({
     ok: true, scenario: 'actual DSH pre-step + standard SessionPersistence interface cold resume using test-only disk backend',
     savedEvidenceCount: storedEvidence.length, reopenedEvidenceCount: persisted.length,
-    restoredWithoutVisionMemory: true,
+    restoredWithoutVisionMemory: true, exactToolResultSchema: true, toolResultProvenanceIndexed: true,
   }))
 } finally {
   if (originalHome === undefined) delete process.env.DSH_HOME
