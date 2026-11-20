@@ -428,9 +428,9 @@ ollama pull qwen2.5vl
 - 桌面截屏必须显式开启。Windows/macOS 使用系统截屏能力；Linux 需安装 ImageMagick `import` 或 `scrot`，且必须处于可截取的桌面会话（Wayland 支持取决于环境）。
 - tesseract 可选。`vision_ocr` 默认使用 `ocrEngine: auto`：在 **Mac ARM64 / Windows x64** 上优先使用已安装且 SHA-256 校验通过的 PP-OCRv6 small/ncnn，未安装或失败才使用本地 Tesseract，最后按照现有隐私设置决定是否回退视觉模型。其他系统暂时保持 Tesseract 优先。针对 Issue #836，Tesseract 自适应识别增加 PSM 7（单行）；只有低置信度时才按需尝试底部字幕的灰度、放大与暗底反相预处理。`auto` 遇到非空但低置信度的本地结果时，在非严格本地模式、未触发熔断且剩余时间允许的情况下，可继续调用视觉模型核查（可能产生服务商用量）；否则保留带不确定性标记的本地结果。仍可在「设置 → 高级 → OCR 默认引擎」强制仅 Tesseract 或直接使用视觉模型。单次调用显式 `engine=tesseract|vision` 始终优先，`engine=tesseract` 绝不触发云端视觉请求。
 
-  **按需安装与卸载（此开发分支的新功能）：** 在「设置 → 本地与设备 → 可选本地 OCR」查看两个引擎的状态。若检测到系统 Tesseract 及 `chi_sim`、`eng`，直接使用，不再重复安装；缺少时可点击安装插件私有的 Tesseract.js/WASM 和中英文模型，之后可只卸载插件副本。PP-OCRv6 支持从用户已取得的可信离线包导入、安装和卸载；**原生包尚未获公开分发放行，暂不提供自动下载**。两者均非必装；未安装时继续遵守既有隐私授权并回退到视觉模型。
+  **按需安装与卸载（v3.4.0 之后的开发版本）：** 在「设置 → 本地与设备 → 可选本地 OCR」查看两个引擎的状态。若检测到系统 Tesseract 及 `chi_sim`、`eng`，直接使用，不再重复安装；缺少时可点击安装插件私有的 Tesseract.js/WASM 和中英文模型，之后可只卸载插件副本。macOS ARM64 / Windows x64 用户可点击 **下载并安装 PP-OCRv6**，自动下载并校验固定 npm 资源包 1.0.0，也可导入可信离线包或卸载。无需 Python、PaddleOCR 或系统 npm CLI；仅在用户主动点击时下载。已发布的主插件 v3.4.0 本身不包含这一新下载目录。两者均非必装；未安装时继续遵守既有隐私授权并回退到视觉模型。
 
-  本地安装已验证的 PP-OCRv6 引擎（Mac ARM64 已验证；Windows x64 已通过本地安装与正式 \`auto\` 调用，公开发行仍待最终审查）：拿到经来源核验的单文件包后运行下面一条命令即可，不需要自行编译；安装器会逐项校验二进制与五个模型资产。当前两个包均为**本地验证候选，尚未上传公共 Release**；Windows 版本仍需完成许可证审核。
+  如需离线安装 PP-OCRv6，可取得资源包中的可信内层原生归档后运行下面的命令，无需自行编译；安装器逐项校验二进制与五个模型资产。两平台当前 Desktop 环境已完成真实识别验收，最低系统版本实机兼容尚未经验证；原有插件最低要求不变。资源包通过 npm 分发，不依赖 GitHub Release 附件。
 
   ```bash
   node scripts/install-native-ocr.mjs --bundle /absolute/path/to/ppocrv6-small-darwin-arm64.tar.gz

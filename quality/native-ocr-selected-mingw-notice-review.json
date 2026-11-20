@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "reviewType": "Direct source-blob and source-header notice comparison for all 70 selected MinGW translation-unit/startup mappings",
+  "checkedAtCandidateHead": "c4e501f6f5ae336e7d33f49d328ec6b0567d72b0",
+  "upstream": {
+    "repository": "mingw-w64/mingw-w64",
+    "commit": "0d6dfbc348dfad714761c0a7151615767f96bcb5"
+  },
+  "sourceLedger": {
+    "path": "quality/native-ocr-mingw-source-evidence.json",
+    "gitBlobSha1": "c033b18fa78d20f16d0fed143b5dac82079ea772"
+  },
+  "directlyFetchedGitBlobMatches": 70,
+  "reviewedSelectedSourceCategories": {
+    "public-domain declaration": 46,
+    "no prominent source grant; repository COPYING applies subject to exceptions": 4,
+    "gdtoa / Lucent / David M. Gay notice": 15,
+    "source-specific notice: review": 4,
+    "specific permissive grant text": 1
+  },
+  "publicDomainSourceFilesWithExplicitDeclaration": 46,
+  "sourceFilesWithoutIndividualGrantCoveredByRepositoryCOPYING": 4,
+  "nonPublicDomainSourceHeadersMatchedExactlyToBundledSourceNotices": 20,
+  "bundledSourceNotice": {
+    "path": "assets/licenses/mingw-w64-source-NOTICES.txt",
+    "gitBlobSha1": "1a2d13ff87503b5a6a52605f1dd21b9e88a7144c",
+    "bytes": 25089,
+    "stagedSha256": "3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4"
+  },
+  "bundledCombinedNotices": {
+    "path": "assets/licenses/windows-native-runtime-NOTICES.txt",
+    "gitBlobSha1": "16bc8e8cfcc2ecc491dabeb22e6eab228bcccf6f",
+    "stagedSha256": "ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006"
+  },
+  "observedSelectedSpecialGrants": [
+    "David M. Gay / Lucent gdtoa notice (including pformat floating-point code)",
+    "Keith Marshall source grants",
+    "Zope Public License 2.1 with explicit binary notice conditions"
+  ],
+  "scope": "All 70 exact selected translation-unit source identities and their *prominent source headers* were independently compared to the pinned upstream source. The 20 exceptional/mixed-licence headers appear verbatim in the bundled source notices. The four without an individual header grant remain subject to upstream repository COPYING, which is bundled. This is not a transitive include trace or legal clearance.",
+  "remaining": [
+    "Exact transitive preprocessor-header inclusion/dependency graph",
+    "Additional notices/obligations contributed by included runtime headers and third-party inline code",
+    "Symbol-level retained section audit and independent redistribution review",
+    "Minimum OS runtime and owner-publication authorization"
+  ],
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false,
+  "finalWorkerCbrtSymbolReview": {
+    "run": 44451773187,
+    "job": 135320472558,
+    "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+    "importSymbolMatches": 0,
+    "linkMapSymbolMatches": 0,
+    "source": "quality/native-ocr-final-link-audit.py read-only llvm-readobj+link-map scan",
+    "interpretation": "The suspect MinGW math.h comment sits before cbrt declarations; no directly named cbrt variants were observed in final PE import symbols or linker-map token scan. This narrows but cannot disprove inlined or unnamed retained code; it does not close transitive header provenance."
+  }
+}

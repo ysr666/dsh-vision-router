@@ -646,6 +646,13 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 let desktopOutputBuffer = ''
 let lastCoreProbe
 let runtimePackageEvidence
+let exactNativeOcr
+let exactNativeOcrModule
+let exactNativeRecognition
+let exactNativeToolPhase = false
+let exactNativeToolCalls = 0
+let exactNativeToolResult
+let exactNativeToolError
 const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
@@ -655,6 +662,17 @@ try {
   reportPhase('initialize-fixture')
   mkdirSync(home)
   mkdirSync(userData)
+  if (process.env.DVR_NATIVE_OCR_STAGE) {
+    exactNativeOcrModule = await import('../quality/native-ocr-desktop-acceptance.mjs')
+    assert.ok(process.env.DVR_NATIVE_OCR_DESKTOP_REPORT, 'exact OCR report path required')
+    assert.equal(checkWholeTurnRouting, false, 'exact native OCR requires tool-only routing')
+    exactNativeOcr = exactNativeOcrModule.prepareExactDesktopOcr({
+      source: dvrRoot, root, home,
+      stage: process.env.DVR_NATIVE_OCR_STAGE,
+      bmp: process.env.DVR_NATIVE_OCR_BMP,
+      expected: process.env.DVR_NATIVE_OCR_EXPECTED,
+    })
+  }
 
   textServer = await listenHttp(async (req, res) => {
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
@@ -663,6 +681,46 @@ try {
     const body = await readJsonBody(req)
     textEvidence.requests += 1
     const serialized = JSON.stringify(body)
+    if (exactNativeToolPhase) {
+      const { OCR_TOOL_CALL_ID, OCR_PROMPT_MARKER, OCR_RENDERED_MARKER, readNativeOcrToolResult } = exactNativeOcrModule
+      try {
+        assert.ok(Array.isArray(body.messages), 'missing real Agent message history')
+        const previous = readNativeOcrToolResult(body.messages, exactNativeOcr.expected)
+        if (previous) {
+          assert.equal(exactNativeToolCalls, 1, 'duplicate or unsolicited native OCR result')
+          exactNativeToolResult = previous
+          sendSse(res, [
+            { choices: [{ delta: { content: OCR_RENDERED_MARKER } }] },
+            { choices: [{ finish_reason: 'stop', delta: {} }] },
+          ])
+          return
+        }
+        assert.equal(exactNativeToolCalls, 0, 'expected actual tool response after OCR call')
+        const promptRows = body.messages.filter(row => row?.role === 'user'
+          && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
+        assert.equal(promptRows.length, 1, 'unique OCR user message required')
+        const userText = JSON.stringify(promptRows[0])
+        const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(userText)?.[1]
+          ?? /\bsha256:[a-f0-9]{64}\b/i.exec(userText)?.[0]
+        assert.ok(attachment && attachment !== textEvidence.attachmentId, 'new actual image attachment required')
+        assert.ok(body.tools?.some(row => row?.function?.name === 'vision_ocr'), 'Host did not admit vision_ocr')
+        exactNativeToolCalls++
+        const args = JSON.stringify({ image: attachment })
+        sendSse(res, [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: OCR_TOOL_CALL_ID, type: 'function', function: { name: 'vision_ocr' } }] } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] },
+          { choices: [{ finish_reason: 'tool_calls', delta: {} }] },
+        ])
+        return
+      } catch (error) {
+        exactNativeToolError = String(error?.message ?? error)
+        sendSse(res, [
+          { choices: [{ delta: { content: 'DESKTOP_NATIVE_OCR_E2E_FAILED' } }] },
+          { choices: [{ finish_reason: 'stop', delta: {} }] },
+        ])
+        return
+      }
+    }
     if (checkWholeTurnRouting && serialized.includes('TEXT_FOLLOWUP_AFTER_IMAGE')) {
       sendSse(res, [
         { choices: [{ delta: { content: 'DESKTOP_TEXT_REVERSE_E2E_OK' } }] },
@@ -755,7 +813,7 @@ try {
   const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
-  manifest.dependencies['dsh-vision-router'] = `file:${dvrRoot}`
+  manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
   manifest.dependencies[coreProbeFixture.name] = `file:${coreProbeFixture.directory}`
   if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
   manifest.dsh.profile.bundles.push(coreProbeFixture.name)
@@ -794,6 +852,7 @@ try {
     '    model: desktop-text',
     '- id: vision-router',
     '  config:',
+    ...(exactNativeOcr ? ['    progressiveTools: false', '    ocrEngine: auto', '    freeFallback: false'] : []),
     ...checkWholeTurnRouting
       ? [
           '    routing: true',
@@ -827,6 +886,8 @@ try {
   const hostPort = await freePort()
   const environment = {
     ...process.env,
+    ...exactNativeOcr?.isolatedEnv,
+    ...(exactNativeOcr ? { DVR_NCNN_OCR_CANARY: '', DVR_NCNN_OCR_EXECUTABLE: '', DVR_NCNN_OCR_MODELS: '' } : {}),
     DSH_HOME: home,
     DSH_DESKTOP_DEV_APP: '1',
     DSH_DESKTOP_DSH_DIR: project,
@@ -1128,6 +1189,10 @@ try {
   const restoredToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
   await restoredToggle.waitFor({ state: 'visible', timeout: 5000 })
   if (await restoredToggle.isChecked() !== originalChecked) throw new Error('Desktop Settings restore did not survive save readback')
+  if (exactNativeOcr) {
+    exactNativeRecognition = await exactNativeOcrModule.exerciseExactDesktopOcr(page, exactNativeOcr)
+    reportPhase('exact-native-ocr-gui-installed')
+  }
   await page.getByRole('button', { name: /关闭|Close/i }).first().click()
 
   reportPhase('settings-roundtrip-passed')
@@ -1225,6 +1290,43 @@ try {
   }
 
   reportPhase('vision-answer-rendered')
+  if (exactNativeOcr) {
+    const { OCR_PROMPT_MARKER, OCR_RENDERED_MARKER } = exactNativeOcrModule
+    const sharpModule = createRequire(join(dvrRoot, 'package.json'))('sharp')
+    const sharp = sharpModule.default ?? sharpModule
+    const { decodeBmp } = await import('../quality/native-ocr-staged-acceptance.mjs')
+    const { rgb, width, height } = decodeBmp(readFileSync(exactNativeOcr.bmp))
+    const png = await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer()
+    const beforeVisionRequests = visionEvidence.requests
+    exactNativeToolPhase = true
+    await fileInput.setInputFiles({ name: 'native-ocr-e2e.png', mimeType: 'image/png', buffer: png })
+    await page.locator('img[alt="native-ocr-e2e.png"]').waitFor({ state: 'visible', timeout: 30000 })
+    await composer.fill(OCR_PROMPT_MARKER + ': transcribe the attached image exactly using vision_ocr.')
+    await send.click({ timeout: 30000 })
+    try {
+      await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^(?:' + OCR_RENDERED_MARKER + '|DESKTOP_NATIVE_OCR_E2E_FAILED)$') })
+        .last().waitFor({ state: 'visible', timeout: 90000 })
+      assert.ok(exactNativeToolResult, exactNativeToolError ?? 'actual native OCR result did not arrive')
+      assert.equal(visionEvidence.requests - beforeVisionRequests, 0, 'native OCR unexpectedly called visual model')
+      assert.equal(exactNativeToolCalls, 1)
+      assert.equal(await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^' + OCR_RENDERED_MARKER + '$') }).last().isVisible(), true)
+    } finally {
+      exactNativeToolPhase = false
+    }
+    await accountMenu.click()
+    await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
+    await page.getByText('Vision Router', { exact: true }).last().click()
+    await exactNativeOcrModule.finishExactDesktopOcr(page, exactNativeOcr, exactNativeRecognition, {
+      ...exactNativeToolResult,
+      toolCalls: exactNativeToolCalls,
+      visionRequestsDuringOcr: visionEvidence.requests - beforeVisionRequests,
+      dshVersion,
+    })
+    await page.getByRole('button', { name: /关闭|Close/i }).first().click()
+    reportPhase('exact-native-ocr-agent-and-gui-passed')
+  }
   const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
   const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
   assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')

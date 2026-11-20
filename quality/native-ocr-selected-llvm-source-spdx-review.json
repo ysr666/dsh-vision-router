@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "reviewType": "Upstream fixed-commit independently queried translation unit license headers, static-source correspondence only",
+  "candidate": "win32-x64",
+  "subject": "selected LLVM runtime translation units in exact Windows candidate worker",
+  "sourceLedger": {
+    "path": "quality/native-ocr-llvm-source-byte-evidence.json",
+    "gitBlobSha1": "72f17c21235c64062f573e3624a69ca79692a7a5"
+  },
+  "upstream": {
+    "repository": "llvm/llvm-project",
+    "commit": "7a941dfb2877a0b8cf30323fefa85ad019e0b0f5"
+  },
+  "selectedTranslationUnitCount": 39,
+  "exactGitBlobMatches": 39,
+  "observedSpdx": {
+    "Apache-2.0 WITH LLVM-exception": 39
+  },
+  "observedOtherLicenseFlagsInSelectedTranslationUnits": 0,
+  "licenseNotice": {
+    "path": "assets/licenses/windows-native-runtime-NOTICES.txt",
+    "upstreamComponentTextsVerified": 4,
+    "priorReviewGitBlobSha1": "692c73fd6e3f29a5b846cfbcc3b014f3ba501ccb"
+  },
+  "basis": "Individually fetched and compared the Git blob SHA and SPDX-License-Identifier line of each of the 39 source paths in the source ledger. Reviewed unit code text for obvious GPL/MIT/BSD/Cephes keyword flags. This is not a compiler-header dependency trace.",
+  "notVerified": [
+    "Compiler preprocessor include graph and dependency closure",
+    "Effective object code identity against rebuilt selected LLVM runtime objects",
+    "Source-origin/license of every transitive Windows/Clang/MinGW header",
+    "Symbol/section-level retained proprietary or third-party obligations",
+    "A complete legal redistribution decision for the bundled PE binary"
+  ],
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false
+}
