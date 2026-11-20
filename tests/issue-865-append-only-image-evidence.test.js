@@ -334,3 +334,72 @@ test('issue #865: fifth image does not starve after four evidence messages commi
   planner.onSessionEvent(session, { type: 'user/message', data: second[0] })
   assert.deepEqual(planner.plan(session, current, current, descriptions, source), [])
 })
+
+
+test('issue #865: actual DSH tool/result event indexes image after pre-step', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const imageId = 'sha256:host-tool-produced-image'
+  const toolMessage = {
+    id: 'actual-tool-result-message-id', role: 'tool',
+    source: { kind: 'tool', callId: 'call-865' },
+    toolCallId: 'call-865',
+    content: [{ type: 'image', attachment: { attachmentId: imageId } }],
+  }
+  // Exact pinned DSH SessionEventMap: tool/result.data.message.
+  // There is no "tool/message" event in this Host.
+  const toolEvent = { type: 'tool/result', data: {
+    turn: 1, step: 2, message: toolMessage,
+  } }
+  const current = [{ id: 'later-text', role: 'user',
+    content: [{ type: 'text', text: 'please continue' }] }]
+  const memory = new Map([[imageId, 'delayed tool image recognition']])
+  const liveEvents = []
+  const liveSession = { snapshotEvents() { return liveEvents } }
+  assert.deepEqual(planner.plan(liveSession, current, current, memory, source), [])
+  planner.onSessionEvent(liveSession, toolEvent)
+  const emitted = planner.plan(liveSession, current, current, memory, source)
+  assert.equal(emitted.length, 1,
+    'a newly committed tool/result image must become eligible for late evidence')
+  assert.match(emitted[0].content[0].text, /delayed tool image recognition/)
+  planner.onSessionEvent(liveSession, { type: 'user/message', data: emitted[0] })
+  assert.deepEqual(planner.plan(liveSession, current, current, memory, source), [])
+  const coldSession = { snapshotEvents() { return [
+    toolEvent, { type: 'user/message', data: emitted[0] },
+  ] } }
+  const restored = createSessionImageEvidencePlanner()
+  assert.deepEqual(restored.plan(coldSession, current, current, memory, source), [],
+    'cold resume must not re-emit identical tool-image recognition')
+  memory.set(imageId, 'later corrected tool image text')
+  const corrected = restored.plan(coldSession, current, current, memory, source)
+  assert.equal(corrected.length, 1)
+  assert.notEqual(corrected[0].id, emitted[0].id)
+  assert.match(corrected[0].content[0].text, /later corrected/)
+  // Unknown image IDs in unrelated Session memory remain inadmissible.
+  const foreignSession = { snapshotEvents() { return [] } }
+  assert.deepEqual(restored.plan(foreignSession, current, current, memory, source), [])
+})
+
+test('issue #865: nested images in actual tool/result persist with original tool message identity', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const id = 'sha256:nested-tool-created-image'
+  const msg = {
+    id: 'tool-result-865-nested', role: 'tool',
+    source: { kind: 'tool', callId: 'nested-call' }, toolCallId: 'nested-call',
+    content: [{ type: 'tool-result', content: [
+      { type: 'text', text: 'metadata retained by Host' },
+      { type: 'image', attachment: { attachmentId: id } },
+    ] }],
+  }
+  const committed = { type: 'tool/result', data: { turn: 2, step: 0, message: msg } }
+  const session = { snapshotEvents() { return [committed] } }
+  const textOnly = [{ id: 'text-after-tool-image', role: 'user',
+    content: [{ type: 'text', text: 'continue' }] }]
+  const memo = new Map([[id, 'nested image OCR']])
+  const updates = planner.plan(session, textOnly, textOnly, memo, source)
+  assert.equal(updates.length, 1)
+  assert.match(updates[0].content[0].text, /nested image OCR/)
+  assert.equal(msg.content[0].content[0].text, 'metadata retained by Host')
+  const expected = planAppendOnlyImageEvidence([msg], [msg], memo, source)
+  assert.equal(updates[0].id, expected[0].id,
+    'source identity must be the actual tool/result message ID')
+})
