@@ -8,10 +8,10 @@ const LIMIT = 1000
 const FIELDS = new Set([
   'case', 'trial', 'variant', 'call', 'routeTag', 'modelTag', 'usageSource',
   'inputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens',
-  'totalTokens', 'billedCny', 'billingSource', 'wirePrefixSha256',
+  'totalTokens', 'billedCny', 'billingSource', 'wirePrefixSha256', 'usage',
 ])
 const safeTag = x => typeof x === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(x)
-const natural = x => Number.isSafeInteger(x) && x >= 0
+const natural = x => Number.isSafeInteger(x) && x >= 0 && x <= 1000000000
 const hash = x => typeof x === 'string' && /^[a-f0-9]{64}$/i.test(x)
 function fail(message) { throw new TypeError('Invalid sanitized cache A/B input: ' + message) }
 function moneyMicros(x) {
@@ -21,13 +21,58 @@ function moneyMicros(x) {
   if (amount > 10000 * 1000000) fail('billedCny exceeds the safe per-call bound')
   return amount
 }
+function fromNativeUsage(r) {
+  const source = r.usageSource
+  if (!['deepseek-messages-final', 'deepseek-chat-final'].includes(source)) {
+    if (r.usage !== undefined) fail('nested usage requires explicit DeepSeek final format')
+    return r
+  }
+  const usage = r.usage
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) fail('DeepSeek final usage must be an object')
+  if (['inputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','totalTokens'].some(k => r[k] !== undefined)) {
+    fail('native and normalized usage fields must not be mixed')
+  }
+  const required = source === 'deepseek-messages-final'
+    ? ['input_tokens','cache_read_input_tokens','cache_creation_input_tokens','output_tokens']
+    : ['prompt_tokens','prompt_cache_hit_tokens','prompt_cache_miss_tokens','completion_tokens','total_tokens']
+  if (Object.keys(usage).length !== required.length ||
+      required.some(k => !Object.prototype.hasOwnProperty.call(usage, k) || !natural(usage[k]))) {
+    fail('DeepSeek final usage requires exactly its numeric count fields')
+  }
+  let numbers
+  if (source === 'deepseek-messages-final') {
+    if (usage.cache_creation_input_tokens !== 0) fail('unexpected DeepSeek cache creation count')
+    numbers = {
+      inputTokens: usage.input_tokens,
+      cacheReadTokens: usage.cache_read_input_tokens,
+      cacheWriteTokens: usage.cache_creation_input_tokens,
+      outputTokens: usage.output_tokens,
+      totalTokens: usage.input_tokens + usage.cache_read_input_tokens +
+        usage.cache_creation_input_tokens + usage.output_tokens,
+    }
+  } else {
+    if (usage.prompt_tokens !== usage.prompt_cache_hit_tokens + usage.prompt_cache_miss_tokens ||
+        usage.total_tokens !== usage.prompt_tokens + usage.completion_tokens) {
+      fail('DeepSeek Chat completion usage does not reconcile')
+    }
+    numbers = {
+      inputTokens: usage.prompt_cache_miss_tokens,
+      cacheReadTokens: usage.prompt_cache_hit_tokens,
+      outputTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+    }
+  }
+  const { usage: ignored, ...metadata } = r
+  return { ...metadata, ...numbers }
+}
 function readRow(r) {
   if (!r || typeof r !== 'object' || Array.isArray(r)) fail('observation must be an object')
   if (Object.keys(r).some(k => !FIELDS.has(k))) fail('unknown field (potentially private data)')
   if (!safeTag(r.case) || !safeTag(r.routeTag) || !safeTag(r.modelTag)) fail('case/routeTag/modelTag must be opaque short tags')
   if (!natural(r.trial) || r.trial < 1 || r.trial > 100) fail('trial must be an integer in [1,100]')
   if (!['before', 'after'].includes(r.variant) || !['main', 'vision'].includes(r.call)) fail('variant/call must be known values')
-  if (r.usageSource !== 'provider-response' && r.usageSource !== 'provider-dashboard') fail('usageSource must identify the actual provider evidence')
+  if (!['provider-response','provider-dashboard','deepseek-messages-final','deepseek-chat-final'].includes(r.usageSource)) fail('usageSource must identify the actual provider evidence')
+  r = fromNativeUsage(r)
   for (const k of ['inputTokens','outputTokens','totalTokens']) if (!natural(r[k])) fail('invalid or missing token counter')
   for (const k of ['cacheReadTokens','cacheWriteTokens']) if (r[k] !== undefined && !natural(r[k])) fail('malformed cache counter')
   if (r.wirePrefixSha256 !== undefined && !hash(r.wirePrefixSha256)) fail('wire prefix digest must be SHA256')

@@ -69,3 +69,35 @@ test('rejects prompt or identity fields to prevent accidental sensitive output',
   const r = compareCacheAB(doc([one('before'), one('after')]))
   assert.doesNotMatch(JSON.stringify(r) + formatCacheAB(r), /sameCase|accountOne|modelOne|SECRET/)
 })
+
+test('native DeepSeek Messages final cumulative usage is mapped without double counting', () => {
+  const native = variant => {
+    const { inputTokens, cacheReadTokens, outputTokens, totalTokens, ...meta } = one(variant, { usageSource: 'deepseek-messages-final' })
+    return { ...meta, usage: { input_tokens: 10, cache_read_input_tokens: 90,
+      cache_creation_input_tokens: 0, output_tokens: 7 } }
+  }
+  const result = compareCacheAB(doc([native('before'), native('after')]))
+  assert.equal(result.before.uncachedInputTokens, 10)
+  assert.equal(result.before.cacheReadTokens, 90)
+  assert.equal(result.before.cacheHitPercent, 90)
+  assert.equal(result.before.calls, 1)
+  assert.equal(result.deltas.billedCny, null)
+})
+test('native DeepSeek Chat final usage rejects mismatched prompt and total', () => {
+  const chat = variant => {
+    const { inputTokens, cacheReadTokens, outputTokens, totalTokens, ...meta } = one(variant, { usageSource: 'deepseek-chat-final' })
+    return { ...meta, usage: { prompt_tokens: 100, prompt_cache_hit_tokens: 90,
+      prompt_cache_miss_tokens: 10, completion_tokens: 7, total_tokens: 107 } }
+  }
+  const r = compareCacheAB(doc([chat('before'), chat('after')]))
+  assert.equal(r.after.cacheHitPercent, 90)
+  assert.throws(() => compareCacheAB(doc([chat('before'), {
+    ...chat('after'), usage: { ...chat('after').usage, prompt_tokens: 999 },
+  }])), /does not reconcile/)
+  assert.throws(() => compareCacheAB(doc([{
+    ...chat('before'), inputTokens: 1,
+  }, chat('after')])), /must not be mixed/)
+  assert.throws(() => compareCacheAB(doc([{
+    ...chat('before'), usage: { ...chat('before').usage, request_id: 'SECRET' },
+  }, chat('after')])), /requires exactly/)
+})

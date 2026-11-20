@@ -73,3 +73,33 @@ script.
 No paid DeepSeek canary was executed by this change. The missing evidence
 remains a connected, authorized environment and genuine provider usage and
 billing receipts.
+
+
+### DeepSeek native final-usage input
+
+Provider Usage naming varies by API. This offline tool also accepts an
+observation with usageSource="deepseek-messages-final" and a sanitized
+usage object containing ONLY these four fields from the completed Messages
+response: input_tokens (cache MISS), cache_read_input_tokens (cache HIT),
+cache_creation_input_tokens (currently 0), output_tokens. It computes the
+disjoint total without adding the provisional message_start count. For
+streamed Messages, use the final message_delta usage after a completed
+message_stop, not message_start or a partial stream.
+
+For Chat Completions use usageSource="deepseek-chat-final" with a
+sanitized usage object containing ONLY prompt_tokens,
+prompt_cache_hit_tokens, prompt_cache_miss_tokens, completion_tokens and
+total_tokens. Those fields must reconcile (prompt = hit + miss and total =
+prompt + completion). Do not mix native fields with DSH-normalized fields
+in the same row; the parser rejects that ambiguity. Do not copy full API
+responses (messages, identifiers, output, service-tier metadata) into the
+file. The operator must extract only the listed non-sensitive count fields.
+
+Official field contracts:
+- https://api-docs.deepseek.com/api/create-message/
+- https://api-docs.deepseek.com/api/create-chat-completion/
+- https://api-docs.deepseek.com/guides/anthropic_api/
+
+All usageSource labels are an operator assertion rather than verified
+network provenance. Actual per-request billing is still required to
+establish money savings, and missing calls cannot be inferred away.
