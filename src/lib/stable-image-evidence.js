@@ -50,7 +50,7 @@ function evidenceMessageId(originMessageId, attachmentId, description) {
  */
 export function planAppendOnlyImageEvidence(
   observedMessages, currentMessages, descriptions, source,
-  { maxMessages = MAX_EVIDENCE_PER_STEP, maxChars = MAX_EVIDENCE_CHARS } = {},
+  { maxMessages = MAX_EVIDENCE_PER_STEP, maxChars = MAX_EVIDENCE_CHARS, excludeIds } = {},
 ) {
   if (!Array.isArray(observedMessages) || !Array.isArray(currentMessages) ||
       !(descriptions instanceof Map) || !source || typeof source !== 'object') return []
@@ -65,7 +65,7 @@ export function planAppendOnlyImageEvidence(
     if (typeof description !== 'string' || description.trim() === '') continue
     const bounded = description.trim().slice(0, charCap)
     const id = evidenceMessageId(originMessageId, attachmentId, bounded)
-    if (existing.has(id)) continue
+    if (existing.has(id) || (excludeIds instanceof Set && excludeIds.has(id))) continue
     existing.add(id)
     output.push({
       role: 'user',
@@ -160,8 +160,10 @@ export function createSessionImageEvidencePlanner() {
         id: originMessageId, role: 'user',
         content: [{ type: 'image', attachment: { attachmentId } }],
       }))
-      const planned = planAppendOnlyImageEvidence(occurrences, currentMessages, descriptions, source, options)
-      return planned.filter(message => !state.committed.has(message.id))
+      return planAppendOnlyImageEvidence(occurrences, currentMessages, descriptions, source, {
+        ...options,
+        excludeIds: state.committed,
+      })
     },
     onSessionEvent(session, event) {
       // No state for sessions that never enabled stable history.
