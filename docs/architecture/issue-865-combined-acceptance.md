@@ -102,3 +102,25 @@ The diagnostic does not send prompts, does not provide billed cost data, and
 does not prove server cache hit rates. Stable image history is still opt-in.
 Original source PRs remain authoritative and unmerged; this combined PR is
 test-only and must never be merged into main.
+
+### D4 late memory-only recognition candidate (2026-11-20)
+
+This disposable integration candidate now includes D4 source Draft #871 at
+`3e2d8f94c9fb05b1b2c89bde5eaebe62e5f0c6ec`, without changing the
+default `stableImageHistory: false` or merging any source PR into main.
+The producer retains a bounded, per-Session image-occurrence index and
+recognizes a later memory-only OCR description even after the initial image
+inbox was committed. The image itself and historical serialized request
+prefix remain unchanged. Already committed evidence is filtered *before*
+the four-message-per-step budget, preventing pending fifth images from
+being permanently starved.
+
+The source branch's real pinned Host/production JSONL validation has
+already succeeded with two separate OS processes: `serializedBaselineBytes=685402`,
+`lateMemoryEvidenceCommitted=true`, `evidenceCount=2`,
+`coldResumeWirePrefixUnchanged=true`, and
+`lateMemoryWirePrefixUnchanged=true`. This is synthetic OCR and offline
+model traffic, not a billing experiment. D4 source and combined *full*
+workflow qualification must be reported for their respective exact SHAs,
+not inherited from the prior combined candidate.
+**Never merge this integration-only PR.**

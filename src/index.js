@@ -189,7 +189,7 @@ import {
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
-import { planAppendOnlyImageEvidence } from './lib/stable-image-evidence.js'
+import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -675,6 +675,12 @@ export function apply(ctx, config = {}, runtime = {}) {
     readSessionLog: createSessionLogReader(ctx),
   })
   const imageMemory = visionState.descriptionFacade
+  // #865 experimental stable history: remember image provenance per Session;
+  // a late description can arrive after the original inbox was committed.
+  const sessionImageEvidencePlanner = createSessionImageEvidencePlanner()
+  ctx.on('session/event', (session, event) => {
+    sessionImageEvidencePlanner.onSessionEvent(session, event)
+  })
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
   // #208 large-tool follow-up complete: crop is bounded and presentation is compressed passthrough.
@@ -2726,8 +2732,8 @@ export function apply(ctx, config = {}, runtime = {}) {
       // image occurrences immutable: any newly known OCR/caption text belongs
       // to a new, ID-deduplicated evidence event at the history tail.
       const evidence = stableImageHistoryEnabled()
-        ? planAppendOnlyImageEvidence(
-            rawMessages, baseMessages, sessionImageMemory,
+        ? sessionImageEvidencePlanner.plan(
+            session, rawMessages, baseMessages, sessionImageMemory,
             visionRouterMessageSource(session),
           )
         : []

@@ -50,7 +50,7 @@ function evidenceMessageId(originMessageId, attachmentId, description) {
  */
 export function planAppendOnlyImageEvidence(
   observedMessages, currentMessages, descriptions, source,
-  { maxMessages = MAX_EVIDENCE_PER_STEP, maxChars = MAX_EVIDENCE_CHARS } = {},
+  { maxMessages = MAX_EVIDENCE_PER_STEP, maxChars = MAX_EVIDENCE_CHARS, excludeIds } = {},
 ) {
   if (!Array.isArray(observedMessages) || !Array.isArray(currentMessages) ||
       !(descriptions instanceof Map) || !source || typeof source !== 'object') return []
@@ -65,7 +65,7 @@ export function planAppendOnlyImageEvidence(
     if (typeof description !== 'string' || description.trim() === '') continue
     const bounded = description.trim().slice(0, charCap)
     const id = evidenceMessageId(originMessageId, attachmentId, bounded)
-    if (existing.has(id)) continue
+    if (existing.has(id) || (excludeIds instanceof Set && excludeIds.has(id))) continue
     existing.add(id)
     output.push({
       role: 'user',
@@ -82,4 +82,97 @@ export function planAppendOnlyImageEvidence(
     if (output.length >= limit) break
   }
   return output
+}
+
+
+const MAX_TRACKED_IMAGES = 64
+const MAX_COMMITTED_EVIDENCE_IDS = 512
+
+/**
+ * Remember the Session's most recent admitted images without changing their
+ * durable message bodies. This is exclusively used by the opt-in stable-history
+ * pre-step: a description may arrive *after* the original image inbox is gone.
+ *
+ * On first access after resume, read the Host's committed event snapshot ONCE
+ * to recover original image provenance and already-admitted evidence IDs.
+ * Subsequent steps visit only the current inbox and the bounded image index.
+ * Do not rely on an in-memory "planned" ID: a rejected/aborted pre-step must
+ * be allowed to retry until its user/message actually commits.
+ */
+export function createSessionImageEvidencePlanner() {
+  const sessions = new WeakMap()
+  const isSession = value => value !== null && typeof value === 'object'
+
+  function observe(state, messages) {
+    for (const occurrence of observedImageOccurrences(messages)) {
+      const key = JSON.stringify([occurrence.originMessageId, occurrence.attachmentId])
+      state.images.delete(key)
+      state.images.set(key, occurrence)
+      if (state.images.size > MAX_TRACKED_IMAGES) {
+        state.images.delete(state.images.keys().next().value)
+      }
+    }
+  }
+
+  function recordCommitted(state, message) {
+    const owner = message?.source
+    const trustedDvr = owner?.kind === 'plugin:dsh-vision-router' ||
+      (owner?.kind === 'plugin' && owner?.plugin === 'dsh-vision-router')
+    if (!trustedDvr || typeof message.id !== 'string' ||
+        !message.id.startsWith(PREFIX)) return
+    state.committed.delete(message.id)
+    state.committed.add(message.id)
+    if (state.committed.size > MAX_COMMITTED_EVIDENCE_IDS) {
+      state.committed.delete(state.committed.values().next().value)
+    }
+  }
+
+  function stateFor(session) {
+    if (!isSession(session)) return undefined
+    let state = sessions.get(session)
+    if (state) return state
+    state = { images: new Map(), committed: new Set() }
+    sessions.set(session, state)
+    // The current inbox is not the entire Session history after a resume.
+    // Read existing events just once. Never scan the full log per turn.
+    const events = typeof session.snapshotEvents === 'function'
+      ? session.snapshotEvents()
+      : undefined
+    if (Array.isArray(events)) {
+      for (const event of events) {
+        if (event?.type !== 'user/message' && event?.type !== 'tool/message') continue
+        if (!event.data || typeof event.data !== 'object') continue
+        observe(state, [event.data])
+        if (event.type === 'user/message') recordCommitted(state, event.data)
+      }
+    }
+    return state
+  }
+
+  return {
+    plan(session, observedMessages, currentMessages, descriptions, source, options) {
+      const state = stateFor(session)
+      if (!state) return []
+      observe(state, observedMessages)
+      // Newest occurrences first. An image must have been observed in this
+      // Session; descriptions in another Session's memory cannot be injected.
+      const occurrences = [...state.images.values()].reverse().map(({ originMessageId, attachmentId }) => ({
+        id: originMessageId, role: 'user',
+        content: [{ type: 'image', attachment: { attachmentId } }],
+      }))
+      return planAppendOnlyImageEvidence(occurrences, currentMessages, descriptions, source, {
+        ...options,
+        excludeIds: state.committed,
+      })
+    },
+    onSessionEvent(session, event) {
+      // No state for sessions that never enabled stable history.
+      const state = isSession(session) ? sessions.get(session) : undefined
+      if (!state || event?.type !== 'user/message') return
+      if (event.data && typeof event.data === 'object') {
+        observe(state, [event.data])
+        recordCommitted(state, event.data)
+      }
+    },
+  }
 }

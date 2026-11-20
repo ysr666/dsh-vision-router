@@ -8,7 +8,7 @@ import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { planAppendOnlyImageEvidence } from '../lib/stable-image-evidence.js'
+import { createSessionImageEvidencePlanner } from '../lib/stable-image-evidence.js'
 import { rewriteHistoryImages } from '../lib/core-primitives.js'
 
 const sourceRoot = process.env.DSH_SOURCE_ROOT
@@ -215,12 +215,14 @@ async function mount(memory) {
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new TextAdapter()
   ctx.llm.registerAdapter(['synthetic-text'], adapter)
+  const planner = createSessionImageEvidencePlanner()
+  ctx.on('session/event', (session, event) => planner.onSessionEvent(session, event))
   ctx.on('agent/pre-step', async (payload, next) => {
     const decision = await next()
     if (decision.kind !== 'enter') return decision
     const original = decision.messages
     const stable = rewriteHistoryImages(original, memory, { stable: true }).messages
-    const added = planAppendOnlyImageEvidence(original, stable, memory, SOURCE)
+    const added = planner.plan(payload.agent?.session, original, stable, memory, SOURCE)
     return added.length > 0 || stable !== original
       ? { ...decision, messages: [...stable, ...added] }
       : decision
@@ -261,10 +263,23 @@ try {
   assert.ok(firstMarker, 'stable marker must be model visible')
   assert.equal(evidence.length, 1)
   assert.match(evidence[0].content[0].text, /SYNTHETIC_OCR_EVIDENCE_V1/)
+  // New OCR/caption arrives after the first picture inbox was consumed.
+  // A later TEXT-only followup must append evidence without replaying the
+  // image in its inbox or mutating the first provider-visible message.
+  visionMemory.set(ref.attachmentId, 'SYNTHETIC_OCR_EVIDENCE_V2_LATE_MEMORY')
+  await runTurn(handle.agent, [{ type: 'text', text: 'Follow up after delayed OCR memory' }])
+  assert.equal(ready.adapter.requests.length, 2)
+  const lateWire = ready.adapter.requests[1].messages
+  const lateEvidence = lateWire.filter(message => message?.id?.startsWith('vision-router-image-evidence-v1-'))
+  assert.equal(lateEvidence.length, 2, 'memory-only update must be durably added on the next text turn')
+  assert.equal(lateEvidence[0].id, evidence[0].id, 'old evidence ID remains unchanged')
+  assert.deepEqual(lateEvidence[0].content, evidence[0].content)
+  assert.match(lateEvidence[1].content[0].text, /SYNTHETIC_OCR_EVIDENCE_V2_LATE_MEMORY/)
   const storedEvidence = handle.agent.session.snapshotEvents().filter(event =>
     event.type === 'user/message' &&
     event.data?.id?.startsWith('vision-router-image-evidence-v1-'))
-  assert.equal(storedEvidence.length, 1, 'pre-step evidence must be a real durable user/message')
+  assert.equal(storedEvidence.length, 2,
+    'both original and memory-only late evidence must be committed user/messages')
   await ready.ctx.sessions.flush(handle.agent.session)
   await handle.dispose()
   await ready.ctx.fiber.dispose()
@@ -278,9 +293,11 @@ try {
   assert.equal(reopened.adapter.requests.length, 1)
   const secondWire = reopened.adapter.requests[0].messages
   const persisted = secondWire.filter(message => message?.id?.startsWith('vision-router-image-evidence-v1-'))
-  assert.equal(persisted.length, 1, 'evidence must survive cold resume with an empty in-memory Map')
+  assert.equal(persisted.length, 2, 'both evidence versions must survive cold resume with an empty Map')
   assert.equal(persisted[0].id, evidence[0].id, 'replayed evidence identity must be stable')
   assert.deepEqual(persisted[0].content, evidence[0].content)
+  assert.equal(persisted[1].id, lateEvidence[1].id)
+  assert.deepEqual(persisted[1].content, lateEvidence[1].content)
   const firstMarkerBlock = firstMarker.content.find(block =>
     block.type === 'text' && block.text.includes(ref.attachmentId))
   const restoredOriginal = secondWire.find(message => message?.id === firstMarker.id)
