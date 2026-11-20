@@ -56,3 +56,37 @@ synthetic serialized values only; the test does not claim paid-provider hits,
 actual tokenizer counts, OCR accuracy or full public-plugin execution. The
 existing original-attachment, one durable evidence event, and cold-replay
 checks remain mandatory. This increments evidence, not production defaults.
+
+
+### D4: late memory-only evidence (still opt-in)
+
+The earlier D3 fixture already proved that a *committed* tool result stays in
+new history even after the image inbox is consumed. It did not cover an
+asynchronous image description written only to volatile Session memory after
+the original image turn finished.
+
+The experimental pre-step now uses `createSessionImageEvidencePlanner()`.
+It retains only the 64 most recently observed image occurrences **per live
+Session** and up to 512 committed evidence IDs. On the first use for a
+Session (including a resumed one) it seeds the bounded index from the Host's
+**committed** event snapshot once; it does **not** re-read the entire
+history every step. On subsequent steps it observes the current inbox and
+existing bounded index, not past request serialization. Evidence is marked
+delivered only when the Host emits a committed `user/message` event; an
+uncommitted, interrupted pre-step may retry safely. V3 legacy and V4
+producer-owned DVR source attribution are both recognized.
+
+This allows a late memory-only description to become a new, identified,
+untrusted model-visible message on a later text-only turn, without replacing
+the original image block or its earlier stable marker. The production logic
+remains gated behind `stableImageHistory: true`; default remains **false**.
+Long-session retention intentionally favors recent image occurrences.
+A memory-only description associated with an older image evicted from the
+bounded index is not automatically rehydrated absent new provenance.
+The test fixture uses synthetic recognition and the real Host Session
+admission/persistence interface, not real OCR quality or provider billing.
+
+**Not yet established**: actual paid-provider cache-read rates/fees, image
+answer quality on representative user images, and all-source-PR integration
+acceptance of this D4 revision. No release or merge authorization follows
+from this test.
