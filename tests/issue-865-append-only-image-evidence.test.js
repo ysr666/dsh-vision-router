@@ -289,3 +289,26 @@ test('issue #865: late memory may not escape the owning Session or image provena
     new Map([['sha256:mass-69', 'most recent result']]), source)
   assert.equal(newest.length, 1)
 })
+
+
+test('issue #865: legacy Session V3 source and V4 source both dedupe persisted evidence', () => {
+  const original = history()[0]
+  const memory = new Map([[id, 'persisted V3 image evidence']])
+  const evidence = planAppendOnlyImageEvidence([original], [original], memory, source)[0]
+  const legacy = { ...evidence, source: { kind: 'plugin', plugin: 'dsh-vision-router' } }
+  const text = [{ id: 'later', role: 'user', content: [{ type: 'text', text: 'resume' }] }]
+  const v3 = { snapshotEvents() { return [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: legacy },
+  ] } }
+  assert.deepEqual(createSessionImageEvidencePlanner().plan(
+    v3, text, text, memory, legacy.source,
+  ), [], 'legacy Session V3 evidence must not be appended again')
+  const v4 = { snapshotEvents() { return [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: evidence },
+  ] } }
+  assert.deepEqual(createSessionImageEvidencePlanner().plan(
+    v4, text, text, memory, source,
+  ), [], 'current Session V4 evidence must not be appended again')
+})
