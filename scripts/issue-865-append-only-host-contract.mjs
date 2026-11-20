@@ -254,7 +254,7 @@ try {
     isError: false,
   })
   const committedToolEvent = adoptSessionEvent({
-    type: 'tool/result', seq: 0, time: Date.now(),
+    type: 'tool/result', seq: 0, time: Date.now(), surfaceOp: 'append',
     data: { turn: 0, step: 0, message: outputImage },
   })
   const tracker = createSessionImageEvidencePlanner()
