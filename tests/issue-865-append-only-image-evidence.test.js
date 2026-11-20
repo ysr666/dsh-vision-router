@@ -312,3 +312,25 @@ test('issue #865: legacy Session V3 source and V4 source both dedupe persisted e
     v4, text, text, memory, source,
   ), [], 'current Session V4 evidence must not be appended again')
 })
+
+
+test('issue #865: fifth image does not starve after four evidence messages commit', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const session = { snapshotEvents() { return [] } }
+  const images = Array.from({ length: 5 }, (_, i) => ({
+    id: 'five-original-' + i, role: 'user',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:five-' + i } }],
+  }))
+  const descriptions = new Map(images.map((message, i) =>
+    ['sha256:five-' + i, 'OCR-' + i]))
+  const first = planner.plan(session, images, images, descriptions, source)
+  assert.equal(first.length, 4, 'Host step budget limits new evidence to four')
+  for (const message of first) planner.onSessionEvent(session, { type: 'user/message', data: message })
+  const current = [{ id: 'later-text', role: 'user', content: [{ type: 'text', text: 'continue' }] }]
+  const second = planner.plan(session, current, current, descriptions, source)
+  assert.equal(second.length, 1, 'fifth eligible image must be reached after previous four commit')
+  assert.match(second[0].content[0].text, /OCR-0/)
+  assert.equal(new Set([...first, ...second].map(message => message.id)).size, 5)
+  planner.onSessionEvent(session, { type: 'user/message', data: second[0] })
+  assert.deepEqual(planner.plan(session, current, current, descriptions, source), [])
+})
