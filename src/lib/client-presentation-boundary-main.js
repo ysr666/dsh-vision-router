@@ -1,4 +1,5 @@
 import { injectClientCarrierHtml, installClientScriptCarriers } from './client-script-carrier.js'
+import { createNativeVisionControlContribution, createNativeVisionClientSchemas, nativeVisionSameRoute, createNativeVisionClientBridge, startNativeVisionClientObservation } from './native-vision-control-client.js'
 const CLIENT_PRESENTATION_MARK = 'data-vision-router-presentation-boundary'
 const VISION_MODE_WRAPPER_SOURCE = 'deepseek-official'
 
@@ -162,6 +163,11 @@ export function resolveVisionModePair(groups, current, config = {}) {
 }
 
 const VISION_MODE_HELPER_SOURCE = [
+  createNativeVisionControlContribution,
+  createNativeVisionClientSchemas,
+  nativeVisionSameRoute,
+  createNativeVisionClientBridge,
+  startNativeVisionClientObservation,
   visionModeGroup,
   visionModeHasModel,
   visionModePairMatches,
@@ -1048,6 +1054,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
       enable: '开启识图模式',
       disable: '关闭识图模式',
       unavailable: '当前模型没有对应的「+ 自动识图」版本',
+      nativeUnavailable: '当前会话视觉权限状态不可用',
       loading: '正在读取模型信息…',
       switching: '正在切换识图模式…',
       failed: '模型操作失败：{message}',
@@ -1058,6 +1065,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
       enable: 'Enable Vision mode',
       disable: 'Disable Vision mode',
       unavailable: 'No matching “+ Auto Vision” model is available',
+      nativeUnavailable: 'Vision permission state is unavailable for this session',
       loading: 'Loading model information…',
       switching: 'Switching Vision mode…',
       failed: 'Model action failed: {message}',
@@ -1130,6 +1138,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         models = undefined;
       }
       if (!models || typeof models.directoryFor !== 'function') return;
+      var nativeBridge = createNativeVisionClientBridge(scope);
 
       function fallbackTranslate(active) {
         return function(key, params) {
@@ -1155,6 +1164,42 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             ? function(){ return settings.getSnapshot(); }
             : function(){ return unavailableSettingsState; }
         );
+        var nativeMount = React.useSyncExternalStore(nativeBridge.subscribe, nativeBridge.getSnapshot);
+        var nativeState = React.useState(null);
+        var nativeView = nativeState[0];
+        var setNativeView = nativeState[1];
+        var nativeObservation = React.useRef(null);
+        // A new selected route can replace the Host Agent even if the Session
+        // ID and client namespace stay the same. Re-resolve through Gateway.
+        var nativeProvider = state.current && state.current.provider;
+        var nativeModel = state.current && state.current.model;
+        React.useEffect(function(){
+          if (nativeMount.kind !== 'ready' || props.available !== true || !props.sessionId || (props.session && props.session.removed)) return undefined;
+          var ticket = { mount: nativeMount, sessionId: props.sessionId, directory: directory,
+            provider: nativeProvider, model: nativeModel, controller: null };
+          nativeObservation.current = ticket;
+          ticket.controller = startNativeVisionClientObservation(nativeMount.api, props.sessionId, function(value){
+            if (nativeObservation.current === ticket) setNativeView({ ticket: ticket, value: value });
+          });
+          return function(){
+            if (nativeObservation.current === ticket) nativeObservation.current = null;
+            ticket.controller.stop();
+          };
+        }, [nativeMount, props.sessionId, props.available, props.session && props.session.removed,
+          directory, nativeProvider, nativeModel]);
+        var observationCurrent = nativeView && nativeView.ticket === nativeObservation.current &&
+          nativeView.ticket.mount === nativeMount && nativeView.ticket.sessionId === props.sessionId &&
+          nativeView.ticket.directory === directory && nativeView.ticket.provider === nativeProvider &&
+          nativeView.ticket.model === nativeModel;
+        var read = observationCurrent ? nativeView.value : null;
+        var nativePending = nativeMount.kind === 'waiting' || (nativeMount.kind === 'ready' && (!read || read.kind === 'waiting'));
+        var unsupportedHost = read && read.kind === 'value' &&
+          read.view.kind === 'unavailable' && read.view.reason === 'host-control-unsupported';
+        var nativeLegacy = nativeMount.kind === 'legacy' || unsupportedHost || (read && (read.kind === 'legacy' ||
+          (read.kind === 'value' && read.view.kind === 'legacy' && nativeVisionSameRoute(read.view.selection, state.current))));
+        var nativeControl = read && read.kind === 'value' && read.view.kind === 'native' &&
+          nativeVisionSameRoute(read.view.selection, state.current) ? read.view : null;
+        var nativeUnavailable = !nativeLegacy && !nativeControl;
         var visionConfig = settingsState && settingsState.value && typeof settingsState.value === 'object'
           ? settingsState.value
           : {};
@@ -1197,11 +1242,11 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           toggleTransition.current = null;
         }
         var pair = ownSettling ? { mode: settledMode.current.mode } : livePair;
-        var active = pair.mode === 'on';
+        var active = nativeControl ? nativeControl.enabled : !!(nativeLegacy && pair.mode === 'on');
         var toastState = React.useState(null);
         var toast = toastState[0];
         var setToast = toastState[1];
-        var busy = state.status === 'selecting' || selectionInFlight;
+        var busy = state.status === 'selecting' || selectionInFlight || !!(read && read.writing);
         var loading = settling;
         // Host's model-catalog refresh retains the last good current/groups,
         // but briefly reports 'loading'. When that *complete* pair is still
@@ -1213,16 +1258,17 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var refreshWithPair = state.status === 'loading' && complete &&
           !!livePair.target && state.pending == null && state.error == null &&
           state.routable !== false;
-        var blockingLoad = loading && !refreshWithPair;
+        var blockingLoad = nativePending || (loading && (!refreshWithPair || !nativeLegacy));
         var removed = props.session && props.session.removed === true;
-        var disabled = props.available !== true || removed || busy || blockingLoad || livePair.mode === 'unavailable';
+        var unavailable = nativeUnavailable || (nativeControl ? (!nativeControl.canEnable || state.routable === false || state.status === 'error') : livePair.mode === 'unavailable');
+        var disabled = props.available !== true || removed || busy || blockingLoad || unavailable;
         var t = typeof props.t === 'function' ? props.t : fallbackTranslate(active);
         var title = busy || ownSettling
           ? t('switching')
           : blockingLoad
             ? t('loading')
-            : livePair.mode === 'unavailable'
-              ? t('unavailable')
+            : unavailable
+              ? t(nativeUnavailable ? 'nativeUnavailable' : 'unavailable')
               : active ? t('disable') : t('enable');
         function announceRejectedSelection() {
           var latest;
@@ -1245,6 +1291,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var button = React.createElement('button', {
           type: 'button',
           'data-vision-router-mode-toggle': 'true',
+          'data-native-vision-state': read && read.kind === 'value'
+            ? (read.view.reason || read.view.kind) : (read && (read.reason || read.kind) || nativeMount.kind),
           'aria-pressed': active,
           'aria-label': title,
           'aria-busy': busy || blockingLoad,
@@ -1252,9 +1300,24 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           disabled: disabled,
           className: 'vr-vision-toggle',
           'data-active': active ? 'true' : 'false',
-          'data-dimmed': disabled && !ownSettling && (livePair.mode === 'unavailable' || blockingLoad) ? 'true' : 'false',
+          'data-dimmed': disabled && !ownSettling && (unavailable || blockingLoad) ? 'true' : 'false',
           onClick: function() {
-            if (disabled || !pair.target || typeof props.select !== 'function' ||
+            if (disabled || nativeBridge.getSnapshot() !== nativeMount) return;
+            if (nativeMount.kind === 'ready' && (!observationCurrent ||
+                nativeObservation.current !== nativeView.ticket || !nativeObservation.current.controller.isCurrent(read))) return;
+            if (nativeControl) {
+              var owner = nativeObservation.current;
+              if (!owner || !observationCurrent || owner !== nativeView.ticket) return;
+              var current;
+              try { current = store && store.getSnapshot().current; } catch (_) {}
+              if (!nativeVisionSameRoute(nativeControl.selection, current)) return;
+              setToast(null);
+              void owner.controller.set(nativeControl, current).then(function(accepted){
+                if (!accepted && nativeObservation.current === owner && nativeBridge.getSnapshot() === nativeMount) announceRejectedSelection();
+              });
+              return;
+            }
+            if (!nativeLegacy || !pair.target || typeof props.select !== 'function' ||
               (selectionTransaction.current && selectionTransaction.current.directory === directory)) return;
             var target = pair.target;
             var ticket = { directory: directory, target: target };
@@ -1342,6 +1405,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               }
               return {
                 directory: directory,
+                sessionId: sessionId,
                 available: available,
                 select: function(selection) {
                   if (!available || !directory || typeof directory.select !== 'function') {
