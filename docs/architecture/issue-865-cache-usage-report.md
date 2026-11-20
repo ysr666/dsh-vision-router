@@ -24,3 +24,52 @@ then ON, then OFF again, including ordinary continuation turns per state.
 Record transition positions separately. Do not clear cache, delete history,
 or infer actual monetary savings from aggregate input volume. Live controlled
 comparisons require authorized usage/billing evidence.
+
+
+## Controlled live cache A/B comparison (offline tool)
+
+The optional scripts/issue-865-cache-ab-report.mjs compares REDACTED,
+request-level provider Usage and optionally itemized billed cost. It does not
+send requests, read credentials, touch conversation history, or upload files.
+It is an analysis aid, NOT evidence that a live test was executed.
+
+Use two local, isolated DSH environments pinned to the same Host version,
+account, actual upstream model, reasoning effort, prompts, history and images:
+a known baseline and the integration-only #873 test candidate. Do not merge
+or release #873. Warm up consistently, then capture at least three paired
+continuations per scenario: pure text, Vision ON without an image, image and
+follow-up, and a resumed long history. Include ALL primary and delegated
+vision calls, retries and charged attempts. Prefer actual request-level
+provider Usage and itemized provider-billing exports; a model alias, aggregate
+dashboard totals, or the manual /vision-cache report do not capture these
+extra calls or prove the real network origin. Never put keys, prompts, images,
+full account names, request IDs or raw Session events into input files or CI.
+
+The JSON shape is:
+  { "schema":"dvr-cache-ab-v1", "observations":[ ... ] }
+Each observation is one request and includes short pseudonymous case,
+positive integer trial, variant before/after, call main/vision, opaque routeTag
+and modelTag for the ACTUAL upstream route, usageSource provider-response or
+provider-dashboard, inputTokens, outputTokens, totalTokens, and optionally
+cacheReadTokens, cacheWriteTokens, wirePrefixSha256. To report billed money,
+each call needs billedCny as a decimal STRING plus
+billingSource="provider-billing-export". A separate vision model may carry a
+different route/model tag; all its additional calls still count. The schema
+rejects unexpected fields to reduce accidental disclosure.
+
+Local invocation:
+  node scripts/issue-865-cache-ab-report.mjs --input /private/path/redacted-provider-requests.json
+  node --test tests/issue-865-cache-ab-report.test.js
+
+The analyzer excludes unpaired trials and mismatched MAIN model identities.
+It flags changed/unknown wire-prefix hashes and does not claim causal effects
+merely from token counts. Cache-hit percentages require reconciled disjoint
+counts; missing read counts are UNKNOWN, not zero. Monetary differences are
+UNKNOWN unless every included call has billed evidence. Even a valid A/B is
+not proof of generalizable savings: provider caching is best effort, and
+provenance labels are supplied by the operator, not authenticated by the
+script.
+
+No paid DeepSeek canary was executed by this change. The missing evidence
+remains a connected, authorized environment and genuine provider usage and
+billing receipts.
