@@ -47,6 +47,14 @@ class Cases(unittest.TestCase):
         self.assertEqual(args[-1],'-mno-incremental-linker-compatible')
         self.assertEqual(args[1:3],['-ivfsoverlay',str(overlay)]);self.assertNotIn('-I'+str(tool/'x86_64-w64-mingw32/include'),args);self.assertEqual(args[args.index('-o')+1],str(output));self.assertEqual(args[args.index('-MF')+1],str(d))
         with self.assertRaisesRegex(RuntimeError,'SYSROOT'):m.compile_recipe([line.replace(f'-I{tool}/x86_64-w64-mingw32/include','')],row,src,tool,build,overlay,output)
+    def test_portable_recipe_roundtrip(self):
+        import json
+        path=self.root/'recipe.json';recipe={'args':['-I@SOURCE@/include'], 'generatedHeaders':{'config.h':{'text':'#define X 1\n'}},'distributionReady':False}
+        m.write_portable_recipe(path,recipe)
+        self.assertEqual(json.loads(path.read_bytes()),recipe)
+        self.assertTrue(path.read_bytes().endswith(b'\n'))
+        self.assertFalse(path.read_bytes().endswith(b'\\n'))
+        with self.assertRaises(FileExistsError):m.write_portable_recipe(path,recipe)
     def test_zip_deterministic(self):
         member={'lib/a.o':b'x','lib/b.o':b'y'};manifest=[{'archive':'lib','member':'a.o','sha256':m.sha(b'x'),'bytes':1}]
         a=self.root/'a.zip';b=self.root/'b.zip';m.deterministic_zip(a,member,manifest);m.deterministic_zip(b,dict(reversed(list(member.items()))),manifest)

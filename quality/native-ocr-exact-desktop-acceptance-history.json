@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "scope": "Historical exact-archive native OCR Electron acceptance. CI logs and evidence-only uploaded JSON; not formal distribution permission.",
+  "sourceHead": "1939aaf09491d20067d453529404360d406de3b1",
+  "run": 44436661196,
+  "platforms": {
+    "darwin-arm64": {
+      "job": 135267531991,
+      "stageAcceptance": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "phases": [
+          "fresh-isolated-home",
+          "download-verification-real-install",
+          "manifest-model-license-sbom-readback",
+          "old-token-rejected",
+          "installed-worker-real-ocr",
+          "tampered-download-rejected-installed-worker-unchanged",
+          "wrong-size-download-rejected-installed-worker-unchanged",
+          "uninstall-and-empty-status"
+        ],
+        "downloadCalls": 3,
+        "localHttpRoute": true,
+        "realInstaller": true,
+        "realWorker": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realDesktopHost": false,
+        "exactArchiveDesktopGuiVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "desktopAcceptance": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "realDesktopHost": true,
+        "realElectronRenderer": true,
+        "actualGuiClicks": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realInstaller": true,
+        "realWorker": true,
+        "installedWorkerSupervisorOcr": true,
+        "hostAgentOcrToolVerified": true,
+        "agentEvidence": {
+          "engine": "ncnn",
+          "text": "TEST 123",
+          "uncertain": false,
+          "toolCalls": 1,
+          "visionRequestsDuringOcr": 0,
+          "dshVersion": "0.2.2-rc.4"
+        },
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "phases": [
+          "fresh-home",
+          "download-busy",
+          "corrupt-download-error",
+          "refresh-retry",
+          "verified-install-status",
+          "installed-payload-readback",
+          "installed-worker-ocr",
+          "agent-vision-ocr-returned-ncnn",
+          "gui-uninstall"
+        ],
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "evidenceOnlyArtifact": {
+        "id": 14490086644,
+        "name": "native-ocr-real-desktop-evidence-macOS",
+        "bytes": 732,
+        "zipDigest": "sha256:3d2283417cf92595188bc0c0fbcc73c1b24a9d73ae370c1bcfc7916c143506a7"
+      },
+      "observedFinalPhases": [
+        "exact-native-ocr-gui-installed",
+        "exact-native-ocr-agent-and-gui-passed",
+        "session-source-verified",
+        "all-assertions-passed"
+      ],
+      "evidenceSource": "GitHub Actions job logs, not downloaded artifact ZIP contents"
+    }
+  },
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false,
+  "actualPublicHttps": false,
+  "minimumOsRuntimeVerified": false
+}

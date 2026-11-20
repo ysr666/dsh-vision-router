@@ -1,0 +1,365 @@
+{
+  "schemaVersion": 1,
+  "scope": "Exact final candidate archives successfully staged and independently installed/audited on the same native runners. Test-only replay identity; not a production allowlist or distribution approval.",
+  "sourceHead": "42a16a10958b3950cb7aefcdf454763948258844",
+  "run": 44350673138,
+  "platforms": {
+    "darwin-arm64": {
+      "job": 134965488778,
+      "stage": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archive": {
+          "name": "ppocrv6-small-darwin-arm64.tar.gz",
+          "bytes": 27917268,
+          "sha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd"
+        },
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "buildEvidence": "44244890944/job/134643926507",
+        "archiveReplayMatch": true,
+        "modelOrigin": "windows-canonical",
+        "members": 13,
+        "manifest": {
+          "schemaVersion": 3,
+          "platform": "darwin",
+          "arch": "arm64",
+          "worker": {
+            "sha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+            "bytes": 4167320
+          },
+          "models": {
+            "det.ncnn.bin": {
+              "bytes": 9813748,
+              "sha256": "720620c709ae18566e037f5ac086075553118c91fa2d289af405060e7d047357"
+            },
+            "det.ncnn.param": {
+              "bytes": 18868,
+              "sha256": "986dbd2de4746574263bc616295435d9d775cf2092379ab4c0df42143205bfc4"
+            },
+            "rec.ncnn.bin": {
+              "bytes": 21066500,
+              "sha256": "40f8afb7b9d835e8f5b7d03bd08d74d0f762b27999d05ffdf4644c1c4b24f798"
+            },
+            "rec.ncnn.param": {
+              "bytes": 13845,
+              "sha256": "ad92c23ca2cac8cfa414bc2b6b8c4ad73121f53543d7fb1d6953853b05fc5bda"
+            },
+            "ppocrv6_dict.txt": {
+              "bytes": 74947,
+              "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+            }
+          },
+          "modelLicense": "Apache-2.0",
+          "ncnnSource": "Tencent/ncnn@d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+          "distributionReady": false,
+          "files": {
+            "worker": {
+              "bytes": 4167320,
+              "sha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de"
+            },
+            "models/det.ncnn.bin": {
+              "bytes": 9813748,
+              "sha256": "720620c709ae18566e037f5ac086075553118c91fa2d289af405060e7d047357"
+            },
+            "models/det.ncnn.param": {
+              "bytes": 18868,
+              "sha256": "986dbd2de4746574263bc616295435d9d775cf2092379ab4c0df42143205bfc4"
+            },
+            "models/rec.ncnn.bin": {
+              "bytes": 21066500,
+              "sha256": "40f8afb7b9d835e8f5b7d03bd08d74d0f762b27999d05ffdf4644c1c4b24f798"
+            },
+            "models/rec.ncnn.param": {
+              "bytes": 13845,
+              "sha256": "ad92c23ca2cac8cfa414bc2b6b8c4ad73121f53543d7fb1d6953853b05fc5bda"
+            },
+            "models/ppocrv6_dict.txt": {
+              "bytes": 74947,
+              "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+            },
+            "NCNN-LICENSE.txt": {
+              "bytes": 6427,
+              "sha256": "7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255"
+            },
+            "APACHE-2.0.txt": {
+              "bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            },
+            "PADDLEOCR-LICENSE.txt": {
+              "bytes": 11376,
+              "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e"
+            },
+            "PROJECT-LICENSE.txt": {
+              "bytes": 1087,
+              "sha256": "8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93"
+            },
+            "SOURCE-NOTICE.md": {
+              "bytes": 1482,
+              "sha256": "e4b644e16bd240071f2320ad02ca8f9a97d98d3f2ec26c8ffd44caee152940fc"
+            },
+            "SBOM.cdx.json": {
+              "bytes": 5304,
+              "sha256": "747214f4d59568a27040d95a47ea9da7b5ee9ed83048e3dae99e21c9d39d0117"
+            }
+          }
+        },
+        "sbomSha256": "747214f4d59568a27040d95a47ea9da7b5ee9ed83048e3dae99e21c9d39d0117",
+        "exactArchiveDesktopGuiVerified": false,
+        "minimumOsRuntimeVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "acceptance": {
+        "schemaVersion": 1,
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "actualRecognition": "TEST 123",
+        "confidence": 0.92377,
+        "phases": [
+          "fresh-isolated-home",
+          "download-verification-real-install",
+          "manifest-model-license-sbom-readback",
+          "old-token-rejected",
+          "installed-worker-real-ocr",
+          "tampered-download-rejected-installed-worker-unchanged",
+          "wrong-size-download-rejected-installed-worker-unchanged",
+          "uninstall-and-empty-status"
+        ],
+        "downloadCalls": 3,
+        "localHttpRoute": true,
+        "realInstaller": true,
+        "realWorker": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realDesktopHost": false,
+        "exactArchiveDesktopGuiVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "smoke": {
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "expected": "TEST 123",
+        "actual": "TEST 123",
+        "confidence": 0.92377,
+        "blankPass": true,
+        "malformedPass": true,
+        "recoveryPass": true,
+        "modelOrigin": "windows-canonical",
+        "distributionReady": false
+      },
+      "audit": {
+        "target": "darwin-arm64",
+        "archiveSha256": "a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd",
+        "workerSha256": "56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de",
+        "members": 13,
+        "identityVerified": true,
+        "distributionReady": false,
+        "archiveBytes": 27917268,
+        "sbomSha256": "747214f4d59568a27040d95a47ea9da7b5ee9ed83048e3dae99e21c9d39d0117",
+        "stagedMetadataReadback": true,
+        "independentTarReader": true,
+        "distributionReviewComplete": false,
+        "ownerPublicationAuthorized": false
+      },
+      "evidenceArtifact": {
+        "id": 14447354917,
+        "name": "native-ocr-mac-candidate-evidence",
+        "bytes": 3882,
+        "sha256": "7d15efd1e674eb51ae6bbeb3d4649842213d563134f746531dbf36e37a35e4f0",
+        "scope": "GitHub evidence-only ZIP API identity, not candidate archive download"
+      }
+    },
+    "win32-x64": {
+      "job": 134968324496,
+      "stage": {
+        "schemaVersion": 1,
+        "target": "win32-x64",
+        "archive": {
+          "name": "ppocrv6-small-win32-x64.tar.gz",
+          "bytes": 35313963,
+          "sha256": "fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0"
+        },
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "buildEvidence": "44244890944/job/134643857924",
+        "archiveReplayMatch": true,
+        "modelOrigin": "windows-canonical",
+        "members": 18,
+        "manifest": {
+          "schemaVersion": 4,
+          "platform": "win32",
+          "arch": "x64",
+          "worker": {
+            "sha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+            "bytes": 21494784
+          },
+          "models": {
+            "det.ncnn.bin": {
+              "bytes": 9813748,
+              "sha256": "720620c709ae18566e037f5ac086075553118c91fa2d289af405060e7d047357"
+            },
+            "det.ncnn.param": {
+              "bytes": 18868,
+              "sha256": "986dbd2de4746574263bc616295435d9d775cf2092379ab4c0df42143205bfc4"
+            },
+            "rec.ncnn.bin": {
+              "bytes": 21066500,
+              "sha256": "40f8afb7b9d835e8f5b7d03bd08d74d0f762b27999d05ffdf4644c1c4b24f798"
+            },
+            "rec.ncnn.param": {
+              "bytes": 13845,
+              "sha256": "ad92c23ca2cac8cfa414bc2b6b8c4ad73121f53543d7fb1d6953853b05fc5bda"
+            },
+            "ppocrv6_dict.txt": {
+              "bytes": 74947,
+              "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+            }
+          },
+          "modelLicense": "Apache-2.0",
+          "ncnnSource": "Tencent/ncnn@d1f6ac67e9fc91390cc70f7168573fd2626f1d66",
+          "distributionReady": false,
+          "files": {
+            "worker.exe": {
+              "bytes": 21494784,
+              "sha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166"
+            },
+            "models/det.ncnn.bin": {
+              "bytes": 9813748,
+              "sha256": "720620c709ae18566e037f5ac086075553118c91fa2d289af405060e7d047357"
+            },
+            "models/det.ncnn.param": {
+              "bytes": 18868,
+              "sha256": "986dbd2de4746574263bc616295435d9d775cf2092379ab4c0df42143205bfc4"
+            },
+            "models/rec.ncnn.bin": {
+              "bytes": 21066500,
+              "sha256": "40f8afb7b9d835e8f5b7d03bd08d74d0f762b27999d05ffdf4644c1c4b24f798"
+            },
+            "models/rec.ncnn.param": {
+              "bytes": 13845,
+              "sha256": "ad92c23ca2cac8cfa414bc2b6b8c4ad73121f53543d7fb1d6953853b05fc5bda"
+            },
+            "models/ppocrv6_dict.txt": {
+              "bytes": 74947,
+              "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+            },
+            "NCNN-LICENSE.txt": {
+              "bytes": 6427,
+              "sha256": "7c974bac98848df46be1af5bdaa3c3c9c01f6082a90f55caeb7f60c6208aa255"
+            },
+            "APACHE-2.0.txt": {
+              "bytes": 11358,
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+            },
+            "PADDLEOCR-LICENSE.txt": {
+              "bytes": 11376,
+              "sha256": "3840c5c0c61c294264d2dd77b8777be6ddd90121ef4e0e64abcd22edea581d6e"
+            },
+            "LLVM-LICENSE.txt": {
+              "bytes": 15141,
+              "sha256": "8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee"
+            },
+            "MINGW-RUNTIME-COPYING.txt": {
+              "bytes": 12155,
+              "sha256": "1db8da07b436c68833c0673ffee3d9fcb2526047f3820b81661865dfedc79a1f"
+            },
+            "MINGW-SOURCE-NOTICES.txt": {
+              "bytes": 25089,
+              "sha256": "3309643038dfc2f927ce46df6ee4db7054c532a8b691b13511ff3fe4a84474e4"
+            },
+            "WINDOWS-RUNTIME-NOTICES.txt": {
+              "bytes": 78442,
+              "sha256": "ece379f6c048676b389b03d79677289aef3e5fee572b0d45324321ce3a82e006"
+            },
+            "MINGW-PTHREAD-SIGNAL-NOTICE.txt": {
+              "bytes": 1415,
+              "sha256": "fd8f4c0c69cd7a9e7a7d21a40b060f7492170bc231e9c03d220c7c7212798802"
+            },
+            "PROJECT-LICENSE.txt": {
+              "bytes": 1087,
+              "sha256": "8b2f2e8e2e4c41a2d6bdb378dab9ce65cafa602b89ee4b8a5d29d2b5da0b3f93"
+            },
+            "SOURCE-NOTICE.md": {
+              "bytes": 2453,
+              "sha256": "2101196853061aa8d18ef7415fd7e0ba9f74a1014b01a745e9b8c28dacd35cf4"
+            },
+            "SBOM.cdx.json": {
+              "bytes": 9157,
+              "sha256": "20ac4197d6babde995cdad8614d103a3be473484426d5209a2abb67bb8c9b433"
+            }
+          }
+        },
+        "sbomSha256": "20ac4197d6babde995cdad8614d103a3be473484426d5209a2abb67bb8c9b433",
+        "exactArchiveDesktopGuiVerified": false,
+        "minimumOsRuntimeVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "acceptance": {
+        "schemaVersion": 1,
+        "target": "win32-x64",
+        "archiveSha256": "fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0",
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "actualRecognition": "HELLO 123",
+        "confidence": 0.97396,
+        "phases": [
+          "fresh-isolated-home",
+          "download-verification-real-install",
+          "manifest-model-license-sbom-readback",
+          "old-token-rejected",
+          "installed-worker-real-ocr",
+          "tampered-download-rejected-installed-worker-unchanged",
+          "wrong-size-download-rejected-installed-worker-unchanged",
+          "uninstall-and-empty-status"
+        ],
+        "downloadCalls": 3,
+        "localHttpRoute": true,
+        "realInstaller": true,
+        "realWorker": true,
+        "injectedHttps": true,
+        "actualPublicHttps": false,
+        "realDesktopHost": false,
+        "exactArchiveDesktopGuiVerified": false,
+        "distributionReady": false,
+        "ownerPublicationAuthorized": false
+      },
+      "smoke": {
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "expected": "HELLO 123",
+        "actual": "HELLO 123",
+        "confidence": 0.97396,
+        "blankPass": true,
+        "malformedPass": true,
+        "recoveryPass": true,
+        "modelOrigin": "windows-canonical",
+        "distributionReady": false
+      },
+      "audit": {
+        "target": "win32-x64",
+        "archiveSha256": "fd5791ed9697dbd32ac59b1025600a8a299d8884c607acf6f977445310734ae0",
+        "workerSha256": "d1d958de7d48474aac1b945cfa4d8f0a70c05745334322d00f776c17c70b7166",
+        "members": 18,
+        "identityVerified": true,
+        "distributionReady": false,
+        "archiveBytes": 35313963,
+        "sbomSha256": "20ac4197d6babde995cdad8614d103a3be473484426d5209a2abb67bb8c9b433",
+        "stagedMetadataReadback": true,
+        "independentTarReader": true,
+        "distributionReviewComplete": false,
+        "ownerPublicationAuthorized": false
+      },
+      "evidenceArtifact": {
+        "id": 14449028811,
+        "name": "native-ocr-windows-remediated-stage-evidence",
+        "bytes": 3910,
+        "sha256": "c01b40cd4cb6695e7c66ce64c440e95baa2afd348c61943f4745a221255c0738",
+        "scope": "GitHub evidence-only ZIP API identity, not candidate archive download"
+      }
+    }
+  },
+  "distributionReady": false,
+  "ownerPublicationAuthorized": false,
+  "exactArchiveDesktopGuiVerified": false,
+  "actualPublicHttps": false,
+  "minimumOsRuntimeVerified": false
+}
