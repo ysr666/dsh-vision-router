@@ -76,6 +76,14 @@ function readRow(r) {
   for (const k of ['inputTokens','outputTokens','totalTokens']) if (!natural(r[k])) fail('invalid or missing token counter')
   for (const k of ['cacheReadTokens','cacheWriteTokens']) if (r[k] !== undefined && !natural(r[k])) fail('malformed cache counter')
   if (r.wirePrefixSha256 !== undefined && !hash(r.wirePrefixSha256)) fail('wire prefix digest must be SHA256')
+  // The provider's total includes every explicit disjoint token category.
+  // Reject impossible rows even when a missing cache field would otherwise
+  // suppress only the hit percentage but still allow a billing comparison.
+  const explicitTotal = r.inputTokens + r.outputTokens +
+    (r.cacheReadTokens ?? 0) + (r.cacheWriteTokens ?? 0)
+  if (!Number.isSafeInteger(explicitTotal) || explicitTotal > r.totalTokens) {
+    fail('explicit token counters exceed provider total')
+  }
   if (r.billedCny === undefined && r.billingSource !== undefined || r.billedCny !== undefined && r.billingSource !== 'provider-billing-export') fail('billed cost requires provider-billing-export evidence')
   return { ...r, costMicros: r.billedCny === undefined ? undefined : moneyMicros(r.billedCny) }
 }

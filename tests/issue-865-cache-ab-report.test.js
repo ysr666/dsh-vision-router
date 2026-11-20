@@ -51,6 +51,24 @@ test('missing and non-reconciled cache counters are unknown, never zero', () => 
   const b = compareCacheAB(doc([one('before', { cacheReadTokens: 80 }), one('after')]))
   assert.equal(b.before.cacheReadTokens, null)
 })
+test('impossible explicit token accounting cannot produce a billed-cost comparison', () => {
+  const bill = { billedCny: '0.020000', billingSource: 'provider-billing-export' }
+  assert.throws(() => compareCacheAB(doc([
+    one('before', { ...bill, cacheReadTokens: undefined, inputTokens: 30, outputTokens: 90, totalTokens: 107 }),
+    one('after', bill),
+  ])), /explicit token counters exceed provider total/)
+  assert.throws(() => compareCacheAB(doc([
+    one('before', { ...bill, cacheReadTokens: 100, totalTokens: 107 }),
+    one('after', bill),
+  ])), /explicit token counters exceed provider total/)
+  const unknown = compareCacheAB(doc([
+    one('before', { ...bill, cacheReadTokens: undefined }),
+    one('after', bill),
+  ]))
+  assert.equal(unknown.before.cacheHitPercent, null)
+  assert.equal(unknown.deltas.billedCny, '0.000000')
+})
+
 test('strictly excludes route/model mismatches and unmatched variants', () => {
   const r = compareCacheAB(doc([
     one('before', { case: 'one', modelTag: 'A' }), one('after', { case: 'one', modelTag: 'B' }),

@@ -63,7 +63,12 @@ Local invocation:
 
 The analyzer excludes unpaired trials and mismatched MAIN model identities.
 It flags changed/unknown wire-prefix hashes and does not claim causal effects
-merely from token counts. Cache-hit percentages require reconciled disjoint
+merely from token counts. Explicit noncached-input, output and any present cache-read/write counters
+must not exceed the provider-reported total; impossible records are rejected
+before even a billed-cost comparison. Missing counters that still admit a
+consistent total remain UNKNOWN, not zero.
+
+Cache-hit percentages require reconciled disjoint
 counts; missing read counts are UNKNOWN, not zero. Monetary differences are
 UNKNOWN unless every included call has billed evidence. Even a valid A/B is
 not proof of generalizable savings: provider caching is best effort, and
