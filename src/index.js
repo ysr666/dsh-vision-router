@@ -188,6 +188,7 @@ import {
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
+import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -673,6 +674,12 @@ export function apply(ctx, config = {}, runtime = {}) {
     readSessionLog: createSessionLogReader(ctx),
   })
   const imageMemory = visionState.descriptionFacade
+  // #865 experimental stable history: remember image provenance per Session;
+  // a late description can arrive after the original inbox was committed.
+  const sessionImageEvidencePlanner = createSessionImageEvidencePlanner()
+  ctx.on('session/event', (session, event) => {
+    sessionImageEvidencePlanner.onSessionEvent(session, event)
+  })
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
   // #208 large-tool follow-up complete: crop is bounded and presentation is compressed passthrough.
@@ -725,6 +732,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const instantDescribeEnabled = () =>
     coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
+  const stableImageHistoryEnabled = () => current().stableImageHistory === true
   const autoActivateOnImageEnabled = () =>
     coreVisionFlag(
       'autoActivateOnImage',
@@ -1189,6 +1197,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     const officialStream = createWrapperStreamBody(ctx, {
       imageMemory,
       delegateProvider: wrapperDelegateRoute,
+      stableImageHistory: stableImageHistoryEnabled,
       instantLocal: instantLocalProvider,
       instantLocalStyle,
       instantLocalTimeoutMs: timeoutMs,
@@ -1430,6 +1439,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
+        stableImageHistory: stableImageHistoryEnabled,
         // A native multimodal source already knows how to consume the image.
         // Keep that direct path intact and expose vision-router as optional
         // precision tools instead of forcing an image -> text detour.
@@ -2694,8 +2704,20 @@ export function apply(ctx, config = {}, runtime = {}) {
       }
     }
     const appendStructuredReminder = (baseMessages) => {
-      if (!bootstrapReminder) return baseMessages
-      const nextMessages = [...baseMessages, bootstrapReminder]
+      // The Host persists newly injected pre-step user messages. Keep old
+      // image occurrences immutable: any newly known OCR/caption text belongs
+      // to a new, ID-deduplicated evidence event at the history tail.
+      const evidence = stableImageHistoryEnabled()
+        ? sessionImageEvidencePlanner.plan(
+            session, rawMessages, baseMessages, sessionImageMemory,
+            visionRouterMessageSource(session),
+          )
+        : []
+      const withEvidence = evidence.length > 0
+        ? [...baseMessages, ...evidence]
+        : baseMessages
+      if (!bootstrapReminder) return withEvidence
+      const nextMessages = [...withEvidence, bootstrapReminder]
       if (
         bootstrapState &&
         typeof bootstrapReminder.id === 'string' &&
@@ -2780,7 +2802,9 @@ export function apply(ctx, config = {}, runtime = {}) {
           const adapterHandlesImages = wrapperRegistered
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
-              ? rewriteHistoryImages(messages, sessionImageMemory).messages
+              ? rewriteHistoryImages(messages, sessionImageMemory, {
+                stable: stableImageHistoryEnabled(),
+              }).messages
               : messages
           return {
             ...decision,
@@ -2792,7 +2816,9 @@ export function apply(ctx, config = {}, runtime = {}) {
       // route, rewrite uploaded image blocks into attachment markers so the
       // text-only model can still query them via vision_describe.
       if (rewriteEnabled() && !routingEnabled() && !wrapperRegistered) {
-        const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
+        const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory, {
+                stable: stableImageHistoryEnabled(),
+              }).messages
         return {
           ...decision,
           messages: appendStructuredReminder(rewrittenHistory),
@@ -2809,7 +2835,9 @@ export function apply(ctx, config = {}, runtime = {}) {
     // Current-turn images are left untouched above so the vision pass runs.
     if (!hasImage && rewriteEnabled()) {
       const base = messages
-      const cleaned = rewriteHistoryImages(base, sessionImageMemory)
+      const cleaned = rewriteHistoryImages(base, sessionImageMemory, {
+        stable: stableImageHistoryEnabled(),
+      })
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
           ...decision,
@@ -2820,6 +2848,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (!hasImage && bootstrapReminder) {
       return { ...decision, messages: appendStructuredReminder(messages) }
     }
+    const finalizedMessages = appendStructuredReminder(messages)
+    if (finalizedMessages !== messages) return { ...decision, messages: finalizedMessages }
     return sanitizedToolResults.changed ? { ...decision, messages } : decision
   })
 

@@ -31,3 +31,62 @@ This matters separately from #868's adapter replay and double-projection fixes. 
 - `src/lib/session-vision-state.ts`: bounded process-local per-Session description map.
 
 This characterization is intentionally separate from the adapter fix in #868; a subsequent implementation PR should flip the regression from a *known drift* assertion to a *stable prefix* assertion.
+
+## Experimental opt-in implementation
+
+Branch `feat/865-append-only-image-evidence` implements the first version of
+`stableImageHistory: true` (default **false**).
+
+- `rewriteHistoryImages(..., { stable: true })` writes a static marker for each original image occurrence regardless of later OCR memory.
+- Text-only wrappers keep their image markers stable and do not perform **unlogged** local description directly at the adapter boundary in this mode. A configured `instantDescribe` at the normal Session pre-step remains available and appends the result.
+- `planAppendOnlyImageEvidence()` scans only image IDs actually present in this Session's request inputs; known descriptions become bounded, explicitly untrusted plugin-owned user messages with deterministic IDs. The existing `agent/pre-step` stream publishes them through the Host's durable message admission. When that same ID is already in model-visible history it is not added twice. Later improved descriptions append new IDs.
+- The normal route is unchanged by default until Host integration demonstrates persistence, source attribution and context recovery, including when no local OCR backend is enabled.
+
+**Outstanding**: exact Host real Session append/replay integration, model-visible request inspection, native multimodal fidelity, UI toggle and permissions, legacy migration behavior, retries after failed pre-step, image memory eviction/cold reopen, 100k+ token prefix and prompt-quality tests. Do not enable this setting globally or publish it before those gates pass.
+
+### D3 actual wire prefix across long cold resume
+
+The real production JSONL persistence fixture now submits a deterministic
+500 kB+ synthetic image-containing request through the exact DSH DeepSeek
+Messages serializer. In the second OS process, the next request must retain
+the complete ordered old serialized message entries and request header
+(including system and tools). A further continuation after changing volatile
+OCR memory must preserve the entire resumed prefix as well. Hashes are of
+synthetic serialized values only; the test does not claim paid-provider hits,
+actual tokenizer counts, OCR accuracy or full public-plugin execution. The
+existing original-attachment, one durable evidence event, and cold-replay
+checks remain mandatory. This increments evidence, not production defaults.
+
+
+### D4: late memory-only evidence (still opt-in)
+
+The earlier D3 fixture already proved that a *committed* tool result stays in
+new history even after the image inbox is consumed. It did not cover an
+asynchronous image description written only to volatile Session memory after
+the original image turn finished.
+
+The experimental pre-step now uses `createSessionImageEvidencePlanner()`.
+It retains only the 64 most recently observed image occurrences **per live
+Session** and up to 512 committed evidence IDs. On the first use for a
+Session (including a resumed one) it seeds the bounded index from the Host's
+**committed** event snapshot once; it does **not** re-read the entire
+history every step. On subsequent steps it observes the current inbox and
+existing bounded index, not past request serialization. Evidence is marked
+delivered only when the Host emits a committed `user/message` event; an
+uncommitted, interrupted pre-step may retry safely. V3 legacy and V4
+producer-owned DVR source attribution are both recognized.
+
+This allows a late memory-only description to become a new, identified,
+untrusted model-visible message on a later text-only turn, without replacing
+the original image block or its earlier stable marker. The production logic
+remains gated behind `stableImageHistory: true`; default remains **false**.
+Long-session retention intentionally favors recent image occurrences.
+A memory-only description associated with an older image evicted from the
+bounded index is not automatically rehydrated absent new provenance.
+The test fixture uses synthetic recognition and the real Host Session
+admission/persistence interface, not real OCR quality or provider billing.
+
+**Not yet established**: actual paid-provider cache-read rates/fees, image
+answer quality on representative user images, and all-source-PR integration
+acceptance of this D4 revision. No release or merge authorization follows
+from this test.

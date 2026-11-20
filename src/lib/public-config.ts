@@ -19,6 +19,9 @@ export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T):
   }
 
   coreConfig.set('progressiveTools', z.boolean().default(false))
+  // Issue #865 phase D: opt-in until exact Host history/admission and cold-resume
+  // contracts prove append-only image evidence preserves visual quality.
+  coreConfig.set('stableImageHistory', z.boolean().default(false))
 
   // Keep provider/task/turn timeout layers coherent. The whole-turn budget is
   // an optional safety cap: 0 remains unlimited for long-running agent turns.
