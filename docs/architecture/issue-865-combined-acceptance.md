@@ -124,3 +124,29 @@ model traffic, not a billing experiment. D4 source and combined *full*
 workflow qualification must be reported for their respective exact SHAs,
 not inherited from the prior combined candidate.
 **Never merge this integration-only PR.**
+
+### D4 tool-result event compatibility checkpoint (2026-11-20)
+
+Pinned DSH SessionEventMap uses `tool/result` with its **identified tool
+message in `event.data.message`**. It does not use `tool/message`. The
+D4 per-Session image tracker now observes both committed `user/message`
+and canonical `tool/result.data.message` on initial Session snapshot and
+subsequent session/event notifications. This enables late OCR memory
+evidence for tool-produced image attachments while retaining their
+original message identity, bounding retention and avoiding per-step
+full-history scanning.
+
+Source Draft #871 `488026940849eb38a763171b709bb613de2d83c9`
+adds exact Host event-schema validation using upstream
+`createToolResultMessage()` and `adoptSessionEvent()`, plus focused
+live, nested-tool-image and cold-resume regression tests. The above
+source tests remain synthetic image/OCR; do not claim actual image
+quality or provider-billed cache savings.
+
+Previous combined #873 SHA `406d92e5` had one legacy Windows
+Desktop Node 24.21 toggle settlement timeout despite two real
+DOM clicks and accepted Host model selections. A **single failed-job
+rerun** passed, without changing product code or relaxing assertions;
+preserve its original forensic record instead of silently claiming
+the original attempt was green. All workflows must be checked for
+the *new* integration HEAD independently; #873 remains DO NOT MERGE.

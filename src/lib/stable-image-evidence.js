@@ -140,10 +140,14 @@ export function createSessionImageEvidencePlanner() {
       : undefined
     if (Array.isArray(events)) {
       for (const event of events) {
-        if (event?.type !== 'user/message' && event?.type !== 'tool/message') continue
-        if (!event.data || typeof event.data !== 'object') continue
-        observe(state, [event.data])
-        if (event.type === 'user/message') recordCommitted(state, event.data)
+        // Pinned DSH stores a tool image as tool/result.data.message,
+        // NOT as a tool/message event or as top-level tool/result.data.
+        const message = event?.type === 'user/message'
+          ? event.data
+          : event?.type === 'tool/result' ? event.data?.message : undefined
+        if (!message || typeof message !== 'object') continue
+        observe(state, [message])
+        if (event.type === 'user/message') recordCommitted(state, message)
       }
     }
     return state
@@ -168,11 +172,13 @@ export function createSessionImageEvidencePlanner() {
     onSessionEvent(session, event) {
       // No state for sessions that never enabled stable history.
       const state = isSession(session) ? sessions.get(session) : undefined
-      if (!state || event?.type !== 'user/message') return
-      if (event.data && typeof event.data === 'object') {
-        observe(state, [event.data])
-        recordCommitted(state, event.data)
-      }
+      if (!state) return
+      const message = event?.type === 'user/message'
+        ? event.data
+        : event?.type === 'tool/result' ? event.data?.message : undefined
+      if (!message || typeof message !== 'object') return
+      observe(state, [message])
+      if (event.type === 'user/message') recordCommitted(state, message)
     },
   }
 }
