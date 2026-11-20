@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash } from 'node:crypto'
 import { approvedNativeArchive, downloadVerifiedNativeArchive } from '../src/lib/native-ocr-download.js'
+import { createNpmAssetPackage } from '../quality/native-ocr-npm-package.mjs'
 import { Readable } from 'node:stream'
 import { mkdtemp, mkdir, writeFile, lstat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallTesseract, uninstallNative, nodeChildEnvironment, downloadAndInstallNative,
+  managedTesseractPaths, optionalOcrStatus, mutateOptionalOcr, installTesseract, uninstallTesseract, uninstallNative, retryNativeOcrWindowsFs, nodeChildEnvironment, downloadAndInstallNative,
   OPTIONAL_TESSERACT_PACKAGES,
 } from '../src/lib/optional-ocr-engines.js'
 import { installOptionalOcrRoutes, OPTIONAL_OCR_ROUTE } from '../src/lib/optional-ocr-routes.js'
@@ -223,28 +224,95 @@ test('damaged plugin Tesseract is removable but cannot be silently overwritten',
 })
 
 test('online native installation stays unavailable without an approved public artifact', async () => {
-  assert.equal(approvedNativeArchive('darwin', 'arm64'), null)
-  assert.equal(approvedNativeArchive('win32', 'x64'), null)
-  await assert.rejects(downloadAndInstallNative(), /no approved public archive/)
+  assert.equal(approvedNativeArchive('linux', 'x64'), null)
+  assert.equal(approvedNativeArchive('darwin', 'x64'), null)
+  await assert.rejects(downloadAndInstallNative({ entry: null, fetchImpl: () => { throw Error('must not fetch') } }), /no approved public archive/)
   await assert.rejects(mutateOptionalOcr({ engine:'tesseract', action:'download' }), /invalid OCR operation/)
 })
-test('reviewed download verifies bounded archive bytes before invoking the existing installer', async () => {
-  const bytes = Buffer.alloc(256, 7)
-  const entry = {
-    url:'https://github.com/ysr666/dsh-vision-router/releases/download/native-test-v1/ppocrv6-small-darwin-arm64.tar.gz',
-    bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
-  }
-  let called = false
-  const result = await downloadAndInstallNative({ entry,
-    fetchImpl: async () => new Response(bytes),
-    install: async archive => { called = true; assert.deepEqual(archive, bytes); return {ok:true} }
-  })
+test('reviewed npm download verifies both archive layers before invoking the existing installer', async () => {
+  const bytes = Buffer.alloc(256,7)
+  const {payload, report} = createNpmAssetPackage({ target:'darwin-arm64',version:'0.0.0-staging',archive:bytes,projectLicense:'MIT fixture' })
+  const entry=report.entry
+  let called=false
+  const result=await downloadAndInstallNative({entry,fetchImpl:async url=>{
+    assert.equal(String(url),entry.url)
+    return new Response(payload)
+  },install:async archive=>{called=true;assert.deepEqual(archive,bytes);return {ok:true}}})
   assert.equal(result.ok,true)
   assert.equal(called,true)
   called=false
-  await assert.rejects(downloadAndInstallNative({ entry, fetchImpl: async () => new Response(Buffer.alloc(256,8)),
-    install:async()=>{called=true} }), /integrity mismatch/)
+  const corrupt=Buffer.from(payload);corrupt[corrupt.length>>1]^=255
+  await assert.rejects(downloadAndInstallNative({entry,fetchImpl:async()=>new Response(corrupt),install:async()=>{called=true}}),/native OCR npm tarball integrity mismatch/)
   assert.equal(called,false)
-  await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(Buffer.alloc(257))}),/exceeds reviewed size/)
+  await assert.rejects(downloadVerifiedNativeArchive({...entry,sha256:'0'.repeat(64)},{fetchImpl:async()=>new Response(payload)}),/inner archive integrity mismatch/)
+  await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(Buffer.concat([payload,Buffer.from([1])]))}),/exceeds reviewed size/)
   await assert.rejects(downloadVerifiedNativeArchive(entry,{fetchImpl:async()=>new Response(null,{status:302,headers:{location:'https://example.org/fake'}})}),/untrusted.*redirect/)
+  await assert.rejects(downloadVerifiedNativeArchive({...entry,url:entry.url.replace('0.0.0-staging','latest')},{fetchImpl:async()=>{throw Error('must not fetch')}}),/untrusted native OCR download source/)
+})
+
+// Windows transient native-file locks: owner identity and safe bounded retries.
+// Unsupported CI platforms inject only the isolated fixture path; production
+// resolveNativePaths() remains unchanged and is checked on real Windows CI.
+const transient = code => Object.assign(new Error('temporary OS file lock'), { code })
+test('Windows owner-bound native OCR uninstall removes a realistic fresh directory', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-win-ocr-uninstall-'))
+  const root = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
+  try {
+    await mkdir(join(root, 'models'), { recursive: true })
+    await writeFile(join(root, 'SOURCE-NOTICE.md'),
+      '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    await writeFile(join(root, 'worker.exe'), 'fake unit-test executable, never run')
+    await writeFile(join(root, 'models', 'dummy.param'), 'fake model')
+    assert.equal((await uninstallNative({ home, resolvePaths: () => ({ root }) })).installed, false)
+    await assert.rejects(lstat(root), { code: 'ENOENT' })
+  } finally { await rm(home, { recursive: true, force: true, maxRetries: 5 }) }
+})
+test('Windows retries bounded transient rename failures before the owned move', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-win-ocr-retry-move-'))
+  const root = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
+  try {
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, 'SOURCE-NOTICE.md'),
+      '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    const { moveOwnedNativeOcrDirectory } = await import('../src/lib/native-ocr-installation.js')
+    let calls=0
+    const result=await uninstallNative({home,platform:'win32',resolvePaths:() => ({root}),moveOwned:async(from,to)=>{
+      if(calls++<2)throw transient('EPERM')
+      return moveOwnedNativeOcrDirectory(from,to)
+    }})
+    assert.equal(result.installed,false);assert.equal(calls,3)
+    await assert.rejects(lstat(root),{code:'ENOENT'})
+  } finally { await rm(home,{recursive:true,force:true,maxRetries:5}) }
+})
+test('Windows retries only transient bounded tomb cleanup and never touches unrelated tree', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dvr-win-ocr-retry-rm-'))
+  const root = join(home, '.dsh-vision-router', 'ocr', 'ppocrv6-small')
+  const unrelated = join(home, 'unrelated.txt')
+  try {
+    await mkdir(root,{recursive:true})
+    await writeFile(join(root, 'SOURCE-NOTICE.md'),
+      '# Locally installed native OCR assets\nRuntime: Tencent/ncnn @ pinned\n')
+    await writeFile(unrelated,'must stay')
+    let calls=0
+    const result=await uninstallNative({home,platform:'win32',resolvePaths:() => ({root}),remove:async(tomb,opts)=>{
+      assert.ok(tomb.startsWith(root+'.removing-'))
+      assert.equal(opts.recursive,true)
+      if(calls++<2)throw transient('EBUSY')
+      return rm(tomb,opts)
+    }})
+    assert.equal(result.installed,false);assert.equal(calls,3)
+    assert.equal((await lstat(unrelated)).isFile(),true)
+    await assert.rejects(lstat(root),{code:'ENOENT'})
+  } finally { await rm(home,{recursive:true,force:true,maxRetries:5}) }
+})
+test('Non-Windows and nontransient errors are never retried', async ()=>{
+  for(const [platform,code,expected] of [
+    ['darwin','EPERM',1],['win32','ENOENT',1],['win32','EPERM',3]
+  ]){
+    let attempts=0
+    await assert.rejects(retryNativeOcrWindowsFs(async()=>{
+      attempts++;throw transient(code)
+    },{platform,attempts:expected,sleep:async()=>{}}),{code})
+    assert.equal(attempts,expected)
+  }
 })

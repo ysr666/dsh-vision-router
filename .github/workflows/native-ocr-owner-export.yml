@@ -1,0 +1,17 @@
+name: Native OCR owner-authorized npm export
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  exact-owner-export:
+    if: >-
+      github.repository == 'ysr666/dsh-vision-router' &&
+      github.event.pull_request.number == 862 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/native-ocr-release-staging' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor == 'ysr666' && github.triggering_actor == 'ysr666' &&
+      github.event.sender.login == 'ysr666' && startsWith(github.event.label.name, 'ocr-')
+    uses: ./.github/workflows/native-ocr-clean-audit.yml

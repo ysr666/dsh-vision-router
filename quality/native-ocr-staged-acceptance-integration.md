@@ -1,0 +1,28 @@
+# Native OCR staged acceptance integration (not distribution approval)
+
+Mac diagnostic head 9ca32b9cfa60173dadc7a8477a4598288eb7c6cd, run 44344904283 / job 134944862726: canonical five model assets, exact worker SHA-256 56499298089bc98709d3b6818fc870c8cf16c4c8607edd5ded842f304cbe84de, tar.gz 27917268 bytes / a5245c2420fa10ab9da124e2f8e308930a202c6239b4711b0dd73c14f29b78cd; actual TEST 123 (0.92377), fresh isolated home, verified download, installed worker OCR, repeated token and same-size corrupted payload rejection, unchanged installed worker and uninstall. Loopback HTTP with injected HTTPS response, not Desktop GUI, public HTTPS or minimum OS acceptance. Evidence-only artifact ZIP digest 8a98c384be1d45abd31646df1af73088f29245765cc9bed920412141df777410. Production pins/catalog untouched.
+
+The clean audit reuses Windows conversion to emit only labels/whitespace/Split alias choices; no raw model params, weights, worker or bundle artifacts. Mac reconstructs independently and checks all five exact hashes. Both targets run the same real installer acceptance, retaining only evidence JSON. The Windows fixture is HELLO 123. This integrated workflow is not yet executed at the time of this commit.
+
+Windows SBOM historical private reference (report 0d7525fe29814f1e84d5a32ead468487e33f55309285981e59b1341d46416df9, ZIP 011c1d2777f991641afb8373fd2ab5dcec4a98da0441251bd7fef7bb75349b0b) is superseded for new staged packages by independent reconstruction evidence report b10a66e205a299770237b042c20a5df2b49a3b5d5100c8b1eb0f12a68ca4a331 and exact source reconstruction ZIP 4352197dadef779a8a6cc5cff0126a31d9f5968c43a09f273aa9fdd58f1dcf24, documented in quality/native-ocr-crt-ci-reconstruction-evidence.json. Prior cross-relink run 44244890944 / job 134643857924 logged exact old and new worker matches. This metadata changes the Windows archive identity; stage and install again before any admission. No redistribution approval claimed; SBOM remains incomplete.
+
+## 2026-11-19 completion of native staging and GUI acceptance
+
+The earlier paragraph saying integration was not yet executed records the
+historical status of that commit. It has now executed: run
+[#44451773187](https://github.com/ysr666/dsh-vision-router/actions/runs/44451773187)
+passed conversion, independent CRT reconstruction, Mac and Windows exact native
+workers, actual archives, isolated installer verification, and real Electron
+Settings → installed ncnn `vision_ocr` → GUI uninstall with DSH 0.2.2-rc.5.
+Mac recognized `TEST 123` and Windows recognized `HELLO 123`. Both Agent
+proofs record one real native tool call and zero visual-model fallback. See
+`quality/native-ocr-current-host-desktop-evidence.json` for exact archive
+SHA-256, Worker SHA-256, native job IDs and evidence-only artifact digests.
+
+This does **not** waive the unfinished licensed-header/retained-code
+provenance review or actual minimum-OS execution, and does not authorize
+public archive hosting, production allowlist changes or formal publication.
+Direct selected-translation-unit license evidence is in
+`quality/native-ocr-selected-llvm-source-spdx-review.json` and
+`quality/native-ocr-selected-mingw-notice-review.json`; these do not
+establish the entire transitive include graph.
