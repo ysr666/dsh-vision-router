@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   planAppendOnlyImageEvidence,
+  createSessionImageEvidencePlanner,
 } from '../lib/stable-image-evidence.js'
 import {
   rewriteHistoryImages,
@@ -208,4 +209,83 @@ test('issue #865: text-only wrapper stops changing historical image text under s
   const evidence = planAppendOnlyImageEvidence(original, original, memory, source)
   assert.equal(evidence.length, 1, 'new knowledge remains available as independent evidence')
   assert.match(evidence[0].content[0].text, /new knowledge from vision_describe/)
+})
+
+
+test('issue #865: memory-only late descriptions append on text continuation, once committed', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const events = [{ type: 'user/message', data: original }]
+  let scans = 0
+  const session = { snapshotEvents() { scans++; return events } }
+  const memory = new Map()
+  const continuation = [{ id: 'current-text-inbox', role: 'user', content: [{ type: 'text', text: 'continue' }] }]
+  assert.deepEqual(planner.plan(session, [original], [original], memory, source), [])
+  memory.set(id, 'OCR arrived asynchronously after the image inbox was committed')
+  const newEvidence = planner.plan(session, continuation, continuation, memory, source)
+  assert.equal(newEvidence.length, 1, 'late evidence must not depend on re-claiming the original image')
+  assert.match(newEvidence[0].content[0].text, /asynchronously/)
+  // Planning a user/message is not a commit. An aborted Host admission must
+  // retry instead of silently dropping that version of evidence.
+  assert.deepEqual(planner.plan(session, continuation, continuation, memory, source), newEvidence)
+  const committed = { type: 'user/message', data: newEvidence[0] }
+  events.push(committed)
+  planner.onSessionEvent(session, committed)
+  assert.deepEqual(planner.plan(session, continuation, continuation, memory, source), [])
+  assert.equal(scans, 1, 'the durable log must only be inspected once per Session')
+  const oldPrefix = JSON.stringify(rewriteHistoryImages([original], memory, { stable: true }).messages)
+  memory.set(id, 'Newer OCR result on a later turn')
+  const later = planner.plan(session, continuation, continuation, memory, source)
+  assert.equal(later.length, 1)
+  assert.notEqual(later[0].id, newEvidence[0].id)
+  assert.equal(JSON.stringify(rewriteHistoryImages([original], memory, { stable: true }).messages), oldPrefix)
+  assert.equal(original.content[0].type, 'image')
+})
+
+test('issue #865: cold resume reads committed image identity and evidence once', () => {
+  const original = history()[0]
+  const memory = new Map([[id, 'already persisted']])
+  const first = planAppendOnlyImageEvidence([original], [original], memory, source)[0]
+  const events = [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: first },
+  ]
+  let scans = 0
+  const session = { snapshotEvents() { scans++; return events } }
+  const planner = createSessionImageEvidencePlanner()
+  const text = [{ id: 'continued-after-restart', role: 'user', content: [{ type: 'text', text: 'hello' }] }]
+  assert.deepEqual(planner.plan(session, text, text, memory, source), [],
+    'restart must not duplicate an already persisted evidence ID')
+  memory.set(id, 'new memory-only content after cold resume')
+  const evidence = planner.plan(session, text, text, memory, source)
+  assert.equal(evidence.length, 1)
+  assert.notEqual(evidence[0].id, first.id)
+  assert.equal(scans, 1)
+})
+
+test('issue #865: late memory may not escape the owning Session or image provenance bound', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const ownSession = { snapshotEvents() { return [{ type: 'user/message', data: original }] } }
+  const foreignSession = { snapshotEvents() { return [] } }
+  const memory = new Map([[id, 'PRIVATE_SESSION_A_CONTENT']])
+  const text = [{ id: 'text-only', role: 'user', content: [{ type: 'text', text: 'test' }] }]
+  assert.deepEqual(planner.plan(foreignSession, text, text, memory, source), [],
+    'same attachment ID in a foreign memory does not confer authorization')
+  assert.equal(planner.plan(ownSession, text, text, memory, source).length, 1)
+  const forged = new Map([['sha256:unseen-other', 'unrelated secret']])
+  assert.deepEqual(planner.plan(ownSession, text, text, forged, source), [])
+  // A bounded tracker must evict old occurrences instead of accumulating an
+  // unlimited list of historical attachments or scanning all messages/turn.
+  const many = Array.from({ length: 70 }, (_, i) => ({
+    id: 'mass-image-' + i, role: 'user',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:mass-' + i } }],
+  }))
+  const limitedSession = { snapshotEvents() { return [] } }
+  planner.plan(limitedSession, many, many, new Map(), source)
+  assert.deepEqual(planner.plan(limitedSession, text, text,
+    new Map([['sha256:mass-0', 'evicted result']]), source), [])
+  const newest = planner.plan(limitedSession, text, text,
+    new Map([['sha256:mass-69', 'most recent result']]), source)
+  assert.equal(newest.length, 1)
 })
