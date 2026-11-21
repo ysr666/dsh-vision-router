@@ -42,6 +42,33 @@ test('bounds recent entries and scan without serializing full history', () => {
   assert.deepEqual(summarizeSessionCacheUsage([response(1), ...tail]), { rows: [], truncated: true })
   assert.equal(summarizeSessionCacheUsage(undefined), undefined)
 })
+test('current Host ranged snapshots do not materialize long Session logs', () => {
+  let command
+  installSessionCacheUsageCommand({ inject(_names, apply) {
+    apply({ commands: { register(value) { command = value } } })
+  } })
+  const tail = Array.from({ length: 10_000 }, () => ({ type: 'tool/result' }))
+  tail[tail.length - 1] = response(123, {
+    inputTokens: 10, cacheReadTokens: 90, outputTokens: 7, totalTokens: 107,
+  })
+  let calls = 0
+  const session = {
+    id: 'long-session', seq: 12_345,
+    snapshotEvents(from, to) {
+      calls++
+      assert.equal(from, 2345, 'long Session reader must request only bounded tail')
+      assert.equal(to, 12345)
+      return tail
+    },
+  }
+  const result = command.handler({ agent: { id: session.id, session }, rawInput: '' })
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /123\/1 \| R1 \| 10 \| 90/)
+  assert.match(result.text, /earlier events omitted/)
+  assert.equal(calls, 1, 'one ranged snapshot, never a full-history fallback')
+  assert.doesNotMatch(result.text, /SECRET_ACCOUNT|PRIVATE_MODEL|NEVER_EXPORT/)
+})
+
 test('manual command reads only the authorized live Session and calls no model', () => {
   let command
   installSessionCacheUsageCommand({ inject(names, apply) {

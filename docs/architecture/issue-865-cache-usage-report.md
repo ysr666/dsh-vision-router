@@ -10,7 +10,11 @@ It reports up to 20 committed, non-interrupted assistant responses from
 the latest 10,000 events using persisted Host TokenUsage. R1/R2 are report-local
 anonymous recorded provider/model pairs. No messages, route IDs, account
 names, request IDs, attachment metadata or raw errors appear in the result.
-A route label is not proof of the actual upstream provider.
+A route label is not proof of the actual upstream provider. On current DSH
+Hosts, the command requests only a bounded `snapshotEvents(fromSeq, toSeq)`
+tail rather than materializing the entire long-Session event log. Older Hosts
+without a verified range interface use the prior compatible snapshot reader.
+An omitted earlier range is reported as truncated, not silently hidden.
 
 Pinned DSH 0.2.2-rc.5 documents disjoint input/cache-read/cache-write counts.
 A hit ratio requires explicit read and reconcilable total, output and input
