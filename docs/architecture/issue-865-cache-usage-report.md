@@ -65,8 +65,10 @@ The analyzer excludes unpaired trials and mismatched MAIN model identities.
 It flags changed/unknown wire-prefix hashes and does not claim causal effects
 merely from token counts. Explicit noncached-input, output and any present cache-read/write counters
 must not exceed the provider-reported total; impossible records are rejected
-before even a billed-cost comparison. Missing counters that still admit a
-consistent total remain UNKNOWN, not zero.
+before even a billed-cost comparison. If both cache-read and cache-write are
+explicit, the complete disjoint sum must equal the reported total; an unexplained
+surplus is also rejected. Missing counters that still admit a consistent total
+remain UNKNOWN, not zero.
 
 Cache-hit percentages require reconciled disjoint
 counts; missing read counts are UNKNOWN, not zero. Monetary differences are

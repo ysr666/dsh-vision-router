@@ -61,6 +61,15 @@ test('impossible explicit token accounting cannot produce a billed-cost comparis
     one('before', { ...bill, cacheReadTokens: 100, totalTokens: 107 }),
     one('after', bill),
   ])), /explicit token counters exceed provider total/)
+  assert.throws(() => compareCacheAB(doc([
+    one('before', { ...bill, inputTokens: 10, cacheReadTokens: 80, cacheWriteTokens: 0, outputTokens: 7, totalTokens: 107 }),
+    one('after', bill),
+  ])), /complete disjoint token counters do not reconcile/)
+  const complete = compareCacheAB(doc([
+    one('before', { ...bill, inputTokens: 10, cacheReadTokens: 80, cacheWriteTokens: 10, outputTokens: 7, totalTokens: 107 }),
+    one('after', bill),
+  ]))
+  assert.equal(complete.before.cacheHitPercent, 80)
   const unknown = compareCacheAB(doc([
     one('before', { ...bill, cacheReadTokens: undefined }),
     one('after', bill),

@@ -84,6 +84,13 @@ function readRow(r) {
   if (!Number.isSafeInteger(explicitTotal) || explicitTotal > r.totalTokens) {
     fail('explicit token counters exceed provider total')
   }
+  // When all disjoint categories were reported, there is no missing
+  // component that could explain an additional unexplained token count.
+  // Do not promote a contradictory full record to billed-cost evidence.
+  if (r.cacheReadTokens !== undefined && r.cacheWriteTokens !== undefined &&
+      explicitTotal !== r.totalTokens) {
+    fail('complete disjoint token counters do not reconcile with provider total')
+  }
   if (r.billedCny === undefined && r.billingSource !== undefined || r.billedCny !== undefined && r.billingSource !== 'provider-billing-export') fail('billed cost requires provider-billing-export evidence')
   return { ...r, costMicros: r.billedCny === undefined ? undefined : moneyMicros(r.billedCny) }
 }
