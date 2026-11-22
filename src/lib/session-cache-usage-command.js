@@ -2,6 +2,28 @@ import { legacySessionEvents } from './session-event-history-compat.js'
 
 const MAX_ROWS = 20
 const MAX_EVENTS = 10_000
+
+// The pinned Host supports snapshotEvents(fromSeq, toSeqExclusive). Reading
+// without offsets copies the *entire* Session log even though this manual
+// diagnostic inspects only the last MAX_EVENTS. Long user Sessions must not
+// be fully materialized merely to diagnose cache usage. Old Hosts without a
+// trustworthy offset contract retain the compatible legacy reader.
+function recentSessionEvents(session) {
+  try {
+    const end = session?.seq
+    if (Number.isSafeInteger(end) && end >= 0 &&
+        typeof session.snapshotEvents === 'function') {
+      const start = Math.max(0, end - MAX_EVENTS)
+      const events = session.snapshotEvents(start, end)
+      if (Array.isArray(events) && events.length === end - start) {
+        return { events, olderEventsOmitted: start > 0 }
+      }
+    }
+  } catch {
+    // An unsupported or rejected range read is not permission to guess.
+  }
+  return { events: legacySessionEvents(session), olderEventsOmitted: false }
+}
 function count(value) {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
     ? value : undefined
@@ -27,7 +49,7 @@ function usageRow(usage) {
 
 /** Manual Session-local diagnostic: do not copy message content, route
  * identifiers, account names, request IDs, or other raw provider fields. */
-export function summarizeSessionCacheUsage(events) {
+export function summarizeSessionCacheUsage(events, { olderEventsOmitted = false } = {}) {
   if (!Array.isArray(events)) return undefined
   const recent = []
   let examined = 0
@@ -48,7 +70,7 @@ export function summarizeSessionCacheUsage(events) {
     if (!labels.has(route)) labels.set(route, 'R' + (labels.size + 1))
     return { ...row, route: labels.get(route) }
   })
-  return { rows, truncated: examined < events.length }
+  return { rows, truncated: olderEventsOmitted || examined < events.length }
 }
 
 function format(report) {
@@ -85,7 +107,8 @@ export function installSessionCacheUsageCommand(ctx) {
         if (typeof session?.id !== 'string' || !session.id || agent?.id !== session.id) {
           return { kind: 'error', text: 'Cache report requires the authorized active Session.' }
         }
-        const report = summarizeSessionCacheUsage(legacySessionEvents(session))
+        const { events, olderEventsOmitted } = recentSessionEvents(session)
+        const report = summarizeSessionCacheUsage(events, { olderEventsOmitted })
         if (!report) return { kind: 'error', text: 'This Host does not expose a readable active Session history.' }
         return { kind: 'success', text: format(report) }
       },
