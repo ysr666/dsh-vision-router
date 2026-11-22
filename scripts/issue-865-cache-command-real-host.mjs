@@ -100,6 +100,12 @@ try {
   const committed = before.filter(e => e.type === 'assistant/message')
   assert.equal(committed.length, 2)
   assert.deepEqual(committed.map(e => e.data.usage?.cacheReadTokens), [90, 70])
+  // The command itself appends Host command events. These must not rewrite
+  // either Session's existing model-visible message history or request header.
+  const historyA = structuredClone(a.session.deriveMessages())
+  const historyB = structuredClone(b.session.deriveMessages())
+  const headerA = structuredClone(a.session.requestHeader())
+  const headerB = structuredClone(b.session.requestHeader())
   async function report(agent) {
     const call = await ctx.commands.execute(agent, '/vision-cache', [], AbortSignal.timeout(8000))
     assert.ok(call, 'Host admitted command')
@@ -120,6 +126,14 @@ try {
   assert.equal(after.filter(e => e.type === 'assistant/message').length, 2)
   assert.equal(after.filter(e => e.type === 'command/run').length, 1)
   assert.equal(after.filter(e => e.type === 'command/done').length, 1)
+  assert.deepEqual(a.session.deriveMessages(), historyA,
+    'manual cache command must not rewrite the affected Session model history')
+  assert.deepEqual(b.session.deriveMessages(), historyB,
+    'manual cache command must not rewrite another Session model history')
+  assert.deepEqual(a.session.requestHeader(), headerA,
+    'manual cache command must not alter the affected request header')
+  assert.deepEqual(b.session.requestHeader(), headerB,
+    'manual cache command must not alter another Session request header')
   assert.equal(a.session.deriveMessages().some(message => message.content?.some(
     block => block.type === 'text' && block.text.includes('DVR cache usage'))), false)
   console.log(JSON.stringify({ ok: true, scenario: 'actual DVR public entry + real Host cache command',
