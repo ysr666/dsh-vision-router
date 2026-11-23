@@ -64,7 +64,11 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
         generation.lifetime.abort()
         try { void Promise.resolve(generation.unprovide()).catch(() => {}) } catch {}
       }
-      releaseActiveReceiver = releaseReceiver
+      const retireReceiver = () => {
+        active = false
+        releaseReceiver()
+      }
+      releaseActiveReceiver = retireReceiver
 
       const reconcile = () => {
         if (retired || !active) return
@@ -122,9 +126,8 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
         }
       }
       scope.effect(() => () => {
-        active = false
-        releaseReceiver()
-        if (releaseActiveReceiver === releaseReceiver) releaseActiveReceiver = () => {}
+        retireReceiver()
+        if (releaseActiveReceiver === retireReceiver) releaseActiveReceiver = () => {}
       }, 'vision-router: native Remote receiver lifetime')
       scope.typert.lookups.subscribe(change => {
         if (change?.key === 'agent') reconcile()
