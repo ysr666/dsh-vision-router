@@ -30,22 +30,34 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
     // Avoid the order race where the Host Agent Registry's own Typert
     // injection runs after our plugin. A checked lookup, not a version guess.
     let held
+    let withdrawDefinition
     let retired = false
-    const release = () => {
+    // The strict Typert definition belongs to the PLUGIN generation, not to
+    // the Agent lookup's transient availability. Withdrawing it on a lookup
+    // restart makes the Gateway return gateway/definition-unavailable for the
+    // still-mounted client. A missing/mismatched lookup instead must remove
+    // the active receiver and abort its streams; the Gateway's live lookup
+    // guard then denies calls until the official lookup reappears.
+    const releaseReceiver = () => {
       const generation = held
       held = undefined
       if (!generation) return
       generation.lifetime.abort()
       // Disposers are fiber-owned and may also be invoked during unload.
-      try { void Promise.resolve(generation.withdraw()).catch(() => {}) } catch {}
       try { void Promise.resolve(generation.unprovide()).catch(() => {}) } catch {}
+    }
+    const releaseAll = () => {
+      releaseReceiver()
+      const withdraw = withdrawDefinition
+      withdrawDefinition = undefined
+      try { void Promise.resolve(withdraw?.()).catch(() => {}) } catch {}
     }
     const reconcile = () => {
       if (retired) return
       const lookup = registry.lookups.get(agentParameter.lookup)
       if (lookup?.resource !== 'session' || lookup.wire !== agentParameter.wire ||
           lookup.wireTypeSymbol !== agentParameter.codec.typeSymbol || typeof lookup.resolve !== 'function') {
-        release()
+        releaseReceiver()
         return
       }
       if (held) return
@@ -57,6 +69,7 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       const receiver = {
         async set(agent, request, signal) {
           const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
+          liveSignal.throwIfAborted()
           const input = nativeVisionMutationRequestSchema.parse(request)
           const receipt = await options.mutate(agent, input, liveSignal)
           return nativeVisionMutationReceiptSchema.parse(receipt)
@@ -77,12 +90,14 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       let unprovide
       try {
         unprovide = scope.provide(NATIVE_VISION_REMOTE, receiver)
-        const withdraw = registry.register({
-          package: contribution.package, face: 'host', schemas: [],
-          model: { services: [], events: [], objects: [] },
-          invocations: contribution.descriptors,
-        })
-        held = { lifetime, withdraw, unprovide }
+        if (!withdrawDefinition) {
+          withdrawDefinition = registry.register({
+            package: contribution.package, face: 'host', schemas: [],
+            model: { services: [], events: [], objects: [] },
+            invocations: contribution.descriptors,
+          })
+        }
+        held = { lifetime, unprovide }
       } catch (error) {
         lifetime.abort()
         try { void Promise.resolve(unprovide?.()).catch(() => {}) } catch {}
@@ -90,7 +105,7 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
         scope.logger?.warn?.('vision-router: native control Remote unavailable: %s', String(error))
       }
     }
-    scope.effect(() => () => { retired = true; release() }, 'vision-router: native Remote lifetime')
+    scope.effect(() => () => { retired = true; releaseAll() }, 'vision-router: native Remote lifetime')
     registry.lookups.subscribe(change => {
       if (change?.key === 'agent') reconcile()
     })
