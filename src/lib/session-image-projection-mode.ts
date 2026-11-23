@@ -31,7 +31,7 @@ type Context = {
 type Session = {
   id?: unknown
   requestHeader?(): unknown
-  snapshotEvents?(): readonly { type?: string }[]
+  snapshotEvents?(): readonly { type?: string; data?: unknown }[]
   seq?: unknown
   eventAt?(seq: number): { type?: string } | undefined
   firstLiveSeq?: unknown
@@ -76,6 +76,45 @@ export function hasPriorModelHistory(session: Session): boolean {
     if (!knownNew && events.some(event => event?.type === 'user/message')) return true
     return false
   } catch { return true }
+}
+
+/**
+ * An unknown Session projection is safe only if neither the currently
+ * claimed step nor ANY model-visible committed surface contains image input.
+ * Model-visible OCR evidence is also an image-history witness even when the
+ * original attachment has been compacted out of the derived surface.
+ *
+ * Any failure to inspect the authoritative Session log is unsafe: do not
+ * convert a storage/read error into "there were no historical images".
+ */
+export function requiresVerifiedImageProjection(
+  session: Session,
+  currentMessages: readonly unknown[],
+  blocksContainImage: (content: unknown) => boolean,
+): boolean {
+  try {
+    const events = session.snapshotEvents?.()
+    if (!Array.isArray(events) || !Array.isArray(currentMessages)) return true
+    const hasVisualEvidence = (candidate: unknown): boolean => {
+      if (candidate === null || typeof candidate !== 'object') return false
+      const message = candidate as { id?: unknown; content?: unknown }
+      return (Array.isArray(message.content) && blocksContainImage(message.content)) ||
+        (typeof message.id === 'string' &&
+          message.id.startsWith('vision-router-image-evidence-v1-'))
+    }
+    if (currentMessages.some(hasVisualEvidence)) return true
+    return events.some((event) => {
+      const kind = event?.type
+      const payload = event?.data
+      const candidate = kind === 'user/message' ? payload
+        : kind === 'tool/result' || kind === 'assistant/message' ||
+          kind === 'system/message' || kind === 'developer/message'
+          ? (payload as { message?: unknown } | undefined)?.message : undefined
+      return hasVisualEvidence(candidate)
+    })
+  } catch {
+    return true
+  }
 }
 
 /**
