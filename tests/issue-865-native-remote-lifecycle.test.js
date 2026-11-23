@@ -16,31 +16,29 @@ function remoteFixture() {
   let listener
   let receiver
   let descriptor
-  let disposer
+  let ownerDisposer
+  let childDisposer
+  let mountChild
   let lastMutationSignal
-  const ctx = {
-    inject(deps, callback) {
-      assert.deepEqual(deps, ['typert', 'agents', 'llm'])
-      return callback(scope)
+
+  const typert = {
+    register(contribution) {
+      calls.registrations++
+      assert.equal(contribution.face, 'host')
+      assert.deepEqual(contribution.invocations.map(x => x.method), ['observe', 'set'])
+      descriptor = contribution
+      return () => {
+        calls.withdrawals++
+        descriptor = undefined
+      }
+    },
+    lookups: {
+      get(key) { assert.equal(key, 'agent'); return lookup },
+      subscribe(fn) { listener = fn },
     },
   }
-  const scope = {
-    typert: {
-      register(contribution) {
-        calls.registrations++
-        assert.equal(contribution.face, 'host')
-        assert.deepEqual(contribution.invocations.map(x => x.method), ['observe', 'set'])
-        descriptor = contribution
-        return () => {
-          calls.withdrawals++
-          descriptor = undefined
-        }
-      },
-      lookups: {
-        get(key) { assert.equal(key, 'agent'); return lookup },
-        subscribe(fn) { listener = fn },
-      },
-    },
+  const makeChildScope = () => ({
+    typert,
     provide(name, value) {
       assert.equal(name, 'dvrNativeVision')
       assert.equal(receiver, undefined, 'at most one active receiver per lookup')
@@ -52,8 +50,24 @@ function remoteFixture() {
         receiver = undefined
       }
     },
-    effect(setup) { disposer = setup() },
+    effect(setup) { childDisposer = setup() },
     logger: { warn() {} },
+  })
+  const owner = {
+    typert,
+    effect(setup) { ownerDisposer = setup() },
+    inject(deps, callback) {
+      assert.deepEqual(deps, ['agents', 'llm'])
+      mountChild = callback
+      return callback(makeChildScope())
+    },
+  }
+  const ctx = {
+    inject(deps, callback) {
+      assert.deepEqual(deps, ['typert'],
+        'the strict Remote definition must outlive Agents/LLM generation churn')
+      return callback(owner)
+    },
   }
   const store = { subscribe() {} }
   const mutate = async (_agent, _request, signal) => {
@@ -71,7 +85,19 @@ function remoteFixture() {
       listener?.({ kind: 'lookup', key: 'agent' })
     },
     otherChange() { listener?.({ kind: 'lookup', key: 'unrelated' }) },
-    dispose() { disposer?.() },
+    retireAgents() {
+      childDisposer?.()
+      childDisposer = undefined
+      listener = undefined
+    },
+    remountAgents() {
+      assert.ok(mountChild)
+      return mountChild(makeChildScope())
+    },
+    dispose() {
+      this.retireAgents()
+      ownerDisposer?.()
+    },
   }
 }
 
