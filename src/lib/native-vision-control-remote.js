@@ -48,7 +48,9 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       try { void Promise.resolve(withdraw?.()).catch(() => {}) } catch {}
     }, 'vision-router: native strict Remote definition lifetime')
 
-    return owner.inject(['typert', 'agents', 'llm'], scope => {
+    // Cordis inject() returns a Fiber, not an effect disposer. Do NOT return
+    // that Fiber from the outer injection callback (Invalid effect on Host).
+    owner.inject(['typert', 'agents', 'llm'], scope => {
       if (typeof scope.provide !== 'function' ||
           typeof scope.effect !== 'function' ||
           typeof scope.typert?.lookups?.subscribe !== 'function') return
