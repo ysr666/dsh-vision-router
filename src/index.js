@@ -191,6 +191,7 @@ import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
 import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
 import { requiresVerifiedImageProjection, preserveClaimedMessagesOnBlockedStep } from './lib/session-image-projection-mode.js'
+import { hasUnstableStableV2ImageIdentity } from './lib/core-primitives.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -2646,6 +2647,13 @@ export function apply(ctx, config = {}, runtime = {}) {
     // always overrides later Settings changes and fork configuration.
     const newStableRequested = current().stableImageHistoryNewSessions === true
       ? 'stable-v2' : current().stableImageHistory === true
+    // Do not commit a v2 witness on a genuinely new Session whose image lacks
+    // BOTH a durable attachment ID and its source message ID. For an existing
+    // witnessed v2 Session, resolution still pins v2 and the guard below
+    // refuses the unsafe request rather than rewriting an old cache prefix.
+    const unstableV2Identity = newStableRequested === 'stable-v2' &&
+      hasUnstableStableV2ImageIdentity(decision?.messages ?? payload.messages ?? [])
+    const requestedProjection = unstableV2Identity ? false : newStableRequested
     const modeStoreNeeded = sessionImageProjectionModeStore?.resolve &&
       (newStableRequested ||
         sessionImageProjectionModeStore.hasStorageFacility?.() === true ||
@@ -2653,8 +2661,18 @@ export function apply(ctx, config = {}, runtime = {}) {
         sessionImageProjectionModeStore.hasCommittedWitness?.(session) === true)
     if (modeStoreNeeded) {
       const projection = await sessionImageProjectionModeStore.resolve(
-        session, newStableRequested,
+        session, requestedProjection,
       )
+      if (projection === 'stable-v2' && unstableV2Identity) {
+        if (!payload.signal?.aborted) {
+          preserveClaimedMessagesOnBlockedStep(payload.agent, payload.messages ?? [])
+        }
+        throw new Error(
+          'Vision Router stable-v2 cannot prove an image identity. ' +
+          'Original pending input was requeued; obtain a durable attachment or ' +
+          'message ID instead of changing the committed image-history prefix.',
+        )
+      }
       if (projection === 'unknown') {
         // A missing optional sidecar cannot justify rewriting *any* image
         // from a previous stable Session. Pure text turns, however, share
