@@ -287,14 +287,21 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
       return 'stable'
     }
     if (cache.has(id)) return cache.get(id) as ProjectionMode
+    // A fresh unrequested Session has no old image prefix to migrate. Its
+    // first admitted DSH user/message witness is sufficient durability even
+    // when the optional sidecar is completely unavailable.
+    const firstStableRequest = allowNewStable && !hasPriorModelHistory(session)
     if (pending.has(id)) return pending.get(id) as Promise<ProjectionResolution>
     const task = (async (): Promise<ProjectionResolution> => {
       try {
         const modes = await table()
         if (!modes || closed) {
-          if (allowNewStable) {
-            warn(new Error('storageDomain missing or unavailable'))
+          if (closed) return 'unknown'
+          if (firstStableRequest) {
+            cache.set(id, 'stable')
+            return 'stable'
           }
+          if (allowNewStable) warn(new Error('storageDomain missing or unavailable for historical Session'))
           return unknownOrLegacy()
         }
         const stored = recordSchema.safeParse(modes.get(id))
@@ -311,6 +318,13 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         return mode
       } catch (error) {
         warn(error)
+        if (firstStableRequest && !closed) {
+          // The Session witness will be admitted and persisted together with
+          // the first model request. A failed optional sidecar cannot prevent
+          // a genuinely fresh Session from using an opt-in stable format.
+          cache.set(id, 'stable')
+          return 'stable'
+        }
         return unknownOrLegacy()
       }
     })()
