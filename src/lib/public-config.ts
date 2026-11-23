@@ -25,7 +25,7 @@ export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T):
   // Existing opt-in preserves pre-rollout behavior. Newly created Sessions
   // select v1 stable history only when a durable per-Session format record can
   // be committed before the first provider request. Old Sessions stay legacy.
-  coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(true))
+  coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(false))
 
   // Keep provider/task/turn timeout layers coherent. The whole-turn budget is
   // an optional safety cap: 0 remains unlimited for long-running agent turns.
