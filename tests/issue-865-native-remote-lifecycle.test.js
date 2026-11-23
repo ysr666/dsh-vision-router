@@ -149,6 +149,37 @@ test('issue #865: a withdrawn Agent lookup revokes receiver but NOT the strict G
   assert.equal(f.calls.registrations, 1, 'disposed plugin must not silently remount')
 })
 
+test('issue #865: Agents/LLM dependency restarts cannot withdraw strict native Remote definition', async () => {
+  const f = remoteFixture()
+  f.setLookup(matchingLookup())
+  const original = f.receiver
+  assert.ok(original)
+  assert.ok(f.descriptor)
+  assert.equal(f.calls.registrations, 1)
+
+  f.retireAgents()
+  assert.equal(f.receiver, undefined, 'old Agent lifetime must immediately revoke its receiver')
+  assert.ok(f.descriptor, 'Typert-owned strict endpoint must survive child dependency retirement')
+  assert.equal(f.calls.withdrawals, 0)
+  await assert.rejects(original.set(
+    { id: 'retired' }, { enabled: true, selection: { provider: 'native', model: 'mm' } },
+  ), { name: 'AbortError' })
+
+  f.remountAgents()
+  assert.notEqual(f.receiver, original)
+  assert.ok(f.receiver)
+  assert.equal(f.calls.registrations, 1, 'no duplicate strict registration during dependency reload')
+  assert.equal(f.calls.provisions, 2)
+  f.retireAgents()
+  assert.equal(f.calls.withdrawals, 0)
+  f.remountAgents()
+  assert.equal(f.calls.registrations, 1, 'repeated HMR-style dependency rebinding retains exact method identity')
+  assert.equal(f.calls.provisions, 3)
+  f.dispose()
+  assert.equal(f.calls.withdrawals, 1, 'only Typert/plugin retirement withdraws the descriptor')
+  assert.equal(f.calls.unprovisions, 3)
+})
+
 test('issue #865: only transient lookup/service READ failures are retried, never writes', async () => {
   const validView = {
     kind: 'native', selection: { provider: 'p', model: 'm' },
