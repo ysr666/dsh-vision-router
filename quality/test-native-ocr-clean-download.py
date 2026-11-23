@@ -74,7 +74,11 @@ class Cases(TestCase):
         self.assertFalse(self.dest.exists())
 
     def test_bad_digest_not_retried(self):
-        with patch('urllib.request.urlopen',return_value=Response([b'bad'])) as f:
+        # A complete, incorrect source is an integrity failure, not a
+        # transient short HTTP 200 response. Never retry or accept it.
+        wrong = b'badmodel'
+        self.assertEqual(len(wrong), self.expected['bytes'])
+        with patch('urllib.request.urlopen',return_value=Response([wrong])) as f:
             with self.assertRaisesRegex(RuntimeError,'IDENTITY_MISMATCH'):acquire(self.source,self.dest,self.expected)
             self.assertEqual(f.call_count,1)
         self.assertFalse(self.dest.exists())
