@@ -165,7 +165,7 @@ try {
   assert.equal(requests.length, 3, 'opt-in format action cannot invoke or bill a model')
   assert.deepEqual(a.session.deriveMessages().slice(0, stableBefore.length), stableBefore,
     'old model-visible history is appended to, never rewritten during migration')
-  assert.deepEqual(assessProjectionDowngrade(migratedEvents, 'pre-v2'),
+  assert.deepEqual(assessProjectionDowngrade(migratedEvents, 'stable-v1'),
     { decision: 'block', reason: 'target-cannot-read-v2' })
   const repeat = await ctx.commands.execute(a, '/vision-history-stabilize CONFIRM', [],
     AbortSignal.timeout(8000))
@@ -185,7 +185,7 @@ try {
   assert.equal(resumedEvents.filter(e => e.type === 'user/message' &&
     e.data?.id?.startsWith('vision-router-projection-stable-v2-')).length, 1,
   'production compressed JSONL cold resume must restore exactly one v2 witness')
-  assert.deepEqual(assessProjectionDowngrade(resumedEvents, 'pre-v2'),
+  assert.deepEqual(assessProjectionDowngrade(resumedEvents, 'stable-v1'),
     { decision: 'block', reason: 'target-cannot-read-v2' })
   assert.equal(requests.length, 3)
   console.log(JSON.stringify({ ok: true, scenario: 'actual DVR public entry + real Host idle migration',
