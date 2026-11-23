@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { assessProjectionDowngrade } from '../lib/session-image-stabilize-command.js'
 
 const root = process.env.DSH_SOURCE_ROOT
 assert.ok(root, 'DSH_SOURCE_ROOT required')
@@ -14,7 +15,8 @@ const requireHost = createRequire(join(resolve(root), 'packages/llm/llm/package.
 const [
   { Context }, llm, { default: Sessions }, { default: Projection },
   { default: SystemPrompt }, { default: Tools }, { default: AgentRegistry },
-  { default: AgentLoop }, { default: Commands }, { default: AttachmentLocal }, dvr,
+  { default: AgentLoop }, { default: Commands }, { default: AttachmentLocal },
+  JsonlPersistence, dvr,
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -26,6 +28,7 @@ const [
   host('packages/core/agent-loop/src/index.ts'),
   host('packages/interaction/commands/src/index.ts'),
   host('packages/attachment/attachment-local/src/index.ts'),
+  host('packages/session/session-persistence-jsonl/src/index.ts'),
   import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
 ])
 const dir = await mkdtemp(join(tmpdir(), 'dvr-865-cache-'))
@@ -68,6 +71,7 @@ try {
     async execute() { throw new Error('No tools expected') },
   })
   await ctx.plugin(AgentRegistry)
+  await ctx.plugin(JsonlPersistence, { root: join(dir, 'sessions'), compression: 'zstd' })
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(Commands)
   ctx.llm.registerAdapter(['private-account'], new OfflineModel())
@@ -139,6 +143,55 @@ try {
   console.log(JSON.stringify({ ok: true, scenario: 'actual DVR public entry + real Host cache command',
     committedUsageRows: 3, sessionIsolation: true, anonymousReport: true,
     addedModelRequests: 0, addedModelSelections: 0, commandEvents: 2 }))
+  // The old long Session can opt in ONLY through the registered maintenance
+  // command. This is an actual DSH Agent and actual JSONL persistence, not a
+  // mock test of Session.append. It runs after the separate diagnostic
+  // noninterference assertions above, so they cannot accidentally be relaxed.
+  const stableBefore = structuredClone(a.session.deriveMessages())
+  const noConfirm = await ctx.commands.execute(a, '/vision-history-stabilize', [],
+    AbortSignal.timeout(8000))
+  assert.equal(noConfirm?.result.kind, 'error')
+  assert.match(noConfirm.result.text, /cache baseline/)
+  assert.equal(a.session.snapshotEvents().filter(e => e.type === 'user/message' &&
+    e.data?.id?.startsWith('vision-router-projection-stable-v2-')).length, 0)
+  const migrate = await ctx.commands.execute(a, '/vision-history-stabilize CONFIRM', [],
+    AbortSignal.timeout(8000))
+  assert.equal(migrate?.result.kind, 'success', migrate?.result.text)
+  const migratedEvents = a.session.snapshotEvents()
+  const witnesses = migratedEvents.filter(e => e.type === 'user/message' &&
+    e.data?.id?.startsWith('vision-router-projection-stable-v2-'))
+  assert.equal(witnesses.length, 1)
+  assert.equal(migratedEvents.filter(e => e.type === 'assistant/message').length, 2)
+  assert.equal(requests.length, 3, 'opt-in format action cannot invoke or bill a model')
+  assert.deepEqual(a.session.deriveMessages().slice(0, stableBefore.length), stableBefore,
+    'old model-visible history is appended to, never rewritten during migration')
+  assert.deepEqual(assessProjectionDowngrade(migratedEvents, 'pre-v2'),
+    { decision: 'block', reason: 'target-cannot-read-v2' })
+  const repeat = await ctx.commands.execute(a, '/vision-history-stabilize CONFIRM', [],
+    AbortSignal.timeout(8000))
+  assert.equal(repeat?.result.kind, 'success')
+  assert.equal(a.session.snapshotEvents().filter(e => e.type === 'user/message' &&
+    e.data?.id?.startsWith('vision-router-projection-stable-v2-')).length, 1,
+  'repeat confirmed command must not append another durable format witness')
+
+  await ctx.sessions.flush(a.session)
+  await handles[0].dispose()
+  const reloaded = await ctx.agents.resume({
+    resumeSessionId: 'cache-proof-a',
+    agentOptions: { provider: 'private-account', model: 'PRIVATE_MODEL' },
+  })
+  handles[0] = reloaded
+  const resumedEvents = reloaded.agent.session.snapshotEvents()
+  assert.equal(resumedEvents.filter(e => e.type === 'user/message' &&
+    e.data?.id?.startsWith('vision-router-projection-stable-v2-')).length, 1,
+  'production compressed JSONL cold resume must restore exactly one v2 witness')
+  assert.deepEqual(assessProjectionDowngrade(resumedEvents, 'pre-v2'),
+    { decision: 'block', reason: 'target-cannot-read-v2' })
+  assert.equal(requests.length, 3)
+  console.log(JSON.stringify({ ok: true, scenario: 'actual DVR public entry + real Host idle migration',
+    owner: 'Host Agent.runMaintenance + Sessions.flush + JSONL resume',
+    oldMessagesPreserved: stableBefore.length,
+    witnesses: 1, unexpectedModelRequests: 0, downgradeBlock: true }))
 } finally {
   for (const handle of handles.reverse()) await handle.dispose()
   await ctx.fiber.dispose()
