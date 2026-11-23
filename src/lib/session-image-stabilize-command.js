@@ -3,7 +3,7 @@
 // Host Agent.runMaintenance owns the genuine idle phase; Session.append uses
 // official user/message surface semantics and Sessions.flush proves durability.
 import {
-  committedStableProjectionWitnessMode,
+  inspectCommittedProjectionWitnesses,
   createStableProjectionWitness,
   hasPriorModelHistory,
 } from './session-image-projection-mode.js'
@@ -20,26 +20,10 @@ const WARNING = [
   'To approve, use /vision-history-stabilize CONFIRM when the Agent is idle.',
 ].join('\n')
 
-function ownedWitnessCandidate(message) {
-  const source = message?.source
-  return source && (source.kind === 'plugin:dsh-vision-router' ||
-    (source.kind === 'plugin' && source.plugin === 'dsh-vision-router')) &&
-    typeof message.id === 'string' && message.id.startsWith('vision-router-projection-')
-}
-
 /** Read-only; do not expose message text, attachment names, raw errors or IDs. */
 export function inspectHistoricalProjectionEvents(events) {
   if (!Array.isArray(events)) return { status: 'unknown' }
-  let mode
-  for (const event of events) {
-    if (event?.type !== 'user/message') continue
-    const message = event.data
-    if (!ownedWitnessCandidate(message)) continue
-    const candidate = committedStableProjectionWitnessMode(message)
-    if (!candidate) return { status: 'unknown' }
-    if (mode && mode !== candidate) return { status: 'unknown' }
-    mode = candidate
-  }
+  const mode = inspectCommittedProjectionWitnesses(events)
   return mode === 'stable-v2' ? { status: 'stable-v2' }
     : mode === 'stable' ? { status: 'stable-v1' }
       : { status: 'unwitnessed' }
