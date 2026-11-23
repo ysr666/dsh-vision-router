@@ -353,15 +353,15 @@ const CLIENT_PRELUDE = String.raw`(function(){
     var recovery = recoveryFor(directory);
     recovery.clear();
     var promise = Promise.resolve().then(function(){
-      var ready = function(){
-        // A later user selection supersedes an earlier wait. Never dispatch
-        // the stale request after hydration (even if both waiters awake).
+      var hydration = waitForDirectoryReady(directory);
+      // Only supersede an unsubmitted click awaiting initial hydration.
+      // Already-ready Hosts must retain their existing concurrent dispatch
+      // semantics; generation fencing applies to COMPLETION, not submission.
+      if (!hydration) return directory.select(selection);
+      return hydration.then(function(){
         if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
         return directory.select(selection);
-      };
-      var hydration = waitForDirectoryReady(directory);
-      // Preserve the existing no-wait microtask semantics for ready Hosts.
-      return hydration ? hydration.then(ready) : ready();
+      });
     }).then(
       function(value){
         if (!current()) return value;
