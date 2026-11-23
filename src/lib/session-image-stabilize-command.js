@@ -109,8 +109,18 @@ export function installSessionImageStabilizeCommand(ctx, modeStore) {
             if (status === 'unknown') {
               return { kind: 'error', text: 'An unrecognized/conflicting format witness blocks migration.' }
             }
-            if (status === 'stable-v1' || modeStore?.get?.(session.id) === 'stable') {
+            if (status === 'stable-v1') {
               return { kind: 'error', text: 'This Session is pinned to stable-v1; it will not be silently converted.' }
+            }
+            if (status === 'unwitnessed') {
+              // Do NOT trust the in-memory cache alone: after cold restart an
+              // established v1 Session may have a durable v1 sidecar but no
+              // explicit witness yet. Resolve the authoritative storage row
+              // before admitting any format-changing migration.
+              const persistedMode = await modeStore?.resolve?.(session, false)
+              if (persistedMode !== 'legacy') {
+                return { kind: 'error', text: 'Cannot establish a durable legacy format. Restore Session projection storage; v1/unknown history cannot be migrated.' }
+              }
             }
             // The Host's authoritative checkpoint requires at least one
             // participating persistence listener. No offline/test-only fake
