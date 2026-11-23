@@ -20,6 +20,7 @@ function fixture({
   const log = [...events]
   const original = log.slice()
   const actions = { appends: [], flushes: 0, maintenance: 0 }
+  const durabilityHolds = new Set()
   let flushBehavior = flushResult
   const session = {
     id: 'old-image-session',
@@ -61,13 +62,18 @@ function fixture({
         } },
       })
     },
-  }, { get() { return mode } })
+  }, {
+    get() { return mode },
+    markUnverifiedDurability(id) { durabilityHolds.add(id) },
+    markVerifiedDurability(id) { durabilityHolds.delete(id) },
+    isDurabilityUnverified(id) { return durabilityHolds.has(id) },
+  })
   const definition = handlers.get('vision-history-stabilize')
   assert.ok(definition)
   const call = (rawInput = 'CONFIRM', attachments = [], signal = new AbortController().signal) =>
     definition.handler({ agent, rawInput, attachments, signal })
   return {
-    session, agent, log, original, actions, call,
+    session, agent, log, original, actions, call, durabilityHolds,
     setFlush(value) { flushBehavior = value },
   }
 }
@@ -141,11 +147,15 @@ test('#865: a failed postappend flush returns error and a later retry does not d
   assert.equal(f.actions.appends.length, 1)
   assert.equal(inspectHistoricalProjectionEvents(f.log).status, 'stable-v2')
   assert.equal(f.actions.flushes, 2)
+  assert.equal(f.durabilityHolds.has(f.session.id), true,
+    'an unflushed in-memory v2 witness must fence later model requests')
   f.setFlush(true)
   const second = await f.call()
   assert.equal(second.kind, 'success')
   assert.equal(f.actions.appends.length, 1)
   assert.equal(f.actions.flushes, 4)
+  assert.equal(f.durabilityHolds.has(f.session.id), false,
+    'only confirmed retry removes the unverified-durability fence')
 })
 
 test('#865: prior v1 and contradictory witness histories cannot silently switch', async () => {
