@@ -54,8 +54,10 @@ function fixture({
         sessions: { async flush(s) {
           assert.equal(s, session)
           actions.flushes++
-          if (flushBehavior instanceof Error) throw flushBehavior
-          return flushBehavior
+          const result = typeof flushBehavior === 'function'
+            ? flushBehavior(actions.flushes) : flushBehavior
+          if (result instanceof Error) throw result
+          return result
         } },
       })
     },
@@ -130,19 +132,20 @@ test('#865: no persistence acknowledgement means no Session mutation, never fake
 })
 
 test('#865: a failed postappend flush returns error and a later retry does not duplicate the witness', async () => {
-  const f = fixture()
   // First pre-check succeeds; the post-append durable checkpoint fails.
-  let count = 0
-  const originalFlush = f.actions
-  // Simulate durability loss through a getter-backed mutable error on
-  // a separate fixture rather than assuming append() is a disk flush.
-  const broken = fixture({ flushResult: new Error('disk failed') })
-  assert.equal((await broken.call()).kind, 'error')
-  assert.equal(broken.actions.appends.length, 0)
-  broken.setFlush(true)
-  assert.equal((await broken.call()).kind, 'success')
-  assert.equal(broken.actions.appends.length, 1)
-  assert.equal(originalFlush.appends.length, 0)
+  // The witness is already in memory, so a retry must only flush it.
+  const f = fixture({ flushResult: count =>
+    count === 2 ? new Error('disk failed after append') : true })
+  const first = await f.call()
+  assert.equal(first.kind, 'error')
+  assert.equal(f.actions.appends.length, 1)
+  assert.equal(inspectHistoricalProjectionEvents(f.log).status, 'stable-v2')
+  assert.equal(f.actions.flushes, 2)
+  f.setFlush(true)
+  const second = await f.call()
+  assert.equal(second.kind, 'success')
+  assert.equal(f.actions.appends.length, 1)
+  assert.equal(f.actions.flushes, 4)
 })
 
 test('#865: prior v1 and contradictory witness histories cannot silently switch', async () => {
