@@ -277,7 +277,9 @@ export const Config = z.object({
   guidanceOverrides: z
     .array(z.object({ kind: z.string(), text: z.string() }))
     .default([]),
-  progressiveTools: z.boolean().default(true),
+  // Align the legacy Core entry with the public entry: a missing field must
+  // never enable global mid-session tool-schema changes.
+  progressiveTools: z.boolean().default(false),
   autoActivateOnImage: z.boolean().default(true),
   // Desktop capture crosses a separate privacy boundary from inspecting user-
   // supplied images. The entry-layer stabilizer dynamically mounts/unmounts
@@ -3618,7 +3620,7 @@ ctx.logger?.info(
     })
 
     // ── lightweight pixel loop: deep-look tools on sharp, no Python ─────────
-    const progressive = config.progressiveTools !== false
+    const progressive = config.progressiveTools === true
     const artifactsRel =
       typeof config.artifactsDir === 'string' && config.artifactsDir !== ''
         ? config.artifactsDir
