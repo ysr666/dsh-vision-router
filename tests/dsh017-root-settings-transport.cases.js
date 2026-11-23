@@ -226,17 +226,33 @@ test('0.1.7 root settings route survives repeated ConfigEditor reconciliation ac
   assert.equal(get.json.value.value.visionDepth, 'fast')
 })
 
-test('root settings transport stays absent on legacy SettingsProvider hosts', () => {
+test('#881: a pre-registration settings provider mounts safely but exposes no absent namespace', async () => {
   const harness = makeHarness()
-  const legacySettings = {
-    register() {},
-    describe() { return [] },
-    async mutate() {},
+  let registered = false
+  let writes = 0
+  const settings = {
+    register() { registered = true },
+    describe() {
+      return registered ? [descriptor(0, { visionDepth: 'standard' })] : []
+    },
+    async mutate() { writes++ },
   }
-  const legacy = harness.generation(legacySettings)
-  installDsh017RootLocalSettingsTransport(legacy.ctx)
-  assert.equal(harness.routes.length, 0)
-  assert.equal(harness.rootDisposers.length, 0)
+  const generation = harness.generation(settings)
+  installDsh017RootLocalSettingsTransport(generation.ctx)
+  assert.equal(harness.routes.length, 1, 'public-entry installs the bridge before base.apply registers settings')
+  assert.equal(harness.rootDisposers.length, 1)
+  const before = response()
+  await harness.routes[0].handler(request('GET'), before)
+  assert.equal(before.snapshot().status, 404, 'an unregistered namespace must never leak settings')
+  const prematureSave = response()
+  await harness.routes[0].handler(request('POST', { ops: [], expectedRevision: 0 }), prematureSave)
+  assert.equal(prematureSave.snapshot().status, 404, 'no writes before the provider registers our namespace')
+  assert.equal(writes, 0)
+  settings.register()
+  const after = response()
+  await harness.routes[0].handler(request('GET'), after)
+  assert.equal(after.snapshot().status, 200, 'the original root route must become live after registration')
+  assert.equal(after.snapshot().json.value.value.visionDepth, 'standard')
 })
 
 test('root settings transport binds generation ownership before admitting the root route', () => {
@@ -428,9 +444,9 @@ test('native SettingsProvider waits for delayed configForms without permanent 40
   }
   const generation = harness.generation(native)
   installDsh017RootLocalSettingsTransport(generation.ctx)
-  assert.equal(harness.routes.length, 0, 'before configForms, do not bind native route')
+  assert.equal(harness.routes.length, 1, 'native provider with the DVR namespace mounts without configForms')
   harness.startConfigForms({ get(namespace) { assert.equal(namespace, 'vision-router'); return {} } })
-  assert.equal(harness.routes.length, 1, 'Cordis multi-service injection must mount after configForms arrives')
+  assert.equal(harness.routes.length, 1, 'a later configForms service must not duplicate the root route')
   const out = response()
   await harness.routes[0].handler(request('GET'), out)
   assert.equal(out.snapshot().status, 200)
@@ -442,4 +458,94 @@ test('native SettingsProvider waits for delayed configForms without permanent 40
   }), post)
   assert.equal(post.snapshot().status, 200)
   assert.equal(harness.routes.length, 1, 'do not duplicate root route')
+})
+
+test('#881: 0.2.3 native settings without configForms requires admitted Peer and supports authenticated read/write', async () => {
+  const harness = makeHarness({ browserAuth: null })
+  let revision = 7
+  let depth = 'standard'
+  let writes = 0
+  const settings = {
+    // 0.2.3 native SettingsProvider has no compatibility marker, writable flag,
+    // Host-side configForms, or connection.requestRejection().
+    describe() { return [descriptor(revision, { visionDepth: depth })] },
+    async mutate(namespace, ops, expectedRevision) {
+      assert.equal(namespace, 'vision-router')
+      assert.equal(expectedRevision, revision)
+      assert.deepEqual(ops, [{ op: 'set', path: ['visionDepth'], value: 'fast' }])
+      depth = 'fast'
+      revision++
+      writes++
+    },
+  }
+  installDsh017RootLocalSettingsTransport(harness.generation(settings).ctx)
+  assert.equal(harness.routes.length, 1)
+  const route = harness.routes[0]
+  assert.equal(route.path, LOCAL_SETTINGS_PATH)
+  assert.equal(route.auth, 'required', 'WebServer must enforce authenticated browser admission')
+
+  function local(method, payload, remoteAddress = '127.0.0.1') {
+    const req = request(method, payload)
+    req.socket = { remoteAddress }
+    req.headers = { host: 'localhost:3080' }
+    return req
+  }
+  const peer = { principal: { kind: 'owner' } }
+  const unauth = response()
+  await route.handler(local('GET'), unauth)
+  assert.equal(unauth.snapshot().status, 403, 'no Peer and no legacy auth is never sufficient')
+  for (const foreignPeer of [
+    { principal: { kind: 'guest' } },
+    { principal: { kind: 'api' } },
+    { principal: { kind: 'operator' } },
+    { principal: 'owner' },
+    {},
+  ]) {
+    const deniedGet = response()
+    await route.handler(local('GET'), deniedGet, foreignPeer)
+    assert.equal(deniedGet.snapshot().status, 403, 'non-owner Peer cannot read settings')
+    const deniedPost = response()
+    await route.handler(local('POST', { ops: [], expectedRevision: 7 }), deniedPost, foreignPeer)
+    assert.equal(deniedPost.snapshot().status, 403, 'non-owner Peer cannot mutate settings')
+  }
+  assert.equal(writes, 0)
+  const untrusted = response()
+  await route.handler(local('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 7,
+  }, '203.0.113.10'), untrusted, peer)
+  assert.equal(untrusted.snapshot().status, 403, 'even an admitted Peer cannot bypass loopback checks')
+  assert.equal(writes, 0)
+
+  const initial = response()
+  await route.handler(local('GET'), initial, peer)
+  assert.equal(initial.snapshot().status, 200)
+  assert.equal(initial.snapshot().json.value.writable, true)
+  assert.equal(initial.snapshot().json.value.revision, 7)
+
+  const saved = response()
+  await route.handler(local('POST', {
+    ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
+    expectedRevision: 7,
+  }), saved, peer)
+  assert.equal(saved.snapshot().status, 200)
+  assert.equal(saved.snapshot().json.value.revision, 8)
+  assert.equal(saved.snapshot().json.value.value.visionDepth, 'fast')
+  assert.equal(writes, 1)
+})
+
+test('#881: deprecated requestRejection denial still wins over a supplied Peer', async () => {
+  const harness = makeHarness({ browserAuth: () => 401 })
+  const settings = {
+    [DSH_017_SETTINGS_COMPAT_MARK]: true,
+    describe() { return [descriptor(1, { localOnlyVision: true })] },
+    async mutate() { assert.fail('rejected request must not be written') },
+  }
+  installDsh017RootLocalSettingsTransport(harness.generation(settings).ctx)
+  const req = request('GET')
+  req.socket = { remoteAddress: '127.0.0.1' }
+  req.headers = { host: 'localhost:3080' }
+  const res = response()
+  await harness.routes[0].handler(req, res, { principal: { kind: 'owner' } })
+  assert.equal(res.snapshot().status, 401)
 })

@@ -1,0 +1,109 @@
+name: "Issue 881 exact DSH 0.2.3-alpha.2 acceptance"
+
+# Isolated issue-specific gate. Does not change the reviewed support/Alpha pins
+# and never publishes, tags, merges or uploads native installation packages.
+on:
+  pull_request:
+    paths:
+      - "src/lib/web/dsh-settings-017-root-transport.js"
+      - "tests/dsh017-root-settings-transport.cases.js"
+      - ".github/workflows/issue-881-alpha2-acceptance.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-881-alpha2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-alpha2-settings:
+    name: "alpha2 settings / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout DVR candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout immutable DSH 0.2.3-alpha.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4b399c39a6d1479cd84ca591b4d7c88e24d38a96
+          persist-credentials: false
+          path: dsh-alpha2
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          # Upstream alpha2 explicitly requires ^24.22.3 || >=26.13.1.
+          node-version: 24.22.3
+      - name: Verify immutable Host version and runtime compatibility
+        working-directory: dsh-alpha2
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./package.json').version")" = "0.2.3-alpha.2"
+          test "$(git rev-parse HEAD)" = "4b399c39a6d1479cd84ca591b4d7c88e24d38a96"
+          node -e "if(process.versions.node!=='24.22.3') process.exit(1)"
+      - name: Build DVR and test authenticated root transport
+        working-directory: dvr
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+          node --test tests/dsh017-root-settings-transport.cases.js
+      - name: Install and build exact alpha2 Host
+        working-directory: dsh-alpha2
+        env:
+          CI: "true"
+          LEFTHOOK: "0"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Install Chromium for real Settings UI
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-alpha2
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ../dvr/scripts/ci-prefer-ubuntu-archive.sh
+          pnpm --filter @deepseek-ai/dsh-web-frontend exec playwright install --with-deps chromium
+      - name: Verify real alpha2 Settings mount/save/reload/readback
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-alpha2
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha2
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.3-alpha.2
+          DVR_EXPECT_NATIVE_SETTINGS_ICON: "1"
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/issue-881-alpha2-settings.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/issue-881-alpha2-settings.png
+        run: node ../dvr/scripts/dsh-preview-settings-browser-lifecycle-smoke.mjs
+      - name: Verify real Windows Desktop alpha2 Host injection
+        if: matrix.os == 'windows-latest'
+        working-directory: dsh-alpha2
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-alpha2
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.3-alpha.2
+          DVR_DESKTOP_BASE_PORT: "19410"
+        run: node --import tsx ../dvr/scripts/dsh017-desktop-host-injection-smoke.mjs
+      - name: Upload isolated UI diagnostics only on failure
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue-881-alpha2-settings-debug
+          path: |
+            ${{ runner.temp }}/issue-881-alpha2-settings.json
+            ${{ runner.temp }}/issue-881-alpha2-settings.png
+          if-no-files-found: ignore
