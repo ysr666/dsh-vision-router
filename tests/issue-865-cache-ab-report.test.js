@@ -170,3 +170,21 @@ test('official DeepSeek Chat Usage allows prompt/completion details and refuses 
   assert.throws(() => compareCacheAB(doc([native('before'), malformed])),
     /cached token detail contradicts/)
 })
+
+
+test('cross-route incident evidence is retained without polluting same-upstream cache A/B', () => {
+  const observations = [
+    one('before', { case: 'routeSwitched', routeTag: 'source', modelTag: 'original', cacheReadTokens: 5, inputTokens: 95 }),
+    one('after', { case: 'routeSwitched', routeTag: 'wrapper', modelTag: 'delegate', cacheReadTokens: 80, inputTokens: 20 }),
+  ]
+  const result = compareCacheAB(doc(observations))
+  assert.equal(result.pairedTrials, 0)
+  assert.equal(result.excluded.mismatchedRoutes, 1)
+  assert.equal(result.routeAttribution.changedPairs, 1)
+  assert.equal(result.routeAttribution.before.cacheReadTokens, 5)
+  assert.equal(result.routeAttribution.after.cacheReadTokens, 80)
+  assert.equal(result.deltas, null, 'changing upstream is not a causal cache regression or saving')
+  assert.equal(result.evidenceLevel.actualItemizedBilling, false)
+  assert.match(formatCacheAB(result), /descriptive only/i)
+  assert.doesNotMatch(formatCacheAB(result), /source|wrapper|original|delegate/)
+})
