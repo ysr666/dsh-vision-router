@@ -29,9 +29,10 @@ function fixture(initial = []) {
   const store = createSessionImageProjectionModeStore(ctx)
   return { ctx, rows, stats, store }
 }
-function session(id, events = []) {
+function session(id, events = [], { firstLiveSeq = 0, isSeeded = false, inheritedEventCount = 0 } = {}) {
   return {
     id, seq: events.length, eventAt: i => events[i],
+    firstLiveSeq, header: { isSeeded }, inheritedEventCount,
     requestHeader() { return events.some(x => x.type === 'request/header') ? {} : undefined },
     snapshotEvents() { return events },
   }
@@ -62,7 +63,7 @@ test('stage 2: preexisting conversation/fork stays legacy forever, even when def
   ])
   assert.equal(await h.store.resolve(legacy, true), 'legacy')
   assert.deepEqual(h.rows.get('historical'), { revision: 1, mode: 'legacy' })
-  const imported = session('forked', [{ type: 'assistant/message' }])
+  const imported = session('forked', [{ type: 'assistant/message' }], { firstLiveSeq: 1, isSeeded: true, inheritedEventCount: 1 })
   assert.equal(await h.store.resolve(imported, true), 'legacy',
     'an imported history without request/header cannot be classified as new')
   await h.ctx.cleanup()
@@ -89,7 +90,7 @@ test('stage 2: absent storage, uninspectable history, and corrupted stored rows 
   assert.equal(await missingHistory.store.resolve({ id: 'uninspectable' }, true), 'legacy')
   await missingHistory.ctx.cleanup()
   const corrupted = fixture([['broken', { revision: 100, mode: 'stable' }]])
-  assert.equal(await corrupted.store.resolve(session('broken'), true), 'legacy')
+  assert.equal(await corrupted.store.resolve(session('broken'), true), 'unknown')
   assert.equal(corrupted.stats.puts, 0, 'bad record must not be overwritten with a guessed stable mode')
   await corrupted.ctx.cleanup()
 })
@@ -126,5 +127,79 @@ test('stage 2: storage write failure does not enable volatile stable history', a
   const store = createSessionImageProjectionModeStore(ctx)
   assert.equal(await store.resolve(session('disk'), true), 'legacy')
   assert.equal(store.get('disk'), undefined)
+  await ctx.cleanup()
+})
+
+test('stage 2: first-turn lifecycle recognizes uncommitted or just-admitted user input, not old model history', async () => {
+  const h = fixture()
+  const first = session('first-prestep', [{ type: 'session/start' }])
+  assert.equal(await h.store.resolve(first, true), 'stable', 'DSH pre-step precedes request/header')
+  const alreadyClaimed = session('first-admitted', [
+    { type: 'user/message', data: { id: 'first-inbox', role: 'user' } },
+  ])
+  assert.equal(await h.store.resolve(alreadyClaimed, true), 'stable',
+    'a user message on a demonstrably fresh Session is not proof of an earlier request')
+  const snapshotFork = session('fork-only-user', [
+    { type: 'user/message' }, { type: 'session/end-seed', data: { inherited: true } },
+  ], { isSeeded: true, firstLiveSeq: 2, inheritedEventCount: 1 })
+  assert.equal(await h.store.resolve(snapshotFork, true), 'legacy',
+    'a fork of a user-only source Session is never a new unseeded conversation')
+  const resumedNoHeader = session('restored-user-only', [
+    { type: 'user/message' },
+  ], { firstLiveSeq: 1 })
+  assert.equal(await h.store.resolve(resumedNoHeader, true), 'legacy')
+  await h.ctx.cleanup()
+})
+
+test('stage 2: immutable per-Session mode beats later global opt-in and opt-out settings', async () => {
+  const h = fixture()
+  const legacy = session('immutable-legacy')
+  assert.equal(await h.store.resolve(legacy, false), 'legacy')
+  assert.equal(await h.store.resolve(legacy, true), 'legacy')
+  const stable = session('immutable-stable')
+  assert.equal(await h.store.resolve(stable, true), 'stable')
+  assert.equal(await h.store.resolve(stable, false), 'stable')
+  await h.ctx.cleanup()
+  const restart = fixture(h.rows)
+  assert.equal(await restart.store.resolve(session('immutable-legacy', [{ type: 'request/header' }]), true), 'legacy')
+  assert.equal(await restart.store.resolve(session('immutable-stable', [{ type: 'request/header' }]), false), 'stable')
+  await restart.ctx.cleanup()
+})
+
+test('stage 2: missing storage after a prior request is UNKNOWN, never guessed legacy', async () => {
+  const store = createSessionImageProjectionModeStore({
+    get() { return undefined },
+    effect(setup) { this.cleanup = setup() },
+  })
+  assert.equal(await store.resolve(session('brand-new'), true), 'legacy',
+    'a fresh Session may safely choose legacy if stable storage is not available')
+  const old = session('recovered-stable-unknown', [
+    { type: 'user/message' }, { type: 'request/header' },
+    { type: 'assistant/message' },
+  ], { firstLiveSeq: 3 })
+  assert.equal(await store.resolve(old, false), 'unknown',
+    'restarted image Sessions must not silently switch from prior stable to legacy')
+})
+
+test('stage 2: failed open retries on next step, can recover the same stable mode without switching format', async () => {
+  let attempts = 0
+  const row = { revision: 1, mode: 'stable' }
+  const ctx = {
+    get() { return { async open() {
+      attempts++
+      if (attempts === 1) throw new Error('transient storage offline')
+      return {
+        table() { return { get() { return row }, async put() { throw new Error('no write expected') } } },
+        async close() {},
+      }
+    } } },
+    effect(setup) { this.cleanup = setup() },
+    logger: { warn() {} },
+  }
+  const store = createSessionImageProjectionModeStore(ctx)
+  const existing = session('restored', [{ type: 'request/header' }], { firstLiveSeq: 1 })
+  assert.equal(await store.resolve(existing), 'unknown')
+  assert.equal(await store.resolve(existing), 'stable')
+  assert.equal(attempts, 2)
   await ctx.cleanup()
 })
