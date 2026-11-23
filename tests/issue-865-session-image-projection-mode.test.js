@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { verifyImageProjectionAdmission } from '../lib/session-image-projection-admission.js'
 import {
   createSessionImageProjectionModeStore,
   imageProjectionModeDomainSpec,
@@ -549,4 +550,50 @@ test('adversarial #865: live malformed witness poisons previous valid mode and c
   assert.equal(await h.store.resolve(live, 'stable-v2'), 'unknown',
     'subsequent valid marker cannot override an already committed contradiction')
   await h.ctx.cleanup()
+})
+
+
+test('adversarial #865: v2 admission refuses an unidentified image and restores the claimed Inbox entry', async () => {
+  const image = { role: 'user', content: [{ type: 'image', attachment: { name: 'no-id.png' } }] }
+  const claimed = [image]
+  const restored = []
+  const payload = {
+    messages: claimed, agent: { inbox: { splice(target, index, count, messages) {
+      assert.equal(target, 'next-turn')
+      assert.equal(index, 0)
+      assert.equal(count, 0)
+      restored.push(...messages)
+    } } },
+  }
+  const modeStore = {
+    isDurabilityUnverified() { return false },
+    hasStorageFacility() { return false },
+    hasCommittedWitness() { return true },
+    get() { return 'stable-v2' },
+    async resolve() { return 'stable-v2' },
+  }
+  await assert.rejects(() => verifyImageProjectionAdmission({
+    session: { id: 'v2-pinned' }, payload, decision: { messages: claimed },
+    modeStore, settings: { stableImageHistoryNewSessions: false },
+    hasRetainedImage: blocks => blocks.some(b => b.type === 'image'),
+  }), /cannot prove an image identity/)
+  assert.deepEqual(restored, claimed, 'the exact human input, not a rewritten history, must be retained')
+})
+
+test('adversarial #865: new Session with unprovable image identity never acquires v2 witness', async () => {
+  const image = { role: 'user', content: [{
+    type: 'image', attachment: { name: 'no-id.png' },
+  }] }
+  const requests = []
+  const store = {
+    async resolve(session, requested) { requests.push(requested); return 'legacy' },
+  }
+  await verifyImageProjectionAdmission({
+    session: { id: 'first-prompt' }, payload: { messages: [image] },
+    decision: { messages: [image] }, modeStore: store,
+    settings: { stableImageHistoryNewSessions: true },
+    hasRetainedImage: blocks => blocks.some(b => b.type === 'image'),
+  })
+  assert.deepEqual(requests, [false],
+    'the opt-in v2 format cannot be selected based on mutable request position')
 })
