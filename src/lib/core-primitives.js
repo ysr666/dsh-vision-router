@@ -695,6 +695,29 @@ export function collectImageBlocks(messages) {
   return out
 }
 
+/**
+ * A stable-v2 text projection may use a durable attachment ID, or a durable
+ * source message ID plus depth-first image occurrence. NEVER substitute the
+ * current request index: history compaction/reordering would change it.
+ * This scan follows the same nested image walk as the actual renderer.
+ */
+export function hasUnstableStableV2ImageIdentity(messages) {
+  for (const message of messages ?? []) {
+    if (!message || !Array.isArray(message.content)) continue
+    const messageStable = typeof message.id === 'string' && message.id.length > 0
+    let missing = false
+    rewriteImagesDeep(message.content, block => {
+      const attachment = block.attachment ?? {}
+      const durable = (typeof attachment.attachmentId === 'string' && attachment.attachmentId.trim()) ||
+        (typeof attachment.id === 'string' && attachment.id.trim())
+      if (!durable && !messageStable) missing = true
+      return block
+    })
+    if (missing) return true
+  }
+  return false
+}
+
 /** Text blocks of the last user message, joined. */
 export function lastUserText(messages) {
   for (let i = (messages ?? []).length - 1; i >= 0; i--) {
@@ -768,7 +791,7 @@ export function projectStableTextOnlyImages(messages, { markerStyle = 'history' 
   }
   const attachments = []
   let changed = false
-  const rewritten = (messages ?? []).map((message, messageIndex) => {
+  const rewritten = (messages ?? []).map((message) => {
     if (!message || !Array.isArray(message.content)) return message
     let imageOccurrence = 0
     const result = rewriteImagesDeep(message.content, (block) => {
@@ -790,8 +813,10 @@ export function projectStableTextOnlyImages(messages, { markerStyle = 'history' 
           // message ID + deterministic depth-first image ordinal is the only
           // stable provenance we can honestly preserve without image bytes.
           // Explicitly do NOT recommend querying vision_describe by this key.
-          const origin = typeof message.id === 'string' && message.id !== ''
-            ? message.id : 'request-message-' + messageIndex
+          if (typeof message.id !== 'string' || message.id === '') {
+            throw new Error('DVR stable-v2 projection refused an image without durable attachment or message identity')
+          }
+          const origin = message.id
           return {
             type: 'text',
             text: '[DVR stable-v2 image without attachment ID; source ' +
