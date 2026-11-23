@@ -11,6 +11,7 @@ import {
   LiveDescribeCache,
 } from './runtime-reliability.js'
 import { projectDelegatedCallConfig } from './delegated-call-config.js'
+import { createVisionDescribeSingleFlight } from './vision-describe-singleflight.js'
 import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
 import { VISION_RESULT_CODES } from './vision-resilience.js'
 
@@ -112,6 +113,7 @@ function stableRuntimeConfigSignature(value) {
 
 function createRuntimeState(initialConfig = {}) {
   const cache = new LiveDescribeCache()
+  const shareDescribe = createVisionDescribeSingleFlight()
   const endpoints = new HttpEndpointRevisionTracker()
   const transparentReasoning = new Map()
   const fallbackConfig = {
@@ -222,6 +224,7 @@ function createRuntimeState(initialConfig = {}) {
 
   return {
     cache,
+    shareDescribe,
     endpoints,
     noteConfig,
     activateSettingsScope,
@@ -678,16 +681,27 @@ async function executeVisionTool(def, args, exec, execute, wrappedCtx, runtimeSt
             cacheKey = undefined
           }
         }
-        const result = await execute(args, exec)
-        if (
-          cacheKey &&
-          runtimeState.config().cache !== false &&
-          !state.signal?.aborted &&
-          cacheableVisionDescribeResult(result)
-        ) {
-          runtimeState.cache.set(cacheKey, result)
+        // Only authorized local-image content hashes can be coalesced. The
+        // Session and Host parent signal MUST both match: separate callers
+        // still own their cancellation and tool capability checks.
+        const cacheRevision = runtimeState.revision()
+        const perform = async () => {
+          const result = await execute(args, exec)
+          if (
+            cacheKey &&
+            runtimeState.config().cache !== false &&
+            runtimeState.revision() === cacheRevision &&
+            !state.signal?.aborted &&
+            cacheableVisionDescribeResult(result)
+          ) {
+            runtimeState.cache.set(cacheKey, result)
+          }
+          return result
         }
-        return result
+        return runtimeState.shareDescribe(
+          exec?.agent?.session, usableSignal(exec?.signal),
+          cacheKey, perform,
+        )
       }),
     ))
   } finally {
