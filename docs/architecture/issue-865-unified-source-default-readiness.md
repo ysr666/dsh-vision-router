@@ -40,3 +40,13 @@
 2. Repair only confirmed implementation or coverage gaps, without weakening OFF execution permission.
 3. Make any future main merge and version/npm/release/tag subject to separate owner approval. No source PR is being merged by creating this Draft branch.
 4. OFF/ON system + tool prefix unification is **deferred**; current OFF permissions are not traded away for cosmetic cache equivalence.
+
+## Mainline compatibility reconciled (2026-11-23)
+
+The integration branch now also includes current-main `d5eae7cc` changes for #869
+(official DeepSeek delegated model image capability) and #881 (authenticated
+DSH 0.2.3-alpha.2 Settings root transport), while keeping the #865
+`stableImageHistory` option adjacent to the new wrapper capability guard.
+Mainline acceptance workflow and original transport/smoke/test file blobs
+are reused unchanged; the overlapping index, runtime-e2e and package script
+were composed semantically, not overwritten.

@@ -124,13 +124,22 @@ try {
   // authorize both the index and the authenticated /api waterfall. The latter
   // catches the field failure where unauthenticated /api requests return 401
   // immediately but authenticated requests never settle.
-  const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) })
-  const setCookie = login.headers.get('set-cookie')
-  await login.body?.cancel()
-  if (login.status !== 303 || setCookie === null) {
-    throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
+  // New Desktop Hosts supply an owner session cookie through the trusted
+  // DesktopHostProcess IPC boundary. They intentionally no longer grant
+  // browser cookies by visiting the readiness URL with a query token.
+  // Older supported Hosts still use the legacy launch-token exchange.
+  let cookie = ready.authenticationCookie
+  let authMode = 'desktop-owned-cookie'
+  if (typeof cookie !== 'string' || cookie.length === 0) {
+    const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) })
+    const setCookie = login.headers.get('set-cookie')
+    await login.body?.cancel()
+    if (login.status !== 303 || setCookie === null) {
+      throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
+    }
+    cookie = setCookie.split(';', 1)[0]
+    authMode = 'legacy-launch-token'
   }
-  const cookie = setCookie.split(';', 1)[0]
   const authenticatedStatus = await statusProbe(ready.url, '/', cookie, 200)
   const authenticatedApiMissing = await statusProbe(ready.url, '/api/__dvr_missing__', cookie, 404)
   const authenticatedApiHealth = await statusProbe(ready.url, '/api/health', cookie, 404)
@@ -184,7 +193,7 @@ try {
     hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
     structuredInjections: ready.injections.length,
     dvrSettingsPreludeRows: rows.length,
-    authTokenExchange: login.status,
+    authentication: authMode,
     authenticatedIndex: authenticatedStatus,
     authenticatedApiMissing,
     authenticatedApiHealth,

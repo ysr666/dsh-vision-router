@@ -658,6 +658,21 @@ test('issue #865: twin reasoning effort is isolated by delegate/model and has bo
   assert.equal(await run('other-511', 'm1'), 'low', 'recent Session state remains')
 })
 
+test('#869: official DeepSeek wrapper uses real delegate image capability, not its advertised synthetic image support', () => {
+  const source = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
+  const start = source.indexOf('const officialStream = createWrapperStreamBody(ctx, {')
+  assert.ok(start >= 0, 'special DeepSeek wrapper must exist')
+  const end = source.indexOf('}).stream', start)
+  assert.ok(end > start, 'special wrapper call must close')
+  const entry = source.slice(start, end)
+  assert.match(entry, /delegateProvider:\s*wrapperDelegateRoute/)
+  assert.match(entry, /preserveImageInput:\s*async\s*\(options\)\s*=>/)
+  assert.match(entry, /resolveModelInfo\(wrapperDelegateRoute\(\), options\.model\)/)
+  assert.match(entry, /modelInfoAcceptsImages\(info\)/)
+  assert.match(entry, /catch\s*\{\s*return false\s*\}/,
+    'unresolved model metadata must retain safe text-only behavior')
+})
+
 // 进程级退出金丝雀：若 buildInstantLocalMap 内部回退为不清理的
 // AbortSignal.timeout(120s)，子进程会被悬挂计时器拖住 120s 无法退出，
 // 本用例会在 15s 判定线内把子进程判死并失败。
