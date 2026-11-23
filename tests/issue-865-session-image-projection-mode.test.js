@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import {
   createSessionImageProjectionModeStore,
   imageProjectionModeDomainSpec,
+  requiresVerifiedImageProjection,
 } from '../lib/session-image-projection-mode.js'
 
 function fixture(initial = []) {
@@ -202,4 +203,43 @@ test('stage 2: failed open retries on next step, can recover the same stable mod
   assert.equal(await store.resolve(existing), 'stable')
   assert.equal(attempts, 2)
   await ctx.cleanup()
+})
+
+test('stage 2: unknown format blocks every image-bearing Session surface but allows pure text', () => {
+  const blocksHaveImage = blocks => blocks.some(block =>
+    block?.type === 'image' ||
+    (Array.isArray(block?.content) && blocksHaveImage(block.content)))
+  const text = { id: 'plain', content: [{ type: 'text', text: 'no image' }] }
+  const picture = { id: 'picture', content: [{ type: 'text', text: 'view' },
+    { type: 'image', attachment: { attachmentId: 'sha256:private-test' } }] }
+  const safe = { snapshotEvents() { return [
+    { type: 'user/message', data: text },
+    { type: 'assistant/message', data: { message: text } },
+  ] } }
+  assert.equal(requiresVerifiedImageProjection(safe, [text], blocksHaveImage), false)
+  assert.equal(requiresVerifiedImageProjection(safe, [picture], blocksHaveImage), true,
+    'a newly claimed image must not be projected without a known durable format')
+  for (const type of ['user/message', 'tool/result', 'assistant/message',
+    'system/message', 'developer/message']) {
+    const event = { type, data: type === 'user/message'
+      ? picture : { message: picture } }
+    const session = { snapshotEvents() { return [event] } }
+    assert.equal(requiresVerifiedImageProjection(session, [text], blocksHaveImage), true,
+      type + ' can retain historical image content')
+  }
+  const nested = { id: 'nested', content: [{ type: 'tool-result',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:nested' } }] }] }
+  assert.equal(requiresVerifiedImageProjection({
+    snapshotEvents() { return [{ type: 'tool/result', data: { message: nested } }] },
+  }, [text], blocksHaveImage), true)
+  assert.equal(requiresVerifiedImageProjection({
+    snapshotEvents() { return [{ type: 'user/message', data: {
+      id: 'vision-router-image-evidence-v1-existing', content: [{ type: 'text', text: 'OCR update' }],
+    } }] },
+  }, [text], blocksHaveImage), true, 'append-only OCR updates witness previous image history')
+  assert.equal(requiresVerifiedImageProjection({}, [text], blocksHaveImage), true,
+    'unreadable history must not be mistaken for an empty image history')
+  assert.equal(requiresVerifiedImageProjection({
+    snapshotEvents() { throw new Error('session log offline') },
+  }, [text], blocksHaveImage), true)
 })
