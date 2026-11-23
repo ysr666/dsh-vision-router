@@ -7,6 +7,7 @@ import {
 import {
   rewriteHistoryImages,
   projectStableTextOnlyImages,
+  hasUnstableStableV2ImageIdentity,
   createWrapperStreamBody,
 } from '../lib/core-primitives.js'
 
@@ -632,4 +633,28 @@ test('stage 2: v2 never conflates distinct images with missing attachment IDs', 
   })) {}
   assert.deepEqual(requests[0].messages, projected,
     'canonical fallback is byte-identical through both text-only paths')
+})
+
+
+test('adversarial #865: idless v2 images may not use mutable request indices', () => {
+  const idless = { role: 'user', content: [
+    { type: 'text', text: 'unidentified but legitimate historical image' },
+    { type: 'image', attachment: { name: 'mutable.png' } },
+  ] }
+  const nested = { role: 'tool', id: 'durable-tool-result', content: [{
+    type: 'tool-result', content: [{ type: 'image', attachment: { name: 'nested.png' } }],
+  }] }
+  assert.equal(hasUnstableStableV2ImageIdentity([idless]), true)
+  assert.equal(hasUnstableStableV2ImageIdentity([nested]), false)
+  assert.throws(() => projectStableTextOnlyImages([idless], { markerStyle: 'canonical-v2' }),
+    /without durable attachment or message identity/)
+  const durable = { ...idless, id: 'durable-image-origin' }
+  const first = projectStableTextOnlyImages([durable], { markerStyle: 'canonical-v2' }).messages
+  const afterInsert = projectStableTextOnlyImages([
+    { role: 'user', id: 'prepend', content: [{ type: 'text', text: 'earlier turn' }] },
+    durable,
+  ], { markerStyle: 'canonical-v2' }).messages
+  assert.deepEqual(first[0], afterInsert[1],
+    'message id + image occurrence keeps historical marker stable when positions change')
+  assert.equal(hasUnstableStableV2ImageIdentity([durable]), false)
 })
