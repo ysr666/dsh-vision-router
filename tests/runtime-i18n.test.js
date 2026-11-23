@@ -585,3 +585,27 @@ test('issue #865: auto-mount notice is append-once across cold resume and HMR, p
   const once = __runtimeI18nTest.addAutoMountReminder(unrelated, payload, i18n)
   assert.equal(once.messages.length, 2)
 })
+
+test('issue #865: parallel image pre-steps mount vision tools once and cannot generate two new notices', async () => {
+  let signalMounted
+  let activated = 0
+  let mounted = false
+  const state = {
+    activationExecute: async () => {
+      activated++
+      await new Promise(resolve => { signalMounted = resolve })
+      mounted = true
+    },
+    activationStateProbe: () => mounted,
+  }
+  const first = __runtimeI18nTest.ensureDeepTools(state)
+  const second = __runtimeI18nTest.ensureDeepTools(state)
+  await Promise.resolve()
+  assert.equal(activated, 1, 'parallel image turns share one tool registration')
+  signalMounted()
+  const outcomes = await Promise.all([first, second])
+  assert.equal(outcomes.filter(x => x === 'mounted').length, 1,
+    'only one caller wins first-mount notification authority')
+  assert.equal(outcomes.filter(x => x === 'already-mounted').length, 1)
+  assert.equal(state.mountInFlight, undefined, 'no stale activation promise after completion')
+})

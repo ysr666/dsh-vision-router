@@ -511,8 +511,21 @@ function createToolBoundary(tools, i18n, liveConfig, state) {
 async function ensureDeepTools(state) {
   if (deepToolsMounted(state)) return DEEP_TOOL_MOUNT_STATE.alreadyMounted
   if (typeof state.activationExecute !== 'function') return DEEP_TOOL_MOUNT_STATE.unavailable
-  await state.activationExecute({}, undefined)
-  return deepToolsMounted(state) ? DEEP_TOOL_MOUNT_STATE.mounted : DEEP_TOOL_MOUNT_STATE.unavailable
+  // Two simultaneous image pre-steps can both observe an unmounted registry.
+  // Single-flight the registration, otherwise duplicate tool mutations can
+  // change the model-facing schema twice before the first turn is assembled.
+  if (state.mountInFlight) {
+    await state.mountInFlight
+    return deepToolsMounted(state) ? DEEP_TOOL_MOUNT_STATE.alreadyMounted : DEEP_TOOL_MOUNT_STATE.unavailable
+  }
+  const operation = Promise.resolve().then(() => state.activationExecute({}, undefined))
+  state.mountInFlight = operation
+  try {
+    await operation
+    return deepToolsMounted(state) ? DEEP_TOOL_MOUNT_STATE.mounted : DEEP_TOOL_MOUNT_STATE.unavailable
+  } finally {
+    if (state.mountInFlight === operation) state.mountInFlight = undefined
+  }
 }
 
 function localizeRequestBody(value, i18n) {
@@ -689,7 +702,9 @@ export function installRuntimeI18nBoundary(ctx, config = {}) {
                 !state.autoMountNotified
               ) {
                 const mountState = await ensureDeepTools(state)
-                if (mountState === DEEP_TOOL_MOUNT_STATE.mounted) {
+                if (mountState === DEEP_TOOL_MOUNT_STATE.mounted && !state.autoMountNotified) {
+                  // A concurrent pre-step may already have committed the
+                  // first notice while this one awaited the same activation.
                   state.autoMountNotified = true
                   decision = addAutoMountReminder(decision, payload, i18n)
                 }
@@ -718,4 +733,5 @@ export const __runtimeI18nTest = Object.freeze({
   localizeRequestBody,
   projectLegacyCoreConfig,
   addAutoMountReminder,
+  ensureDeepTools,
 })
