@@ -299,6 +299,50 @@ const CLIENT_PRELUDE = String.raw`(function(){
     recoveries.set(directory, state);
     return state;
   }
+  // Desktop may render an enabled Vision control before the Host's model
+  // directory finishes its first hydration. A click in that window must be
+  // deferred, not sent to an unready ModelDirectory (where it can be lost).
+  // The subscription is read-only; it never performs a model selection.
+  function waitForDirectoryReady(directory){
+    var store = directory && directory.store;
+    if (!store || typeof store.getSnapshot !== 'function') return Promise.resolve();
+    var initial = store.getSnapshot();
+    if (!initial || (initial.status !== 'idle' && initial.status !== 'loading')) return Promise.resolve();
+    if (typeof store.subscribe !== 'function') return Promise.reject(new Error('ModelDirectory cannot observe initial readiness'));
+    return new Promise(function(resolve, reject){
+      var done = false;
+      var unlisten;
+      var timer;
+      function finish(error){
+        if (done) return;
+        done = true;
+        if (timer !== undefined) window.clearTimeout(timer);
+        if (typeof unlisten === 'function') unlisten();
+        if (error) reject(error);
+        else resolve();
+      }
+      function inspect(){
+        if (done) return;
+        var next;
+        try { next = store.getSnapshot(); }
+        catch (error) { finish(error); return; }
+        if (next && next.status === 'error') {
+          finish(new Error('ModelDirectory failed initial hydration'));
+        } else if (!next || (next.status !== 'loading' && next.status !== 'idle')) {
+          finish();
+        }
+      }
+      try {
+        unlisten = store.subscribe(inspect);
+        timer = window.setTimeout(function(){
+          finish(new Error('ModelDirectory initial hydration timed out'));
+        }, 15000);
+        inspect();
+      } catch (error) {
+        finish(error);
+      }
+    });
+  }
   function select(directory, selection){
     var key = JSON.stringify(selection || {});
     var held = pending.get(directory);
@@ -308,7 +352,14 @@ const CLIENT_PRELUDE = String.raw`(function(){
     var current = function(){ return selectionGenerations.get(directory) === generation; };
     var recovery = recoveryFor(directory);
     recovery.clear();
-    var promise = Promise.resolve().then(function(){ return directory.select(selection); }).then(
+    var promise = Promise.resolve().then(function(){
+      return waitForDirectoryReady(directory);
+    }).then(function(){
+      // A later user selection supersedes an earlier wait. Never dispatch
+      // the stale request after hydration (even if both waiters awake).
+      if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
+      return directory.select(selection);
+    }).then(
       function(value){
         if (!current()) return value;
         if (value && value.ok === false) {
