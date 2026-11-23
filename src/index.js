@@ -2627,10 +2627,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     // Returning { kind: 'reject' } would discard claimed inbox messages;
     // rejecting with an error instead avoids silently continuing with a
     // different format and surfaces the storage repair requirement.
-    if (sessionImageProjectionModeStore?.resolve) {
+    const newStableRequested = current().stableImageHistory === true ||
+      current().stableImageHistoryNewSessions === true
+    const modeStoreNeeded = sessionImageProjectionModeStore?.resolve &&
+      (newStableRequested ||
+        sessionImageProjectionModeStore.hasStorageFacility?.() === true ||
+        sessionImageProjectionModeStore.get?.(session.id) !== undefined)
+    if (modeStoreNeeded) {
       const projection = await sessionImageProjectionModeStore.resolve(
-        session, current().stableImageHistory === true ||
-          current().stableImageHistoryNewSessions === true,
+        session, newStableRequested,
       )
       if (projection === 'unknown') {
         // A missing optional sidecar cannot justify rewriting *any* image
