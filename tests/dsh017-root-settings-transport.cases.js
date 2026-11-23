@@ -490,10 +490,25 @@ test('#881: 0.2.3 native settings without configForms requires admitted Peer and
     req.headers = { host: 'localhost:3080' }
     return req
   }
-  const peer = { principal: 'host-admitted-browser' }
+  const peer = { principal: { kind: 'owner' } }
   const unauth = response()
   await route.handler(local('GET'), unauth)
   assert.equal(unauth.snapshot().status, 403, 'no Peer and no legacy auth is never sufficient')
+  for (const foreignPeer of [
+    { principal: { kind: 'guest' } },
+    { principal: { kind: 'api' } },
+    { principal: { kind: 'operator' } },
+    { principal: 'owner' },
+    {},
+  ]) {
+    const deniedGet = response()
+    await route.handler(local('GET'), deniedGet, foreignPeer)
+    assert.equal(deniedGet.snapshot().status, 403, 'non-owner Peer cannot read settings')
+    const deniedPost = response()
+    await route.handler(local('POST', { ops: [], expectedRevision: 7 }), deniedPost, foreignPeer)
+    assert.equal(deniedPost.snapshot().status, 403, 'non-owner Peer cannot mutate settings')
+  }
+  assert.equal(writes, 0)
   const untrusted = response()
   await route.handler(local('POST', {
     ops: [{ op: 'set', path: ['visionDepth'], value: 'fast' }],
@@ -531,6 +546,6 @@ test('#881: deprecated requestRejection denial still wins over a supplied Peer',
   req.socket = { remoteAddress: '127.0.0.1' }
   req.headers = { host: 'localhost:3080' }
   const res = response()
-  await harness.routes[0].handler(req, res, { principal: 'admitted' })
+  await harness.routes[0].handler(req, res, { principal: { kind: 'owner' } })
   assert.equal(res.snapshot().status, 401)
 })
