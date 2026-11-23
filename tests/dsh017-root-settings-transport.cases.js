@@ -229,12 +229,13 @@ test('0.1.7 root settings route survives repeated ConfigEditor reconciliation ac
 test('#881: a pre-registration settings provider mounts safely but exposes no absent namespace', async () => {
   const harness = makeHarness()
   let registered = false
+  let writes = 0
   const settings = {
     register() { registered = true },
     describe() {
       return registered ? [descriptor(0, { visionDepth: 'standard' })] : []
     },
-    async mutate() {},
+    async mutate() { writes++ },
   }
   const generation = harness.generation(settings)
   installDsh017RootLocalSettingsTransport(generation.ctx)
@@ -243,6 +244,10 @@ test('#881: a pre-registration settings provider mounts safely but exposes no ab
   const before = response()
   await harness.routes[0].handler(request('GET'), before)
   assert.equal(before.snapshot().status, 404, 'an unregistered namespace must never leak settings')
+  const prematureSave = response()
+  await harness.routes[0].handler(request('POST', { ops: [], expectedRevision: 0 }), prematureSave)
+  assert.equal(prematureSave.snapshot().status, 404, 'no writes before the provider registers our namespace')
+  assert.equal(writes, 0)
   settings.register()
   const after = response()
   await harness.routes[0].handler(request('GET'), after)
