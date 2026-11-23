@@ -94,6 +94,15 @@ function remoteFixture() {
       assert.ok(mountChild)
       return mountChild(makeChildScope())
     },
+    remountOverlappingAgents() {
+      const oldListener = listener
+      const oldDisposer = childDisposer
+      mountChild(makeChildScope())
+      return {
+        fireOldLookupChange() { oldListener?.({ kind: 'lookup', key: 'agent' }) },
+        retireOldScope() { oldDisposer?.() },
+      }
+    },
     dispose() {
       this.retireAgents()
       ownerDisposer?.()
@@ -178,6 +187,26 @@ test('issue #865: Agents/LLM dependency restarts cannot withdraw strict native R
   f.dispose()
   assert.equal(f.calls.withdrawals, 1, 'only Typert/plugin retirement withdraws the descriptor')
   assert.equal(f.calls.unprovisions, 3)
+})
+
+test('issue #865: an overlapping old Agent fiber cannot reprovide its retired Remote', async () => {
+  const f = remoteFixture()
+  f.setLookup(matchingLookup())
+  const original = f.receiver
+  const overlapping = f.remountOverlappingAgents()
+  assert.notEqual(f.receiver, original)
+  assert.equal(f.calls.unprovisions, 1)
+  assert.equal(f.calls.provisions, 2)
+  assert.equal(f.calls.registrations, 1)
+  const current = f.receiver
+  overlapping.fireOldLookupChange()
+  assert.equal(f.receiver, current, 'old scoped listener cannot resurrect a stale receiver')
+  assert.equal(f.calls.provisions, 2)
+  overlapping.retireOldScope()
+  assert.equal(f.receiver, current, 'late old fiber teardown cannot retire the new generation')
+  f.dispose()
+  assert.equal(f.calls.withdrawals, 1)
+  assert.equal(f.calls.unprovisions, 2)
 })
 
 test('issue #865: only transient lookup/service READ failures are retried, never writes', async () => {
