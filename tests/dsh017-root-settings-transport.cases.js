@@ -226,17 +226,28 @@ test('0.1.7 root settings route survives repeated ConfigEditor reconciliation ac
   assert.equal(get.json.value.value.visionDepth, 'fast')
 })
 
-test('root settings transport stays absent on legacy SettingsProvider hosts', () => {
+test('#881: a pre-registration settings provider mounts safely but exposes no absent namespace', async () => {
   const harness = makeHarness()
-  const legacySettings = {
-    register() {},
-    describe() { return [] },
+  let registered = false
+  const settings = {
+    register() { registered = true },
+    describe() {
+      return registered ? [descriptor(0, { visionDepth: 'standard' })] : []
+    },
     async mutate() {},
   }
-  const legacy = harness.generation(legacySettings)
-  installDsh017RootLocalSettingsTransport(legacy.ctx)
-  assert.equal(harness.routes.length, 0)
-  assert.equal(harness.rootDisposers.length, 0)
+  const generation = harness.generation(settings)
+  installDsh017RootLocalSettingsTransport(generation.ctx)
+  assert.equal(harness.routes.length, 1, 'public-entry installs the bridge before base.apply registers settings')
+  assert.equal(harness.rootDisposers.length, 1)
+  const before = response()
+  await harness.routes[0].handler(request('GET'), before)
+  assert.equal(before.snapshot().status, 404, 'an unregistered namespace must never leak settings')
+  settings.register()
+  const after = response()
+  await harness.routes[0].handler(request('GET'), after)
+  assert.equal(after.snapshot().status, 200, 'the original root route must become live after registration')
+  assert.equal(after.snapshot().json.value.value.visionDepth, 'standard')
 })
 
 test('root settings transport binds generation ownership before admitting the root route', () => {
