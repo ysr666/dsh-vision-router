@@ -1,8 +1,8 @@
 // #865: compare TWO actual final, already-serialized DeepSeek request objects.
 // Local-only forensic analysis. No network, credentials, provider calls or logs
-// of prompts/tool arguments/images. SHA256 digests here identify local JSON
+// of prompts/tool arguments/images. Ephemeral HMAC-SHA256 digests here identify local JSON
 // serialization differences; they are NOT DeepSeek cache-key proofs.
-import { createHash } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
@@ -22,9 +22,12 @@ function json(value) {
   // JSON request shape is the input contract. Undefined is an absent property.
   return value === undefined ? undefined : JSON.stringify(value)
 }
-function digest(value) {
+function digest(value, key) {
   const encoded = json(value)
-  return encoded === undefined ? null : createHash('sha256').update(encoded).digest('hex')
+  // Per-comparison ephemeral HMAC: users may share the structural report,
+  // but a low-entropy prompt must not be dictionary-guessed from a plain hash.
+  // The key is never exported, logged, persisted or included in the report.
+  return encoded === undefined ? null : createHmac('sha256', key).update(encoded).digest('hex')
 }
 function different(left, right) { return json(left) !== json(right) }
 function classifyMessage(message) {
@@ -71,7 +74,7 @@ function changedUnknownHeader(a, b) {
  * previous messages are a true prefix and the header is unchanged, the local
  * JSON wire-prefix contract holds. This does NOT assert the provider cached it.
  *
- * Returned fields are strictly structural + one-way digests, never content,
+ * Returned fields are strictly structural + ephemeral keyed digests, never content,
  * schema names, tool names, prompt excerpts, image bytes or provider IDs.
  * Source route identity is supplied explicitly; aliases are not invented.
  */
@@ -80,6 +83,7 @@ export function compareFinalWireRequests(beforeRecord, afterRecord) {
   const after = validate(afterRecord)
   const a = before.wire
   const b = after.wire
+  const reportKey = randomBytes(32)
   const ah = header(a)
   const bh = header(b)
   const older = a.messages
@@ -97,7 +101,11 @@ export function compareFinalWireRequests(beforeRecord, afterRecord) {
     tools: hasChangedClass(ah, bh, HEADER_CLASSES.tools),
     system: hasChangedClass(ah, bh, HEADER_CLASSES.system),
     reasoning: hasChangedClass(ah, bh, HEADER_CLASSES.reasoning),
-    otherHeader: changedUnknownHeader(ah, bh),
+    // A stable set of top-level values is not enough: reordering JSON keys
+    // changes the actual native serializer byte sequence even when every
+    // isolated field value compares equal.
+    otherHeader: changedUnknownHeader(ah, bh) || different(ah, bh) &&
+      !Object.values(HEADER_CLASSES).some(keys => hasChangedClass(ah, bh, keys)),
     history: historyChanged,
   }
   if (historyChanged) {
@@ -119,14 +127,14 @@ export function compareFinalWireRequests(beforeRecord, afterRecord) {
     localSerializedPrefixPreserved: prefixPreserved,
     before: {
       historicalMessages: older.length,
-      headerSha256: digest(ah),
-      historySha256: digest(older),
+      headerHmacSha256: digest(ah, reportKey),
+      historyHmacSha256: digest(older, reportKey),
     },
     after: {
       messages: newer.length,
       appendedMessages: historyChanged ? null : newer.length - older.length,
-      headerSha256: digest(bh),
-      oldHistoryPrefixSha256: digest(newer.slice(0, older.length)),
+      headerHmacSha256: digest(bh, reportKey),
+      oldHistoryPrefixHmacSha256: digest(newer.slice(0, older.length), reportKey),
     },
     commonHistoricalMessages: common,
     firstDifferentHistoricalIndex: firstHistoricalDifference,
