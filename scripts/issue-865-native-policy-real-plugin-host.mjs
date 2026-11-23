@@ -1,6 +1,7 @@
 // #865 B1: real DVR plugin.apply() + exact pinned DSH Commands/Agent.
 // Synthetic model transport only; no credentials, external API or native addon.
 import assert from 'node:assert/strict'
+import { preserveClaimedMessagesOnBlockedStep } from '../lib/session-image-projection-mode.js'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -199,6 +200,37 @@ try {
   assert.equal(changedTurn.active.length, 0, 'route change must revoke previous DVR tools in actual request')
   await observer.return()
   observer = undefined
+  // DSH claims the next-turn inbox BEFORE agent/pre-step. If a plugin needs
+  // to block unsafe image-format admission, it must requeue the original
+  // prompt before throwing. Exercise the REAL Agent Inbox implementation,
+  // not a fake array: the splice is persisted as agent/inbox/spliced.
+  const unsafePrompt = llm.createUserMessage({
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'Blocked until projection recovers' }],
+  })
+  const beforeBlock = requests.length
+  let blockedEvents = 0
+  const removeBlocker = ctx.on('agent/pre-step', async (payload, next) => {
+    if (payload.agent !== agent || !payload.messages.some(m => m.id === unsafePrompt.id)) {
+      return next()
+    }
+    blockedEvents++
+    assert.equal(preserveClaimedMessagesOnBlockedStep(payload.agent, payload.messages), 1)
+    throw new Error('synthetic #865 unsafe image projection: blocked without losing inbox')
+  })
+  try {
+    agent.followup(unsafePrompt)
+    await agent.whenIdle()
+    assert.equal(requests.length, beforeBlock, 'unsafe pre-step did not reach the LLM')
+    assert.equal(blockedEvents, 1, 'the Host did not enter an immediate error-retry loop')
+    assert.equal(agent.inbox.nextTurn[0]?.id, unsafePrompt.id,
+      'the original claimed message must remain in the official Host inbox after error')
+    assert.ok(agent.session.snapshotEvents().some(event =>
+      event.type === 'agent/inbox/spliced' &&
+      event.data?.inserted?.some(m => m.id === unsafePrompt.id)),
+    'requeued messages must have an actual Session event, not a volatile JS array')
+  } finally {
+    removeBlocker?.()
+  }
   console.log(JSON.stringify({
     ok: true, scenario: 'actual DVR apply + Host commands native permission',
     sessionCommandCount: 3, selectionEventsAdded: 0, explicitEffortSelectionEvents: 1,
@@ -206,6 +238,7 @@ try {
     activeOwnedToolCounts: [firstOff.active.length, enabled.active.length, lastOff.active.length],
     nativeRequests: requests.length, productionRemoteTransitions: [false, true, false],
     scopedPluginFiber: true, explicitNewRouteReset: true, newRouteOwnedToolCount: changedTurn.active.length,
+    unknownProjectionPreservesClaimedInput: true, unsafeRequestBlocked: true,
   }))
 } finally {
   carrier.abort()
