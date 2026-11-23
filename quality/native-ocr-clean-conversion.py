@@ -78,13 +78,24 @@ def retryable_download_error(error):
     return isinstance(error, (TimeoutError, ConnectionError, http.client.IncompleteRead))
 
 
+class IncompleteSourceError(RuntimeError):
+    """A successful HTTP response delivered fewer bytes than the pinned input.
+
+    Treat this as a retriable transport truncation, never as a trusted model.
+    Same-size wrong SHA-256 and oversized payloads remain immediate hard
+    integrity failures. No downloaded bytes become authoritative before
+    verify() and atomic no-clobber promotion.
+    """
+
+
 def acquire(url, dest, expected):
     if not url.startswith('https://'):
         raise RuntimeError('NON_HTTPS_SOURCE')
     if dest.exists() or dest.is_symlink():
         raise FileExistsError(dest)
     request = urllib.request.Request(url, headers={'User-Agent': 'DVR-native-OCR-clean-audit/1'})
-    for attempt in range(1, 4):
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
         # Fresh temporary file for every attempt; never reuse partial bytes.
         # It is on the destination filesystem for no-clobber promotion.
         with tempfile.TemporaryDirectory(prefix='.dvr-download-', dir=dest.parent) as staging:
@@ -99,8 +110,20 @@ def acquire(url, dest, expected):
                         if size > expected['bytes']:
                             raise RuntimeError('SOURCE_SIZE_EXCEEDED')
                         output.write(chunk)
-            except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead) as error:
-                if attempt == 3 or not retryable_download_error(error):
+                    if size < expected['bytes']:
+                        # An upstream CDN may close normally after a short
+                        # 200 response. A checksum mismatch at the expected
+                        # length is NOT treated as a network retry.
+                        raise IncompleteSourceError(
+                            f'SOURCE_INCOMPLETE: got={size} expected={expected["bytes"]} '
+                            f'sha256={identity(partial)["sha256"]}'
+                        )
+            except (urllib.error.URLError, TimeoutError, ConnectionError,
+                    http.client.IncompleteRead, IncompleteSourceError) as error:
+                if attempt == max_attempts or (
+                    not isinstance(error, IncompleteSourceError) and
+                    not retryable_download_error(error)
+                ):
                     raise
                 print(f'SOURCE_DOWNLOAD_RETRY attempt={attempt} error={type(error).__name__}', flush=True)
             else:
@@ -109,6 +132,7 @@ def acquire(url, dest, expected):
                 # Failure is explicit on filesystems without hardlink support.
                 os.link(partial, dest)
                 return actual
+        # Finite budget: 2 + 4 + 8 + 16s per asset, never background retry.
         time.sleep(2 ** attempt)
 
 def main():
