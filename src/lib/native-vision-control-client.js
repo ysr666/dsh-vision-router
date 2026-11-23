@@ -169,7 +169,13 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
         if (!active) return
         // Only a positively absent endpoint BEFORE any valid frame is old-
         // Host compatibility. A retired or denied namespace never is.
-        if (!seen && reason === 'gateway/invocation-unavailable') {
+        // A never-seen strict endpoint could mean an old Host, OR a modern
+        // Host whose Agent lookup / plugin fiber has not mounted yet. Do not
+        // permanently label it legacy on the first racing lookup. Probe only
+        // a bounded number of READs (no SRC call, no model mutation), then
+        // report legacy compatibility if the endpoint truly stays absent.
+        const tentativeLegacy = !seen && reason === 'gateway/invocation-unavailable'
+        if (tentativeLegacy && attempt >= Math.min(3, retryDelays.length)) {
           latest = undefined
           update({ kind: 'legacy', reason })
           return
@@ -181,7 +187,7 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
         // definition may reappear after a plugin generation swap; retry the
         // SAME strict read endpoint, never SRC fallback. Writes are never
         // replayed. Provider mismatch and principal denial stay hard errors.
-        retryable = ['transport-failed', 'gateway/internal', 'session/not-found',
+        retryable = tentativeLegacy || ['transport-failed', 'gateway/internal', 'session/not-found',
           'gateway/lookup-unavailable', 'gateway/service-unavailable',
           'gateway/definition-unavailable'].includes(reason)
       } finally {
