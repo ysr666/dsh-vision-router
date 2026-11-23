@@ -686,6 +686,14 @@ async function executeVisionTool(def, args, exec, execute, wrappedCtx, runtimeSt
         // still own their cancellation and tool capability checks.
         const cacheRevision = runtimeState.revision()
         const perform = async () => {
+          // A peer can miss the completed cache while hashing its own image,
+          // then enter here after the first in-flight entry was retired.
+          // Recheck at dispatch so that race cannot bill twice.
+          if (cacheKey && runtimeState.config().cache !== false &&
+              runtimeState.revision() === cacheRevision) {
+            const completed = runtimeState.cache.get(cacheKey)
+            if (completed !== undefined) return completed
+          }
           const result = await execute(args, exec)
           if (
             cacheKey &&
@@ -699,7 +707,7 @@ async function executeVisionTool(def, args, exec, execute, wrappedCtx, runtimeSt
           return result
         }
         return runtimeState.shareDescribe(
-          exec?.agent?.session, usableSignal(exec?.signal),
+          exec?.agent?.session, exec?.agent, usableSignal(exec?.signal),
           cacheKey, perform,
         )
       }),
