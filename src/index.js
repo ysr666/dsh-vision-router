@@ -682,6 +682,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   const sessionImageEvidencePlanner = createSessionImageEvidencePlanner()
   ctx.on('session/event', (session, event) => {
     sessionImageEvidencePlanner.onSessionEvent(session, event)
+    sessionImageProjectionModeStore?.onSessionEvent?.(session, event)
   })
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
@@ -2632,7 +2633,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     const modeStoreNeeded = sessionImageProjectionModeStore?.resolve &&
       (newStableRequested ||
         sessionImageProjectionModeStore.hasStorageFacility?.() === true ||
-        sessionImageProjectionModeStore.get?.(session.id) !== undefined)
+        sessionImageProjectionModeStore.get?.(session.id) !== undefined ||
+        sessionImageProjectionModeStore.hasCommittedWitness?.(session) === true)
     if (modeStoreNeeded) {
       const projection = await sessionImageProjectionModeStore.resolve(
         session, newStableRequested,
@@ -2776,18 +2778,26 @@ export function apply(ctx, config = {}, runtime = {}) {
       }
     }
     const appendStructuredReminder = (baseMessages) => {
-      // The Host persists newly injected pre-step user messages. Keep old
-      // image occurrences immutable: any newly known OCR/caption text belongs
-      // to a new, ID-deduplicated evidence event at the history tail.
+      // The one-time model-visible stable-v1 witness is a NORMAL DSH
+      // user/message, not an unapproved plugin record. It is appended only
+      // when the step is admitted and survives Session JSONL restore/fork,
+      // including complete loss of the optional sidecar. It precedes the
+      // current question so the user's request remains the last user turn.
+      const source = visionRouterMessageSource(session)
+      const witness = stableHistoryForStep
+        ? sessionImageProjectionModeStore?.witnessFor?.(session, source)
+        : undefined
+      const withWitness = witness ? [witness, ...baseMessages] : baseMessages
+      // Keep old image occurrences immutable: OCR/caption corrections are
+      // ID-deduplicated evidence appended at the history tail.
       const evidence = stableHistoryForStep
         ? sessionImageEvidencePlanner.plan(
-            session, rawMessages, baseMessages, sessionImageMemory,
-            visionRouterMessageSource(session),
+            session, rawMessages, withWitness, sessionImageMemory, source,
           )
         : []
       const withEvidence = evidence.length > 0
-        ? [...baseMessages, ...evidence]
-        : baseMessages
+        ? [...withWitness, ...evidence]
+        : withWitness
       if (!bootstrapReminder) return withEvidence
       const nextMessages = [...withEvidence, bootstrapReminder]
       if (
