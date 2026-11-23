@@ -601,7 +601,7 @@ test('issue #865 B2.4: missing old endpoint is distinct from permission denial o
     const states = []
     const observation = startNativeVisionClientObservation({
       async *observe() { throw Object.assign(new Error('fixture'), { code }) },
-    }, 'session-one', state => states.push(state))
+    }, 'session-one', state => states.push(state), { retryDelays: [] })
     await new Promise(setImmediate)
     assert.equal(states.at(-1).kind, expected)
     observation.stop()
@@ -625,14 +625,24 @@ test('issue #865 B2.4: production registration shares descriptor lookup and expl
     },
     provide(name, value) { services.set(name, value); return () => services.delete(name) },
   }
-  const ctx = {
+  const owner = {
+    ...scope,
     inject(dependencies, activate) {
+      assert.deepEqual(dependencies, ['agents', 'llm'])
       names.push(...dependencies)
       const traced = new Proxy(scope, { get(target, key) {
         if (key === 'llm' && !dependencies.includes('llm')) throw Error('undeclared LLM')
         return Reflect.get(target, key)
       } })
       return activate(traced)
+    },
+  }
+  const ctx = {
+    inject(dependencies, activate) {
+      assert.deepEqual(dependencies, ['typert'],
+        'strict method registration must belong to the Typert scope, not Agents/LLM')
+      names.push(...dependencies)
+      return activate(owner)
     },
   }
   installNativeVisionControlRemote(ctx, f.store, { mutate: async () => ({ kind: 'success', text: 'ok' }) })
@@ -648,9 +658,10 @@ test('issue #865 B2.4: production registration shares descriptor lookup and expl
   changed({ key: 'agent' })
   assert.equal((await pending).done, true)
   assert.equal(services.size, 0)
-  assert.equal(manifest, undefined)
+  assert.ok(manifest, 'temporary Agent lookup outage must never withdraw strict endpoint')
   await stream.return()
   for (const dispose of [...f.effects]) dispose()
+  assert.equal(manifest, undefined, 'true plugin fiber disposal still withdraws strict endpoint')
 })
 
 
