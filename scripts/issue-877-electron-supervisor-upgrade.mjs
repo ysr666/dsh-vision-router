@@ -296,14 +296,10 @@ export function apply(ctx) {
             res.writeHead(403); res.end('owner POST required'); return
           }
           try {
-            const shop = await scope.pluginManager.installBundle('dsh-plugin-shop@0.9.4', { enabled: true })
-            if (shop?.application !== 'applied') {
-              throw new Error('Shop setup failed: ' + JSON.stringify(shop))
-            }
-            const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
-            if (baseline?.application !== 'applied') {
-              throw new Error('DVR baseline setup failed: ' + JSON.stringify(baseline))
-            }
+            // Both published packages were already loaded at Desktop launch:
+            // this is specifically the existing-profile update path in #877.
+            const shop = { application: 'preexisting' }
+            const baseline = { application: 'preexisting' }
             const update = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0',
               { requestId: 'issue-877-electron-supervisor' })
             res.writeHead(200, { 'content-type': 'application/json' })
@@ -864,10 +860,18 @@ try {
   const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
-  if (!issue877ElectronUpgrade) manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
+  manifest.dependencies['dsh-vision-router'] = issue877ElectronUpgrade ? '3.2.1' : `file:${exactNativeOcr?.copied ?? dvrRoot}`
+  if (issue877ElectronUpgrade) manifest.dependencies['dsh-plugin-shop'] = '0.9.4'
   manifest.dependencies[coreProbeFixture.name] = issue877ElectronUpgrade ? `link:${coreProbeFixture.directory}` : `file:${coreProbeFixture.directory}`
-  if (!issue877ElectronUpgrade && !manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
-  manifest.dsh.profile.bundles.push(coreProbeFixture.name)
+  if (issue877ElectronUpgrade) {
+    // The observer fixture is loaded first; both published third-party
+    // bundles are present in the *booted* Desktop profile, as in #877.
+    // No Host install occurs before updateBundle starts.
+    manifest.dsh.profile.bundles.push(coreProbeFixture.name, 'dsh-plugin-shop', 'dsh-vision-router')
+  } else {
+    if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
+    manifest.dsh.profile.bundles.push(coreProbeFixture.name)
+  }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
   // Exercise the exact public configuration surfaces: a local OpenAI-compatible
   // text route drives the real Agent loop, while DVR's vision-http route drives
@@ -1075,7 +1079,7 @@ try {
     if (child?.exitCode !== null) throw new Error('Electron supervisor exited during DVR upgrade')
     // Check real Electron renderer remained available after Host HMR.
     await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15_000 })
-    console.log(JSON.stringify({ ok: true, scope: 'electron-supervised-market-upgrade',
+    console.log(JSON.stringify({ ok: true, scope: 'electron-supervised-preexisting-profile-upgrade',
       dsh: dshVersion, electronNode, installed: '3.4.0', rendererAlive: true }))
   } else {
   const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
