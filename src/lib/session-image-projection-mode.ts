@@ -214,6 +214,11 @@ export function preserveClaimedMessagesOnBlockedStep(
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
+  // A migration command can append its witness in memory and then fail the
+  // required physical Session flush. Until retry confirms durability, this
+  // Session must not send ANY new model request with a possibly lost format.
+  // The fence outlives Agent disposal within this plugin generation.
+  const unverifiedDurability = new Set<string>()
   // Cache mode for every LIVE Session until its Agent is disposed.
   // An arbitrary LRU ceiling is unsafe: an in-flight Host LlmRuntime call
   // holds only sessionId, so evicting its authoritative format between
@@ -251,6 +256,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
           handle = undefined
           if (toClose) await toClose.close()
           cache.clear()
+          unverifiedDurability.clear()
         }
       }, 'vision-router: durable image projection mode lifecycle')
     }
@@ -354,6 +360,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
       ? session.id : undefined
     const unknownOrLegacy = (): ProjectionResolution => hasPriorModelHistory(session) ? 'unknown' : 'legacy'
     if (!id) return unknownOrLegacy()
+    if (unverifiedDurability.has(id)) return 'unknown'
     // The authoritative Session witness survives a deleted sidecar row,
     // disconnected storage service, cold restart, and a fork with new id.
     const witnessedMode = committedWitnessMode(session)
@@ -422,7 +429,17 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     // legacy path; witnessed v1/v2 Sessions remain recoverable from DSH.
     hasStorageFacility(): boolean { return usableFacility(ctx) !== undefined },
     get(id: unknown): ProjectionMode | undefined {
-      return typeof id === 'string' ? cache.get(id) : undefined
+      return typeof id === 'string' && !unverifiedDurability.has(id)
+        ? cache.get(id) : undefined
+    },
+    isDurabilityUnverified(id: unknown): boolean {
+      return typeof id === 'string' && unverifiedDurability.has(id)
+    },
+    markUnverifiedDurability(id: unknown): void {
+      if (typeof id === 'string' && id) unverifiedDurability.add(id)
+    },
+    markVerifiedDurability(id: unknown): void {
+      if (typeof id === 'string') unverifiedDurability.delete(id)
     },
     // A released Agent will rehydrate the committed row on its next pre-step.
     release(id: unknown) {
