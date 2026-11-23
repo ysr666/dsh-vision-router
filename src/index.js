@@ -190,6 +190,7 @@ import {
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
 import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
+import { requiresVerifiedImageProjection } from './lib/session-image-projection-mode.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -2637,31 +2638,10 @@ export function apply(ctx, config = {}, runtime = {}) {
         // identical projection bytes in both formats and may continue safely.
         // Inspect committed raw events as well as the claimed pre-step batch;
         // a current-step-only check would miss a historical image.
-        let unverifiedImageHistory = true
-        try {
-          const events = session.snapshotEvents?.()
-          if (Array.isArray(events)) {
-            const claimed = decision?.messages ?? payload.messages ?? []
-            const hasImage = (message) =>
-              Array.isArray(message?.content) && blocksHaveRetainedImage(message.content)
-            unverifiedImageHistory = claimed.some(hasImage) || events.some((event) => {
-              // DSH's public surface vocabulary includes system/developer/
-              // user/assistant and tool-result messages. Most image origins
-              // are user/tool, but a future image-capable output must not
-              // bypass this unknown-format guard.
-              const kind = event?.type
-              const message = kind === 'user/message' ? event.data
-                : kind === 'tool/result' || kind === 'assistant/message' ||
-                  kind === 'developer/message' || kind === 'system/message'
-                  ? event.data?.message : undefined
-              return hasImage(message) ||
-                (typeof message?.id === 'string' &&
-                  message.id.startsWith('vision-router-image-evidence-v1-'))
-            })
-          }
-        } catch {
-          unverifiedImageHistory = true
-        }
+        const unverifiedImageHistory = requiresVerifiedImageProjection(
+          session, decision?.messages ?? payload.messages ?? [],
+          (content) => blocksHaveRetainedImage(content),
+        )
         if (unverifiedImageHistory) {
           throw new Error(
             'Vision Router cannot verify this Session image-history format; ' +
