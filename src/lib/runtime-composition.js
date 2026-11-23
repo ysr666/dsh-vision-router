@@ -17,6 +17,7 @@ import { createSessionVisionRuntime } from './session-vision-runtime.js'
 import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
 import { installSessionCacheUsageCommand } from './session-cache-usage-command.js'
+import { createVisionSubcallAccounting } from './vision-subcall-accounting.js'
 import { installSessionImageStabilizeCommand } from './session-image-stabilize-command.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
@@ -205,7 +206,11 @@ function installHostAndSecurityBoundaries(ctx, config, core, providerTransport) 
 
 function createRuntimeOwners(host) {
   const { attachmentCompatCtx, logging, runtimeConfig, runtimeI18nCore } = host
-  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
+  // Runtime-only anonymous counts; no extra provider calls and no persistence.
+  const visionSubcallAudit = createVisionSubcallAccounting()
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(
+    attachmentCompatCtx, runtimeConfig, visionSubcallAudit,
+  )
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
   const coreVisionSurfaceRuntime = createCoreVisionSurfaceRuntime({
     config: () => legacyCoreVisionSettings(nativeImageCompat.ctx, nativeImageCompat.config),
@@ -231,7 +236,7 @@ function createRuntimeOwners(host) {
   // DSH's modelSelection projection. The retired identity-only bridge is gone.
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
   const sessionImageProjectionModeStore = createSessionImageProjectionModeStore(sessionIndexCtx)
-  installSessionCacheUsageCommand(sessionIndexCtx)
+  installSessionCacheUsageCommand(sessionIndexCtx, { visionSubcallAudit })
   installSessionImageStabilizeCommand(sessionIndexCtx, sessionImageProjectionModeStore)
   sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(

@@ -73,7 +73,7 @@ export function summarizeSessionCacheUsage(events, { olderEventsOmitted = false 
   return { rows, truncated: olderEventsOmitted || examined < events.length }
 }
 
-function format(report) {
+function format(report, visionSubcalls) {
   const show = value => value === undefined ? '?' : String(value)
   return [
     'DVR cache usage · latest committed assistant responses',
@@ -88,10 +88,23 @@ function format(report) {
     'Hit = cache read / (total - output), only when disjoint counters reconcile.',
     'Committed non-interrupted main-Session responses only; excludes uncommitted retries and separate vision calls. Not billed cost.',
     report.truncated ? 'Bounded to the latest 20 responses / 10,000 events; earlier events omitted.' : 'No earlier events omitted by this report.',
+    visionSubcalls
+      ? 'Observed vision-tool LLM streams (process-local, latest 64): ' +
+        'seen=' + visionSubcalls.calls + ', finished=' + visionSubcalls.finished +
+        ', failed=' + visionSubcalls.failed + ', incomplete=' + visionSubcalls.incomplete +
+        ', with-usage=' + visionSubcalls.withUsage +
+        ', truncated=' + visionSubcalls.truncated
+      : 'Vision-tool LLM stream observation unavailable on this Host.',
+    visionSubcalls && visionSubcalls.tokenTotals
+      ? 'Observed vision subcall tokens (input/read/write/output/total; ?=unknown): ' +
+        ['inputTokens','cacheReadTokens','cacheWriteTokens','outputTokens','totalTokens']
+          .map(k => visionSubcalls.tokenTotals[k] ?? '?').join('/')
+      : 'Observed vision subcall tokens: unknown.',
+    'Scope: tool-initiated LLM streams visible to DVR only. Host titles, main attempts, direct HTTP bridges and hidden transport retries are NOT automatically counted; this is NOT full billing.',
   ].join('\n')
 }
 
-export function installSessionCacheUsageCommand(ctx) {
+export function installSessionCacheUsageCommand(ctx, { visionSubcallAudit } = {}) {
   if (typeof ctx?.inject !== 'function') return
   ctx.inject(['commands'], scope => {
     scope.commands.register({
@@ -110,7 +123,9 @@ export function installSessionCacheUsageCommand(ctx) {
         const { events, olderEventsOmitted } = recentSessionEvents(session)
         const report = summarizeSessionCacheUsage(events, { olderEventsOmitted })
         if (!report) return { kind: 'error', text: 'This Host does not expose a readable active Session history.' }
-        return { kind: 'success', text: format(report) }
+        const subcalls = typeof visionSubcallAudit?.snapshot === 'function'
+          ? visionSubcallAudit.snapshot(session) : undefined
+        return { kind: 'success', text: format(report, subcalls) }
       },
     })
   })

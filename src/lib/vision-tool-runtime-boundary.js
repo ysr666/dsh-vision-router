@@ -111,7 +111,7 @@ function stableRuntimeConfigSignature(value) {
   }
 }
 
-function createRuntimeState(initialConfig = {}) {
+function createRuntimeState(initialConfig = {}, visionSubcallAudit) {
   const cache = new LiveDescribeCache()
   const shareDescribe = createVisionDescribeSingleFlight()
   const endpoints = new HttpEndpointRevisionTracker()
@@ -225,6 +225,7 @@ function createRuntimeState(initialConfig = {}) {
   return {
     cache,
     shareDescribe,
+    visionSubcallAudit,
     endpoints,
     noteConfig,
     activateSettingsScope,
@@ -246,6 +247,7 @@ function stateFor(name, exec, config) {
   const ambient = currentVisionTurnBudget()
   return {
     name,
+    session: exec?.agent?.session,
     cwd: sessionCwd(exec),
     // Own the complete wall-clock task budget at the outermost runtime seam.
     // Some Host services (notably AttachmentStore.saveImage in DSH 0.1.3) do
@@ -632,7 +634,12 @@ function wrapLlm(llm, runtimeState) {
           const call = signal === undefined || signal === projected?.signal
             ? projected
             : { ...(projected ?? {}), signal }
-          return stream.call(target, call)
+          const outgoing = stream.call(target, call)
+          // Count only tool-owned LLM streams. This deliberately does not claim
+          // to observe the Host's main, title, or all adapter retry calls.
+          return state?.session && runtimeState.visionSubcallAudit
+            ? runtimeState.visionSubcallAudit.observe(state.session, outgoing)
+            : outgoing
         }
       }
       if (property === 'registerAdapter') {
@@ -787,12 +794,12 @@ function wrapTools(tools, wrappedCtx, runtimeState) {
   })
 }
 
-export function installVisionToolRuntimeBoundary(ctx, initialConfig = {}) {
+export function installVisionToolRuntimeBoundary(ctx, initialConfig = {}, visionSubcallAudit) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return ctx
   const cached = wrappedContexts.get(ctx)
   if (cached) return cached
 
-  const runtimeState = createRuntimeState(initialConfig)
+  const runtimeState = createRuntimeState(initialConfig, visionSubcallAudit)
   let wrapped
   wrapped = new Proxy(ctx, {
     get(target, property) {
