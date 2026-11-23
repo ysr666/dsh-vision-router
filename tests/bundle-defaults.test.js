@@ -115,7 +115,7 @@ test('entry contract always exposes the local remote-settings permission and han
   assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
-  assert.equal(Config({}).settingsContractRevision, 7)
+  assert.equal(Config({}).settingsContractRevision, 8)
 })
 
 test('entry contract exposes the custom depth tier to every settings entry point', () => {
