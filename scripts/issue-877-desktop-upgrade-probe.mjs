@@ -42,7 +42,7 @@ function writeProbeFixture(root) {
   }, null, 2))
   writeFileSync(join(dir, 'cordis.patch.yml'),
     '- insert:\n    - id: dvr-issue-877-probe\n      name: dvr-issue-877-probe\n')
-  writeFileSync(join(dir, 'index.js'), "export function apply(ctx) {\n  const events = []\n  const updatePhases = []\n  const requestId = 'issue-877-isolated-upgrade'\n  ctx.on('plugin-manager/update-state', (state) => {\n    if (state?.requestId !== requestId) return\n    updatePhases.push(String(state?.step ?? 'unknown'))\n  }, { global: true })\n  ctx.on('internal/status', (fiber, previous) => {\n    const entryId = fiber?.entry?.options?.id || fiber?.name || ''\n    if (String(entryId).includes('vision-router')) {\n      const error = fiber?._error\n      const stack = error?.stack || (error ? String(error) : null)\n      events.push({ entryId: String(entryId), from: previous, to: fiber?.state,\n        stack: typeof stack === 'string' ? stack.slice(0, 6000) : null })\n      if (events.length > 80) events.splice(0, events.length - 80)\n    }\n  }, { global: true })\n  ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact', path: '/__dvr_issue_877_upgrade', auth: 'required',\n      async handler(req, res, peer) {\n        // Prefer the Host-admitted Peer on 0.2.3+ WebServer. Its\n        // Connection.admit() also exists, but re-authenticating the raw\n        // request inside a registered route can throw and cause blank HTTP 400.\n        // Legacy 0.2.2 WebServer passes no Peer; validate via Connection.admit.\n        const admission = peer?.principal?.kind === 'owner'\n          ? { peer }\n          : typeof scope.connection?.admit === 'function'\n            ? scope.connection.admit(req)\n            : { rejection: 403 }\n        const verified = 'peer' in admission\n          && admission.peer?.principal?.kind === 'owner'\n        if (!verified || req.method !== 'POST') {\n          res.writeHead(403, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({\n            error: 'owner POST required',\n            method: req.method,\n            rejection: 'rejection' in admission ? admission.rejection : null,\n          }))\n          return\n        }\n        const hmrVisibleToProbe = scope.get('hmr') !== undefined\n        const hmrVisibleToPluginManager = scope.pluginManager.ctx?.get?.('hmr') !== undefined\n        try {\n          const result = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0', { requestId })\n          res.writeHead(200, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ result, events, updatePhases, hmrVisibleToProbe, hmrVisibleToPluginManager }))\n        } catch (error) {\n          res.writeHead(500, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ error: String(error), stack: error?.stack, events, updatePhases, hmrVisibleToProbe, hmrVisibleToPluginManager }))\n        }\n      }\n    }), 'issue-877 isolated upgrade evidence endpoint')\n  })\n}\n")
+  writeFileSync(join(dir, 'index.js'), "export function apply(ctx) {\n  const events = []\n  const updatePhases = []\n  const requestId = 'issue-877-isolated-upgrade'\n  const firstFailures = []\n  ctx.on('plugin-manager/update-state', (state) => {\n    if (state?.requestId !== requestId) return\n    updatePhases.push(String(state?.step ?? 'unknown'))\n  }, { global: true })\n  ctx.on('internal/status', (fiber, previous) => {\n    const entryId = fiber?.entry?.options?.id || fiber?.name || ''\n    if (String(entryId).includes('vision-router')) {\n      const error = fiber?._error\n      const stack = error?.stack || (error ? String(error) : null)\n      const event = { entryId: String(entryId), from: previous, to: fiber?.state,\n        stack: typeof stack === 'string' ? stack.slice(0, 6000) : null }\n      if (event.stack && firstFailures.length < 5) firstFailures.push(event)\n      events.push(event)\n      if (events.length > 80) events.splice(0, events.length - 80)\n    }\n  }, { global: true })\n  ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact', path: '/__dvr_issue_877_upgrade', auth: 'required',\n      async handler(req, res, peer) {\n        // Prefer the Host-admitted Peer on 0.2.3+ WebServer. Its\n        // Connection.admit() also exists, but re-authenticating the raw\n        // request inside a registered route can throw and cause blank HTTP 400.\n        // Legacy 0.2.2 WebServer passes no Peer; validate via Connection.admit.\n        const admission = peer?.principal?.kind === 'owner'\n          ? { peer }\n          : typeof scope.connection?.admit === 'function'\n            ? scope.connection.admit(req)\n            : { rejection: 403 }\n        const verified = 'peer' in admission\n          && admission.peer?.principal?.kind === 'owner'\n        if (!verified || req.method !== 'POST') {\n          res.writeHead(403, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({\n            error: 'owner POST required',\n            method: req.method,\n            rejection: 'rejection' in admission ? admission.rejection : null,\n          }))\n          return\n        }\n        const hmrVisibleToProbe = scope.get('hmr') !== undefined\n        const hmrVisibleToPluginManager = scope.pluginManager.ctx?.get?.('hmr') !== undefined\n        const outcomes = []\n        try {\n          const cycles = Math.min(5, Math.max(1, Number(process.env.DVR_DIAG_STRESS_CYCLES ?? '1')))\n          for (let i = 0; i < cycles; i++) {\n            const result = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0', { requestId })\n            outcomes.push({ cycle: i + 1, upgrade: result })\n            if (result?.result?.application !== 'applied' || result?.restore) break\n            if (i + 1 >= cycles) break\n            const removed = await scope.pluginManager.removeBundle('dsh-vision-router')\n            outcomes.push({ cycle: i + 1, removed })\n            if (removed?.application !== 'applied') break\n            const reset = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })\n            outcomes.push({ cycle: i + 1, reset })\n            if (reset?.application !== 'applied') break\n          }\n          const result = outcomes.filter(x => x.upgrade).at(-1)?.upgrade\n          res.writeHead(200, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ result, outcomes, events, firstFailures, updatePhases, hmrVisibleToProbe, hmrVisibleToPluginManager }))\n        } catch (error) {\n          res.writeHead(500, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ error: String(error), stack: error?.stack, outcomes, events, firstFailures, updatePhases, hmrVisibleToProbe, hmrVisibleToPluginManager }))\n        }\n      }\n    }), 'issue-877 isolated upgrade evidence endpoint')\n  })\n}\n")
   return dir
 }
 
@@ -115,6 +115,12 @@ try {
   // Actual immutable npm artifacts; this reproduces a live Host upgrade,
   // not a source-dir cold installation.
   manifest.dependencies['dsh-vision-router'] = '3.2.1'
+  // Real independent Shop bundle adds profile pressure but uses the exact
+  // published 0.9.4 code, not an invented asynchronous plugin.
+  if (process.env.DVR_DIAG_WITH_SHOP === '1') {
+    manifest.dependencies['dsh-plugin-shop'] = '0.9.4'
+    manifest.dsh.profile.bundles.push('dsh-plugin-shop')
+  }
   // Link the diagnostic fixture instead of packing it as a file: dependency.
   // PluginManager's expected-package guard rejects an unrelated dependency
   // if pnpm rematerializes its package.json during DVR's version update.
@@ -165,7 +171,7 @@ try {
   const upgrade = await fetch(hostUrl(ready.url, '/__dvr_issue_877_upgrade'), {
     method: 'POST',
     headers: { cookie },
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(540_000),
   })
   const upgradeStatus = upgrade.status
   const upgradeText = await upgrade.text()
@@ -188,8 +194,18 @@ try {
     phases: upgradeBody.updatePhases,
     hmrVisibleToProbe: upgradeBody.hmrVisibleToProbe,
     hmrVisibleToPluginManager: upgradeBody.hmrVisibleToPluginManager,
+    outcomes: upgradeBody.outcomes,
+    firstFailures: upgradeBody.firstFailures,
   }))
   const upgradeResult = upgradeBody.result
+  const badOutcome = upgradeBody.outcomes?.find(record =>
+    record.upgrade?.result?.application !== undefined && record.upgrade.result.application !== 'applied'
+    || record.removed?.application !== undefined && record.removed.application !== 'applied'
+    || record.reset?.application !== undefined && record.reset.application !== 'applied')
+  if (badOutcome || (upgradeBody.outcomes?.filter(v => v.upgrade).length || 0) !==
+      Number(process.env.DVR_DIAG_STRESS_CYCLES ?? '1')) {
+    throw new Error('Multi-cycle upgrade/reset failure: ' + JSON.stringify(upgradeBody))
+  }
   if (upgradeResult?.result?.application === 'failed' || upgradeResult?.restore !== undefined) {
     throw new Error('Upgrading npm DVR 3.2.1 to 3.4.0 failed or rolled back: ' + JSON.stringify(upgradeBody))
   }
