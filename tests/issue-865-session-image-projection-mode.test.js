@@ -41,6 +41,7 @@ function session(id, events = [], { firstLiveSeq = 0, isSeeded = false, inherite
 
 test('stage 2: brand-new Session commits stable format before request, and restores it after cold restart', async () => {
   const h = fixture()
+  assert.equal(h.store.hasStorageFacility(), true)
   const events = [{ type: 'session/start' }]
   const s = session('new', events)
   assert.equal(await h.store.resolve(s, true), 'stable')
@@ -87,6 +88,7 @@ test('stage 2: absent storage, uninspectable history, and corrupted stored rows 
   const plain = createSessionImageProjectionModeStore({ get() { return undefined }, effect(setup) { this.cleanup = setup() } })
   assert.equal(await plain.resolve(session('no-storage'), true), 'legacy')
   assert.equal(plain.get('no-storage'), undefined)
+  assert.equal(plain.hasStorageFacility(), false, 'optional domain is absent on legacy-only Hosts')
   const missingHistory = fixture()
   assert.equal(await missingHistory.store.resolve({ id: 'uninspectable' }, true), 'legacy')
   await missingHistory.ctx.cleanup()
