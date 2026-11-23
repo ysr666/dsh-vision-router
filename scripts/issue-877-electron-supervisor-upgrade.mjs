@@ -308,12 +308,14 @@ export function apply(ctx) {
   }
   if (process.env.DVR_ISSUE_877_ELECTRON_UPGRADE === '1') {
     const timeline = []
+    let firstFailure = null
     ctx.on('internal/status', (fiber, previous) => {
       const id = String(fiber?.entry?.options?.id ?? '')
       if (id !== 'vision-router') return
       const error = fiber?._error
       const entry = { from: previous, to: fiber.state, uid: fiber.uid,
         error: error ? String(error.stack || error).slice(0, 6000) : null }
+      if (entry.error && firstFailure === null) firstFailure = entry
       timeline.push(entry)
       if (timeline.length > 100) timeline.splice(0, timeline.length - 100)
     }, { global: true })
@@ -346,11 +348,11 @@ export function apply(ctx) {
                   .split(/\r?\n/).filter(line => /installation rejected|installed where|is not installed|declares no bundle/.test(line))
                   .map(line => line.replace(/(?:[A-Z]:\\|\/)[^\s]+/g, '<path>').slice(0, 250)).slice(0, 8),
                 unmet: update?.result?.packageResult?.unmet },
-              timeline, firstFailure: timeline.find(x => x.error) || null }))
+              timeline, firstFailure }))
           } catch (error) {
             res.writeHead(500, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ error: String(error), stack: String(error?.stack || '').slice(0, 6000),
-              timeline, firstFailure: timeline.find(x => x.error) || null }))
+              timeline, firstFailure }))
           }
         },
       }), 'issue-877 Electron supervisor upgrade probe')
