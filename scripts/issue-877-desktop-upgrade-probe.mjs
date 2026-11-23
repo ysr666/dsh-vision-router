@@ -42,7 +42,7 @@ function writeProbeFixture(root) {
   }, null, 2))
   writeFileSync(join(dir, 'cordis.patch.yml'),
     '- insert:\n    - id: dvr-issue-877-probe\n      name: dvr-issue-877-probe\n')
-  writeFileSync(join(dir, 'index.js'), "export function apply(ctx) {\n  const events = []\n  ctx.on('internal/status', (fiber, previous) => {\n    const entryId = fiber?.entry?.options?.id || fiber?.name || ''\n    if (String(entryId).includes('vision-router')) {\n      const error = fiber?._error\n      const stack = error?.stack || (error ? String(error) : null)\n      events.push({ entryId: String(entryId), from: previous, to: fiber?.state,\n        stack: typeof stack === 'string' ? stack.slice(0, 6000) : null })\n      if (events.length > 80) events.splice(0, events.length - 80)\n    }\n  }, { global: true })\n  ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact', path: '/__dvr_issue_877_upgrade', auth: 'required',\n      async handler(req, res, peer) {\n        // The 0.2.2 Host has no third-argument Peer on WebServer routes.\n        // Authenticate through its Connection service instead of trusting\n        // our private path or the deprecated WebServer auth field.\n        const admission = scope.connection.admit(req)\n        const verified = 'peer' in admission\n          && admission.peer?.principal?.kind === 'owner'\n        if (!verified || req.method !== 'POST') {\n          res.writeHead(403, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({\n            error: 'owner POST required',\n            method: req.method,\n            rejection: 'rejection' in admission ? admission.rejection : null,\n          }))\n          return\n        }\n        try {\n          const result = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0')\n          res.writeHead(200, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ result, events }))\n        } catch (error) {\n          res.writeHead(500, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ error: String(error), stack: error?.stack, events }))\n        }\n      }\n    }), 'issue-877 isolated upgrade evidence endpoint')\n  })\n}\n")
+  writeFileSync(join(dir, 'index.js'), "export function apply(ctx) {\n  const events = []\n  ctx.on('internal/status', (fiber, previous) => {\n    const entryId = fiber?.entry?.options?.id || fiber?.name || ''\n    if (String(entryId).includes('vision-router')) {\n      const error = fiber?._error\n      const stack = error?.stack || (error ? String(error) : null)\n      events.push({ entryId: String(entryId), from: previous, to: fiber?.state,\n        stack: typeof stack === 'string' ? stack.slice(0, 6000) : null })\n      if (events.length > 80) events.splice(0, events.length - 80)\n    }\n  }, { global: true })\n  ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact', path: '/__dvr_issue_877_upgrade', auth: 'required',\n      async handler(req, res, peer) {\n        // The 0.2.2 Host passes no Peer and requires Connection.admit(req).\n        // The 0.2.3 Host passes an authenticated Peer to auth:'required' routes\n        // and no longer exposes Connection.admit(). Keep the diagnostic owner-only.\n        const admission = typeof scope.connection?.admit === 'function'\n          ? scope.connection.admit(req)\n          : (peer?.principal?.kind === 'owner' ? { peer } : { rejection: 403 })\n        const verified = 'peer' in admission\n          && admission.peer?.principal?.kind === 'owner'\n        if (!verified || req.method !== 'POST') {\n          res.writeHead(403, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({\n            error: 'owner POST required',\n            method: req.method,\n            rejection: 'rejection' in admission ? admission.rejection : null,\n          }))\n          return\n        }\n        try {\n          const result = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0')\n          res.writeHead(200, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ result, events }))\n        } catch (error) {\n          res.writeHead(500, { 'content-type': 'application/json' })\n          res.end(JSON.stringify({ error: String(error), stack: error?.stack, events }))\n        }\n      }\n    }), 'issue-877 isolated upgrade evidence endpoint')\n  })\n}\n")
   return dir
 }
 
@@ -144,13 +144,18 @@ try {
   // authorize both the index and the authenticated /api waterfall. The latter
   // catches the field failure where unauthenticated /api requests return 401
   // immediately but authenticated requests never settle.
-  const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) })
-  const setCookie = login.headers.get('set-cookie')
-  await login.body?.cancel()
-  if (login.status !== 303 || setCookie === null) {
-    throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
+  let cookie = ready.authenticationCookie
+  let authMode = 'desktop-owned-cookie'
+  if (typeof cookie !== 'string' || cookie.length === 0) {
+    const login = await fetch(ready.url, { redirect: 'manual', signal: AbortSignal.timeout(REQUEST_DEADLINE_MS) })
+    const setCookie = login.headers.get('set-cookie')
+    await login.body?.cancel()
+    if (login.status !== 303 || setCookie === null) {
+      throw new Error(`Desktop Host token exchange failed: status=${String(login.status)} cookie=${String(setCookie !== null)}`)
+    }
+    cookie = setCookie.split(';', 1)[0]
+    authMode = 'legacy-launch-token'
   }
-  const cookie = setCookie.split(';', 1)[0]
   const authenticatedStatus = await statusProbe(ready.url, '/', cookie, 200)
   const authenticatedApiMissing = await statusProbe(ready.url, '/api/__dvr_missing__', cookie, 404)
   const authenticatedApiHealth = await statusProbe(ready.url, '/api/health', cookie, 404)
@@ -225,7 +230,7 @@ try {
     hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
     structuredInjections: ready.injections.length,
     dvrSettingsPreludeRows: rows.length,
-    authTokenExchange: login.status,
+    authentication: authMode,
     authenticatedIndex: authenticatedStatus,
     authenticatedApiMissing,
     authenticatedApiHealth,
