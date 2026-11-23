@@ -498,3 +498,50 @@ test('issue #865: effort-only model selection does not reset explicit Session Vi
   assert.equal(writes, 1)
   assert.equal(rows.get(agent.id).enabled, false, 'deliberate route change re-evaluates legacy policy')
 })
+
+test('stage 2: unchanged Session Vision policy preserves exact ordered tool schema and OFF remains denied', async () => {
+  const policies = new Map([['stage-2-agent', { revision: 1, enabled: false, source: 'user' }]])
+  const h = makeHarness({ sessionVisionPolicyStore: { get: id => policies.get(id) } })
+  const execution = []
+  for (const name of ['vision_ocr', 'vision_describe']) {
+    h.mode.ctx.tools.register({ name, description: 'stable:' + name,
+      async execute() { execution.push(name); return name } })
+  }
+  h.mode.ctx.tools.register({ name: 'foreign_helper', async execute() { return 'foreign' } })
+  const agent = h.makeAgent('deepseek-official', 'stage-2-agent')
+  agent.session.id = agent.id
+  h.handlers.get('agent/created')?.({ agent })
+  const input = {
+    tools: [
+      { name: 'foreign_helper', description: 'other plugin' },
+      { name: 'vision_ocr', description: 'stable:vision_ocr' },
+      { name: 'vision_describe', description: 'stable:vision_describe' },
+    ],
+  }
+  const original = structuredClone(input)
+  const assemble = h.handlers.get('system-prompt/assemble')
+  assert.equal(typeof assemble, 'function')
+  async function projected() {
+    // Real Host assembly snapshots a Session's visible schema, with tool order
+    // meaningful to the downstream DeepSeek prefix serializer.
+    const result = await assemble(input, { agent }, async () => input)
+    assert.deepEqual(input, original, 'DVR must never mutate the Host assembly input')
+    return result.tools
+  }
+  const off = await projected()
+  assert.deepEqual(off.map(x => x.name), ['foreign_helper'])
+  assert.deepEqual(await projected(), off, 'OFF->OFF cannot alter the tool declarations')
+  await assert.rejects(h.definitions.get('vision_describe').execute({}, { agent }), /Vision mode is off/)
+  policies.set(agent.id, { revision: 1, enabled: true, source: 'user' })
+  h.handlers.get('agent/status')?.({ agent, status: 'running' })
+  const on = await projected()
+  assert.deepEqual(on, input.tools, 'ON exposes only the same three owned/foreign tool definitions')
+  assert.deepEqual(await projected(), on, 'ON->ON cannot reorder or mutate tool schemas')
+  assert.equal(await h.definitions.get('vision_describe').execute({}, { agent }), 'vision_describe')
+  assert.deepEqual(execution, ['vision_describe'])
+  policies.set(agent.id, { revision: 1, enabled: false, source: 'user' })
+  h.handlers.get('agent/status')?.({ agent, status: 'running' })
+  assert.deepEqual(await projected(), off, 'OFF restored original declarations exactly')
+  await assert.rejects(h.definitions.get('vision_ocr').execute({}, { agent }), /Vision mode is off/)
+  assert.equal(agent.ctx.tools.get('vision_ocr'), undefined)
+})
