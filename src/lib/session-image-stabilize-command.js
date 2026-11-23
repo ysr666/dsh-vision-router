@@ -129,12 +129,17 @@ export function installSessionImageStabilizeCommand(ctx, modeStore) {
               )
               session.append('user/message', witness, { surfaceOp: 'append' })
             }
-            // On a checkpoint error, NEVER say it succeeded; the already
-            // appended in-memory witness is idempotent and can be flushed on
-            // a later explicit retry without adding a second witness.
-            if (!(await scope.sessions.flush(session))) {
-              return { kind: 'error', text: 'The witness was appended but its durability is unverified. Keep this version and retry after storage recovery.' }
+            // A post-append checkpoint can fail AFTER Session.append has
+            // changed the in-memory surface. Fence all later model requests
+            // until an explicit retry confirms disk persistence. Never claim
+            // success or silently drop this append-only witness.
+            let persisted = false
+            try { persisted = (await scope.sessions.flush(session)) === true } catch {}
+            if (!persisted) {
+              modeStore?.markUnverifiedDurability?.(session.id)
+              return { kind: 'error', text: 'The witness was appended but its durability is unverified. Model requests are blocked until this command is retried after storage recovery.' }
             }
+            modeStore?.markVerifiedDurability?.(session.id)
             return { kind: 'success', text: status === 'stable-v2'
               ? 'Session already uses stable-v2. Durability rechecked; no duplicate witness.'
               : 'Session now uses stable-v2. Old content was kept. Next model request may rebuild its cache; do not downgrade to a pre-v2 plugin.' }
