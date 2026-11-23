@@ -429,8 +429,26 @@ test('stage 2: conflicting witnessed versions fail closed, a v2 witness beats st
   ], { firstLiveSeq: 3 })
   assert.equal(await h.store.resolve(conflicted, 'stable-v2'), 'unknown',
     'two incompatible committed format witnesses may not silently pick one')
+  assert.equal(h.store.get('same-visual-conversation-conflict'), undefined,
+    'a contradictory Session log must not leave a stale in-process format choice')
   assert.equal(committedStableProjectionWitnessMode({ ...v2,
     content: [{ type: 'text', text: STABLE_IMAGE_PROJECTION_WITNESS_V1 }] }), undefined,
     'no witness ID/body cross-version confusion')
+  await h.ctx.cleanup()
+})
+
+test('stage 2: live conflicting witness clears a formerly stable format cache', async () => {
+  const h = fixture()
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const live = session('live-conflict')
+  assert.equal(await h.store.resolve(live, 'stable-v2'), 'stable-v2')
+  const v2 = createStableProjectionWitness('live-conflict', source, 'stable-v2')
+  h.store.onSessionEvent(live, { type: 'user/message', data: v2 })
+  assert.equal(h.store.get('live-conflict'), 'stable-v2')
+  const v1 = createStableProjectionWitness('live-conflict', source)
+  h.store.onSessionEvent(live, { type: 'user/message', data: v1 })
+  assert.equal(h.store.get('live-conflict'), undefined,
+    'conflict must revoke even the previously cached v2 mode')
+  assert.equal(h.store.witnessFor(live, source), undefined)
   await h.ctx.cleanup()
 })
