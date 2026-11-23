@@ -168,6 +168,30 @@ export function requiresVerifiedImageProjection(
 }
 
 /**
+ * The official AgentLoop claims inbox messages BEFORE agent/pre-step runs.
+ * Throwing on an unsafe image format without requeuing loses that prompt:
+ * the Host's error containment ends the turn, not the claim. Preserve the
+ * original identities using the public Inbox.splice, which emits a durable
+ * pending-inbox event. Never requeue the transformed pre-step decision,
+ * because it contains transient runtime context and synthetic reminders.
+ *
+ * No wakeup is issued here: an unavailable storage sidecar must not cause
+ * an uncontrolled immediate retry/error loop. The queued prompt resumes
+ * with the next explicit wake after repair.
+ */
+export function preserveClaimedMessagesOnBlockedStep(
+  agent: { inbox?: { splice?: (target: string, start: number, count: number, messages: readonly unknown[]) => unknown } },
+  claimed: readonly unknown[],
+): number {
+  if (!Array.isArray(claimed) || claimed.length === 0) return 0
+  if (typeof agent?.inbox?.splice !== 'function') {
+    throw new Error('cannot preserve claimed inputs: Host Agent.inbox.splice is unavailable')
+  }
+  agent.inbox.splice('next-turn', 0, 0, claimed)
+  return claimed.length
+}
+
+/**
  * A Session's text-only image format is selected before its first request and
  * persisted before admitting the resulting model-visible history. A preexisting
  * Session with any committed message or request cannot silently migrate.
