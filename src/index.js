@@ -198,7 +198,7 @@ import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
-import { installPreStepModelRouting } from './lib/agent-prestep-model-routing.js'
+import { installPreStepModelRouting, explicitWholeTurnRoutingEnabled } from './lib/agent-prestep-model-routing.js'
 import { hasVisionAutoMountHistoryMarker } from './lib/auto-mount-prefix-guard.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
@@ -704,7 +704,10 @@ export function apply(ctx, config = {}, runtime = {}) {
     const value = current().ocrTimeoutMs
     return Number.isFinite(value) && value > 0 ? value : 30000
   }
-  const routingEnabled = () => current().routing !== false
+  // Fail closed on missing/partial Settings snapshots. Whole-turn routing is
+  // an explicit opt-in; implicit true would silently change model/provider and
+  // create a fresh cache prefix for old image Sessions.
+  const routingEnabled = () => explicitWholeTurnRoutingEnabled(current())
   const reverseRoutingEnabled = () => routingEnabled() && current().reverseRouting !== false
   // Declared up front: the stealth takeover and wrapper blocks below both
   // reference it, and its `const` used to sit after those blocks (TDZ crash).
