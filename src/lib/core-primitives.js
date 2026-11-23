@@ -2556,7 +2556,9 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       // in the durable pre-step instead of being silently synthesized at this
       // adapter-only boundary. Otherwise its content could not be replayed
       // from the Session event log after a cold resume.
-      const stableHistory = liveValue(stableImageHistory) === true
+      const stableHistory = (typeof stableImageHistory === 'function'
+        ? stableImageHistory(options)
+        : stableImageHistory) === true
       const currentInstantLocal = keepOriginalImages || stableHistory ? undefined : liveValue(instantLocal)
       const instantMap =
         currentInstantLocal !== undefined
