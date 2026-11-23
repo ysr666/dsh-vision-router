@@ -750,11 +750,56 @@ export function replaceImageBlocksWithMemory(messages, memory) {
  * when history images are present), and keeps later turns working after an
  * image entered the conversation.
  */
+/**
+ * One deterministic renderer for stable text-only image history.
+ *
+ * Existing opt-in Sessions already have two distinct v1 wire representations:
+ * the standalone rewrite marker and the generated twin's rich marker.
+ * Preserve those exact bytes when refactoring. Changing them on cold resume
+ * would recreate #865's cache-prefix mutation even with empty OCR memory.
+ * A future format migration requires explicit durable Session versioning.
+ *
+ * No imageMemory, OCR output, current permission or clock input is read here.
+ * The durable source image stays unmodified; only request copies are projected.
+ */
+export function projectStableTextOnlyImages(messages, { markerStyle = 'history' } = {}) {
+  if (markerStyle !== 'history' && markerStyle !== 'wrapper') {
+    throw new TypeError('unknown stable image projection format')
+  }
+  const attachments = []
+  let changed = false
+  const rewritten = (messages ?? []).map((message) => {
+    if (!message || !Array.isArray(message.content)) return message
+    const result = rewriteImagesDeep(message.content, (block) => {
+      const attachment = block.attachment || {}
+      const id = attachment.attachmentId || attachment.id || 'unknown'
+      const name = attachment.name || '图片'
+      if (block.attachment) attachments.push(block.attachment)
+      if (markerStyle === 'history') return { type: 'text', text: imageMarker(id) }
+      // V1 wrapper representation must stay byte-for-byte compatible.
+      return {
+        type: 'text',
+        text:
+          `[已收到图片「${name}」（附件 id：「${id}」）。我可以借助视觉工具来看图：` +
+          `需要看图时调用 vision_describe 并传入 attachmentIds: ["${id}"] 和具体问题；` +
+          '定位、裁剪、像素对比、取色、OCR、矢量化、抠图等分别使用 vision_ground、' +
+          'vision_crop、vision_pixel_diff、vision_colors、vision_ocr、vision_trace、' +
+          'vision_extract_foreground 工具。' +
+          'vision_ocr 只用于读取图中文字，不是看图失败的通用重试；' +
+          '若视觉工具返回 ok:false（认证失败/限流/超时/后端不可用），不要改问法重复调用，直接继续文本任务。]',
+      }
+    })
+    if (result.changed) changed = true
+    return result.changed ? { ...message, content: result.content } : message
+  })
+  return { messages: changed ? rewritten : messages, attachments }
+}
+
 export function rewriteHistoryImages(messages, memory, { stable = false } = {}) {
-  // In append-only mode the original image occurrence is projected into the
-  // same marker regardless of later imageMemory entries. Recognition evidence
-  // is instead added as a distinct durable pre-step message.
-  const mem = stable ? new Map() : memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
+  // Preserve the historical v1 marker for Sessions that already opted into
+  // stable mode. All stable paths share the same pure renderer now.
+  if (stable) return projectStableTextOnlyImages(messages, { markerStyle: 'history' })
+  const mem = memory instanceof Map ? memory : new Map(Object.entries(memory ?? {}))
   const attachments = []
   let anyChanged = false
   const rewritten = (messages ?? []).map((message) => {
@@ -2531,7 +2576,11 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
       // after a tool (e.g. the built-in read_image) recorded an image in its
       // result. The session log keeps the original blocks, so the Web UI
       // still shows the uploaded image.
-      const rewritten = keepOriginalImages ? messages : (messages ?? []).map((message) => {
+      const rewritten = keepOriginalImages
+        ? messages
+        : stableHistory
+          ? projectStableTextOnlyImages(messages, { markerStyle: 'wrapper' }).messages
+          : (messages ?? []).map((message) => {
         if (!message || !Array.isArray(message.content)) return message
         const result = rewriteImagesDeep(message.content, (block) => {
           const attachment = block.attachment || {}
@@ -2552,7 +2601,7 @@ export function createWrapperStreamBody(ctx, { imageMemory, delegateProvider, pr
               },
             ]
           }
-          const entry = !stableHistory && id !== 'unknown' ? imageMemory.get(id) : undefined
+          const entry = id !== 'unknown' ? imageMemory.get(id) : undefined
           if (entry && typeof entry === 'string' && entry.trim()) {
             return [
               {
