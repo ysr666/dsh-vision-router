@@ -2623,11 +2623,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     // owner. The global compatibility facade is reserved for adapter stream
     // boundaries where DSH does not expose a Session object.
     const sessionImageMemory = visionState.memoryForSession(session)
-    // A manually migrated witness may already be model-visible in memory
-    // while its required Session.flush() failed. No next turn may use that
-    // format until an explicit idle maintenance retry confirms durability.
-    // DSH already claimed this turn's inbox before agent/pre-step, so put
-    // the exact pending messages back rather than consuming user input.
+    // Block unflushed migration witnesses; return claimed inbox messages
+    // until explicit idle maintenance re-confirms Session durability.
     if (sessionImageProjectionModeStore?.isDurabilityUnverified?.(session.id)) {
       if (!payload.signal?.aborted) {
         preserveClaimedMessagesOnBlockedStep(payload.agent, payload.messages ?? [])
