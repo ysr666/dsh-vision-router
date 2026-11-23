@@ -2645,9 +2645,15 @@ export function apply(ctx, config = {}, runtime = {}) {
             const hasImage = (message) =>
               Array.isArray(message?.content) && blocksHaveRetainedImage(message.content)
             unverifiedImageHistory = claimed.some(hasImage) || events.some((event) => {
-              const message = event?.type === 'tool/result'
-                ? event.data?.message
-                : event?.type === 'user/message' ? event.data : undefined
+              // DSH's public surface vocabulary includes system/developer/
+              // user/assistant and tool-result messages. Most image origins
+              // are user/tool, but a future image-capable output must not
+              // bypass this unknown-format guard.
+              const kind = event?.type
+              const message = kind === 'user/message' ? event.data
+                : kind === 'tool/result' || kind === 'assistant/message' ||
+                  kind === 'developer/message' || kind === 'system/message'
+                  ? event.data?.message : undefined
               return hasImage(message) ||
                 (typeof message?.id === 'string' &&
                   message.id.startsWith('vision-router-image-evidence-v1-'))
