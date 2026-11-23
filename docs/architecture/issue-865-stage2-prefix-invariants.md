@@ -64,9 +64,10 @@ changes can still invalidate a cache.
   Session Vision permission. Its `modes` table stores only
   `{revision:1,mode:'legacy'|'stable'}`, keyed by Session ID; no OCR or image
   bytes. It remains a compatibility accelerator for previously written rows.
-- Every new stable Session also receives **one short, model-visible DSH
-  `user/message` witness** with exact text `[DVR image-history format:
-  stable-v1]`. Its deterministic ID and DVR producer attribution are checked.
+- Each opted-in stable Session receives **one short, model-visible DSH
+  `user/message` witness** with an exact, versioned `stable-v1` or
+  `stable-v2` body. Its deterministic ID and DVR producer attribution
+  are checked. A v1 Session is never silently rewritten to v2.
   The event is only committed upon successful pre-step admission, never merely
   planned. DSH Session JSONL, cold restore and forks carry this witness even
   when the sidecar is deleted or unavailable. It costs a small one-time
@@ -74,10 +75,12 @@ changes can still invalidate a cache.
   The Host explicitly forbids external use of `appendPluginRecord`, and
   SessionHeader has no extension fields, so no unsupported private event is
   introduced.
-- When the witness and sidecar disagree, the committed v1 witness takes
-  precedence. The first eligible stable request needs no storageDomain:
+- When the witness and sidecar disagree, the committed versioned witness
+  takes precedence. Conflicting v1/v2 witnesses in the same Session fail
+  closed, rather than selecting a convenient byte layout. The first eligible stable request needs no storageDomain:
   sidecar write failures fall back to the ordinary committed Session witness,
-  and aborted pre-step plans remain retryable. Older candidate Sessions with
+  and aborted pre-step plans remain retryable. The v2 choice is not written
+  into the v1-only sidecar row schema. Older candidate Sessions with
   sidecar `stable` but no witness receive one on their next admitted step.
   Without either proof, an established image-bearing Session is `unknown`,
   never guessed legacy. Text-only continuation is permitted if inspection
