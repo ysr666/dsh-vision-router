@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createVisionSubcallAccounting } from '../lib/vision-subcall-accounting.js'
+import { installVisionToolRuntimeBoundary } from '../lib/vision-tool-runtime-boundary.js'
 
 test('#865 vision subcall audit counts real streams once and keeps last cumulative Usage only', async () => {
   const audit=createVisionSubcallAccounting()
@@ -54,4 +55,71 @@ test('#865 bounded memory holds only 64 latest stream records and reports trunca
   assert.equal(snapshot.calls,64)
   assert.equal(snapshot.finished,64)
   assert.equal(snapshot.truncated,true)
+})
+
+test('#865 real tool-runtime seam observes tool LLM streams, not unrelated main LLM streams', async () => {
+  const audit = createVisionSubcallAccounting()
+  const session = { id: 'session-1' }
+  const agent = { id: 'session-1', session }
+  let actualRequests = 0
+  let registered
+  const host = {
+    tools: { register(def) { registered = def; return () => {} } },
+    llm: { async *stream() {
+      actualRequests++
+      yield { type: 'usage', usage: { inputTokens: 12, cacheReadTokens: 88,
+        outputTokens: 5, totalTokens: 105 } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(host, {
+    tool: true, cache: false, visionTaskTimeoutMs: 5000,
+  }, audit)
+  wrapped.tools.register({
+    name: 'vision_ocr',
+    async execute() {
+      const received = []
+      for await (const part of wrapped.llm.stream({ provider: 'SENSITIVE', model: 'SECRET' })) {
+        received.push(part.type)
+      }
+      return received
+    },
+  })
+  assert.deepEqual(await registered.execute({}, { agent, signal: new AbortController().signal }),
+    ['usage', 'finish'])
+  const recorded = audit.snapshot(session)
+  assert.equal(actualRequests, 1)
+  assert.equal(recorded.calls, 1)
+  assert.equal(recorded.finished, 1)
+  assert.equal(recorded.tokenTotals.totalTokens, 105)
+  // A native main or Host title stream on the same ctx is not a tool-owned
+  // call. Instrumentation must not misattribute it as paid visual activity.
+  for await (const _ of wrapped.llm.stream({ provider: 'SENSITIVE', model: 'SECRET' })) {}
+  assert.equal(actualRequests, 2)
+  assert.equal(audit.snapshot(session).calls, 1)
+  assert.doesNotMatch(JSON.stringify(audit.snapshot(session)), /SENSITIVE|SECRET|session-1/)
+})
+
+test('#865 Vision tools OFF cannot dispatch or report a paid visual subcall', async () => {
+  const audit = createVisionSubcallAccounting()
+  const session = { id: 'off-session' }
+  let calls = 0, definition
+  const host = {
+    tools: { register(def) { definition = def; return () => {} } },
+    llm: { async *stream() { calls++; yield { type: 'finish', reason: {kind:'stop'} } } },
+  }
+  const wrapped = installVisionToolRuntimeBoundary(host, { tool: false }, audit)
+  wrapped.tools.register({
+    name: 'vision_ocr',
+    async execute() {
+      for await (const _ of wrapped.llm.stream({ provider: 'p', model: 'm' })) {}
+      return 'unexpected'
+    },
+  })
+  await assert.rejects(
+    definition.execute({}, { agent: { id: session.id, session }, signal: new AbortController().signal }),
+    /disabled/i,
+  )
+  assert.equal(calls, 0)
+  assert.equal(audit.snapshot(session).calls, 0)
 })
