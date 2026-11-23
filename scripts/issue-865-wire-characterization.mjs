@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody, rewriteHistoryImages } from '../lib/core-primitives.js'
+import { compareFinalWireRequests } from './issue-865-final-wire-diff.mjs'
 import { createSessionImageProjectionModeStore, hasPriorModelHistory } from '../lib/session-image-projection-mode.js'
 import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
 import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
@@ -323,12 +324,24 @@ try {
       what + ': all previously serialized model messages must retain their bytes and order',
     )
   }
+  // Pass the ACTUAL pinned DSH DeepSeek Messages serializer output through
+  // the same privacy-preserving forensic analyzer exposed to maintainers.
+  // Upstream is taken from the exact delegated LlmRuntime options, never
+  // guessed from a DVR alias or a model name.
+  const forensic = (earlier, later) => compareFinalWireRequests(
+    { wire: earlier.wire, upstream: { provider: earlier.options.provider, model: earlier.options.model } },
+    { wire: later.wire, upstream: { provider: later.options.provider, model: later.options.model } },
+  )
   const offMessages = [createSystemMessage('stable native prompt'), user('opening OFF turn'), assistant('opening reply'), user('vision OFF first')]
   const offHistory = { tools: [foreign], updates: [] }
   const offOne = await request(sourceRoute, offMessages, { tools: [foreign], toolHistory: offHistory })
   const offTwo = await request(sourceRoute, [...offMessages, assistant('answered OFF first'), user('vision still OFF')], {
     tools: [foreign], toolHistory: offHistory,
   })
+  const offForensic = forensic(offOne, offTwo)
+  assert.equal(offForensic.localSerializedPrefixPreserved, true,
+    'real serialized OFF->OFF history + header must preserve prefix')
+  assert.equal(offForensic.changes.upstream, false)
   assert.equal(schemaHeader(offOne.wire), schemaHeader(offTwo.wire), 'OFF->OFF headers must stay stable')
   checkPrefix(offOne, offTwo, 'OFF->OFF')
   assert.equal(countChanges(offTwo.wire), 0)
@@ -347,6 +360,14 @@ try {
   const onTwo = await request(sourceRoute, [...onMessages, assistant('answered ON'), user('vision still ON')], {
     tools: [foreign, ocr, describe], toolHistory: enabledHistory,
   })
+  const transitionForensic = forensic(offOne, onOne)
+  assert.equal(transitionForensic.localSerializedPrefixPreserved, false,
+    'real native DeepSeek OFF->ON tool change must NOT be reported as a cache-continuous transition')
+  assert.equal(transitionForensic.changes.tools, true,
+    'actual serialized DeepSeek tools are different across permission transitions')
+  const onForensic = forensic(onOne, onTwo)
+  assert.equal(onForensic.localSerializedPrefixPreserved, true,
+    'real serialized ON->ON history + header must preserve prefix')
   assert.equal(schemaHeader(onOne.wire), schemaHeader(onTwo.wire), 'ON->ON headers must stay stable')
   checkPrefix(onOne, onTwo, 'ON->ON')
   assert.equal(countChanges(onOne.wire), 2, 'each tool becomes available once through the official addition-only projection')
@@ -416,6 +437,11 @@ try {
     connection, projected[0].messages, new Map(), () => undefined)
   assert.deepEqual(serializedTwin.messages, serializedHistory.wire.messages,
     'both real DeepSeek serializer entrypoints must receive the exact same canonical v2 image prefix')
+  assert.equal(compareFinalWireRequests(
+    { wire: serializedHistory.wire, upstream: { provider: sourceRoute, model: modelId } },
+    { wire: serializedTwin, upstream: { provider: sourceRoute, model: modelId } },
+  ).localSerializedPrefixPreserved, true,
+  'the forensic auditor must accept actual v2 wrapper/direct full native DeepSeek serialization')
   v2Memory.set('sha256:canonical-v2-wire-attachment', 'OCR changed after cold resume')
   const afterOcrV2 = rewriteHistoryImages(rawV2, v2Memory, { stable: 'stable-v2' }).messages
   assert.deepEqual(afterOcrV2, historyV2, 'historical v2 prefix is immutable after OCR update')
