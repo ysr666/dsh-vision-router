@@ -238,16 +238,22 @@ try {
   const rows = ready.injections.filter((row) => row?.kind === 'script'
     && typeof row.text === 'string'
     && row.text.includes('data-vision-router-settings-017-compat'))
-  if (rows.length !== 1) {
-    throw new Error(`expected exactly one DVR Desktop bootstrap injection, found ${rows.length}`)
+  // ready.injections is a startup-only DesktopHostProcess snapshot. In the
+  // Shop coexistence scenario, DVR is deliberately absent at Host boot and
+  // added later through PluginManager; it must NOT be expected in that snapshot.
+  const expectedBootstrapRows = process.env.DVR_DIAG_WITH_SHOP === '1' ? 0 : 1
+  if (rows.length !== expectedBootstrapRows) {
+    throw new Error(`expected ${expectedBootstrapRows} startup DVR bootstrap injection(s), found ${rows.length}`)
   }
-  const [row] = rows
-  if (row.placement !== 'head') throw new Error(`DVR Desktop bootstrap injection is not in <head>: ${String(row.placement)}`)
-  if (!row.text.includes('__visionRouterSettings017Compat')) {
-    throw new Error('DVR Desktop bootstrap injection is missing the 0.1.7 settings compatibility prelude')
-  }
-  if (/<\/script/i.test(row.text)) {
-    throw new Error('DVR Desktop bootstrap injection contains a literal closing script tag')
+  if (rows.length === 1) {
+    const [row] = rows
+    if (row.placement !== 'head') throw new Error(`DVR Desktop bootstrap injection is not in <head>: ${String(row.placement)}`)
+    if (!row.text.includes('__visionRouterSettings017Compat')) {
+      throw new Error('DVR Desktop bootstrap injection is missing the 0.1.7 settings compatibility prelude')
+    }
+    if (/<\\/script/i.test(row.text)) {
+      throw new Error('DVR Desktop bootstrap injection contains a literal closing script tag')
+    }
   }
 
   console.log(JSON.stringify({
