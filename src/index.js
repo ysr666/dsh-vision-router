@@ -2623,6 +2623,21 @@ export function apply(ctx, config = {}, runtime = {}) {
     // owner. The global compatibility facade is reserved for adapter stream
     // boundaries where DSH does not expose a Session object.
     const sessionImageMemory = visionState.memoryForSession(session)
+    // A manually migrated witness may already be model-visible in memory
+    // while its required Session.flush() failed. No next turn may use that
+    // format until an explicit idle maintenance retry confirms durability.
+    // DSH already claimed this turn's inbox before agent/pre-step, so put
+    // the exact pending messages back rather than consuming user input.
+    if (sessionImageProjectionModeStore?.isDurabilityUnverified?.(session.id)) {
+      if (!payload.signal?.aborted) {
+        preserveClaimedMessagesOnBlockedStep(payload.agent, payload.messages ?? [])
+      }
+      throw new Error(
+        'Vision Router migration witness has not been durably flushed. ' +
+        'Repair Session storage and retry /vision-history-stabilize CONFIRM; ' +
+        'original pending input was preserved.',
+      )
+    }
     // Do not admit a request when this Session's existing image projection
     // cannot be verified. In DSH the pre-step waterfall runs BEFORE the first
     // request/header commit, so this is the last safe format selection gate.
