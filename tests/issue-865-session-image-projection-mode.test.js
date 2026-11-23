@@ -7,6 +7,7 @@ import {
   createStableProjectionWitness,
   isCommittedStableProjectionWitness,
   STABLE_IMAGE_PROJECTION_WITNESS_V1,
+  preserveClaimedMessagesOnBlockedStep,
 } from '../lib/session-image-projection-mode.js'
 
 function fixture(initial = []) {
@@ -339,4 +340,32 @@ test('stage 2: no Storage Domain is required for explicit first-request stable o
   ], { firstLiveSeq: 2 }), false), 'stable',
   'the witness, not optional sidecar persistence, determines format after cold restore')
   await ctx.cleanup()
+})
+
+test('stage 2: blocked first step durably requeues exact claimed input in original order', () => {
+  const first = { role: 'user', id: 'claimed-user-image', content: [{ type: 'image' }] }
+  const second = { role: 'user', id: 'claimed-user-followup', content: [{ type: 'text', text: 'followup' }] }
+  const later = { role: 'user', id: 'already-queued', content: [{ type: 'text', text: 'later' }] }
+  const pending = [later]
+  const calls = []
+  const agent = { inbox: {
+    splice(target, index, count, inserted) {
+      calls.push({ target, index, count, inserted })
+      pending.splice(index, count, ...inserted)
+      // Actual Host emits agent/inbox/spliced for this operation; this fixture
+      // verifies we call the public atomic mutation seam, never raw Session.append.
+    },
+  } }
+  const claimed = [first, second]
+  assert.equal(preserveClaimedMessagesOnBlockedStep(agent, claimed), 2)
+  assert.deepEqual(pending, [first, second, later],
+    'the blocked user's original messages must remain pending before later inputs')
+  assert.deepEqual(calls, [{
+    target: 'next-turn', index: 0, count: 0, inserted: claimed,
+  }], 'one atomic official Inbox.splice, not duplicate best-effort insertions')
+  assert.equal(pending[0], first, 'do not clone or rewrite the original image attachment')
+  assert.equal(preserveClaimedMessagesOnBlockedStep(agent, []), 0)
+  assert.equal(calls.length, 1, 'an empty tool continuation cannot requeue synthetic input')
+  assert.throws(() => preserveClaimedMessagesOnBlockedStep({}, [first]),
+    /Inbox.splice is unavailable/, 'never claim successful requeue if the Host lacks the interface')
 })
