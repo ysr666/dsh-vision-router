@@ -89,8 +89,8 @@ test('stage 2: explicit new-Session opt-out persists, including after Settings t
 
 test('stage 2: absent storage, uninspectable history, and corrupted stored rows all fail closed', async () => {
   const plain = createSessionImageProjectionModeStore({ get() { return undefined }, effect(setup) { this.cleanup = setup() } })
-  assert.equal(await plain.resolve(session('no-storage'), true), 'legacy')
-  assert.equal(plain.get('no-storage'), undefined)
+  assert.equal(await plain.resolve(session('no-storage'), true), 'stable')
+  assert.equal(plain.get('no-storage'), 'stable')
   assert.equal(plain.hasStorageFacility(), false, 'optional domain is absent on legacy-only Hosts')
   const missingHistory = fixture()
   assert.equal(await missingHistory.store.resolve({ id: 'uninspectable' }, true), 'legacy')
@@ -117,7 +117,7 @@ test('stage 2: concurrent first turns commit only one durable mode; Sessions can
   await h.ctx.cleanup()
 })
 
-test('stage 2: storage write failure does not enable volatile stable history', async () => {
+test('stage 2: a fresh Session safely uses durable in-Session witness even if optional sidecar write fails', async () => {
   const ctx = {
     get(name) {
       if (name !== 'storageDomain') return undefined
@@ -131,8 +131,11 @@ test('stage 2: storage write failure does not enable volatile stable history', a
     logger: { warn() {} },
   }
   const store = createSessionImageProjectionModeStore(ctx)
-  assert.equal(await store.resolve(session('disk'), true), 'legacy')
-  assert.equal(store.get('disk'), undefined)
+  const fresh = session('disk')
+  assert.equal(await store.resolve(fresh, true), 'stable')
+  assert.equal(store.get('disk'), 'stable')
+  assert.ok(store.witnessFor(fresh, { kind: 'plugin:dsh-vision-router' }),
+    'successful Host step admission will durably record the witness despite failed sidecar')
   await ctx.cleanup()
 })
 
@@ -177,8 +180,8 @@ test('stage 2: missing storage after a prior request is UNKNOWN, never guessed l
     get() { return undefined },
     effect(setup) { this.cleanup = setup() },
   })
-  assert.equal(await store.resolve(session('brand-new'), true), 'legacy',
-    'a fresh Session may safely choose legacy if stable storage is not available')
+  assert.equal(await store.resolve(session('brand-new'), true), 'stable',
+    'a genuinely fresh opted-in Session can persist format in the DSH event log itself')
   const old = session('recovered-stable-unknown', [
     { type: 'user/message' }, { type: 'request/header' },
     { type: 'assistant/message' },
@@ -317,5 +320,23 @@ test('stage 2: missing optional storage still recovers a committed witness', asy
   assert.equal(h.hasStorageFacility(), false)
   assert.equal(await h.resolve(session('previously-stable', events, { firstLiveSeq: 2 }), false), 'stable')
   assert.equal(h.get('previously-stable'), 'stable')
+  await ctx.cleanup()
+})
+
+test('stage 2: no Storage Domain is required for explicit first-request stable opt-in', async () => {
+  const ctx = { get() { return undefined }, effect(setup) { this.cleanup = setup() } }
+  const store = createSessionImageProjectionModeStore(ctx)
+  const fresh = session('no-sidecar-opt-in')
+  assert.equal(await store.resolve(fresh, true), 'stable')
+  const witness = store.witnessFor(fresh, { kind: 'plugin:dsh-vision-router' })
+  assert.ok(witness)
+  const event = { type: 'user/message', data: witness }
+  store.onSessionEvent(fresh, event)
+  await ctx.cleanup()
+  const restored = createSessionImageProjectionModeStore(ctx)
+  assert.equal(await restored.resolve(session('no-sidecar-opt-in', [
+    event, { type: 'request/header' },
+  ], { firstLiveSeq: 2 }), false), 'stable',
+  'the witness, not optional sidecar persistence, determines format after cold restore')
   await ctx.cleanup()
 })
