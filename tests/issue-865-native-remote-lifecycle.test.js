@@ -57,7 +57,7 @@ function remoteFixture() {
     typert,
     effect(setup) { ownerDisposer = setup() },
     inject(deps, callback) {
-      assert.deepEqual(deps, ['agents', 'llm'])
+      assert.deepEqual(deps, ['typert', 'agents', 'llm'])
       mountChild = callback
       return callback(makeChildScope())
     },
