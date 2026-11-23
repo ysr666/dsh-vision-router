@@ -216,6 +216,10 @@ function routeFor(root, state, getConnection) {
         sendJson(res, 405, { ok: false, error: { code: 'method-not-allowed', message: 'method not allowed' } })
         return
       }
+      if (!namespaceDescriptor(settings)) {
+        sendJson(res, 404, { ok: false, error: { code: 'settings-unavailable', message: 'Vision Router settings are unavailable' } })
+        return
+      }
 
       let slowTimer
       try {
