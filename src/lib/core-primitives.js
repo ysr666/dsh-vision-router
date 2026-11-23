@@ -768,7 +768,7 @@ export function projectStableTextOnlyImages(messages, { markerStyle = 'history' 
   }
   const attachments = []
   let changed = false
-  const rewritten = (messages ?? []).map((message) => {
+  const rewritten = (messages ?? []).map((message, messageIndex) => {
     if (!message || !Array.isArray(message.content)) return message
     let imageOccurrence = 0
     const result = rewriteImagesDeep(message.content, (block) => {
@@ -791,7 +791,7 @@ export function projectStableTextOnlyImages(messages, { markerStyle = 'history' 
           // stable provenance we can honestly preserve without image bytes.
           // Explicitly do NOT recommend querying vision_describe by this key.
           const origin = typeof message.id === 'string' && message.id !== ''
-            ? message.id : 'unidentified-message'
+            ? message.id : 'request-message-' + messageIndex
           return {
             type: 'text',
             text: '[DVR stable-v2 image without attachment ID; source ' +
