@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { doctorProfiles, resolveDshHome } from './doctor.js'
 import { inspectPlatform, probeRuntime, supportReport } from './doctor-runtime.js'
 import { inspectDoctorVisionLimits, formatDoctorVisionLimits } from './doctor-vision-limits.js'
-import { repairLegacySessionLogs } from './legacy-session-repair.js'
+import { repairLegacySessionLogs, inspectDshDowngradeSafety } from './legacy-session-repair.js'
 
 function usage() {
-  return `dsh-vision-router doctor [--profile <name>] [--json | --issue-template] [--sessions] [--runtime-url <url>] [--no-runtime] [--upgrade-preflight] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --issue-template      Print a safe, Markdown issue template with diagnostics and fill-in reproduction fields. Read-only.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --upgrade-preflight    Read-only gate for known 3.2 profile migration hazards; not a full release approval.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
+  return `dsh-vision-router doctor [--profile <name>] [--json | --issue-template] [--sessions] [--runtime-url <url>] [--no-runtime] [--upgrade-preflight] [--downgrade-preflight <legacy-only|stable-v1|stable-v2>] [--fix]\ndsh-vision-router repair [--profile <name>]\ndsh-vision-router repair-sessions\n\nChecks installation, profile composition, runtime routes, recent settings-save failures and local vision capabilities.\n\nCommands:\n  doctor           Read-only health report by default. --fix is kept for compatibility but prefer the explicit repair command.\n  repair           Safely remove a leading UTF-8 BOM and rewrite stale version-pinned minimumReleaseAgeExclude entries.\n  repair-sessions  Offline repair for exact known Vision Router session corruptions, including the legacy missing-id reminder and duplicate structured guard-stop messages. Stop DSH first.\n\nOptions:\n  --profile <name>       Check only one profile (for example: web).\n  --json                 Emit a shareable, secret-minimized JSON diagnostic report.\n  --issue-template      Print a safe, Markdown issue template with diagnostics and fill-in reproduction fields. Read-only.\n  --sessions             Also scan session logs for exact known Vision Router corruption signatures (read-only; may take longer).\n  --runtime-url <url>    Probe a running DSH web instance (default: DSH_WEB_URL or http://127.0.0.1:3080).\n  --no-runtime           Skip the read-only runtime route probe.\n  --upgrade-preflight    Read-only gate for known 3.2 profile migration hazards; not a full release approval.\n  --downgrade-preflight <capability>  Read-only Session format check against an explicitly known target binary capability. Unknown blocks; not a downgrade installer.\n  --fix                  Backward-compatible doctor repair mode; prefer \`repair\`.\n  --help                 Show this help.\n`
 }
 
 function parseArgs(argv) {
@@ -21,6 +21,7 @@ function parseArgs(argv) {
   let issueTemplate = false
   let sessions = false
   let upgradePreflight = false
+  let downgradePreflight
   let runtime = command === 'doctor'
   let runtimeUrl
 
@@ -45,6 +46,15 @@ function parseArgs(argv) {
     if (value === '--upgrade-preflight') {
       if (command !== 'doctor') throw new Error('--upgrade-preflight is only used with doctor')
       upgradePreflight = true
+      continue
+    }
+    if (value === '--downgrade-preflight' || value.startsWith('--downgrade-preflight=')) {
+      if (command !== 'doctor') throw new Error('--downgrade-preflight is only used with doctor')
+      const target = value.includes('=') ? value.slice(value.indexOf('=') + 1) : args[++index]
+      if (!['legacy-only', 'stable-v1', 'stable-v2'].includes(target)) {
+        throw new Error('--downgrade-preflight requires legacy-only, stable-v1 or stable-v2')
+      }
+      downgradePreflight = target
       continue
     }
     if (value === '--sessions') {
@@ -91,6 +101,8 @@ function parseArgs(argv) {
   if (issueTemplate && fix) throw new Error('--issue-template is read-only and cannot be combined with --fix')
   if (upgradePreflight && fix) throw new Error('--upgrade-preflight is read-only and cannot be combined with --fix')
   if (upgradePreflight && issueTemplate) throw new Error('--upgrade-preflight is not an issue template; use --json instead')
+  if (downgradePreflight && fix) throw new Error('--downgrade-preflight is read-only and cannot be combined with --fix')
+  if (downgradePreflight && issueTemplate) throw new Error('--downgrade-preflight is not an issue template; use --json instead')
   if (profile && (!/^[A-Za-z0-9._-]+$/.test(profile) || profile === '.' || profile === '..')) {
     throw new Error(`invalid profile name: ${profile}`)
   }
@@ -99,7 +111,7 @@ function parseArgs(argv) {
     try { parsed = new URL(runtimeUrl) } catch { throw new Error(`invalid runtime URL: ${runtimeUrl}`) }
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error(`invalid runtime URL protocol: ${parsed.protocol}`)
   }
-  return { command, profile, fix, json, issueTemplate, sessions, upgradePreflight, runtime, runtimeUrl }
+  return { command, profile, fix, json, issueTemplate, sessions, upgradePreflight, downgradePreflight, runtime, runtimeUrl }
 }
 
 /**
@@ -333,15 +345,21 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
 
   const upgradePreflight = options.upgradePreflight
     ? assessUpgradeProfileRisk(profileReport, platform) : undefined
+  // All profiles in the same DSH_HOME share the Session root. This does not
+  // silently infer an installed binary's reader capability from SemVer.
+  const downgradePreflight = options.downgradePreflight
+    ? inspectDshDowngradeSafety({ dshHome, target: options.downgradePreflight }) : undefined
   const overallOk = profileReport.ok
     && (runtime?.ok ?? true)
     && (!sessions || (sessions.affected === 0 && sessions.errors.length === 0))
     && (!upgradePreflight || upgradePreflight.pass)
+    && (!downgradePreflight || downgradePreflight.decision === 'allow')
 
   if (options.json || options.issueTemplate) {
     const report = supportReport({ profileReport, runtime, platform, sessions })
     report.visionLimits = visionLimits
     if (upgradePreflight) report.upgradePreflight = upgradePreflight
+    if (downgradePreflight) report.downgradePreflight = downgradePreflight
     report.ok = overallOk
     io.log(options.issueTemplate ? formatIssueTemplate(report) : JSON.stringify(report, null, 2))
     return overallOk ? 0 : 1
@@ -356,6 +374,19 @@ export async function run(argv = process.argv.slice(2), io = console, env = proc
       for (const item of upgradePreflight.blockers) io.error(`  ✗ ${item.code}: ${item.affectedProfiles} affected profile(s)`)
     }
     io.log('! Upgrade preflight does not verify the running Desktop Host, runtime routes, or historical data.')
+  }
+  if (downgradePreflight) {
+    const p = downgradePreflight
+    if (p.decision === 'allow') {
+      io.log('✓ Downgrade preflight: all ' + p.scanned +
+        ' inspected Session log(s) have a witnessed format supported by target ' + p.target + '.')
+    } else {
+      io.error('✗ Downgrade preflight ' + p.decision.toUpperCase() + ' for target ' + p.target +
+        ': ' + p.blocked + ' incompatible, ' + p.unknown + ' unwitnessed, ' +
+        p.unreadable + ' unreadable of ' + p.scanned + ' inspected Session log(s).')
+      io.error('  Do not install that older DVR binary until incompatible Sessions are backed up and a safe plan is reviewed.')
+    }
+    io.log('! This is a read-only voluntary preflight. An unmodified older binary cannot enforce it; manual overwrites bypass it.')
   }
   if (profileReport.applicableProfiles === 0) io.error('✗ Vision Router is not installed or mounted in any discovered profile.')
 
