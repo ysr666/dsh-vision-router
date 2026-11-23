@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Domain, DomainSpec, KvTable } from '@deepseek-ai/dsh-storage-domain'
 
 type ProjectionMode = 'legacy' | 'stable'
+type ProjectionResolution = ProjectionMode | 'unknown'
 type RecordValue = Readonly<{ revision: 1; mode: ProjectionMode }>
 const recordSchema = z.object({
   revision: z.literal(1),
@@ -33,6 +34,9 @@ type Session = {
   snapshotEvents?(): readonly { type?: string }[]
   seq?: unknown
   eventAt?(seq: number): { type?: string } | undefined
+  firstLiveSeq?: unknown
+  inheritedEventCount?: unknown
+  header?: { isSeeded?: boolean }
 }
 
 function usableFacility(ctx: Context): Facility | undefined {
@@ -42,27 +46,36 @@ function usableFacility(ctx: Context): Facility | undefined {
   } catch { return undefined }
 }
 
-function hasPriorModelHistory(session: Session): boolean {
-  // Refuse to label a fork, imported history, or old Session "new".
+/**
+ * In pinned DSH the inbox is claimed during pre-step and user/message commits
+ * only after that waterfall returns. A stray current-turn user/message is not
+ * itself proof that a model has ever seen this Session.
+ *
+ * firstLiveSeq is the immutable construction offset: 0 for a truly fresh
+ * Session, >0 for a resumed or seeded one. A fork also supplies a durable
+ * inherited cut / seeded header. Unknown lifecycle shapes stay legacy.
+ */
+export function hasPriorModelHistory(session: Session): boolean {
   try {
     if (session.requestHeader?.() !== undefined) return true
+    if (session.header?.isSeeded === true ||
+        (typeof session.inheritedEventCount === 'number' && session.inheritedEventCount > 0)) return true
+    if (typeof session.firstLiveSeq === 'number' && session.firstLiveSeq > 0) return true
+    const knownNew = session.firstLiveSeq === 0 && session.header?.isSeeded === false
+    const events = typeof session.snapshotEvents === 'function'
+      ? session.snapshotEvents()
+      : typeof session.seq === 'number' && typeof session.eventAt === 'function'
+        ? Array.from({ length: session.seq }, (_, i) => session.eventAt?.(i))
+        : undefined
+    if (!events) return true
+    if (events.some(event => event?.type === 'request/header' ||
+        event?.type === 'assistant/message' || event?.type === 'tool/result' ||
+        event?.type === 'session/end-seed')) return true
+    // Imported user-only history with no verified fresh construction offset
+    // cannot be safely migrated. Fresh DSH initial input is permitted.
+    if (!knownNew && events.some(event => event?.type === 'user/message')) return true
+    return false
   } catch { return true }
-  try {
-    if (typeof session.seq === 'number' && typeof session.eventAt === 'function') {
-      for (let index = 0; index < session.seq; index++) {
-        const type = session.eventAt(index)?.type
-        if (type === 'request/header' || type === 'assistant/message' ||
-            type === 'user/message' || type === 'tool/result') return true
-      }
-      return false
-    }
-    if (typeof session.snapshotEvents === 'function') {
-      return session.snapshotEvents().some(event =>
-        ['request/header', 'assistant/message', 'user/message', 'tool/result'].includes(event?.type ?? ''))
-    }
-  } catch { return true }
-  // A Host with no trustworthy Session history inspection must remain legacy.
-  return true
 }
 
 /**
@@ -70,13 +83,14 @@ function hasPriorModelHistory(session: Session): boolean {
  * persisted before admitting the resulting model-visible history. A preexisting
  * Session with any committed message or request cannot silently migrate.
  *
- * If the official storageDomain is absent, unavailable or returns an unknown
- * row, callers use legacy projection: volatile "stable" guesses must never be
- * allowed to become a different format after process restart.
+ * A missing or unhealthy storageDomain yields 'unknown' for established
+ * Sessions. In that state the caller must stop request admission: guessing
+ * legacy could silently rewrite a previously stable image-history prefix.
+ * Before the very first request, legacy is a safe non-durable fallback.
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
-  const pending = new Map<string, Promise<ProjectionMode>>()
+  const pending = new Map<string, Promise<ProjectionResolution>>()
   let open: Promise<Domain<DomainSpec> | undefined> | undefined
   let handle: Domain<DomainSpec> | undefined
   let closed = false
@@ -86,7 +100,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
   const warn = (error: unknown) => {
     if (warned) return
     warned = true
-    ctx.logger?.warn?.('vision-router: stable image projection storage unavailable; retain legacy Session projection (%s)',
+    ctx.logger?.warn?.('vision-router: image projection storage unavailable; established Sessions require verified format before model admission (%s)',
       error instanceof Error ? error.name : 'unknown')
   }
 
@@ -122,6 +136,8 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         })
         .catch(error => {
           warn(error)
+          // A transient failed open must not permanently poison this owner.
+          open = undefined
           return undefined
         })
     }
@@ -129,31 +145,32 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     return domain?.table('modes') as KvTable<string, RecordValue> | undefined
   }
 
-  const resolve = async (session: Session, allowNewStable = true): Promise<ProjectionMode> => {
+  const resolve = async (session: Session, allowNewStable = true): Promise<ProjectionResolution> => {
     const id = typeof session?.id === 'string' && session.id.trim() !== ''
       ? session.id : undefined
-    if (!id) return 'legacy'
+    const unknownOrLegacy = (): ProjectionResolution => hasPriorModelHistory(session) ? 'unknown' : 'legacy'
+    if (!id) return unknownOrLegacy()
     if (cache.has(id)) return cache.get(id) as ProjectionMode
-    if (pending.has(id)) return pending.get(id) as Promise<ProjectionMode>
-    const task = (async (): Promise<ProjectionMode> => {
+    if (pending.has(id)) return pending.get(id) as Promise<ProjectionResolution>
+    const task = (async (): Promise<ProjectionResolution> => {
       try {
         const modes = await table()
-        if (!modes || closed) return 'legacy'
+        if (!modes || closed) return unknownOrLegacy()
         const stored = recordSchema.safeParse(modes.get(id))
         if (stored.success) {
           cache.set(id, stored.data.mode)
           return stored.data.mode
         }
         // A corrupt/unknown persisted row must not be silently replaced.
-        if (modes.get(id) !== undefined) return 'legacy'
+        if (modes.get(id) !== undefined) return 'unknown'
         const mode = allowNewStable && !hasPriorModelHistory(session) ? 'stable' : 'legacy'
         await modes.put(id, { revision: 1, mode })
-        if (closed) return 'legacy'
+        if (closed) return 'unknown'
         cache.set(id, mode)
         return mode
       } catch (error) {
         warn(error)
-        return 'legacy'
+        return unknownOrLegacy()
       }
     })()
     pending.set(id, task)
