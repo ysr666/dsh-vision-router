@@ -32,7 +32,7 @@ test('public entry remains schema/export only and delegates runtime composition 
   assert.match(source, /import \{ applyVisionRuntimeComposition \} from '\.\/lib\/runtime-composition\.js'/)
   assert.match(source, /composePublicVisionConfig/)
   assert.match(source, /export \{ SETTINGS_CONTRACT_REVISION \}/)
-  assert.match(publicConfig, /export const SETTINGS_CONTRACT_REVISION = 7/)
+  assert.match(publicConfig, /export const SETTINGS_CONTRACT_REVISION = 8/)
   assert.match(source, /export const Config = composePublicVisionConfig\(core\.Config\)/)
   assert.doesNotMatch(source, /Config\.set\(/)
   assert.match(
