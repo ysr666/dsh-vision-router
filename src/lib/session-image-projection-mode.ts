@@ -218,6 +218,10 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
 
   return {
     resolve,
+    // A Host that has never mounted storageDomain cannot have produced a
+    // durable stable-mode record through this feature. The default-disabled
+    // legacy path must stay available on such installations.
+    hasStorageFacility(): boolean { return usableFacility(ctx) !== undefined },
     get(id: unknown): ProjectionMode | undefined {
       return typeof id === 'string' ? cache.get(id) : undefined
     },
