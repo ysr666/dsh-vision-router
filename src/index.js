@@ -734,14 +734,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const instantDescribeEnabled = () =>
     coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
-  // Existing explicit opt-in remains authoritative. The new default for
-  // *new* Sessions is read from a durable per-Session format decision made at
-  // pre-step before the first request. Never infer a format from mutable OCR
-  // memory, route identity, or current global Settings after history exists.
+  // Once a Session has a durable image format, live Settings cannot override
+  // it. The legacy opt-in is only a fallback for old embedding contexts without
+  // a mode-store capability; normal production always supplies that owner.
   const stableImageHistoryEnabled = (sessionOrOptions) => {
-    if (current().stableImageHistory === true) return true
     const id = sessionOrOptions?.sessionId ?? sessionOrOptions?.id
-    return sessionImageProjectionModeStore?.get?.(id) === 'stable'
+    if (sessionImageProjectionModeStore) {
+      return sessionImageProjectionModeStore.get(id) === 'stable'
+    }
+    return current().stableImageHistory === true
   }
   const autoActivateOnImageEnabled = () =>
     coreVisionFlag(
@@ -2619,13 +2620,23 @@ export function apply(ctx, config = {}, runtime = {}) {
     // owner. The global compatibility facade is reserved for adapter stream
     // boundaries where DSH does not expose a Session object.
     const sessionImageMemory = visionState.memoryForSession(session)
-    // Await the durable format choice *before* preparing either pre-step
-    // history or the text-wrapper stream. Missing storage is legacy-only;
-    // it must never optimistically enable a format that cannot be replayed.
+    // Do not admit a request when this Session's existing image projection
+    // cannot be verified. In DSH the pre-step waterfall runs BEFORE the first
+    // request/header commit, so this is the last safe format selection gate.
+    // Returning { kind: 'reject' } would discard claimed inbox messages;
+    // rejecting with an error instead avoids silently continuing with a
+    // different format and surfaces the storage repair requirement.
     if (sessionImageProjectionModeStore?.resolve) {
-      await sessionImageProjectionModeStore.resolve(
-        session, current().stableImageHistoryNewSessions !== false,
+      const projection = await sessionImageProjectionModeStore.resolve(
+        session, current().stableImageHistory === true ||
+          current().stableImageHistoryNewSessions === true,
       )
+      if (projection === 'unknown') {
+        throw new Error(
+          'Vision Router cannot verify this Session image-history format; ' +
+          'restore its DSH storageDomain before continuing to avoid corrupting the cached request prefix.',
+        )
+      }
     }
     const stableHistoryForStep = stableImageHistoryEnabled(session)
     // Bind the turn-scoped failure memory for this session+turn: tool calls
