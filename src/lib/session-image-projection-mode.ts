@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { createHash } from 'node:crypto'
 import type { Domain, DomainSpec, KvTable } from '@deepseek-ai/dsh-storage-domain'
 
-export type ProjectionMode = 'legacy' | 'stable'
+export type ProjectionMode = 'legacy' | 'stable' | 'stable-v2'
 
 /**
  * An ordinary, immutable DSH user/message is the only supported durable
@@ -15,8 +15,11 @@ export type ProjectionMode = 'legacy' | 'stable'
  * can authorize projecting old images. Never accept arbitrary user text.
  */
 export const STABLE_IMAGE_PROJECTION_WITNESS_V1 = '[DVR image-history format: stable-v1]'
+export const STABLE_IMAGE_PROJECTION_WITNESS_V2 = '[DVR image-history format: stable-v2]'
 const STABLE_WITNESS_PREFIX = 'vision-router-projection-stable-v1-'
+const STABLE_WITNESS_PREFIX_V2 = 'vision-router-projection-stable-v2-'
 const STABLE_WITNESS_ID = /^vision-router-projection-stable-v1-[a-f0-9]{40}$/u
+const STABLE_WITNESS_ID_V2 = /^vision-router-projection-stable-v2-[a-f0-9]{40}$/u
 
 function isDvrSource(source: unknown): boolean {
   if (!source || typeof source !== 'object') return false
@@ -25,35 +28,43 @@ function isDvrSource(source: unknown): boolean {
     (value.kind === 'plugin' && value.plugin === 'dsh-vision-router')
 }
 
-export function isCommittedStableProjectionWitness(message: unknown): boolean {
-  if (!message || typeof message !== 'object') return false
+/** A format witness is trusted only when both its ID family and exact body match. */
+export function committedStableProjectionWitnessMode(message: unknown): 'stable' | 'stable-v2' | undefined {
+  if (!message || typeof message !== 'object') return undefined
   const value = message as {
     role?: unknown; id?: unknown; source?: unknown;
     content?: readonly { type?: unknown; text?: unknown }[]
   }
-  return value.role === 'user' && typeof value.id === 'string' &&
-    STABLE_WITNESS_ID.test(value.id) &&
-    isDvrSource(value.source) &&
-    Array.isArray(value.content) && value.content.length === 1 &&
-    value.content[0]?.type === 'text' &&
-    value.content[0].text === STABLE_IMAGE_PROJECTION_WITNESS_V1
+  if (value.role !== 'user' || typeof value.id !== 'string' ||
+      !isDvrSource(value.source) || !Array.isArray(value.content) ||
+      value.content.length !== 1 || value.content[0]?.type !== 'text') return undefined
+  if (STABLE_WITNESS_ID.test(value.id) &&
+      value.content[0].text === STABLE_IMAGE_PROJECTION_WITNESS_V1) return 'stable'
+  if (STABLE_WITNESS_ID_V2.test(value.id) &&
+      value.content[0].text === STABLE_IMAGE_PROJECTION_WITNESS_V2) return 'stable-v2'
+  return undefined
+}
+export function isCommittedStableProjectionWitness(message: unknown): boolean {
+  return committedStableProjectionWitnessMode(message) !== undefined
 }
 
 export function createStableProjectionWitness(
   sessionId: string, source: { kind: string; plugin?: string },
+  mode: 'stable' | 'stable-v2' = 'stable',
 ) {
   if (!sessionId || !isDvrSource(source)) throw new TypeError('stable witness needs a DVR-owned source and Session')
   const fingerprint = createHash('sha256').update(sessionId).digest('hex').slice(0, 40)
   return {
     role: 'user' as const,
-    id: STABLE_WITNESS_PREFIX + fingerprint,
+    id: (mode === 'stable-v2' ? STABLE_WITNESS_PREFIX_V2 : STABLE_WITNESS_PREFIX) + fingerprint,
     source: { ...source },
-    content: [{ type: 'text' as const, text: STABLE_IMAGE_PROJECTION_WITNESS_V1 }],
+    content: [{ type: 'text' as const,
+      text: mode === 'stable-v2' ? STABLE_IMAGE_PROJECTION_WITNESS_V2 : STABLE_IMAGE_PROJECTION_WITNESS_V1 }],
   }
 }
 
 type ProjectionResolution = ProjectionMode | 'unknown'
-type RecordValue = Readonly<{ revision: 1; mode: ProjectionMode }>
+type RecordValue = Readonly<{ revision: 1; mode: 'legacy' | 'stable' }>
 const recordSchema = z.object({
   revision: z.literal(1),
   mode: z.enum(['legacy', 'stable']),
@@ -203,7 +214,7 @@ export function preserveClaimedMessagesOnBlockedStep(
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
-  const witnesses = new WeakMap<object, boolean>()
+  const witnesses = new WeakMap<object, 'stable' | 'stable-v2' | 'unknown' | false>()
   const pending = new Map<string, Promise<ProjectionResolution>>()
   let open: Promise<Domain<DomainSpec> | undefined> | undefined
   let handle: Domain<DomainSpec> | undefined
@@ -264,51 +275,63 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
   // publication updates this state without rescanning a long conversation.
   // Each cold-restored/forked Session is a new object and scans its own history
   // once, including inherited events.
-  const hasCommittedWitness = (session: Session): boolean => {
-    if (typeof session !== 'object' || !session) return false
+  const committedWitnessMode = (session: Session): 'stable' | 'stable-v2' | 'unknown' | undefined => {
+    if (typeof session !== 'object' || !session) return undefined
     const cached = witnesses.get(session)
-    if (cached !== undefined) return cached
+    if (cached !== undefined) return cached === false ? undefined : cached
     try {
       const events = session.snapshotEvents?.()
-      if (!Array.isArray(events)) return false
-      const found = events.some(event => event?.type === 'user/message' &&
-        isCommittedStableProjectionWitness(event.data))
-      witnesses.set(session, found)
+      if (!Array.isArray(events)) return undefined
+      let found: 'stable' | 'stable-v2' | 'unknown' | undefined
+      for (const event of events) {
+        if (event?.type !== 'user/message') continue
+        const mode = committedStableProjectionWitnessMode(event.data)
+        if (!mode) continue
+        if (found && found !== mode) { found = 'unknown'; break }
+        found = mode
+      }
+      witnesses.set(session, found ?? false)
       return found
     } catch {
-      return false
+      return undefined
     }
   }
+  const hasCommittedWitness = (session: Session): boolean =>
+    committedWitnessMode(session) !== undefined
 
   const witnessFor = (session: Session, source: { kind: string; plugin?: string }) => {
     const id = session.id
-    if (typeof id !== 'string' || cache.get(id) !== 'stable' || hasCommittedWitness(session)) {
-      return undefined
-    }
-    // Merely planning a pre-step does NOT mark a witness as committed. DSH
-    // persists the user/message only on successful step admission. A rejected
-    // or cancelled waterfall will plan the same deterministic ID on retry.
-    return createStableProjectionWitness(id, source)
+    const mode = typeof id === 'string' ? cache.get(id) : undefined
+    if (typeof id !== 'string' || (mode !== 'stable' && mode !== 'stable-v2') ||
+        hasCommittedWitness(session)) return undefined
+    // An aborted pre-step never commits this deterministic v1/v2 ID.
+    return createStableProjectionWitness(id, source, mode)
   }
 
   const onSessionEvent = (session: Session, event: { type?: string; data?: unknown }) => {
-    if (session && typeof session === 'object' && event?.type === 'user/message' &&
-        isCommittedStableProjectionWitness(event.data)) {
-      witnesses.set(session, true)
-      if (typeof session.id === 'string') cache.set(session.id, 'stable')
-    }
+    if (!session || typeof session !== 'object' || event?.type !== 'user/message') return
+    const mode = committedStableProjectionWitnessMode(event.data)
+    if (!mode) return
+    const old = witnesses.get(session)
+    const nextMode = old && old !== mode ? 'unknown' : mode
+    witnesses.set(session, nextMode)
+    if (typeof session.id === 'string' && nextMode !== 'unknown') cache.set(session.id, nextMode)
   }
 
-  const resolve = async (session: Session, allowNewStable = true): Promise<ProjectionResolution> => {
+  const resolve = async (session: Session, requested: boolean | 'stable-v2' = true): Promise<ProjectionResolution> => {
+    const newMode: 'legacy' | 'stable' | 'stable-v2' = requested === 'stable-v2'
+      ? 'stable-v2' : requested === true ? 'stable' : 'legacy'
+    const allowNewStable = newMode !== 'legacy'
     const id = typeof session?.id === 'string' && session.id.trim() !== ''
       ? session.id : undefined
     const unknownOrLegacy = (): ProjectionResolution => hasPriorModelHistory(session) ? 'unknown' : 'legacy'
     if (!id) return unknownOrLegacy()
     // The authoritative Session witness survives a deleted sidecar row,
     // disconnected storage service, cold restart, and a fork with new id.
-    if (hasCommittedWitness(session)) {
-      cache.set(id, 'stable')
-      return 'stable'
+    const witnessedMode = committedWitnessMode(session)
+    if (witnessedMode) {
+      if (witnessedMode !== 'unknown') cache.set(id, witnessedMode)
+      return witnessedMode
     }
     if (cache.has(id)) return cache.get(id) as ProjectionMode
     // A fresh unrequested Session has no old image prefix to migrate. Its
@@ -322,8 +345,8 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         if (!modes || closed) {
           if (closed) return 'unknown'
           if (firstStableRequest) {
-            cache.set(id, 'stable')
-            return 'stable'
+            cache.set(id, newMode)
+            return newMode
           }
           if (allowNewStable) warn(new Error('storageDomain missing or unavailable for historical Session'))
           return unknownOrLegacy()
@@ -335,8 +358,10 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         }
         // A corrupt/unknown persisted row must not be silently replaced.
         if (modes.get(id) !== undefined) return 'unknown'
-        const mode = allowNewStable && !hasPriorModelHistory(session) ? 'stable' : 'legacy'
-        await modes.put(id, { revision: 1, mode })
+        const mode = firstStableRequest ? newMode : 'legacy'
+        // The ordinary DSH Session witness, not an externally versioned
+        // sidecar schema, owns v2. Never write v2 into v1 sidecar records.
+        if (mode !== 'stable-v2') await modes.put(id, { revision: 1, mode })
         if (closed) return 'unknown'
         cache.set(id, mode)
         return mode
@@ -346,8 +371,8 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
           // The Session witness will be admitted and persisted together with
           // the first model request. A failed optional sidecar cannot prevent
           // a genuinely fresh Session from using an opt-in stable format.
-          cache.set(id, 'stable')
-          return 'stable'
+          cache.set(id, newMode)
+          return newMode
         }
         return unknownOrLegacy()
       }
