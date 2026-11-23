@@ -97,7 +97,7 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   const loggingAt = source.indexOf('const logging = installVisionRouterFileLogging(adapterContractCtx)')
   const settingsAt = source.indexOf('const settingsCtx = batchAttachmentHost')
   const runtimeAt = source.indexOf(
-    'const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
+    'const toolRuntimeCtx = installVisionToolRuntimeBoundary(',
   )
   const nativeAt = source.indexOf(
     'const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
@@ -145,6 +145,9 @@ test('P3 final composition keeps runtime order outside the thin public entry', a
   assert.ok(loggingAt > adapterContractAt, 'all later adapter wrappers must register through the final contract boundary')
   assert.ok(settingsAt > loggingAt)
   assert.ok(runtimeAt > settingsAt, 'runtime boundary must see rc7/rc8 host settings compatibility')
+  assert.match(source,
+    /installVisionToolRuntimeBoundary\(\s*attachmentCompatCtx,\s*runtimeConfig,\s*visionSubcallAudit,\s*\)/,
+    'runtime tool observer must remain injected at the original runtime boundary, not a new competing wrapper')
   assert.ok(nativeAt > runtimeAt, 'session image ownership must run inside live tool/cancellation policy')
   assert.ok(
     coreSurfaceRuntimeAt > nativeAt,

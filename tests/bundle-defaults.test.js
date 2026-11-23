@@ -70,8 +70,8 @@ test('public plugin config defaults progressive tools off', () => {
 
 test('issue #865: legacy Core defaults cannot silently re-enable progressive schema changes', async () => {
   const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
-  assert.match(source, /progressiveTools: z\\.boolean\\(\\)\\.default\\(false\\)/)
-  assert.match(source, /const progressive = config\\.progressiveTools === true/)
+  assert.match(source, /progressiveTools: z\.boolean\(\)\.default\(false\)/)
+  assert.match(source, /const progressive = config\.progressiveTools === true/)
   assert.equal(Config({}).progressiveTools, false)
 })
 

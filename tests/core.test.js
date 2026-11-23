@@ -1842,6 +1842,9 @@ test('vision chain never attributes a successful answer to an offloaded history 
 
 test('vision_describe threads the live DSH session id into its child Harness call', async () => {
   const config = {
+    // This test targets dynamic deep-tool activation, an explicit opt-in
+    // after the #865 production default was made schema-stable.
+    progressiveTools: true,
     providers: [{ provider: 'opencode-go', model: 'qwen3.6-plus' }],
     downscale: false,
   }
@@ -2197,7 +2200,9 @@ test('vision-http stream emits the indexed block protocol the assemblers need', 
 
 test('apply registers the vision-tools skill with source and content', () => {
   const { ctx, captured } = mockHarnessCtx({ skills: true })
-  apply(ctx, Config({}))
+  // Skill is only needed when tools mount progressively; all-at-boot mode
+  // already exposes the same tools and must not add this skill by default.
+  apply(ctx, Config({ progressiveTools: true }))
   const skill = captured.skills.find((s) => s.name === 'vision-tools')
   assert.ok(skill, 'expected the vision-tools skill registration')
   // the skill registry validates the LOADED definition against these fields
