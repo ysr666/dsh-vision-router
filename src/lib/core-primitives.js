@@ -770,16 +770,37 @@ export function projectStableTextOnlyImages(messages, { markerStyle = 'history' 
   let changed = false
   const rewritten = (messages ?? []).map((message) => {
     if (!message || !Array.isArray(message.content)) return message
+    let imageOccurrence = 0
     const result = rewriteImagesDeep(message.content, (block) => {
       const attachment = block.attachment || {}
-      const id = attachment.attachmentId || attachment.id || 'unknown'
+      const durableId = (typeof attachment.attachmentId === 'string' && attachment.attachmentId.trim())
+        ? attachment.attachmentId
+        : (typeof attachment.id === 'string' && attachment.id.trim()) ? attachment.id : undefined
+      const id = durableId || 'unknown'
       const name = attachment.name || '图片'
+      const occurrence = imageOccurrence++
       if (block.attachment) attachments.push(block.attachment)
       if (markerStyle === 'history') return { type: 'text', text: imageMarker(id) }
       // V2 is identical in the pre-step and text-twin paths. Exclude mutable
       // filename, OCR memory, current permission and adapter identity.
       if (markerStyle === 'canonical-v2') {
-        const ref = JSON.stringify(String(id))
+        if (!durableId) {
+          // Different images with no queryable attachment ID must never all
+          // collapse to the same fictitious "unknown" attachment. A DSH
+          // message ID + deterministic depth-first image ordinal is the only
+          // stable provenance we can honestly preserve without image bytes.
+          // Explicitly do NOT recommend querying vision_describe by this key.
+          const origin = typeof message.id === 'string' && message.id !== ''
+            ? message.id : 'unidentified-message'
+          return {
+            type: 'text',
+            text: '[DVR stable-v2 image without attachment ID; source ' +
+              JSON.stringify(origin) + '; occurrence ' + occurrence +
+              '] Original pixels are unavailable to this text-only request. ' +
+              'The image has no queryable attachment ID; do not invent one.',
+          }
+        }
+        const ref = JSON.stringify(durableId)
         return {
           type: 'text',
           text: '[DVR stable-v2 image ' + ref +
