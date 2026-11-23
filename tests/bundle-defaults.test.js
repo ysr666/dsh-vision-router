@@ -63,7 +63,7 @@ test('public Config composition preserves the mature Core schema identity', () =
 test('public plugin config defaults progressive tools off', () => {
   assert.equal(Config({}).progressiveTools, false)
   assert.equal(Config({}).stableImageHistory, false)
-  assert.equal(Config({}).stableImageHistoryNewSessions, true)
+  assert.equal(Config({}).stableImageHistoryNewSessions, false)
 })
 
 test('progressive tools remain an explicit opt-in', () => {
