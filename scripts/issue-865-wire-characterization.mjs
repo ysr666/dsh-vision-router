@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createWrapperStreamBody } from '../lib/core-primitives.js'
+import { createSessionImageProjectionModeStore, hasPriorModelHistory } from '../lib/session-image-projection-mode.js'
 import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
 import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
 
@@ -20,6 +21,44 @@ const [{ Context }, llm, { serialize }] = await Promise.all([
   host('packages/llm/llm-deepseek/src/serialize.ts'),
 ])
 const { LlmAdapter, createUserMessage, createAssistantMessage, createDeveloperMessage, createSystemMessage } = llm
+// Use the exact pinned DSH Session implementation, not a synthetic event
+// fixture: first-turn inbox history and firstLiveSeq are distinct boundaries.
+const { Session } = await host('packages/core/session/src/index.ts')
+const freshSession = Session.create('issue-865-real-first-prestep')
+assert.equal(freshSession.firstLiveSeq, 0)
+assert.equal(freshSession.header.isSeeded, false)
+assert.equal(freshSession.requestHeader(), undefined)
+assert.equal(hasPriorModelHistory(freshSession), false)
+freshSession.append('user/message', createUserMessage({
+  source: { kind: 'user' }, content: [{ type: 'text', text: 'first turn' }],
+}), { surfaceOp: 'append' })
+assert.equal(hasPriorModelHistory(freshSession), false,
+  'first user input is not proof of a previous model request in a genuinely fresh DSH Session')
+const testRows = new Map()
+let testCleanup
+const projectionStore = createSessionImageProjectionModeStore({
+  get(name) {
+    if (name !== 'storageDomain') return undefined
+    return {
+      async open() {
+        return {
+          table(tableName) {
+            assert.equal(tableName, 'modes')
+            return {
+              get: id => testRows.get(id),
+              async put(id, value) { testRows.set(id, structuredClone(value)) },
+            }
+          },
+          async close() {},
+        }
+      },
+    }
+  },
+  effect(setup) { testCleanup = setup() },
+})
+assert.equal(await projectionStore.resolve(freshSession, true), 'stable')
+assert.equal(projectionStore.get(freshSession.id), 'stable')
+await testCleanup()
 const modelId = 'deepseek-flash'
 const sourceRoute = 'deepseek-account'
 const twinRoute = 'deepseek-account-vision'
