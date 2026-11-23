@@ -7,6 +7,8 @@ import {
   createStableProjectionWitness,
   isCommittedStableProjectionWitness,
   STABLE_IMAGE_PROJECTION_WITNESS_V1,
+  STABLE_IMAGE_PROJECTION_WITNESS_V2,
+  committedStableProjectionWitnessMode,
   preserveClaimedMessagesOnBlockedStep,
 } from '../lib/session-image-projection-mode.js'
 
@@ -368,4 +370,67 @@ test('stage 2: blocked first step durably requeues exact claimed input in origin
   assert.equal(calls.length, 1, 'an empty tool continuation cannot requeue synthetic input')
   assert.throws(() => preserveClaimedMessagesOnBlockedStep({}, [first]),
     /Agent\.inbox\.splice is unavailable/, 'never claim successful requeue if the Host lacks the interface')
+})
+
+test('stage 2: v2 first request is witnessed in DSH history and survives deleted sidecar and fork', async () => {
+  const h = fixture()
+  const owner = { kind: 'plugin:dsh-vision-router' }
+  const original = session('canonical-v2-first')
+  assert.equal(await h.store.resolve(original, 'stable-v2'), 'stable-v2')
+  assert.equal(h.rows.has('canonical-v2-first'), false, 'v2 must not write an unsupported value into the v1 sidecar')
+  const witness = h.store.witnessFor(original, owner)
+  assert.ok(witness)
+  assert.equal(witness.content[0].text, STABLE_IMAGE_PROJECTION_WITNESS_V2)
+  assert.equal(committedStableProjectionWitnessMode(witness), 'stable-v2')
+  assert.equal(h.store.witnessFor(original, owner).id, witness.id,
+    'a failed request must retry the same deterministic v2 witness')
+  await h.ctx.cleanup()
+
+  const persistedEvents = [{ type: 'user/message', data: witness }, { type: 'request/header' }]
+  const cold = fixture([])
+  const resumed = session('canonical-v2-first', persistedEvents, { firstLiveSeq: 2 })
+  assert.equal(await cold.store.resolve(resumed, false), 'stable-v2')
+  assert.equal(cold.store.witnessFor(resumed, owner), undefined)
+  const child = session('canonical-v2-fork', persistedEvents, {
+    firstLiveSeq: 2, inheritedEventCount: 1, isSeeded: true,
+  })
+  assert.equal(await cold.store.resolve(child, true), 'stable-v2',
+    'v2 fork inheritance is based on the Session witness, not mutable settings or child ID')
+  assert.equal(cold.stats.puts, 0)
+  await cold.ctx.cleanup()
+})
+
+test('stage 2: a committed v1 witness always stays v1, even when new Sessions prefer v2', async () => {
+  const h = fixture()
+  const v1 = createStableProjectionWitness('older-v1', { kind: 'plugin:dsh-vision-router' })
+  const restored = session('older-v1', [{ type: 'user/message', data: v1 },
+    { type: 'request/header' }], { firstLiveSeq: 2 })
+  assert.equal(await h.store.resolve(restored, 'stable-v2'), 'stable')
+  assert.equal(h.store.witnessFor(restored, { kind: 'plugin:dsh-vision-router' }), undefined)
+  await h.ctx.cleanup()
+})
+
+test('stage 2: conflicting witnessed versions fail closed, a v2 witness beats stale v1 sidecar', async () => {
+  const owner = { kind: 'plugin:dsh-vision-router' }
+  const v1 = createStableProjectionWitness('same-visual-conversation', owner)
+  const v2 = createStableProjectionWitness('same-visual-conversation', owner, 'stable-v2')
+  assert.equal(isCommittedStableProjectionWitness(v2), true)
+  assert.equal(committedStableProjectionWitnessMode(v2), 'stable-v2')
+  const h = fixture([['same-visual-conversation', { revision: 1, mode: 'legacy' }]])
+  const rescued = session('same-visual-conversation', [
+    { type: 'user/message', data: v2 }, { type: 'request/header' },
+  ], { firstLiveSeq: 2 })
+  assert.equal(await h.store.resolve(rescued, false), 'stable-v2',
+    'the official Session log is authoritative when an old sidecar row disagrees')
+  assert.deepEqual(h.rows.get('same-visual-conversation'), { revision: 1, mode: 'legacy' })
+  const conflicted = session('same-visual-conversation-conflict', [
+    { type: 'user/message', data: v1 }, { type: 'user/message', data: v2 },
+    { type: 'request/header' },
+  ], { firstLiveSeq: 3 })
+  assert.equal(await h.store.resolve(conflicted, 'stable-v2'), 'unknown',
+    'two incompatible committed format witnesses may not silently pick one')
+  assert.equal(committedStableProjectionWitnessMode({ ...v2,
+    content: [{ type: 'text', text: STABLE_IMAGE_PROJECTION_WITNESS_V1 }] }), undefined,
+    'no witness ID/body cross-version confusion')
+  await h.ctx.cleanup()
 })
