@@ -120,7 +120,7 @@ export function createNativeVisionClientBridge(scope) {
 // Each active composer Session owns one observation. Never reuse a previous
 // Session or connection's value; retirement is synchronous even if the
 // transport refuses cancellation. No polling or optimistic toggle state.
-export function startNativeVisionClientObservation(api, sessionId, publish, { retryDelays = [100, 350, 1000] } = {}) {
+export function startNativeVisionClientObservation(api, sessionId, publish, { retryDelays = [100, 350, 1000, 2000, 3000] } = {}) {
   const schemas = createNativeVisionClientSchemas()
   const ctl = new AbortController()
   let active = true
@@ -177,10 +177,13 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
         // The Host can briefly retire its Agent lookup while keeping the
         // DVR strict endpoint registered. The Gateway then correctly rejects
         // observation with a missing lookup/service; retry the READ only for
-        // the existing small budget. Writes are never replayed, and mismatched
-        // providers, withdrawn definitions and access denials stay hard errors.
+        // a finite startup/HMR budget. Even a temporarily withdrawn strict
+        // definition may reappear after a plugin generation swap; retry the
+        // SAME strict read endpoint, never SRC fallback. Writes are never
+        // replayed. Provider mismatch and principal denial stay hard errors.
         retryable = ['transport-failed', 'gateway/internal', 'session/not-found',
-          'gateway/lookup-unavailable', 'gateway/service-unavailable'].includes(reason)
+          'gateway/lookup-unavailable', 'gateway/service-unavailable',
+          'gateway/definition-unavailable'].includes(reason)
       } finally {
         try { stream?.dispose() } catch {}
         stream = undefined
