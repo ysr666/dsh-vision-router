@@ -50,3 +50,32 @@ DSH 0.2.3-alpha.2 Settings root transport), while keeping the #865
 Mainline acceptance workflow and original transport/smoke/test file blobs
 are reused unchanged; the overlapping index, runtime-e2e and package script
 were composed semantically, not overwritten.
+
+## Added targeted closure tests and in-process subcall observation (2026-11-24)
+
+The private Vision tool LLM proxy now captures only **actual streamed** tool-invoked
+LLM calls while executing a Vision Router tool. It stores up to 64 results per
+live Session object in a WeakMap, tracks finished/failed/incomplete status and
+the *last* cumulative Usage chunk, and exposes only anonymous counts/totals
+through `/vision-cache`. It records no prompt, attachment, file path, account,
+provider route or raw error; it never starts a new model call. A stream that
+is constructed but never consumed is not counted as a started execution.
+
+This **does not close the fully automatic billing ledger**: Host-originated
+titles, native main provider transactions, unobserved adapter retries and
+direct HTTP bridges do not necessarily cross this proxy; cache hits are not
+provider calls; provider billing records cannot be inferred from token Usage.
+Missing usage is explicitly `?`, not a zero or a free call. For full-cost
+analysis, reconcile independent provider gateway call inventory, including
+all `main`, `vision`, `title` and `retry` rows.
+
+The new isolated `#865 targeted final closure` CI matrix executes focused
+immutable-history, single-flight, sidecall observation and offline Usage
+tests on Node 24.9 and 24.21 with an explicit 20-minute per-job timeout.
+It supplements, never replaces, the required full CI and exact Host gates.
+
+**Release candidate guard:** neither the stable-v2 default nor a shipped
+version is enabled here. Existing Sessions/forks remain locked to their
+original format; full quality and representative real-Host performance
+remain user-visible acceptance gates. OFF/ON full tool-prefix parity remains
+deferred by the owner and must not weaken OFF permissions.
