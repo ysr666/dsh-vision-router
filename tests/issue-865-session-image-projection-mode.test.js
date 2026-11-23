@@ -359,7 +359,7 @@ test('stage 2: blocked first step durably requeues exact claimed input in origin
   const claimed = [first, second]
   assert.equal(preserveClaimedMessagesOnBlockedStep(agent, claimed), 2)
   assert.deepEqual(pending, [first, second, later],
-    'the blocked user's original messages must remain pending before later inputs')
+    "the blocked user\'s original messages must remain pending before later inputs")
   assert.deepEqual(calls, [{
     target: 'next-turn', index: 0, count: 0, inserted: claimed,
   }], 'one atomic official Inbox.splice, not duplicate best-effort insertions')
