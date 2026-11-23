@@ -190,7 +190,7 @@ import {
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
 import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
-import { requiresVerifiedImageProjection } from './lib/session-image-projection-mode.js'
+import { requiresVerifiedImageProjection, preserveClaimedMessagesOnBlockedStep } from './lib/session-image-projection-mode.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -2650,9 +2650,18 @@ export function apply(ctx, config = {}, runtime = {}) {
           (content) => blocksHaveRetainedImage(content),
         )
         if (unverifiedImageHistory) {
+          // DSH AgentLoop already claimed the inbox BEFORE this waterfall.
+          // Requeue the exact original messages using its public durable Inbox
+          // seam before throwing. A bare throw or {kind:'reject'} would consume
+          // the human input permanently while stopping the unsafe request.
+          // Skip requeue if this turn was explicitly cancelled.
+          if (!payload.signal?.aborted) {
+            preserveClaimedMessagesOnBlockedStep(payload.agent, payload.messages ?? [])
+          }
           throw new Error(
             'Vision Router cannot verify this Session image-history format; ' +
-            'restore its DSH storageDomain before continuing an image-bearing request.',
+            'restore its DSH storageDomain before continuing an image-bearing request. ' +
+            'Original pending input has been retained for retry after recovery.',
           )
         }
         // Do not cache a guessed legacy mode. If storage later recovers, the
