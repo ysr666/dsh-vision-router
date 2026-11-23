@@ -47,7 +47,7 @@ changes can still invalidate a cache.
 ## What is deliberately NOT changed
 
 - Existing `stableImageHistory` remains explicit opt-in (default false).
-  The separate `stableImageHistoryNewSessions` switch defaults true. It
+  The separate `stableImageHistoryNewSessions` switch remains EXPERIMENTAL and defaults false; an architecture review found unaddressed first-turn classification, runtime Settings override, and missing-sidecar restart hazards. It
   applies only when the official DSH Storage Domain can persist a per-Session
   format decision **before the first LLM request**. In old or imported Sessions
   with committed model history, the first decision is `legacy`, and stays
