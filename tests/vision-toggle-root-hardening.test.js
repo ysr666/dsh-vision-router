@@ -656,3 +656,39 @@ test('Desktop race: model-directory hydration never waits forever or reports a f
   assert.equal(released, 1)
   assert.match(api.recoveryFor(directory).getSnapshot().message, /initial hydration timed out/)
 })
+
+test('Desktop hydration observer cleans up when ModelDirectory publishes synchronously during subscribe', async () => {
+  let timers = 0
+  const window = {
+    fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }),
+    setTimeout() { timers++; return 1 },
+    clearTimeout() {},
+  }
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error,
+  })
+  let status = 'loading'
+  let unsubscribed = 0
+  let dispatched = 0
+  const directory = {
+    store: {
+      getSnapshot() { return { status } },
+      subscribe(callback) {
+        status = 'ready'
+        callback()
+        return () => { unsubscribed++ }
+      },
+    },
+    select() { dispatched++; return Promise.resolve({ ok: true }) },
+  }
+  const outcome = await window.__dshVisionRouterRootHardening.select(directory, {
+    provider: 'desktop-e2e-vision', model: 'desktop-text',
+  })
+  assert.equal(outcome.ok, true)
+  assert.equal(dispatched, 1)
+  assert.equal(unsubscribed, 1, 'synchronous publish cannot orphan an observer')
+  assert.equal(timers, 0, 'already-hydrated directory must not install a stale deadline')
+})
