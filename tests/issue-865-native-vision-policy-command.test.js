@@ -628,7 +628,7 @@ test('issue #865 B2.4: production registration shares descriptor lookup and expl
   const owner = {
     ...scope,
     inject(dependencies, activate) {
-      assert.deepEqual(dependencies, ['agents', 'llm'])
+      assert.deepEqual(dependencies, ['typert', 'agents', 'llm'])
       names.push(...dependencies)
       const traced = new Proxy(scope, { get(target, key) {
         if (key === 'llm' && !dependencies.includes('llm')) throw Error('undeclared LLM')
