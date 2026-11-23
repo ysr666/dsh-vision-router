@@ -98,9 +98,9 @@ test('#865: explicit old legacy Session v2 stabilization is additive, durable an
   assert.deepEqual(f.log.slice(0, f.original.length), f.original,
     'all old Session raw records/attachments preserved without alteration')
   assert.equal(inspectHistoricalProjectionEvents(f.log).status, 'stable-v2')
-  assert.deepEqual(assessProjectionDowngrade(f.log, 'pre-v2'),
+  assert.deepEqual(assessProjectionDowngrade(f.log, 'stable-v1'),
     { decision: 'block', reason: 'target-cannot-read-v2' })
-  assert.deepEqual(assessProjectionDowngrade(f.log, 'v2-aware'),
+  assert.deepEqual(assessProjectionDowngrade(f.log, 'stable-v2'),
     { decision: 'allow', reason: 'format-recognized' })
   const again = await f.call()
   assert.equal(again.kind, 'success')
@@ -157,11 +157,13 @@ test('#865: prior v1 and contradictory witness histories cannot silently switch'
   assert.equal(f.actions.appends.length, 0)
   assert.equal(inspectHistoricalProjectionEvents(old).status, 'stable-v1')
   const conflict = [...old, { type: 'user/message', data: v2 }]
-  assert.deepEqual(assessProjectionDowngrade(conflict, 'v2-aware'),
+  assert.deepEqual(assessProjectionDowngrade(conflict, 'stable-v2'),
     { decision: 'block', reason: 'unverified-session-format' })
   assert.equal((await fixture({ events: conflict }).call()).kind, 'error')
-  assert.deepEqual(assessProjectionDowngrade(old, 'pre-v2'),
+  assert.deepEqual(assessProjectionDowngrade(old, 'stable-v1'),
     { decision: 'allow', reason: 'format-recognized' })
+  assert.deepEqual(assessProjectionDowngrade(old, 'legacy-only'),
+    { decision: 'block', reason: 'target-cannot-read-v1' })
 })
 
 test('#865: an unverified witness family fails closed, unwitnessed history is UNKNOWN on downgrade', async () => {
@@ -172,7 +174,7 @@ test('#865: an unverified witness family fails closed, unwitnessed history is UN
   const log = [{ type: 'request/header' }, { type: 'user/message', data: bad }]
   assert.equal(inspectHistoricalProjectionEvents(log).status, 'unknown')
   assert.equal((await fixture({ events: log }).call()).kind, 'error')
-  assert.deepEqual(assessProjectionDowngrade([{ type: 'request/header' }], 'pre-v2'),
+  assert.deepEqual(assessProjectionDowngrade([{ type: 'request/header' }], 'legacy-only'),
     { decision: 'unknown', reason: 'no-committed-format-proof' })
   assert.throws(() => assessProjectionDowngrade([], 'guessed-old-version'), /unknown target/)
 })
