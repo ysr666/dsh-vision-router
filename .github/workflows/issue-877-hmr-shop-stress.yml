@@ -1,0 +1,53 @@
+name: "Issue 877 Windows HMR + Shop multi-cycle regression"
+on:
+  push:
+    branches: [diagnostics/issue-877-multibundle-hmr-stress]
+    paths:
+      - "scripts/issue-877-desktop-upgrade-probe.mjs"
+      - ".github/workflows/issue-877-hmr-shop-stress.yml"
+permissions:
+  contents: read
+jobs:
+  real-shop-recompose:
+    name: "Windows rc5 / Shop 0.9.4 / four HMR upgrade cycles"
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb
+          persist-credentials: false
+          path: dsh-host
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.21.0
+      - name: Build isolated host test dependencies
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+      - name: Build immutable DSH Windows Desktop RC5
+        working-directory: dsh-host
+        env:
+          CI: "true"
+          LEFTHOOK: "0"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Exercise real Shop coexistence and repeat package HMR updates
+        working-directory: dsh-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-host
+          DSH_EXPECTED_VERSION: 0.2.2-rc.5
+          DVR_DESKTOP_BASE_PORT: "19911"
+          DVR_DIAG_WITH_SHOP: "1"
+          DVR_DIAG_STRESS_CYCLES: "4"
+        run: node --import tsx ../dvr/scripts/issue-877-desktop-upgrade-probe.mjs
