@@ -250,3 +250,19 @@ test('#865 text report visibly flags missing provider calls and does not certify
   assert.match(text,/full-session-billing-reconciled=false/)
   assert.match(text,/unmatched-variants=1/)
 })
+
+test('#865 title/retry model route drift is descriptive, not causal savings', () => {
+  for (const kind of ['title','retry']) {
+    const rows=[
+      one('before'),
+      one('before',{call:kind,routeTag:'extraA',modelTag:'extraModel'}),
+      one('after'),
+      one('after',{call:kind,routeTag:'extraB',modelTag:'extraModel'}),
+    ]
+    const report=compareCacheAB(doc(rows))
+    assert.equal(report.pairedTrials,0,kind+' mismatched supplementary route must not be compared')
+    assert.equal(report.excluded.mismatchedRoutes,1)
+    assert.equal(report.routeAttribution.changedPairs,1)
+    assert.equal(report.evidenceLevel.fullSessionBilledCostReconciled,false)
+  }
+})

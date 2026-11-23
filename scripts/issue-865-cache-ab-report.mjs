@@ -222,12 +222,19 @@ export function compareCacheAB(document) {
       .map(r => JSON.stringify([r.routeTag, r.modelTag])))
     const mainBefore = identities('before')('main')
     const mainAfter = identities('after')('main')
-    const visionBefore = identities('before')('vision')
-    const visionAfter = identities('after')('vision')
     const mainTag = mainBefore.size === 1 ? [...mainBefore][0] : undefined
-    const visionTags = new Set([...visionBefore, ...visionAfter])
+    // Each shared extra-call category (vision/title/retry) must also keep its
+    // upstream identity. Otherwise a changed title/retry model can look like
+    // an improvement in the main Session cache while polluting the bill.
+    const auxiliaryRoutesStable = ['vision', 'title', 'retry'].every(kind => {
+      const before = identities('before')(kind)
+      const after = identities('after')(kind)
+      if (!before.size || !after.size) return true
+      return before.size === 1 && after.size === 1 &&
+        [...before][0] === [...after][0]
+    })
     if (!mainTag || mainAfter.size !== 1 || !mainAfter.has(mainTag) ||
-        (visionBefore.size && visionAfter.size && visionTags.size !== 1) ||
+        !auxiliaryRoutesStable ||
         (referenceMainRoute !== undefined && mainTag !== referenceMainRoute)) {
       mismatchedRoutes++
       // A cross-provider/model case may explain the original user's bill,
