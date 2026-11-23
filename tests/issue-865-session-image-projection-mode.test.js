@@ -455,18 +455,21 @@ test('stage 2: live conflicting witness clears a formerly stable format cache', 
   await h.ctx.cleanup()
 })
 
-test('stage 2: per-Session mode cache is bounded and reconstructs evicted records', async () => {
+test('stage 2: 530 simultaneously live Sessions retain pinned format until Agent disposal', async () => {
   const h = fixture()
   for (let i = 0; i < 530; i++) {
     assert.equal(await h.store.resolve(session('many-' + i), true), 'stable')
   }
-  assert.equal(h.store.get('many-0'), undefined,
-    'oldest Session format may be evicted from process-local LRU')
+  assert.equal(h.store.get('many-0'), 'stable',
+    'an in-flight Adapter may read this first Session after 529 unrelated pre-steps')
   assert.equal(h.store.get('many-529'), 'stable')
+  h.hooks.get('agent/disposed')?.({ agent: { id: 'many-0', session: { id: 'many-0' } } })
+  assert.equal(h.store.get('many-0'), undefined,
+    'the Agent lifetime, not an unrelated LRU operation, ends the format binding')
   assert.equal(await h.store.resolve(session('many-0', [
     { type: 'request/header' },
   ], { firstLiveSeq: 1 }), false), 'stable',
-  'an evicted format rehydrates from the durable v1 compatibility row')
+  'the retired and later restored Session reads the original durable v1 row')
   await h.ctx.cleanup()
 })
 
