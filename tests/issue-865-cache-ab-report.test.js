@@ -126,7 +126,7 @@ test('native DeepSeek Chat final usage rejects mismatched prompt and total', () 
   }, chat('after')])), /must not be mixed/)
   assert.throws(() => compareCacheAB(doc([{
     ...chat('before'), usage: { ...chat('before').usage, request_id: 'SECRET' },
-  }, chat('after')])), /requires exactly/)
+  }, chat('after')])), /unrecognized native Usage field/)
 })
 
 
@@ -162,7 +162,7 @@ test('official DeepSeek Chat Usage allows prompt/completion details and refuses 
       prompt_cache_miss_tokens: 30, completion_tokens: 5, total_tokens: 105,
       prompt_tokens_details: { cached_tokens: 70 },
       completion_tokens_details: { reasoning_tokens: 4 },
-      extra_provider_field: 'untrusted but not shared',
+      service_tier: 'standard',
     },
   })
   assert.equal(compareCacheAB(doc([native('before'), native('after')])).before.cacheHitPercent, 70)

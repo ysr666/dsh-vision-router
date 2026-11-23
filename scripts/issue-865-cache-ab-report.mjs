@@ -44,6 +44,16 @@ function fromNativeUsage(r) {
   if (required.some(k => !Object.prototype.hasOwnProperty.call(usage, k) || !natural(usage[k]))) {
     fail('DeepSeek final usage is missing a required valid numeric counter')
   }
+  // Accept published provider Usage extensions, but reject unrecognized
+  // properties such as request_id or raw prompt metadata. That protects
+  // shareable evidence files without re-introducing exact-key-count failures.
+  const extensions = source === 'deepseek-messages-final'
+    ? ['service_tier', 'output_tokens_details', 'server_tool_use']
+    : ['prompt_tokens_details', 'completion_tokens_details', 'service_tier']
+  const allowed = new Set([...required, ...extensions])
+  if (Object.keys(usage).some(key => !allowed.has(key))) {
+    fail('DeepSeek final usage contains an unrecognized native Usage field')
+  }
   if (source === 'deepseek-chat-final' &&
       usage.prompt_tokens_details !== undefined &&
       usage.prompt_tokens_details !== null) {

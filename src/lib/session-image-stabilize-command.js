@@ -26,7 +26,8 @@ export function inspectHistoricalProjectionEvents(events) {
   const mode = inspectCommittedProjectionWitnesses(events)
   return mode === 'stable-v2' ? { status: 'stable-v2' }
     : mode === 'stable' ? { status: 'stable-v1' }
-      : { status: 'unwitnessed' }
+      : mode === 'unknown' ? { status: 'unknown' }
+        : { status: 'unwitnessed' }
 }
 
 /**
