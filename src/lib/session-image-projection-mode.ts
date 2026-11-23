@@ -214,6 +214,18 @@ export function preserveClaimedMessagesOnBlockedStep(
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
+  // Cached modes are only an acceleration layer. Eviction can always recover
+  // authority from a witnessed Session or the old v1 domain record.
+  const MAX_CACHED_SESSIONS = 512
+  const rememberMode = (id: string, mode: ProjectionMode): void => {
+    cache.delete(id)
+    cache.set(id, mode)
+    while (cache.size > MAX_CACHED_SESSIONS) {
+      const oldest = cache.keys().next().value
+      if (oldest === undefined) break
+      cache.delete(oldest)
+    }
+  }
   const witnesses = new WeakMap<object, 'stable' | 'stable-v2' | 'unknown' | false>()
   const pending = new Map<string, Promise<ProjectionResolution>>()
   let open: Promise<Domain<DomainSpec> | undefined> | undefined
@@ -247,6 +259,22 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     }
   } catch {
     owned = false
+  }
+
+  // An Agent is the lifetime owner of its Session-side in-memory view. Do
+  // not retain a stale ID-level choice after that owner is retired; a future
+  // owner with the same ID must rederive its format from durable evidence.
+  try {
+    ctx.on?.('agent/disposed', (payload) => {
+      const agent = (payload as {
+        agent?: { id?: unknown; session?: { id?: unknown } }
+      } | undefined)?.agent
+      const id = agent?.session?.id ?? agent?.id
+      if (typeof id === 'string') cache.delete(id)
+    })
+  } catch {
+    // Older Hosts may not expose this lifecycle event. The bounded LRU still
+    // caps retention without weakening the authoritative Session witness.
   }
 
   const table = async (): Promise<KvTable<string, RecordValue> | undefined> => {
@@ -317,7 +345,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     witnesses.set(session, nextMode)
     if (typeof session.id === 'string') {
       if (nextMode === 'unknown') cache.delete(session.id)
-      else cache.set(session.id, nextMode)
+      else rememberMode(session.id, nextMode)
     }
   }
 
@@ -337,7 +365,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
       // projection choice. Otherwise the Core's safe-text continuation could
       // accidentally consult a stale stable-v1/v2 cache after 'unknown'.
       if (witnessedMode === 'unknown') cache.delete(id)
-      else cache.set(id, witnessedMode)
+      else rememberMode(id, witnessedMode)
       return witnessedMode
     }
     if (cache.has(id)) return cache.get(id) as ProjectionMode
@@ -352,7 +380,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         if (!modes || closed) {
           if (closed) return 'unknown'
           if (firstStableRequest) {
-            cache.set(id, newMode)
+            rememberMode(id, newMode)
             return newMode
           }
           if (allowNewStable) warn(new Error('storageDomain missing or unavailable for historical Session'))
@@ -360,7 +388,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         }
         const stored = recordSchema.safeParse(modes.get(id))
         if (stored.success) {
-          cache.set(id, stored.data.mode)
+          rememberMode(id, stored.data.mode)
           return stored.data.mode
         }
         // A corrupt/unknown persisted row must not be silently replaced.
@@ -370,7 +398,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
         // sidecar schema, owns v2. Never write v2 into v1 sidecar records.
         if (mode !== 'stable-v2') await modes.put(id, { revision: 1, mode })
         if (closed) return 'unknown'
-        cache.set(id, mode)
+        rememberMode(id, mode)
         return mode
       } catch (error) {
         warn(error)
@@ -378,7 +406,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
           // The Session witness will be admitted and persisted together with
           // the first model request. A failed optional sidecar cannot prevent
           // a genuinely fresh Session from using an opt-in stable format.
-          cache.set(id, newMode)
+          rememberMode(id, newMode)
           return newMode
         }
         return unknownOrLegacy()
