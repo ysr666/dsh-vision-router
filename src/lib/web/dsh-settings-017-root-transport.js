@@ -69,16 +69,10 @@ function serviceOf(ctx, name) {
 function compatibleSettings(ctx) {
   const settings = serviceOf(ctx, 'settings')
   if (typeof settings?.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
-  // DSH 0.2.3 exposes the native SettingsProvider without a Host-side
-  // configForms service. Require ownership of our namespace rather than
-  // inferring it from a removed compatibility service.
-  if (settings[DSH_017_SETTINGS_COMPAT_MARK] !== true) {
-    try {
-      if (!namespaceDescriptor(settings)) return undefined
-    } catch {
-      return undefined
-    }
-  }
+  // DSH 0.2.3 removes Host-side configForms. This hook runs before
+  // base.apply() registers the DVR namespace on an already-present settings
+  // service, so only inspect provider capabilities at mount time. The GET/POST
+  // handler still requires the actual vision-router descriptor before access.
   return settings
 }
 
