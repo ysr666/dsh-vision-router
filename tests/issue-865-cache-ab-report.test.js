@@ -239,3 +239,14 @@ test('#865 callInventory refuses to certify an incomplete title/retry/provider b
   assert.throws(()=>compareCacheAB({...doc(observations),callInventory:[
     {...known[0],accountId:'SECRET'},known[1]]}),/invalid call inventory/)
 })
+
+test('#865 text report visibly flags missing provider calls and does not certify full billing', () => {
+  const r=compareCacheAB({...doc([one('before'),one('after')]),callInventory:[
+    {case:'sameCase',trial:1,variant:'before',main:1,vision:0,title:2,retry:0},
+    {case:'sameCase',trial:1,variant:'after',main:1,vision:0,title:0,retry:0},
+  ]})
+  const text=formatCacheAB(r)
+  assert.match(text,/title=0, retry=0/)
+  assert.match(text,/full-session-billing-reconciled=false/)
+  assert.match(text,/unmatched-variants=1/)
+})

@@ -24,3 +24,47 @@ then ON, then OFF again, including ordinary continuation turns per state.
 Record transition positions separately. Do not clear cache, delete history,
 or infer actual monetary savings from aggregate input volume. Live controlled
 comparisons require authorized usage/billing evidence.
+
+## Offline full-call inventory comparison (Draft #885)
+
+The local-only `scripts/issue-865-cache-ab-report.mjs` accepts each provider
+response in one of four classes: `main`, `vision`, `title`, or `retry`.
+This includes title/retry costs in the submitted A/B totals rather than
+silently reporting only main Session responses.
+
+To check whether a dataset omits extra calls, optionally provide a strictly
+redacted gateway-derived count summary alongside the observations:
+
+```json
+{
+  "schema": "dvr-cache-ab-v1",
+  "observations": [
+    {"case":"example","trial":1,"variant":"before","call":"main",
+     "routeTag":"opaqueRoute","modelTag":"opaqueModel",
+     "usageSource":"provider-response",
+     "inputTokens":10,"cacheReadTokens":90,"outputTokens":7,"totalTokens":107},
+    {"case":"example","trial":1,"variant":"after","call":"main",
+     "routeTag":"opaqueRoute","modelTag":"opaqueModel",
+     "usageSource":"provider-response",
+     "inputTokens":10,"cacheReadTokens":90,"outputTokens":7,"totalTokens":107}
+  ],
+  "callInventory": [
+    {"case":"example","trial":1,"variant":"before",
+     "main":1,"vision":0,"title":0,"retry":0},
+    {"case":"example","trial":1,"variant":"after",
+     "main":1,"vision":0,"title":0,"retry":0}
+  ]
+}
+```
+
+A missing title/retry/vision row causes
+`callCoverage.allSubmittedCallsReconciled=false` and
+`evidenceLevel.fullSessionBilledCostReconciled=false`. Each row needs its
+own actual billed-CNY export to support a full-billing conclusion.
+Route/model mismatch or incomplete paired trials also prevent a comparable
+full-session billed-cost claim.
+
+**Privacy and provenance:** this is user-supplied count reconciliation, not
+an independently authenticated gateway export. If a call is absent from both
+the observations and claimed inventory, the tool cannot detect it.
+The analyzer refuses secret fields/request IDs and makes no provider calls.

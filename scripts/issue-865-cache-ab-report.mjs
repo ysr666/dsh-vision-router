@@ -288,6 +288,7 @@ export function compareCacheAB(document) {
         before.billedCny !== null && after.billedCny !== null,
       fullSessionBilledCostReconciled: document.callInventory !== undefined &&
         unreconciledInventories === 0 && reconciledInventories > 0 &&
+        incompletePairs === 0 && mismatchedRoutes === 0 &&
         valid.length > 0 &&
         before.billedCny !== null && after.billedCny !== null,
     },
@@ -314,7 +315,8 @@ export function compareCacheAB(document) {
 export function formatCacheAB(report) {
   const show = x => x === null || x === undefined ? 'unknown' : String(x)
   const entry = (name, x) => name + ': ' + (x ? [
-    'calls=' + x.calls + ' (main=' + x.mainCalls + ', vision=' + x.visionCalls + ')',
+    'calls=' + x.calls + ' (main=' + x.mainCalls + ', vision=' + x.visionCalls +
+      ', title=' + x.titleCalls + ', retry=' + x.retryCalls + ')',
     'uncached-input=' + x.uncachedInputTokens,
     'cache-read=' + show(x.cacheReadTokens), 'hit=' + show(x.cacheHitPercent) + '%',
     'billed-CNY=' + show(x.billedCny),
@@ -329,7 +331,12 @@ export function formatCacheAB(report) {
     entry('Cross-route after', report.routeAttribution.after),
     'Evidence: complete-cache-counters=' + report.evidenceLevel.submittedCacheCountersComplete +
       '; all-native-final-usage=' + report.evidenceLevel.allIncludedCallsHaveNativeFinalUsage +
-      '; itemized-actual-billing=' + report.evidenceLevel.actualItemizedBilling,
+      '; itemized-actual-billing=' + report.evidenceLevel.actualItemizedBilling +
+      '; full-session-billing-reconciled=' + report.evidenceLevel.fullSessionBilledCostReconciled,
+    'Call inventory: provided=' + report.callCoverage.inventoryProvided +
+      ', matched-variants=' + report.callCoverage.matchedVariants +
+      ', unmatched-variants=' + report.callCoverage.unmatchedVariants +
+      ', all-reconciled=' + report.callCoverage.allSubmittedCallsReconciled,
     'Deltas (after-before): calls=' + show(report.deltas?.requests) + ', uncached-input=' + show(report.deltas?.uncachedInputTokens) + ', hit-pp=' + show(report.deltas?.cacheHitPercentagePoints) + ', billed-CNY=' + show(report.deltas?.billedCny),
     ...report.limits.map(x => '- ' + x),
   ].join('\n')
