@@ -29,12 +29,14 @@ function fixture(initial = []) {
       async close() { stats.closes++ },
     }
   } }
+  const hooks = new Map()
   const ctx = {
     get(name) { return name === 'storageDomain' ? facility : undefined },
     effect(setup) { this.cleanup = setup() },
+    on(event, listener) { hooks.set(event, listener) },
   }
   const store = createSessionImageProjectionModeStore(ctx)
-  return { ctx, rows, stats, store }
+  return { ctx, rows, stats, store, hooks }
 }
 function session(id, events = [], { firstLiveSeq = 0, isSeeded = false, inheritedEventCount = 0 } = {}) {
   return {
@@ -450,5 +452,30 @@ test('stage 2: live conflicting witness clears a formerly stable format cache', 
   assert.equal(h.store.get('live-conflict'), undefined,
     'conflict must revoke even the previously cached v2 mode')
   assert.equal(h.store.witnessFor(live, source), undefined)
+  await h.ctx.cleanup()
+})
+
+test('stage 2: per-Session mode cache is bounded and reconstructs evicted records', async () => {
+  const h = fixture()
+  for (let i = 0; i < 530; i++) {
+    assert.equal(await h.store.resolve(session('many-' + i), true), 'stable')
+  }
+  assert.equal(h.store.get('many-0'), undefined,
+    'oldest Session format may be evicted from process-local LRU')
+  assert.equal(h.store.get('many-529'), 'stable')
+  assert.equal(await h.store.resolve(session('many-0', [
+    { type: 'request/header' },
+  ], { firstLiveSeq: 1 }), false), 'stable',
+  'an evicted format rehydrates from the durable v1 compatibility row')
+  await h.ctx.cleanup()
+})
+
+test('stage 2: retired Agent invalidates process-local Session choice', async () => {
+  const h = fixture()
+  assert.equal(await h.store.resolve(session('retiring'), 'stable-v2'), 'stable-v2')
+  assert.equal(h.store.get('retiring'), 'stable-v2')
+  h.hooks.get('agent/disposed')?.({ agent: { id: 'retiring', session: { id: 'retiring' } } })
+  assert.equal(h.store.get('retiring'), undefined,
+    'a later Agent owner must rederive the image format from its Session history')
   await h.ctx.cleanup()
 })
