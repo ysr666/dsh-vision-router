@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { createWrapperStreamBody } from '../lib/core-primitives.js'
+import { createWrapperStreamBody, rewriteHistoryImages } from '../lib/core-primitives.js'
 import { createSessionImageProjectionModeStore, hasPriorModelHistory } from '../lib/session-image-projection-mode.js'
 import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
 import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
@@ -86,6 +86,19 @@ const inherited = Session.create(
 assert.equal(inherited.header.isSeeded, true)
 assert.equal(await orphanStore.resolve(inherited, false), 'stable',
   'forks inherit the format from their real DSH source log, not the child Session ID')
+// A first-ever, real DSH Session can select v2 without any optional storage.
+// The committed v2 witness survives Host cold restore and seeded fork.
+const canonicalV2 = Session.create('issue-865-canonical-v2')
+assert.equal(await orphanStore.resolve(canonicalV2, 'stable-v2'), 'stable-v2')
+const canonicalWitness = orphanStore.witnessFor(canonicalV2, { kind: 'plugin:dsh-vision-router' })
+assert.ok(canonicalWitness)
+canonicalV2.append('user/message', canonicalWitness, { surfaceOp: 'append' })
+orphanStore.onSessionEvent(canonicalV2, { type: 'user/message', data: canonicalWitness })
+const restoredV2 = Session.create('issue-865-canonical-v2', canonicalV2.snapshotEvents())
+assert.equal(await orphanStore.resolve(restoredV2, false), 'stable-v2')
+const forkedV2 = Session.create('issue-865-canonical-v2-fork', canonicalV2.snapshotEvents(),
+  { ...canonicalV2.header, id: 'issue-865-canonical-v2-fork', isSeeded: true }, canonicalV2.seq)
+assert.equal(await orphanStore.resolve(forkedV2, false), 'stable-v2')
 await orphanCleanup()
 const modelId = 'deepseek-flash'
 const sourceRoute = 'deepseek-account'
@@ -365,6 +378,47 @@ try {
   const offeredNames = offAgain.wire.tools?.map(tool => tool.name) ?? []
   assert.ok(!offeredNames.includes(ocr.name) && !offeredNames.includes(describe.name),
     'OFF must never retain an executable DVR tool declaration')
+
+  // V2: both text-only entries converge on the actual native DeepSeek
+  // Messages serializer, not merely an approximate JSON representation.
+  // The image is a realistic DSH UserMessage but is NEVER serialized as
+  // image bytes on this text-only route.
+  const fixtureImage = createUserMessage({
+    source: { kind: 'user' }, content: [{
+      type: 'image', attachment: {
+        attachmentId: 'sha256:canonical-v2-wire-attachment', name: 'original.png',
+      },
+    }],
+  })
+  const rawV2 = [
+    createSystemMessage('canonical stable-v2 synthetic prompt'),
+    fixtureImage, assistant('prior answer'), user('follow-up message'),
+  ]
+  const v2Memory = new Map([['sha256:canonical-v2-wire-attachment', 'late OCR does not belong to old history']])
+  const historyV2 = rewriteHistoryImages(rawV2, v2Memory, { stable: 'stable-v2' }).messages
+  const serializedHistory = await request(sourceRoute, historyV2)
+  const projected = []
+  const bridgeV2 = createWrapperStreamBody({
+    llm: { async *stream(options) {
+      projected.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
+  }, {
+    imageMemory: v2Memory, delegateProvider: sourceRoute, preserveImageInput: false,
+    stableImageHistory: options => options.sessionId === 'wire-v2' ? 'stable-v2' : false,
+  })
+  for await (const _ of bridgeV2.stream({
+    provider: 'synthetic-v2-twin', model: modelId, messages: rawV2,
+    sessionId: 'wire-v2', maxTokens: 128, reasoningEffort: 'high',
+  })) {}
+  assert.equal(projected.length, 1)
+  const serializedTwin = serialize({ ...serializedHistory.options, messages: projected[0].messages },
+    connection, projected[0].messages, new Map(), () => undefined)
+  assert.deepEqual(serializedTwin.messages, serializedHistory.wire.messages,
+    'both real DeepSeek serializer entrypoints must receive the exact same canonical v2 image prefix')
+  v2Memory.set('sha256:canonical-v2-wire-attachment', 'OCR changed after cold resume')
+  const afterOcrV2 = rewriteHistoryImages(rawV2, v2Memory, { stable: 'stable-v2' }).messages
+  assert.deepEqual(afterOcrV2, historyV2, 'historical v2 prefix is immutable after OCR update')
 
   console.log(JSON.stringify({
     ok: true,
