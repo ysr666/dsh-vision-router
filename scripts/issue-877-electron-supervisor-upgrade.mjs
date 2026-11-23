@@ -300,10 +300,15 @@ export function apply(ctx) {
             if (shop?.application !== 'applied') {
               throw new Error('Shop setup failed: ' + JSON.stringify(shop))
             }
+            const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
+            if (baseline?.application !== 'applied') {
+              throw new Error('DVR baseline setup failed: ' + JSON.stringify(baseline))
+            }
             const update = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0',
               { requestId: 'issue-877-electron-supervisor' })
             res.writeHead(200, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ shop: { application: shop?.application, version: shop?.version },
+              baseline: { application: baseline?.application, version: baseline?.version },
               update: { from: update?.from, to: update?.to, step: update?.step,
                 application: update?.result?.application, version: update?.result?.version,
                 error: update?.result?.error, restored: !!update?.restore },
@@ -859,9 +864,9 @@ try {
   const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
-  manifest.dependencies['dsh-vision-router'] = issue877ElectronUpgrade ? '3.2.1' : `file:${exactNativeOcr?.copied ?? dvrRoot}`
+  if (!issue877ElectronUpgrade) manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
   manifest.dependencies[coreProbeFixture.name] = issue877ElectronUpgrade ? `link:${coreProbeFixture.directory}` : `file:${coreProbeFixture.directory}`
-  if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
+  if (!issue877ElectronUpgrade && !manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
   manifest.dsh.profile.bundles.push(coreProbeFixture.name)
   writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
   // Exercise the exact public configuration surfaces: a local OpenAI-compatible
