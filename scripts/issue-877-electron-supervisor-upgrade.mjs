@@ -307,7 +307,13 @@ export function apply(ctx) {
               baseline: { application: baseline?.application, version: baseline?.version },
               update: { from: update?.from, to: update?.to, step: update?.step,
                 application: update?.result?.application, version: update?.result?.version,
-                error: update?.result?.error, restored: !!update?.restore },
+                error: update?.result?.error, restored: !!update?.restore,
+                // Only sanitized package-expectation diagnostics; never report
+                // request contents, credentials, user paths, or full pnpm logs.
+                expectedPackageWarnings: String(update?.result?.packageResult?.output ?? '')
+                  .split(/\\r?\\n/).filter(line => /installation rejected|installed where|is not installed|declares no bundle/.test(line))
+                  .map(line => line.replace(/(?:[A-Z]:\\\\|\\/)[^\\s]+/g, '<path>').slice(0, 250)).slice(0, 8),
+                unmet: update?.result?.packageResult?.unmet },
               timeline, firstFailure: timeline.find(x => x.error) || null }))
           } catch (error) {
             res.writeHead(500, { 'content-type': 'application/json' })
