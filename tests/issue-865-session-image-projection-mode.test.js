@@ -482,3 +482,27 @@ test('stage 2: retired Agent invalidates process-local Session choice', async ()
     'a later Agent owner must rederive the image format from its Session history')
   await h.ctx.cleanup()
 })
+
+test('stage 2: failed command-level durability fences v2 mode through Agent disposal until successful flush', async () => {
+  const h = fixture()
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const events = [{ type: 'request/header' }]
+  const witness = createStableProjectionWitness('durability-fenced', source, 'stable-v2')
+  events.push({ type: 'user/message', data: witness })
+  const s = session('durability-fenced', events, { firstLiveSeq: 2 })
+  assert.equal(await h.store.resolve(s, false), 'stable-v2')
+  assert.equal(h.store.get(s.id), 'stable-v2')
+  h.store.markUnverifiedDurability(s.id)
+  assert.equal(h.store.isDurabilityUnverified(s.id), true)
+  assert.equal(h.store.get(s.id), undefined,
+    'auxiliary dispatch cannot accidentally use the pending-unflushed v2 mode')
+  assert.equal(await h.store.resolve(s, false), 'unknown',
+    'the authoritative witness is not sufficient without command-level disk acknowledgement')
+  h.store.release(s.id)
+  assert.equal(h.store.isDurabilityUnverified(s.id), true,
+    'disposing an Agent cannot erase the disk-failure fence')
+  h.store.markVerifiedDurability(s.id)
+  assert.equal(h.store.isDurabilityUnverified(s.id), false)
+  assert.equal(await h.store.resolve(s, false), 'stable-v2')
+  await h.ctx.cleanup()
+})
