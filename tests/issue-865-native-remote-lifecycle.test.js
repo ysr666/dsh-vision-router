@@ -214,7 +214,7 @@ test('issue #865: only transient lookup/service READ failures are retried, never
     kind: 'native', selection: { provider: 'p', model: 'm' },
     enabled: false, requestedEnabled: false, canEnable: true, durable: true,
   }
-  for (const reason of ['gateway/lookup-unavailable', 'gateway/service-unavailable']) {
+  for (const reason of ['gateway/lookup-unavailable', 'gateway/service-unavailable', 'gateway/definition-unavailable']) {
     let reads = 0
     let writes = 0
     let observer
@@ -242,8 +242,8 @@ test('issue #865: only transient lookup/service READ failures are retried, never
   }
 })
 
-test('issue #865: unauthorized or withdrawn strict Remote never retries or falls back to SRC', async () => {
-  for (const reason of ['gateway/definition-unavailable', 'gateway/provider-mismatch', 'remote-access/denied']) {
+test('issue #865: authorization and signature failures never retry or fall back to SRC', async () => {
+  for (const reason of ['gateway/provider-mismatch', 'remote-access/denied']) {
     let reads = 0
     let observer
     const api = {
@@ -264,4 +264,31 @@ test('issue #865: unauthorized or withdrawn strict Remote never retries or falls
     assert.equal(result.reason, reason)
     assert.equal(reads, 1, reason + ' is a hard failure, never silent compatibility fallback')
   }
+})
+
+test('issue #865: permanently withdrawn strict definition eventually fails, never disguises as legacy', async () => {
+  let reads = 0
+  let observer
+  const api = {
+    observe() {
+      reads++
+      throw Object.assign(new Error('strict definition still withdrawn'), {
+        code: 'gateway/definition-unavailable',
+      })
+    },
+    async set() { throw new Error('strict read retries must never invoke set') },
+  }
+  const result = await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('finite strict registry retry timeout')), 2500)
+    observer = startNativeVisionClientObservation(api, 'session', state => {
+      if (state.kind === 'failed' || state.kind === 'legacy') {
+        clearTimeout(deadline)
+        resolve(state)
+      }
+    }, { retryDelays: [1, 1] })
+  })
+  observer.stop()
+  assert.equal(result.kind, 'failed', 'registry retirement is not an old Host compatibility signal')
+  assert.equal(result.reason, 'gateway/definition-unavailable')
+  assert.equal(reads, 3, 'one initial read plus two finite retries; never retry indefinitely')
 })
