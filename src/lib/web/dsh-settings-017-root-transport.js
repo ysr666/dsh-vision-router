@@ -163,18 +163,20 @@ function beginSlowMutationWatch(root, requestId) {
 }
 
 function allowLocalSettingsRequest(req, res, connection, peer) {
-  // Locality is necessary but never sufficient for access to settings.
-  // On 0.2.3+ the WebServer auth:'required' gate passes the admitted Peer;
-  // older Hosts keep requestRejection(). With neither authority, fail closed.
+  // DSH 0.2.3+ WebServer auth:'required' admits authenticated Peers,
+  // including non-owner principals. Configuration is owner-only. Older Hosts
+  // do not provide a Peer and use Connection.requestRejection instead.
   let denied = !isLocalUiRequest(req) ? 403 : undefined
   if (denied === undefined) {
     try {
-      if (typeof connection?.requestRejection === 'function') {
+      if (peer !== undefined && peer?.principal?.kind !== 'owner') {
+        denied = 403
+      } else if (typeof connection?.requestRejection === 'function') {
         const rejection = connection.requestRejection(req)
         if (rejection !== undefined && rejection !== null) {
           denied = rejection === 401 ? 401 : 403
         }
-      } else if (!peer || typeof peer !== 'object') {
+      } else if (peer?.principal?.kind !== 'owner') {
         denied = 403
       }
     } catch { denied = 403 }
