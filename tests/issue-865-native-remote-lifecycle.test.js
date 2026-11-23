@@ -59,14 +59,19 @@ function remoteFixture() {
     inject(deps, callback) {
       assert.deepEqual(deps, ['typert', 'agents', 'llm'])
       mountChild = callback
-      return callback(makeChildScope())
+      callback(makeChildScope())
+      // The real Cordis inject() returns a Fiber, not an admissible cleanup
+      // effect. The enclosing callback must never leak this object to Host.
+      return { kind: 'synthetic-cordis-fiber' }
     },
   }
   const ctx = {
     inject(deps, callback) {
       assert.deepEqual(deps, ['typert'],
         'the strict Remote definition must outlive Agents/LLM generation churn')
-      return callback(owner)
+      const installedEffect = callback(owner)
+      assert.equal(installedEffect, undefined,
+        'a nested Cordis Fiber must not be returned as an outer injection effect')
     },
   }
   const store = { subscribe() {} }
