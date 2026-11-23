@@ -64,7 +64,7 @@ test('#865 unknown authorization, missing signal and cancelled signal never shar
 })
 test('#865 failed producer is never replayed as a permanent cached result', async () => {
   const run = createVisionDescribeSingleFlight()
-  const session = {}, signal = new AbortController().signal
+  const session = {}, agent = {}, signal = new AbortController().signal
   const gate = deferred()
   let calls = 0
   const failing = () => { calls++; return gate.promise }
