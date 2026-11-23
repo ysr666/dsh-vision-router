@@ -601,3 +601,35 @@ test('stage 2: v2 escapes untrusted attachment identifiers without changing iden
   assert.ok(!marker.messages[0].content[0].text.includes('mutable-name.png'))
   assert.equal(original[0].content[0].type, 'image')
 })
+
+test('stage 2: v2 never conflates distinct images with missing attachment IDs', async () => {
+  const missing = [{ id: 'tool-produced-two-images', role: 'tool', content: [
+    { type: 'image', attachment: { name: 'first.png' } },
+    { type: 'tool-result', content: [
+      { type: 'image', attachment: { name: 'second.png' } },
+    ] },
+  ] }]
+  const original = structuredClone(missing)
+  const projected = rewriteHistoryImages(missing, new Map(), { stable: 'stable-v2' }).messages
+  const first = projected[0].content[0].text
+  const second = projected[0].content[1].content[0].text
+  assert.notEqual(first, second, 'two unqueryable pictures cannot share an identical synthetic marker')
+  assert.match(first, /source "tool-produced-two-images"; occurrence 0/)
+  assert.match(second, /source "tool-produced-two-images"; occurrence 1/)
+  assert.match(first, /do not invent one/)
+  assert.ok(!first.includes('attachmentIds:'), 'never advertise an unqueryable attachment as a real ID')
+  assert.deepEqual(missing, original, 'request-only projection does not mutate the durable tool result')
+  const requests = []
+  const bridge = createWrapperStreamBody({ llm: { async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } } }, {
+    delegateProvider: 'text', preserveImageInput: false,
+    imageMemory: new Map(), stableImageHistory: 'stable-v2',
+  })
+  for await (const _ of bridge.stream({
+    provider: 'text-twin', model: 'text', sessionId: 'missing-id-case', messages: missing,
+  })) {}
+  assert.deepEqual(requests[0].messages, projected,
+    'canonical fallback is byte-identical through both text-only paths')
+})
