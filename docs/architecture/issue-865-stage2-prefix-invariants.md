@@ -93,6 +93,31 @@ changes can still invalidate a cache.
   Actual per-request cache read/miss and itemized charges remain separate
   evidence to collect with authorization.
 
+## Canonical v2 isolation (new, explicitly opted-in Sessions only)
+
+- `stableImageHistoryNewSessions: true` selects `stable-v2` only for a
+  demonstrably fresh Session, while the older `stableImageHistory: true`
+  opt-in remains `stable-v1`. Both decisions become immutable when a
+  versioned DVR-source-attributed normal DSH `user/message` witness commits.
+  A restored/forked Session always reads its original witness, even when
+  the sidecar is missing; contradictory v1/v2 witnesses fail closed.
+- The v2 representation is **identical** for the pre-step history rewriter
+  and the generated text twin. It is made only from a JSON-quoted durable
+  attachment ID, and never from filenames, OCR results, clock time, current
+  permission, or mutable adapter memory. The prior v1 path-specific English
+  and Chinese markers are retained byte-for-byte.
+- The official DSH Session lifecycle and DeepSeek Messages serializer are
+  exercised by `scripts/issue-865-wire-characterization.mjs`; unit tests
+  cover v2 direct/wrapper parity, OCR/filename mutations, saved v1 continuity,
+  fork recovery, hostile attachment IDs, and conflicting witness formats.
+- This is **text-only path parity**, not a promise of equality across native
+  multimodal image serialization, provider/model changes or tool ON→OFF.
+  Rolling back to a pre-v2 DVR binary can also lose v2 awareness: rollback is
+  a separate compatibility boundary, not silently supported.
+- Explicit opt-in only. The global new-Session default remains **false**;
+  actual cache-hit/miss billing comparisons and full supported Host/Desktop
+  approval remain required.
+
 ## Verification still required
 
 - Exact-HEAD CI on supported Windows/macOS/Linux Host and Desktop.
