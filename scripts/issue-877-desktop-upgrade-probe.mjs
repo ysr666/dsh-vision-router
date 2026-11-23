@@ -168,9 +168,19 @@ try {
     signal: AbortSignal.timeout(180_000),
   })
   const upgradeStatus = upgrade.status
-  const upgradeBody = await upgrade.json()
-  if (upgradeStatus !== 200) {
-    throw new Error('Host PluginManager upgrade request failed: ' + JSON.stringify(upgradeBody))
+  const upgradeText = await upgrade.text()
+  let upgradeBody
+  try {
+    upgradeBody = upgradeText ? JSON.parse(upgradeText) : undefined
+  } catch {
+    throw new Error('Host PluginManager probe returned invalid JSON: status='
+      + String(upgradeStatus) + ' content-type=' + String(upgrade.headers.get('content-type'))
+      + ' body=' + upgradeText.slice(0, 600))
+  }
+  if (upgradeStatus !== 200 || !upgradeBody) {
+    throw new Error('Host PluginManager probe did not reach JSON handler: status='
+      + String(upgradeStatus) + ' content-type=' + String(upgrade.headers.get('content-type'))
+      + ' body=' + upgradeText.slice(0, 600))
   }
   console.log('ISSUE_877_UPGRADE_PROBE=' + JSON.stringify({
     hostVersion: dshVersion, node: process.version,
