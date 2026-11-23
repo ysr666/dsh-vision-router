@@ -35,9 +35,22 @@ function fromNativeUsage(r) {
   const required = source === 'deepseek-messages-final'
     ? ['input_tokens','cache_read_input_tokens','cache_creation_input_tokens','output_tokens']
     : ['prompt_tokens','prompt_cache_hit_tokens','prompt_cache_miss_tokens','completion_tokens','total_tokens']
-  if (Object.keys(usage).length !== required.length ||
-      required.some(k => !Object.prototype.hasOwnProperty.call(usage, k) || !natural(usage[k]))) {
-    fail('DeepSeek final usage requires exactly its numeric count fields')
+  // The native final Usage objects are extensible. Official DeepSeek replies
+  // may include service_tier, prompt_tokens_details, output_tokens_details and
+  // server_tool_use alongside these counters. Validate REQUIRED arithmetic but
+  // do not reject otherwise valid official responses for additional fields.
+  // The entire original usage object is discarded below; it is never echoed to
+  // the shareable report, so extensions cannot leak private content.
+  if (required.some(k => !Object.prototype.hasOwnProperty.call(usage, k) || !natural(usage[k]))) {
+    fail('DeepSeek final usage is missing a required valid numeric counter')
+  }
+  if (source === 'deepseek-chat-final' && usage.prompt_tokens_details !== undefined) {
+    const detail = usage.prompt_tokens_details
+    if (!detail || typeof detail !== 'object' || Array.isArray(detail) ||
+        !natural(detail.cached_tokens) ||
+        detail.cached_tokens !== usage.prompt_cache_hit_tokens) {
+      fail('DeepSeek cached token detail contradicts final cache hit count')
+    }
   }
   let numbers
   if (source === 'deepseek-messages-final') {
