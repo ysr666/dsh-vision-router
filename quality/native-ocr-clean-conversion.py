@@ -114,6 +114,9 @@ def acquire(url, dest, expected):
                         # An upstream CDN may close normally after a short
                         # 200 response. A checksum mismatch at the expected
                         # length is NOT treated as a network retry.
+                        # Flush buffered writes before computing a diagnostic
+                        # SHA from the short response.
+                        output.flush()
                         raise IncompleteSourceError(
                             f'SOURCE_INCOMPLETE: got={size} expected={expected["bytes"]} '
                             f'sha256={identity(partial)["sha256"]}'
