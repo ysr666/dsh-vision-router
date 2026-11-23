@@ -46,20 +46,37 @@ changes can still invalidate a cache.
 
 ## What is deliberately NOT changed
 
-- `stableImageHistory` stays **opt-in**. An unconditional default flip would
-  switch already-running Sessions from mutable legacy history to v1 markers
-  and cause the very historical prefix reset this fix seeks to prevent.
-- Do not infer a persistent projection version from process-local Maps or
-  whether OCR memory happens to be populated. A future default-on rollout
-  needs durable per-Session format/version identification, a legacy migration
-  boundary, quality tests with real OCR and native/text-only image inputs,
-  and specific cold-resume validation. This Draft does not invent one.
+- Existing `stableImageHistory` remains explicit opt-in (default false).
+  The separate `stableImageHistoryNewSessions` switch defaults true. It
+  applies only when the official DSH Storage Domain can persist a per-Session
+  format decision **before the first LLM request**. In old or imported Sessions
+  with committed model history, the first decision is `legacy`, and stays
+  `legacy` on future requests and across cold resume. If already stored,
+  neither current Settings nor later request headers silently change it.
+- The optional domain `vision_router_image_projection` is distinct from
+  Session Vision permission. Its `modes` table stores only
+  `{revision:1,mode:'legacy'|'stable'}`, keyed by Session ID; no OCR text,
+  image contents, private Session events, or credentials are stored. Missing
+  or untrusted storage fails closed to legacy, never a process-local guess.
+  A genuinely interrupted/failed sidecar write cannot justify a stable-mode
+  request, and ambiguous provider/cache outcomes still require testing.
+- Source histories retain their original image events. Existing opt-in v1
+  text-wrapper and history markers are unchanged. No unapproved retroactive
+  migration of old Session prefixes occurs.
 - DeepSeek `toolUpdate: addition-only` cannot represent tool removal as an
   incremental change. On OFF, the Host must rebuild declarations. DVR must
   **not** preserve protected tools just to make the header look cache-stable.
 - No claim of provider cache hits, user billing savings, or final Issue closure.
   Actual per-request cache read/miss and itemized charges remain separate
   evidence to collect with authorization.
+
+## Verification still required
+
+- Exact-HEAD CI on supported Windows/macOS/Linux Host and Desktop.
+- Provider-backed read/miss and billing comparisons remain part of the final
+  #865 issue closure, not of the offline Stage 2 prefix contract.
+- Real Chinese screenshots/low-resolution documents and the PP-OCRv6 quality
+  acceptance are not replaced by these synthetic image/pixel-preservation gates.
 
 ## Deployment
 
