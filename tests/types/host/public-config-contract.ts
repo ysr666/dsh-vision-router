@@ -11,7 +11,7 @@ const core = z.object({
 
 const composed = composePublicVisionConfig(core)
 const sameIdentityType: typeof core = composed
-const revision: 7 = SETTINGS_CONTRACT_REVISION
+const revision: 8 = SETTINGS_CONTRACT_REVISION
 
 void sameIdentityType
 void revision
