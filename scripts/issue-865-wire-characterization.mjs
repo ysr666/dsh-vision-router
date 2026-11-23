@@ -226,6 +226,79 @@ try {
   assert.equal(extractSignatures(trustedTwinContinuation.wire).length, 1,
     'provider-stamped native twin replay must survive private DVR source rebinding')
 
+  // Stage 2: use actual LlmRuntime + DeepSeek Messages wire projection to
+  // distinguish stable same-policy requests from the unavoidable removal
+  // baseline reset. This is not a claim of real provider-side cache hits.
+  const foreign = schema('foreign_helper')
+  const ocr = schema('vision_ocr')
+  const describe = schema('vision_describe')
+  const schemaHeader = (wire) => {
+    const { messages: _messages, ...header } = wire
+    return fingerprint(header)
+  }
+  const checkPrefix = (before, after, what) => {
+    assert.deepEqual(
+      after.wire.messages.slice(0, before.wire.messages.length),
+      before.wire.messages,
+      what + ': all previously serialized model messages must retain their bytes and order',
+    )
+  }
+  const offMessages = [createSystemMessage('stable native prompt'), user('vision OFF first')]
+  const offHistory = { tools: [foreign], updates: [] }
+  const offOne = await request(sourceRoute, offMessages, { tools: [foreign], toolHistory: offHistory })
+  const offTwo = await request(sourceRoute, [...offMessages, user('vision still OFF')], {
+    tools: [foreign], toolHistory: offHistory,
+  })
+  assert.equal(schemaHeader(offOne.wire), schemaHeader(offTwo.wire), 'OFF->OFF headers must stay stable')
+  checkPrefix(offOne, offTwo, 'OFF->OFF')
+  assert.equal(countChanges(offTwo.wire), 0)
+
+  const enable = createDeveloperMessage({ source: { kind: 'user' }, content: [
+    { type: 'tool-addition', toolName: ocr.name },
+    { type: 'tool-addition', toolName: describe.name },
+  ] })
+  const enabledHistory = { tools: [foreign], updates: [
+    { messageId: enable.id, additions: [ocr, describe] },
+  ] }
+  const onMessages = [...offMessages, assistant('answered OFF'), user('enable visual precision'), enable, user('vision ON first')]
+  const onOne = await request(sourceRoute, onMessages, {
+    tools: [foreign, ocr, describe], toolHistory: enabledHistory,
+  })
+  const onTwo = await request(sourceRoute, [...onMessages, assistant('answered ON'), user('vision still ON')], {
+    tools: [foreign, ocr, describe], toolHistory: enabledHistory,
+  })
+  assert.equal(schemaHeader(onOne.wire), schemaHeader(onTwo.wire), 'ON->ON headers must stay stable')
+  checkPrefix(onOne, onTwo, 'ON->ON')
+  assert.equal(countChanges(onOne.wire), 2, 'each tool becomes available once through the official addition-only projection')
+
+  const disable = createDeveloperMessage({ source: { kind: 'user' }, content: [
+    { type: 'tool-removal', toolName: ocr.name },
+    { type: 'tool-removal', toolName: describe.name },
+  ] })
+  const disabledHistory = { tools: [foreign], updates: [
+    { messageId: enable.id, additions: [ocr, describe] },
+    { messageId: disable.id, additions: [] },
+  ] }
+  const afterOffMessages = [...onMessages, assistant('answered ON'), user('disable visual precision'), disable, user('vision OFF again')]
+  const offAgain = await request(sourceRoute, afterOffMessages, {
+    tools: [foreign], toolHistory: disabledHistory,
+  })
+  const offContinuation = await request(sourceRoute, [...afterOffMessages, assistant('answered OFF again'), user('remain OFF')], {
+    tools: [foreign], toolHistory: disabledHistory,
+  })
+  assert.equal(schemaHeader(offAgain.wire), schemaHeader(offContinuation.wire),
+    'post-transition OFF->OFF headers must stay stable')
+  checkPrefix(offAgain, offContinuation, 'post-transition OFF->OFF')
+  // DeepSeek addition-only MUST rebuild at a tool removal. Do not keep a
+  // protected tool declared merely to manufacture a historical cache hit.
+  assert.equal(schemaHeader(offAgain.wire), schemaHeader(offOne.wire),
+    'returning OFF should expose exactly the original tool header')
+  assert.equal(countChanges(offAgain.wire), 0,
+    'removed visual tools must not be offered after an addition-only baseline reset')
+  const offeredNames = offAgain.wire.tools?.map(tool => tool.name) ?? []
+  assert.ok(!offeredNames.includes(ocr.name) && !offeredNames.includes(describe.name),
+    'OFF must never retain an executable DVR tool declaration')
+
   console.log(JSON.stringify({
     ok: true,
     host: process.env.DSH_EXPECTED_VERSION ?? 'pinned DSH',
@@ -244,6 +317,10 @@ try {
       directPrefix: fingerprint(directTools.wire),
       wrappedPrefix: fingerprint(viaTwinTools.wire),
       waterfallPrefix: fingerprint(transparentTools.wire),
+    },
+    toolStateContinuity: {
+      offSamePrefix: true, onSamePrefix: true, postTransitionOffSamePrefix: true,
+      offToolNames: offeredNames, toolRemovalRebuilt: true,
     },
     waterfall: {
       delegatedCalls: delegatedAtWaterfall,
