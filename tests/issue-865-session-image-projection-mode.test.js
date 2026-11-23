@@ -9,6 +9,7 @@ import {
   STABLE_IMAGE_PROJECTION_WITNESS_V1,
   STABLE_IMAGE_PROJECTION_WITNESS_V2,
   committedStableProjectionWitnessMode,
+  inspectCommittedProjectionWitnesses,
   preserveClaimedMessagesOnBlockedStep,
 } from '../lib/session-image-projection-mode.js'
 
@@ -504,5 +505,48 @@ test('stage 2: failed command-level durability fences v2 mode through Agent disp
   h.store.markVerifiedDurability(s.id)
   assert.equal(h.store.isDurabilityUnverified(s.id), false)
   assert.equal(await h.store.resolve(s, false), 'stable-v2')
+  await h.ctx.cleanup()
+})
+
+
+test('adversarial #865: trusted malformed witness is UNKNOWN, never rescued by an old sidecar', async () => {
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const original = createStableProjectionWitness('bad-witness', source, 'stable-v2')
+  const malformed = { ...original, content: [{ type: 'text', text: 'tampered' }] }
+  const events = [{ type: 'user/message', data: malformed }, { type: 'request/header' }]
+  assert.equal(inspectCommittedProjectionWitnesses(events), 'unknown')
+  assert.equal(inspectCommittedProjectionWitnesses([{
+    type: 'user/message', data: { ...malformed, source: { kind: 'user' } },
+  }]), undefined, 'foreign user prose never becomes a DVR-owned mode witness')
+  const h = fixture([['bad-witness', { revision: 1, mode: 'legacy' }]])
+  const restored = session('bad-witness', events, { firstLiveSeq: 2 })
+  assert.equal(await h.store.resolve(restored, false), 'unknown',
+    'malformed trusted proof cannot fall back to a plausible stale sidecar row')
+  assert.equal(h.store.hasCommittedWitness(restored), true)
+  assert.equal(h.store.get(restored.id), undefined)
+  await h.ctx.cleanup()
+})
+
+test('adversarial #865: live malformed witness poisons previous valid mode and cannot be repaired by another valid marker', async () => {
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const h = fixture()
+  const events = []
+  const live = session('live-malformed', events)
+  assert.equal(await h.store.resolve(live, 'stable-v2'), 'stable-v2')
+  const original = createStableProjectionWitness(live.id, source, 'stable-v2')
+  const validEvent = { type: 'user/message', data: original }
+  events.push(validEvent)
+  h.store.onSessionEvent(live, validEvent)
+  assert.equal(h.store.get(live.id), 'stable-v2')
+  const malformed = { type: 'user/message', data: {
+    ...original, content: [{ type: 'text', text: 'altered in storage' }],
+  } }
+  events.push(malformed)
+  h.store.onSessionEvent(live, malformed)
+  assert.equal(h.store.get(live.id), undefined)
+  assert.equal(await h.store.resolve(live, 'stable-v2'), 'unknown')
+  h.store.onSessionEvent(live, validEvent)
+  assert.equal(await h.store.resolve(live, 'stable-v2'), 'unknown',
+    'subsequent valid marker cannot override an already committed contradiction')
   await h.ctx.cleanup()
 })
