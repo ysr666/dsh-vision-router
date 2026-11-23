@@ -69,18 +69,27 @@ function serviceOf(ctx, name) {
 function compatibleSettings(ctx) {
   const settings = serviceOf(ctx, 'settings')
   if (typeof settings?.describe !== 'function' || typeof settings.mutate !== 'function') return undefined
-  // Modern Hosts can expose both native SettingsProvider.register() and
-  // configForms. Their browser uses the local bridge even without our
-  // ConfigEditor compatibility facade/marker. Keep legacy Hosts without
-  // configForms on their original settings path.
-  const forms = serviceOf(ctx, 'configForms')
-  if (settings[DSH_017_SETTINGS_COMPAT_MARK] !== true && typeof forms?.get !== 'function') return undefined
+  // DSH 0.2.3 exposes the native SettingsProvider without a Host-side
+  // configForms service. Require ownership of our namespace rather than
+  // inferring it from a removed compatibility service.
+  if (settings[DSH_017_SETTINGS_COMPAT_MARK] !== true) {
+    try {
+      if (!namespaceDescriptor(settings)) return undefined
+    } catch {
+      return undefined
+    }
+  }
   return settings
 }
 
 function namespaceDescriptor(settings) {
   const descriptors = settings.describe({ redactSecrets: true })
   return Array.isArray(descriptors) ? descriptors.find((entry) => entry?.ns === 'vision-router') : undefined
+}
+
+function writableOf(settings) {
+  if (typeof settings?.writable === 'boolean') return settings.writable
+  return typeof settings?.mutate === 'function'
 }
 
 function sendJson(res, status, body) {
@@ -159,19 +168,20 @@ function beginSlowMutationWatch(root, requestId) {
   }, SLOW_MUTATION_MS)
 }
 
-function allowLocalSettingsRequest(req, res, connection) {
-  // This root-owned route bypasses DVR's usual child-Context WebServer wrapper.
-  // Check *both* transport locality and the Host's authenticated browser
-  // session before reading or mutating the complete settings namespace.
+function allowLocalSettingsRequest(req, res, connection, peer) {
+  // Locality is necessary but never sufficient for access to settings.
+  // On 0.2.3+ the WebServer auth:'required' gate passes the admitted Peer;
+  // older Hosts keep requestRejection(). With neither authority, fail closed.
   let denied = !isLocalUiRequest(req) ? 403 : undefined
   if (denied === undefined) {
     try {
-      if (typeof connection?.requestRejection !== 'function') denied = 403
-      else {
+      if (typeof connection?.requestRejection === 'function') {
         const rejection = connection.requestRejection(req)
         if (rejection !== undefined && rejection !== null) {
           denied = rejection === 401 ? 401 : 403
         }
+      } else if (!peer || typeof peer !== 'object') {
+        denied = 403
       }
     } catch { denied = 403 }
   }
@@ -184,8 +194,9 @@ function routeFor(root, state, getConnection) {
   return {
     kind: 'exact',
     path: LOCAL_SETTINGS_PATH,
-    async handler(req, res) {
-      if (!allowLocalSettingsRequest(req, res, getConnection())) return
+    auth: 'required',
+    async handler(req, res, peer) {
+      if (!allowLocalSettingsRequest(req, res, getConnection(), peer)) return
       const requestId = ++state.requestSequence
       trace('handler-enter', { requestId, method: req.method, generation: state.current?.id })
       const settings = currentSettings(state)
@@ -201,7 +212,7 @@ function routeFor(root, state, getConnection) {
           sendJson(res, 404, { ok: false, error: { code: 'settings-unavailable', message: 'Vision Router settings are unavailable' } })
           return
         }
-        sendJson(res, 200, { ok: true, value: { ...descriptor, writable: settings.writable === true } })
+        sendJson(res, 200, { ok: true, value: { ...descriptor, writable: writableOf(settings) } })
         trace('response', { requestId, status: 200, revision: descriptor.revision })
         return
       }
@@ -229,7 +240,7 @@ function routeFor(root, state, getConnection) {
         const afterSettings = currentSettings(state) ?? settings
         const descriptor = namespaceDescriptor(afterSettings)
         if (!descriptor) throw new Error('Vision Router settings disappeared after the write')
-        sendJson(res, 200, { ok: true, value: { ...descriptor, writable: afterSettings.writable === true } })
+        sendJson(res, 200, { ok: true, value: { ...descriptor, writable: writableOf(afterSettings) } })
         trace('response', { requestId, status: 200, revision: descriptor.revision })
       } catch (error) {
         const conflict = error?.code === 'SETTINGS_CONFLICT'
@@ -342,11 +353,10 @@ export function installDsh017RootLocalSettingsTransport(ctx) {
     }
   }
 
-  // The 0.1.7 facade needs only settings and must continue to work when the
-  // modern configForms service does not exist.
+  // All supported facades and native SettingsProviders can mount once
+  // they expose the real vision-router namespace, even without configForms.
   ctx.inject(['settings'], (settingsCtx) => {
-    const settings = serviceOf(settingsCtx, 'settings')
-    if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] === true) mountGeneration(settingsCtx)
+    if (compatibleSettings(settingsCtx)) mountGeneration(settingsCtx)
   })
 
   // Native SettingsProvider + configForms is a two-service capability.
@@ -354,6 +364,7 @@ export function installDsh017RootLocalSettingsTransport(ctx) {
   // permanently skip the route. Cordis reinvokes a multi-service inject when
   // configForms becomes ready and disposes it if either service disappears.
   ctx.inject(['settings', 'configForms'], (servicesCtx) => {
+    if (state.current?.active) return
     const settings = serviceOf(servicesCtx, 'settings')
     if (settings?.[DSH_017_SETTINGS_COMPAT_MARK] !== true) mountGeneration(servicesCtx)
   })
