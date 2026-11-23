@@ -16,8 +16,8 @@ const [
   { Context }, llm, { default: Sessions }, { default: Projection },
   { default: SystemPrompt }, { default: Tools }, { default: AgentRegistry },
   { default: AgentLoop }, { default: Commands }, { default: AttachmentLocal },
-  JsonlPersistence, { default: StorageHub }, { default: JsonBackend },
-  { default: StorageDomain }, dvr,
+  JsonlPersistence, { default: StorageHub }, JsonBackend,
+  StorageDomain, dvr,
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
