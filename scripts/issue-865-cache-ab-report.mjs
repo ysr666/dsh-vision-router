@@ -189,7 +189,12 @@ export function compareCacheAB(document) {
     if (prefixes[0].length === 1 && prefixes[1].length === 1 && prefixes.every(a => a[0] !== undefined)) {
       if (prefixes[0][0] !== prefixes[1][0]) changedPrefixes++
     } else unknownPrefixes++
-    valid.push({ before: combine(group.before), after: combine(group.after) })
+    valid.push({
+      before: combine(group.before),
+      after: combine(group.after),
+      nativeFinalUsage: [...group.before, ...group.after].every(row =>
+        row.usageSource === 'deepseek-messages-final' || row.usageSource === 'deepseek-chat-final'),
+    })
   }
   const before = valid.length ? aggregate(valid, 'before') : null
   const after = valid.length ? aggregate(valid, 'after') : null
@@ -213,8 +218,14 @@ export function compareCacheAB(document) {
       interpretation: 'Descriptive only: route/model identity changed or was ambiguous; cannot attribute any cost difference to DVR cache fixes.',
     },
     evidenceLevel: {
-      providerCacheUsage: valid.length > 0 && before.cacheHitPercent !== null && after.cacheHitPercent !== null,
-      actualItemizedBilling: valid.length > 0 && before.billedCny !== null && after.billedCny !== null,
+      // Complete normalized counters can be manually supplied; they are not
+      // necessarily native provider final messages or independent proof.
+      submittedCacheCountersComplete: valid.length > 0 &&
+        before.cacheHitPercent !== null && after.cacheHitPercent !== null,
+      allIncludedCallsHaveNativeFinalUsage: valid.length > 0 &&
+        valid.every(pair => pair.nativeFinalUsage),
+      actualItemizedBilling: valid.length > 0 &&
+        before.billedCny !== null && after.billedCny !== null,
     },
     deltas: valid.length ? {
       requests: after.calls - before.calls,
@@ -250,7 +261,8 @@ export function formatCacheAB(report) {
     'Cross-route diagnostic pairs (descriptive only): ' + report.routeAttribution.changedPairs,
     entry('Cross-route before', report.routeAttribution.before),
     entry('Cross-route after', report.routeAttribution.after),
-    'Evidence: actual-provider-cache-usage=' + report.evidenceLevel.providerCacheUsage +
+    'Evidence: complete-cache-counters=' + report.evidenceLevel.submittedCacheCountersComplete +
+      '; all-native-final-usage=' + report.evidenceLevel.allIncludedCallsHaveNativeFinalUsage +
       '; itemized-actual-billing=' + report.evidenceLevel.actualItemizedBilling,
     'Deltas (after-before): calls=' + show(report.deltas?.requests) + ', uncached-input=' + show(report.deltas?.uncachedInputTokens) + ', hit-pp=' + show(report.deltas?.cacheHitPercentagePoints) + ', billed-CNY=' + show(report.deltas?.billedCny),
     ...report.limits.map(x => '- ' + x),
