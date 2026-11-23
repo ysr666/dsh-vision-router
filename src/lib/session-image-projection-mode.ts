@@ -194,7 +194,12 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     const task = (async (): Promise<ProjectionResolution> => {
       try {
         const modes = await table()
-        if (!modes || closed) return unknownOrLegacy()
+        if (!modes || closed) {
+          if (allowNewStable) {
+            warn(new Error('storageDomain missing or unavailable'))
+          }
+          return unknownOrLegacy()
+        }
         const stored = recordSchema.safeParse(modes.get(id))
         if (stored.success) {
           cache.set(id, stored.data.mode)
