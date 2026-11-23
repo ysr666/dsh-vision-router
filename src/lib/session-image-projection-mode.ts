@@ -214,17 +214,14 @@ export function preserveClaimedMessagesOnBlockedStep(
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
-  // Cached modes are only an acceleration layer. Eviction can always recover
-  // authority from a witnessed Session or the old v1 domain record.
-  const MAX_CACHED_SESSIONS = 512
+  // Cache mode for every LIVE Session until its Agent is disposed.
+  // An arbitrary LRU ceiling is unsafe: an in-flight Host LlmRuntime call
+  // holds only sessionId, so evicting its authoritative format between
+  // pre-step and twin.stream would silently select the wrong projector.
+  // Agent disposal and owner.effect teardown, never unrelated activity,
+  // own the lifetime of these mode bindings.
   const rememberMode = (id: string, mode: ProjectionMode): void => {
-    cache.delete(id)
     cache.set(id, mode)
-    while (cache.size > MAX_CACHED_SESSIONS) {
-      const oldest = cache.keys().next().value
-      if (oldest === undefined) break
-      cache.delete(oldest)
-    }
   }
   const witnesses = new WeakMap<object, 'stable' | 'stable-v2' | 'unknown' | false>()
   const pending = new Map<string, Promise<ProjectionResolution>>()
@@ -421,9 +418,8 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     hasCommittedWitness,
     witnessFor,
     onSessionEvent,
-    // A Host that has never mounted storageDomain cannot have produced a
-    // durable stable-mode record through this feature. The default-disabled
-    // legacy path must stay available on such installations.
+    // A Host with no storageDomain must still keep its default-disabled
+    // legacy path; witnessed v1/v2 Sessions remain recoverable from DSH.
     hasStorageFacility(): boolean { return usableFacility(ctx) !== undefined },
     get(id: unknown): ProjectionMode | undefined {
       return typeof id === 'string' ? cache.get(id) : undefined
