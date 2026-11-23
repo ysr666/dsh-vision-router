@@ -315,7 +315,10 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     const old = witnesses.get(session)
     const nextMode = old && old !== mode ? 'unknown' : mode
     witnesses.set(session, nextMode)
-    if (typeof session.id === 'string' && nextMode !== 'unknown') cache.set(session.id, nextMode)
+    if (typeof session.id === 'string') {
+      if (nextMode === 'unknown') cache.delete(session.id)
+      else cache.set(session.id, nextMode)
+    }
   }
 
   const resolve = async (session: Session, requested: boolean | 'stable-v2' = true): Promise<ProjectionResolution> => {
@@ -330,7 +333,11 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     // disconnected storage service, cold restart, and a fork with new id.
     const witnessedMode = committedWitnessMode(session)
     if (witnessedMode) {
-      if (witnessedMode !== 'unknown') cache.set(id, witnessedMode)
+      // A conflicting witness must invalidate every earlier in-process
+      // projection choice. Otherwise the Core's safe-text continuation could
+      // accidentally consult a stale stable-v1/v2 cache after 'unknown'.
+      if (witnessedMode === 'unknown') cache.delete(id)
+      else cache.set(id, witnessedMode)
       return witnessedMode
     }
     if (cache.has(id)) return cache.get(id) as ProjectionMode
