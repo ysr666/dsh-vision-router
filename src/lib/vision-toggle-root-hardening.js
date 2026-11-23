@@ -305,9 +305,9 @@ const CLIENT_PRELUDE = String.raw`(function(){
   // The subscription is read-only; it never performs a model selection.
   function waitForDirectoryReady(directory){
     var store = directory && directory.store;
-    if (!store || typeof store.getSnapshot !== 'function') return Promise.resolve();
+    if (!store || typeof store.getSnapshot !== 'function') return undefined;
     var initial = store.getSnapshot();
-    if (!initial || (initial.status !== 'idle' && initial.status !== 'loading')) return Promise.resolve();
+    if (!initial || (initial.status !== 'idle' && initial.status !== 'loading')) return undefined;
     if (typeof store.subscribe !== 'function') return Promise.reject(new Error('ModelDirectory cannot observe initial readiness'));
     return new Promise(function(resolve, reject){
       var done = false;
@@ -353,12 +353,15 @@ const CLIENT_PRELUDE = String.raw`(function(){
     var recovery = recoveryFor(directory);
     recovery.clear();
     var promise = Promise.resolve().then(function(){
-      return waitForDirectoryReady(directory);
-    }).then(function(){
-      // A later user selection supersedes an earlier wait. Never dispatch
-      // the stale request after hydration (even if both waiters awake).
-      if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
-      return directory.select(selection);
+      var ready = function(){
+        // A later user selection supersedes an earlier wait. Never dispatch
+        // the stale request after hydration (even if both waiters awake).
+        if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
+        return directory.select(selection);
+      };
+      var hydration = waitForDirectoryReady(directory);
+      // Preserve the existing no-wait microtask semantics for ready Hosts.
+      return hydration ? hydration.then(ready) : ready();
     }).then(
       function(value){
         if (!current()) return value;
