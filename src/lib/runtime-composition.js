@@ -19,6 +19,7 @@ import { installSessionVisionModeBoundary } from './session-vision-mode-boundary
 import { installSessionCacheUsageCommand } from './session-cache-usage-command.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
+import { createSessionImageProjectionModeStore } from './session-image-projection-mode.js'
 import { installSessionVisionDelegationBoundary } from './session-vision-delegation-boundary.js'
 import { installPiAiBridgeWireCompat } from './pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './live-model-discovery.js'
@@ -228,6 +229,7 @@ function createRuntimeOwners(host) {
   // Session mode owns per-Agent visibility and execution authority from
   // DSH's modelSelection projection. The retired identity-only bridge is gone.
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
+  const sessionImageProjectionModeStore = createSessionImageProjectionModeStore(sessionIndexCtx)
   installSessionCacheUsageCommand(sessionIndexCtx)
   sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(
@@ -252,6 +254,7 @@ function createRuntimeOwners(host) {
     nativeImageCompat,
     sessionVisionModeCompat,
     sessionVisionPolicyStore,
+    sessionImageProjectionModeStore,
     sessionVisionRuntime,
   }
 }
@@ -411,7 +414,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
     runtimeConfig,
     runtimeI18nCoreScope,
   } = host
-  const { coreVisionSurfaceRuntime, sessionVisionModeCompat, sessionVisionRuntime } = owners
+  const { coreVisionSurfaceRuntime, sessionVisionModeCompat, sessionVisionRuntime, sessionImageProjectionModeStore } = owners
   const { breakerShadowHealth, sessionEventTailReader, sessionTurnResolver } = routing
   const { coreRequestAuthorityCtx } = execution
   try {
@@ -461,6 +464,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
           sessionVisionModeCompat.config,
           {
             sessionVision: sessionVisionRuntime,
+            sessionImageProjectionModeStore,
             coreVisionSurface: coreVisionSurfaceRuntime,
             sessionTurnResolver,
             sessionEventTailReader,
