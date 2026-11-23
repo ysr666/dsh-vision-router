@@ -17,6 +17,7 @@ import { createSessionVisionRuntime } from './session-vision-runtime.js'
 import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
 import { installSessionCacheUsageCommand } from './session-cache-usage-command.js'
+import { installSessionImageStabilizeCommand } from './session-image-stabilize-command.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
 import { createSessionImageProjectionModeStore } from './session-image-projection-mode.js'
@@ -231,6 +232,7 @@ function createRuntimeOwners(host) {
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
   const sessionImageProjectionModeStore = createSessionImageProjectionModeStore(sessionIndexCtx)
   installSessionCacheUsageCommand(sessionIndexCtx)
+  installSessionImageStabilizeCommand(sessionIndexCtx, sessionImageProjectionModeStore)
   sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(
       agentsCtx,
