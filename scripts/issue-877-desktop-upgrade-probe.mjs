@@ -115,7 +115,10 @@ try {
   // Actual immutable npm artifacts; this reproduces a live Host upgrade,
   // not a source-dir cold installation.
   manifest.dependencies['dsh-vision-router'] = '3.2.1'
-  manifest.dependencies['dvr-issue-877-probe'] = `file:${writeProbeFixture(root)}`
+  // Link the diagnostic fixture instead of packing it as a file: dependency.
+  // PluginManager's expected-package guard rejects an unrelated dependency
+  // if pnpm rematerializes its package.json during DVR's version update.
+  manifest.dependencies['dvr-issue-877-probe'] = `link:${writeProbeFixture(root)}`
   manifest.dsh.profile.bundles.push('dsh-vision-router', 'dvr-issue-877-probe')
   writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
 
