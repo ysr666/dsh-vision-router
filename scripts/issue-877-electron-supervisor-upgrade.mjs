@@ -29,6 +29,7 @@ const { prepareDevelopmentApp } = await importDsh('apps/desktop/scripts/developm
 const { DesktopProjectManager } = await importDsh('apps/desktop/src/project-manager.ts')
 const { resolveDesktopPaths } = await importDsh('apps/desktop/src/paths.ts')
 const { DESKTOP_HOST_PROTOCOL_VERSION } = await importDsh('apps/desktop/src/host-protocol.ts')
+const { DesktopHostProcess } = await importDsh('apps/desktop/src/host-process.ts')
 
 const desktopRequire = createRequire(join(dshRoot, 'apps/desktop/package.json'))
 const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
@@ -274,6 +275,37 @@ function collectDvrMessages(value, out = []) {
 }
 
 export function apply(ctx) {
+  // Seed a genuine Desktop profile through the Host-owned package manager,
+  // then terminate this seed Host BEFORE launching the real Electron Desktop.
+  // This reproduces an already-installed 3.2.1 at the next process boot,
+  // rather than a manually edited profile or an in-process fresh install.
+  if (process.env.DVR_ISSUE_877_PREBOOT_SEED === '1') {
+    ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {
+      scope.effect(() => scope.webServer.register({
+        kind: 'exact', path: '/__dvr_issue_877_preboot_seed', auth: 'required',
+        async handler(req, res, peer) {
+          const owner = peer?.principal?.kind === 'owner' ||
+            (typeof scope.connection?.admit === 'function' &&
+              scope.connection.admit(req)?.peer?.principal?.kind === 'owner')
+          if (!owner || req.method !== 'POST') {
+            res.writeHead(403); res.end('owner POST required'); return
+          }
+          try {
+            const shop = await scope.pluginManager.installBundle('dsh-plugin-shop@0.9.4', { enabled: true })
+            if (shop?.application !== 'applied') throw Error('Shop seed refused: ' + JSON.stringify(shop))
+            const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
+            if (baseline?.application !== 'applied') throw Error('DVR seed refused: ' + JSON.stringify(baseline))
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ shop: { application: shop.application, version: shop.version },
+              baseline: { application: baseline.application, version: baseline.version } }))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ error: String(error), stack: String(error?.stack || '').slice(0, 4000) }))
+          }
+        },
+      }), 'issue-877 preboot Host-managed profile seed')
+    })
+  }
   if (process.env.DVR_ISSUE_877_ELECTRON_UPGRADE === '1') {
     const timeline = []
     ctx.on('internal/status', (fiber, previous) => {
@@ -866,14 +898,12 @@ try {
   const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
   const manifestPath = join(paths.profile, 'package.json')
   const manifest = readJson(manifestPath)
-  manifest.dependencies['dsh-vision-router'] = issue877ElectronUpgrade ? '3.2.1' : `file:${exactNativeOcr?.copied ?? dvrRoot}`
-  if (issue877ElectronUpgrade) manifest.dependencies['dsh-plugin-shop'] = '0.9.4'
+  if (!issue877ElectronUpgrade) manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
   manifest.dependencies[coreProbeFixture.name] = issue877ElectronUpgrade ? `link:${coreProbeFixture.directory}` : `file:${coreProbeFixture.directory}`
   if (issue877ElectronUpgrade) {
-    // The observer fixture is loaded first; both published third-party
-    // bundles are present in the *booted* Desktop profile, as in #877.
-    // No Host install occurs before updateBundle starts.
-    manifest.dsh.profile.bundles.push(coreProbeFixture.name, 'dsh-plugin-shop', 'dsh-vision-router')
+    // Seed operation will append both published bundles via the real
+    // PluginManager, and Electron will load them on its own cold start.
+    manifest.dsh.profile.bundles.push(coreProbeFixture.name)
   } else {
     if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
     manifest.dsh.profile.bundles.push(coreProbeFixture.name)
@@ -941,6 +971,62 @@ try {
     throw new Error(`Desktop profile install failed (${String(install.status)})\n${install.stdout}\n${install.stderr}`)
   }
 
+  if (issue877ElectronUpgrade) {
+    reportPhase('desktop-profile-installed')
+    // Use an actual *previous* Host process to create the prior install.
+    // The real Electron supervisor starts only after that Host has stopped.
+    const variables = ['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DSH_CLIENT_VERSION',
+      'DEEPSEEK_API_KEY', 'DVR_ISSUE_877_PREBOOT_SEED']
+    const originals = new Map(variables.map(key => [key, process.env[key]]))
+    let seedHost
+    try {
+      process.env.DSH_HOME = home
+      process.env.DSH_TELEMETRY_MODE = 'DISABLED'
+      process.env.DSH_CLIENT_VERSION = dshVersion
+      process.env.DEEPSEEK_API_KEY = 'dvr-diagnostic-no-call'
+      process.env.DVR_ISSUE_877_PREBOOT_SEED = '1'
+      seedHost = new DesktopHostProcess(process.execPath, project, paths.profile)
+      const ready = await seedHost.start()
+      let cookie = ready.authenticationCookie
+      if (!cookie) {
+        const login = await fetch(ready.url, { redirect: 'manual',
+          signal: AbortSignal.timeout(10000) })
+        if (login.status !== 303) throw Error('Preboot Desktop cookie exchange rejected: ' + login.status)
+        cookie = login.headers.get('set-cookie')?.split(';', 1)[0]
+        await login.body?.cancel()
+      }
+      if (!cookie) throw Error('Preboot Desktop owner cookie unavailable')
+      const target = new URL(ready.url)
+      target.pathname = '/__dvr_issue_877_preboot_seed'
+      target.search = ''
+      const response = await fetch(target, { method: 'POST', headers: { cookie },
+        signal: AbortSignal.timeout(240000) })
+      const raw = await response.text()
+      const result = JSON.parse(raw)
+      if (response.status !== 200 ||
+        result.shop?.application !== 'applied' ||
+        result.baseline?.application !== 'applied') {
+        throw Error('Preboot Host-owned profile setup failed: ' + JSON.stringify(result).slice(0, 3000))
+      }
+      console.log('ISSUE_877_PREBOOT_PROFILE=' + JSON.stringify({
+        shop: result.shop, baseline: result.baseline, complete: true }))
+    } finally {
+      if (seedHost) await seedHost.stop()
+      for (const [key, value] of originals) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+    const persisted = readJson(manifestPath)
+    if (String(persisted.dependencies?.['dsh-vision-router']) !== '3.2.1' ||
+        String(persisted.dependencies?.['dsh-plugin-shop']) !== '0.9.4') {
+      throw Error('Preboot Host did not persist both exact npm baseline dependencies')
+    }
+    if (!['dsh-vision-router', 'dsh-plugin-shop'].every(name =>
+      persisted.dsh?.profile?.bundles?.includes(name))) {
+      throw Error('Preboot Host did not select both bundles in the persisted profile')
+    }
+  }
   reportPhase('desktop-profile-installed')
   const rendererPort = await freePort()
   const mainPort = await freePort()
