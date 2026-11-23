@@ -6,6 +6,7 @@ import {
 } from '../lib/stable-image-evidence.js'
 import {
   rewriteHistoryImages,
+  projectStableTextOnlyImages,
   createWrapperStreamBody,
 } from '../lib/core-primitives.js'
 
@@ -402,4 +403,83 @@ test('issue #865: nested images in actual tool/result persist with original tool
   const expected = planAppendOnlyImageEvidence([msg], [msg], memo, source)
   assert.equal(updates[0].id, expected[0].id,
     'source identity must be the actual tool/result message ID')
+})
+
+test('stage 2: stable image projector keeps the exact existing v1 wire bytes across both entry paths', async () => {
+  const input = history()
+  const memory = new Map([[id, 'a later OCR description must never appear in old history']])
+  const direct = projectStableTextOnlyImages(input, { markerStyle: 'history' })
+  assert.deepEqual(direct, rewriteHistoryImages(input, memory, { stable: true }))
+  assert.equal(direct.messages[0].content[0].text,
+    `[attached image: ${id}] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["${id}"] and a specific question.`)
+
+  const wrapper = projectStableTextOnlyImages(input, { markerStyle: 'wrapper' })
+  assert.equal(wrapper.messages[0].content[0].text,
+    `[已收到图片「synthetic.png」（附件 id：「${id}」）。我可以借助视觉工具来看图：` +
+    `需要看图时调用 vision_describe 并传入 attachmentIds: ["${id}"] 和具体问题；` +
+    '定位、裁剪、像素对比、取色、OCR、矢量化、抠图等分别使用 vision_ground、' +
+    'vision_crop、vision_pixel_diff、vision_colors、vision_ocr、vision_trace、' +
+    'vision_extract_foreground 工具。' +
+    'vision_ocr 只用于读取图中文字，不是看图失败的通用重试；' +
+    '若视觉工具返回 ok:false（认证失败/限流/超时/后端不可用），不要改问法重复调用，直接继续文本任务。]')
+  assert.equal(input[0].content[0].type, 'image', 'request projection must not alter durable original')
+  assert.throws(() => projectStableTextOnlyImages(input, { markerStyle: 'future' }), /unknown stable image projection/)
+
+  const requests = []
+  const adapter = createWrapperStreamBody({ llm: { async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } } }, {
+    imageMemory: memory, delegateProvider: 'text', preserveImageInput: false, stableImageHistory: true,
+  })
+  for await (const _ of adapter.stream({ provider: 'text-vision', model: 'text', messages: input })) {}
+  assert.deepEqual(requests[0].messages[0].content, wrapper.messages[0].content,
+    'the shipping text wrapper must use the same stable projector without changing v1 bytes')
+  memory.set(id, 'completely changed late OCR')
+  for await (const _ of adapter.stream({ provider: 'text-vision', model: 'text', messages: input })) {}
+  assert.deepEqual(requests[1].messages[0].content, requests[0].messages[0].content)
+})
+
+test('stage 2: committed versions dedupe across OCR whitespace, 512-id eviction, and cold resume', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const otherId = 'sha256:independent-865-image'
+  const other = { id: 'another-origin', role: 'user', source: { kind: 'user' },
+    content: [{ type: 'image', attachment: { attachmentId: otherId } }] }
+  const events = [{ type: 'user/message', data: original }, { type: 'user/message', data: other }]
+  let snapshots = 0
+  const session = { snapshotEvents() { snapshots++; return events } }
+  const descriptions = new Map([[id, 'baseline\r\nOCR result'], [otherId, 'revision initial']])
+  const first = planner.plan(session, [original, other], [original, other], descriptions, source)
+  assert.equal(first.length, 2)
+  const commit = message => {
+    const event = { type: 'user/message', data: message }
+    events.push(event)
+    planner.onSessionEvent(session, event)
+  }
+  for (const message of first) commit(message)
+  descriptions.set(id, 'baseline\nOCR result  ')
+  assert.deepEqual(planner.plan(session, [original], [original], descriptions, source), [],
+    'changing only line endings or trailing spaces is not a second visual fact')
+
+  // Keep the first image alive while many later revisions exhaust the bounded
+  // committed-ID cache. An earlier committed version must not be replayed.
+  for (let i = 0; i < 520; i++) {
+    descriptions.set(otherId, 'revision ' + i)
+    const next = planner.plan(session, [other], [other], descriptions, source)
+    assert.equal(next.length, 1, 'a real changed OCR version is append-only')
+    commit(next[0])
+  }
+  assert.deepEqual(planner.plan(session, [{ id: 'continue', content: [] }], [], descriptions, source), [])
+  assert.equal(snapshots, 1)
+  const cold = createSessionImageEvidencePlanner()
+  const resumed = { snapshotEvents() { return events } }
+  assert.deepEqual(cold.plan(resumed, [], [], descriptions, source), [],
+    'recover last committed v1 evidence from durable Session events, even after 512 IDs')
+  descriptions.set(id, 'baseline OCR result corrected')
+  const correction = cold.plan(resumed, [], [], descriptions, source)
+  assert.equal(correction.length, 1, 'substantive new OCR evidence must remain visible')
+  assert.match(correction[0].content[0].text, /corrected/)
+  assert.equal(cold.plan(resumed, [], [], descriptions, source)[0].id, correction[0].id,
+    'an uncommitted plan may be retried')
 })
