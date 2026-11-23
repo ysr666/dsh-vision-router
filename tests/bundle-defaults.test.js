@@ -69,7 +69,7 @@ test('progressive tools remain an explicit opt-in', () => {
 })
 
 test('entry contract exposes routing product semantics without enabling auto execution or measurement by default', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   const defaults = Config({})
   assert.equal(defaults.routingMode, 'ordered')
   assert.equal(defaults.routingPreference, 'balanced')
@@ -110,7 +110,7 @@ test('walkthrough step 1 combines the Vision toggle and model selector into one 
 })
 
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
   assert.equal(Config({}).settingsContractRevision, 7)
