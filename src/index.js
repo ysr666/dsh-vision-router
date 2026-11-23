@@ -199,6 +199,7 @@ import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
 import { installPreStepModelRouting } from './lib/agent-prestep-model-routing.js'
+import { hasVisionAutoMountHistoryMarker } from './lib/auto-mount-prefix-guard.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
 import {
@@ -2814,7 +2815,10 @@ export function apply(ctx, config = {}, runtime = {}) {
       // them from its very first step without the user asking for them.
       if (toolEnabled() && autoActivateOnImageEnabled()) {
         const outcome = activateDeepTools()
-        if (!autoMountNotified && outcome.includes('已挂载')) {
+        // Never re-inject the same durable user-message notice when an old
+        // image Session resumes under a new plugin generation.
+        if (!autoMountNotified && outcome.includes('已挂载') &&
+            !hasVisionAutoMountHistoryMarker(messages)) {
           autoMountNotified = true
           // The harness persists pre-step-injected boundary messages as durable
           // user/message events; session validation requires an `id`, so the

@@ -1,6 +1,7 @@
 import { createRuntimeI18n, DEEP_TOOL_MOUNT_STATE } from './runtime-i18n.js'
 import { depthCopyFor } from './depth-guidance.js'
 import { blocksHaveRetainedImage } from './image-offload-compat.js'
+import { hasVisionAutoMountHistoryMarker } from './auto-mount-prefix-guard.js'
 import { captureFetchDelegate, installFetchWrapper } from './fetch-wrapper-lifecycle.js'
 import { visionRouterMessageSource } from './session-message-source-compat.js'
 
@@ -427,6 +428,10 @@ function addAutoMountReminder(decision, payload, i18n) {
       ? payload.messages
       : undefined
   if (!base) return decision
+  // The old auto-mount notice is part of the committed Session history.
+  // After HMR, ensureDeepTools() can mount again; do not append an entirely
+  // new synthetic user message with a random ID into the old prompt prefix.
+  if (hasVisionAutoMountHistoryMarker(base)) return decision
   const reminder = {
     role: 'user',
     id: `vision-router-auto-mount-${
@@ -712,4 +717,5 @@ export const __runtimeI18nTest = Object.freeze({
   localizeMessages,
   localizeRequestBody,
   projectLegacyCoreConfig,
+  addAutoMountReminder,
 })

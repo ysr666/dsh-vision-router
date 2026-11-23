@@ -557,3 +557,31 @@ test('issue #808: progressive activation reports the Core-owned mount when late 
   assert.equal(decision.messages.length, 2, 'auto-mount must emit the image-turn reminder')
   assert.match(decision.messages[1].content[0].text, /pixel-level vision tools/i)
 })
+
+test('issue #865: auto-mount notice is append-once across cold resume and HMR, preserving the original wire prefix', () => {
+  const payload = {
+    agent: { session: { header: { version: 4 } } },
+    messages: [{ id: 'user-image', role: 'user', content: [{ type: 'image' }] }],
+  }
+  const i18n = { t: () => 'Pixel-level vision tools mounted.' }
+  const before = { kind: 'accept', messages: payload.messages }
+  const first = __runtimeI18nTest.addAutoMountReminder(before, payload, i18n)
+  assert.equal(first.messages.length, 2)
+  assert.match(first.messages[1].id, /^vision-router-auto-mount-/)
+  assert.equal(first.messages[1].content[0].text, 'Pixel-level vision tools mounted.')
+  // A new plugin generation has no in-memory autoMountNotified latch; its
+  // input is the historical wire content committed by the earlier generation.
+  const afterReload = __runtimeI18nTest.addAutoMountReminder(first, payload, i18n)
+  assert.equal(afterReload, first, 'existing historical marker is reused, not replaced')
+  assert.equal(afterReload.messages[1], first.messages[1])
+  assert.equal(afterReload.messages.length, 2, 'no duplicate synthetic user turn')
+  const resumedWithNewImage = {
+    ...first, messages: [...first.messages, { id: 'second-image', role: 'user', content: [{ type: 'image' }] }],
+  }
+  assert.equal(__runtimeI18nTest.addAutoMountReminder(resumedWithNewImage, payload, i18n),
+    resumedWithNewImage, 'later images must not re-add the original activation notice')
+  // Never mistake an ordinary user message for DVR's reserved marker.
+  const unrelated = { kind: 'accept', messages: [{ id: 'user-image', role: 'user', content: [] }] }
+  const once = __runtimeI18nTest.addAutoMountReminder(unrelated, payload, i18n)
+  assert.equal(once.messages.length, 2)
+})
