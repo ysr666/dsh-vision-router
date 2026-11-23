@@ -87,7 +87,11 @@ try {
   await ctx.plugin(Commands)
   ctx.llm.registerAdapter(['private-account'], new OfflineModel())
   await ctx.plugin({ inject: dvr.inject, apply(scope) {
+    // This fixture specifically validates explicit migration of an *old*
+    // legacy Session. New installations now default stable-v2 for fresh
+    // Sessions, so keep this test owner explicitly opted out of that default.
     return dvr.apply(scope, dvr.Config({ tool: true, routing: false, progressiveTools: false,
+      stableImageHistoryNewSessions: false,
       autoWrapProviders: false, wrappedProviders: [], providers: [],
       freeFallback: false, downscale: false, cache: false }))
   } })
