@@ -146,6 +146,7 @@ test('official DeepSeek Messages Usage accepts auxiliary fields but still checks
   const result = compareCacheAB(doc([native('before'), native('after')]))
   assert.equal(result.pairedTrials, 1)
   assert.equal(result.before.cacheHitPercent, 80)
+  assert.equal(result.evidenceLevel.allIncludedCallsHaveNativeFinalUsage, true)
   assert.equal(result.deltas.billedCny, null, 'official Usage alone never proves money charged')
   assert.equal(JSON.stringify(result).includes('service_tier'), false,
     'provider detail strings are never leaked in the report')
@@ -180,6 +181,7 @@ test('cross-route incident evidence is retained without polluting same-upstream 
   const result = compareCacheAB(doc(observations))
   assert.equal(result.pairedTrials, 0)
   assert.equal(result.excluded.mismatchedRoutes, 1)
+  assert.equal(result.evidenceLevel.allIncludedCallsHaveNativeFinalUsage, false)
   assert.equal(result.routeAttribution.changedPairs, 1)
   assert.equal(result.routeAttribution.before.cacheReadTokens, 5)
   assert.equal(result.routeAttribution.after.cacheReadTokens, 80)
@@ -187,4 +189,12 @@ test('cross-route incident evidence is retained without polluting same-upstream 
   assert.equal(result.evidenceLevel.actualItemizedBilling, false)
   assert.match(formatCacheAB(result), /descriptive only/i)
   assert.doesNotMatch(formatCacheAB(result), /source|wrapper|original|delegate/)
+})
+
+
+test('manually normalized provider-response counters are not misrepresented as raw native final Usage', () => {
+  const r = compareCacheAB(doc([one('before'), one('after')]))
+  assert.equal(r.evidenceLevel.submittedCacheCountersComplete, true)
+  assert.equal(r.evidenceLevel.allIncludedCallsHaveNativeFinalUsage, false)
+  assert.equal(r.evidenceLevel.actualItemizedBilling, false)
 })
