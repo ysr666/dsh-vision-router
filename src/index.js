@@ -645,6 +645,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // adapter boundaries that do not expose a Session; ambiguous attachment ids
   // deliberately miss instead of crossing conversations.
   const sessionVisionRuntime = runtime?.sessionVision
+  const sessionImageProjectionModeStore = runtime?.sessionImageProjectionModeStore
   const providerTransport = runtime?.providerTransport
   const callOpenAIWithProviderTransport = (provider, messages, options = {}) =>
     callOpenAICompatible(provider, messages, { ...options, providerTransport })
@@ -733,7 +734,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const instantDescribeEnabled = () =>
     coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
-  const stableImageHistoryEnabled = () => current().stableImageHistory === true
+  // Existing explicit opt-in remains authoritative. The new default for
+  // *new* Sessions is read from a durable per-Session format decision made at
+  // pre-step before the first request. Never infer a format from mutable OCR
+  // memory, route identity, or current global Settings after history exists.
+  const stableImageHistoryEnabled = (sessionOrOptions) => {
+    if (current().stableImageHistory === true) return true
+    const id = sessionOrOptions?.sessionId ?? sessionOrOptions?.id
+    return sessionImageProjectionModeStore?.get?.(id) === 'stable'
+  }
   const autoActivateOnImageEnabled = () =>
     coreVisionFlag(
       'autoActivateOnImage',
@@ -2610,6 +2619,15 @@ export function apply(ctx, config = {}, runtime = {}) {
     // owner. The global compatibility facade is reserved for adapter stream
     // boundaries where DSH does not expose a Session object.
     const sessionImageMemory = visionState.memoryForSession(session)
+    // Await the durable format choice *before* preparing either pre-step
+    // history or the text-wrapper stream. Missing storage is legacy-only;
+    // it must never optimistically enable a format that cannot be replayed.
+    if (sessionImageProjectionModeStore?.resolve) {
+      await sessionImageProjectionModeStore.resolve(
+        session, current().stableImageHistoryNewSessions !== false,
+      )
+    }
+    const stableHistoryForStep = stableImageHistoryEnabled(session)
     // Bind the turn-scoped failure memory for this session+turn: tool calls
     // later in the same turn resolve to the same scope, so an all-backends
     // verdict can short-circuit repeat calls without network attempts.
@@ -2731,7 +2749,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       // The Host persists newly injected pre-step user messages. Keep old
       // image occurrences immutable: any newly known OCR/caption text belongs
       // to a new, ID-deduplicated evidence event at the history tail.
-      const evidence = stableImageHistoryEnabled()
+      const evidence = stableHistoryForStep
         ? sessionImageEvidencePlanner.plan(
             session, rawMessages, baseMessages, sessionImageMemory,
             visionRouterMessageSource(session),
@@ -2827,7 +2845,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
               ? rewriteHistoryImages(messages, sessionImageMemory, {
-                stable: stableImageHistoryEnabled(),
+                stable: stableHistoryForStep,
               }).messages
               : messages
           return {
@@ -2841,7 +2859,7 @@ export function apply(ctx, config = {}, runtime = {}) {
       // text-only model can still query them via vision_describe.
       if (rewriteEnabled() && !routingEnabled() && !wrapperRegistered) {
         const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory, {
-                stable: stableImageHistoryEnabled(),
+                stable: stableHistoryForStep,
               }).messages
         return {
           ...decision,
@@ -2860,7 +2878,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (!hasImage && rewriteEnabled()) {
       const base = messages
       const cleaned = rewriteHistoryImages(base, sessionImageMemory, {
-        stable: stableImageHistoryEnabled(),
+        stable: stableHistoryForStep,
       })
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
