@@ -51,17 +51,24 @@ export function inspectHistoricalProjectionEvents(events) {
  * it must NOT be misrepresented as protection against manual overwrites.
  */
 export function assessProjectionDowngrade(events, target) {
-  if (target !== 'pre-v2' && target !== 'v2-aware') throw new TypeError('unknown target capability')
+  // Capabilities, not release numbers: an older binary may predate v1 as
+  // well as v2. Never call an unspecified 'old version' compatible.
+  if (!['legacy-only', 'stable-v1', 'stable-v2'].includes(target)) {
+    throw new TypeError('unknown target capability')
+  }
   const current = inspectHistoricalProjectionEvents(events).status
   if (current === 'unknown') return { decision: 'block', reason: 'unverified-session-format' }
-  if (current === 'stable-v2' && target === 'pre-v2') {
-    return { decision: 'block', reason: 'target-cannot-read-v2' }
-  }
   if (current === 'unwitnessed') {
     // No witness does NOT prove the old projection was v1, legacy or entirely
     // image-free. A blind downgrade would promise historical wire continuity
     // that cannot be derived from the Session itself.
     return { decision: 'unknown', reason: 'no-committed-format-proof' }
+  }
+  if (current === 'stable-v2' && target !== 'stable-v2') {
+    return { decision: 'block', reason: 'target-cannot-read-v2' }
+  }
+  if (current === 'stable-v1' && target === 'legacy-only') {
+    return { decision: 'block', reason: 'target-cannot-read-v1' }
   }
   return { decision: 'allow', reason: 'format-recognized' }
 }
