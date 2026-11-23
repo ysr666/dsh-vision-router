@@ -44,11 +44,14 @@ function fromNativeUsage(r) {
   if (required.some(k => !Object.prototype.hasOwnProperty.call(usage, k) || !natural(usage[k]))) {
     fail('DeepSeek final usage is missing a required valid numeric counter')
   }
-  if (source === 'deepseek-chat-final' && usage.prompt_tokens_details !== undefined) {
+  if (source === 'deepseek-chat-final' &&
+      usage.prompt_tokens_details !== undefined &&
+      usage.prompt_tokens_details !== null) {
     const detail = usage.prompt_tokens_details
-    if (!detail || typeof detail !== 'object' || Array.isArray(detail) ||
-        !natural(detail.cached_tokens) ||
-        detail.cached_tokens !== usage.prompt_cache_hit_tokens) {
+    if (typeof detail !== 'object' || Array.isArray(detail) ||
+        (Object.hasOwn(detail, 'cached_tokens') &&
+          (!natural(detail.cached_tokens) ||
+            detail.cached_tokens !== usage.prompt_cache_hit_tokens))) {
       fail('DeepSeek cached token detail contradicts final cache hit count')
     }
   }
