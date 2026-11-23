@@ -3,112 +3,133 @@
 // No eager import of a Host package, private HTTP route, or SRC fallback.
 import { observeNativeVisionControlState } from './native-vision-control-state.js'
 import { nativeVisionControlSessionIdSchema, nativeVisionControlViewSchema, nativeVisionMutationRequestSchema, nativeVisionMutationReceiptSchema } from './native-vision-control-wire.js'
-
 import { NATIVE_VISION_REMOTE, createNativeVisionControlContribution } from './native-vision-control-client.js'
 export { NATIVE_VISION_REMOTE } from './native-vision-control-client.js'
 
-
 /**
- * Register only on Hosts with the current strict Typert registry and the
- * Session-scoped Agent lookup. Missing features leave existing commands
- * and legacy picker unchanged. No fallback to an unauthenticated carrier.
+ * Strict descriptors are owned by the Typert/plugin generation, NOT by the
+ * transient Agents/LLM injection or by the current 'agent' lookup.
+ *
+ * DSH Gateway remembers strict endpoints; temporarily withdrawing a
+ * definition while its client stays mounted yields
+ * gateway/definition-unavailable (no SRC fallback is permitted). On an Agent
+ * lookup outage we instead abort current streams and unprovide the receiver.
+ * Gateway continues to enforce live lookup, binding and principal validation;
+ * no stale Agent can be invoked. The descriptor is withdrawn only when this
+ * actual Typert/plugin owner retires.
  */
 export function installNativeVisionControlRemote(ctx, store, options = {}) {
   if (typeof ctx?.inject !== 'function' || typeof store?.subscribe !== 'function' ||
       typeof options.mutate !== 'function') return
-  return ctx.inject(['typert', 'agents', 'llm'], scope => {
-    const registry = scope.typert
+  return ctx.inject(['typert'], owner => {
+    const registry = owner.typert
     if (typeof registry?.register !== 'function' ||
         typeof registry?.lookups?.get !== 'function' ||
-        typeof registry?.lookups?.subscribe !== 'function' ||
-        typeof scope.provide !== 'function' || typeof scope.effect !== 'function') return
+        typeof owner.inject !== 'function' ||
+        typeof owner.effect !== 'function') return
     const contribution = createNativeVisionControlContribution({
       id: nativeVisionControlSessionIdSchema, view: nativeVisionControlViewSchema,
       request: nativeVisionMutationRequestSchema, receipt: nativeVisionMutationReceiptSchema,
     })
     const agentParameter = contribution.descriptors[0].parameters[0]
-    // Avoid the order race where the Host Agent Registry's own Typert
-    // injection runs after our plugin. A checked lookup, not a version guess.
-    let held
     let withdrawDefinition
+    let releaseActiveReceiver = () => {}
     let retired = false
-    // The strict Typert definition belongs to the PLUGIN generation, not to
-    // the Agent lookup's transient availability. Withdrawing it on a lookup
-    // restart makes the Gateway return gateway/definition-unavailable for the
-    // still-mounted client. A missing/mismatched lookup instead must remove
-    // the active receiver and abort its streams; the Gateway's live lookup
-    // guard then denies calls until the official lookup reappears.
-    const releaseReceiver = () => {
-      const generation = held
-      held = undefined
-      if (!generation) return
-      generation.lifetime.abort()
-      // Disposers are fiber-owned and may also be invoked during unload.
-      try { void Promise.resolve(generation.unprovide()).catch(() => {}) } catch {}
-    }
-    const releaseAll = () => {
-      releaseReceiver()
+
+    // Parent-scope registration outlives any number of child Agents/LLM
+    // rebinding cycles. Both strict methods remain available in the public
+    // Typert registry, but neither can run without a valid live receiver and
+    // matching Host Agent lookup.
+    owner.effect(() => () => {
+      retired = true
+      releaseActiveReceiver()
       const withdraw = withdrawDefinition
       withdrawDefinition = undefined
       try { void Promise.resolve(withdraw?.()).catch(() => {}) } catch {}
-    }
-    const reconcile = () => {
-      if (retired) return
-      const lookup = registry.lookups.get(agentParameter.lookup)
-      if (lookup?.resource !== 'session' || lookup.wire !== agentParameter.wire ||
-          lookup.wireTypeSymbol !== agentParameter.codec.typeSymbol || typeof lookup.resolve !== 'function') {
-        releaseReceiver()
-        return
+    }, 'vision-router: native strict Remote definition lifetime')
+
+    return owner.inject(['agents', 'llm'], scope => {
+      if (typeof scope.provide !== 'function' ||
+          typeof scope.effect !== 'function' ||
+          typeof scope.typert?.lookups?.subscribe !== 'function') return
+      // A new Agents/LLM binding wins over any still-disposing previous one.
+      // The old receiver is synchronously removed before a new one exists.
+      releaseActiveReceiver()
+      let held
+      let active = true
+      const releaseReceiver = () => {
+        const generation = held
+        held = undefined
+        if (!generation) return
+        generation.lifetime.abort()
+        try { void Promise.resolve(generation.unprovide()).catch(() => {}) } catch {}
       }
-      if (held) return
-      const lifetime = new AbortController()
-      // This plain Cordis service uses the public TypertGatewayBinding shape.
-      // Its methods close over the owning scope instead of relying on an
-      // invocation-context receiver; the Gateway still validates the exact
-      // binding, wire arguments, principal and lookup before invoking them.
-      const receiver = {
-        async set(agent, request, signal) {
-          const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
-          liveSignal.throwIfAborted()
-          const input = nativeVisionMutationRequestSchema.parse(request)
-          const receipt = await options.mutate(agent, input, liveSignal)
-          return nativeVisionMutationReceiptSchema.parse(receipt)
-        },
-        observe(agent, signal) {
-          const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
-          if (liveSignal.aborted) return (async function* () {})()
-          return observeNativeVisionControlState(scope, store, agent, {
-            ...options, signal: liveSignal,
-          })
-        },
-      }
-      Object.defineProperty(receiver, 'typertRemote', {
-        value: Object.freeze({ service: receiver, serviceKey: NATIVE_VISION_REMOTE,
-          namespace: NATIVE_VISION_REMOTE }),
-        enumerable: true,
-      })
-      let unprovide
-      try {
-        unprovide = scope.provide(NATIVE_VISION_REMOTE, receiver)
-        if (!withdrawDefinition) {
-          withdrawDefinition = registry.register({
-            package: contribution.package, face: 'host', schemas: [],
-            model: { services: [], events: [], objects: [] },
-            invocations: contribution.descriptors,
-          })
+      releaseActiveReceiver = releaseReceiver
+
+      const reconcile = () => {
+        if (retired || !active) return
+        // The official AgentRegistry itself may install its lookup AFTER the
+        // Agents service has been constructed. Wait for that positive match.
+        const lookup = scope.typert.lookups.get(agentParameter.lookup)
+        if (lookup?.resource !== 'session' || lookup.wire !== agentParameter.wire ||
+            lookup.wireTypeSymbol !== agentParameter.codec.typeSymbol ||
+            typeof lookup.resolve !== 'function') {
+          releaseReceiver()
+          return
         }
-        held = { lifetime, unprovide }
-      } catch (error) {
-        lifetime.abort()
-        try { void Promise.resolve(unprovide?.()).catch(() => {}) } catch {}
-        // Never replace a conflicting service or descriptor.
-        scope.logger?.warn?.('vision-router: native control Remote unavailable: %s', String(error))
+        if (held) return
+        const lifetime = new AbortController()
+        // Gateway, not client-provided input, resolves Agent and principal.
+        const receiver = {
+          async set(agent, request, signal) {
+            const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
+            liveSignal.throwIfAborted()
+            const input = nativeVisionMutationRequestSchema.parse(request)
+            const receipt = await options.mutate(agent, input, liveSignal)
+            return nativeVisionMutationReceiptSchema.parse(receipt)
+          },
+          observe(agent, signal) {
+            const liveSignal = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
+            if (liveSignal.aborted) return (async function* () {})()
+            return observeNativeVisionControlState(scope, store, agent, {
+              ...options, signal: liveSignal,
+            })
+          },
+        }
+        Object.defineProperty(receiver, 'typertRemote', {
+          value: Object.freeze({ service: receiver, serviceKey: NATIVE_VISION_REMOTE,
+            namespace: NATIVE_VISION_REMOTE }),
+          enumerable: true,
+        })
+        let unprovide
+        try {
+          unprovide = scope.provide(NATIVE_VISION_REMOTE, receiver)
+          if (!withdrawDefinition) {
+            // Crucially obtain the register() view from OWNER (Typert only),
+            // not SCOPE (Agents/LLM), or Cordis will withdraw the strict
+            // definition whenever Agents/LLM restarts.
+            withdrawDefinition = registry.register({
+              package: contribution.package, face: 'host', schemas: [],
+              model: { services: [], events: [], objects: [] },
+              invocations: contribution.descriptors,
+            })
+          }
+          held = { lifetime, unprovide }
+        } catch (error) {
+          lifetime.abort()
+          try { void Promise.resolve(unprovide?.()).catch(() => {}) } catch {}
+          scope.logger?.warn?.('vision-router: native control Remote unavailable: %s', String(error))
+        }
       }
-    }
-    scope.effect(() => () => { retired = true; releaseAll() }, 'vision-router: native Remote lifetime')
-    registry.lookups.subscribe(change => {
-      if (change?.key === 'agent') reconcile()
+      scope.effect(() => () => {
+        active = false
+        releaseReceiver()
+        if (releaseActiveReceiver === releaseReceiver) releaseActiveReceiver = () => {}
+      }, 'vision-router: native Remote receiver lifetime')
+      scope.typert.lookups.subscribe(change => {
+        if (change?.key === 'agent') reconcile()
+      })
+      reconcile()
     })
-    reconcile()
   })
 }
