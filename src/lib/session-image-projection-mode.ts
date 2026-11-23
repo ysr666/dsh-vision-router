@@ -1,7 +1,57 @@
 import { z } from 'zod'
+import { createHash } from 'node:crypto'
 import type { Domain, DomainSpec, KvTable } from '@deepseek-ai/dsh-storage-domain'
 
-type ProjectionMode = 'legacy' | 'stable'
+export type ProjectionMode = 'legacy' | 'stable'
+
+/**
+ * An ordinary, immutable DSH user/message is the only supported durable
+ * format witness for external plugins. DSH forbids external usage of
+ * appendPluginRecord and restricts the SessionHeader schema. The witness
+ * necessarily costs one short model-visible user message, admitted with the
+ * first stable request, but it is replayed and forked with the conversation.
+ *
+ * Source attribution and exact text+ID format are validated before a witness
+ * can authorize projecting old images. Never accept arbitrary user text.
+ */
+export const STABLE_IMAGE_PROJECTION_WITNESS_V1 = '[DVR image-history format: stable-v1]'
+const STABLE_WITNESS_PREFIX = 'vision-router-projection-stable-v1-'
+const STABLE_WITNESS_ID = /^vision-router-projection-stable-v1-[a-f0-9]{40}$/u
+
+function isDvrSource(source: unknown): boolean {
+  if (!source || typeof source !== 'object') return false
+  const value = source as { kind?: unknown; plugin?: unknown }
+  return value.kind === 'plugin:dsh-vision-router' ||
+    (value.kind === 'plugin' && value.plugin === 'dsh-vision-router')
+}
+
+export function isCommittedStableProjectionWitness(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false
+  const value = message as {
+    role?: unknown; id?: unknown; source?: unknown;
+    content?: readonly { type?: unknown; text?: unknown }[]
+  }
+  return value.role === 'user' && typeof value.id === 'string' &&
+    STABLE_WITNESS_ID.test(value.id) &&
+    isDvrSource(value.source) &&
+    Array.isArray(value.content) && value.content.length === 1 &&
+    value.content[0]?.type === 'text' &&
+    value.content[0].text === STABLE_IMAGE_PROJECTION_WITNESS_V1
+}
+
+export function createStableProjectionWitness(
+  sessionId: string, source: { kind: string; plugin?: string },
+) {
+  if (!sessionId || !isDvrSource(source)) throw new TypeError('stable witness needs a DVR-owned source and Session')
+  const fingerprint = createHash('sha256').update(sessionId).digest('hex').slice(0, 40)
+  return {
+    role: 'user' as const,
+    id: STABLE_WITNESS_PREFIX + fingerprint,
+    source: { ...source },
+    content: [{ type: 'text' as const, text: STABLE_IMAGE_PROJECTION_WITNESS_V1 }],
+  }
+}
+
 type ProjectionResolution = ProjectionMode | 'unknown'
 type RecordValue = Readonly<{ revision: 1; mode: ProjectionMode }>
 const recordSchema = z.object({
@@ -129,6 +179,7 @@ export function requiresVerifiedImageProjection(
  */
 export function createSessionImageProjectionModeStore(ctx: Context) {
   const cache = new Map<string, ProjectionMode>()
+  const witnesses = new WeakMap<object, boolean>()
   const pending = new Map<string, Promise<ProjectionResolution>>()
   let open: Promise<Domain<DomainSpec> | undefined> | undefined
   let handle: Domain<DomainSpec> | undefined
@@ -184,11 +235,57 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     return domain?.table('modes') as KvTable<string, RecordValue> | undefined
   }
 
+
+  // One bounded snapshot per live Session object; incremental event
+  // publication updates this state without rescanning a long conversation.
+  // Each cold-restored/forked Session is a new object and scans its own history
+  // once, including inherited events.
+  const hasCommittedWitness = (session: Session): boolean => {
+    if (typeof session !== 'object' || !session) return false
+    const cached = witnesses.get(session)
+    if (cached !== undefined) return cached
+    try {
+      const events = session.snapshotEvents?.()
+      if (!Array.isArray(events)) return false
+      const found = events.some(event => event?.type === 'user/message' &&
+        isCommittedStableProjectionWitness(event.data))
+      witnesses.set(session, found)
+      return found
+    } catch {
+      return false
+    }
+  }
+
+  const witnessFor = (session: Session, source: { kind: string; plugin?: string }) => {
+    const id = session.id
+    if (typeof id !== 'string' || cache.get(id) !== 'stable' || hasCommittedWitness(session)) {
+      return undefined
+    }
+    // Merely planning a pre-step does NOT mark a witness as committed. DSH
+    // persists the user/message only on successful step admission. A rejected
+    // or cancelled waterfall will plan the same deterministic ID on retry.
+    return createStableProjectionWitness(id, source)
+  }
+
+  const onSessionEvent = (session: Session, event: { type?: string; data?: unknown }) => {
+    if (session && typeof session === 'object' && event?.type === 'user/message' &&
+        isCommittedStableProjectionWitness(event.data)) {
+      witnesses.set(session, true)
+      if (typeof session.id === 'string') cache.set(session.id, 'stable')
+    }
+  }
+
   const resolve = async (session: Session, allowNewStable = true): Promise<ProjectionResolution> => {
     const id = typeof session?.id === 'string' && session.id.trim() !== ''
       ? session.id : undefined
     const unknownOrLegacy = (): ProjectionResolution => hasPriorModelHistory(session) ? 'unknown' : 'legacy'
     if (!id) return unknownOrLegacy()
+    // The authoritative Session witness survives a deleted sidecar row,
+    // disconnected storage service, cold restart, and a fork with new id.
+    if (hasCommittedWitness(session)) {
+      cache.set(id, 'stable')
+      return 'stable'
+    }
     if (cache.has(id)) return cache.get(id) as ProjectionMode
     if (pending.has(id)) return pending.get(id) as Promise<ProjectionResolution>
     const task = (async (): Promise<ProjectionResolution> => {
@@ -223,6 +320,9 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
 
   return {
     resolve,
+    hasCommittedWitness,
+    witnessFor,
+    onSessionEvent,
     // A Host that has never mounted storageDomain cannot have produced a
     // durable stable-mode record through this feature. The default-disabled
     // legacy path must stay available on such installations.
