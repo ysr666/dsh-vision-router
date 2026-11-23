@@ -742,7 +742,8 @@ export function apply(ctx, config = {}, runtime = {}) {
   const stableImageHistoryEnabled = (sessionOrOptions) => {
     const id = sessionOrOptions?.sessionId ?? sessionOrOptions?.id
     if (sessionImageProjectionModeStore) {
-      return sessionImageProjectionModeStore.get(id) === 'stable'
+      const mode = sessionImageProjectionModeStore.get(id)
+      return mode === 'stable-v2' ? 'stable-v2' : mode === 'stable'
     }
     return current().stableImageHistory === true
   }
@@ -2628,8 +2629,11 @@ export function apply(ctx, config = {}, runtime = {}) {
     // Returning { kind: 'reject' } would discard claimed inbox messages;
     // rejecting with an error instead avoids silently continuing with a
     // different format and surfaces the storage repair requirement.
-    const newStableRequested = current().stableImageHistory === true ||
-      current().stableImageHistoryNewSessions === true
+    // Keep explicitly opted-in historical v1 Sessions byte-identical.
+    // New-Session opt-in chooses canonical v2; a persisted v1/v2 witness
+    // always overrides later Settings changes and fork configuration.
+    const newStableRequested = current().stableImageHistoryNewSessions === true
+      ? 'stable-v2' : current().stableImageHistory === true
     const modeStoreNeeded = sessionImageProjectionModeStore?.resolve &&
       (newStableRequested ||
         sessionImageProjectionModeStore.hasStorageFacility?.() === true ||
