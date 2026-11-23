@@ -174,7 +174,13 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
           update({ kind: 'legacy', reason })
           return
         }
-        retryable = ['transport-failed', 'gateway/internal', 'session/not-found'].includes(reason)
+        // The Host can briefly retire its Agent lookup while keeping the
+        // DVR strict endpoint registered. The Gateway then correctly rejects
+        // observation with a missing lookup/service; retry the READ only for
+        // the existing small budget. Writes are never replayed, and mismatched
+        // providers, withdrawn definitions and access denials stay hard errors.
+        retryable = ['transport-failed', 'gateway/internal', 'session/not-found',
+          'gateway/lookup-unavailable', 'gateway/service-unavailable'].includes(reason)
       } finally {
         try { stream?.dispose() } catch {}
         stream = undefined
