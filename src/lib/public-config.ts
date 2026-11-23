@@ -22,9 +22,10 @@ export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T):
   // Issue #865 phase D: opt-in until exact Host history/admission and cold-resume
   // contracts prove append-only image evidence preserves visual quality.
   coreConfig.set('stableImageHistory', z.boolean().default(false))
-  // Existing opt-in preserves pre-rollout behavior. Newly created Sessions
-  // select v1 stable history only when a durable per-Session format record can
-  // be committed before the first provider request. Old Sessions stay legacy.
+  // Experimental only: NOT safe as a default until real Host first-turn
+  // classification, per-Session Settings immutability and missing-sidecar
+  // recovery are fixed. Do not auto-adopt the v1 format on normal installs.
+  // The opt-in still requires a durable format record before first request.
   coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(false))
 
   // Keep provider/task/turn timeout layers coherent. The whole-turn budget is
