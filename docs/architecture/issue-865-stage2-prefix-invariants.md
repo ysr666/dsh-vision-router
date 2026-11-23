@@ -47,12 +47,14 @@ changes can still invalidate a cache.
 ## What is deliberately NOT changed
 
 - Existing `stableImageHistory` remains explicit opt-in (default false).
-  The separate `stableImageHistoryNewSessions` switch remains EXPERIMENTAL and defaults false; an architecture review found unaddressed first-turn classification, runtime Settings override, and missing-sidecar restart hazards. It
-  applies only when the official DSH Storage Domain can persist a per-Session
-  format decision **before the first LLM request**. In old or imported Sessions
-  with committed model history, the first decision is `legacy`, and stays
-  `legacy` on future requests and across cold resume. If already stored,
-  neither current Settings nor later request headers silently change it.
+  The separate `stableImageHistoryNewSessions` switch remains EXPERIMENTAL and
+  defaults false. Its durable mode must be committed through the official DSH
+  Storage Domain **before the first LLM request**. Current DSH
+  `agent/pre-step` claims the inbox before user/message is committed; the
+  format guard uses `requestHeader()`, `firstLiveSeq`, `header.isSeeded`,
+  inherited fork cuts and existing requests, not a user message alone, to
+  distinguish genuine first requests from seeded/restored history. The persisted
+  per-Session mode always wins over live Settings thereafter.
 - The optional domain `vision_router_image_projection` is distinct from
   Session Vision permission. Its `modes` table stores only
   `{revision:1,mode:'legacy'|'stable'}`, keyed by Session ID; no OCR text,
