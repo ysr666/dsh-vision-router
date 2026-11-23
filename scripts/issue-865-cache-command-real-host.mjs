@@ -16,7 +16,8 @@ const [
   { Context }, llm, { default: Sessions }, { default: Projection },
   { default: SystemPrompt }, { default: Tools }, { default: AgentRegistry },
   { default: AgentLoop }, { default: Commands }, { default: AttachmentLocal },
-  JsonlPersistence, dvr,
+  JsonlPersistence, { default: StorageHub }, { default: JsonBackend },
+  { default: StorageDomain }, dvr,
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -29,6 +30,9 @@ const [
   host('packages/interaction/commands/src/index.ts'),
   host('packages/attachment/attachment-local/src/index.ts'),
   host('packages/session/session-persistence-jsonl/src/index.ts'),
+  host('packages/storage/storage/src/index.ts'),
+  host('packages/storage/storage-json/src/index.ts'),
+  host('packages/storage/storage-domain/src/index.ts'),
   import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
 ])
 const dir = await mkdtemp(join(tmpdir(), 'dvr-865-cache-'))
@@ -71,6 +75,13 @@ try {
     async execute() { throw new Error('No tools expected') },
   })
   await ctx.plugin(AgentRegistry)
+  // The real current Host normally mounts storageDomain over an explicit
+  // storage backend. An absent sidecar facility must correctly BLOCK
+  // unwitnessed old-Session migrations; this positive path deliberately
+  // mounts the *official* Host storage, not a fake get()/put() adapter.
+  await ctx.plugin(StorageHub)
+  await ctx.plugin(JsonBackend, { root: join(dir, 'domain-json') })
+  await ctx.plugin(StorageDomain, { backend: 'json' })
   await ctx.plugin(JsonlPersistence, { root: join(dir, 'sessions'), compression: 'zstd' })
   await ctx.plugin(AgentLoop, { agents: [] })
   await ctx.plugin(Commands)
