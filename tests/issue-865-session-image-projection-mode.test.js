@@ -367,5 +367,5 @@ test('stage 2: blocked first step durably requeues exact claimed input in origin
   assert.equal(preserveClaimedMessagesOnBlockedStep(agent, []), 0)
   assert.equal(calls.length, 1, 'an empty tool continuation cannot requeue synthetic input')
   assert.throws(() => preserveClaimedMessagesOnBlockedStep({}, [first]),
-    /Inbox.splice is unavailable/, 'never claim successful requeue if the Host lacks the interface')
+    /Agent\\.inbox\\.splice is unavailable/, 'never claim successful requeue if the Host lacks the interface')
 })
