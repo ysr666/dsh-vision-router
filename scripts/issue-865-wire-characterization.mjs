@@ -58,7 +58,35 @@ const projectionStore = createSessionImageProjectionModeStore({
 })
 assert.equal(await projectionStore.resolve(freshSession, true), 'stable')
 assert.equal(projectionStore.get(freshSession.id), 'stable')
+const stableWitness = projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' })
+assert.ok(stableWitness, 'the real DSH Session must receive exactly one source-attributed format witness')
+assert.deepEqual(projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' }), stableWitness,
+  'uncommitted steps must retry the same witness ID')
+freshSession.append('user/message', stableWitness, { surfaceOp: 'append' })
+projectionStore.onSessionEvent(freshSession, { type: 'user/message', data: stableWitness })
+assert.equal(projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' }), undefined)
 await testCleanup()
+
+// Restore the exact real Host Session events with NO image-format sidecar.
+// This mimics an externally lost sidecar and a fork whose Session id differs.
+let orphanCleanup
+const orphanStore = createSessionImageProjectionModeStore({
+  get() { return undefined },
+  effect(setup) { orphanCleanup = setup() },
+})
+const restored = Session.create('issue-865-real-first-prestep', freshSession.snapshotEvents())
+assert.equal(hasPriorModelHistory(restored), true, 'cold resume has a historical construction offset')
+assert.equal(await orphanStore.resolve(restored, false), 'stable',
+  'the committed Host user/message witness is authoritative even without a sidecar')
+const inherited = Session.create(
+  'issue-865-real-child-fork', freshSession.snapshotEvents(),
+  { ...freshSession.header, id: 'issue-865-real-child-fork', isSeeded: true },
+  freshSession.seq,
+)
+assert.equal(inherited.header.isSeeded, true)
+assert.equal(await orphanStore.resolve(inherited, false), 'stable',
+  'forks inherit the format from their real DSH source log, not the child Session ID')
+await orphanCleanup()
 const modelId = 'deepseek-flash'
 const sourceRoute = 'deepseek-account'
 const twinRoute = 'deepseek-account-vision'
