@@ -92,3 +92,27 @@ test('manual command reads only the authorized live Session and calls no model',
   assert.equal(command.handler({ agent, signal: AbortSignal.abort() }).kind, 'error')
   assert.equal(reads, 1)
 })
+
+test('#865 command includes anonymous, process-local vision stream totals without claiming complete billing', async () => {
+  let registered
+  const observed = []
+  const session = {id:'S',snapshotEvents(){return [response(1,{inputTokens:5,cacheReadTokens:95,outputTokens:2,totalTokens:102})]}}
+  const visionSubcallAudit={
+    snapshot(s){
+      observed.push(s)
+      return {calls:2,finished:1,failed:1,incomplete:0,withUsage:1,truncated:false,
+        tokenTotals:{inputTokens:null,cacheReadTokens:null,cacheWriteTokens:null,outputTokens:null,totalTokens:null}}
+    },
+  }
+  installSessionCacheUsageCommand({inject(_names,fn){
+    fn({commands:{register(v){registered=v}}})
+  }},{visionSubcallAudit})
+  const out=registered.handler({agent:{id:'S',session}})
+  assert.equal(out.kind,'success')
+  assert.equal(observed.length,1)
+  assert.equal(observed[0],session)
+  assert.match(out.text,/Observed vision-tool LLM streams.*seen=2, finished=1, failed=1/)
+  assert.match(out.text,/unknown/)
+  assert.match(out.text,/NOT full billing/)
+  assert.doesNotMatch(out.text,/SECRET_ACCOUNT|PRIVATE_MODEL/)
+})

@@ -40,12 +40,14 @@ export function createVisionSubcallAccounting() {
         sessions.set(session, state)
       }
       const record = { status: 'incomplete', usage: undefined }
-      state.rows.push(record)
-      if (state.rows.length > MAX_CALLS_PER_SESSION) {
-        state.rows.shift()
-        state.truncated = true
-      }
       return (async function* () {
+        // A constructed but never consumed async iterator is not a confirmed
+        // execution. Count this only once the Host starts consuming it.
+        state.rows.push(record)
+        if (state.rows.length > MAX_CALLS_PER_SESSION) {
+          state.rows.shift()
+          state.truncated = true
+        }
         let complete = false, failed = false
         try {
           for await (const chunk of stream) {
