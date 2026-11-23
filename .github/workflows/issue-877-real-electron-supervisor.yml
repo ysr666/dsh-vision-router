@@ -1,7 +1,7 @@
-name: Issue 877 existing-profile real Electron Desktop upgrade
+name: Issue 877 Host-seeded preinstalled profile Electron upgrade
 on:
   push:
-    branches: [diagnostics/issue-877-electron-existing-profile]
+    branches: [diagnostics/issue-877-electron-preboot-profile]
     paths:
       - scripts/issue-877-electron-supervisor-upgrade.mjs
       - .github/workflows/issue-877-real-electron-supervisor.yml
@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   electron-supervisor:
-    name: "Windows Electron Desktop / preloaded Shop + DVR 3.2.1 → 3.4.0"
+    name: "Windows Electron Desktop / persisted Host-installed 3.2.1 → 3.4.0"
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
