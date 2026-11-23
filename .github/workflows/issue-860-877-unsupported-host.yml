@@ -1,0 +1,76 @@
+name: Issue 860/877 unsupported Host differential
+# Diagnostic only. No release/tag, package publication, or writes to main.
+on:
+  push:
+    branches: [diagnostics/issue-860-877-unsupported-matrix]
+    paths:
+      - "scripts/issue-877-unsupported-host-activation.mjs"
+      - ".github/workflows/issue-860-877-unsupported-host.yml"
+permissions:
+  contents: read
+jobs:
+  unsupported-differential:
+    name: "Windows fresh DVR 3.4.0 / ${{ matrix.dsh }} / Node ${{ matrix.node }}"
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Reported by #837. Intentionally unsupported by DVR's published
+          # >=0.2.1-rc.5 engine floor, bypassing marketplace preflight only
+          # inside this disposable, isolated test profile.
+          - dsh: 0.2.1-rc.2
+            node: 24.13.1
+            commit: 687f282e8625c6b8d11ff58211a90524be2e4317
+          # The exact DVR support floor and the same Node version are the
+          # paired control to isolate the effect of the DSH version.
+          - dsh: 0.2.1-rc.5
+            node: 24.13.1
+            commit: b830ec950faba0a46dda564be3e2d854afed94f1
+    steps:
+      - name: Checkout isolated diagnostic source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          path: dvr
+      - name: Checkout exact immutable DSH Host
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ matrix.commit }}
+          persist-credentials: false
+          path: dsh-host
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Validate pinned DSH and published DVR support boundary
+        shell: bash
+        working-directory: dsh-host
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ matrix.commit }}"
+          test "$(node -p "require('./package.json').version")" = "${{ matrix.dsh }}"
+          node -e "const s=require('../dvr/package.json'); if(!s.engines.dsh.includes('0.2.1-rc.5'))process.exit(1)"
+      - name: Install diagnostics dependencies
+        working-directory: dvr
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build exact Windows Desktop Host
+        working-directory: dsh-host
+        env:
+          CI: "true"
+          LEFTHOOK: "0"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Isolated real Windows Desktop fresh activation of published DVR 3.4.0
+        working-directory: dsh-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-host
+          DSH_EXPECTED_VERSION: ${{ matrix.dsh }}
+          DVR_DIAG_MODE: fresh-activation
+          DVR_DESKTOP_BASE_PORT: "19651"
+        run: node --import tsx ../dvr/scripts/issue-877-unsupported-host-activation.mjs
