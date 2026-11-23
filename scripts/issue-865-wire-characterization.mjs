@@ -243,10 +243,10 @@ try {
       what + ': all previously serialized model messages must retain their bytes and order',
     )
   }
-  const offMessages = [createSystemMessage('stable native prompt'), user('vision OFF first'), assistant('answered OFF first')]
+  const offMessages = [createSystemMessage('stable native prompt'), user('opening OFF turn'), assistant('opening reply'), user('vision OFF first')]
   const offHistory = { tools: [foreign], updates: [] }
   const offOne = await request(sourceRoute, offMessages, { tools: [foreign], toolHistory: offHistory })
-  const offTwo = await request(sourceRoute, [...offMessages, user('vision still OFF')], {
+  const offTwo = await request(sourceRoute, [...offMessages, assistant('answered OFF first'), user('vision still OFF')], {
     tools: [foreign], toolHistory: offHistory,
   })
   assert.equal(schemaHeader(offOne.wire), schemaHeader(offTwo.wire), 'OFF->OFF headers must stay stable')
@@ -260,7 +260,7 @@ try {
   const enabledHistory = { tools: [foreign], updates: [
     { messageId: enable.id, additions: [ocr, describe] },
   ] }
-  const onMessages = [...offMessages, user('enable visual precision'), enable, user('vision ON first')]
+  const onMessages = [...offMessages, assistant('answered OFF'), user('enable visual precision'), enable, user('vision ON first')]
   const onOne = await request(sourceRoute, onMessages, {
     tools: [foreign, ocr, describe], toolHistory: enabledHistory,
   })
