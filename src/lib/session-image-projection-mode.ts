@@ -48,6 +48,31 @@ export function isCommittedStableProjectionWitness(message: unknown): boolean {
   return committedStableProjectionWitnessMode(message) !== undefined
 }
 
+/**
+ * Single authority for all trusted Session image-projection witnesses.
+ * DVR-owned projection IDs with an invalid body or shape are not absence of
+ * proof: they are contradictory evidence and MUST fail closed. Foreign/user
+ * messages cannot claim this authority merely by quoting a marker.
+ */
+export function inspectCommittedProjectionWitnesses(
+  events: readonly { type?: string; data?: unknown }[],
+): 'stable' | 'stable-v2' | 'unknown' | undefined {
+  if (!Array.isArray(events)) return 'unknown'
+  let found: 'stable' | 'stable-v2' | undefined
+  for (const event of events) {
+    if (event?.type !== 'user/message') continue
+    const message = event.data
+    if (!message || typeof message !== 'object') continue
+    const candidate = message as { id?: unknown; source?: unknown }
+    if (!isDvrSource(candidate.source) || typeof candidate.id !== 'string' ||
+        !candidate.id.startsWith('vision-router-projection-')) continue
+    const mode = committedStableProjectionWitnessMode(message)
+    if (!mode || (found !== undefined && found !== mode)) return 'unknown'
+    found = mode
+  }
+  return found
+}
+
 export function createStableProjectionWitness(
   sessionId: string, source: { kind: string; plugin?: string },
   mode: 'stable' | 'stable-v2' = 'stable',
@@ -313,14 +338,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
     try {
       const events = session.snapshotEvents?.()
       if (!Array.isArray(events)) return undefined
-      let found: 'stable' | 'stable-v2' | 'unknown' | undefined
-      for (const event of events) {
-        if (event?.type !== 'user/message') continue
-        const mode = committedStableProjectionWitnessMode(event.data)
-        if (!mode) continue
-        if (found && found !== mode) { found = 'unknown'; break }
-        found = mode
-      }
+      const found = inspectCommittedProjectionWitnesses(events)
       witnesses.set(session, found ?? false)
       return found
     } catch {
@@ -341,7 +359,7 @@ export function createSessionImageProjectionModeStore(ctx: Context) {
 
   const onSessionEvent = (session: Session, event: { type?: string; data?: unknown }) => {
     if (!session || typeof session !== 'object' || event?.type !== 'user/message') return
-    const mode = committedStableProjectionWitnessMode(event.data)
+    const mode = inspectCommittedProjectionWitnesses([event])
     if (!mode) return
     const old = witnesses.get(session)
     const nextMode = old && old !== mode ? 'unknown' : mode
