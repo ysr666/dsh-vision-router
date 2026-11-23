@@ -37,11 +37,15 @@ changes can still invalidate a cache.
   original source image unchanged, no memory-dependent historical mutation,
   >512 committed versions, independent-process-style cold restoration, and
   uncommitted pre-step retry.
+- `tests/issue-865-session-image-projection-mode.test.js`: witness commit-vs-plan,
+  source authentication, deleted-sidecar cold restore, fork inheritance and
+  missing-storage legacy guard.
 - `tests/issue-512-tool-restriction.test.js`: OFF/OFF, ON/ON, ON/OFF,
   foreign tools and executable permission denial.
 - `scripts/issue-865-wire-characterization.mjs`: actual pinned DSH
   `LlmRuntime` -> official DeepSeek Messages serializer for unchanged-policy
-  prefix, addition-only incremental additions and safe removal baseline reset.
+  prefix, addition-only incremental additions, safe removal baseline reset,
+  and an actual pinned DSH Session witness, cold reconstruction and fork.
 - Existing production JSONL and original-image tests remain mandatory.
 
 ## What is deliberately NOT changed
@@ -55,13 +59,26 @@ changes can still invalidate a cache.
   inherited fork cuts and existing requests, not a user message alone, to
   distinguish genuine first requests from seeded/restored history. The persisted
   per-Session mode always wins over live Settings thereafter.
-- The optional domain `vision_router_image_projection` is distinct from
+- The optional domain `vision_router_image_projection` is separate from
   Session Vision permission. Its `modes` table stores only
-  `{revision:1,mode:'legacy'|'stable'}`, keyed by Session ID; no OCR text,
-  image contents, private Session events, or credentials are stored. Missing
-  or untrusted storage fails closed to legacy, never a process-local guess.
-  A genuinely interrupted/failed sidecar write cannot justify a stable-mode
-  request, and ambiguous provider/cache outcomes still require testing.
+  `{revision:1,mode:'legacy'|'stable'}`, keyed by Session ID; no OCR or image
+  bytes. It remains a compatibility accelerator for previously written rows.
+- Every new stable Session also receives **one short, model-visible DSH
+  `user/message` witness** with exact text `[DVR image-history format:
+  stable-v1]`. Its deterministic ID and DVR producer attribution are checked.
+  The event is only committed upon successful pre-step admission, never merely
+  planned. DSH Session JSONL, cold restore and forks carry this witness even
+  when the sidecar is deleted or unavailable. It costs a small one-time
+  model-visible prompt prefix; this cost must be measured, not concealed.
+  The Host explicitly forbids external use of `appendPluginRecord`, and
+  SessionHeader has no extension fields, so no unsupported private event is
+  introduced.
+- When the witness and sidecar disagree, the committed v1 witness takes
+  precedence. Older candidate Sessions with sidecar `stable` but no witness
+  receive it on their next admitted step. Without either proof, an established
+  image-bearing Session is `unknown`, never guessed legacy. Text-only
+  continuation is permitted if inspection proves it cannot alter image
+  history. Lost pre-witness experimental state remains a rollout limitation.
 - Source histories retain their original image events. Existing opt-in v1
   text-wrapper and history markers are unchanged. No unapproved retroactive
   migration of old Session prefixes occurs.
