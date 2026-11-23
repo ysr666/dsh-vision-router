@@ -334,6 +334,14 @@ const CLIENT_PRELUDE = String.raw`(function(){
       }
       try {
         unlisten = store.subscribe(inspect);
+        // Some store adapters synchronously publish their current snapshot
+        // during subscribe. In that case finish() ran before unlisten was
+        // assigned; release the now-available disposer without starting a
+        // stray timeout or leaving an orphan observer behind.
+        if (done) {
+          if (typeof unlisten === 'function') unlisten();
+          return;
+        }
         timer = window.setTimeout(function(){
           finish(new Error('ModelDirectory initial hydration timed out'));
         }, 15000);
