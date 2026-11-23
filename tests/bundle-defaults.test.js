@@ -63,7 +63,9 @@ test('public Config composition preserves the mature Core schema identity', () =
 test('public plugin config defaults progressive tools off', () => {
   assert.equal(Config({}).progressiveTools, false)
   assert.equal(Config({}).stableImageHistory, false)
-  assert.equal(Config({}).stableImageHistoryNewSessions, false)
+  assert.equal(Config({}).stableImageHistoryNewSessions, true)
+  assert.equal(Config({ stableImageHistoryNewSessions: false }).stableImageHistoryNewSessions, false,
+    'an explicit user opt-out stays authoritative')
 })
 
 test('issue #865: legacy Core defaults cannot silently re-enable progressive schema changes', async () => {

@@ -79,3 +79,33 @@ version is enabled here. Existing Sessions/forks remain locked to their
 original format; full quality and representative real-Host performance
 remain user-visible acceptance gates. OFF/ON full tool-prefix parity remains
 deferred by the owner and must not weaken OFF permissions.
+
+## Default-on decision: verified fresh Sessions only (2026-11-24)
+
+The public default `stableImageHistoryNewSessions` is now **true** on the
+Draft source candidate. This does **not** enable legacy v1 projection and does
+not change the global `stableImageHistory` default (still false). The actual
+pre-step admission owner picks the format before the first model request; an
+existing/witnessed/seeded/forked Session retains its original immutable mode.
+Explicit `stableImageHistoryNewSessions: false` remains authoritative.
+
+Safety:
+- Missing both durable attachment ID and source message ID: a truly fresh
+  Session falls back to legacy before its first request; a witnessed v2
+  Session stops and requeues the exact original pending message.
+- Existing legacy Sessions are **not** automatically migrated and require
+  `/vision-history-stabilize CONFIRM` when idle, with a durable flush.
+- Text-only fresh Sessions receive exactly one durable v2 format witness;
+  this is a small constant cache-prefix overhead, not per-turn growth. The
+  witness deliberately avoids unverified later switching when an image arrives.
+- Native visual capability delegation, original image pixel storage and
+  append-only OCR evidence stay unchanged. This is a structural integrity and
+  offline performance gate, **not** a claim that PP-OCRv6 achieves Chinese OCR
+  accuracy without a representative quality corpus.
+
+The earlier synthetic 1.317 MB / 1700 messages / 131 images test, real-Host
+JSONL/Session migration contract and explicit opt-out/unsafe identity tests
+support this conservative default for qualifying first-turn Sessions. Keep
+all changes Draft until the complete exact-HEAD Host and package acceptance
+has passed. Formal main merge, version, tag, npm and release remain separately
+prohibited without owner's explicit permission.

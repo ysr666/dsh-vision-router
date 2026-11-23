@@ -22,11 +22,13 @@ export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T):
   // Issue #865 phase D: opt-in until exact Host history/admission and cold-resume
   // contracts prove append-only image evidence preserves visual quality.
   coreConfig.set('stableImageHistory', z.boolean().default(false))
-  // Experimental only: NOT safe as a default until real Host first-turn
-  // classification, per-Session Settings immutability and missing-sidecar
-  // recovery are fixed. Do not auto-adopt the v1 format on normal installs.
-  // The opt-in still requires a durable format record before first request.
-  coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(false))
+  // Issue #865: after Host admission/cold-resume/witness + long-history
+  // performance gates, default canonical v2 ONLY for demonstrably fresh
+  // Sessions. Explicit false remains authoritative. Preexisting/forked
+  // Sessions never silently change format; malformed image identity must
+  // safely fall back to legacy before the first request (or reject if a v2
+  // witness is already committed). This does NOT enable historical v1.
+  coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(true))
 
   // Keep provider/task/turn timeout layers coherent. The whole-turn budget is
   // an optional safety cap: 0 remains unlimited for long-running agent turns.

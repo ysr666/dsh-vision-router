@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { verifyImageProjectionAdmission } from '../lib/session-image-projection-admission.js'
+import { Config } from '../entry.js'
+import { rewriteHistoryImages } from '../lib/core-primitives.js'
 import {
   createSessionImageProjectionModeStore,
   imageProjectionModeDomainSpec,
@@ -596,4 +598,71 @@ test('adversarial #865: new Session with unprovable image identity never acquire
   })
   assert.deepEqual(requests, [false],
     'the opt-in v2 format cannot be selected based on mutable request position')
+})
+
+test('issue #865 default-on: first verified image Session adopts stable-v2 and preserves immutable history', async () => {
+  const h=fixture()
+  const events=[{type:'session/start'}]
+  const fresh=session('new-default-image',events)
+  const original={role:'user',id:'original-1',content:[
+    {type:'text',text:'请识别这张截图里的中文文字'},
+    {type:'image',attachment:{attachmentId:'sha256:offline-chinese-screenshot',name:'中文截图.png'}},
+  ]}
+  const payload={agent:{session:fresh},messages:[original]}
+  const settings=Config({})
+  assert.equal(settings.stableImageHistory, false,'legacy v1 remains off')
+  assert.equal(settings.stableImageHistoryNewSessions,true,'stable-v2 now defaults on')
+  await verifyImageProjectionAdmission({
+    session:fresh,payload,decision:{messages:payload.messages},modeStore:h.store,
+    settings,hasRetainedImage:blocks=>blocks.some(b=>b.type==='image'),
+  })
+  assert.equal(h.store.get(fresh.id),'stable-v2')
+  const witness=h.store.witnessFor(fresh,{kind:'plugin:dsh-vision-router'})
+  assert.ok(witness,'stable-v2 gets a durable in-Session witness')
+  assert.equal(witness.content[0].text,STABLE_IMAGE_PROJECTION_WITNESS_V2)
+  const historical=structuredClone([original])
+  const before=rewriteHistoryImages(historical,new Map(),{stable:'stable-v2'}).messages
+  const after=rewriteHistoryImages(historical,new Map([[
+    'sha256:offline-chinese-screenshot','后续完整中文 OCR 识别结果',
+  ]]),{stable:'stable-v2'}).messages
+  assert.deepEqual(after,before,'late Chinese OCR is append-only, not an earlier prefix rewrite')
+  assert.equal(historical[0].content[1].type,'image','original pixels never mutated')
+  await h.ctx.cleanup()
+})
+
+test('issue #865 default-on: preexisting Session and explicit opt-out remain legacy without changing history', async () => {
+  const h=fixture()
+  const old=session('old-default',[{type:'request/header'},{type:'assistant/message'}],
+    {firstLiveSeq:2})
+  const raw={role:'user',id:'old-pic',content:[{type:'image',attachment:{attachmentId:'sha256:old'}}]}
+  await verifyImageProjectionAdmission({
+    session:old,payload:{agent:{session:old},messages:[raw]},
+    decision:{messages:[raw]},modeStore:h.store,settings:Config({}),
+    hasRetainedImage:blocks=>blocks.some(b=>b.type==='image'),
+  })
+  assert.equal(h.store.get(old.id),'legacy')
+  assert.equal(h.store.witnessFor(old,{kind:'plugin:dsh-vision-router'}),undefined)
+  const fresh=session('new-explicit-off')
+  await verifyImageProjectionAdmission({
+    session:fresh,payload:{agent:{session:fresh},messages:[raw]},
+    decision:{messages:[raw]},modeStore:h.store,
+    settings:Config({stableImageHistoryNewSessions:false}),
+    hasRetainedImage:blocks=>blocks.some(b=>b.type==='image'),
+  })
+  assert.equal(h.store.get(fresh.id),'legacy')
+  await h.ctx.cleanup()
+})
+
+test('issue #865 default-on: missing image and message IDs falls back safely before first model request', async () => {
+  const h=fixture()
+  const fresh=session('new-missing-identity')
+  const raw={role:'user',content:[{type:'image',attachment:{name:'no-durable-id.png'}}]}
+  await verifyImageProjectionAdmission({
+    session:fresh,payload:{agent:{session:fresh},messages:[raw]},
+    decision:{messages:[raw]},modeStore:h.store,settings:Config({}),
+    hasRetainedImage:blocks=>blocks.some(b=>b.type==='image'),
+  })
+  assert.equal(h.store.get(fresh.id),'legacy')
+  assert.equal(h.store.witnessFor(fresh,{kind:'plugin:dsh-vision-router'}),undefined)
+  await h.ctx.cleanup()
 })
