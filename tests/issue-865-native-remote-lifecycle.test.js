@@ -292,3 +292,60 @@ test('issue #865: permanently withdrawn strict definition eventually fails, neve
   assert.equal(result.reason, 'gateway/definition-unavailable')
   assert.equal(reads, 3, 'one initial read plus two finite retries; never retry indefinitely')
 })
+
+test('issue #865: modern Host late strict mount is not misclassified as legacy on first absent read', async () => {
+  let reads = 0
+  let observer
+  const api = {
+    observe() {
+      reads++
+      if (reads === 1) {
+        throw Object.assign(new Error('strict Host endpoint not mounted yet'), {
+          code: 'gateway/invocation-unavailable',
+        })
+      }
+      return (async function* () { yield {
+        kind: 'native', selection: { provider: 'p', model: 'm' },
+        enabled: false, requestedEnabled: false, canEnable: true, durable: true,
+      } })()
+    },
+    async set() { throw new Error('never replay writes') },
+  }
+  const result = await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('modern Host late endpoint never recovered')), 2500)
+    observer = startNativeVisionClientObservation(api, 'session', state => {
+      if (state.kind === 'legacy' || state.kind === 'value' || state.kind === 'failed') {
+        clearTimeout(deadline)
+        resolve(state)
+      }
+    }, { retryDelays: [1, 1, 1] })
+  })
+  observer.stop()
+  assert.equal(result.kind, 'value', 'one early gateway/invocation-unavailable is ambiguous, not proof of old Host')
+  assert.equal(reads, 2)
+})
+
+test('issue #865: genuinely missing legacy endpoint settles after finite read probes', async () => {
+  let reads = 0
+  let observer
+  const api = {
+    observe() {
+      reads++
+      throw Object.assign(new Error('no strict endpoint'), {
+        code: 'gateway/invocation-unavailable',
+      })
+    },
+  }
+  const result = await new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => reject(new Error('old Host compatibility probe timed out')), 2500)
+    observer = startNativeVisionClientObservation(api, 'session', state => {
+      if (state.kind === 'legacy' || state.kind === 'value' || state.kind === 'failed') {
+        clearTimeout(deadline)
+        resolve(state)
+      }
+    }, { retryDelays: [1, 1, 1] })
+  })
+  observer.stop()
+  assert.equal(result.kind, 'legacy', 'old Hosts retain their old picker after a short bounded probe')
+  assert.equal(reads, 4, 'initial read plus only three probes; no unbounded fallback polling')
+})
