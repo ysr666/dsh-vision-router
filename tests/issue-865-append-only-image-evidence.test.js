@@ -483,3 +483,73 @@ test('stage 2: committed versions dedupe across OCR whitespace, 512-id eviction,
   assert.equal(cold.plan(resumed, [], [], descriptions, source)[0].id, correction[0].id,
     'an uncommitted plan may be retried')
 })
+
+test('stage 2: a native image-capable route preserves original pixels, metadata and nested tool images', async () => {
+  const original = history()
+  original[0].content[0].attachment.width = 111
+  original[0].content[0].attachment.height = 77
+  const tool = {
+    id: 'tool-image-native', role: 'tool', content: [{
+      type: 'tool-result', toolCallId: 'read-123', content: [
+        { type: 'image', attachment: { attachmentId: 'sha256:native-nested', name: 'diagram.png' } },
+      ],
+    }],
+  }
+  const submitted = [...original, tool]
+  const before = structuredClone(submitted)
+  const requests = []
+  const memory = new Map([[id, 'OCR is not an excuse to remove native image input']])
+  const bridge = createWrapperStreamBody({ llm: {
+    async *stream(options) {
+      requests.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  } }, {
+    imageMemory: memory, delegateProvider: 'native-synthetic',
+    preserveImageInput: async () => true,
+    stableImageHistory: (options) => options.sessionId === 'stable-native-session',
+  })
+  for await (const _ of bridge.stream({
+    provider: 'synthetic-native-vision', model: 'multimodal',
+    sessionId: 'stable-native-session', messages: submitted,
+  })) {}
+  assert.equal(requests.length, 1)
+  assert.deepEqual(requests[0].messages, before,
+    'native model must receive actual original image blocks, never OCR-only placeholders')
+  assert.equal(requests[0].messages[2].content[0].content[0].type, 'image')
+  assert.deepEqual(submitted, before, 'the durable source image and tool-result objects stay untouched')
+})
+
+test('stage 2: format policy is evaluated per Session at the actual wrapper request boundary', async () => {
+  const requests = []
+  const memory = new Map([[id, 'learned OCR after the first request']])
+  const activeSessions = new Map([['new-stable', true], ['old-legacy', false]])
+  const bridge = createWrapperStreamBody({
+    llm: { async *stream(options) {
+      requests.push({ id: options.sessionId, content: options.messages[0].content[0].text })
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
+  }, {
+    imageMemory: memory,
+    delegateProvider: 'synthetic-text',
+    preserveImageInput: false,
+    stableImageHistory: options => activeSessions.get(options.sessionId) === true,
+  })
+  const request = async sessionId => {
+    for await (const _ of bridge.stream({
+      provider: 'synthetic-text-vision', model: 'text', sessionId, messages: history(),
+    })) {}
+  }
+  await request('new-stable')
+  await request('old-legacy')
+  assert.match(requests[0].content, /已收到图片/)
+  assert.match(requests[1].content, /learned OCR/)
+  memory.set(id, 'CORRECTED OCR')
+  await request('new-stable')
+  await request('old-legacy')
+  assert.equal(requests[2].content, requests[0].content,
+    'stable Session history must be independent of late OCR memory')
+  assert.notEqual(requests[3].content, requests[1].content,
+    'existing legacy Sessions retain their old wire behavior until migration is authorized')
+  assert.equal(requests[3].id, 'old-legacy')
+})
