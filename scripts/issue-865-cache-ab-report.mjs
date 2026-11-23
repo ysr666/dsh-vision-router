@@ -96,7 +96,7 @@ function readRow(r) {
   if (Object.keys(r).some(k => !FIELDS.has(k))) fail('unknown field (potentially private data)')
   if (!safeTag(r.case) || !safeTag(r.routeTag) || !safeTag(r.modelTag)) fail('case/routeTag/modelTag must be opaque short tags')
   if (!natural(r.trial) || r.trial < 1 || r.trial > 100) fail('trial must be an integer in [1,100]')
-  if (!['before', 'after'].includes(r.variant) || !['main', 'vision'].includes(r.call)) fail('variant/call must be known values')
+  if (!['before', 'after'].includes(r.variant) || !['main', 'vision', 'title', 'retry'].includes(r.call)) fail('variant/call must be known values')
   if (!['provider-response','provider-dashboard','deepseek-messages-final','deepseek-chat-final'].includes(r.usageSource)) fail('usageSource must identify the actual provider evidence')
   r = fromNativeUsage(r)
   for (const k of ['inputTokens','outputTokens','totalTokens']) if (!natural(r[k])) fail('invalid or missing token counter')
@@ -134,6 +134,8 @@ function combine(rows) {
   const costMicros = costComplete ? sum('costMicros') : null
   return { calls: rows.length, mainCalls: rows.filter(r => r.call === 'main').length,
     visionCalls: rows.filter(r => r.call === 'vision').length,
+    titleCalls: rows.filter(r => r.call === 'title').length,
+    retryCalls: rows.filter(r => r.call === 'retry').length,
     uncachedInputTokens: input, cacheReadTokens: read,
     cacheHitPercent: complete && prompt > 0 ? Math.round(read / prompt * 1000) / 10 : null,
     billedCny: costMicros === null ? null : (costMicros / 1000000).toFixed(6),
@@ -150,6 +152,7 @@ function aggregate(pairs, side) {
   return {
     _costMicros: costMicros,
     calls: sum('calls'), mainCalls: sum('mainCalls'), visionCalls: sum('visionCalls'),
+    titleCalls: sum('titleCalls'), retryCalls: sum('retryCalls'),
     uncachedInputTokens: sum('uncachedInputTokens'),
     cacheReadTokens: read,
     cacheHitPercent: prompt > 0 && read !== null ? Math.round(read / prompt * 1000) / 10 : null,
@@ -159,9 +162,31 @@ function aggregate(pairs, side) {
 /** The caller must supply actual, redacted provider observations; no synthetic inference. */
 export function compareCacheAB(document) {
   if (!document || typeof document !== 'object' || Array.isArray(document) ||
-      Object.keys(document).some(k => !['schema','observations'].includes(k)) ||
+      Object.keys(document).some(k => !['schema','observations','callInventory'].includes(k)) ||
       document.schema !== SCHEMA || !Array.isArray(document.observations) ||
       !document.observations.length || document.observations.length > LIMIT) fail('schema or observation count')
+  // Optional COUNTS, never raw request identifiers. These are provided
+  // independently from the gateway/desktop transaction record and are
+  // reconciled to the rows; they do not authenticate their own provenance.
+  const inventory = new Map()
+  if (document.callInventory !== undefined) {
+    if (!Array.isArray(document.callInventory) ||
+        document.callInventory.length > LIMIT * 2) fail('invalid call inventory')
+    for (const item of document.callInventory) {
+      if (!item || typeof item !== 'object' || Array.isArray(item) ||
+          Object.keys(item).some(k => !['case','trial','variant','main','vision','title','retry'].includes(k)) ||
+          !safeTag(item.case) || !natural(item.trial) || item.trial < 1 || item.trial > 100 ||
+          !['before','after'].includes(item.variant) ||
+          ['main','vision','title','retry'].some(k => !natural(item[k]))) {
+        fail('invalid call inventory item')
+      }
+      const key = JSON.stringify([item.case,item.trial,item.variant])
+      if (inventory.has(key)) fail('duplicate call inventory item')
+      inventory.set(key, item)
+    }
+  }
+  let unreconciledInventories = 0
+  let reconciledInventories = 0
   const groups = new Map()
   for (const raw of document.observations) {
     const row = readRow(raw)
@@ -169,6 +194,23 @@ export function compareCacheAB(document) {
     let group = groups.get(key)
     if (!group) { group = { before: [], after: [] }; groups.set(key, group) }
     group[row.variant].push(row)
+  }
+  // Verify each claimed provider request bucket before interpreting money
+  // as a complete Session expense. Missing title/retries remain visible.
+  for (const [key,group] of groups) {
+    const [name,trial] = JSON.parse(key)
+    for (const variant of ['before','after']) {
+      const row = inventory.get(JSON.stringify([name,trial,variant]))
+      const matching = row && ['main','vision','title','retry'].every(
+        kind => group[variant].filter(r=>r.call===kind).length===row[kind])
+      if (matching) reconciledInventories++
+      else unreconciledInventories++
+    }
+  }
+  // Unmatched ledger claims are also a coverage error, not extra proof.
+  for (const key of inventory.keys()) {
+    const [name, trial] = JSON.parse(key)
+    if (!groups.has(JSON.stringify([name,trial]))) unreconciledInventories++
   }
   let incompletePairs = 0, mismatchedRoutes = 0, changedPrefixes = 0, unknownPrefixes = 0
   let referenceMainRoute
@@ -221,6 +263,14 @@ export function compareCacheAB(document) {
     prefixComparison: { changedPairs: changedPrefixes, unknownPairs: unknownPrefixes,
       samePairs: valid.length - changedPrefixes - unknownPrefixes },
     before, after,
+    callCoverage: {
+      // This is self-supplied count reconciliation, not authentication.
+      inventoryProvided: document.callInventory !== undefined,
+      matchedVariants: reconciledInventories,
+      unmatchedVariants: unreconciledInventories,
+      allSubmittedCallsReconciled: document.callInventory !== undefined &&
+        unreconciledInventories === 0 && reconciledInventories > 0,
+    },
     routeAttribution: {
       changedPairs: routeChanged.length,
       before: crossRouteBefore,
@@ -236,6 +286,10 @@ export function compareCacheAB(document) {
         valid.every(pair => pair.nativeFinalUsage),
       actualItemizedBilling: valid.length > 0 &&
         before.billedCny !== null && after.billedCny !== null,
+      fullSessionBilledCostReconciled: document.callInventory !== undefined &&
+        unreconciledInventories === 0 && reconciledInventories > 0 &&
+        valid.length > 0 &&
+        before.billedCny !== null && after.billedCny !== null,
     },
     deltas: valid.length ? {
       requests: after.calls - before.calls,
@@ -250,6 +304,8 @@ export function compareCacheAB(document) {
       'Provider Usage can prove cache counters; price-sheet estimates and balance differences are not per-request billed amounts.',
       'Token cache read is not a billing statement. Money comparison needs provider-billing-export values on every included request.',
       'A changed wire prefix or unverified matching scenario prevents causal attribution to DVR alone.',
+      'Submitted calls include main/vision/title/retry; extra provider calls must be represented as rows.',
+      'Optional callInventory reconciles supplied gateway counts but does not authenticate their completeness.',
       'Reports include only submitted calls; missing vision/retry calls invalidate a full-cost conclusion.',
       'DeepSeek cache is best effort; few paired trials cannot establish generalizable savings.',
     ],

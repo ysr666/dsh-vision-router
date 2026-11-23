@@ -198,3 +198,44 @@ test('manually normalized provider-response counters are not misrepresented as r
   assert.equal(r.evidenceLevel.allIncludedCallsHaveNativeFinalUsage, false)
   assert.equal(r.evidenceLevel.actualItemizedBilling, false)
 })
+
+test('#865 includes title and retry calls in the paid total, without calling them main requests', () => {
+  const samples=[
+    one('before'), one('after'),
+    one('before',{call:'vision',routeTag:'child',modelTag:'other'}),
+    one('before',{call:'title',routeTag:'title',modelTag:'short'}),
+    one('before',{call:'retry',routeTag:'mainRetry',modelTag:'modelOne'}),
+    one('after',{call:'title',routeTag:'title',modelTag:'short'}),
+  ]
+  const r=compareCacheAB(doc(samples))
+  assert.equal(r.before.calls,4)
+  assert.equal(r.before.titleCalls,1)
+  assert.equal(r.before.retryCalls,1)
+  assert.equal(r.before.visionCalls,1)
+  assert.equal(r.after.titleCalls,1)
+  assert.equal(r.deltas.requests,-2)
+  assert.equal(r.callCoverage.inventoryProvided,false)
+  assert.equal(r.evidenceLevel.fullSessionBilledCostReconciled,false)
+})
+test('#865 callInventory refuses to certify an incomplete title/retry/provider billing ledger', () => {
+  const known=[
+    {case:'sameCase',trial:1,variant:'before',main:1,vision:0,title:1,retry:0},
+    {case:'sameCase',trial:1,variant:'after',main:1,vision:0,title:0,retry:0},
+  ]
+  const observations=[
+    one('before',{billedCny:'0.001000',billingSource:'provider-billing-export'}),
+    one('after',{billedCny:'0.001000',billingSource:'provider-billing-export'}),
+  ]
+  const incomplete=compareCacheAB({...doc(observations),callInventory:known})
+  assert.equal(incomplete.evidenceLevel.actualItemizedBilling,true,'submitted rows have bills')
+  assert.equal(incomplete.callCoverage.allSubmittedCallsReconciled,false)
+  assert.equal(incomplete.evidenceLevel.fullSessionBilledCostReconciled,false)
+  const covered=compareCacheAB({...doc([...observations,
+    one('before',{call:'title',routeTag:'title',modelTag:'short',
+      billedCny:'0.000500',billingSource:'provider-billing-export'})]),callInventory:known})
+  assert.equal(covered.callCoverage.allSubmittedCallsReconciled,true)
+  assert.equal(covered.before.titleCalls,1)
+  assert.equal(covered.evidenceLevel.fullSessionBilledCostReconciled,true)
+  assert.throws(()=>compareCacheAB({...doc(observations),callInventory:[
+    {...known[0],accountId:'SECRET'},known[1]]}),/invalid call inventory/)
+})
