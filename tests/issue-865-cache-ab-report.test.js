@@ -128,3 +128,45 @@ test('native DeepSeek Chat final usage rejects mismatched prompt and total', () 
     ...chat('before'), usage: { ...chat('before').usage, request_id: 'SECRET' },
   }, chat('after')])), /requires exactly/)
 })
+
+
+test('official DeepSeek Messages Usage accepts auxiliary fields but still checks arithmetic', () => {
+  const native = variant => ({
+    case: 'officialMessages', trial: 1, variant, call: 'main',
+    routeTag: 'deepseekNative', modelTag: 'modelNative',
+    usageSource: 'deepseek-messages-final',
+    usage: {
+      input_tokens: 20, cache_read_input_tokens: 80,
+      cache_creation_input_tokens: 0, output_tokens: 10,
+      service_tier: 'default',
+      output_tokens_details: { reasoning_tokens: 6 },
+      server_tool_use: { web_search_requests: 0 },
+    },
+  })
+  const result = compareCacheAB(doc([native('before'), native('after')]))
+  assert.equal(result.pairedTrials, 1)
+  assert.equal(result.before.cacheHitPercent, 80)
+  assert.equal(result.deltas.billedCny, null, 'official Usage alone never proves money charged')
+  assert.equal(JSON.stringify(result).includes('service_tier'), false,
+    'provider detail strings are never leaked in the report')
+})
+
+test('official DeepSeek Chat Usage allows prompt/completion details and refuses inconsistent cached counts', () => {
+  const native = variant => ({
+    case: 'officialChat', trial: 1, variant, call: 'main',
+    routeTag: 'chat', modelTag: 'modelChat',
+    usageSource: 'deepseek-chat-final',
+    usage: {
+      prompt_tokens: 100, prompt_cache_hit_tokens: 70,
+      prompt_cache_miss_tokens: 30, completion_tokens: 5, total_tokens: 105,
+      prompt_tokens_details: { cached_tokens: 70 },
+      completion_tokens_details: { reasoning_tokens: 4 },
+      extra_provider_field: 'untrusted but not shared',
+    },
+  })
+  assert.equal(compareCacheAB(doc([native('before'), native('after')])).before.cacheHitPercent, 70)
+  const malformed = native('after')
+  malformed.usage.prompt_tokens_details.cached_tokens = 2
+  assert.throws(() => compareCacheAB(doc([native('before'), malformed])),
+    /cached token detail contradicts/)
+})
