@@ -1189,6 +1189,16 @@ export function apply(ctx, config = {}, runtime = {}) {
     const officialStream = createWrapperStreamBody(ctx, {
       imageMemory,
       delegateProvider: wrapperDelegateRoute,
+      // Use the real delegated model's capabilities, not the wrapper's
+      // advertised image modalities. Unknown metadata stays text-only.
+      preserveImageInput: async (options) => {
+        try {
+          const info = await ctx.llm.resolveModelInfo(wrapperDelegateRoute(), options.model)
+          return modelInfoAcceptsImages(info)
+        } catch {
+          return false
+        }
+      },
       instantLocal: instantLocalProvider,
       instantLocalStyle,
       instantLocalTimeoutMs: timeoutMs,
