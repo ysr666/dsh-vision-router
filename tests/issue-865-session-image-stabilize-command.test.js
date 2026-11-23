@@ -64,6 +64,7 @@ function fixture({
     },
   }, {
     get() { return mode },
+    async resolve() { return mode },
     markUnverifiedDurability(id) { durabilityHolds.add(id) },
     markVerifiedDurability(id) { durabilityHolds.delete(id) },
     isDurabilityUnverified(id) { return durabilityHolds.has(id) },
@@ -187,6 +188,21 @@ test('#865: an unverified witness family fails closed, unwitnessed history is UN
   assert.deepEqual(assessProjectionDowngrade([{ type: 'request/header' }], 'legacy-only'),
     { decision: 'unknown', reason: 'no-committed-format-proof' })
   assert.throws(() => assessProjectionDowngrade([], 'guessed-old-version'), /unknown target/)
+})
+
+test('#865: cold-restored hidden v1 sidecar blocks a silent migration despite no witness and empty cache', async () => {
+  const f = fixture({ mode: 'stable' })
+  const result = await f.call()
+  assert.equal(result.kind, 'error')
+  assert.match(result.text, /v1\/unknown history cannot be migrated/)
+  assert.equal(f.actions.appends.length, 0)
+  assert.equal(f.actions.flushes, 0)
+})
+
+test('#865: absent historical mode store cannot pretend an unwitnessed conversation is legacy', async () => {
+  const f = fixture({ mode: 'unknown' })
+  assert.equal((await f.call()).kind, 'error')
+  assert.equal(f.actions.appends.length, 0)
 })
 
 test('#865: current live stable-v1 sidecar also prevents a conflicting explicit migration', async () => {
