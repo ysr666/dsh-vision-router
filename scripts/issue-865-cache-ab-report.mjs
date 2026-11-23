@@ -160,6 +160,7 @@ export function compareCacheAB(document) {
   let incompletePairs = 0, mismatchedRoutes = 0, changedPrefixes = 0, unknownPrefixes = 0
   let referenceMainRoute
   const valid = []
+  const routeChanged = []
   for (const group of groups.values()) {
     if (!group.before.length || !group.after.length) { incompletePairs++; continue }
     const identities = side => call => new Set(group[side].filter(r => r.call === call)
@@ -173,7 +174,12 @@ export function compareCacheAB(document) {
     if (!mainTag || mainAfter.size !== 1 || !mainAfter.has(mainTag) ||
         (visionBefore.size && visionAfter.size && visionTags.size !== 1) ||
         (referenceMainRoute !== undefined && mainTag !== referenceMainRoute)) {
-      mismatchedRoutes++; continue
+      mismatchedRoutes++
+      // A cross-provider/model case may explain the original user's bill,
+      // but cannot be paired as a same-route causal cache experiment. Retain
+      // its sanitized token observations as a SEPARATE descriptive diagnostic.
+      routeChanged.push({ before: combine(group.before), after: combine(group.after) })
+      continue
     }
     referenceMainRoute = mainTag
     const prefixes = ['before', 'after'].map(side => group[side].filter(r => r.call === 'main').map(r => r.wirePrefixSha256))
@@ -184,6 +190,10 @@ export function compareCacheAB(document) {
   }
   const before = valid.length ? aggregate(valid, 'before') : null
   const after = valid.length ? aggregate(valid, 'after') : null
+  const crossRouteBefore = routeChanged.length ? aggregate(routeChanged, 'before') : null
+  const crossRouteAfter = routeChanged.length ? aggregate(routeChanged, 'after') : null
+  if (crossRouteBefore) delete crossRouteBefore._costMicros
+  if (crossRouteAfter) delete crossRouteAfter._costMicros
   const moneyDelta = before?._costMicros === null || after?._costMicros === null || !valid.length
     ? null : after._costMicros - before._costMicros
   if (before) delete before._costMicros
@@ -193,6 +203,16 @@ export function compareCacheAB(document) {
     prefixComparison: { changedPairs: changedPrefixes, unknownPairs: unknownPrefixes,
       samePairs: valid.length - changedPrefixes - unknownPrefixes },
     before, after,
+    routeAttribution: {
+      changedPairs: routeChanged.length,
+      before: crossRouteBefore,
+      after: crossRouteAfter,
+      interpretation: 'Descriptive only: route/model identity changed or was ambiguous; cannot attribute any cost difference to DVR cache fixes.',
+    },
+    evidenceLevel: {
+      providerCacheUsage: valid.length > 0 && before.cacheHitPercent !== null && after.cacheHitPercent !== null,
+      actualItemizedBilling: valid.length > 0 && before.billedCny !== null && after.billedCny !== null,
+    },
     deltas: valid.length ? {
       requests: after.calls - before.calls,
       uncachedInputTokens: after.uncachedInputTokens - before.uncachedInputTokens,
@@ -202,6 +222,8 @@ export function compareCacheAB(document) {
     } : null,
     limits: [
       'Input labels and provider export provenance are user supplied, not independently authenticated.',
+      'Cross-route/model observations are descriptive; they are excluded from the same-upstream causal A/B.',
+      'Provider Usage can prove cache counters; price-sheet estimates and balance differences are not per-request billed amounts.',
       'Token cache read is not a billing statement. Money comparison needs provider-billing-export values on every included request.',
       'A changed wire prefix or unverified matching scenario prevents causal attribution to DVR alone.',
       'Reports include only submitted calls; missing vision/retry calls invalidate a full-cost conclusion.',
@@ -222,6 +244,11 @@ export function formatCacheAB(report) {
     'Comparable paired trials: ' + report.pairedTrials + '; incomplete: ' + report.excluded.incompletePairs + '; route/model mismatch: ' + report.excluded.mismatchedRoutes,
     'Wire prefix: same=' + report.prefixComparison.samePairs + ', changed=' + report.prefixComparison.changedPairs + ', unknown=' + report.prefixComparison.unknownPairs,
     entry('Before', report.before), entry('After', report.after),
+    'Cross-route diagnostic pairs (descriptive only): ' + report.routeAttribution.changedPairs,
+    entry('Cross-route before', report.routeAttribution.before),
+    entry('Cross-route after', report.routeAttribution.after),
+    'Evidence: actual-provider-cache-usage=' + report.evidenceLevel.providerCacheUsage +
+      '; itemized-actual-billing=' + report.evidenceLevel.actualItemizedBilling,
     'Deltas (after-before): calls=' + show(report.deltas?.requests) + ', uncached-input=' + show(report.deltas?.uncachedInputTokens) + ', hit-pp=' + show(report.deltas?.cacheHitPercentagePoints) + ', billed-CNY=' + show(report.deltas?.billedCny),
     ...report.limits.map(x => '- ' + x),
   ].join('\n')
