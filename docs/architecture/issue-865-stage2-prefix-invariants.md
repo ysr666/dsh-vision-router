@@ -52,8 +52,9 @@ changes can still invalidate a cache.
 
 - Existing `stableImageHistory` remains explicit opt-in (default false).
   The separate `stableImageHistoryNewSessions` switch remains EXPERIMENTAL and
-  defaults false. Its durable mode must be committed through the official DSH
-  Storage Domain **before the first LLM request**. Current DSH
+  defaults false. A genuinely new Session can choose stable at its
+  pre-step and persist its proof as a normal DSH user/message **with the first
+  LLM request**, without relying on optional storageDomain. Current DSH
   `agent/pre-step` claims the inbox before user/message is committed; the
   format guard uses `requestHeader()`, `firstLiveSeq`, `header.isSeeded`,
   inherited fork cuts and existing requests, not a user message alone, to
@@ -74,11 +75,14 @@ changes can still invalidate a cache.
   SessionHeader has no extension fields, so no unsupported private event is
   introduced.
 - When the witness and sidecar disagree, the committed v1 witness takes
-  precedence. Older candidate Sessions with sidecar `stable` but no witness
-  receive it on their next admitted step. Without either proof, an established
-  image-bearing Session is `unknown`, never guessed legacy. Text-only
-  continuation is permitted if inspection proves it cannot alter image
-  history. Lost pre-witness experimental state remains a rollout limitation.
+  precedence. The first eligible stable request needs no storageDomain:
+  sidecar write failures fall back to the ordinary committed Session witness,
+  and aborted pre-step plans remain retryable. Older candidate Sessions with
+  sidecar `stable` but no witness receive one on their next admitted step.
+  Without either proof, an established image-bearing Session is `unknown`,
+  never guessed legacy. Text-only continuation is permitted if inspection
+  proves it cannot alter image history. Lost pre-witness experimental state
+  remains a rollout limitation.
 - Source histories retain their original image events. Existing opt-in v1
   text-wrapper and history markers are unchanged. No unapproved retroactive
   migration of old Session prefixes occurs.
