@@ -4,6 +4,9 @@ import {
   createSessionImageProjectionModeStore,
   imageProjectionModeDomainSpec,
   requiresVerifiedImageProjection,
+  createStableProjectionWitness,
+  isCommittedStableProjectionWitness,
+  STABLE_IMAGE_PROJECTION_WITNESS_V1,
 } from '../lib/session-image-projection-mode.js'
 
 function fixture(initial = []) {
@@ -244,4 +247,75 @@ test('stage 2: unknown format blocks every image-bearing Session surface but all
   assert.equal(requiresVerifiedImageProjection({
     snapshotEvents() { throw new Error('session log offline') },
   }, [text], blocksHaveImage), true)
+})
+
+test('stage 2: committed stable witness is the authoritative source even after sidecar deletion', async () => {
+  const ownedSource = { kind: 'plugin:dsh-vision-router' }
+  const h = fixture()
+  const events = [{ type: 'turn/start' }]
+  const s = session('witness-original', events)
+  assert.equal(await h.store.resolve(s, true), 'stable')
+  const witness = h.store.witnessFor(s, ownedSource)
+  assert.ok(witness)
+  assert.equal(witness.content[0].text, STABLE_IMAGE_PROJECTION_WITNESS_V1)
+  assert.equal(isCommittedStableProjectionWitness(witness), true)
+  assert.deepEqual(h.store.witnessFor(s, ownedSource), witness,
+    'a planned but not committed witness is still retryable with exactly the same ID')
+  const event = { type: 'user/message', data: witness }
+  events.push(event)
+  s.seq = events.length
+  h.store.onSessionEvent(s, event)
+  assert.equal(h.store.witnessFor(s, ownedSource), undefined,
+    'once the official Host commits the user message, do not repeat it')
+  await h.ctx.cleanup()
+
+  // A cold restore must not depend on any surviving sidecar data.
+  const absentSidecar = fixture([])
+  const resumed = session('witness-original', [
+    ...events, { type: 'request/header' }, { type: 'assistant/message' },
+  ], { firstLiveSeq: events.length + 2 })
+  assert.equal(await absentSidecar.store.resolve(resumed, false), 'stable',
+    'authoritative history witness recovers the exact stable projection after sidecar deletion')
+  assert.equal(absentSidecar.stats.puts, 0, 'restored witness does not need to recreate sidecar')
+  assert.equal(absentSidecar.store.witnessFor(resumed, ownedSource), undefined)
+  await absentSidecar.ctx.cleanup()
+})
+
+test('stage 2: fork inherits stable format witness even with new Session ID and no sidecar', async () => {
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const original = createStableProjectionWitness('parent-of-fork', source)
+  const inheritedEvents = [{ type: 'user/message', data: original },
+    { type: 'session/end-seed', data: { inherited: true } }]
+  const h = fixture()
+  const child = session('child-of-fork', inheritedEvents, {
+    firstLiveSeq: inheritedEvents.length, inheritedEventCount: 1, isSeeded: true,
+  })
+  assert.equal(await h.store.resolve(child, true), 'stable')
+  assert.equal(h.store.witnessFor(child, source), undefined,
+    'a child with an inherited v1 witness must not append a new one')
+  assert.equal(h.stats.puts, 0)
+  await h.ctx.cleanup()
+})
+
+test('stage 2: a fake user message cannot spoof a trusted stable format witness', () => {
+  const source = { kind: 'plugin:dsh-vision-router' }
+  const witness = createStableProjectionWitness('private', source)
+  assert.equal(isCommittedStableProjectionWitness(witness), true)
+  assert.equal(isCommittedStableProjectionWitness({ ...witness, source: { kind: 'user' } }), false)
+  assert.equal(isCommittedStableProjectionWitness({ ...witness, id: 'fake' }), false)
+  assert.equal(isCommittedStableProjectionWitness({ ...witness,
+    content: [{ type: 'text', text: 'different text' }] }), false)
+  assert.throws(() => createStableProjectionWitness('private', { kind: 'user' }),
+    /DVR-owned source/)
+})
+
+test('stage 2: missing optional storage still recovers a committed witness', async () => {
+  const original = createStableProjectionWitness('previously-stable', { kind: 'plugin:dsh-vision-router' })
+  const events = [{ type: 'user/message', data: original }, { type: 'request/header' }]
+  const ctx = { get() { return undefined }, effect(setup) { this.cleanup = setup() } }
+  const h = createSessionImageProjectionModeStore(ctx)
+  assert.equal(h.hasStorageFacility(), false)
+  assert.equal(await h.resolve(session('previously-stable', events, { firstLiveSeq: 2 }), false), 'stable')
+  assert.equal(h.get('previously-stable'), 'stable')
+  await ctx.cleanup()
 })
