@@ -42,7 +42,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Verify Core API and runtime composition contracts
-        run: node --test --test-reporter=tap tests/core.test.js tests/bundle-defaults.test.js tests/qa-runtime-identity.test.js
+        run: node --test --test-reporter=tap tests/core.test.js tests/bundle-defaults.test.js tests/qa-runtime-identity.test.js tests/vision-resilience.test.js
 
   runtime-e2e-regression:
     name: "runtime e2e / Node ${{ matrix.node }}"
