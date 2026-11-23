@@ -2632,10 +2632,38 @@ export function apply(ctx, config = {}, runtime = {}) {
           current().stableImageHistoryNewSessions === true,
       )
       if (projection === 'unknown') {
-        throw new Error(
-          'Vision Router cannot verify this Session image-history format; ' +
-          'restore its DSH storageDomain before continuing to avoid corrupting the cached request prefix.',
-        )
+        // A missing optional sidecar cannot justify rewriting *any* image
+        // from a previous stable Session. Pure text turns, however, share
+        // identical projection bytes in both formats and may continue safely.
+        // Inspect committed raw events as well as the claimed pre-step batch;
+        // a current-step-only check would miss a historical image.
+        let unverifiedImageHistory = true
+        try {
+          const events = session.snapshotEvents?.()
+          if (Array.isArray(events)) {
+            const claimed = decision?.messages ?? payload.messages ?? []
+            const hasImage = (message) =>
+              Array.isArray(message?.content) && blocksHaveRetainedImage(message.content)
+            unverifiedImageHistory = claimed.some(hasImage) || events.some((event) => {
+              const message = event?.type === 'tool/result'
+                ? event.data?.message
+                : event?.type === 'user/message' ? event.data : undefined
+              return hasImage(message) ||
+                (typeof message?.id === 'string' &&
+                  message.id.startsWith('vision-router-image-evidence-v1-'))
+            })
+          }
+        } catch {
+          unverifiedImageHistory = true
+        }
+        if (unverifiedImageHistory) {
+          throw new Error(
+            'Vision Router cannot verify this Session image-history format; ' +
+            'restore its DSH storageDomain before continuing an image-bearing request.',
+          )
+        }
+        // Do not cache a guessed legacy mode. If storage later recovers, the
+        // persisted format still determines how any future image is projected.
       }
     }
     const stableHistoryForStep = stableImageHistoryEnabled(session)
