@@ -4,6 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zstdCompressSync } from 'node:zlib'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import {
   inspectDshDowngradeSafety,
   assessSessionArtifactDowngrade,
@@ -113,5 +115,40 @@ test('#865: file length limit rejects huge Session without parsing private text'
     const report = inspectDshDowngradeSafety({ dshHome: f.dir, target: 'stable-v2', maxLogBytes: 10 })
     assert.equal(report.decision, 'block')
     assert.equal(report.unreadable, 1)
+  } finally { f.close() }
+})
+
+test('#865: public Doctor explicitly rejects v2->v1 downgrade and never leaks Session data', () => {
+  const f = fixture()
+  try {
+    const profile = join(f.dir, 'profiles', 'web')
+    mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({
+      dependencies: { 'dsh-vision-router': '^1.7.4' },
+      dsh: { profile: { bundles: ['dsh-vision-router'] } },
+    }))
+    const plugin = join(profile, 'node_modules', 'dsh-vision-router')
+    mkdirSync(plugin, { recursive: true })
+    writeFileSync(join(plugin, 'package.json'), JSON.stringify({
+      name: 'dsh-vision-router', version: '1.7.4', main: 'entry.js',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    }))
+    writeFileSync(join(plugin, 'entry.js'), 'export default {}\n')
+    writeFileSync(join(plugin, 'cordis.patch.yml'), '- insert: []\n')
+    f.add('sensitive', 'stable-v2', true)
+    const doctor = fileURLToPath(new URL('../lib/doctor-cli.js', import.meta.url))
+    const invoke = args => spawnSync(process.execPath, [doctor, 'doctor', '--no-runtime', ...args], {
+      encoding: 'utf8', env: { ...process.env, DSH_HOME: f.dir },
+    })
+    const blocked = invoke(['--downgrade-preflight=stable-v1', '--json'])
+    assert.equal(blocked.status, 1, blocked.stderr)
+    const parsed = JSON.parse(blocked.stdout)
+    assert.equal(parsed.downgradePreflight.decision, 'block')
+    assert.equal(parsed.downgradePreflight.blocked, 1)
+    assert.doesNotMatch(blocked.stdout, /PRIVATE_SESSION_sensitive|sensitive|session\.jsonl|cache-proof/)
+    const refusedWrite = invoke(['--downgrade-preflight', 'stable-v1', '--fix'])
+    assert.equal(refusedWrite.status, 2, 'read-only downgrade preflight must not accept mutation')
+    const missingCapability = invoke(['--downgrade-preflight', 'undefined-old-version'])
+    assert.equal(missingCapability.status, 2, 'do not guess capabilities from a release label')
   } finally { f.close() }
 })
