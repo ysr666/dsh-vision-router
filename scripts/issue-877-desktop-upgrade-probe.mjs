@@ -251,7 +251,7 @@ try {
     if (!row.text.includes('__visionRouterSettings017Compat')) {
       throw new Error('DVR Desktop bootstrap injection is missing the 0.1.7 settings compatibility prelude')
     }
-    if (/<\\/script/i.test(row.text)) {
+    if (/<\/script/i.test(row.text)) {
       throw new Error('DVR Desktop bootstrap injection contains a literal closing script tag')
     }
   }
