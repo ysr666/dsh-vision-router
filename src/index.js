@@ -2651,9 +2651,10 @@ export function apply(ctx, config = {}, runtime = {}) {
     // BOTH a durable attachment ID and its source message ID. For an existing
     // witnessed v2 Session, resolution still pins v2 and the guard below
     // refuses the unsafe request rather than rewriting an old cache prefix.
-    const unstableV2Identity = newStableRequested === 'stable-v2' &&
+    const unstableV2Identity =
       hasUnstableStableV2ImageIdentity(decision?.messages ?? payload.messages ?? [])
-    const requestedProjection = unstableV2Identity ? false : newStableRequested
+    const requestedProjection = newStableRequested === 'stable-v2' && unstableV2Identity
+      ? false : newStableRequested
     const modeStoreNeeded = sessionImageProjectionModeStore?.resolve &&
       (newStableRequested ||
         sessionImageProjectionModeStore.hasStorageFacility?.() === true ||
