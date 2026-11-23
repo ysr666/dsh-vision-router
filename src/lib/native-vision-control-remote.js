@@ -48,7 +48,7 @@ export function installNativeVisionControlRemote(ctx, store, options = {}) {
       try { void Promise.resolve(withdraw?.()).catch(() => {}) } catch {}
     }, 'vision-router: native strict Remote definition lifetime')
 
-    return owner.inject(['agents', 'llm'], scope => {
+    return owner.inject(['typert', 'agents', 'llm'], scope => {
       if (typeof scope.provide !== 'function' ||
           typeof scope.effect !== 'function' ||
           typeof scope.typert?.lookups?.subscribe !== 'function') return
