@@ -28,7 +28,7 @@ test('#865: append-only final DSH DeepSeek Messages history preserves old serial
   assert.equal(d.commonHistoricalMessages, 3)
   assert.equal(d.after.appendedMessages, 1)
   assert.deepEqual(d.changedDimensions, [])
-  assert.equal(d.before.historySha256, d.after.oldHistoryPrefixSha256)
+  assert.equal(d.before.historyHmacSha256, d.after.oldHistoryPrefixHmacSha256)
   const printed = JSON.stringify(d)
   for (const secret of ['SECRET', 'secret_vision_tool', upstream.provider, upstream.model]) {
     assert.ok(!printed.includes(secret), 'must not echo request/model/tool text: ' + secret)
@@ -72,6 +72,31 @@ test('#865: prompt, model and reasoning changes are independent causes, not one 
   assert.equal(d.changes.history, false)
   assert.equal(d.localSerializedPrefixPreserved, false)
   assert.ok(!JSON.stringify(d).includes('ANOTHER'))
+})
+
+test('#865: reordering serialized header keys is a real wire-byte change', () => {
+  const a = fixture()
+  const b = {
+    upstream,
+    wire: {
+      tools: a.wire.tools,
+      model: a.wire.model,
+      max_tokens: a.wire.max_tokens,
+      messages: a.wire.messages,
+    },
+  }
+  const d = compareFinalWireRequests(a, b)
+  assert.equal(d.changes.otherHeader, true)
+  assert.equal(d.localSerializedPrefixPreserved, false)
+  assert.notEqual(d.before.headerHmacSha256, d.after.headerHmacSha256)
+})
+
+test('#865: HMAC report digests use an unexported per-comparison key', () => {
+  const a = compareFinalWireRequests(fixture(), fixture())
+  const b = compareFinalWireRequests(fixture(), fixture())
+  assert.equal(a.before.historyHmacSha256, a.after.oldHistoryPrefixHmacSha256)
+  assert.notEqual(a.before.historyHmacSha256, b.before.historyHmacSha256,
+    'low-entropy prompts must not yield a stable publicly dictionary-searchable hash')
 })
 
 test('#865: same wire on a different actual upstream provider is NOT considered cache-preserving', () => {
