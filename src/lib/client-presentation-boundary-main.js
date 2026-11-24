@@ -1324,7 +1324,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               (selectionTransaction.current && selectionTransaction.current.directory === directory)) return;
             var target = pair.target;
             var legacyOwner = nativeMount.kind === 'ready' ? nativeObservation.current : null;
-            var sourceAtClick = state.current;
+            var sourceAtClick = { provider: state.current.provider, model: state.current.model, reasoningEffort: state.current.reasoningEffort };
             var ticket = { directory: directory, target: target };
             selectionTransaction.current = ticket;
             refreshSelection(function(revision){ return revision + 1; });
@@ -1345,7 +1345,7 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               var selected = latest && latest.current;
               if (!nativeVisionSameRoute(sourceAtClick, selected) ||
                   (sourceAtClick.reasoningEffort || null) !== (selected.reasoningEffort || null) ||
-                  latest.status === 'selecting' || latest.status === 'error' ||
+                  latest.status === 'selecting' || (latest.status === 'error' && state.status !== 'error') ||
                   latest.routable === false || latest.pending != null) return false;
               var pending;
               try { pending = props.select(target); }
