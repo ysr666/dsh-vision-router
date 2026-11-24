@@ -61,6 +61,9 @@ export function installSessionVisionDelegationBoundary<
       await store.hydrate(parent.id)
     }
 
+    // A cold child may already own a durable OFF decision. Do not overwrite
+    // an unreadable record with inherited authority, even from a verified parent.
+    if (store.isUnverified?.(child.id)) return
     await materializeDelegatedSessionVisionPolicy(
       store,
       parent,

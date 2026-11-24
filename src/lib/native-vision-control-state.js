@@ -1,5 +1,5 @@
 import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
-import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
+import { resolveSessionVisionModeAuthority, sessionVisionPolicyForAuthority, UNVERIFIED_SESSION_VISION_POLICY } from './session-vision-mode-authority.js'
 
 export function nativeControlSelection(agent) {
   try {
@@ -102,7 +102,8 @@ export async function readNativeVisionControlState(ctx, store, agent, {
     if (signal?.aborted || !nativeControlTargetCurrent(ctx, agent, target)) {
       return { kind: 'unavailable', reason: 'stale-selection' }
     }
-    policy = store.get(target.sessionId)
+    policy = sessionVisionPolicyForAuthority(store, target.sessionId)
+    if (policy === UNVERIFIED_SESSION_VISION_POLICY) return { kind: 'unavailable', reason: 'policy-read-failed' }
     allowed = toolEnabled() === true
   } catch {
     return { kind: 'unavailable', reason: 'policy-read-failed' }

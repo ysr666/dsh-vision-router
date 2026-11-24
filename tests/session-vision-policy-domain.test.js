@@ -576,3 +576,39 @@ test('a service appearing after a volatile mutation cannot make that intent evic
   assert.equal((await store.hydrate('s'))?.enabled, false)
   await h.ctx.cleanup()
 })
+
+test('one Session storage failure cannot turn another cold persisted OFF into a route grant', async () => {
+  const h = durableHarness([['b', userSessionVisionPolicy(false)]])
+  const lookup = h.ctx.get.bind(h.ctx)
+  let available = true
+  h.ctx.get = name => available ? lookup(name) : undefined
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  assert.equal((await store.hydrate('b'))?.enabled, false)
+  store.release('b')
+  available = false
+  await store.set('a', userSessionVisionPolicy(false))
+  available = true
+  assert.equal(await store.hydrate('b'), undefined)
+  assert.equal(store.isUnverified('b'), true, 'unreadable is not absent')
+  assert.equal(store.isUnverified('a'), false, 'explicit live authority remains known')
+  assert.equal(h.rows.get('b')?.enabled, false)
+  await store.set('b', userSessionVisionPolicy(true))
+  assert.equal(store.isUnverified('b'), false, 'explicit new user intent can resolve the unknown')
+  assert.equal(store.get('b')?.enabled, true)
+  await h.ctx.cleanup()
+})
+
+test('only a verified absent record or a Host without the optional store may use route fallback', async () => {
+  const h = durableHarness()
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  assert.equal(store.isUnverified('fresh'), true)
+  assert.equal(await store.hydrate('fresh'), undefined)
+  assert.equal(store.isUnverified('fresh'), false)
+  store.release('fresh')
+  assert.equal(store.isUnverified('fresh'), true)
+  await store.delete('fresh')
+  assert.equal(store.isUnverified('fresh'), false)
+  await h.ctx.cleanup()
+  const legacy = createSessionVisionPolicyRuntimeStore({})
+  assert.equal(legacy.isUnverified('fresh'), false)
+})

@@ -24,6 +24,8 @@ export interface SessionVisionPolicyTable {
 
 export interface SessionVisionPolicyStore {
   get(sessionId: string): Readonly<SessionVisionPolicy> | undefined
+  /** Unknown durable truth is not an absent policy; deny route-derived grants. */
+  isUnverified?(sessionId: string): boolean
   /** Optional durable hydration before the Session becomes model-facing. */
   hydrate?(sessionId: string): Promise<Readonly<SessionVisionPolicy> | undefined>
   /** Drop only process-local hot state while retaining durable Session truth. */

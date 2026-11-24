@@ -113,3 +113,12 @@ test('policy persistence failure rejects the serial creation listener', async ()
     /durability failed/,
   )
 })
+
+test('unverified child policy cannot be replaced by inherited ON', async () => {
+  const parent = { id: 'parent', routeEnabled: true }
+  const h = harness({ parent })
+  h.store.isUnverified = id => id === 'child'
+  installSessionVisionDelegationBoundary(h.ctx, h.store, () => ({ enabled: true }))
+  await h.created({ id: 'child' })
+  assert.equal(h.store.get('child'), undefined)
+})

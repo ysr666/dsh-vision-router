@@ -696,3 +696,28 @@ test('#877: scope identity changes require a new mask for the same Agent object'
   assert.deepEqual(h.restrictCalls, [['vision_describe'], ['vision_describe']])
   assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
 })
+
+test('unverified persisted policy masks and denies owned tools without materializing an effort-only event', async () => {
+  let uncertain = true
+  let writes = 0
+  const h = makeHarness({ sessionVisionPolicyStore: {
+    durable: false,
+    get() { return undefined },
+    isUnverified() { return uncertain },
+    async set() { writes++ },
+  } })
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() { return 'ok' } })
+  const agent = h.makeAgent('deepseek-vision', 'cold')
+  agent.session.id = agent.id
+  h.mode.reconcileExistingAgents()
+  assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
+  await assert.rejects(h.definitions.get('vision_describe').execute({}, { agent }), /Vision mode is off/)
+  h.handlers.get('session/event')(agent.session, { type: 'model/selection',
+    data: { provider: 'deepseek-vision', model: 'model', reasoningEffort: 'high' },
+  })
+  assert.equal(writes, 0)
+  uncertain = false
+  h.mode.reconcileExistingAgents()
+  assert.ok(agent.ctx.tools.get('vision_describe'), 'verified absence preserves ordinary route fallback')
+  assert.equal(await h.definitions.get('vision_describe').execute({}, { agent }), 'ok')
+})

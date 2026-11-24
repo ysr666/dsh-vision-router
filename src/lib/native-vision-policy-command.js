@@ -162,6 +162,9 @@ export function installNativeVisionPolicyCommand(ctx, store, options = {}) {
             if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')
           }
           const explicit = store.get(sessionId)
+          if (explicit === undefined && store.isUnverified?.(sessionId)) {
+            return result('error', 'Persisted Vision policy is unverified; DVR precision tools are disabled until you explicitly choose a mode or restore policy storage.')
+          }
           const description = explicit?.source === 'user'
             ? (explicit.enabled ? 'on' : 'off')
             : 'not explicitly selected (legacy route policy)'

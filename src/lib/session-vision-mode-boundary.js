@@ -7,6 +7,8 @@ import {
   clearSessionVisionModeAuthorityForAgent,
   rememberSessionVisionModeAssemblyAuthorityForAgent,
   resolveSessionVisionModeAuthority,
+  sessionVisionPolicyForAuthority,
+  UNVERIFIED_SESSION_VISION_POLICY,
   runWithSessionVisionModeAuthority,
   takeSessionVisionModeAssemblyAuthorityForAgent,
   visionModeEnabledForAgent,
@@ -403,11 +405,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   const sessionPolicyForAgent = (agent) => {
     const id = typeof agent?.id === 'string' ? agent.id : ''
     if (id === '' || typeof sessionVisionPolicyStore?.get !== 'function') return undefined
-    try {
-      return sessionVisionPolicyStore.get(id)
-    } catch {
-      return undefined
-    }
+    return sessionVisionPolicyForAuthority(sessionVisionPolicyStore, id)
   }
 
   const resolveForAgent = (agent, options = {}) => resolveSessionVisionModeAuthority(
@@ -564,6 +562,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       // legacy route authority and overrides inherited delegation snapshots.
       const currentPolicy = sessionPolicyForAgent({ id })
       if (sameRoute && (currentPolicy?.source === 'user'
+        || currentPolicy === UNVERIFIED_SESSION_VISION_POLICY
         || (currentPolicy === undefined && sessionVisionPolicyStore.durable === true))) return
       const authority = resolveSessionVisionModeAuthority(
         ctx,

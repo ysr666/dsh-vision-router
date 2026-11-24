@@ -67,6 +67,7 @@ interface SessionVisionPolicyDomainContext {
 export interface SessionVisionPolicyRuntimeStore extends SessionVisionPolicyStore {
   /** Whether this process still has a usable durable sidecar. */
   readonly durable: boolean
+  isUnverified(sessionId: string): boolean
   /** Evict only the hot in-process copy after one Agent lifetime ends. */
   release(sessionId: string): void
   /** Internal invalidation feed, not a transport or a second policy authority. */
@@ -110,6 +111,9 @@ export function createSessionVisionPolicyRuntimeStore(
   ctx: SessionVisionPolicyDomainContext,
 ): SessionVisionPolicyRuntimeStore {
   const cache = new Map<string, Readonly<SessionVisionPolicy>>()
+  // Distinguish confirmed absence from a cold/unreadable durable policy.
+  const verifiedAbsent = new Set<string>()
+  let storageSeen = storageDomainOf(ctx) !== undefined
   const closedDomains = new WeakSet<object>()
   let activeFacility: StorageDomainFacilityLike | undefined
   let domainPromise: Promise<Domain<DomainSpec> | undefined> | undefined
@@ -197,6 +201,7 @@ export function createSessionVisionPolicyRuntimeStore(
             lifecycleClosed = true
             subscribers.clear()
             pendingReleases.clear()
+            verifiedAbsent.clear()
             // No new durable mutation is admitted after lifecycleClosed flips.
             // Wait every mutation that was already admitted before closing the
             // shared domain underneath it.
@@ -252,6 +257,7 @@ export function createSessionVisionPolicyRuntimeStore(
     if (!lifecycleBound || (lifecycleClosed && !allowClosed) || durableDisabled) return undefined
     const facility = storageDomainOf(ctx)
     if (facility === undefined) return undefined
+    storageSeen = true
     transition = transition.then(
       () => ensureDomainFor(facility, allowClosed),
       () => ensureDomainFor(facility, allowClosed),
@@ -318,6 +324,12 @@ export function createSessionVisionPolicyRuntimeStore(
       return cache.get(normalizedSessionId(sessionId))
     },
 
+    isUnverified(sessionId) {
+      const key = normalizedSessionId(sessionId)
+      if (storageDomainOf(ctx) !== undefined) storageSeen = true
+      return storageSeen && !cache.has(key) && !verifiedAbsent.has(key)
+    },
+
     subscribe(sessionId, invalidate) {
       const key = normalizedSessionId(sessionId)
       if (typeof invalidate !== 'function') throw new TypeError('policy invalidation callback required')
@@ -356,10 +368,15 @@ export function createSessionVisionPolicyRuntimeStore(
           const handle = await table()
           if (hydrationTokens.get(key) !== token) return cache.get(key)
           if (handle === undefined) return undefined
-          const policy = parseSessionVisionPolicy(handle.get(key))
+          const raw = handle.get(key)
+          const policy = parseSessionVisionPolicy(raw)
           if (hydrationTokens.get(key) !== token) return cache.get(key)
           if (policy !== undefined) {
+            verifiedAbsent.delete(key)
             cache.set(key, policy)
+            notify(key)
+          } else if (raw === undefined && !verifiedAbsent.has(key)) {
+            verifiedAbsent.add(key)
             notify(key)
           }
           return cache.get(key)
@@ -382,7 +399,9 @@ export function createSessionVisionPolicyRuntimeStore(
       // Agent or newer mutation reclaimed the record and durability survives.
       if (!this.durable) return
       const evict = () => {
-        if (this.durable && cache.delete(key)) notify(key)
+        if (!this.durable) return
+        const absent = verifiedAbsent.delete(key)
+        if (cache.delete(key) || absent) notify(key)
       }
       const tail = mutationTails.get(key)
       if (tail === undefined) {
@@ -411,6 +430,7 @@ export function createSessionVisionPolicyRuntimeStore(
       // model/selection event must affect the next prompt immediately even if
       // sidecar I/O is still settling; delegation still awaits this method and
       // therefore preserves its stronger durability-before-child-release rule.
+      verifiedAbsent.delete(key)
       cache.set(key, normalized)
       const pending = enqueueMutation(key, async () => {
         try {
@@ -433,7 +453,8 @@ export function createSessionVisionPolicyRuntimeStore(
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
       pendingReleases.delete(key)
-      const changed = cache.delete(key)
+      const changed = cache.delete(key) || !verifiedAbsent.has(key)
+      verifiedAbsent.add(key)
       const pending = enqueueMutation(key, async () => {
         try {
           // Same admission rule as set(): pre-close deletes must not be lost.

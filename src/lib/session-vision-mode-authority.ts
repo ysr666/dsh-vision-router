@@ -2,7 +2,18 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { VisionRouteIdentity } from './vision-execution-order.js'
 import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
-import { parseSessionVisionPolicy } from './session-vision-policy.js'
+import { parseSessionVisionPolicy, type SessionVisionPolicyStore } from './session-vision-policy.js'
+
+// Internal authority sentinel; never serialize or persist as user intent.
+export const UNVERIFIED_SESSION_VISION_POLICY = Symbol('unverified-session-vision-policy')
+export function sessionVisionPolicyForAuthority(store: SessionVisionPolicyStore | undefined, id: string) {
+  if (!store) return undefined
+  try {
+    return store.get(id) ?? (store.isUnverified?.(id) ? UNVERIFIED_SESSION_VISION_POLICY : undefined)
+  } catch {
+    return UNVERIFIED_SESSION_VISION_POLICY
+  }
+}
 
 const VISION_ROUTER_OWNERSHIP = 'vision-router-owned'
 const DEFAULT_WRAPPER_ROUTE = 'deepseek-vision'
@@ -11,6 +22,7 @@ const DEEPSEEK_SOURCE = 'deepseek-official'
 
 export type SessionVisionModeReason =
   | 'session-policy'
+  | 'unverified-session-policy'
   | 'vision-router-route'
   | 'ordinary-route'
   | 'unknown-route'
@@ -253,11 +265,12 @@ export function resolveSessionVisionModeAuthority(
   const sessionPolicy = parseSessionVisionPolicy(options.sessionPolicy)
   const config = liveConfig(ctx, fallbackConfig)
   const routeEnabled = routeOwnedByVisionRouter(ctx, route, config, options.visionPolicy)
-  const enabled = sessionPolicy?.enabled ?? routeEnabled
+  const unverified = options.sessionPolicy === UNVERIFIED_SESSION_VISION_POLICY
+  const enabled = unverified ? false : sessionPolicy?.enabled ?? routeEnabled
   return Object.freeze({
     enabled,
     route: route ? Object.freeze({ ...route }) : undefined,
-    reason: sessionPolicy !== undefined
+    reason: unverified ? 'unverified-session-policy' : sessionPolicy !== undefined
       ? 'session-policy'
       : routeEnabled
         ? 'vision-router-route'
