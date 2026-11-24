@@ -976,3 +976,84 @@ test('remote log metadata is redacted even when a reverse proxy makes the TCP pe
   assert.equal(remote.directory, undefined)
   assert.equal(remote.file, undefined)
 })
+
+async function reactiveMountHarness({ fail, retireOnRegister, retireOnRelease } = {}) {
+  // Run the actual core block, not a separate implementation of its algorithm.
+  const source = (await readFile(new URL('../src/index.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
+  const start = source.indexOf('  let wrapperRouteHandle\n')
+  const end = source.indexOf('  // #208:', start)
+  assert.ok(start >= 0 && end > start, 'reactive routing block must be present')
+  const fiber = { uid: 9, state: 2 }
+  const live = new Set()
+  const registrations = []
+  let cleanup
+  let wrapper = 'wrapper'
+  const ctx = {
+    fiber,
+    effect(setup) { cleanup = setup() },
+    llm: {
+      registerAdapter([name]) {
+        registrations.push(name)
+        if (fiber.uid === null || fiber.state === 5) throw Object.assign(new Error('cannot create effect on inactive context'), { code: 'INACTIVE_EFFECT' })
+        if (fail) throw fail
+        live.add(name)
+        if (retireOnRegister === name) { fiber.uid = null; fiber.state = 5 }
+        return () => {
+          live.delete(name)
+          if (retireOnRelease === name) { fiber.uid = null; fiber.state = 5 }
+        }
+      },
+    },
+  }
+  const mount = new Function('ctx', 'wrapperRoute', 'chainRoute', 'routingEnabled', 'wrapperAdapter', 'chainAdapter',
+    'let wrapperRegistered = false;\n' + source.slice(start, end) + '\nreturn { sync: syncRoutingMounts, registered: () => wrapperRegistered };')
+    (ctx, () => wrapper, () => 'chain', () => true, {}, {})
+  return { ...mount, live, registrations, fiber, dispose: () => cleanup(), setWrapper: value => { wrapper = value } }
+}
+
+test('#877: synchronous retirement during wrapper registration stops chain acquisition and releases late handle', async () => {
+  const h = await reactiveMountHarness({ retireOnRegister: 'wrapper' })
+  assert.doesNotThrow(h.sync)
+  assert.deepEqual(h.registrations, ['wrapper'])
+  assert.equal(h.live.size, 0)
+  assert.equal(h.registered(), false)
+  h.dispose()
+  h.sync()
+  assert.deepEqual(h.registrations, ['wrapper'])
+})
+
+test('#877: synchronous retirement during chain registration releases late handle and old wrapper on teardown', async () => {
+  const h = await reactiveMountHarness({ retireOnRegister: 'chain' })
+  h.sync()
+  assert.deepEqual(h.registrations, ['wrapper', 'chain'])
+  assert.deepEqual([...h.live], ['wrapper'])
+  h.dispose()
+  assert.equal(h.live.size, 0)
+  assert.equal(h.registered(), false)
+})
+
+test('#877: synchronous retirement on old route disposal prevents replacement registration', async () => {
+  const h = await reactiveMountHarness({ retireOnRelease: 'wrapper' })
+  h.sync()
+  h.setWrapper('replacement')
+  h.sync()
+  assert.deepEqual(h.registrations, ['wrapper', 'chain'])
+  h.dispose()
+  assert.equal(h.live.size, 0)
+})
+
+test('#877: active routing still reconciles settings and does not hide unexpected failures', async () => {
+  const h = await reactiveMountHarness()
+  h.sync()
+  h.sync()
+  assert.deepEqual(h.registrations, ['wrapper', 'chain'])
+  h.setWrapper('replacement')
+  h.sync()
+  assert.deepEqual([...h.live].sort(), ['chain', 'replacement'])
+  h.dispose()
+  h.sync()
+  assert.equal(h.live.size, 0)
+  const activeFailure = Object.assign(new Error('unexpected active context error'), { code: 'INACTIVE_EFFECT' })
+  const bad = await reactiveMountHarness({ fail: activeFailure })
+  assert.throws(bad.sync, error => error === activeFailure)
+})
