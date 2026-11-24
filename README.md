@@ -22,7 +22,7 @@
 > **Data leaves your machine by default.** When a cloud vision model is used, Vision Router sends the image (or a derived crop), the vision prompt and related request metadata to that provider. A fresh install has an anonymous OVHcloud vision fallback enabled, so "free" and "no key" do **not** mean offline. Do not use the cloud chain for confidential, regulated or classified material. See [Data flow and strict local-only use](#data-flow-and-strict-local-only-use).
 
 > [!WARNING]
-> **v3.4.0 minor release — confirm publication through GitHub Releases/npm:** Local OCR is now strictly **opt-in**. In Settings → Local & device → Optional local OCR, a working system Tesseract with `chi_sim` + `eng` is reused without another installation; otherwise you can install/remove a plugin-owned, SHA-verified Tesseract.js/WASM engine and Chinese/English models on demand. PP-OCRv6/ncnn can be installed or removed only from a user-provided, SHA-verified offline bundle on supported macOS ARM64/Windows x64; **public native binary/model redistribution remains NOT cleared**, with no automatic download. Most users need install neither engine: the existing consent/policy-governed vision-model fallback remains unchanged, including cloud image egress unless strict local-only is enabled. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required. No automatic profile migration. Back up your profile, run read-only `doctor --upgrade-preflight`, and retain v3.3.0 for rollback. See [v3.4.0 release notes](docs/releases/v3.4.0.md).
+> **v3.4.0 minor release — confirm publication through GitHub Releases/npm:** Local OCR is now strictly **opt-in**. In Settings → Local & device → Optional local OCR, a working system Tesseract with `chi_sim` + `eng` is reused without another installation; otherwise you can install/remove a plugin-owned, SHA-verified Tesseract.js/WASM engine and Chinese/English models on demand. PP-OCRv6/ncnn can be installed or removed only from a user-provided, SHA-verified offline bundle on supported macOS ARM64/Windows x64; **public native binary/model redistribution remains NOT cleared**, with no automatic download. Most users need install neither engine: the existing consent/policy-governed vision-model fallback remains unchanged, including cloud image egress unless strict local-only is enabled. DSH >=0.2.1-rc.5 <0.3.0-0 and Node.js >=24.9.0 remain required. No automatic profile migration. Back up your profile, run read-only `upgrade-preflight`, and retain v3.3.0 for rollback. See [v3.4.0 release notes](docs/releases/v3.4.0.md).
 
 ## Start here
 
@@ -576,10 +576,10 @@ npx dsh-vision-router repair --profile web
 To diagnose without changing the file:
 
 ```sh
-npx dsh-vision-router doctor --profile web
+npx dsh-vision-router repair --profile web --check
 ```
 
-Replace `web` if you use another profile, or omit `--profile` to scan all profiles.
+Replace `web` if you use another profile, or omit `--profile` to scan all profiles. The legacy general-purpose Doctor command is retired; see [recovery and preflights](docs/doctor.md).
 
 Manual fallback: in VS Code, use “Save with Encoding” → `UTF-8` (without BOM). If `repair` removes the BOM but the JSON is still invalid, it will not guess or rewrite any other JSON content; inspect the file manually.
 

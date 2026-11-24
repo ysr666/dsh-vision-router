@@ -13,9 +13,9 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { isCliEntry } from '../lib/doctor-cli.js'
+import { isCliEntry } from '../lib/repair-cli.js'
 
-const modulePath = fileURLToPath(new URL('../lib/doctor-cli.js', import.meta.url))
+const modulePath = fileURLToPath(new URL('../lib/repair-cli.js', import.meta.url))
 const moduleUrl = pathToFileURL(modulePath).href
 
 function materializeHealthyProfile(profileDir) {
@@ -39,7 +39,7 @@ test('isCliEntry matches direct invocation paths only', () => {
   assert.equal(isCliEntry(undefined, moduleUrl), false)
 })
 
-test('doctor CLI prints a report when invoked through a symlinked bin (npx shim shape)', { skip: process.platform === 'win32' }, () => {
+test('repair check prints a report when invoked through a symlinked bin (npx shim shape)', { skip: process.platform === 'win32' }, () => {
   const home = mkdtempSync(path.join(tmpdir(), 'dsh-cli-'))
   const profileDir = path.join(home, 'profiles', 'web')
   mkdirSync(profileDir, { recursive: true })
@@ -49,7 +49,7 @@ test('doctor CLI prints a report when invoked through a symlinked bin (npx shim 
   const link = path.join(binDir, 'dsh-vision-router')
   symlinkSync(modulePath, link)
 
-  const result = spawnSync(process.execPath, [link, 'doctor', '--no-runtime'], {
+  const result = spawnSync(process.execPath, [link, 'repair', '--check'], {
     encoding: 'utf8',
     env: { ...process.env, DSH_HOME: home },
   })
@@ -98,7 +98,7 @@ test('repair-sessions CLI repairs the exact legacy reminder and prints the backu
 })
 
 
-test('DVR 3.2 Doctor tells the user about legacy Connection rows but never prints trust values in issue templates', () => {
+test('upgrade preflight detects legacy Connection rows without exposing secrets or changing the patch', () => {
   const home = mkdtempSync(path.join(tmpdir(), 'dsh-cli-connection-retirement-'))
   const profileDir = path.join(home, 'profiles', 'web')
   mkdirSync(profileDir, { recursive: true })
@@ -115,16 +115,16 @@ test('DVR 3.2 Doctor tells the user about legacy Connection rows but never print
   const run = (argv) => spawnSync(process.execPath, [modulePath, ...argv], {
     encoding: 'utf8', env: { ...process.env, DSH_HOME: home },
   })
-  const doctor = run(['doctor', '--no-runtime'])
+  const doctor = run(['repair', '--check'])
   assert.equal(doctor.status, 0, doctor.stderr)
   assert.match(doctor.stdout, /Profile-owned Connection override detected/)
   assert.match(doctor.stdout, /retired visionRouterWebConnectionReady bridge/)
   assert.equal(readFileSync(patch, 'utf8'), original)
-  const blocked = run(['doctor', '--upgrade-preflight', '--no-runtime'])
+  const blocked = run(['upgrade-preflight'])
   assert.equal(blocked.status, 1, '3.2 upgrade gate must not treat dangerous Connection warnings as ready')
   assert.match(blocked.stderr, /PROFILE_CONNECTION_OVERRIDE/)
   assert.match(blocked.stderr, /RETIRED_READY_BRIDGE_REFERENCE/)
-  const blockedJson = run(['doctor', '--upgrade-preflight', '--no-runtime', '--json'])
+  const blockedJson = run(['upgrade-preflight', '--json'])
   assert.equal(blockedJson.status, 1)
   const data = JSON.parse(blockedJson.stdout)
   assert.equal(data.ok, false)
@@ -134,20 +134,14 @@ test('DVR 3.2 Doctor tells the user about legacy Connection rows but never print
     'PROFILE_CONNECTION_OVERRIDE', 'RETIRED_READY_BRIDGE_REFERENCE',
   ])
   assert.doesNotMatch(blockedJson.stdout, /private\.example\.invalid|do-not-print/)
-  const refusedFix = run(['doctor', '--upgrade-preflight', '--fix', '--no-runtime'])
+  const refusedFix = run(['upgrade-preflight', '--fix'])
   assert.equal(refusedFix.status, 2, 'read-only preflight must reject repair')
   assert.equal(readFileSync(patch, 'utf8'), original)
-  const report = run(['doctor', '--issue-template', '--no-runtime'])
-  assert.equal(report.status, 0, report.stderr)
-  assert.match(report.stdout, /Profile-owned Connection overrides: 1 profile/)
-  assert.match(report.stdout, /Retired private Connection-bridge references: 1 profile/)
-  assert.doesNotMatch(report.stdout, /private\.example\.invalid|do-not-print/)
   assert.equal(readFileSync(patch, 'utf8'), original)
 })
 
-
-test('upgrade preflight gates workspace pins but never changes ordinary Doctor semantics', async () => {
-  const { assessUpgradeProfileRisk } = await import('../lib/doctor-cli.js')
+test('upgrade preflight gates workspace pins but never changes ordinary repair semantics', async () => {
+  const { assessUpgradeProfileRisk } = await import('../lib/repair-cli.js')
   const base = {
     ok: true,
     profiles: [{
@@ -181,7 +175,7 @@ test('upgrade preflight gates workspace pins but never changes ordinary Doctor s
 
 
 test('upgrade preflight refuses floating GitHub DVR sources while preserving immutable refs', async () => {
-  const { assessUpgradeProfileRisk, isFloatingDvrGitSource } = await import('../lib/doctor-cli.js')
+  const { assessUpgradeProfileRisk, isFloatingDvrGitSource } = await import('../lib/repair-cli.js')
   const floating = [
     'github:ysr666/dsh-vision-router',
     'github:ysr666/dsh-vision-router#main',
