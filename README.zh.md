@@ -22,7 +22,7 @@
 > **默认配置会让数据出网。** 使用云端视觉模型时，Vision Router 会将图片（或由它裁剪出的局部）、识图提示词及相关请求元数据发送给对应供应商。新安装默认开启 OVHcloud 匿名视觉兜底，因此“免费”和“免 Key”不等于离线。涉密、涉案、内部或其他受限材料请勿使用云端链路。详见[数据流向与严格纯本地配置](#数据流向与严格纯本地配置)。
 
 > [!WARNING]
-> **v3.4.0 次版本更新（正式发布状态请核实 GitHub Releases/npm）：** 本地 OCR 改为**完全按需安装**，普通用户无需预装任何引擎。设置 → 本地与设备 → 可选本地 OCR 可分别管理 Tesseract 和 PP-OCRv6：若系统 Tesseract 已具备简体中文 `chi_sim` 与英文 `eng`，直接复用，不会重复安装或卸载系统组件；否则用户可主动一键安装/卸载插件私有 Tesseract.js/WASM 与中英文语言数据。PP-OCRv6/ncnn 可从用户自行提供的、经 SHA-256 验证的可信离线包导入和卸载（支持 Mac ARM64 / Windows x64），**原生二进制和模型公开分发仍未获放行，不提供一键公网下载**。不安装两者时照旧根据既有授权与隐私设置回退视觉模型，默认云端兜底可能发送图片；敏感场景须开启严格本地模式。最低要求仍为 DSH >=0.2.1-rc.5 <0.3.0-0、Node.js >=24.9.0；不自动迁移 Profile。升级前备份，运行只读 `doctor --upgrade-preflight`，保留 v3.3.0 回滚方案。详见 [v3.4.0 发布说明](docs/releases/v3.4.0.md)。
+> **v3.4.0 次版本更新（正式发布状态请核实 GitHub Releases/npm）：** 本地 OCR 改为**完全按需安装**，普通用户无需预装任何引擎。设置 → 本地与设备 → 可选本地 OCR 可分别管理 Tesseract 和 PP-OCRv6：若系统 Tesseract 已具备简体中文 `chi_sim` 与英文 `eng`，直接复用，不会重复安装或卸载系统组件；否则用户可主动一键安装/卸载插件私有 Tesseract.js/WASM 与中英文语言数据。PP-OCRv6/ncnn 可从用户自行提供的、经 SHA-256 验证的可信离线包导入和卸载（支持 Mac ARM64 / Windows x64），**原生二进制和模型公开分发仍未获放行，不提供一键公网下载**。不安装两者时照旧根据既有授权与隐私设置回退视觉模型，默认云端兜底可能发送图片；敏感场景须开启严格本地模式。最低要求仍为 DSH >=0.2.1-rc.5 <0.3.0-0、Node.js >=24.9.0；不自动迁移 Profile。升级前备份，运行只读 `upgrade-preflight`，保留 v3.3.0 回滚方案。详见 [v3.4.0 发布说明](docs/releases/v3.4.0.md)。
 
 ## 先用起来
 
@@ -587,10 +587,10 @@ npx dsh-vision-router repair --profile web
 只想检查、不修改文件时：
 
 ```sh
-npx dsh-vision-router doctor --profile web
+npx dsh-vision-router repair --profile web --check
 ```
 
-如果你使用的不是 `web` profile，把 `web` 换成对应名称；也可以不传 `--profile`，让 doctor 扫描全部 profile。
+如果你使用的不是 `web` profile，把 `web` 换成对应名称；也可以不传 `--profile`，扫描全部 profile。旧综合 Doctor 命令已退役；见[修复与预检](docs/doctor.md)。
 
 手动兜底方式：VS Code 右下角编码 → “通过编码保存” → 选择 `UTF-8`（无 BOM）。若 `repair` 去掉 BOM 后仍提示 JSON 非法，它不会猜测或重写其他 JSON 内容，请再手动检查文件。
 

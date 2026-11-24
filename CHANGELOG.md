@@ -5,6 +5,8 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
+- Retire the general-purpose Doctor CLI and its network health probes/reports. Keep explicit offline `repair`, `repair-sessions`, read-only `--check`, `upgrade-preflight`, and `downgrade-preflight`; retired Doctor invocations fail without mutation. / 退役旧综合 Doctor 入口，保留独立修复、只读检查及升级/降级预检；旧命令明确报错，不改动用户数据。
+
 ## v3.4.0
 
 ### Opt-in local OCR / 按需本地 OCR
