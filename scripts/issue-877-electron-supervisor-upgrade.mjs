@@ -1083,9 +1083,13 @@ try {
       }
     }
     const persisted = readJson(manifestPath)
+    const marketSpec = String(persisted.dependencies?.['dshmarket'])
     if (String(persisted.dependencies?.['dsh-vision-router']) !== '3.2.1' ||
-        String(persisted.dependencies?.['dshmarket']) !== process.env.DVR_MARKET_VERSION) {
-      throw Error('Preboot Host did not persist both exact npm baseline dependencies')
+        !marketSpec.startsWith('file:') ||
+        resolve(paths.profile, marketSpec.slice(5)).toLowerCase() !== resolve(process.env.DVR_MARKET_CANDIDATE_SPEC).toLowerCase() ||
+        readJson(join(paths.profile, 'node_modules', 'dshmarket', 'package.json')).version !== process.env.DVR_MARKET_VERSION ||
+        !readFileSync(join(paths.profile, 'node_modules', 'dshmarket', 'lib', 'routes.js'), 'utf8').includes('readPostUpdateLoaderEntries')) {
+      throw Error('Preboot Host did not persist the exact local market candidate and npm DVR baseline: ' + marketSpec)
     }
     if (!['dsh-vision-router', 'dshmarket'].every(name =>
       persisted.dsh?.profile?.bundles?.includes(name))) {
