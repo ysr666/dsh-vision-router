@@ -24,8 +24,9 @@ function harness({ parent, owned = true, seed = [] } = {}) {
         return owned && owner === parent && id === 'child'
       },
     },
-    on(event, callback) {
+    on(event, callback, options) {
       assert.equal(event, 'agent/created')
+      assert.equal(options?.global, true, 'observe the actual scoped Host Agent creation carrier')
       listener = callback
     },
   }
