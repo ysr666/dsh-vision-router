@@ -271,6 +271,18 @@ export function createSessionVisionPolicyRuntimeStore(
     await enqueueRetire()
   }
 
+  // A missing storage service during a mutation is a durability failure,
+  // not proof that the new policy has been persisted. Do not advertise a
+  // recovered service as durable after accepting an unpersisted intent.
+  // As with a rejected backend write, this generation stays volatile.
+  const mutationTable = async (): Promise<KvTable<string, SessionVisionPolicy> | undefined> => {
+    const handle = await table(true)
+    if (handle === undefined && lifecycleBound && !durableDisabled) {
+      await failDurabilityAndRetire(new Error('Session Vision policy storage unavailable during mutation'))
+    }
+    return handle
+  }
+
   const enqueueMutation = (key: string, mutate: () => Promise<void>): Promise<void> => {
     if (lifecycleClosed) return Promise.resolve()
     const previous = mutationTails.get(key) ?? Promise.resolve()
@@ -404,7 +416,7 @@ export function createSessionVisionPolicyRuntimeStore(
         try {
           // This mutation was admitted before lifecycle close; the disposer
           // waits it before retiring the domain, so it may finish durable I/O.
-          const handle = await table(true)
+          const handle = await mutationTable()
           if (handle !== undefined) await handle.put(key, normalized)
         } catch (error) {
           await failDurabilityAndRetire(error)
@@ -425,7 +437,7 @@ export function createSessionVisionPolicyRuntimeStore(
       const pending = enqueueMutation(key, async () => {
         try {
           // Same admission rule as set(): pre-close deletes must not be lost.
-          const handle = await table(true)
+          const handle = await mutationTable()
           if (handle !== undefined) await handle.delete(key)
         } catch (error) {
           await failDurabilityAndRetire(error)

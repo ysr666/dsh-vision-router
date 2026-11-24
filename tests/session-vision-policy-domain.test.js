@@ -541,3 +541,38 @@ test('concurrent cold hydration shares one read and returns identical OFF author
   assert.equal(store.get('s'), a)
   await h.ctx.cleanup()
 })
+
+test('storage disappearance during OFF or delete cannot resurrect an older policy after service recovery', async () => {
+  for (const operation of ['off', 'delete']) {
+    const h = durableHarness([['s', userSessionVisionPolicy(true)]])
+    const lookup = h.ctx.get.bind(h.ctx)
+    let available = true
+    h.ctx.get = name => available ? lookup(name) : undefined
+    const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+    assert.equal((await store.hydrate('s'))?.enabled, true)
+    available = false
+    if (operation === 'off') await store.set('s', userSessionVisionPolicy(false))
+    else await store.delete('s')
+    assert.equal(store.durable, false)
+    assert.equal(h.rows.get('s')?.enabled, true, 'unavailable storage still has old ON')
+    available = true
+    assert.equal(store.durable, false, 'service availability cannot prove an earlier write')
+    store.release('s')
+    assert.equal((await store.hydrate('s'))?.enabled, operation === 'off' ? false : undefined)
+    await h.ctx.cleanup()
+  }
+})
+
+test('a service appearing after a volatile mutation cannot make that intent evictable', async () => {
+  const h = durableHarness([['s', userSessionVisionPolicy(true)]])
+  const lookup = h.ctx.get.bind(h.ctx)
+  let available = false
+  h.ctx.get = name => available ? lookup(name) : undefined
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  await store.set('s', userSessionVisionPolicy(false))
+  available = true
+  store.release('s')
+  assert.equal(store.durable, false)
+  assert.equal((await store.hydrate('s'))?.enabled, false)
+  await h.ctx.cleanup()
+})
