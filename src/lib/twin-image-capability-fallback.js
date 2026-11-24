@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { restoreOwnedTwinStreamInput } from './owned-twin-stream-boundary.js'
 import { blocksHaveRetainedImage } from './image-offload-compat.js'
 
 const TWIN_SUFFIX = '-vision'
@@ -271,8 +272,17 @@ export function contextWithTwinImageCapabilityFallback(ctx, options = {}) {
   const wrapTwinAdapter = (adapter, sourceProvider) => {
     if (!adapter || !isObject(adapter) || typeof adapter.stream !== 'function') return adapter
     const stream = adapter.stream
-    return facadeFor(adapter, {
+    const wrapped = facadeFor(adapter, {
+      ...(typeof adapter.prepareCall === 'function' ? {
+        async prepareCall(...args) {
+          const prepared = await adapter.prepareCall(...args)
+          return { ...prepared, stream: (options) => wrapped.stream(options) }
+        },
+      } : {}),
       async *stream(options = {}) {
+        // Restore before the first attempt so both capability-fallback attempts
+        // share the same unprojected input, even after the scope is consumed.
+        options = restoreOwnedTwinStreamInput(options, `${sourceProvider}-vision`)
         const messages = options.messages ?? []
         if (!twinRequestHasImage(messages)) {
           yield* stream.call(adapter, options)
@@ -384,6 +394,7 @@ export function contextWithTwinImageCapabilityFallback(ctx, options = {}) {
         }
       },
     })
+    return wrapped
   }
 
   const llmProxy = facadeFor(llm, {

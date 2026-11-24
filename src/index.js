@@ -115,11 +115,13 @@ async function awaitVisionBackendAttempt(signal, operation) {
 export * from './lib/vision-resilience.js'
 
 import { installReactiveRoutingMounts } from './lib/reactive-routing-mounts.js'
+
 import z from '@deepseek-ai/schemastery'
 
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { runExperimentalNativeOcrCanary } from './lib/native-ocr-canary.js'
+import { identifyOwnedTwinStream, installOwnedTwinStreamBoundary } from './lib/owned-twin-stream-boundary.js'
 import { localNativeOcrInstallPaths } from './lib/native-ocr-installation.js'
 import { managedTesseractPaths, runManagedTesseractOcr, systemTesseract } from './lib/optional-ocr-engines.js'
 import { prepareTesseractSubtitleRetry } from './lib/tesseract-image-preprocess.js'
@@ -189,6 +191,8 @@ import {
 } from './lib/artifact-boundary.js'
 import { visionDescribeSuccessContext } from './lib/vision-evidence-guidance.js'
 import { visionRouterMessageSource } from './lib/session-message-source-compat.js'
+import { createSessionImageEvidencePlanner } from './lib/stable-image-evidence.js'
+import { verifyImageProjectionAdmission } from './lib/session-image-projection-admission.js'
 
 import { streamWithLegacyGlobalProxyScope } from './lib/legacy-global-proxy-boundary.js'
 
@@ -196,7 +200,8 @@ import { createCoalescingRunner } from './lib/adapter-update-coalescer.js'
 import { createDesktopScreenshotTool } from './lib/desktop-screenshot-tool.js'
 import { installVisionDiagnosticsRoutes } from './lib/vision-diagnostics-routes.js'
 import { blocksHaveRetainedImage, isOffloadedImageBlock, offloadedImagePlaceholder } from './lib/image-offload-compat.js'
-import { installPreStepModelRouting } from './lib/agent-prestep-model-routing.js'
+import { installPreStepModelRouting, explicitWholeTurnRoutingEnabled } from './lib/agent-prestep-model-routing.js'
+import { hasVisionAutoMountHistoryMarker } from './lib/auto-mount-prefix-guard.js'
 import { createSessionTurnResolver } from './lib/session-turn-resolver.js'
 import { shouldBlockDegradedHostTool } from './lib/degraded-local-evidence.js'
 import {
@@ -274,7 +279,9 @@ export const Config = z.object({
   guidanceOverrides: z
     .array(z.object({ kind: z.string(), text: z.string() }))
     .default([]),
-  progressiveTools: z.boolean().default(true),
+  // Align the legacy Core entry with the public entry: a missing field must
+  // never enable global mid-session tool-schema changes.
+  progressiveTools: z.boolean().default(false),
   autoActivateOnImage: z.boolean().default(true),
   // Desktop capture crosses a separate privacy boundary from inspecting user-
   // supplied images. The entry-layer stabilizer dynamically mounts/unmounts
@@ -644,6 +651,7 @@ export function apply(ctx, config = {}, runtime = {}) {
   // adapter boundaries that do not expose a Session; ambiguous attachment ids
   // deliberately miss instead of crossing conversations.
   const sessionVisionRuntime = runtime?.sessionVision
+  const sessionImageProjectionModeStore = runtime?.sessionImageProjectionModeStore
   const providerTransport = runtime?.providerTransport
   const callOpenAIWithProviderTransport = (provider, messages, options = {}) =>
     callOpenAICompatible(provider, messages, { ...options, providerTransport })
@@ -674,6 +682,13 @@ export function apply(ctx, config = {}, runtime = {}) {
     readSessionLog: createSessionLogReader(ctx),
   })
   const imageMemory = visionState.descriptionFacade
+  // #865 experimental stable history: remember image provenance per Session;
+  // a late description can arrive after the original inbox was committed.
+  const sessionImageEvidencePlanner = createSessionImageEvidencePlanner()
+  ctx.on('session/event', (session, event) => {
+    sessionImageEvidencePlanner.onSessionEvent(session, event)
+    sessionImageProjectionModeStore?.onSessionEvent?.(session, event)
+  })
   // #208 follow-up complete: session-visible paths use scoped memory; only
   // session-less adapter boundaries use the ambiguity-safe facade.
   // #208 large-tool follow-up complete: crop is bounded and presentation is compressed passthrough.
@@ -693,7 +708,10 @@ export function apply(ctx, config = {}, runtime = {}) {
     const value = current().ocrTimeoutMs
     return Number.isFinite(value) && value > 0 ? value : 30000
   }
-  const routingEnabled = () => current().routing !== false
+  // Fail closed on missing/partial Settings snapshots. Whole-turn routing is
+  // an explicit opt-in; implicit true would silently change model/provider and
+  // create a fresh cache prefix for old image Sessions.
+  const routingEnabled = () => explicitWholeTurnRoutingEnabled(current())
   const reverseRoutingEnabled = () => routingEnabled() && current().reverseRouting !== false
   // Declared up front: the stealth takeover and wrapper blocks below both
   // reference it, and its `const` used to sit after those blocks (TDZ crash).
@@ -726,6 +744,17 @@ export function apply(ctx, config = {}, runtime = {}) {
     )
   const instantDescribeEnabled = () =>
     coreVisionFlag('instantDescribe', () => current().instantDescribe === true)
+  // Once a Session has a durable image format, live Settings cannot override
+  // it. The legacy opt-in is only a fallback for old embedding contexts without
+  // a mode-store capability; normal production always supplies that owner.
+  const stableImageHistoryEnabled = (sessionOrOptions) => {
+    const id = sessionOrOptions?.sessionId ?? sessionOrOptions?.id
+    if (sessionImageProjectionModeStore) {
+      const mode = sessionImageProjectionModeStore.get(id)
+      return mode === 'stable-v2' ? 'stable-v2' : mode === 'stable'
+    }
+    return current().stableImageHistory === true
+  }
   const autoActivateOnImageEnabled = () =>
     coreVisionFlag(
       'autoActivateOnImage',
@@ -1190,8 +1219,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     const officialStream = createWrapperStreamBody(ctx, {
       imageMemory,
       delegateProvider: wrapperDelegateRoute,
-      // Use the real delegated model's capabilities, not the wrapper's
-      // advertised image modalities. Unknown metadata stays text-only.
+      // Preserve original image pixels only when the actual delegated model
+      // can read images. The synthetic wrapper's modalities cannot decide.
       preserveImageInput: async (options) => {
         try {
           const info = await ctx.llm.resolveModelInfo(wrapperDelegateRoute(), options.model)
@@ -1200,6 +1229,7 @@ export function apply(ctx, config = {}, runtime = {}) {
           return false
         }
       },
+      stableImageHistory: stableImageHistoryEnabled,
       instantLocal: instantLocalProvider,
       instantLocalStyle,
       instantLocalTimeoutMs: timeoutMs,
@@ -1376,7 +1406,15 @@ export function apply(ctx, config = {}, runtime = {}) {
   // replaced without changing its route. The registration itself, however,
   // is reconciled against live topology so a dormant configured provider does
   // not publish a ghost `*-vision` route.
-  const twinHandles = new Map() // provider -> { handle, state, key }
+  const twinHandles = new Map() // provider -> { registration, adapter, state, key }
+  // Route ownership is validated AGAINST the live Host registry by the
+  // waterfall seam. This keeps first-party generated twins transparent without
+  // hijacking a foreign adapter that happens to use the same *-vision suffix.
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    const provider = route.slice(0, -'-vision'.length)
+    const held = twinHandles.get(provider)
+    return held && route === `${provider}-vision` ? held.adapter : undefined
+  })
   const twinModelsKey = (models) => models.slice().sort().join('\u0000')
   const twinSpecKey = (models, sourceName) => JSON.stringify([twinModelsKey(models), sourceName])
   const makeTwinAdapter = (provider, state) => {
@@ -1438,9 +1476,26 @@ export function apply(ctx, config = {}, runtime = {}) {
         const base = await original.resolveModel(provider, model)
         return { ...base, provider: twinRoute, inputModalities: ['text', 'image'] }
       },
+      // DSH 0.2.1+ binds the exact registered adapter generation through
+      // llm.prepareCall() BEFORE the llm/stream waterfall is reached. The
+      // owner-checked transparent delegation cannot skip this validation.
+      // Provide the official prepareCall contract on the twin itself, while
+      // deferring actual dispatch to the same registered stream body. The Host
+      // still owns picker defaults, reasoning validation and cancellation.
+      async prepareCall(_provider, model, signal) {
+        signal?.throwIfAborted()
+        const resolved = await this.resolveModel(twinRoute, model)
+        signal?.throwIfAborted()
+        return {
+          model: resolved,
+          stream: (options) => this.stream(options),
+        }
+      },
       ...createWrapperStreamBody(ctx, {
         imageMemory,
         delegateProvider: provider,
+        stableImageHistory: stableImageHistoryEnabled,
+        ownedTwinProvider: twinRoute,
         // A native multimodal source already knows how to consume the image.
         // Keep that direct path intact and expose vision-router as optional
         // precision tools instead of forcing an image -> text detour.
@@ -1528,12 +1583,11 @@ export function apply(ctx, config = {}, runtime = {}) {
       const twinRoute = `${provider}-vision`
       const state = { models: spec.models, sourceName: spec.sourceName }
       try {
-        const registration = ctx.llm.registerAdapter(
-          [twinRoute],
-          makeTwinAdapter(provider, state),
-        )
+        const adapter = identifyOwnedTwinStream(makeTwinAdapter(provider, state))
+        const registration = ctx.llm.registerAdapter([twinRoute], adapter)
         twinHandles.set(provider, {
           registration,
+          adapter,
           state,
           key: twinSpecKey(spec.models, spec.sourceName),
         })
@@ -2530,6 +2584,11 @@ export function apply(ctx, config = {}, runtime = {}) {
     // owner. The global compatibility facade is reserved for adapter stream
     // boundaries where DSH does not expose a Session object.
     const sessionImageMemory = visionState.memoryForSession(session)
+    await verifyImageProjectionAdmission({
+      session, payload, decision, modeStore: sessionImageProjectionModeStore,
+      settings: current(), hasRetainedImage: blocksHaveRetainedImage,
+    })
+    const stableHistoryForStep = stableImageHistoryEnabled(session)
     // Bind the turn-scoped failure memory for this session+turn: tool calls
     // later in the same turn resolve to the same scope, so an all-backends
     // verdict can short-circuit repeat calls without network attempts.
@@ -2648,8 +2707,28 @@ export function apply(ctx, config = {}, runtime = {}) {
       }
     }
     const appendStructuredReminder = (baseMessages) => {
-      if (!bootstrapReminder) return baseMessages
-      const nextMessages = [...baseMessages, bootstrapReminder]
+      // The one-time model-visible stable-v1 witness is a NORMAL DSH
+      // user/message, not an unapproved plugin record. It is appended only
+      // when the step is admitted and survives Session JSONL restore/fork,
+      // including complete loss of the optional sidecar. It precedes the
+      // current question so the user's request remains the last user turn.
+      const source = visionRouterMessageSource(session)
+      const witness = stableHistoryForStep
+        ? sessionImageProjectionModeStore?.witnessFor?.(session, source)
+        : undefined
+      const withWitness = witness ? [witness, ...baseMessages] : baseMessages
+      // Keep old image occurrences immutable: OCR/caption corrections are
+      // ID-deduplicated evidence appended at the history tail.
+      const evidence = stableHistoryForStep
+        ? sessionImageEvidencePlanner.plan(
+            session, rawMessages, withWitness, sessionImageMemory, source,
+          )
+        : []
+      const withEvidence = evidence.length > 0
+        ? [...withWitness, ...evidence]
+        : withWitness
+      if (!bootstrapReminder) return withEvidence
+      const nextMessages = [...withEvidence, bootstrapReminder]
       if (
         bootstrapState &&
         typeof bootstrapReminder.id === 'string' &&
@@ -2696,7 +2775,10 @@ export function apply(ctx, config = {}, runtime = {}) {
       // them from its very first step without the user asking for them.
       if (toolEnabled() && autoActivateOnImageEnabled()) {
         const outcome = activateDeepTools()
-        if (!autoMountNotified && outcome.includes('已挂载')) {
+        // Never re-inject the same durable user-message notice when an old
+        // image Session resumes under a new plugin generation.
+        if (!autoMountNotified && outcome.includes('已挂载') &&
+            !hasVisionAutoMountHistoryMarker(messages)) {
           autoMountNotified = true
           // The harness persists pre-step-injected boundary messages as durable
           // user/message events; session validation requires an `id`, so the
@@ -2734,7 +2816,9 @@ export function apply(ctx, config = {}, runtime = {}) {
           const adapterHandlesImages = wrapperRegistered
           const base =
             rewriteEnabled() && !routingEnabled() && !adapterHandlesImages
-              ? rewriteHistoryImages(messages, sessionImageMemory).messages
+              ? rewriteHistoryImages(messages, sessionImageMemory, {
+                stable: stableHistoryForStep,
+              }).messages
               : messages
           return {
             ...decision,
@@ -2746,7 +2830,9 @@ export function apply(ctx, config = {}, runtime = {}) {
       // route, rewrite uploaded image blocks into attachment markers so the
       // text-only model can still query them via vision_describe.
       if (rewriteEnabled() && !routingEnabled() && !wrapperRegistered) {
-        const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory).messages
+        const rewrittenHistory = rewriteHistoryImages(messages, sessionImageMemory, {
+                stable: stableHistoryForStep,
+              }).messages
         return {
           ...decision,
           messages: appendStructuredReminder(rewrittenHistory),
@@ -2763,7 +2849,9 @@ export function apply(ctx, config = {}, runtime = {}) {
     // Current-turn images are left untouched above so the vision pass runs.
     if (!hasImage && rewriteEnabled()) {
       const base = messages
-      const cleaned = rewriteHistoryImages(base, sessionImageMemory)
+      const cleaned = rewriteHistoryImages(base, sessionImageMemory, {
+        stable: stableHistoryForStep,
+      })
       if (cleaned.messages !== base || bootstrapReminder) {
         return {
           ...decision,
@@ -2774,6 +2862,8 @@ export function apply(ctx, config = {}, runtime = {}) {
     if (!hasImage && bootstrapReminder) {
       return { ...decision, messages: appendStructuredReminder(messages) }
     }
+    const finalizedMessages = appendStructuredReminder(messages)
+    if (finalizedMessages !== messages) return { ...decision, messages: finalizedMessages }
     return sanitizedToolResults.changed ? { ...decision, messages } : decision
   })
 
@@ -3485,7 +3575,7 @@ ctx.logger?.info(
     })
 
     // ── lightweight pixel loop: deep-look tools on sharp, no Python ─────────
-    const progressive = config.progressiveTools !== false
+    const progressive = config.progressiveTools === true
     const artifactsRel =
       typeof config.artifactsDir === 'string' && config.artifactsDir !== ''
         ? config.artifactsDir

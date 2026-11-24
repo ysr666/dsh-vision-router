@@ -32,13 +32,53 @@ class Cases(TestCase):
     def test_timeout_after_partial_then_pass(self):
         self.assertEqual(self.run_fetch([Response([b'com',TimeoutError()]),Response([self.good])]),(self.expected,2))
         self.assertEqual(self.dest.read_bytes(),self.good);self.assertEqual(list(self.root.iterdir()),[self.dest])
-    def test_three_transient_failures_leave_no_file(self):
-        with patch('urllib.request.urlopen',side_effect=[TimeoutError()]*3) as f:
+    def test_five_transient_failures_leave_no_file(self):
+        with patch('urllib.request.urlopen',side_effect=[TimeoutError()]*5) as f:
             with self.assertRaises(TimeoutError):acquire(self.source,self.dest,self.expected)
-            self.assertEqual(f.call_count,3)
+            self.assertEqual(f.call_count,5)
         self.assertEqual(list(self.root.iterdir()),[])
+    def test_short_http_200_then_full_hash_verified(self):
+        self.assertEqual(self.run_fetch([Response([self.good[:3]]), Response([self.good])]),
+                         (self.expected, 2))
+        self.assertEqual(self.dest.read_bytes(), self.good)
+        self.assertEqual(list(self.root.iterdir()), [self.dest])
+
+    def test_five_short_http_200_responses_fail_closed_without_files(self):
+        with patch('urllib.request.urlopen', side_effect=[
+            Response([self.good[:3]]) for _ in range(5)
+        ]) as f:
+            with self.assertRaisesRegex(module.IncompleteSourceError,
+                                        r'SOURCE_INCOMPLETE: got=3 expected=8'):
+                acquire(self.source, self.dest, self.expected)
+            self.assertEqual(f.call_count, 5)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_http_502_then_good_integrity_pinned(self):
+        error = urllib.error.HTTPError(self.source, 502, 'bad gateway', {}, None)
+        self.assertEqual(self.run_fetch([error, error, Response([self.good])]),
+                         (self.expected, 3))
+        self.assertEqual(self.dest.read_bytes(), self.good)
+
+    def test_short_then_same_size_wrong_digest_still_fails_immediately(self):
+        # Retry only the short response. An exact-sized wrong model is not
+        # admitted or retried as though it were a transient CDN failure.
+        same_size_wrong = b'badmodel'
+        self.assertEqual(len(same_size_wrong), self.expected['bytes'])
+        with patch('urllib.request.urlopen', side_effect=[
+            Response([self.good[:2]]), Response([same_size_wrong]),
+            Response([self.good]),
+        ]) as f:
+            with self.assertRaisesRegex(RuntimeError, 'IDENTITY_MISMATCH'):
+                acquire(self.source, self.dest, self.expected)
+            self.assertEqual(f.call_count, 2)
+        self.assertFalse(self.dest.exists())
+
     def test_bad_digest_not_retried(self):
-        with patch('urllib.request.urlopen',return_value=Response([b'bad'])) as f:
+        # A complete, incorrect source is an integrity failure, not a
+        # transient short HTTP 200 response. Never retry or accept it.
+        wrong = b'badmodel'
+        self.assertEqual(len(wrong), self.expected['bytes'])
+        with patch('urllib.request.urlopen',return_value=Response([wrong])) as f:
             with self.assertRaisesRegex(RuntimeError,'IDENTITY_MISMATCH'):acquire(self.source,self.dest,self.expected)
             self.assertEqual(f.call_count,1)
         self.assertFalse(self.dest.exists())

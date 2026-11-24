@@ -536,3 +536,247 @@ test('Windows CRLF client source still receives the exact root ownership hardeni
   assert.match(hardened, /ownership\.sourceFor\(wrapperRoute\) !== VISION_MODE_WRAPPER_SOURCE/)
   assert.match(hardened, /ownership\.sourceFor\(target\.id\)/)
 })
+
+test('Desktop race: Vision selection during initial hydration is deferred until ready and never silently lost', async () => {
+  const window = {
+    fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }),
+    setTimeout, clearTimeout,
+  }
+  const html = hardenVisionToggleHtml('<html><head></head></html>')
+  const source = scriptsOfInjectedFixture(html).find(script =>
+    script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error,
+  })
+  const api = window.__dshVisionRouterRootHardening
+  let state = { status: 'loading' }
+  const listeners = new Set()
+  let unsubscribed = 0
+  const sent = []
+  const directory = {
+    store: {
+      getSnapshot() { return state },
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => { listeners.delete(listener); unsubscribed++ }
+      },
+    },
+    select(selection) {
+      sent.push(selection)
+      return Promise.resolve({ ok: true, value: null })
+    },
+  }
+  const selection = { provider: 'desktop-e2e-vision', model: 'desktop-text' }
+  const queued = api.select(directory, selection)
+  await Promise.resolve()
+  assert.equal(sent.length, 0, 'the Host must not receive a selection while its directory is loading')
+  assert.equal(listeners.size, 1)
+  state = { status: 'ready' }
+  for (const listener of [...listeners]) listener()
+  assert.equal((await queued).ok, true)
+  assert.deepEqual(sent, [selection], 'the real click selects exactly once after readiness')
+  assert.equal(unsubscribed, 1, 'readiness observer retires after the click')
+  assert.equal(listeners.size, 0)
+  assert.equal(api.recoveryFor(directory).getSnapshot(), null)
+})
+
+test('Desktop race: a newer selection supersedes an older hydration waiter without stale model dispatch', async () => {
+  const window = {
+    fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }),
+    setTimeout, clearTimeout,
+  }
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error,
+  })
+  const api = window.__dshVisionRouterRootHardening
+  let state = { status: 'loading' }
+  const listeners = new Set()
+  const calls = []
+  const directory = {
+    store: {
+      getSnapshot() { return state },
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    },
+    select(selection) {
+      calls.push(selection)
+      return Promise.resolve({ ok: true })
+    },
+  }
+  const on = { provider: 'p', model: 'on' }
+  const off = { provider: 'p', model: 'off' }
+  const old = api.select(directory, on)
+  const newest = api.select(directory, off)
+  await Promise.resolve()
+  assert.equal(listeners.size, 2)
+  state = { status: 'ready' }
+  for (const listener of [...listeners]) listener()
+  assert.equal((await newest).ok, true)
+  assert.equal((await old).ok, false)
+  assert.deepEqual(calls, [off], 'an outdated queued click cannot override the latest selection')
+  assert.equal(listeners.size, 0)
+  assert.equal(api.recoveryFor(directory).getSnapshot(), null)
+})
+
+test('Desktop race: model-directory hydration never waits forever or reports a false successful click', async () => {
+  let timeout
+  const window = {
+    fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }),
+    setTimeout(fn) { timeout = fn; return 1 },
+    clearTimeout() {},
+  }
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error,
+  })
+  const api = window.__dshVisionRouterRootHardening
+  let calls = 0
+  let released = 0
+  const directory = {
+    store: {
+      getSnapshot() { return { status: 'loading' } },
+      subscribe() { return () => { released++ } },
+    },
+    select() { calls++; return Promise.resolve({ ok: true }) },
+  }
+  const request = api.select(directory, { provider: 'p', model: 'vision' })
+  await Promise.resolve()
+  assert.equal(typeof timeout, 'function')
+  timeout()
+  await assert.rejects(request, /initial hydration timed out/)
+  assert.equal(calls, 0)
+  assert.equal(released, 1)
+  assert.match(api.recoveryFor(directory).getSnapshot().message, /initial hydration timed out/)
+})
+
+test('Desktop hydration observer cleans up when ModelDirectory publishes synchronously during subscribe', async () => {
+  let timers = 0
+  const window = {
+    fetch: async () => ({ ok: true, json: async () => ({ revision: 0, routes: [] }) }),
+    setTimeout() { timers++; return 1 },
+    clearTimeout() {},
+  }
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  assert.ok(source)
+  vm.runInNewContext(source, {
+    window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error,
+  })
+  let status = 'loading'
+  let unsubscribed = 0
+  let dispatched = 0
+  const directory = {
+    store: {
+      getSnapshot() { return { status } },
+      subscribe(callback) {
+        status = 'ready'
+        callback()
+        return () => { unsubscribed++ }
+      },
+    },
+    select() { dispatched++; return Promise.resolve({ ok: true }) },
+  }
+  const outcome = await window.__dshVisionRouterRootHardening.select(directory, {
+    provider: 'desktop-e2e-vision', model: 'desktop-text',
+  })
+  assert.equal(outcome.ok, true)
+  assert.equal(dispatched, 1)
+  assert.equal(unsubscribed, 1, 'synchronous publish cannot orphan an observer')
+  assert.equal(timers, 0, 'already-hydrated directory must not install a stale deadline')
+})
+
+test('Vision ON waits for live owned target after Host remount and submits only once', async () => {
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  let route = 'missing'
+  let reads = 0
+  let dispatched = 0
+  const from = { provider: 'vendor', model: 'm' }
+  const to = { provider: 'vendor-vision', model: 'm' }
+  const window = {
+    setTimeout, clearTimeout,
+    fetch: async () => {
+      reads++
+      if (route === 'missing') return { ok: false }
+      return { ok: true, json: async () => ({ revision: 1, routes: [
+        { provider: to.provider, source: route === 'foreign' ? 'other' : from.provider },
+      ] }) }
+    },
+  }
+  vm.runInNewContext(source, { window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error })
+  const directory = {
+    store: { getSnapshot: () => ({ status: 'ready', current: from }) },
+    select(selection) {
+      dispatched++
+      assert.equal(route, 'owned')
+      assert.deepEqual(selection, to)
+      return Promise.resolve({ ok: true })
+    },
+  }
+  const api = window.__dshVisionRouterRootHardening
+  const operation = api.select(directory, to, from)
+  assert.equal(api.select(directory, to, from), operation, 'same click intent coalesces')
+  await new Promise(resolve => setTimeout(resolve, 30))
+  assert.equal(dispatched, 0)
+  route = 'foreign'
+  await new Promise(resolve => setTimeout(resolve, 120))
+  assert.equal(dispatched, 0, 'foreign same-name route is not admitted')
+  route = 'owned'
+  assert.equal((await operation).ok, true)
+  assert.equal(dispatched, 1)
+  assert.ok(reads >= 3)
+})
+
+test('pending ON intent is fenced when current model changes during remount', async () => {
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  const from = { provider: 'vendor', model: 'm' }
+  const to = { provider: 'vendor-vision', model: 'm' }
+  let current = from
+  let dispatched = 0
+  const window = { setTimeout, clearTimeout, fetch: async () => ({ ok: false }) }
+  vm.runInNewContext(source, { window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error })
+  const directory = {
+    store: { getSnapshot: () => ({ status: 'ready', current }) },
+    select() { dispatched++; return Promise.resolve({ ok: true }) },
+  }
+  const operation = window.__dshVisionRouterRootHardening.select(directory, to, from)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  current = { provider: 'other', model: 'm' }
+  assert.equal((await operation).ok, false)
+  assert.equal(dispatched, 0)
+})
+
+test('ownership snapshot excludes withdrawn or foreign-replaced live registrations', () => {
+  const config = { wrapperRoute: 'deepseek-vision' }
+  const original = { providerInfo: route => ({ id: route, name: 'Vendor' }) }
+  const { ctx, registry } = fakeHost(config, [{ route: 'vendor', adapter: original }])
+  const hardening = createVisionToggleRootHardening(ctx, config)
+  const twin = { providerInfo: route => ({ id: route, name: 'Vendor + 自动识图' }) }
+  hardening.ctx.llm.registerAdapter(['vendor-vision'], twin)
+  assert.deepEqual(hardening.ownership.snapshot(ctx.llm).routes, [{ provider: 'vendor-vision', source: 'vendor' }])
+  registry.delete('vendor-vision')
+  assert.deepEqual(hardening.ownership.snapshot(ctx.llm).routes, [])
+  registry.set('vendor-vision', { providerInfo: twin.providerInfo })
+  assert.deepEqual(hardening.ownership.snapshot(ctx.llm).routes, [])
+  registry.set('vendor-vision', twin)
+  registry.delete('vendor')
+  assert.deepEqual(hardening.ownership.snapshot(ctx.llm).routes, [])
+})
+
+test('actual composed Vision click supplies its source identity only for ON preflight', () => {
+  const html = hardenVisionToggleHtml(injectClientPresentationBoundary('<html><head></head></html>'))
+  const composed = scriptsOfInjectedFixture(html).find(script => script.includes('function VisionModeToggle'))
+  assert.ok(composed)
+  assert.match(composed, /pending = props\.select\(target, pair\.mode === "off" \? state\.current : undefined\)/)
+  assert.match(composed, /select: function\(selection, from\)/)
+  assert.match(composed, /hardening\.select\(directory, selection, from\)/)
+})

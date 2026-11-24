@@ -2,7 +2,7 @@ import '@deepseek-ai/schemastery'
 
 export const name: 'vision-router'
 export const inject: readonly ['tools', 'llm']
-export const SETTINGS_CONTRACT_REVISION: 7
+export const SETTINGS_CONTRACT_REVISION: 8
 
 export const Config: Schemastery<
   Record<string, unknown>,

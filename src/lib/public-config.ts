@@ -3,7 +3,7 @@ import z from '@deepseek-ai/schemastery'
 // Increment whenever the browser-visible settings contract gains a field whose
 // absence changes write semantics. The resolved schema also publishes this as
 // a read-only-by-convention handshake for browser/Host compatibility checks.
-export const SETTINGS_CONTRACT_REVISION = 7 as const
+export const SETTINGS_CONTRACT_REVISION = 8 as const
 
 /**
  * Compose DVR's public product settings onto the mature Core schema.
@@ -19,6 +19,16 @@ export function composePublicVisionConfig<T extends Schemastery>(coreConfig: T):
   }
 
   coreConfig.set('progressiveTools', z.boolean().default(false))
+  // Issue #865 phase D: opt-in until exact Host history/admission and cold-resume
+  // contracts prove append-only image evidence preserves visual quality.
+  coreConfig.set('stableImageHistory', z.boolean().default(false))
+  // Issue #865: after Host admission/cold-resume/witness + long-history
+  // performance gates, default canonical v2 ONLY for demonstrably fresh
+  // Sessions. Explicit false remains authoritative. Preexisting/forked
+  // Sessions never silently change format; malformed image identity must
+  // safely fall back to legacy before the first request (or reject if a v2
+  // witness is already committed). This does NOT enable historical v1.
+  coreConfig.set('stableImageHistoryNewSessions', z.boolean().default(true))
 
   // Keep provider/task/turn timeout layers coherent. The whole-turn budget is
   // an optional safety cap: 0 remains unlimited for long-running agent turns.

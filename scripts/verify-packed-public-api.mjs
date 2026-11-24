@@ -182,7 +182,7 @@ import {
 } from 'dsh-vision-router'
 
 const exactName: 'vision-router' = name
-const exactRevision: 7 = SETTINGS_CONTRACT_REVISION
+const exactRevision: 8 = SETTINGS_CONTRACT_REVISION
 const exactInject: readonly ['tools', 'llm'] = inject
 const config: Record<string, unknown> = Config({})
 const batch: boolean = hasBatchAttachmentContract({})

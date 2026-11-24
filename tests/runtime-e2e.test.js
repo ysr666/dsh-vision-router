@@ -582,6 +582,82 @@ test('native multimodal wrapper preserves images without a discarded local capti
   }
 })
 
+
+test('issue #865: twin reasoning effort is isolated between Sessions, including anonymous calls', async () => {
+  const requests = []
+  const ctx = {
+    llm: {
+      async *stream(options) {
+        requests.push(options)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }
+  const adapter = createWrapperStreamBody(ctx, {
+    imageMemory: new Map(),
+    delegateProvider: 'deepseek-account',
+    preserveImageInput: true,
+  })
+  const run = async (sessionId, reasoningEffort) => {
+    const options = {
+      model: 'deepseek-flash',
+      messages: [],
+      ...(sessionId === undefined ? {} : { sessionId }),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    }
+    for await (const _chunk of adapter.stream(options)) {}
+    return requests.at(-1)
+  }
+
+  assert.equal((await run('session-A', 'high')).reasoningEffort, 'high')
+  assert.equal((await run('session-B')).reasoningEffort, undefined, 'another Session must not borrow A')
+  assert.equal((await run('session-B', 'off')).reasoningEffort, 'off')
+  assert.equal((await run('session-A')).reasoningEffort, 'high', 'later step retains A choice')
+  assert.equal((await run('session-B')).reasoningEffort, 'off', 'later step retains B choice')
+  assert.equal((await run(undefined, 'max')).reasoningEffort, 'max')
+  assert.equal((await run(undefined)).reasoningEffort, undefined, 'anonymous calls are not shared')
+})
+
+test('issue #865: twin reasoning effort is isolated by delegate/model and has bounded retention', async () => {
+  const requests = []
+  let delegate = 'provider-A'
+  const adapter = createWrapperStreamBody({
+    llm: {
+      async *stream(options) {
+        requests.push(options)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }, {
+    imageMemory: new Map(),
+    delegateProvider: () => delegate,
+    preserveImageInput: true,
+  })
+  const run = async (sessionId, model, reasoningEffort) => {
+    for await (const _chunk of adapter.stream({
+      sessionId,
+      model,
+      messages: [],
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    })) {}
+    return requests.at(-1).reasoningEffort
+  }
+
+  assert.equal(await run('one', 'm1', 'high'), 'high')
+  assert.equal(await run('one', 'm2'), undefined)
+  delegate = 'provider-B'
+  assert.equal(await run('one', 'm1'), undefined)
+  delegate = 'provider-A'
+  assert.equal(await run('one', 'm1'), 'high')
+  // The adapter may live for days. Retaining an unbounded entry per Session
+  // would become a process-level leak, so verify LRU eviction after 512 entries.
+  for (let i = 0; i < 512; i++) {
+    await run('other-' + i, 'm1', 'low')
+  }
+  assert.equal(await run('one', 'm1'), undefined, 'oldest Session state is evicted')
+  assert.equal(await run('other-511', 'm1'), 'low', 'recent Session state remains')
+})
+
 test('#869: official DeepSeek wrapper uses real delegate image capability, not its advertised synthetic image support', () => {
   const source = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8')
   const start = source.indexOf('const officialStream = createWrapperStreamBody(ctx, {')
@@ -663,10 +739,18 @@ test('imageMemorySet keeps main unbounded semantics (no FIFO eviction)', () => {
 
 // ── D. vision_screenshot 真实截屏 + identify 全链路 ────────────────────────
 
+// The historical runtime-e2e suite deliberately tests dynamic deep-tool
+// activation. Production's safe default is now progressiveTools=false;
+// explicitly opt this test fixture into that feature instead of silently
+// depending on an outdated public/Core schema default.
+function runtimeFixtureConfig(value = {}) {
+  return Config({ progressiveTools: true, ...value })
+}
+
 function bootHarness(config0 = {}) {
   const registrations = new Map()
   const toolDefs = new Map()
-  let resolvedSettings = Config({ ...config0 })
+  let resolvedSettings = runtimeFixtureConfig({ ...config0 })
   let settingsWatcher
   let attachmentCounter = 0
   const attachments = {
@@ -741,7 +825,7 @@ function bootHarness(config0 = {}) {
     toolDefs,
     registrations,
     setSettings(next) {
-      resolvedSettings = Config({ ...next })
+      resolvedSettings = runtimeFixtureConfig({ ...next })
       if (typeof settingsWatcher === 'function') settingsWatcher(resolvedSettings)
     },
   }
@@ -749,7 +833,7 @@ function bootHarness(config0 = {}) {
 
 async function mountDeepTool(config0, name) {
   const { ctx, toolDefs } = bootHarness(config0)
-  apply(ctx, Config({ ...config0 }))
+  apply(ctx, runtimeFixtureConfig({ ...config0 }))
   const activate = toolDefs.get('vision_activate')
   assert.ok(activate, 'progressive mode should register vision_activate')
   assert.match(activate.description, /same parallel tool batch as vision_activate/)
@@ -779,7 +863,7 @@ test('vision-http reads local backend settings live, including URL/model/protoco
   })
   const harness = bootHarness({ freeFallback: false })
   try {
-    apply(harness.ctx, Config({ freeFallback: false }))
+    apply(harness.ctx, runtimeFixtureConfig({ freeFallback: false }))
     const registration = harness.registrations.get('vision-http')
     assert.ok(registration, 'the route must exist even when no provider is enabled at apply time')
     const adapter = registration.adapter
@@ -869,7 +953,7 @@ test('vision_ocr propagates tool cancellation into an in-flight direct HTTP fall
       })
     },
   }
-  apply(harness.ctx, Config(config0), { providerTransport })
+  apply(harness.ctx, runtimeFixtureConfig(config0), { providerTransport })
   const activate = harness.toolDefs.get('vision_activate')
   assert.ok(activate)
   await activate.execute({}, {})
@@ -1070,15 +1154,18 @@ test('vision_screenshot is NOT registered until the user explicitly opts in (boo
   // visible set entirely — a disabled default must not change the tool
   // schema / token / prefix cache.
   const disabled = bootHarness({})
-  apply(disabled.ctx, Config({}))
+  apply(disabled.ctx, runtimeFixtureConfig({}))
   const activate = disabled.toolDefs.get('vision_activate')
   assert.ok(activate, 'progressive mode should register vision_activate')
   await activate.execute({}, {})
   assert.equal(disabled.toolDefs.has('vision_screenshot'), false)
+  assert.equal(runtimeFixtureConfig({}).progressiveTools, true,
+    'legacy activation fixtures explicitly opt in; production stays default-off')
+  assert.equal(Config({}).progressiveTools, false, 'production Core default must remain off')
 
   // Opted in at boot: the tool is registered and executable.
   const enabled = bootHarness({ desktopScreenshot: true })
-  apply(enabled.ctx, Config({ desktopScreenshot: true }))
+  apply(enabled.ctx, runtimeFixtureConfig({ desktopScreenshot: true }))
   const activate2 = enabled.toolDefs.get('vision_activate')
   await activate2.execute({}, {})
   assert.equal(enabled.toolDefs.has('vision_screenshot'), true)
@@ -1266,7 +1353,7 @@ test('vision chain falls through from a hung local backend to the next local bac
     warn: (...args) => { warns.push(args) },
     error() {},
   }
-  apply(ctx, Config(config0))
+  apply(ctx, runtimeFixtureConfig(config0))
   // Route the chain's delegation through the registered adapters like a real
   // harness would (the stock mock stream is a no-op stub).
   ctx.llm.stream = async function* (options) {
@@ -1346,7 +1433,7 @@ async function runIssue818Grounding(replies, verify) {
     config,
   })
   try {
-    apply(framedCtx, Config(config), { providerTransport })
+    apply(framedCtx, runtimeFixtureConfig(config), { providerTransport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const tool = harness.toolDefs.get('vision_ground')
     const args = { image, target: 'the Save changes button', annotate: false }
@@ -1425,7 +1512,7 @@ test('deep tool mounting owns every registration and rolls back a partial failur
     effects.push(dispose)
     return dispose
   }
-  apply(harness.ctx, Config({ progressiveTools: true }))
+  apply(harness.ctx, runtimeFixtureConfig({ progressiveTools: true }))
 
   const activate = harness.toolDefs.get('vision_activate')
   assert.ok(activate, 'progressive mode should register vision_activate')
@@ -1488,7 +1575,7 @@ test('vision_describe cancellation does not poison same-session backend failure 
   writeFileSync(img, PNG_BYTES)
   const session = { header: { cwd: home } }
   try {
-    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport })
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), runtimeFixtureConfig(config), { providerTransport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const describe = harness.toolDefs.get('vision_describe')
     const controller = new AbortController()
@@ -1541,7 +1628,7 @@ test('vision_describe 550 then user abort does not turn a healthy later retry in
   const session = { header: { cwd: home } }
   const args = { paths: [img], question: 'What is visible?' }
   try {
-    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport: transport })
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const describe = harness.toolDefs.get('vision_describe')
     const ctrl = new AbortController()
@@ -1576,7 +1663,7 @@ test('vision_describe genuine consecutive 550 and 503 keeps all-failed state for
   const session = { header: { cwd: home } }
   const args = { paths: [img], question: 'What is visible?' }
   try {
-    apply(installVisionToolRuntimeBoundary(harness.ctx, config), Config(config), { providerTransport: transport })
+    apply(installVisionToolRuntimeBoundary(harness.ctx, config), runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const describe = harness.toolDefs.get('vision_describe')
     const first = JSON.parse(await describe.execute(args, { agent: { session } }))
@@ -1620,7 +1707,7 @@ test('issue #791: two server failures cannot leave the last HTTP model silent fo
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const start = Date.now()
     const result = JSON.parse(await harness.toolDefs.get('vision_describe').execute({
@@ -1658,7 +1745,7 @@ test('issue #791: real loopback HTTP 550 to 503 to a silent socket ends in struc
   writeFileSync(img, PNG_BYTES)
   let timer
   try {
-    apply(harness.ctx, Config(config))
+    apply(harness.ctx, runtimeFixtureConfig(config))
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const start = Date.now()
     const actual = harness.toolDefs.get('vision_describe').execute({
@@ -1702,7 +1789,7 @@ test('issue #791 unbranded HTTP 550 and 503 still bound a silent final fallback'
   writeFileSync(img, PNG_BYTES)
   let timer
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const start = Date.now()
     const resultPromise = harness.toolDefs.get('vision_describe').execute({
@@ -1745,7 +1832,7 @@ test('issue #791: a noncooperative third HTTP transport cannot ignore the post-5
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const start = Date.now()
     let timer
@@ -1788,7 +1875,7 @@ test('issue #791: a single 550 must not truncate a legitimately slow healthy sec
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const result = await harness.toolDefs.get('vision_describe').execute({
       paths: [img], question: 'What is visible?',
@@ -1821,7 +1908,7 @@ test('issue #791: healthy third HTTP model still answers after 550 and 503', asy
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const result = await harness.toolDefs.get('vision_describe').execute({
       paths: [img], question: 'What is visible?',
@@ -1859,7 +1946,7 @@ test('vision_describe reserves a real attempt for later HTTP fallback when first
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const result = await harness.toolDefs.get('vision_describe').execute({
       paths: [img], question: 'What is pictured?',
@@ -1888,7 +1975,7 @@ test('single HTTP vision provider retains full shared-budget chance for a slow v
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const result = await harness.toolDefs.get('vision_describe').execute({
       paths: [img], question: 'What is pictured?',
@@ -1925,7 +2012,7 @@ test('vision_ocr vision-engine reserves later HTTP fallback after first backend 
   const img = path.join(home, 'small.png')
   writeFileSync(img, PNG_BYTES)
   try {
-    apply(harness.ctx, Config(config), { providerTransport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const tool = harness.toolDefs.get('vision_ocr')
     const parsed = JSON.parse(await tool.execute({ image: img, engine: 'vision' },
@@ -1958,7 +2045,7 @@ test('issue #791 a silent HTTP transport cannot hang vision_ocr after two 5xx', 
   writeFileSync(img, PNG_BYTES)
   let timer
   try {
-    apply(harness.ctx, Config(config), { providerTransport: transport })
+    apply(harness.ctx, runtimeFixtureConfig(config), { providerTransport: transport })
     await harness.toolDefs.get('vision_activate').execute({}, {})
     const result = JSON.parse(await Promise.race([
       harness.toolDefs.get('vision_ocr').execute({ image: img, engine: 'vision' },

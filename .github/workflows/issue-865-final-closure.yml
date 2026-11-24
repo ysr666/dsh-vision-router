@@ -1,0 +1,101 @@
+name: "#865 targeted final closure"
+on:
+  pull_request:
+    paths:
+      - "src/lib/vision-describe-singleflight.js"
+      - "src/lib/vision-subcall-accounting.js"
+      - "src/lib/vision-tool-runtime-boundary.js"
+      - "src/lib/session-cache-usage-command.js"
+      - "src/lib/session-image-projection-mode.ts"
+      - "src/lib/session-image-projection-admission.js"
+      - "tests/issue-865-*.test.js"
+      - "tests/session-cache-usage-command.test.js"
+      - ".github/workflows/issue-865-final-closure.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-865-final-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-and-composition-regression:
+    name: "Core/default/composition / Node ${{ matrix.node }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["24.9.0", "24.21.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Verify Core API and runtime composition contracts
+        run: node --test --test-reporter=tap tests/core.test.js tests/bundle-defaults.test.js tests/qa-runtime-identity.test.js tests/vision-resilience.test.js tests/native-ocr-host-canary.test.js
+
+  runtime-e2e-regression:
+    name: "runtime e2e / Node ${{ matrix.node }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["24.9.0", "24.21.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Verify original runtime e2e with explicit progressive opt-in
+        run: node --test --test-reporter=tap tests/runtime-e2e.test.js
+
+  targeted-source:
+    name: "final source / Node ${{ matrix.node }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["24.9.0", "24.21.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Verify focused history, cache and request accounting tests
+        run: |
+          node --test \
+            tests/issue-865-vision-subcall-accounting.test.js \
+            tests/issue-865-inflight-vision-describe.test.js \
+            tests/session-cache-usage-command.test.js \
+            tests/issue-865-cache-ab-report.test.js \
+            tests/issue-865-stable-v2-default-performance.test.js \
+            tests/issue-865-session-image-projection-mode.test.js \
+            tests/issue-865-append-only-image-evidence.test.js

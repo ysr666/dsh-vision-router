@@ -16,8 +16,12 @@ import { installSessionVisionIndexBoundary } from './session-vision-index.js'
 import { createSessionVisionRuntime } from './session-vision-runtime.js'
 import { runCoreApplyLifecycle } from './core-apply-lifecycle.js'
 import { installSessionVisionModeBoundary } from './session-vision-mode-boundary.js'
+import { installSessionCacheUsageCommand } from './session-cache-usage-command.js'
+import { createVisionSubcallAccounting } from './vision-subcall-accounting.js'
+import { installSessionImageStabilizeCommand } from './session-image-stabilize-command.js'
 import { resolveSessionVisionModeAuthority } from './session-vision-mode-authority.js'
 import { createSessionVisionPolicyRuntimeStore } from './session-vision-policy-domain.js'
+import { createSessionImageProjectionModeStore } from './session-image-projection-mode.js'
 import { installSessionVisionDelegationBoundary } from './session-vision-delegation-boundary.js'
 import { installPiAiBridgeWireCompat } from './pi-ai-bridge-wire-compat.js'
 import { installLiveModelDiscovery } from './live-model-discovery.js'
@@ -202,7 +206,11 @@ function installHostAndSecurityBoundaries(ctx, config, core, providerTransport) 
 
 function createRuntimeOwners(host) {
   const { attachmentCompatCtx, logging, runtimeConfig, runtimeI18nCore } = host
-  const toolRuntimeCtx = installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)
+  // Runtime-only anonymous counts; no extra provider calls and no persistence.
+  const visionSubcallAudit = createVisionSubcallAccounting()
+  const toolRuntimeCtx = installVisionToolRuntimeBoundary(
+    attachmentCompatCtx, runtimeConfig, visionSubcallAudit,
+  )
   const nativeImageCompat = contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)
   const coreVisionSurfaceRuntime = createCoreVisionSurfaceRuntime({
     config: () => legacyCoreVisionSettings(nativeImageCompat.ctx, nativeImageCompat.config),
@@ -227,6 +235,9 @@ function createRuntimeOwners(host) {
   // Session mode owns per-Agent visibility and execution authority from
   // DSH's modelSelection projection. The retired identity-only bridge is gone.
   const sessionVisionPolicyStore = createSessionVisionPolicyRuntimeStore(sessionIndexCtx)
+  const sessionImageProjectionModeStore = createSessionImageProjectionModeStore(sessionIndexCtx)
+  installSessionCacheUsageCommand(sessionIndexCtx, { visionSubcallAudit })
+  installSessionImageStabilizeCommand(sessionIndexCtx, sessionImageProjectionModeStore)
   sessionIndexCtx.inject?.(['agents'], (agentsCtx) => {
     installSessionVisionDelegationBoundary(
       agentsCtx,
@@ -250,6 +261,7 @@ function createRuntimeOwners(host) {
     nativeImageCompat,
     sessionVisionModeCompat,
     sessionVisionPolicyStore,
+    sessionImageProjectionModeStore,
     sessionVisionRuntime,
   }
 }
@@ -409,7 +421,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
     runtimeConfig,
     runtimeI18nCoreScope,
   } = host
-  const { coreVisionSurfaceRuntime, sessionVisionModeCompat, sessionVisionRuntime } = owners
+  const { coreVisionSurfaceRuntime, sessionVisionModeCompat, sessionVisionRuntime, sessionImageProjectionModeStore } = owners
   const { breakerShadowHealth, sessionEventTailReader, sessionTurnResolver } = routing
   const { coreRequestAuthorityCtx } = execution
   try {
@@ -451,7 +463,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
   }
 
   return runCoreApplyLifecycle(
-    () => runtimeI18nCoreScope.run(() =>
+    () => (sessionVisionModeCompat.withHydratedExistingAgents ?? ((invoke) => invoke()))(() => runtimeI18nCoreScope.run(() =>
       withVisionCircuitBreakerObserver(
         breakerShadowHealth.capture,
         () => core.apply(
@@ -459,6 +471,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
           sessionVisionModeCompat.config,
           {
             sessionVision: sessionVisionRuntime,
+            sessionImageProjectionModeStore,
             coreVisionSurface: coreVisionSurfaceRuntime,
             sessionTurnResolver,
             sessionEventTailReader,
@@ -467,7 +480,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
           },
         ),
       ),
-    ),
+    )),
     {
       onSuccess: installPostCoreRuntime,
       onFailure: failCoreApply,

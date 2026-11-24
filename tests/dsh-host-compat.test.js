@@ -404,7 +404,7 @@ test('host settings bridge registers the final entry settings contract including
     namespace: 'vision-router',
   })
 
-  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   assert.equal(registeredConfig, EntryConfig)
   assert.equal(registeredConfig({}).allowRemoteSettings, false)
   assert.equal(registeredConfig({ allowRemoteSettings: true }).allowRemoteSettings, true)

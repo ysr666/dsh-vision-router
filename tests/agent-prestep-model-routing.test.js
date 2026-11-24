@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { installPreStepModelRouting } from '../lib/agent-prestep-model-routing.js'
+import { installPreStepModelRouting, explicitWholeTurnRoutingEnabled } from '../lib/agent-prestep-model-routing.js'
 import { blocksHaveRetainedImage } from '../lib/image-offload-compat.js'
 
 const source = (kind = 'user') => ({ kind })
@@ -362,4 +362,16 @@ test('early Hook logs redact provider credentials without changing queued messag
   const warning=JSON.stringify(t.log.warnings)
   assert.ok(warning.includes('[REDACTED]'),warning)
   assert.ok(!warning.includes(secret),'credential must not reach logs')
+})
+
+test('issue #865: absent or partial Settings can never enable cross-provider image routing', () => {
+  assert.equal(explicitWholeTurnRoutingEnabled(undefined), false)
+  assert.equal(explicitWholeTurnRoutingEnabled(null), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({}), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({ progressiveTools: false, routing: undefined }), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({ routing: false }), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({ routing: 1 }), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({ routing: 'true' }), false)
+  assert.equal(explicitWholeTurnRoutingEnabled({ routing: true }), true,
+    'explicitly enabled legacy whole-turn routing is still supported')
 })

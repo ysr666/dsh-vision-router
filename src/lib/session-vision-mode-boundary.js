@@ -1,5 +1,8 @@
 import { currentSessionVisionPolicy } from './native-image-coexistence.js'
 import { userSessionVisionPolicy } from './session-vision-policy.js'
+import { createNativeVisionPolicyMutator, installNativeVisionPolicyCommand } from './native-vision-policy-command.js'
+import { installNativeVisionControlRemote } from './native-vision-control-remote.js'
+import { nativeControlSelection } from './native-vision-control-state.js'
 import {
   clearSessionVisionModeAuthorityForAgent,
   rememberSessionVisionModeAssemblyAuthorityForAgent,
@@ -363,14 +366,18 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   const restrictions = new WeakMap()
   const activeRestrictions = new Set()
   const assemblySnapshots = new WeakMap()
+  const observedSelectionBySession = new WeakMap()
   const ownedVisionTools = new Map()
   const sessionVisionPolicyStore = runtime?.sessionVisionPolicyStore
+  // The Host Commands API is Session-authorized; native-multimodal enhancement
+  // can be selected without touching Agent.model or selecting a twin provider.
+  // Host and composer share one authority and one route-generation fence.
+  const nativeControlOptions = { config, toolEnabled: () => liveConfig(ctx, config).tool !== false }
+  nativeControlOptions.mutate = createNativeVisionPolicyMutator(ctx, sessionVisionPolicyStore, nativeControlOptions)
   let toolsView
-  let generationClosed = false
+  let generationActive = true
   const syncRestriction = (...args) => {
-    if (!generationClosed) {
-      syncAgentToolRestriction(...args, () => !generationClosed)
-    }
+    if (generationActive) syncAgentToolRestriction(...args, () => generationActive)
   }
 
   // This boundary can install Agent-scoped restrictions whose lifetime exceeds
@@ -380,7 +387,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     if (typeof ctx.effect === 'function') {
       ctx.effect(
         () => () => {
-          generationClosed = true
+          generationActive = false
           releaseAllAgentToolRestrictions(activeRestrictions)
         },
         'vision-router: Session Vision restriction lifecycle',
@@ -389,6 +396,9 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   } catch {
     return { ctx, config }
   }
+
+  installNativeVisionPolicyCommand(ctx, sessionVisionPolicyStore, nativeControlOptions)
+  installNativeVisionControlRemote(ctx, sessionVisionPolicyStore, nativeControlOptions)
 
   const sessionPolicyForAgent = (agent) => {
     const id = typeof agent?.id === 'string' ? agent.id : ''
@@ -417,6 +427,10 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   const syncForAgent = (agent) => {
     if (!isObject(agent)) return
     const authority = resolveForAgent(agent)
+    if (isObject(agent.session) && !observedSelectionBySession.has(agent.session)) {
+      const initial = nativeControlSelection(agent) ?? authority.route
+      if (initial) observedSelectionBySession.set(agent.session, initial)
+    }
     syncRestriction(
       agent,
       visionToolSurfaceEnabled(ctx, config, authority),
@@ -502,29 +516,55 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       } else if (status === 'idle') {
         clearAgent(agent)
       }
-    })
+    }, { global: true })
     ctx.on?.('agent/created', ({ agent }) => {
       clearAgent(agent)
+      const id = typeof agent?.id === 'string' ? agent.id : ''
+      const hydrate = sessionVisionPolicyStore?.hydrate
+      if (id !== '' && agent.session?.id === id
+        && sessionVisionPolicyStore?.durable === true && typeof hydrate === 'function') {
+        // Creation is serial, but independent listener ordering is not
+        // authority. Restore the sidecar before projecting this Agent even
+        // if the delegation observer has not run yet.
+        return Promise.resolve(hydrate.call(sessionVisionPolicyStore, id)).then(() => {
+          if (generationActive) syncForAgent(agent)
+        })
+      }
       syncForAgent(agent)
-    })
+    }, { global: true })
     ctx.on?.('agent/disposed', ({ agent }) => {
+      nativeControlOptions.mutate.retireAgent(agent)
       clearAgent(agent)
       releaseAgentToolRestriction(agent, restrictions, activeRestrictions)
       const id = typeof agent?.id === 'string' ? agent.id : ''
       if (id !== '') {
         try { sessionVisionPolicyStore?.release?.(id) } catch {}
       }
-    })
+    }, { global: true })
 
     // DSH persists explicit composer/model-picker intent as model/selection.
     // Materialize the matching DVR Session authority from that exact durable
     // event so a delegated snapshot can always be overridden by a later user
     // choice. Route-derived compatibility remains the fallback until a Session
-    // has made an explicit selection.
+    // has made an explicit selection. This is a cross-Agent Session observer:
+    // a Host-owned scoped carrier must not filter out the plugin fiber.
     ctx.on?.('session/event', (session, event) => {
-      if (event?.type !== 'model/selection') return
-      const id = typeof session?.id === 'string' ? session.id : ''
-      if (id === '' || typeof sessionVisionPolicyStore?.set !== 'function') return
+      if (!isObject(session) || event?.type !== 'model/selection') return
+      const id = typeof session.id === 'string' ? session.id : ''
+      const route = event.data
+      if (id === '' || typeof route?.provider !== 'string' || !route.provider ||
+          typeof route?.model !== 'string' || !route.model) return
+      const previous = observedSelectionBySession.get(session)
+      const sameRoute = previous?.provider === route.provider && previous?.model === route.model
+      observedSelectionBySession.set(session, { provider: route.provider, model: route.model })
+      if (!sameRoute) nativeControlOptions.mutate.invalidateSession(session)
+      if (typeof sessionVisionPolicyStore?.set !== 'function') return
+      // An effort-only model/selection event does not change the route.
+      // Preserve the user policy; a deliberate route change still restores
+      // legacy route authority and overrides inherited delegation snapshots.
+      const currentPolicy = sessionPolicyForAgent({ id })
+      if (sameRoute && (currentPolicy?.source === 'user'
+        || (currentPolicy === undefined && sessionVisionPolicyStore.durable === true))) return
       const authority = resolveSessionVisionModeAuthority(
         ctx,
         { id, session },
@@ -534,7 +574,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       void sessionVisionPolicyStore
         .set(id, userSessionVisionPolicy(authority.enabled))
         .catch(() => {})
-    })
+    }, { global: true })
   } catch {
     // Minimum Hosts may not expose every lifecycle event. Prompt assembly and
     // execution guards preserve the safety boundary without making apply fail.
@@ -598,20 +638,49 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     },
   })
 
+  const existingAgents = () => {
+    try {
+      const registry = ctx.get?.('agents')
+      const agents = typeof registry?.list === 'function' ? registry.list() : undefined
+      return Array.isArray(agents) ? agents : []
+    } catch {
+      return []
+    }
+  }
+
+  // An existing Agent does not emit agent/created when DVR alone is
+  // reloaded. Hydrate the new generation's hot sidecar BEFORE Core
+  // registers vision tools, otherwise route fallback replaces explicit
+  // user policy and PTC freezes the wrong SDK. No durable store or no live
+  // Agents preserves the ordinary synchronous Core apply contract.
+  const withHydratedExistingAgents = (invoke) => {
+    if (sessionVisionPolicyStore?.durable !== true
+      || typeof sessionVisionPolicyStore.hydrate !== 'function') return invoke()
+    const ids = new Set()
+    for (const agent of existingAgents()) {
+      const id = typeof agent?.id === 'string' ? agent.id : ''
+      if (id === '' || agent.session?.id !== id) continue
+      ids.add(id)
+      // Seed route identity before I/O so a concurrent effort-only picker
+      // event is not mistaken for a deliberate route switch.
+      const selection = nativeControlSelection(agent) ?? resolveForAgent(agent).route
+      if (selection && !observedSelectionBySession.has(agent.session)) {
+        observedSelectionBySession.set(agent.session, selection)
+      }
+    }
+    if (ids.size === 0) return invoke()
+    return Promise.all([...ids].map(id => sessionVisionPolicyStore.hydrate(id))).then(() => {
+      if (!generationActive) throw new Error('Session Vision generation disposed during policy hydration')
+      return invoke()
+    })
+  }
+
   // After HMR the old plugin generation releases its Agent-scoped masks.
   // Reconcile agents that were already alive before this generation mounted:
   // otherwise their OFF scopes see newly registered global DVR schemas until
   // the next agent/status or prompt-assembly event.
   const reconcileExistingAgents = () => {
-    let agents
-    try {
-      const registry = ctx.get?.('agents')
-      agents = typeof registry?.list === 'function' ? registry.list() : undefined
-    } catch {
-      return
-    }
-    if (!Array.isArray(agents)) return
-    for (const agent of agents) {
+    for (const agent of existingAgents()) {
       try {
         syncForAgent(agent)
       } catch {
@@ -621,5 +690,5 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     }
   }
 
-  return { ctx: wrapped, config, reconcileExistingAgents }
+  return { ctx: wrapped, config, reconcileExistingAgents, withHydratedExistingAgents }
 }

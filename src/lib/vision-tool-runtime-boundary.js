@@ -11,6 +11,7 @@ import {
   LiveDescribeCache,
 } from './runtime-reliability.js'
 import { projectDelegatedCallConfig } from './delegated-call-config.js'
+import { createVisionDescribeSingleFlight } from './vision-describe-singleflight.js'
 import { isVisionRouterOwnedAdapter } from './adapter-ownership.js'
 import { VISION_RESULT_CODES } from './vision-resilience.js'
 
@@ -110,8 +111,9 @@ function stableRuntimeConfigSignature(value) {
   }
 }
 
-function createRuntimeState(initialConfig = {}) {
+function createRuntimeState(initialConfig = {}, visionSubcallAudit) {
   const cache = new LiveDescribeCache()
+  const shareDescribe = createVisionDescribeSingleFlight()
   const endpoints = new HttpEndpointRevisionTracker()
   const transparentReasoning = new Map()
   const fallbackConfig = {
@@ -222,6 +224,8 @@ function createRuntimeState(initialConfig = {}) {
 
   return {
     cache,
+    shareDescribe,
+    visionSubcallAudit,
     endpoints,
     noteConfig,
     activateSettingsScope,
@@ -243,6 +247,7 @@ function stateFor(name, exec, config) {
   const ambient = currentVisionTurnBudget()
   return {
     name,
+    session: exec?.agent?.session,
     cwd: sessionCwd(exec),
     // Own the complete wall-clock task budget at the outermost runtime seam.
     // Some Host services (notably AttachmentStore.saveImage in DSH 0.1.3) do
@@ -629,7 +634,12 @@ function wrapLlm(llm, runtimeState) {
           const call = signal === undefined || signal === projected?.signal
             ? projected
             : { ...(projected ?? {}), signal }
-          return stream.call(target, call)
+          const outgoing = stream.call(target, call)
+          // Count only tool-owned LLM streams. This deliberately does not claim
+          // to observe the Host's main, title, or all adapter retry calls.
+          return state?.session && runtimeState.visionSubcallAudit
+            ? runtimeState.visionSubcallAudit.observe(state.session, outgoing)
+            : outgoing
         }
       }
       if (property === 'registerAdapter') {
@@ -678,16 +688,35 @@ async function executeVisionTool(def, args, exec, execute, wrappedCtx, runtimeSt
             cacheKey = undefined
           }
         }
-        const result = await execute(args, exec)
-        if (
-          cacheKey &&
-          runtimeState.config().cache !== false &&
-          !state.signal?.aborted &&
-          cacheableVisionDescribeResult(result)
-        ) {
-          runtimeState.cache.set(cacheKey, result)
+        // Only authorized local-image content hashes can be coalesced. The
+        // Session and Host parent signal MUST both match: separate callers
+        // still own their cancellation and tool capability checks.
+        const cacheRevision = runtimeState.revision()
+        const perform = async () => {
+          // A peer can miss the completed cache while hashing its own image,
+          // then enter here after the first in-flight entry was retired.
+          // Recheck at dispatch so that race cannot bill twice.
+          if (cacheKey && runtimeState.config().cache !== false &&
+              runtimeState.revision() === cacheRevision) {
+            const completed = runtimeState.cache.get(cacheKey)
+            if (completed !== undefined) return completed
+          }
+          const result = await execute(args, exec)
+          if (
+            cacheKey &&
+            runtimeState.config().cache !== false &&
+            runtimeState.revision() === cacheRevision &&
+            !state.signal?.aborted &&
+            cacheableVisionDescribeResult(result)
+          ) {
+            runtimeState.cache.set(cacheKey, result)
+          }
+          return result
         }
-        return result
+        return runtimeState.shareDescribe(
+          exec?.agent?.session, exec?.agent, usableSignal(exec?.signal),
+          cacheKey, perform,
+        )
       }),
     ))
   } finally {
@@ -765,12 +794,12 @@ function wrapTools(tools, wrappedCtx, runtimeState) {
   })
 }
 
-export function installVisionToolRuntimeBoundary(ctx, initialConfig = {}) {
+export function installVisionToolRuntimeBoundary(ctx, initialConfig = {}, visionSubcallAudit) {
   if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return ctx
   const cached = wrappedContexts.get(ctx)
   if (cached) return cached
 
-  const runtimeState = createRuntimeState(initialConfig)
+  const runtimeState = createRuntimeState(initialConfig, visionSubcallAudit)
   let wrapped
   wrapped = new Proxy(ctx, {
     get(target, property) {
