@@ -89,6 +89,17 @@ try {
       providers: [], freeFallback: false, downscale: false, cache: false,
     }))
   } })
+  // Real Host PromptContext experiment. This deliberately does not replace
+  // DVR policy, tool restrictions or the executor. A separate synthetic
+  // operational fact can change while the actual Vision permission is OFF.
+  let probeState = 'OFF'
+  const { serialize } = await host('packages/llm/llm-deepseek/src/serialize.ts')
+  const { compareFinalWireRequests } = await import('./issue-865-final-wire-diff.mjs')
+  const probeText = () => 'DVR SYNTHETIC CONTEXT PROBE: ' + probeState
+  ctx.systemPrompt.context({
+    name: 'dvr-prefix-experiment', order: 50000, required: true,
+    interpolate: false, text: probeText,
+  })
   handle = await ctx.agents.create({
     sessionId: 'dvr-865-real-plugin-native-commands',
     agentOptions: { provider: 'native-proof', model: 'test-mm' },
@@ -178,6 +189,44 @@ try {
   assert.equal(agent.session.deriveMessages().some(message =>
     message.content?.some(block => block.type === 'text' &&
       block.text.includes('/vision-router'))), false)
+  // Keep actual Vision OFF throughout this isolated transport experiment.
+  // The policy markers below are synthetic and have no authorization effect.
+  const connection = {
+    models: [{ id: 'test-mm', systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' }],
+    defaults: { reasoningEffort: 'high' }, maxTokens: 1024,
+  }
+  const record = request => ({
+    wire: serialize(request, connection, request.messages, new Map(), () => undefined),
+    upstream: { provider: request.provider, model: request.model },
+  })
+  const ctxMarker = 'DVR SYNTHETIC CONTEXT PROBE: '
+  const snapshots = wire => wire.messages.flatMap(m => m.content ?? [])
+    .filter(b => b.type === 'text' && b.text.includes(ctxMarker)).map(b => b.text)
+  let prior = record(requests.at(-1))
+  const originalMarkers = snapshots(prior.wire)
+  assert.ok(originalMarkers.some(t => t.includes(ctxMarker + 'OFF')),
+    'the real Host must materialize the registered context')
+  const contextTransitions = []
+  for (const state of ['ON', 'ON', 'OFF', 'ON']) {
+    probeState = state
+    const currentTurn = await turn('Synthetic context transport only: ' + state)
+    assert.equal(currentTurn.active.length, 0, 'actual OFF visibility cannot change in this experiment')
+    assert.equal(currentTurn.leadingOwned, 0, 'actual OFF wire stays free of DVR declarations')
+    const current = record(requests.at(-1))
+    const diff = compareFinalWireRequests(prior, current)
+    assert.equal(diff.localSerializedPrefixPreserved, true,
+      'native runtime context must not rewrite the old serialized request: ' + JSON.stringify(diff.changedDimensions))
+    assert.equal(JSON.stringify(current.wire.messages.slice(0, prior.wire.messages.length)),
+      JSON.stringify(prior.wire.messages), 'old native message bytes must be preserved')
+    const markers = snapshots(current.wire)
+    assert.ok(markers.at(-1)?.includes(ctxMarker + state), 'latest context must be delivered')
+    contextTransitions.push({ state, prefixPreserved: true, actualVisionOff: true,
+      markerBlocks: markers.length })
+    prior = current
+  }
+  console.log(JSON.stringify({ scenario: 'real Host required PromptContext wire experiment',
+    contextTransitions, noAdditionalModelDispatchPerTurn: true,
+    productionPermissionChanged: false }))
   // Unlike effort-only changes, a deliberate provider/model change must
   // recompute the route-derived authority, even in the real plugin fiber.
   const routeObserver = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
