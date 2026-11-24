@@ -1230,12 +1230,16 @@ try {
     try { routingControlEvidence = await readProbe('routing-control') }
     catch (error) { routingControlEvidence = { fixtureError: String(error) } }
     console.log('ISSUE_877_ROUTING_CONTROL=' + JSON.stringify(routingControlEvidence))
+    marketEvidence = { routingControl: routingControlEvidence }
     const before = await readProbe('arm')
     if (!before.armed || installed('dshmarket') !== process.env.DVR_MARKET_VERSION ||
         installed('dsh-vision-router') !== '3.2.1' ||
-        !before.entries.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE')) {
+        !before.entries.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE')) {
       throw Error('Market/DVR baseline not established: ' + JSON.stringify(before))
     }
+    marketEvidence.before = before
+    marketEvidence.baselineInstalled = installed('dsh-vision-router')
+    marketEvidence.baselineMarket = installed('dshmarket')
     target.pathname = '/dsh-market/status'
     const marketStatus = await fetchHostProbe(target, { headers }, 15000)
     const marketStatusCode = marketStatus.status
@@ -1252,13 +1256,14 @@ try {
     } catch (error) { marketResult = { transportError: String(error) } }
     // A lost response is not proof of a failed transaction. Poll read-only
     // observations for a bounded interval; record the disk and loader separately.
+    marketEvidence.marketResult = marketResult
     let after, lastProbeError
     const settleDeadline = Date.now() + 60000
     do {
       try { after = await readProbe() } catch (error) { lastProbeError = String(error) }
       if (after?.firstEffect || after?.firstFailure ||
           (installed('dsh-vision-router') === '3.4.0' &&
-           after?.entries?.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE'))) break
+           after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE'))) break
       await new Promise(resolve => setTimeout(resolve, 1000))
     } while (Date.now() < settleDeadline)
     let marketLog = []
@@ -1271,12 +1276,14 @@ try {
     const final = { installed: installed('dsh-vision-router'), marketVersion: installed('dshmarket'),
       profileSpec: persisted.dependencies?.['dsh-vision-router'] ?? null,
       bundleSelected: persisted.dsh?.profile?.bundles?.includes('dsh-vision-router') ?? false,
-      marketResult, before, after, lastProbeError, marketLog, routingControl: routingControlEvidence }
+      marketResult, before, after, lastProbeError, marketLog, routingControl: routingControlEvidence,
+      baselineUid: before.entries.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid,
+      finalUid: after?.entries?.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid }
     marketEvidence = final
     console.log('ISSUE_877_REAL_MARKET=' + JSON.stringify(final))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
     if (final.installed !== '3.4.0' || !final.bundleSelected ||
-        !after?.entries?.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE') ||
+        !after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE') ||
         after.firstEffect || after.firstFailure) {
       throw Error('Real market update did not converge cleanly; inspect first-effect and transaction evidence')
     }
