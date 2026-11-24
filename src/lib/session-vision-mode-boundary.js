@@ -486,11 +486,22 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       } else if (status === 'idle') {
         clearAgent(agent)
       }
-    })
+    }, { global: true })
     ctx.on?.('agent/created', ({ agent }) => {
       clearAgent(agent)
+      const id = typeof agent?.id === 'string' ? agent.id : ''
+      const hydrate = sessionVisionPolicyStore?.hydrate
+      if (id !== '' && agent.session?.id === id
+        && sessionVisionPolicyStore?.durable === true && typeof hydrate === 'function') {
+        // Creation is serial, but independent listener ordering is not
+        // authority. Restore the sidecar before projecting this Agent even
+        // if the delegation observer has not run yet.
+        return Promise.resolve(hydrate.call(sessionVisionPolicyStore, id)).then(() => {
+          if (generationActive) syncForAgent(agent)
+        })
+      }
       syncForAgent(agent)
-    })
+    }, { global: true })
     ctx.on?.('agent/disposed', ({ agent }) => {
       nativeControlOptions.mutate.retireAgent(agent)
       clearAgent(agent)
@@ -499,7 +510,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       if (id !== '') {
         try { sessionVisionPolicyStore?.release?.(id) } catch {}
       }
-    })
+    }, { global: true })
 
     // DSH persists explicit composer/model-picker intent as model/selection.
     // Materialize the matching DVR Session authority from that exact durable
