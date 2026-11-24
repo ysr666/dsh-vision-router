@@ -463,7 +463,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
   }
 
   return runCoreApplyLifecycle(
-    () => runtimeI18nCoreScope.run(() =>
+    () => (sessionVisionModeCompat.withHydratedExistingAgents ?? ((invoke) => invoke()))(() => runtimeI18nCoreScope.run(() =>
       withVisionCircuitBreakerObserver(
         breakerShadowHealth.capture,
         () => core.apply(
@@ -480,7 +480,7 @@ function applyMatureCoreBridge(host, owners, routing, execution, core, runtime) 
           },
         ),
       ),
-    ),
+    )),
     {
       onSuccess: installPostCoreRuntime,
       onFailure: failCoreApply,
