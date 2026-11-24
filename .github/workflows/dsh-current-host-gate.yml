@@ -94,12 +94,6 @@ jobs:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
           DSH_EXPECTED_VERSION: ${{ steps.pin.outputs.version }}
         run: pnpm exec tsx ../dvr/scripts/issue-865-wire-characterization.mjs
-      - name: Probe real PTC SDK prefix and actual DVR permission transitions
-        if: matrix.os == 'ubuntu-latest'
-        working-directory: dsh-current-host
-        env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
-        run: pnpm exec tsx ../dvr/scripts/issue-865-ptc-prefix-host.mjs
       - name: Verify #865 actual DVR generated twin on exact Host
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-current-host
@@ -116,6 +110,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-current-host
         run: pnpm run build:native-system
+      - name: Probe real PTC SDK prefix and actual DVR permission transitions
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+        run: pnpm exec tsx ../dvr/scripts/issue-865-ptc-prefix-host.mjs
       - name: Verify #865 production JSONL evidence across independent processes
         if: matrix.os == 'ubuntu-latest'
         working-directory: dsh-current-host
