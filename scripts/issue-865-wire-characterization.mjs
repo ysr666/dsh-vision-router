@@ -102,10 +102,14 @@ const forkedV2 = Session.create('issue-865-canonical-v2-fork', canonicalV2.snaps
 assert.equal(await orphanStore.resolve(forkedV2, false), 'stable-v2')
 await orphanCleanup()
 const modelId = 'deepseek-flash'
+const fullHistoryModelId = 'synthetic-full-tool-history'
 const sourceRoute = 'deepseek-account'
 const twinRoute = 'deepseek-account-vision'
 const connection = {
-  models: [{ id: modelId, systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' }],
+  models: [
+    { id: modelId, systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' },
+    { id: fullHistoryModelId, systemPromptUpdate: 'in-history', toolUpdate: 'in-history' },
+  ],
   defaults: { reasoningEffort: 'high' },
   maxTokens: 1024,
 }
@@ -133,7 +137,7 @@ class SourceAdapter extends LlmAdapter {
         { id: 'off', name: 'Off' }, { id: 'low', name: 'Low' },
         { id: 'high', name: 'High' }, { id: 'max', name: 'Max' },
       ], defaultEffort: 'high' },
-      toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
+      toolUpdate: model === fullHistoryModelId ? 'in-history' : 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
     requests.push(options)
@@ -447,6 +451,59 @@ try {
   console.log(JSON.stringify({ scenario: 'issue-865 fixed surface wire feasibility',
     fixedNative, deferredNative, genericTransport,
     limitations: ['synthetic policy context', 'no actual PTC executor', 'no provider cache claim'] }))
+
+  // Compare a route that truthfully advertises complete tool-update support.
+  // This is a synthetic capability declaration, NOT evidence that DeepSeek
+  // Flash or a third-party provider supports tool_removal. No live request.
+  // The first native addition necessarily changes the declaration header;
+  // later removal/re-addition may retain the established deferred baseline.
+  const fullMessages = [createSystemMessage('full-history capability control'), user('opening OFF')]
+  const fullUpdates = []
+  const fullTransitions = []
+  let priorFull
+  for (const [index, enabled] of [false, true, false, true].entries()) {
+    if (index > 0) {
+      fullMessages.push(assistant('previous response ' + index), user('toggle ' + index))
+      const change = createDeveloperMessage({ source: { kind: 'user' }, content: [
+        { type: enabled ? 'tool-addition' : 'tool-removal', toolName: ocr.name },
+        { type: enabled ? 'tool-addition' : 'tool-removal', toolName: describe.name },
+      ] })
+      fullMessages.push(change)
+      fullUpdates.push({ messageId: change.id, additions: enabled ? [ocr, describe] : [] })
+    }
+    const active = enabled ? [foreign, ocr, describe] : [foreign]
+    const current = await request(sourceRoute, [...fullMessages], {
+      model: fullHistoryModelId, tools: active,
+      toolHistory: { tools: [foreign], updates: [...fullUpdates] },
+    })
+    const diff = priorFull ? forensic(priorFull, current) : null
+    if (index === 1) assert.equal(diff.changes.tools, true,
+      'first-ever tool declarations cannot be added without changing the wire header')
+    if (index >= 2) {
+      assert.equal(diff.localSerializedPrefixPreserved, true,
+        'a complete in-history provider can retain the established native declarations')
+      checkPrefix(priorFull, current, 'complete in-history provider')
+    }
+    const declarations = current.wire.tools ?? []
+    fullTransitions.push({ enabled, headerOwned: declarations.filter(t => t.name.startsWith('vision_')).length,
+      activeOwned: active.filter(t => t.name.startsWith('vision_')).length,
+      prefixPreserved: diff?.localSerializedPrefixPreserved ?? null,
+      changedDimensions: diff?.changedDimensions ?? [], historyChangeBlocks: countChanges(current.wire) })
+    priorFull = current
+  }
+  assert.equal(fullTransitions[2].activeOwned, 0)
+  assert.equal(fullTransitions[2].headerOwned, 2,
+    'retained declarations are not strict physical schema invisibility')
+  console.log(JSON.stringify({ scenario: 'complete tool-update capability control', fullTransitions,
+    limitations: ['synthetic model capability', 'not DeepSeek Flash support', 'no actual cache hit proof'] }))
+  // A switch back to an earlier state may still reuse the earlier state's
+  // original prefix even when it differs from the immediately preceding request.
+  // Record this separately instead of counting every transition as a full miss.
+  const returningOff = forensic(offOne, offAgain)
+  console.log(JSON.stringify({ scenario: 'addition-only returning OFF cache opportunity',
+    earlierOffPrefixPreserved: returningOff.localSerializedPrefixPreserved,
+    commonHistoricalMessages: returningOff.commonHistoricalMessages,
+    changedDimensions: returningOff.changedDimensions }))
 
   // V2: both text-only entries converge on the actual native DeepSeek
   // Messages serializer, not merely an approximate JSON representation.
