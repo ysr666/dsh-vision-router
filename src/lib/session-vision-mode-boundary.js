@@ -189,10 +189,12 @@ function retiredAgentScope(ctx) {
   return fiber?.uid === null || fiber?.state === 4 || fiber?.state === 5
 }
 
-function syncAgentToolRestriction(agent, enabled, restrictions, owned, registryTools, activeRestrictions) {
+function syncAgentToolRestriction(agent, enabled, restrictions, owned, registryTools, activeRestrictions, generationAlive) {
   if (!isObject(agent)) return
   const agentCtx = agent.ctx
-  if (enabled || retiredAgentScope(agentCtx)) {
+  const owner = agentCtx?.fiber ?? agentCtx
+  const ownerAlive = () => generationAlive() && !retiredAgentScope(agentCtx) && (agent.ctx?.fiber ?? agent.ctx) === owner
+  if (enabled || !ownerAlive()) {
     releaseAgentToolRestriction(agent, restrictions, activeRestrictions)
     return
   }
@@ -212,24 +214,23 @@ function syncAgentToolRestriction(agent, enabled, restrictions, owned, registryT
 
   const held = restrictions.get(agent)
   const signature = deny.join('\u0000')
-  const owner = agentCtx?.fiber ?? agentCtx
   if (held?.signature === signature && held.owner === owner) return
   releaseAgentToolRestriction(agent, restrictions, activeRestrictions)
 
   // Registry reads and releasing a mask may synchronously dispatch Host hooks.
-  if (retiredAgentScope(agentCtx)) return
+  if (!ownerAlive()) return
   try {
     // Current DSH can mask all inherited plugin tools in one scoped operation.
     const dispose = restrict.call(tools, { deny })
     const held = { owner, signature, disposers: typeof dispose === 'function' ? [dispose] : [] }
-    if (retiredAgentScope(agentCtx)) disposeHeldRestriction(held)
+    if (!ownerAlive()) disposeHeldRestriction(held)
     else rememberAgentToolRestriction(agent, restrictions, activeRestrictions, held)
     return
   } catch (combinedError) {
     // This is a lifecycle cancellation, not an invalid tool-name batch. Never
     // retry a dead scope once for every tool. Unknown active-scope failures
     // still use the existing bounded fallback and diagnostics.
-    if (retiredAgentScope(agentCtx)) return
+    if (!ownerAlive()) return
     if (combinedError?.code === 'INACTIVE_EFFECT') {
       warnRestrictionFailure(agent, combinedError, deny)
       return
@@ -239,22 +240,23 @@ function syncAgentToolRestriction(agent, enabled, restrictions, owned, registryT
     // Vision Router capability visible, so retry each owned name separately.
     const disposers = []
     const failed = []
+    let interrupted = false
     for (const name of deny) {
-      if (retiredAgentScope(agentCtx)) break
+      if (!ownerAlive()) break
       try {
         const dispose = restrict.call(tools, { deny: [name] })
         if (typeof dispose === 'function') disposers.push(dispose)
       } catch (error) {
         failed.push(name)
-        if (error?.code === 'INACTIVE_EFFECT') break
+        if (error?.code === 'INACTIVE_EFFECT') { interrupted = true; break }
       }
     }
-    if (retiredAgentScope(agentCtx)) {
+    if (!ownerAlive()) {
       disposeHeldRestriction({ disposers })
       return
     }
     if (disposers.length > 0) {
-      rememberAgentToolRestriction(agent, restrictions, activeRestrictions, { owner, signature, disposers })
+      rememberAgentToolRestriction(agent, restrictions, activeRestrictions, { owner, signature: interrupted ? undefined : signature, disposers })
     }
     if (failed.length > 0 || disposers.length === 0) {
       warnRestrictionFailure(agent, combinedError, deny, failed.length > 0 ? failed : deny)
@@ -367,8 +369,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   let generationClosed = false
   const syncRestriction = (...args) => {
     if (!generationClosed) {
-      syncAgentToolRestriction(...args)
-      if (generationClosed) releaseAgentToolRestriction(args[0], restrictions, activeRestrictions)
+      syncAgentToolRestriction(...args, () => !generationClosed)
     }
   }
 

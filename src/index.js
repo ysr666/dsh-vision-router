@@ -114,6 +114,7 @@ async function awaitVisionBackendAttempt(signal, operation) {
 
 export * from './lib/vision-resilience.js'
 
+import { installReactiveRoutingMounts } from './lib/reactive-routing-mounts.js'
 import z from '@deepseek-ai/schemastery'
 
 import path from 'node:path'
@@ -2397,94 +2398,10 @@ export function apply(ctx, config = {}, runtime = {}) {
   // the agent/request hook now reconcile against the resolved settings
   // document: the settings seam below runs one initial sync and re-syncs on
   // every document change, so toggles take effect immediately.
-  let wrapperRouteHandle
-  let wrapperRouteMounted
-  let chainRouteHandle
-  let chainRouteMounted
-  let routingMountsClosed = false
-  const routingMountsAlive = () => {
-    const fiber = ctx.fiber
-    // PENDING and LOADING can own effects; UNLOADING and DISPOSED cannot.
-    return !routingMountsClosed && fiber?.uid !== null && fiber?.state !== 4 && fiber?.state !== 5
-  }
-  const syncRoutingMounts = () => {
-    if (!routingMountsAlive()) return
-    const wantWrapper = wrapperRoute()
-    if (wantWrapper !== wrapperRouteMounted) {
-      const previous = wrapperRouteHandle
-      wrapperRouteHandle = undefined
-      wrapperRouteMounted = undefined
-      wrapperRegistered = false
-      previous?.()
-      if (!routingMountsAlive()) return
-      if (wantWrapper !== undefined) {
-        try {
-          const handle = ctx.llm.registerAdapter([wantWrapper], wrapperAdapter)
-          // Adapter publication dispatches Host listeners synchronously. The
-          // caller can have been retired before registerAdapter() returns.
-          if (!routingMountsAlive()) {
-            handle?.()
-            return
-          }
-          wrapperRouteHandle = handle
-          wrapperRouteMounted = wantWrapper
-          wrapperRegistered = true
-        } catch (error) {
-          if (!routingMountsAlive() && error?.code === 'INACTIVE_EFFECT') return
-          if (error?.code === 'DUPLICATE_ADAPTER') {
-            if (!routingMountsAlive()) return
-            // Another layer already serves this name: adopt it, do not own it.
-            wrapperRouteMounted = wantWrapper
-            wrapperRegistered = true
-          } else {
-            throw error
-          }
-        }
-      }
-    }
-    if (!routingMountsAlive()) return
-    const wantChain = routingEnabled() ? chainRoute() : undefined
-    if (wantChain !== chainRouteMounted) {
-      const previous = chainRouteHandle
-      chainRouteHandle = undefined
-      chainRouteMounted = undefined
-      previous?.()
-      if (!routingMountsAlive()) return
-      if (wantChain !== undefined) {
-        try {
-          const handle = ctx.llm.registerAdapter([wantChain], chainAdapter)
-          if (!routingMountsAlive()) {
-            handle?.()
-            return
-          }
-          chainRouteHandle = handle
-          chainRouteMounted = wantChain
-        } catch (error) {
-          if (!routingMountsAlive() && error?.code === 'INACTIVE_EFFECT') return
-          if (error?.code === 'DUPLICATE_ADAPTER') {
-            if (!routingMountsAlive()) return
-            chainRouteMounted = wantChain
-          } else {
-            throw error
-          }
-        }
-      }
-    }
-  }
-  ctx.effect(
-    () => () => {
-      routingMountsClosed = true
-      const wrapper = wrapperRouteHandle
-      const chain = chainRouteHandle
-      wrapperRouteHandle = undefined
-      chainRouteHandle = undefined
-      wrapperRouteMounted = undefined
-      chainRouteMounted = undefined
-      wrapperRegistered = false
-      try { wrapper?.() } finally { chain?.() }
-    },
-    'vision-router: reactive routing mounts',
-  )
+  const syncRoutingMounts = installReactiveRoutingMounts(ctx, {
+    wrapperRoute, chainRoute, routingEnabled, wrapperAdapter, chainAdapter,
+    setWrapperRegistered: (registered) => { wrapperRegistered = registered },
+  })
 
   // #208: attachment refs and description memory are owned by the same
   // bounded SessionVisionStateStore above. Historical ref recovery stays

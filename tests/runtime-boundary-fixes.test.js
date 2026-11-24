@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import { installReactiveRoutingMounts } from '../lib/reactive-routing-mounts.js'
 import { createCoalescingRunner } from '../lib/adapter-update-coalescer.js'
 import {
   createTesseractPromisifyCompat,
@@ -978,11 +979,6 @@ test('remote log metadata is redacted even when a reverse proxy makes the TCP pe
 })
 
 async function reactiveMountHarness({ fail, retireOnRegister, retireOnRelease } = {}) {
-  // Run the actual core block, not a separate implementation of its algorithm.
-  const source = (await readFile(new URL('../src/index.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
-  const start = source.indexOf('  let wrapperRouteHandle\n')
-  const end = source.indexOf('  // #208:', start)
-  assert.ok(start >= 0 && end > start, 'reactive routing block must be present')
   const fiber = { uid: 9, state: 2 }
   const live = new Set()
   const registrations = []
@@ -1005,10 +1001,12 @@ async function reactiveMountHarness({ fail, retireOnRegister, retireOnRelease } 
       },
     },
   }
-  const mount = new Function('ctx', 'wrapperRoute', 'chainRoute', 'routingEnabled', 'wrapperAdapter', 'chainAdapter',
-    'let wrapperRegistered = false;\n' + source.slice(start, end) + '\nreturn { sync: syncRoutingMounts, registered: () => wrapperRegistered };')
-    (ctx, () => wrapper, () => 'chain', () => true, {}, {})
-  return { ...mount, live, registrations, fiber, dispose: () => cleanup(), setWrapper: value => { wrapper = value } }
+  let registered = false
+  const sync = installReactiveRoutingMounts(ctx, {
+    wrapperRoute: () => wrapper, chainRoute: () => 'chain', routingEnabled: () => true,
+    wrapperAdapter: {}, chainAdapter: {}, setWrapperRegistered: value => { registered = value },
+  })
+  return { sync, registered: () => registered, live, registrations, fiber, dispose: () => cleanup(), setWrapper: value => { wrapper = value } }
 }
 
 test('#877: synchronous retirement during wrapper registration stops chain acquisition and releases late handle', async () => {
