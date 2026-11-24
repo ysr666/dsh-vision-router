@@ -7,6 +7,7 @@ const OWNER = Symbol.for('dsh-vision-router.adapter-owner')
 
 function makeHarness({ failRestriction = false, sessionVisionPolicyStore, hostGetRequiresExplicitScope = false } = {}) {
   const handlers = new Map()
+  const eventOptions = new Map()
   const definitions = new Map()
   const restrictCalls = []
   const warnings = []
@@ -68,8 +69,9 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore, hostGe
       if (name === 'sessionProjections') return sessionProjections
       return undefined
     },
-    on(event, handler) {
+    on(event, handler, options) {
       handlers.set(event, handler)
+      eventOptions.set(event, options)
       return () => handlers.delete(event)
     },
     effect(setup) {
@@ -141,6 +143,7 @@ function makeHarness({ failRestriction = false, sessionVisionPolicyStore, hostGe
     ctx,
     config,
     handlers,
+    eventOptions,
     definitions,
     restrictCalls,
     warnings,
@@ -609,4 +612,30 @@ test('existing-Agent hydration keeps empty startup synchronous and refuses late 
   release()
   await assert.rejects(activation, /generation disposed/)
   assert.equal(called, false)
+})
+test('real Host carrier creation must await durable policy before scoped tool projection', async () => {
+  let release
+  const pending = new Promise(resolve => { release = resolve })
+  const rows = new Map()
+  const h = makeHarness({ sessionVisionPolicyStore: {
+    durable: true,
+    get: id => rows.get(id),
+    async hydrate(id) {
+      await pending
+      rows.set(id, { revision: 1, enabled: true, source: 'user' })
+      return rows.get(id)
+    },
+  } })
+  for (const event of ['agent/created', 'agent/status', 'agent/disposed']) {
+    assert.equal(h.eventOptions.get(event)?.global, true, event + ' must see exact Host Agent carrier')
+  }
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = h.makeAgent('deepseek-official', 'resume-on')
+  agent.session.id = agent.id
+  const admitted = h.handlers.get('agent/created')({ agent })
+  assert.equal(typeof admitted?.then, 'function', 'Host serial creation waits for hydration')
+  release()
+  await admitted
+  assert.ok(hotTool())
+  function hotTool() { return agent.ctx.tools.get('vision_describe') }
 })
