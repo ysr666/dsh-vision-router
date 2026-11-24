@@ -273,7 +273,109 @@ function collectDvrMessages(value, out = []) {
   return out
 }
 
+// Test-fixture-only observer of the exact Host catalog reads. No extra
+// model discovery, credential access, model calls or retry of the user click.
+// Return the original values/Promise unchanged; never mask a Host failure.
+function installModelAdmissionAudit(scope) {
+  const llm = scope.llm
+  const source = 'desktop-e2e'
+  const twin = 'desktop-e2e-vision'
+  const model = 'desktop-text'
+  const trace = []
+  const restores = []
+  const observed = new WeakSet()
+  let sequence = 0
+  const record = (event) => {
+    trace.push({ seq: ++sequence, ms: Date.now(), ...event })
+    if (trace.length > 160) trace.splice(0, trace.length - 160)
+  }
+  const safeCode = error => {
+    const code = error?.code
+    return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)
+      ? code : 'UNCLASSIFIED'
+  }
+  const shape = rows => ({
+    count: Array.isArray(rows) ? rows.length : null,
+    hasModel: Array.isArray(rows) && rows.some(row => row?.id === model),
+  })
+  const wrap = (object, key, make) => {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key)
+    const original = object[key]
+    if (typeof original !== 'function') throw new Error('missing catalog observer target')
+    const wrapped = make(original)
+    Object.defineProperty(object, key, { configurable: true, writable: true, value: wrapped })
+    restores.push(() => {
+      if (object[key] !== wrapped) return
+      if (descriptor) Object.defineProperty(object, key, descriptor)
+      else delete object[key]
+    })
+  }
+  const observeModels = (original, layer) => function(provider, ...args) {
+    if (provider !== source && provider !== twin) return Reflect.apply(original, this, [provider, ...args])
+    const call = sequence + 1
+    record({ kind: 'models-start', layer, provider, call })
+    let value
+    try { value = Reflect.apply(original, this, [provider, ...args]) }
+    catch (error) {
+      record({ kind: 'models-error', layer, provider, call, code: safeCode(error) })
+      throw error
+    }
+    const success = rows => record({ kind: 'models-end', layer, provider, call, ...shape(rows) })
+    const failed = error => record({ kind: 'models-error', layer, provider, call, code: safeCode(error) })
+    if (value && typeof value.then === 'function') void Promise.resolve(value).then(success, failed).catch(() => {})
+    else success(value)
+    return value
+  }
+  const rawListProviders = llm.listProviders
+  const snapshotTopology = kind => {
+    try {
+      const rows = Reflect.apply(rawListProviders, llm, [])
+      record({ kind, source: rows.some(row => row.id === source), twin: rows.some(row => row.id === twin) })
+      // Capture errors that the DVR twin's listModels catch would otherwise
+      // turn into []; never call the source catalog independently.
+      const adapter = rows.some(row => row.id === source) ? llm.registration(source).adapter : undefined
+      if (adapter && !observed.has(adapter)) {
+        wrap(adapter, 'listModels', original => observeModels(original, 'source-adapter'))
+        observed.add(adapter)
+        record({ kind: 'source-observer-installed' })
+      }
+    } catch (error) {
+      record({ kind: 'observer-error', code: safeCode(error) })
+    }
+  }
+  try {
+    wrap(llm, 'listProviders', original => function(...args) {
+      const rows = Reflect.apply(original, this, args)
+      record({ kind: 'providers-read', source: rows.some(row => row.id === source),
+        twin: rows.some(row => row.id === twin) })
+      return rows
+    })
+    wrap(llm, 'listModels', original => observeModels(original, 'host'))
+    snapshotTopology('initial-topology')
+    scope.on('llm/adapters-updated', () => snapshotTopology('topology-change'), { global: true })
+    scope.effect(() => () => {
+      for (const restore of restores.reverse()) {
+        try { restore() } catch {}
+      }
+    }, 'desktop-e2e: restore catalog observer')
+  } catch (error) {
+    record({ kind: 'observer-error', code: safeCode(error) })
+  }
+  return () => trace.slice()
+}
+
 export function apply(ctx) {
+  ctx.inject(['webServer', 'llm'], (scope) => {
+    const admission = installModelAdmissionAudit(scope)
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-model-admission',
+      handler(_request, response) {
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ trace: admission() }))
+      },
+    }), 'desktop-e2e: exact model admission diagnostics')
+  })
   ctx.inject(['webServer'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
@@ -488,6 +590,18 @@ async function readHostSessionSources(authenticatedUrl) {
       { cause: error },
     )
   }
+}
+
+async function readHostModelAdmission(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-model-admission'
+  target.search = ''
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
+  if (!response.ok) throw new Error('model admission probe HTTP ' + response.status)
+  const body = await response.json()
+  if (!Array.isArray(body?.trace)) throw new Error('model admission probe invalid shape')
+  return body.trace.slice(-160)
 }
 
 async function readHostModelSelections(authenticatedUrl) {
@@ -1084,6 +1198,9 @@ try {
       // probe read-only and protect the original timeout as the root error.
       const hostSelections = await readHostModelSelections(authenticatedHostUrl)
         .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
+      const admissionTrace = await readHostModelAdmission(authenticatedHostUrl)
+        .catch(() => [{ kind: 'admission-observer-unavailable' }])
+      console.error(JSON.stringify({ scenario: 'Desktop exact Host model admission trace', direction, admissionTrace }))
       const clientDirectory = await readClientModelDirectory(page)
         .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
       const clientTransitions = await page.evaluate(() => ({
@@ -1109,6 +1226,14 @@ try {
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
+  const admissionTrace = await readHostModelAdmission(authenticatedHostUrl)
+  assert.ok(admissionTrace.some(row => row.kind === 'models-end' && row.layer === 'host'
+    && row.provider === 'desktop-e2e-vision' && row.hasModel === true),
+    'positive control: observer captured actual Host twin catalog result')
+  assert.ok(admissionTrace.some(row => row.kind === 'models-end' && row.layer === 'source-adapter'
+    && row.provider === 'desktop-e2e' && row.hasModel === true),
+    'positive control: observer captured actual source adapter catalog result')
+  console.log(JSON.stringify({ scenario: 'Desktop model admission observation positive control', admissionTrace }))
   const domClickEvidence = await page.evaluate(() =>
     window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [])
   assert.equal(domClickEvidence.length, 2,
