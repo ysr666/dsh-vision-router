@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { hardenVisionClientSource } from '../lib/vision-toggle-root-hardening.js'
 import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from '../scripts/dsh-desktop-toggle-stability.mjs'
 import {
   CLIENT_PRESENTATION_PRELUDE,
@@ -63,7 +64,7 @@ function translate(key, params) {
     Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match)
 }
 
-function createHookReact(runEffects = false) {
+function createHookReact(runEffects = false, onExternalStore) {
   const effects = []
   const scheduled = []
   let effectCursor = 0
@@ -94,7 +95,7 @@ function createHookReact(runEffects = false) {
       if (previous && deps?.length === previous.deps?.length && deps.every((v, i) => Object.is(v, previous.deps[i]))) return
       scheduled.push(() => { previous?.cleanup?.(); effects[at] = { deps, cleanup: run() } })
     },
-    useSyncExternalStore(_subscribe, getSnapshot) { return getSnapshot() },
+    useSyncExternalStore(subscribe, getSnapshot) { onExternalStore?.(subscribe, getSnapshot); return getSnapshot() },
   }
 }
 
@@ -121,6 +122,8 @@ function createBrowserHarness({
   deferSelectionAt = null,
   deferCompletion = false,
   nativeApi,
+  rootHardening,
+  onExternalStore,
 } = {}) {
   let registered
   const loader = {
@@ -129,8 +132,8 @@ function createBrowserHarness({
       return spec
     },
   }
-  const window = { __ModuleLoader__: loader }
-  vm.runInNewContext(CLIENT_PRESENTATION_PRELUDE, {
+  const window = { __ModuleLoader__: loader, ...(rootHardening ? { __dshVisionRouterRootHardening: rootHardening } : {}) }
+  vm.runInNewContext(rootHardening ? hardenVisionClientSource(CLIENT_PRESENTATION_PRELUDE) : CLIENT_PRESENTATION_PRELUDE, {
     window,
     Object,
     Promise,
@@ -211,7 +214,7 @@ function createBrowserHarness({
     },
   }
 
-  const React = createHookReact(!!nativeApi)
+  const React = createHookReact(!!nativeApi, onExternalStore)
   function NativeToast() {}
   function WarningIcon() {}
   const primitives = { Toast: NativeToast, IconWarningOutline16: WarningIcon }
@@ -1319,4 +1322,42 @@ test('issue #865: same-session route switch retires old observation and resolves
   assert.equal(restored.props['aria-pressed'], true)
   assert.equal(h.selections.length, 1)
   h.render({ available: false })
+})
+
+test('post-#888 shipping chip wakes on ownership-only restoration with unchanged Host catalog', () => {
+  const listeners = new Set()
+  let snapshot = { revision: 1, routes: new Map() }
+  let subscribed = false
+  let renders = 0
+  const rootHardening = {
+    sourceFor: provider => snapshot.routes.get(provider),
+    getSnapshot: () => snapshot,
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
+  }
+  let harness
+  let currentButton
+  harness = createBrowserHarness({
+    rootHardening,
+    onExternalStore(subscribe, getSnapshot) {
+      if (subscribe !== rootHardening.subscribe || subscribed) return
+      assert.equal(getSnapshot, rootHardening.getSnapshot)
+      subscribed = true
+      subscribe(() => { renders++; currentButton = buttonOf(harness.render()) })
+    },
+  })
+  const catalog = harness.getSnapshot()
+  currentButton = buttonOf(harness.render())
+  assert.equal(subscribed, true, 'the real generated toggle must subscribe')
+  assert.equal(currentButton.props.disabled, true)
+  snapshot = { revision: 2, routes: new Map([['opencode-go-vision', 'opencode-go']]) }
+  for (const listener of listeners) listener()
+  assert.equal(harness.getSnapshot(), catalog, 'no second Host catalog update')
+  assert.equal(renders, 1)
+  assert.equal(currentButton.props.disabled, false)
+  assert.equal(currentButton.props['aria-pressed'], false)
+  assert.equal(harness.selections.length, 0, 'ownership refresh does not select a model')
+  snapshot = { revision: 3, routes: new Map() }
+  for (const listener of listeners) listener()
+  assert.equal(currentButton.props.disabled, true, 'withdrawal also invalidates the UI')
+  assert.equal(harness.selections.length, 0)
 })

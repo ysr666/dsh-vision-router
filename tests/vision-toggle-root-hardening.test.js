@@ -780,3 +780,68 @@ test('actual composed Vision click supplies its source identity only for ON pref
   assert.match(composed, /select: function\(selection, from\)/)
   assert.match(composed, /hardening\.select\(directory, selection, from\)/)
 })
+
+test('ownership observer recovers a restored route without a second Host directory publication and stops on unmount', async () => {
+  const source = scriptsOfInjectedFixture(hardenVisionToggleHtml('<html><head></head></html>'))
+    .find(script => script.includes('__dshVisionRouterRootHardening'))
+  let routes = [{ provider: 'vendor-vision', source: 'vendor' }]
+  let revision = 1
+  let reads = 0
+  let id = 0
+  const timers = new Map()
+  const window = {
+    fetch: async () => {
+      reads++
+      return { ok: true, json: async () => ({ revision, routes }) }
+    },
+    setTimeout(callback) { const token = ++id; timers.set(token, callback); return token },
+    clearTimeout(token) { timers.delete(token) },
+  }
+  vm.runInNewContext(source, { window, Object, Promise, Array, String, Map, Set, WeakMap, JSON, Date, Number, Error })
+  const api = window.__dshVisionRouterRootHardening
+  await api.refresh(true)
+  const original = api.getSnapshot()
+  let notifications = 0
+  const stop = api.subscribe(() => { notifications++ })
+  await api.refresh(true)
+  assert.equal(api.getSnapshot(), original, 'unchanged read must keep React snapshot identity')
+  assert.equal(notifications, 0)
+  routes = []
+  revision++
+  await api.refresh(true)
+  assert.equal(api.getSnapshot().routes.has('vendor-vision'), false)
+  assert.equal(notifications, 1)
+  // The Host route returns after the last directory publication. Only the
+  // observed ownership read is allowed to wake the waiting UI.
+  routes = [{ provider: 'vendor-vision', source: 'vendor' }]
+  revision++
+  assert.equal(timers.size, 1)
+  const [token, tick] = timers.entries().next().value
+  timers.delete(token)
+  tick()
+  await api.refresh(true)
+  await Promise.resolve()
+  assert.equal(api.getSnapshot().routes.get('vendor-vision'), 'vendor')
+  assert.equal(notifications, 2)
+  const restored = api.getSnapshot()
+  await api.refresh(true)
+  assert.equal(api.getSnapshot(), restored)
+  assert.equal(notifications, 2)
+  assert.equal(timers.size, 1, 'only one timer for the entire ownership store')
+  stop()
+  assert.equal(timers.size, 0)
+  assert.ok(reads >= 4)
+})
+
+test('actual post-#888 composed chip subscribes to ownership before resolving livePair', () => {
+  const html = hardenVisionToggleHtml(injectClientPresentationBoundary('<html><head></head></html>'))
+  const composed = scriptsOfInjectedFixture(html).find(script => script.includes('function VisionModeToggle'))
+  assert.ok(composed)
+  const start = composed.indexOf('function VisionModeToggle')
+  const end = composed.indexOf('var complete =', start)
+  const seam = composed.slice(start, end)
+  assert.match(seam, /React\.useSyncExternalStore\(\s*rootHardening \? rootHardening\.subscribe/)
+  assert.match(seam, /rootHardening \? rootHardening\.getSnapshot/)
+  assert.ok(seam.indexOf('rootHardening.subscribe') < seam.indexOf('var livePair ='))
+  assert.equal((seam.match(/rootHardening\.subscribe/g) || []).length, 1)
+})
