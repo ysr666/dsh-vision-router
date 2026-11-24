@@ -545,3 +545,68 @@ test('stage 2: unchanged Session Vision policy preserves exact ordered tool sche
   await assert.rejects(h.definitions.get('vision_ocr').execute({}, { agent }), /Vision mode is off/)
   assert.equal(agent.ctx.tools.get('vision_ocr'), undefined)
 })
+
+test('HMR hydrates durable existing Agent policy before any Core tool registration', async () => {
+  const durable = new Map([
+    ['native-on', { revision: 1, enabled: true, source: 'user' }],
+    ['wrapper-off', { revision: 1, enabled: false, source: 'user' }],
+  ])
+  const hot = new Map()
+  const hydrateCalls = []
+  let releaseHydration, writes = 0
+  const pending = new Promise(resolve => { releaseHydration = resolve })
+  const store = {
+    durable: true,
+    get: id => hot.get(id),
+    async hydrate(id) {
+      hydrateCalls.push(id)
+      await pending
+      const row = durable.get(id)
+      if (row !== undefined && !hot.has(id)) hot.set(id, row)
+      return hot.get(id)
+    },
+    async set(id, policy) { writes++; hot.set(id, policy) },
+  }
+  const h = makeHarness({ sessionVisionPolicyStore: store })
+  const on = h.makeAgent('deepseek-official', 'native-on')
+  const off = h.makeAgent('deepseek-vision', 'wrapper-off')
+  on.session.id = on.id
+  off.session.id = off.id
+  let coreCalls = 0
+  const activation = h.mode.withHydratedExistingAgents(() => {
+    coreCalls++
+    h.mode.ctx.tools.register({ name: 'vision_describe', async execute() { return 'ok' } })
+    h.mode.reconcileExistingAgents()
+    return 'core-ready'
+  })
+  assert.equal(coreCalls, 0, 'no newly mounted schemas before persisted policy is available')
+  assert.deepEqual(hydrateCalls.sort(), ['native-on', 'wrapper-off'])
+  h.handlers.get('session/event')(on.session, {
+    type: 'model/selection',
+    data: { provider: 'deepseek-official', model: 'model', reasoningEffort: 'high' },
+  })
+  assert.equal(writes, 0, 'effort-only event during cold hydration cannot overwrite durable user policy')
+  releaseHydration()
+  assert.equal(await activation, 'core-ready')
+  assert.equal(coreCalls, 1)
+  assert.ok(on.ctx.tools.get('vision_describe'), 'persisted native ON restores')
+  assert.equal(off.ctx.tools.get('vision_describe'), undefined, 'persisted wrapper OFF cannot be replaced by route fallback')
+  await assert.rejects(h.definitions.get('vision_describe').execute({}, { agent: off }), /Vision mode is off/)
+})
+
+test('existing-Agent hydration keeps empty startup synchronous and refuses late Core after disposal', async () => {
+  let release
+  const pending = new Promise(resolve => { release = resolve })
+  const h = makeHarness({ sessionVisionPolicyStore: {
+    durable: true, get() {}, hydrate: () => pending,
+  } })
+  assert.equal(h.mode.withHydratedExistingAgents(() => 7), 7)
+  const agent = h.makeAgent('deepseek-official', 'disposed-during-hydration')
+  agent.session.id = agent.id
+  let called = false
+  const activation = h.mode.withHydratedExistingAgents(() => { called = true })
+  h.disposeBoundaryEffects()
+  release()
+  await assert.rejects(activation, /generation disposed/)
+  assert.equal(called, false)
+})
