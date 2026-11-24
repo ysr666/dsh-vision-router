@@ -348,6 +348,7 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   const nativeControlOptions = { config, toolEnabled: () => liveConfig(ctx, config).tool !== false }
   nativeControlOptions.mutate = createNativeVisionPolicyMutator(ctx, sessionVisionPolicyStore, nativeControlOptions)
   let toolsView
+  let generationActive = true
 
   // This boundary can install Agent-scoped restrictions whose lifetime exceeds
   // the plugin generation. Establish the generation owner before registering
@@ -355,7 +356,10 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
   try {
     if (typeof ctx.effect === 'function') {
       ctx.effect(
-        () => () => releaseAllAgentToolRestrictions(activeRestrictions),
+        () => () => {
+          generationActive = false
+          releaseAllAgentToolRestrictions(activeRestrictions)
+        },
         'vision-router: Session Vision restriction lifecycle',
       )
     }
@@ -517,7 +521,9 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
       // An effort-only model/selection event does not change the route.
       // Preserve the user policy; a deliberate route change still restores
       // legacy route authority and overrides inherited delegation snapshots.
-      if (sameRoute && sessionPolicyForAgent({ id })?.source === 'user') return
+      const currentPolicy = sessionPolicyForAgent({ id })
+      if (sameRoute && (currentPolicy?.source === 'user'
+        || (currentPolicy === undefined && sessionVisionPolicyStore.durable === true))) return
       const authority = resolveSessionVisionModeAuthority(
         ctx,
         { id, session },
@@ -591,20 +597,49 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     },
   })
 
+  const existingAgents = () => {
+    try {
+      const registry = ctx.get?.('agents')
+      const agents = typeof registry?.list === 'function' ? registry.list() : undefined
+      return Array.isArray(agents) ? agents : []
+    } catch {
+      return []
+    }
+  }
+
+  // An existing Agent does not emit agent/created when DVR alone is
+  // reloaded. Hydrate the new generation's hot sidecar BEFORE Core
+  // registers vision tools, otherwise route fallback replaces explicit
+  // user policy and PTC freezes the wrong SDK. No durable store or no live
+  // Agents preserves the ordinary synchronous Core apply contract.
+  const withHydratedExistingAgents = (invoke) => {
+    if (sessionVisionPolicyStore?.durable !== true
+      || typeof sessionVisionPolicyStore.hydrate !== 'function') return invoke()
+    const ids = new Set()
+    for (const agent of existingAgents()) {
+      const id = typeof agent?.id === 'string' ? agent.id : ''
+      if (id === '' || agent.session?.id !== id) continue
+      ids.add(id)
+      // Seed route identity before I/O so a concurrent effort-only picker
+      // event is not mistaken for a deliberate route switch.
+      const selection = nativeControlSelection(agent) ?? resolveForAgent(agent).route
+      if (selection && !observedSelectionBySession.has(agent.session)) {
+        observedSelectionBySession.set(agent.session, selection)
+      }
+    }
+    if (ids.size === 0) return invoke()
+    return Promise.all([...ids].map(id => sessionVisionPolicyStore.hydrate(id))).then(() => {
+      if (!generationActive) throw new Error('Session Vision generation disposed during policy hydration')
+      return invoke()
+    })
+  }
+
   // After HMR the old plugin generation releases its Agent-scoped masks.
   // Reconcile agents that were already alive before this generation mounted:
   // otherwise their OFF scopes see newly registered global DVR schemas until
   // the next agent/status or prompt-assembly event.
   const reconcileExistingAgents = () => {
-    let agents
-    try {
-      const registry = ctx.get?.('agents')
-      agents = typeof registry?.list === 'function' ? registry.list() : undefined
-    } catch {
-      return
-    }
-    if (!Array.isArray(agents)) return
-    for (const agent of agents) {
+    for (const agent of existingAgents()) {
       try {
         syncForAgent(agent)
       } catch {
@@ -614,5 +649,5 @@ export function installSessionVisionModeBoundary(ctx, config = {}, runtime = {})
     }
   }
 
-  return { ctx: wrapped, config, reconcileExistingAgents }
+  return { ctx: wrapped, config, reconcileExistingAgents, withHydratedExistingAgents }
 }
