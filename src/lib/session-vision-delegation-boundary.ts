@@ -15,6 +15,7 @@ export interface SessionVisionDelegationContext<A extends SessionVisionDelegatio
   on?(
     event: 'agent/created',
     listener: (event: Readonly<{ agent: A }>) => Promise<void> | void,
+    options?: { global: boolean },
   ): unknown
 }
 
@@ -44,6 +45,9 @@ export function installSessionVisionDelegationBoundary<
     return false
   }
 
+  // Host creation is emitted through the exact Agent carrier. The DVR
+  // generation is an independent fiber; this observer must receive all
+  // creation edges, while delegation authority still requires isOwnedBy.
   on.call(ctx, 'agent/created', async ({ agent: child }) => {
     if (typeof store.hydrate === 'function') {
       await store.hydrate(child.id)
@@ -63,6 +67,6 @@ export function installSessionVisionDelegationBoundary<
       child,
       resolveParentAuthority,
     )
-  })
+  }, { global: true })
   return true
 }
