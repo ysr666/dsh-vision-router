@@ -1,6 +1,12 @@
 import { reverseRouteTarget } from './core-primitives.js'
 import { redactDiagnosticText } from './diagnostic-redaction.js'
 
+// A missing live Settings field must never opt an existing Session into
+// cross-provider routing. The public schema defaults routing to false.
+export function explicitWholeTurnRoutingEnabled(settings) {
+  return settings?.routing === true
+}
+
 function routeOf(value) {
   if (!value || typeof value !== 'object') return undefined
   if (typeof value.provider !== 'string' || !value.provider || typeof value.model !== 'string' || !value.model) return undefined

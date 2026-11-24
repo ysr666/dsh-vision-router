@@ -15,6 +15,7 @@ export interface SessionVisionDelegationContext<A extends SessionVisionDelegatio
   on?(
     event: 'agent/created',
     listener: (event: Readonly<{ agent: A }>) => Promise<void> | void,
+    options?: { global: boolean },
   ): unknown
 }
 
@@ -44,6 +45,9 @@ export function installSessionVisionDelegationBoundary<
     return false
   }
 
+  // Host creation is emitted through the exact Agent carrier. The DVR
+  // generation is an independent fiber; this observer must receive all
+  // creation edges, while delegation authority still requires isOwnedBy.
   on.call(ctx, 'agent/created', async ({ agent: child }) => {
     if (typeof store.hydrate === 'function') {
       await store.hydrate(child.id)
@@ -57,12 +61,15 @@ export function installSessionVisionDelegationBoundary<
       await store.hydrate(parent.id)
     }
 
+    // A cold child may already own a durable OFF decision. Do not overwrite
+    // an unreadable record with inherited authority, even from a verified parent.
+    if (store.isUnverified?.(child.id)) return
     await materializeDelegatedSessionVisionPolicy(
       store,
       parent,
       child,
       resolveParentAuthority,
     )
-  })
+  }, { global: true })
   return true
 }

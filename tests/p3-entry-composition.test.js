@@ -33,7 +33,7 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     'installVisionSettingsWebBoundary(stabilizedCtx, logging.logger)',
     'installHostSettingsCompatibility(',
     'installDshHostCapabilityDiagnostics(settingsCtx)',
-    'installVisionToolRuntimeBoundary(attachmentCompatCtx, runtimeConfig)',
+    'installVisionToolRuntimeBoundary(',
     'contextWithNativeImageCoexistence(toolRuntimeCtx, runtimeConfig)',
     'createCoreVisionSurfaceRuntime({',
     'createSessionVisionRuntime({',
@@ -66,6 +66,11 @@ test('P3-F composition remains bounded and preserves the mature runtime sequence
     source,
     /\(\) => core\.apply\(\s*coreRequestAuthorityCtx,\s*sessionVisionModeCompat\.config,\s*\{[\s\S]*?sessionVision:\s*sessionVisionRuntime,[\s\S]*?coreVisionSurface:\s*coreVisionSurfaceRuntime,[\s\S]*?providerTransport:\s*runtime\?\.providerTransport,[\s\S]*?\},?\s*\)/,
     'core must receive the fully composed backend context plus request-handoff authority, Session Vision mode authority, and explicit SessionVisionRuntime/CoreVisionSurface/ProviderTransport owners',
+  )
+  assert.match(
+    source,
+    /installVisionToolRuntimeBoundary\(\s*attachmentCompatCtx,\s*runtimeConfig,\s*visionSubcallAudit,\s*\)/,
+    'runtime audit must be injected through the original ordered Vision tool boundary, not a competing LLM wrapper',
   )
   assert.ok(
     source.split('\n').length < 500,

@@ -43,10 +43,15 @@ function activeConfig(ctx, fallback) {
 function createOwnership() {
   const owned = new Set()
   const wrappers = new Map()
+  const registeredAdapters = new Map()
   let revision = 0
-  const add = (routes, adapter, config) => {
+  const add = (routes, adapter, config, llm) => {
     let changed = false
     for (const route of routes) {
+      // Capture the actual Host registry identity, including any compatibility
+      // proxy applied below our registration boundary.
+      try { registeredAdapters.set(route, llm?.registration(route)?.adapter ?? adapter) }
+      catch { registeredAdapters.delete(route) }
       if (!owned.has(route)) {
         owned.add(route)
         changed = true
@@ -62,6 +67,7 @@ function createOwnership() {
   const remove = (routes) => {
     let changed = false
     for (const route of routes) {
+      registeredAdapters.delete(route)
       if (owned.delete(route)) changed = true
       if (wrappers.delete(route)) changed = true
     }
@@ -72,9 +78,16 @@ function createOwnership() {
     sourceFor: (route) => wrappers.get(route),
     add,
     remove,
-    snapshot: () => ({
+    snapshot: (llm) => ({
       revision,
       routes: [...wrappers]
+        .filter(([provider, source]) => {
+          if (!llm) return true
+          try {
+            return llm.registration(provider)?.adapter === registeredAdapters.get(provider)
+              && registeredAdapters.has(provider) && hasRoute(llm, source)
+          } catch { return false }
+        })
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([provider, source]) => ({ provider, source })),
     }),
@@ -172,7 +185,7 @@ function contextView(ctx, fallbackConfig, ownership) {
               const normalized = (Array.isArray(routes) ? routes : [routes]).map(String)
               const handle = register.call(target, normalized, adapter)
               let held = new Set(normalized)
-              ownership.add(held, adapter, current())
+              ownership.add(held, adapter, current(), target)
               const dispose = () => {
                 try {
                   return handle()
@@ -187,7 +200,7 @@ function contextView(ctx, fallbackConfig, ownership) {
                   handle.replace(normalizedNext)
                   ownership.remove(held)
                   held = new Set(normalizedNext)
-                  ownership.add(held, adapter, current())
+                  ownership.add(held, adapter, current(), target)
                 }
               }
               return dispose
@@ -299,7 +312,106 @@ const CLIENT_PRELUDE = String.raw`(function(){
     recoveries.set(directory, state);
     return state;
   }
-  function select(directory, selection){
+  // Desktop may render an enabled Vision control before the Host's model
+  // directory finishes its first hydration. A click in that window must be
+  // deferred, not sent to an unready ModelDirectory (where it can be lost).
+  // The subscription is read-only; it never performs a model selection.
+  function waitForDirectoryReady(directory){
+    var store = directory && directory.store;
+    if (!store || typeof store.getSnapshot !== 'function') return undefined;
+    var initial = store.getSnapshot();
+    if (!initial || (initial.status !== 'idle' && initial.status !== 'loading')) return undefined;
+    if (typeof store.subscribe !== 'function') return Promise.reject(new Error('ModelDirectory cannot observe initial readiness'));
+    return new Promise(function(resolve, reject){
+      var done = false;
+      var unlisten;
+      var timer;
+      function finish(error){
+        if (done) return;
+        done = true;
+        if (timer !== undefined) window.clearTimeout(timer);
+        if (typeof unlisten === 'function') unlisten();
+        if (error) reject(error);
+        else resolve();
+      }
+      function inspect(){
+        if (done) return;
+        var next;
+        try { next = store.getSnapshot(); }
+        catch (error) { finish(error); return; }
+        if (next && next.status === 'error') {
+          finish(new Error('ModelDirectory failed initial hydration'));
+        } else if (!next || (next.status !== 'loading' && next.status !== 'idle')) {
+          finish();
+        }
+      }
+      try {
+        unlisten = store.subscribe(inspect);
+        // Some store adapters synchronously publish their current snapshot
+        // during subscribe. In that case finish() ran before unlisten was
+        // assigned; release the now-available disposer without starting a
+        // stray timeout or leaving an orphan observer behind.
+        if (done) {
+          if (typeof unlisten === 'function') unlisten();
+          return;
+        }
+        timer = window.setTimeout(function(){
+          finish(new Error('ModelDirectory initial hydration timed out'));
+        }, 15000);
+        inspect();
+      } catch (error) {
+        finish(error);
+      }
+    });
+  }
+  // The Host may be replacing the DVR fiber while its last catalog is still
+  // displayed. Do not dispatch an ON selection on stale ownership. Wait for
+  // the exact owned target, never for an arbitrary suffix or alternate model.
+  // Only read-only preflight is repeated; the actual selection is submitted
+  // at most once. OFF uses the ordinary Host source route without this gate.
+  async function waitForOwnedTarget(directory, selection, from, current){
+    var deadline = Date.now() + 5000;
+    while (current()) {
+      var state = directory.store && directory.store.getSnapshot();
+      var selected = state && state.current;
+      if (!selected || selected.provider !== from.provider || selected.model !== from.model ||
+          (selected.reasoningEffort || null) !== (from.reasoningEffort || null)) {
+        return false;
+      }
+      var fresh;
+      var timer;
+      var controller = typeof window.AbortController === 'function' ? new window.AbortController() : null;
+      try {
+        var read = Promise.resolve().then(function(){
+          return window.fetch('/_dsh/vision-router/route-ownership', {
+            credentials: 'same-origin', cache: 'no-store',
+            ...(controller ? { signal: controller.signal } : {})
+          });
+        }).then(function(response){ return response && response.ok ? response.json() : undefined; });
+        var timeout = new Promise(function(resolve){
+          timer = window.setTimeout(function(){
+            if (controller) controller.abort();
+            resolve(undefined);
+          }, Math.max(1, Math.min(1000, deadline - Date.now())));
+        });
+        fresh = await Promise.race([read, timeout]);
+      } catch (_) {}
+      finally { if (timer !== undefined) window.clearTimeout(timer); }
+      if (!current()) return false;
+      state = directory.store && directory.store.getSnapshot();
+      selected = state && state.current;
+      if (!selected || selected.provider !== from.provider || selected.model !== from.model ||
+          (selected.reasoningEffort || null) !== (from.reasoningEffort || null)) return false;
+      var owned = fresh && Array.isArray(fresh.routes) && fresh.routes.some(function(row){
+        return row && row.provider === selection.provider && row.source === from.provider;
+      });
+      if (owned && state.status === 'ready') return true;
+      if (Date.now() >= deadline) break;
+      await new Promise(function(resolve){ window.setTimeout(resolve, 100); });
+    }
+    return false;
+  }
+  function select(directory, selection, from){
     var key = JSON.stringify(selection || {});
     var held = pending.get(directory);
     if (held && held.key === key) return held.promise;
@@ -308,7 +420,23 @@ const CLIENT_PRELUDE = String.raw`(function(){
     var current = function(){ return selectionGenerations.get(directory) === generation; };
     var recovery = recoveryFor(directory);
     recovery.clear();
-    var promise = Promise.resolve().then(function(){ return directory.select(selection); }).then(
+    var promise = Promise.resolve().then(function(){
+      var hydration = waitForDirectoryReady(directory);
+      // Only supersede an unsubmitted click awaiting initial hydration.
+      // Already-ready Hosts must retain their existing concurrent dispatch
+      // semantics; generation fencing applies to COMPLETION, not submission.
+      var submit = function(){
+        if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
+        if (!from) return directory.select(selection);
+        return waitForOwnedTarget(directory, selection, from, current).then(function(ready){
+          if (!current()) return { ok: false, error: { code: 'selection/superseded' } };
+          if (!ready) return { ok: false, error: { code: 'vision/route-unavailable', message: 'Vision route is not ready or the model selection changed.' } };
+          return directory.select(selection);
+        });
+      };
+      if (!hydration) return from ? submit() : directory.select(selection);
+      return hydration.then(submit);
+    }).then(
       function(value){
         if (!current()) return value;
         if (value && value.ok === false) {
@@ -414,10 +542,14 @@ export function hardenVisionClientSource(source) {
     `          var recoveryStore = typeof recovery === 'undefined' ? null : recovery;\n          if (!recoveryStore && typeof window !== 'undefined') {\n            var hardening = window.__dshVisionRouterRootHardening;\n            if (hardening && typeof hardening.recoveryFor === 'function') recoveryStore = hardening.recoveryFor(directory);\n          }\n          var recovered = recoveryStore && typeof recoveryStore.getSnapshot === 'function' ? recoveryStore.getSnapshot() : null;\n          var message = latest && typeof latest.error === 'string' && latest.error !== ''\n            ? latest.error\n            : recovered && recovered.message ? recovered.message : t('failedUnknown');`,
   )
 
+  next = replaceAll(next, 'select: function(selection) {', 'select: function(selection, from) {')
+  next = replaceAll(next, 'pending = props.select(target);',
+    'pending = props.select(target, pair.mode === "off" ? state.current : undefined);')
+
   next = replaceAll(
     next,
     `                  try {\n                    return Promise.resolve(directory.select(selection)).then(\n                      function(result){ return !result || result.ok !== false; },\n                      function(){ return false; }\n                    );\n                  } catch (_) {\n                    return Promise.resolve(false);\n                  }`,
-    `                  var hardening = window.__dshVisionRouterRootHardening;\n                  var operation;\n                  try { operation = hardening ? hardening.select(directory, selection) : Promise.resolve(directory.select(selection)); }\n                  catch (_) { return Promise.resolve(false); }\n                  return Promise.resolve(operation).then(function(result){ return !result || result.ok !== false; }, function(){ return false; });`,
+    `                  var hardening = window.__dshVisionRouterRootHardening;\n                  var operation;\n                  try { operation = hardening ? hardening.select(directory, selection, from) : Promise.resolve(directory.select(selection)); }\n                  catch (_) { return Promise.resolve(false); }\n                  return Promise.resolve(operation).then(function(result){ return !result || result.ok !== false; }, function(){ return false; });`,
   )
 
   next = replaceAll(
@@ -493,12 +625,12 @@ export function hardenVisionToggleHtml(html) {
   return next
 }
 
-function sendSnapshot(res, ownership) {
+function sendSnapshot(res, ownership, llm) {
   res.writeHead(200, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
   })
-  res.end(JSON.stringify(ownership.snapshot()))
+  res.end(JSON.stringify(ownership.snapshot(llm)))
 }
 
 export function createVisionToggleRootHardening(ctx, config = {}) {
@@ -521,7 +653,7 @@ export function createVisionToggleRootHardening(ctx, config = {}) {
                 res.end()
                 return
               }
-              sendSnapshot(res, ownership)
+              sendSnapshot(res, ownership, ctx?.llm)
             },
           }),
           'vision-router: route ownership',

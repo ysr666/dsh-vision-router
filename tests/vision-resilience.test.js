@@ -940,7 +940,10 @@ test('Test 6b: tesseract gets a capped slice and the vision fallback the remaind
 // ── Test 7: OCR tool description + injected prompts ────────────────────────
 
 test('Test 7: injected descriptions forbid OCR-as-retry and demand stop-on-backend-failure', async () => {
-  const config = visionConfig()
+  // This test explicitly expects the progressive image-turn activation
+  // reminder and vision-tools Skill. Production defaults progressiveTools off
+  // to preserve the tool schema/cache prefix, so this fixture must opt in.
+  const config = visionConfig({ progressiveTools: true })
   const mock = mockVisionCtx()
   mock.setSeamConfig(config)
   apply(mock.ctx, config)

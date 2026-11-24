@@ -1,0 +1,637 @@
+// #865: characterize the REAL DSH LlmRuntime adapter boundary and the native
+// DeepSeek Messages serializer. No network, user data, API key or paid requests.
+// Run from a pinned Host checkout: node --import tsx ../dvr/scripts/issue-865-wire-characterization.mjs
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { createWrapperStreamBody, rewriteHistoryImages } from '../lib/core-primitives.js'
+import { compareFinalWireRequests } from './issue-865-final-wire-diff.mjs'
+import { createSessionImageProjectionModeStore, hasPriorModelHistory } from '../lib/session-image-projection-mode.js'
+import { contextWithDelegatedReplay } from '../lib/replay-delegation.js'
+import { installOwnedTwinStreamBoundary, identifyOwnedTwinStream } from '../lib/owned-twin-stream-boundary.js'
+
+const root = resolve(process.env.DSH_SOURCE_ROOT ?? '')
+assert.ok(process.env.DSH_SOURCE_ROOT, 'DSH_SOURCE_ROOT is required')
+const hostRequire = createRequire(join(root, 'packages/llm/llm/package.json'))
+const host = (relative) => import(pathToFileURL(join(root, relative)).href)
+const [{ Context }, llm, { serialize }] = await Promise.all([
+  import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href),
+  host('packages/llm/llm/src/index.ts'),
+  host('packages/llm/llm-deepseek/src/serialize.ts'),
+])
+const { LlmAdapter, createUserMessage, createAssistantMessage, createDeveloperMessage, createSystemMessage } = llm
+// Use the exact pinned DSH Session implementation, not a synthetic event
+// fixture: first-turn inbox history and firstLiveSeq are distinct boundaries.
+const { Session } = await host('packages/core/session/src/index.ts')
+const freshSession = Session.create('issue-865-real-first-prestep')
+assert.equal(freshSession.firstLiveSeq, 0)
+assert.equal(freshSession.header.isSeeded, false)
+assert.equal(freshSession.requestHeader(), undefined)
+assert.equal(hasPriorModelHistory(freshSession), false)
+freshSession.append('user/message', createUserMessage({
+  source: { kind: 'user' }, content: [{ type: 'text', text: 'first turn' }],
+}), { surfaceOp: 'append' })
+assert.equal(hasPriorModelHistory(freshSession), false,
+  'first user input is not proof of a previous model request in a genuinely fresh DSH Session')
+const testRows = new Map()
+let testCleanup
+const projectionStore = createSessionImageProjectionModeStore({
+  get(name) {
+    if (name !== 'storageDomain') return undefined
+    return {
+      async open() {
+        return {
+          table(tableName) {
+            assert.equal(tableName, 'modes')
+            return {
+              get: id => testRows.get(id),
+              async put(id, value) { testRows.set(id, structuredClone(value)) },
+            }
+          },
+          async close() {},
+        }
+      },
+    }
+  },
+  effect(setup) { testCleanup = setup() },
+})
+assert.equal(await projectionStore.resolve(freshSession, true), 'stable')
+assert.equal(projectionStore.get(freshSession.id), 'stable')
+const stableWitness = projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' })
+assert.ok(stableWitness, 'the real DSH Session must receive exactly one source-attributed format witness')
+assert.deepEqual(projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' }), stableWitness,
+  'uncommitted steps must retry the same witness ID')
+freshSession.append('user/message', stableWitness, { surfaceOp: 'append' })
+projectionStore.onSessionEvent(freshSession, { type: 'user/message', data: stableWitness })
+assert.equal(projectionStore.witnessFor(freshSession, { kind: 'plugin:dsh-vision-router' }), undefined)
+await testCleanup()
+
+// Restore the exact real Host Session events with NO image-format sidecar.
+// This mimics an externally lost sidecar and a fork whose Session id differs.
+let orphanCleanup
+const orphanStore = createSessionImageProjectionModeStore({
+  get() { return undefined },
+  effect(setup) { orphanCleanup = setup() },
+})
+const restored = Session.create('issue-865-real-first-prestep', freshSession.snapshotEvents())
+assert.equal(hasPriorModelHistory(restored), true, 'cold resume has a historical construction offset')
+assert.equal(await orphanStore.resolve(restored, false), 'stable',
+  'the committed Host user/message witness is authoritative even without a sidecar')
+const inherited = Session.create(
+  'issue-865-real-child-fork', freshSession.snapshotEvents(),
+  { ...freshSession.header, id: 'issue-865-real-child-fork', isSeeded: true },
+  freshSession.seq,
+)
+assert.equal(inherited.header.isSeeded, true)
+assert.equal(await orphanStore.resolve(inherited, false), 'stable',
+  'forks inherit the format from their real DSH source log, not the child Session ID')
+// A first-ever, real DSH Session can select v2 without any optional storage.
+// The committed v2 witness survives Host cold restore and seeded fork.
+const canonicalV2 = Session.create('issue-865-canonical-v2')
+assert.equal(await orphanStore.resolve(canonicalV2, 'stable-v2'), 'stable-v2')
+const canonicalWitness = orphanStore.witnessFor(canonicalV2, { kind: 'plugin:dsh-vision-router' })
+assert.ok(canonicalWitness)
+canonicalV2.append('user/message', canonicalWitness, { surfaceOp: 'append' })
+orphanStore.onSessionEvent(canonicalV2, { type: 'user/message', data: canonicalWitness })
+const restoredV2 = Session.create('issue-865-canonical-v2', canonicalV2.snapshotEvents())
+assert.equal(await orphanStore.resolve(restoredV2, false), 'stable-v2')
+const forkedV2 = Session.create('issue-865-canonical-v2-fork', canonicalV2.snapshotEvents(),
+  { ...canonicalV2.header, id: 'issue-865-canonical-v2-fork', isSeeded: true }, canonicalV2.seq)
+assert.equal(await orphanStore.resolve(forkedV2, false), 'stable-v2')
+await orphanCleanup()
+const modelId = 'deepseek-flash'
+const fullHistoryModelId = 'synthetic-full-tool-history'
+const sourceRoute = 'deepseek-account'
+const twinRoute = 'deepseek-account-vision'
+const connection = {
+  models: [
+    { id: modelId, systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' },
+    { id: fullHistoryModelId, systemPromptUpdate: 'in-history', toolUpdate: 'in-history' },
+  ],
+  defaults: { reasoningEffort: 'high' },
+  maxTokens: 1024,
+}
+const fingerprint = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 16)
+const text = (value) => ({ type: 'text', text: value })
+const user = (value) => createUserMessage({ content: [text(value)], source: { kind: 'user' } })
+const assistant = (value, replay = undefined) => createAssistantMessage({
+  content: replay ? [{ type: 'reasoning', text: value }] : [text(value)],
+  source: { provider: sourceRoute, model: modelId, ...(replay ? { replayState: replay } : {}) },
+})
+const schema = (name) => ({
+  name, description: name + ' synthetic schema',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+})
+const ctx = new Context()
+await ctx.plugin(llm.default)
+const requests = []
+
+class SourceAdapter extends LlmAdapter {
+  providerInfo(provider) { return { id: provider, name: 'Offline synthetic DeepSeek' } }
+  async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
+  async resolveModel(provider, model) {
+    return { provider, id: model, name: model, inputModalities: ['text', 'image'],
+      reasoning: { efforts: [
+        { id: 'off', name: 'Off' }, { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High' }, { id: 'max', name: 'Max' },
+      ], defaultEffort: 'high' },
+      toolUpdate: model === fullHistoryModelId ? 'in-history' : 'addition-only', systemPromptUpdate: 'in-history' }
+  }
+  async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+const sourceAdapter = new SourceAdapter()
+ctx.llm.registerAdapter([sourceRoute], sourceAdapter)
+const privateContext = contextWithDelegatedReplay(ctx, { wrapperRoute: 'synthetic-not-used' })
+const bridge = createWrapperStreamBody(privateContext, {
+  imageMemory: new Map(),
+  delegateProvider: sourceRoute,
+  ownedTwinProvider: twinRoute,
+  preserveImageInput: true,
+})
+class TwinAdapter extends LlmAdapter {
+  providerInfo(provider) { return { id: provider, name: 'Offline twin' } }
+  async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
+  async resolveModel(provider, model) {
+    return { ...await sourceAdapter.resolveModel(sourceRoute, model), provider }
+  }
+  async *stream(options) { yield* bridge.stream(options) }
+}
+const twinAdapter = new TwinAdapter()
+ctx.llm.registerAdapter([twinRoute], twinAdapter)
+
+async function request(provider, messages, opts = {}) {
+  const before = requests.length
+  for await (const chunk of ctx.llm.stream({
+    provider, model: modelId, messages, maxTokens: 128, reasoningEffort: 'high',
+    sessionId: 'issue-865-synthetic', signal: AbortSignal.timeout(10000), ...opts,
+  })) {
+    if (chunk.type === 'finish' && chunk.reason?.kind !== 'stop') {
+      throw new Error('DSH request failed before source dispatch: ' + JSON.stringify(chunk.reason))
+    }
+  }
+  assert.equal(requests.length, before + 1, 'one source adapter dispatch per main call')
+  const actual = requests.at(-1)
+  assert.equal(actual.provider, sourceRoute, 'both paths must delegate to the same source provider')
+  return { options: actual, wire: serialize(actual, connection, actual.messages, new Map(), () => undefined) }
+}
+
+const extractSignatures = (wire) =>
+  wire.messages.flatMap(message =>
+    message.role !== 'assistant' ? [] : message.content.flatMap(block =>
+      block.type === 'thinking' && typeof block.signature === 'string' ? [block.signature] : []))
+const countChanges = (wire) =>
+  wire.messages.flatMap(message => message.content ?? []).filter(block => block.type === 'tool_addition' || block.type === 'tool_removal').length
+
+try {
+  const replayState = {
+    response: { kind: 'deepseek-messages', version: 1, model: modelId },
+    blocks: [{ type: 'reasoning', signature: 'SYNTHETIC_NON_SECRET_SIGNATURE' }],
+  }
+  const fixed = [
+    createSystemMessage('stable synthetic system'),
+    user('old user message'),
+    assistant('synthetic private thinking', replayState),
+    user('new user message'),
+  ]
+  const direct = await request(sourceRoute, fixed)
+  const viaTwin = await request(twinRoute, fixed)
+  const restored = await request(sourceRoute, fixed)
+  assert.deepEqual(extractSignatures(direct.wire), ['SYNTHETIC_NON_SECRET_SIGNATURE'],
+    'native adapter must retain signed DeepSeek Messages replay')
+  assert.deepEqual(extractSignatures(restored.wire), extractSignatures(direct.wire),
+    'switching back to native route restores original source replay')
+  assert.deepEqual(extractSignatures(viaTwin.wire), [],
+    'CHARACTERIZATION: the independent twin loses source-owned replay before delegate')
+  assert.notEqual(fingerprint(direct.wire), fingerprint(viaTwin.wire))
+  assert.equal(fingerprint(direct.wire), fingerprint(restored.wire))
+
+  const base = schema('base')
+  const first = schema('first')
+  const later = schema('later')
+  const removed = createDeveloperMessage({
+    source: { kind: 'user' }, content: [{ type: 'tool-removal', toolName: 'base' }],
+  })
+  const addedFirst = createDeveloperMessage({
+    source: { kind: 'user' }, content: [{ type: 'tool-addition', toolName: 'first' }],
+  })
+  const addedLater = createDeveloperMessage({
+    source: { kind: 'user' }, content: [{ type: 'tool-addition', toolName: 'later' }],
+  })
+  const toolMessages = [
+    createSystemMessage('stable synthetic system'),
+    user('first user'), assistant('answer one'),
+    user('remove tool'), removed, assistant('answer two'),
+    user('add first'), addedFirst, assistant('answer three'),
+    user('add later'), addedLater, assistant('answer four'),
+    user('continue'),
+  ]
+  const toolHistory = {
+    tools: [base],
+    updates: [
+      { messageId: removed.id, additions: [] },
+      { messageId: addedFirst.id, additions: [first] },
+      { messageId: addedLater.id, additions: [later] },
+    ],
+  }
+  const config = { tools: [first, later], toolHistory }
+  const directTools = await request(sourceRoute, toolMessages, config)
+  const viaTwinTools = await request(twinRoute, toolMessages, config)
+  // The Host addition-only baseline rebases at the removal and the first
+  // post-removal addition. A later update must survive as an activation block.
+  assert.ok(countChanges(directTools.wire) > 0,
+    'single projection retains the last incremental tool activation')
+  assert.equal(countChanges(viaTwinTools.wire), 0,
+    'CHARACTERIZATION: wrapper double projection strips a surviving developer update')
+  assert.notEqual(fingerprint(directTools.wire), fingerprint(viaTwinTools.wire))
+
+  // Candidate fix seam: the Host's documented llm/stream waterfall runs BEFORE
+  // adapterStream's projection. Capture only our synthetic twin's inputs;
+  // the Host still dispatches its pinned generation before source delegation.
+  // The source Runtime must then project and filter history exactly once.
+  // This characterizes correctness, not retry/usage/middleware ordering.
+  let delegatedAtWaterfall = 0
+  installOwnedTwinStreamBoundary(ctx, (route) => {
+    if (route !== twinRoute) return undefined
+    delegatedAtWaterfall += 1
+    return twinAdapter
+  })
+  const transparentReplay = await request(twinRoute, fixed)
+  const transparentTools = await request(twinRoute, toolMessages, config)
+  assert.equal(delegatedAtWaterfall, 2)
+  assert.deepEqual(extractSignatures(transparentReplay.wire), extractSignatures(direct.wire),
+    'waterfall delegation must preserve source-owned signed history')
+  assert.equal(fingerprint(transparentReplay.wire), fingerprint(direct.wire),
+    'waterfall delegation must produce identical native DeepSeek replay wire')
+  assert.equal(countChanges(transparentTools.wire), countChanges(directTools.wire),
+    'waterfall delegation must not lose tool-update blocks')
+  assert.equal(fingerprint(transparentTools.wire), fingerprint(directTools.wire),
+    'waterfall delegation must produce identical native tool history wire')
+
+  // Known residual gap: a successfully streamed source response is persisted
+  // with the *twin* public route as its source identity. Native DeepSeek
+  // replayState v1 carries a model id but no separate provider ownership proof.
+  // The subsequent source dispatch cannot safely replay that signature until
+  // an explicit alias-provenance contract is introduced. This must be covered
+  // by a separate fix, not hidden by claiming complete prefix transparency.
+  const twinAuthored = [
+    createSystemMessage('stable synthetic system'),
+    user('first twin conversation turn'),
+    createAssistantMessage({
+      content: [{ type: 'reasoning', text: 'synthetic private thinking' }],
+      source: { provider: twinRoute, model: modelId, replayState },
+    }),
+    user('next twin conversation turn'),
+  ]
+  const twinContinuation = await request(twinRoute, twinAuthored)
+  assert.equal(extractSignatures(twinContinuation.wire).length, 0,
+    'unstamped old twin replay must not be inferred from an alias name')
+
+  const provenTwinAuthored = twinAuthored.map(message => {
+    if (message.role !== 'assistant') return message
+    return {
+      ...message,
+      source: {
+        ...message.source,
+        replayState: {
+          ...message.source.replayState,
+          response: {
+            ...message.source.replayState.response,
+            provider: sourceRoute,
+          },
+        },
+      },
+    }
+  })
+  const trustedTwinContinuation = await request(twinRoute, provenTwinAuthored)
+  assert.equal(extractSignatures(trustedTwinContinuation.wire).length, 1,
+    'provider-stamped native twin replay must survive private DVR source rebinding')
+
+  // Stage 2: use actual LlmRuntime + DeepSeek Messages wire projection to
+  // distinguish stable same-policy requests from the unavoidable removal
+  // baseline reset. This is not a claim of real provider-side cache hits.
+  const foreign = schema('foreign_helper')
+  const ocr = schema('vision_ocr')
+  const describe = schema('vision_describe')
+  const schemaHeader = (wire) => {
+    const { messages: _messages, ...header } = wire
+    return fingerprint(header)
+  }
+  const checkPrefix = (before, after, what) => {
+    assert.deepEqual(
+      after.wire.messages.slice(0, before.wire.messages.length),
+      before.wire.messages,
+      what + ': all previously serialized model messages must retain their bytes and order',
+    )
+  }
+  // Pass the ACTUAL pinned DSH DeepSeek Messages serializer output through
+  // the same privacy-preserving forensic analyzer exposed to maintainers.
+  // Upstream is taken from the exact delegated LlmRuntime options, never
+  // guessed from a DVR alias or a model name.
+  const forensic = (earlier, later) => compareFinalWireRequests(
+    { wire: earlier.wire, upstream: { provider: earlier.options.provider, model: earlier.options.model } },
+    { wire: later.wire, upstream: { provider: later.options.provider, model: later.options.model } },
+  )
+  const offMessages = [createSystemMessage('stable native prompt'), user('opening OFF turn'), assistant('opening reply'), user('vision OFF first')]
+  const offHistory = { tools: [foreign], updates: [] }
+  const offOne = await request(sourceRoute, offMessages, { tools: [foreign], toolHistory: offHistory })
+  const offTwo = await request(sourceRoute, [...offMessages, assistant('answered OFF first'), user('vision still OFF')], {
+    tools: [foreign], toolHistory: offHistory,
+  })
+  const offForensic = forensic(offOne, offTwo)
+  assert.equal(offForensic.localSerializedPrefixPreserved, true,
+    'real serialized OFF->OFF history + header must preserve prefix')
+  assert.equal(offForensic.changes.upstream, false)
+  assert.equal(schemaHeader(offOne.wire), schemaHeader(offTwo.wire), 'OFF->OFF headers must stay stable')
+  checkPrefix(offOne, offTwo, 'OFF->OFF')
+  assert.equal(countChanges(offTwo.wire), 0)
+
+  const enable = createDeveloperMessage({ source: { kind: 'user' }, content: [
+    { type: 'tool-addition', toolName: ocr.name },
+    { type: 'tool-addition', toolName: describe.name },
+  ] })
+  const enabledHistory = { tools: [foreign], updates: [
+    { messageId: enable.id, additions: [ocr, describe] },
+  ] }
+  const onMessages = [...offMessages, assistant('answered OFF'), user('enable visual precision'), enable, user('vision ON first')]
+  const onOne = await request(sourceRoute, onMessages, {
+    tools: [foreign, ocr, describe], toolHistory: enabledHistory,
+  })
+  const onTwo = await request(sourceRoute, [...onMessages, assistant('answered ON'), user('vision still ON')], {
+    tools: [foreign, ocr, describe], toolHistory: enabledHistory,
+  })
+  const transitionForensic = forensic(offOne, onOne)
+  assert.equal(transitionForensic.localSerializedPrefixPreserved, false,
+    'real native DeepSeek OFF->ON tool change must NOT be reported as a cache-continuous transition')
+  assert.equal(transitionForensic.changes.tools, true,
+    'actual serialized DeepSeek tools are different across permission transitions')
+  const onForensic = forensic(onOne, onTwo)
+  assert.equal(onForensic.localSerializedPrefixPreserved, true,
+    'real serialized ON->ON history + header must preserve prefix')
+  assert.equal(schemaHeader(onOne.wire), schemaHeader(onTwo.wire), 'ON->ON headers must stay stable')
+  checkPrefix(onOne, onTwo, 'ON->ON')
+  assert.equal(countChanges(onOne.wire), 2, 'each tool becomes available once through the official addition-only projection')
+
+  const disable = createDeveloperMessage({ source: { kind: 'user' }, content: [
+    { type: 'tool-removal', toolName: ocr.name },
+    { type: 'tool-removal', toolName: describe.name },
+  ] })
+  const disabledHistory = { tools: [foreign], updates: [
+    { messageId: enable.id, additions: [ocr, describe] },
+    { messageId: disable.id, additions: [] },
+  ] }
+  const afterOffMessages = [...onMessages, assistant('answered ON'), user('disable visual precision'), disable, user('vision OFF again')]
+  const offAgain = await request(sourceRoute, afterOffMessages, {
+    tools: [foreign], toolHistory: disabledHistory,
+  })
+  const offContinuation = await request(sourceRoute, [...afterOffMessages, assistant('answered OFF again'), user('remain OFF')], {
+    tools: [foreign], toolHistory: disabledHistory,
+  })
+  assert.equal(schemaHeader(offAgain.wire), schemaHeader(offContinuation.wire),
+    'post-transition OFF->OFF headers must stay stable')
+  checkPrefix(offAgain, offContinuation, 'post-transition OFF->OFF')
+  // DeepSeek addition-only MUST rebuild at a tool removal. Do not keep a
+  // protected tool declared merely to manufacture a historical cache hit.
+  assert.equal(schemaHeader(offAgain.wire), schemaHeader(offOne.wire),
+    'returning OFF should expose exactly the original tool header')
+  assert.equal(countChanges(offAgain.wire), 0,
+    'removed visual tools must not be offered after an addition-only baseline reset')
+  const offeredNames = offAgain.wire.tools?.map(tool => tool.name) ?? []
+  assert.ok(!offeredNames.includes(ocr.name) && !offeredNames.includes(describe.name),
+    'OFF must never retain an executable DVR tool declaration')
+
+  // Experimental control: separate fixed transport declarations from a
+  // durable appended policy snapshot. No production visibility is changed.
+  // This exercises actual pinned LlmRuntime and DeepSeek serialization, NOT
+  // the real provider's cache or permission enforcement. In particular the
+  // fixed native candidate exposes definitions while OFF and is not eligible
+  // for the existing strict visibility contract.
+  async function probeFixedSurface(label, tools) {
+    const history = { tools, updates: [] }
+    const messages = [createSystemMessage('fixed synthetic capability instructions')]
+    const transitions = []
+    let previous
+    for (const [index, enabled] of [false, true, false, true].entries()) {
+      if (index > 0) messages.push(assistant('synthetic prior response ' + index))
+      messages.push(user('synthetic input ' + index))
+      // Model-visible snapshots use user-role context, matching the Host
+      // PromptContext transport. Place the context before an assistant, not
+      // after an already serialized user turn in a separate request.
+      messages.push(user('synthetic runtime vision policy: ' + (enabled ? 'ON' : 'OFF')))
+      const current = await request(sourceRoute, [...messages], { tools, toolHistory: history })
+      if (previous) {
+        const difference = forensic(previous, current)
+        assert.equal(difference.localSerializedPrefixPreserved, true, label + ': ' + JSON.stringify(difference.changedDimensions))
+        assert.equal(difference.changes.upstream, false)
+        checkPrefix(previous, current, label)
+        assert.equal(JSON.stringify(current.wire.messages.slice(0, previous.wire.messages.length)),
+          JSON.stringify(previous.wire.messages), label + ': exact serialized historical bytes')
+      }
+      transitions.push({ enabled, prefix: previous ? true : null, ownedDeclarations: (current.wire.tools ?? [])
+        .filter(tool => tool.name.startsWith('vision_')).length })
+      previous = current
+    }
+    return transitions
+  }
+  const fixedNative = await probeFixedSurface('fixed native declarations', [foreign, ocr, describe])
+  assert.ok(fixedNative.every(row => row.ownedDeclarations === 2),
+    'negative control: fixed native declarations violate OFF invisibility')
+  const deferredNative = await probeFixedSurface('fixed deferred declarations',
+    [foreign, { ...ocr, deferLoading: true }, { ...describe, deferLoading: true }])
+  assert.ok(deferredNative.every(row => row.ownedDeclarations === 2),
+    'deferred declarations are still physically sent, not hidden')
+  // Generic transport control, not a real PTC executor test. A subsequent
+  // PTC integration must prove SDK/context projection and nested denial.
+  const genericTransport = await probeFixedSurface('fixed generic transport', [schema('run_code')])
+  assert.ok(genericTransport.every(row => row.ownedDeclarations === 0))
+  console.log(JSON.stringify({ scenario: 'issue-865 fixed surface wire feasibility',
+    fixedNative, deferredNative, genericTransport,
+    limitations: ['synthetic policy context', 'no actual PTC executor', 'no provider cache claim'] }))
+
+  // Compare a route that truthfully advertises complete tool-update support.
+  // This is a synthetic capability declaration, NOT evidence that DeepSeek
+  // Flash or a third-party provider supports tool_removal. No live request.
+  // The first native addition necessarily changes the declaration header;
+  // later removal/re-addition may retain the established deferred baseline.
+  const fullMessages = [createSystemMessage('full-history capability control'), user('opening OFF')]
+  const fullUpdates = []
+  const fullTransitions = []
+  let priorFull
+  for (const [index, enabled] of [false, true, false, true].entries()) {
+    if (index > 0) {
+      fullMessages.push(assistant('previous response ' + index), user('toggle ' + index))
+      const change = createDeveloperMessage({ source: { kind: 'user' }, content: [
+        { type: enabled ? 'tool-addition' : 'tool-removal', toolName: ocr.name },
+        { type: enabled ? 'tool-addition' : 'tool-removal', toolName: describe.name },
+      ] })
+      fullMessages.push(change)
+      fullUpdates.push({ messageId: change.id, additions: enabled ? [ocr, describe] : [] })
+    }
+    const active = enabled ? [foreign, ocr, describe] : [foreign]
+    const current = await request(sourceRoute, [...fullMessages], {
+      model: fullHistoryModelId, tools: active,
+      toolHistory: { tools: [foreign], updates: [...fullUpdates] },
+    })
+    const diff = priorFull ? forensic(priorFull, current) : null
+    if (index === 1) assert.equal(diff.changes.tools, true,
+      'first-ever tool declarations cannot be added without changing the wire header')
+    if (index >= 2) {
+      assert.equal(diff.localSerializedPrefixPreserved, true,
+        'a complete in-history provider can retain the established native declarations')
+      checkPrefix(priorFull, current, 'complete in-history provider')
+    }
+    const declarations = current.wire.tools ?? []
+    fullTransitions.push({ enabled, headerOwned: declarations.filter(t => t.name.startsWith('vision_')).length,
+      activeOwned: active.filter(t => t.name.startsWith('vision_')).length,
+      prefixPreserved: diff?.localSerializedPrefixPreserved ?? null,
+      changedDimensions: diff?.changedDimensions ?? [], historyChangeBlocks: countChanges(current.wire) })
+    priorFull = current
+  }
+  assert.equal(fullTransitions[2].activeOwned, 0)
+  assert.equal(fullTransitions[2].headerOwned, 2,
+    'retained declarations are not strict physical schema invisibility')
+  console.log(JSON.stringify({ scenario: 'complete tool-update capability control', fullTransitions,
+    limitations: ['synthetic model capability', 'not DeepSeek Flash support', 'no actual cache hit proof'] }))
+  // A switch back to an earlier state may still reuse the earlier state's
+  // original prefix even when it differs from the immediately preceding request.
+  // Record this separately instead of counting every transition as a full miss.
+  const returningOff = forensic(offOne, offAgain)
+  console.log(JSON.stringify({ scenario: 'addition-only returning OFF cache opportunity',
+    earlierOffPrefixPreserved: returningOff.localSerializedPrefixPreserved,
+    commonHistoricalMessages: returningOff.commonHistoricalMessages,
+    changedDimensions: returningOff.changedDimensions }))
+
+  // V2: both text-only entries converge on the actual native DeepSeek
+  // Messages serializer, not merely an approximate JSON representation.
+  // The image is a realistic DSH UserMessage but is NEVER serialized as
+  // image bytes on this text-only route.
+  const fixtureImage = createUserMessage({
+    source: { kind: 'user' }, content: [{
+      type: 'image', attachment: {
+        attachmentId: 'sha256:canonical-v2-wire-attachment', name: 'original.png',
+      },
+    }],
+  })
+  const rawV2 = [
+    createSystemMessage('canonical stable-v2 synthetic prompt'),
+    fixtureImage, assistant('prior answer'), user('follow-up message'),
+  ]
+  const v2Memory = new Map([['sha256:canonical-v2-wire-attachment', 'late OCR does not belong to old history']])
+  const historyV2 = rewriteHistoryImages(rawV2, v2Memory, { stable: 'stable-v2' }).messages
+  const serializedHistory = await request(sourceRoute, historyV2)
+  const projected = []
+  const bridgeV2 = createWrapperStreamBody({
+    llm: { async *stream(options) {
+      projected.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
+  }, {
+    imageMemory: v2Memory, delegateProvider: sourceRoute, preserveImageInput: false,
+    stableImageHistory: options => options.sessionId === 'wire-v2' ? 'stable-v2' : false,
+  })
+  for await (const _ of bridgeV2.stream({
+    provider: 'synthetic-v2-twin', model: modelId, messages: rawV2,
+    sessionId: 'wire-v2', maxTokens: 128, reasoningEffort: 'high',
+  })) {}
+  assert.equal(projected.length, 1)
+  const serializedTwin = serialize({ ...serializedHistory.options, messages: projected[0].messages },
+    connection, projected[0].messages, new Map(), () => undefined)
+  assert.deepEqual(serializedTwin.messages, serializedHistory.wire.messages,
+    'both real DeepSeek serializer entrypoints must receive the exact same canonical v2 image prefix')
+  assert.equal(compareFinalWireRequests(
+    { wire: serializedHistory.wire, upstream: { provider: sourceRoute, model: modelId } },
+    { wire: serializedTwin, upstream: { provider: sourceRoute, model: modelId } },
+  ).localSerializedPrefixPreserved, true,
+  'the forensic auditor must accept actual v2 wrapper/direct full native DeepSeek serialization')
+  v2Memory.set('sha256:canonical-v2-wire-attachment', 'OCR changed after cold resume')
+  const afterOcrV2 = rewriteHistoryImages(rawV2, v2Memory, { stable: 'stable-v2' }).messages
+  assert.deepEqual(afterOcrV2, historyV2, 'historical v2 prefix is immutable after OCR update')
+
+  console.log(JSON.stringify({
+    ok: true,
+    host: process.env.DSH_EXPECTED_VERSION ?? 'pinned DSH',
+    scenario: 'issue-865 real LlmRuntime + DeepSeek Messages serializer',
+    replay: {
+      directSignatureCount: extractSignatures(direct.wire).length,
+      wrappedSignatureCount: extractSignatures(viaTwin.wire).length,
+      restoredSignatureCount: extractSignatures(restored.wire).length,
+      directPrefix: fingerprint(direct.wire),
+      wrappedPrefix: fingerprint(viaTwin.wire),
+    },
+    toolHistory: {
+      directChangeBlocks: countChanges(directTools.wire),
+      wrappedChangeBlocks: countChanges(viaTwinTools.wire),
+      waterfallChangeBlocks: countChanges(transparentTools.wire),
+      directPrefix: fingerprint(directTools.wire),
+      wrappedPrefix: fingerprint(viaTwinTools.wire),
+      waterfallPrefix: fingerprint(transparentTools.wire),
+    },
+    toolStateContinuity: {
+      offSamePrefix: true, onSamePrefix: true, postTransitionOffSamePrefix: true,
+      offToolNames: offeredNames, toolRemovalRebuilt: true,
+    },
+    waterfall: {
+      delegatedCalls: delegatedAtWaterfall,
+      preservedReplaySignatureCount: extractSignatures(transparentReplay.wire).length,
+      sameReplayWire: fingerprint(transparentReplay.wire) === fingerprint(direct.wire),
+      sameToolWire: fingerprint(transparentTools.wire) === fingerprint(directTools.wire),
+      twinAuthoredReplaySignatureCount: extractSignatures(twinContinuation.wire).length,
+      provenTwinReplaySignatureCount: extractSignatures(trustedTwinContinuation.wire).length,
+    },
+  }))
+  // A prepared call is bound to its original registered generation by DSH.
+  // Verify the real Host positive control, then the DVR waterfall shortcut
+  // against exactly the same synchronous route replacement.
+  async function preparedGenerationProbe(route, intercept) {
+    const calls = []
+    class Generation extends LlmAdapter {
+      constructor(label) { super(); this.label = label }
+      providerInfo(provider) { return { id: provider, name: 'Offline generation ' + this.label } }
+      async listModels(provider) { return [await this.resolveModel(provider, modelId)] }
+      async resolveModel(provider, model) {
+        return { provider, id: model, name: model, inputModalities: ['text'] }
+      }
+      async *stream() {
+        calls.push(this.label)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    let current = identifyOwnedTwinStream(new Generation('prepared-old'))
+    const old = ctx.llm.registerAdapter([route], current)
+    const removeBoundary = intercept
+      ? installOwnedTwinStreamBoundary(ctx, provider => provider === route ? current : undefined)
+      : undefined
+    let replacement
+    try {
+      const prepared = await ctx.llm.prepareCall({ provider: route, model: modelId, maxTokens: 128 })
+      old.replace([])
+      current = identifyOwnedTwinStream(new Generation('replacement-new'))
+      replacement = ctx.llm.registerAdapter([route], current)
+      const chunks = []
+      for await (const chunk of prepared.stream({
+        ...prepared.config, messages: [user('synthetic generation contract')],
+        sessionId: 'synthetic-generation-fence',
+      })) chunks.push(chunk)
+      assert.equal(chunks.at(-1)?.reason?.kind, 'stop')
+      return calls
+    } finally {
+      removeBoundary?.()
+      replacement?.()
+      old()
+    }
+  }
+  const baselineGeneration = await preparedGenerationProbe('baseline-prepared-vision', false)
+  assert.deepEqual(baselineGeneration, ['prepared-old'], 'positive control: DSH pins its prepared registration')
+  const candidateGeneration = await preparedGenerationProbe('candidate-prepared-vision', true)
+  console.log(JSON.stringify({ scenario: 'issue-865 pinned prepared registration across HMR',
+    baselineGeneration, candidateGeneration,
+    candidatePreservesGeneration: candidateGeneration.length === 1 && candidateGeneration[0] === 'prepared-old' }))
+  assert.deepEqual(candidateGeneration, ['prepared-old'],
+    'DVR transparent dispatch must not replace the Host-pinned adapter generation')
+} finally {
+  await ctx.fiber.dispose()
+}

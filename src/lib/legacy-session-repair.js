@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { randomBytes } from 'node:crypto'
+import { assessProjectionDowngrade } from './session-image-stabilize-command.js'
 import {
   constants as zlibConstants,
   zstdCompressSync,
@@ -479,6 +480,90 @@ export function inspectLegacySessionArtifact(filePath, {
     repaired: true,
     backupPath,
   }
+}
+
+/**
+ * Read-only capability preflight for an explicitly selected old DVR binary.
+ *
+ * This deliberately reuses the exact parser, contiguous-seq integrity check
+ * and bounded Zstd frame decoder used by the existing Session repair code.
+ * Never infer compatibility from a grep hit or an unreadable compressed log.
+ * No file is modified, no Session IDs, paths, prompts or image references
+ * escape the aggregate result.
+ */
+export function assessSessionArtifactDowngrade(filePath, target, {
+  maxLogBytes = DEFAULT_MAX_LOG_BYTES,
+  maxFramePlaintextBytes = DEFAULT_MAX_FRAME_PLAINTEXT_BYTES,
+} = {}) {
+  const before = fileIdentity(filePath)
+  if (before.size > BigInt(maxLogBytes)) throw new Error('bounded Session scan limit exceeded')
+  const input = readFileSync(filePath)
+  let rows
+  if (filePath.endsWith('.zstd')) {
+    const scan = scanZstdFrameRanges(input)
+    if (scan.tornStart !== undefined || scan.frames.length === 0) {
+      throw new Error('incomplete compressed Session: downgrade is unverified')
+    }
+    const header = decodeZstdFrame(input, scan.frames[0], maxFramePlaintextBytes).toString('utf8')
+    if (!header.endsWith('\n') || header.indexOf('\n') !== header.length - 1) {
+      throw new Error('malformed compressed Session header')
+    }
+    parseHeaderLine(header.slice(0, -1))
+    const frames = scan.frames.slice(1).map((range, i) =>
+      parseEventLines(decodeZstdFrame(input, range, maxFramePlaintextBytes).toString('utf8'),
+        { frameLabel: 'compressed Session frame ' + i }))
+    scanRows(frames)
+    rows = frames.flatMap(frame => frame.map(item => item.row))
+  } else {
+    const text = input.toString('utf8')
+    const newline = text.indexOf('\n')
+    if (newline < 0 || !text.endsWith('\n')) throw new Error('incomplete Session JSONL')
+    parseHeaderLine(text.slice(0, newline))
+    const records = parseEventLines(text.slice(newline + 1))
+    scanRows([records])
+    rows = records.map(item => item.row)
+  }
+  if (!sameIdentity(before, fileIdentity(filePath))) {
+    throw new Error('Session changed while reading: cannot prove downgrade safety')
+  }
+  return assessProjectionDowngrade(rows, target)
+}
+
+export function inspectDshDowngradeSafety({
+  dshHome, target, maxLogBytes = DEFAULT_MAX_LOG_BYTES,
+  maxFramePlaintextBytes = DEFAULT_MAX_FRAME_PLAINTEXT_BYTES,
+} = {}) {
+  if (typeof dshHome !== 'string' || !dshHome.trim()) {
+    throw new TypeError('downgrade preflight requires an explicit DSH home')
+  }
+  if (!['legacy-only', 'stable-v1', 'stable-v2'].includes(target)) {
+    throw new TypeError('downgrade preflight requires an explicit target capability')
+  }
+  const root = path.join(dshHome, 'sessions')
+  if (!existsSync(root)) {
+    return { target, scanned: 0, blocked: 0, unknown: 0, unreadable: 0,
+      decision: 'unknown', reason: 'session-store-unavailable' }
+  }
+  const files = listSessionArtifacts(root)
+  const counts = { allow: 0, block: 0, unknown: 0, unreadable: 0 }
+  for (const file of files) {
+    try {
+      const result = assessSessionArtifactDowngrade(file, target,
+        { maxLogBytes, maxFramePlaintextBytes })
+      counts[result.decision]++
+    } catch {
+      // NEVER copy original Session IDs, private paths or exception bodies
+      // into a shareable doctor report; unreadable is a hard blocker.
+      counts.unreadable++
+    }
+  }
+  const decision = counts.block > 0 || counts.unreadable > 0 ? 'block'
+    : counts.unknown > 0 || files.length === 0 ? 'unknown' : 'allow'
+  return { target, scanned: files.length, blocked: counts.block,
+    unknown: counts.unknown, unreadable: counts.unreadable, decision,
+    reason: decision === 'allow' ? 'all-readable-formats-supported'
+      : decision === 'block' ? 'incompatible-or-unreadable-session'
+        : 'unproven-session-format' }
 }
 
 export function listSessionArtifacts(sessionsRoot) {

@@ -24,8 +24,9 @@ function harness({ parent, owned = true, seed = [] } = {}) {
         return owned && owner === parent && id === 'child'
       },
     },
-    on(event, callback) {
+    on(event, callback, options) {
       assert.equal(event, 'agent/created')
+      assert.equal(options?.global, true, 'observe the actual scoped Host Agent creation carrier')
       listener = callback
     },
   }
@@ -111,4 +112,13 @@ test('policy persistence failure rejects the serial creation listener', async ()
     () => listener({ agent: { id: 'child' } }),
     /durability failed/,
   )
+})
+
+test('unverified child policy cannot be replaced by inherited ON', async () => {
+  const parent = { id: 'parent', routeEnabled: true }
+  const h = harness({ parent })
+  h.store.isUnverified = id => id === 'child'
+  installSessionVisionDelegationBoundary(h.ctx, h.store, () => ({ enabled: true }))
+  await h.created({ id: 'child' })
+  assert.equal(h.store.get('child'), undefined)
 })

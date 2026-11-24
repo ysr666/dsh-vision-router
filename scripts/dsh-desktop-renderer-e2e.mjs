@@ -273,7 +273,128 @@ function collectDvrMessages(value, out = []) {
   return out
 }
 
+// Test-fixture-only observer of the exact Host catalog reads. No extra
+// model discovery, credential access, model calls or retry of the user click.
+// Return the original values/Promise unchanged; never mask a Host failure.
+function installModelAdmissionAudit(scope) {
+  const llm = scope.llm
+  const source = 'desktop-e2e'
+  const twin = 'desktop-e2e-vision'
+  const model = 'desktop-text'
+  const trace = []
+  const restores = []
+  const observed = new WeakSet()
+  let sequence = 0
+  const record = (event) => {
+    trace.push({ seq: ++sequence, ms: Date.now(), ...event })
+    if (trace.length > 160) trace.splice(0, trace.length - 160)
+  }
+  const safeCode = error => {
+    const code = error?.code
+    return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code)
+      ? code : 'UNCLASSIFIED'
+  }
+  const shape = rows => ({
+    count: Array.isArray(rows) ? rows.length : null,
+    hasModel: Array.isArray(rows) && rows.some(row => row?.id === model),
+  })
+  const wrap = (object, key, make) => {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key)
+    const original = object[key]
+    if (typeof original !== 'function') throw new Error('missing catalog observer target')
+    const wrapped = make(original)
+    Object.defineProperty(object, key, { configurable: true, writable: true, value: wrapped })
+    restores.push(() => {
+      if (object[key] !== wrapped) return
+      if (descriptor) Object.defineProperty(object, key, descriptor)
+      else delete object[key]
+    })
+  }
+  const observeModels = (original, layer) => function(provider, ...args) {
+    if (provider !== source && provider !== twin) return Reflect.apply(original, this, [provider, ...args])
+    const call = sequence + 1
+    record({ kind: 'models-start', layer, provider, call })
+    let value
+    try { value = Reflect.apply(original, this, [provider, ...args]) }
+    catch (error) {
+      record({ kind: 'models-error', layer, provider, call, code: safeCode(error) })
+      throw error
+    }
+    const success = rows => record({ kind: 'models-end', layer, provider, call, ...shape(rows) })
+    const failed = error => record({ kind: 'models-error', layer, provider, call, code: safeCode(error) })
+    if (value && typeof value.then === 'function') void Promise.resolve(value).then(success, failed).catch(() => {})
+    else success(value)
+    return value
+  }
+  const rawListProviders = llm.listProviders
+  const snapshotTopology = kind => {
+    try {
+      const rows = Reflect.apply(rawListProviders, llm, [])
+      record({ kind, source: rows.some(row => row.id === source), twin: rows.some(row => row.id === twin) })
+      // Capture errors that the DVR twin's listModels catch would otherwise
+      // turn into []; never call the source catalog independently.
+      const adapter = rows.some(row => row.id === source) ? llm.registration(source).adapter : undefined
+      if (adapter && !observed.has(adapter)) {
+        wrap(adapter, 'listModels', original => observeModels(original, 'source-adapter'))
+        observed.add(adapter)
+        record({ kind: 'source-observer-installed' })
+      }
+    } catch (error) {
+      record({ kind: 'observer-error', code: safeCode(error) })
+    }
+  }
+  try {
+    wrap(llm, 'listProviders', original => function(...args) {
+      const rows = Reflect.apply(original, this, args)
+      record({ kind: 'providers-read', source: rows.some(row => row.id === source),
+        twin: rows.some(row => row.id === twin) })
+      return rows
+    })
+    wrap(llm, 'listModels', original => observeModels(original, 'host'))
+    // selectModel also validates exact model metadata/reasoning before
+    // committing. Its catch maps those failures to the same remote code.
+    if (typeof llm.resolveCallConfig === 'function') {
+      wrap(llm, 'resolveCallConfig', original => function(config, ...args) {
+        const provider = config?.provider
+        if (provider !== source && provider !== twin) return Reflect.apply(original, this, [config, ...args])
+        const call = sequence + 1
+        record({ kind: 'resolve-start', provider, call, exactModel: config?.model === model,
+          explicitEffort: config?.reasoningEffort !== undefined })
+        let value
+        try { value = Reflect.apply(original, this, [config, ...args]) }
+        catch (error) { record({ kind: 'resolve-error', provider, call, code: safeCode(error) }); throw error }
+        const success = () => record({ kind: 'resolve-end', provider, call })
+        const failed = error => record({ kind: 'resolve-error', provider, call, code: safeCode(error) })
+        if (value && typeof value.then === 'function') void Promise.resolve(value).then(success, failed).catch(() => {})
+        else success()
+        return value
+      })
+    }
+    snapshotTopology('initial-topology')
+    scope.on('llm/adapters-updated', () => snapshotTopology('topology-change'), { global: true })
+    scope.effect(() => () => {
+      for (const restore of restores.reverse()) {
+        try { restore() } catch {}
+      }
+    }, 'desktop-e2e: restore catalog observer')
+  } catch (error) {
+    record({ kind: 'observer-error', code: safeCode(error) })
+  }
+  return () => trace.slice()
+}
+
 export function apply(ctx) {
+  ctx.inject(['webServer', 'llm'], (scope) => {
+    const admission = installModelAdmissionAudit(scope)
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-model-admission',
+      handler(_request, response) {
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ trace: admission() }))
+      },
+    }), 'desktop-e2e: exact model admission diagnostics')
+  })
   ctx.inject(['webServer'], (scope) => {
     scope.effect(() => scope.webServer.register({
       kind: 'exact',
@@ -490,6 +611,18 @@ async function readHostSessionSources(authenticatedUrl) {
   }
 }
 
+async function readHostModelAdmission(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-model-admission'
+  target.search = ''
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
+  if (!response.ok) throw new Error('model admission probe HTTP ' + response.status)
+  const body = await response.json()
+  if (!Array.isArray(body?.trace)) throw new Error('model admission probe invalid shape')
+  return body.trace.slice(-160)
+}
+
 async function readHostModelSelections(authenticatedUrl) {
   const target = new URL(authenticatedUrl)
   const cookie = await exchangeHostCookie(authenticatedUrl)
@@ -654,6 +787,8 @@ let exactNativeToolCalls = 0
 let exactNativeToolResult
 let exactNativeToolError
 const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
+// The reviewed current Host, unlike the supported old floor, has Agent.model.current.
+const checkNativePolicy = dshVersion === '0.2.2-rc.5' && !checkWholeTurnRouting
 const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
 const visionEvidence = { requests: 0, sawImage: false }
 const rendererErrors = []
@@ -846,6 +981,22 @@ try {
     // never a fabricated context-window size in their adapter manifest.
     checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
     '            maxTokens: 2048',
+    ...(checkNativePolicy ? [
+      // A different provider is intentional. The existing picker preserves
+      // Vision ON when changing a model within its visible wrapper group (#284).
+      // A distinct native provider exercises an actual ordinary route, rather
+      // than accidentally testing the twin under its presentation label.
+      '      desktop-native-e2e:',
+      '        displayName: Desktop Native E2E',
+      '        api: openai-completions',
+      '        apiKeyEnv: DVR_DESKTOP_E2E_API_KEY',
+      `        baseURL: ${textServer.url}/v1`,
+      '        models:',
+      '          - id: desktop-native',
+      '            input: [text, image]',
+      '            contextWindow: 131072',
+      '            maxTokens: 2048',
+    ] : []),
     '- id: agent-default-model',
     '  config:',
     '    provider: desktop-e2e',
@@ -1030,6 +1181,7 @@ try {
       disabled: node.disabled === true,
       label: node.getAttribute('aria-label'),
       title: node.title,
+      nativeState: node.getAttribute('data-native-vision-state'),
     }
   })
   // Observe every relevant mutation, not only the state at two timestamps.
@@ -1065,6 +1217,9 @@ try {
       // probe read-only and protect the original timeout as the root error.
       const hostSelections = await readHostModelSelections(authenticatedHostUrl)
         .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
+      const admissionTrace = await readHostModelAdmission(authenticatedHostUrl)
+        .catch(() => [{ kind: 'admission-observer-unavailable' }])
+      console.error(JSON.stringify({ scenario: 'Desktop exact Host model admission trace', direction, admissionTrace }))
       const clientDirectory = await readClientModelDirectory(page)
         .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
       const clientTransitions = await page.evaluate(() => ({
@@ -1090,6 +1245,14 @@ try {
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
+  const admissionTrace = await readHostModelAdmission(authenticatedHostUrl)
+  assert.ok(admissionTrace.some(row => row.kind === 'models-end' && row.layer === 'host'
+    && row.provider === 'desktop-e2e-vision' && row.hasModel === true),
+    'positive control: observer captured actual Host twin catalog result')
+  assert.ok(admissionTrace.some(row => row.kind === 'models-end' && row.layer === 'source-adapter'
+    && row.provider === 'desktop-e2e' && row.hasModel === true),
+    'positive control: observer captured actual source adapter catalog result')
+  console.log(JSON.stringify({ scenario: 'Desktop model admission observation positive control', admissionTrace }))
   const domClickEvidence = await page.evaluate(() =>
     window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [])
   assert.equal(domClickEvidence.length, 2,
@@ -1368,6 +1531,68 @@ try {
   }
 
   reportPhase('session-source-verified')
+  let nativePolicyToggle
+  if (checkNativePolicy) {
+    const nativeToggle = page.locator('[data-vision-router-mode-toggle="true"]')
+    // Drive the official model picker and the actual DVR button, not a test
+    // command or direct mutation of the model directory. The chat already
+    // contains an image, so select a genuinely image-capable fixture model.
+    const modelTrigger = page.getByRole('button', { name: /^(?:Select model|选择模型)/i }).last()
+    await modelTrigger.click()
+    await page.getByRole('menuitem', { name: /^(?:Model|模型)/i }).first().click()
+    await page.locator('button[role="menuitemradio"]').filter({
+      has: page.locator('[data-provider-id="desktop-native-e2e"][data-model-id="desktop-native"]'),
+    }).click()
+    reportPhase('native-model-selected')
+    const waitNative = async (pressed) => {
+      try {
+        await page.waitForFunction((expected) => {
+          const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+          return node?.getAttribute('data-native-vision-state') === 'native'
+            && node.getAttribute('aria-pressed') === expected
+            && node.getAttribute('aria-busy') !== 'true' && !node.disabled
+        }, pressed, { timeout: 30_000 })
+        await waitForSettledVisionState(pressed, 'native policy ' + pressed)
+      } catch (error) {
+        const observed = await inspectToggleState()
+        const selected = await readClientModelDirectory(page)
+        const host = await readHostModelSelections(authenticatedHostUrl)
+        throw Error('Native Desktop policy did not settle: expected=' + pressed +
+          '; observed=' + JSON.stringify(observed) + '; directory=' + JSON.stringify(selected) +
+          '; host=' + JSON.stringify(host), { cause: error })
+      }
+    }
+    const readNativeSelection = async () => {
+      const snapshot = await readHostModelSelections(authenticatedHostUrl)
+      const matching = snapshot.sessions.filter(session =>
+        session.projected?.next?.provider === 'desktop-native-e2e'
+        && session.projected?.next?.model === 'desktop-native')
+      assert.equal(matching.length, 1, 'expected exactly one native fixture Session')
+      return matching[0]
+    }
+    await waitNative('false')
+    const before = await readNativeSelection()
+    assert.equal(before.latest.at(-1)?.model, 'desktop-native')
+    const requestsBefore = textEvidence.requests
+    const nativeClicksBefore = await page.evaluate(() => window.__dvrDesktopToggleAudit?.domClicks?.length ?? 0)
+    await nativeToggle.click()
+    await waitNative('true')
+    const enabled = await readNativeSelection()
+    assert.deepEqual(enabled, before, 'native ON may not append a model/selection event')
+    await nativeToggle.click()
+    await waitNative('false')
+    const disabled = await readNativeSelection()
+    assert.deepEqual(disabled, before, 'native OFF may not append a model/selection event')
+    const nativeDirectory = await readClientModelDirectory(page)
+    assert.equal(nativeDirectory.current?.provider, 'desktop-native-e2e')
+    assert.equal(nativeDirectory.current?.model, 'desktop-native')
+    assert.equal(textEvidence.requests, requestsBefore, 'policy changes must not call the LLM')
+    const nativeClicksAfter = await page.evaluate(() => window.__dvrDesktopToggleAudit?.domClicks?.length ?? 0)
+    assert.equal(nativeClicksAfter - nativeClicksBefore, 2, 'native positive control has exactly two actual DOM clicks')
+    nativePolicyToggle = { actualDesktopClicks: nativeClicksAfter - nativeClicksBefore, modelIdentityUnchanged: true,
+      selectionEventsAdded: 0, modelRequestsAdded: 0, restored: true }
+    reportPhase('native-policy-toggle-verified')
+  }
   await assertDesktopHtmlRendering('after vision turn')
   if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
   const result = {
@@ -1378,6 +1603,7 @@ try {
     electronNode,
     structuredMarkers: markers.length,
     toggle: { initial: initialPressed, exercised: true, restored: true },
+    ...(nativePolicyToggle ? { nativePolicyToggle } : {}),
     onboarding: { settingsPath: true },
     settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
     functionalVisionTurn: {
@@ -1397,6 +1623,7 @@ try {
       arch: process.arch,
       structuredMarkers: markers.length,
       toggle: result.toggle,
+      ...(nativePolicyToggle ? { nativePolicyToggle } : {}),
       settings: result.settings,
       functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
     }

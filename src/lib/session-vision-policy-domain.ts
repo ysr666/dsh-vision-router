@@ -67,8 +67,11 @@ interface SessionVisionPolicyDomainContext {
 export interface SessionVisionPolicyRuntimeStore extends SessionVisionPolicyStore {
   /** Whether this process still has a usable durable sidecar. */
   readonly durable: boolean
+  isUnverified(sessionId: string): boolean
   /** Evict only the hot in-process copy after one Agent lifetime ends. */
   release(sessionId: string): void
+  /** Internal invalidation feed, not a transport or a second policy authority. */
+  subscribe(sessionId: string, invalidate: () => void): () => void
 }
 
 function normalizedSessionId(value: unknown): string {
@@ -108,17 +111,39 @@ export function createSessionVisionPolicyRuntimeStore(
   ctx: SessionVisionPolicyDomainContext,
 ): SessionVisionPolicyRuntimeStore {
   const cache = new Map<string, Readonly<SessionVisionPolicy>>()
+  // Distinguish confirmed absence from a cold/unreadable durable policy.
+  const verifiedAbsent = new Set<string>()
+  let storageSeen = storageDomainOf(ctx) !== undefined
   const closedDomains = new WeakSet<object>()
   let activeFacility: StorageDomainFacilityLike | undefined
   let domainPromise: Promise<Domain<DomainSpec> | undefined> | undefined
   let transition: Promise<void> = Promise.resolve()
   const mutationTails = new Map<string, Promise<void>>()
   const activeMutations = new Set<Promise<void>>()
-  const hydrationTokens = new Map<string, object>()
+  const hydrationTokens = new Map<string, { promise?: Promise<Readonly<SessionVisionPolicy> | undefined> }>()
+  const pendingReleases = new Map<string, object>()
   let durableDisabled = false
   let lifecycleClosed = false
   let lifecycleBound = false
   let warned = false
+
+  // Only subscribers of the affected Session are invalidated. No raw policy,
+  // parent ID, or Session data crosses this callback. A caller must read the
+  // current authoritative store; the UI carrier still needs Host permission.
+  const subscribers = new Map<string, Set<() => void>>()
+  const notify = (key: string) => {
+    if (lifecycleClosed) return
+    const listeners = subscribers.get(key)
+    if (listeners === undefined) return
+    for (const listener of [...listeners]) {
+      if (!listeners.has(listener)) continue
+      // Observers cannot roll back or disrupt a committed permission update.
+      try { listener() } catch {}
+    }
+  }
+  const notifyAll = () => {
+    for (const key of [...subscribers.keys()]) notify(key)
+  }
 
   const warnDegraded = (error: unknown) => {
     if (warned) return
@@ -132,8 +157,10 @@ export function createSessionVisionPolicyRuntimeStore(
   }
 
   const markDurabilityFailed = (error: unknown) => {
+    const changed = !durableDisabled
     durableDisabled = true
     warnDegraded(error)
+    if (changed) notifyAll()
   }
 
   const closeDomainOnce = async (domain: Domain<DomainSpec>): Promise<void> => {
@@ -172,6 +199,9 @@ export function createSessionVisionPolicyRuntimeStore(
           lifecycleBound = true
           return async () => {
             lifecycleClosed = true
+            subscribers.clear()
+            pendingReleases.clear()
+            verifiedAbsent.clear()
             // No new durable mutation is admitted after lifecycleClosed flips.
             // Wait every mutation that was already admitted before closing the
             // shared domain underneath it.
@@ -227,6 +257,7 @@ export function createSessionVisionPolicyRuntimeStore(
     if (!lifecycleBound || (lifecycleClosed && !allowClosed) || durableDisabled) return undefined
     const facility = storageDomainOf(ctx)
     if (facility === undefined) return undefined
+    storageSeen = true
     transition = transition.then(
       () => ensureDomainFor(facility, allowClosed),
       () => ensureDomainFor(facility, allowClosed),
@@ -244,6 +275,18 @@ export function createSessionVisionPolicyRuntimeStore(
   const failDurabilityAndRetire = async (error: unknown): Promise<void> => {
     markDurabilityFailed(error)
     await enqueueRetire()
+  }
+
+  // A missing storage service during a mutation is a durability failure,
+  // not proof that the new policy has been persisted. Do not advertise a
+  // recovered service as durable after accepting an unpersisted intent.
+  // As with a rejected backend write, this generation stays volatile.
+  const mutationTable = async (): Promise<KvTable<string, SessionVisionPolicy> | undefined> => {
+    const handle = await table(true)
+    if (handle === undefined && lifecycleBound && !durableDisabled) {
+      await failDurabilityAndRetire(new Error('Session Vision policy storage unavailable during mutation'))
+    }
+    return handle
   }
 
   const enqueueMutation = (key: string, mutate: () => Promise<void>): Promise<void> => {
@@ -281,40 +324,105 @@ export function createSessionVisionPolicyRuntimeStore(
       return cache.get(normalizedSessionId(sessionId))
     },
 
+    isUnverified(sessionId) {
+      const key = normalizedSessionId(sessionId)
+      if (storageDomainOf(ctx) !== undefined) storageSeen = true
+      return storageSeen && !cache.has(key) && !verifiedAbsent.has(key)
+    },
+
+    subscribe(sessionId, invalidate) {
+      const key = normalizedSessionId(sessionId)
+      if (typeof invalidate !== 'function') throw new TypeError('policy invalidation callback required')
+      if (lifecycleClosed) return () => {}
+      let listeners = subscribers.get(key)
+      if (listeners === undefined) {
+        listeners = new Set()
+        subscribers.set(key, listeners)
+      }
+      // Unique wrapper: two subscriptions of the same function have separate
+      // lifetimes; each disposer only removes its own registration.
+      const listener = () => invalidate()
+      const owned = listeners
+      owned.add(listener)
+      return () => {
+        owned.delete(listener)
+        if (owned.size === 0 && subscribers.get(key) === owned) subscribers.delete(key)
+      }
+    },
+
     async hydrate(sessionId) {
       const key = normalizedSessionId(sessionId)
+      // A new Agent lifetime cancels a deferred eviction from the old one.
+      pendingReleases.delete(key)
       const existing = cache.get(key)
       if (existing !== undefined) return existing
-      const token = {}
+      // A queued delete already removed the live authority. Until it settles,
+      // the old disk row is not an admissible source of policy.
+      if (mutationTails.has(key)) return undefined
+      const pending = hydrationTokens.get(key)?.promise
+      if (pending !== undefined) return pending
+      const token: { promise?: Promise<Readonly<SessionVisionPolicy> | undefined> } = {}
       hydrationTokens.set(key, token)
-      try {
-        const handle = await table()
-        if (hydrationTokens.get(key) !== token) return cache.get(key)
-        if (handle === undefined) return undefined
-        const policy = parseSessionVisionPolicy(handle.get(key))
-        if (hydrationTokens.get(key) !== token) return cache.get(key)
-        if (policy !== undefined) cache.set(key, policy)
-        return policy
-      } catch (error) {
-        await failDurabilityAndRetire(error)
-        return undefined
-      } finally {
-        if (hydrationTokens.get(key) === token) hydrationTokens.delete(key)
-      }
+      token.promise = (async () => {
+        try {
+          const handle = await table()
+          if (hydrationTokens.get(key) !== token) return cache.get(key)
+          if (handle === undefined) return undefined
+          const raw = handle.get(key)
+          const policy = parseSessionVisionPolicy(raw)
+          if (hydrationTokens.get(key) !== token) return cache.get(key)
+          if (policy !== undefined) {
+            verifiedAbsent.delete(key)
+            cache.set(key, policy)
+            notify(key)
+          } else if (raw === undefined && !verifiedAbsent.has(key)) {
+            verifiedAbsent.add(key)
+            notify(key)
+          }
+          return cache.get(key)
+        } catch (error) {
+          await failDurabilityAndRetire(error)
+          return cache.get(key)
+        } finally {
+          if (hydrationTokens.get(key) === token) hydrationTokens.delete(key)
+        }
+      })()
+      return token.promise
     },
 
     release(sessionId) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
-      // A durable row can be rehydrated on the next Agent creation. Keep the
-      // process-local copy when durability is unavailable so volatile support
-      // does not lose the only Session-scoped truth it has.
-      if (this.durable) cache.delete(key)
+      pendingReleases.delete(key)
+      // The in-process intent is authoritative even while its durable write
+      // is queued. Evict only after that write settles, if no replacement
+      // Agent or newer mutation reclaimed the record and durability survives.
+      if (!this.durable) return
+      const evict = () => {
+        if (!this.durable) return
+        const absent = verifiedAbsent.delete(key)
+        if (cache.delete(key) || absent) notify(key)
+      }
+      const tail = mutationTails.get(key)
+      if (tail === undefined) {
+        evict()
+        return
+      }
+      const token = {}
+      pendingReleases.set(key, token)
+      void tail.then(() => {
+        if (pendingReleases.get(key) !== token) return
+        pendingReleases.delete(key)
+        evict()
+      }, () => {
+        if (pendingReleases.get(key) === token) pendingReleases.delete(key)
+      })
     },
 
     async set(sessionId, policy) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
+      pendingReleases.delete(key)
       const normalized = parseSessionVisionPolicy(policy)
       if (normalized === undefined) throw new TypeError('invalid session vision policy')
 
@@ -322,33 +430,42 @@ export function createSessionVisionPolicyRuntimeStore(
       // model/selection event must affect the next prompt immediately even if
       // sidecar I/O is still settling; delegation still awaits this method and
       // therefore preserves its stronger durability-before-child-release rule.
+      verifiedAbsent.delete(key)
       cache.set(key, normalized)
-      await enqueueMutation(key, async () => {
+      const pending = enqueueMutation(key, async () => {
         try {
           // This mutation was admitted before lifecycle close; the disposer
           // waits it before retiring the domain, so it may finish durable I/O.
-          const handle = await table(true)
+          const handle = await mutationTable()
           if (handle !== undefined) await handle.put(key, normalized)
         } catch (error) {
           await failDurabilityAndRetire(error)
         }
       })
+      // Enqueue the durable write BEFORE observers run. A reentrant observer
+      // may request another change; its write must not overtake this one.
+      notify(key)
+      await pending
       return normalized
     },
 
     async delete(sessionId) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
-      cache.delete(key)
-      await enqueueMutation(key, async () => {
+      pendingReleases.delete(key)
+      const changed = cache.delete(key) || !verifiedAbsent.has(key)
+      verifiedAbsent.add(key)
+      const pending = enqueueMutation(key, async () => {
         try {
           // Same admission rule as set(): pre-close deletes must not be lost.
-          const handle = await table(true)
+          const handle = await mutationTable()
           if (handle !== undefined) await handle.delete(key)
         } catch (error) {
           await failDurabilityAndRetire(error)
         }
       })
+      if (changed) notify(key)
+      await pending
     },
   }
 }

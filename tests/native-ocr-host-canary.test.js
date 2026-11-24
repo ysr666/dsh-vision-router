@@ -12,7 +12,10 @@ const SAMPLE_PNG = Buffer.from(
 
 function mockHost(config0 = {}) {
   const tools = new Map()
-  let current = Config({ ...config0 })
+  // Native OCR canary tests explicitly exercise vision_activate followed by
+  // vision_ocr. This fixture opts into progressive exposure; the production
+  // safe default (progressiveTools=false) must stay unchanged.
+  let current = Config({ progressiveTools: true, ...config0 })
   const registrations = new Map()
   const ctx = {
     get(name) {

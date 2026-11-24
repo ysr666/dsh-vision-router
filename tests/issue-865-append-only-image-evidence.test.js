@@ -1,0 +1,660 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  planAppendOnlyImageEvidence,
+  createSessionImageEvidencePlanner,
+} from '../lib/stable-image-evidence.js'
+import {
+  rewriteHistoryImages,
+  projectStableTextOnlyImages,
+  hasUnstableStableV2ImageIdentity,
+  createWrapperStreamBody,
+} from '../lib/core-primitives.js'
+
+const id = 'sha256:synthetic-865-image'
+const source = { kind: 'plugin:dsh-vision-router' }
+const history = () => [
+  {
+    id: 'original-user-image',
+    role: 'user',
+    source: { kind: 'user' },
+    content: [{
+      type: 'image',
+      attachment: { attachmentId: id, name: 'synthetic.png' },
+    }],
+  },
+  { id: 'next-user', role: 'user', source: { kind: 'user' },
+    content: [{ type: 'text', text: 'Continue the conversation' }] },
+]
+
+test('issue #865: opt-in marker projection ignores late changes to imageMemory', () => {
+  const events = history()
+  const memory = new Map()
+  const before = rewriteHistoryImages(events, memory, { stable: true }).messages
+  memory.set(id, 'New OCR recognized later')
+  const after = rewriteHistoryImages(events, memory, { stable: true }).messages
+  assert.deepEqual(after, before, 'same original image must not mutate request prefix after OCR')
+  assert.match(after[0].content[0].text, /sha256:synthetic-865-image/)
+  assert.equal(events[0].content[0].type, 'image', 'original durable image is never changed')
+  assert.notDeepEqual(
+    rewriteHistoryImages(events, memory).messages,
+    rewriteHistoryImages(events, new Map()).messages,
+    'legacy behavior remains available only when opted out',
+  )
+})
+
+test('issue #865: append-only evidence is once-per-version, replayable after cold resume', () => {
+  const original = history()
+  const memory = new Map([[id, 'first OCR result']])
+  const first = planAppendOnlyImageEvidence(original, original, memory, source)
+  assert.equal(first.length, 1)
+  assert.match(first[0].content[0].text, /first OCR result/)
+  assert.match(first[0].content[0].text, /不可信证据/)
+  assert.notEqual(first[0].id, original[0].id)
+  assert.deepEqual(first[0].source, source)
+  assert.equal(planAppendOnlyImageEvidence(original, [...original, ...first], memory, source).length, 0,
+    'the same evidence must never be injected repeatedly into subsequent Host steps')
+  memory.set(id, 'new verified OCR result')
+  const later = planAppendOnlyImageEvidence(original, [...original, ...first], memory, source)
+  assert.equal(later.length, 1)
+  assert.notEqual(later[0].id, first[0].id, 'new evidence is added, not rewritten in old messages')
+  assert.match(first[0].content[0].text, /first OCR result/)
+  assert.match(later[0].content[0].text, /new verified OCR result/)
+  const restored = [...original, ...first, ...later]
+  assert.equal(planAppendOnlyImageEvidence(original, restored, memory, source).length, 0,
+    'cold restored durable event history must dedupe without an auxiliary Map of emitted ids')
+})
+
+test('issue #865: same attachment and text in separate turns never reuse a user/message ID', () => {
+  const first = history()
+  const second = [{
+    ...first[0],
+    id: 'next-turn-reused-image',
+  }]
+  const memory = new Map([[id, 'same OCR for identical attachment']])
+  const a = planAppendOnlyImageEvidence(first, first, memory, source)
+  const b = planAppendOnlyImageEvidence(second, second, memory, source)
+  assert.equal(a.length, 1)
+  assert.equal(b.length, 1)
+  assert.notEqual(a[0].id, b[0].id,
+    'DSH Session messages must have distinct identities even for repeat uploads')
+})
+
+test('issue #865: evidence only originates from attached image and is bounded', () => {
+  const nested = [{
+    id: 'tool-result',
+    role: 'tool',
+    content: [{ type: 'tool-result', content: [
+      { type: 'image', attachment: { attachmentId: 'sha256:nested-evidence' } },
+    ] }],
+  }]
+  const desc = new Map([
+    ['sha256:unrelated', 'secret session 2 data'],
+    ['sha256:nested-evidence', 'x'.repeat(5000)],
+  ])
+  const evidence = planAppendOnlyImageEvidence(nested, nested, desc, source)
+  assert.equal(evidence.length, 1)
+  assert.ok(!evidence[0].content[0].text.includes('secret session 2 data'))
+  assert.ok(evidence[0].content[0].text.length < 2300,
+    'a long OCR output must not explode the provider prompt')
+  assert.deepEqual(planAppendOnlyImageEvidence(nested, nested, new Map(), source), [])
+})
+
+test('issue #865: 120k-character replay prefix keeps zero historical mutations after late OCR', () => {
+  const longHistory = [history()[0]]
+  for (let i = 0; i < 600; i++) {
+    longHistory.push({
+      id: 'historic-' + i,
+      role: i % 2 === 0 ? 'assistant' : 'user',
+      content: [{ type: 'text', text: 'stable-history-' + i + ':' + 'x'.repeat(200) }],
+    })
+  }
+  const beforeMemory = new Map()
+  const afterMemory = new Map([[id, 'OCR result learned in a later turn']])
+  const oldBefore = rewriteHistoryImages(longHistory, beforeMemory).messages
+  const oldAfter = rewriteHistoryImages(longHistory, afterMemory).messages
+  const stableBefore = rewriteHistoryImages(longHistory, beforeMemory, { stable: true }).messages
+  const stableAfter = rewriteHistoryImages(longHistory, afterMemory, { stable: true }).messages
+  const changedCount = (a, b) => a.reduce((n, msg, i) =>
+    n + Number(JSON.stringify(msg) !== JSON.stringify(b[i])), 0)
+  const legacyChanges = changedCount(oldBefore, oldAfter)
+  const stableChanges = changedCount(stableBefore, stableAfter)
+  assert.ok(JSON.stringify(stableBefore).length > 120_000,
+    'exercise a realistically long synthetic replay prefix, not a toy 2-turn chat')
+  assert.equal(legacyChanges, 1, 'legacy behavior mutates an older image occurrence')
+  assert.equal(stableChanges, 0, 'append-only behavior must mutate zero old messages')
+  assert.equal(JSON.stringify(stableBefore), JSON.stringify(stableAfter),
+    'full JSON prefix remains identical after a late image-memory write')
+  // 1→0 rewritten historic messages is a synthetic cache-prefix metric,
+  // NOT a prediction of real DeepSeek cache hit ratio or billed tokens.
+})
+
+test('issue #865: delayed OCR tool evidence appends without rewriting the earlier image prefix', () => {
+  const original = history()
+  const empty = new Map()
+  const before = rewriteHistoryImages(original, empty, { stable: true }).messages
+  const oldPrefix = JSON.stringify(before)
+  const lateToolResult = {
+    id: 'late-ocr-tool-result',
+    role: 'tool',
+    source: { kind: 'tool' },
+    content: [{
+      type: 'tool-result',
+      toolCallId: 'ocr-call-1',
+      content: [{ type: 'text', text: 'OCR result from a later vision_ocr call: DSH_865_LATE_TEXT' }],
+    }],
+  }
+  empty.set(id, 'new summary written after the first image was admitted')
+  const after = rewriteHistoryImages([...original, lateToolResult], empty, { stable: true }).messages
+  assert.equal(JSON.stringify(after.slice(0, original.length)), oldPrefix,
+    'all previously admitted messages must serialize identically after delayed OCR')
+  assert.match(JSON.stringify(after.at(-1)), /DSH_865_LATE_TEXT/,
+    'the already durable tool result must remain visible as appended evidence')
+  assert.equal(original[0].content[0].type, 'image')
+  // The delayed tool result is already an append-only model-facing event.
+  // No duplicate copy should be planned when the new inbox has no image.
+  assert.deepEqual(planAppendOnlyImageEvidence(
+    [lateToolResult], [lateToolResult], empty, source,
+  ), [])
+})
+
+test('issue #865: nested tool-result images stay fixed after OCR memory changes', () => {
+  const nested = [{
+    id: 'read-image-tool-result',
+    role: 'tool',
+    source: { kind: 'tool' },
+    content: [{ type: 'tool-result', toolCallId: 'read-call-1', content: [
+      { type: 'text', text: 'result metadata' },
+      { type: 'image', attachment: { attachmentId: id, name: 'rendered-output.png' } },
+    ] }],
+  }]
+  const memory = new Map()
+  const before = rewriteHistoryImages(nested, memory, { stable: true }).messages
+  memory.set(id, 'delayed interpretation')
+  const after = rewriteHistoryImages(nested, memory, { stable: true }).messages
+  assert.deepEqual(after, before)
+  assert.match(JSON.stringify(after), /result metadata/,
+    'nested tool-result metadata must survive image sanitization')
+  assert.match(JSON.stringify(after), /sha256:synthetic-865-image/)
+})
+
+test('issue #865: text-only wrapper stops changing historical image text under stable mode', async () => {
+  const requests = []
+  const memory = new Map()
+  const wrapper = createWrapperStreamBody({
+    llm: {
+      async *stream(options) {
+        requests.push(options)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      },
+    },
+  }, {
+    imageMemory: memory,
+    delegateProvider: 'synthetic-text-provider',
+    preserveImageInput: false,
+    stableImageHistory: true,
+  })
+  const original = history()
+  async function request() {
+    for await (const _ of wrapper.stream({
+      provider: 'synthetic-text-provider-vision',
+      model: 'text-only',
+      sessionId: 's-865',
+      messages: original,
+    })) {}
+    return requests.at(-1).messages[0].content[0].text
+  }
+  const before = await request()
+  memory.set(id, 'new knowledge from vision_describe')
+  const after = await request()
+  assert.equal(after, before, 'historical image marker remains identical after description memory write')
+  const evidence = planAppendOnlyImageEvidence(original, original, memory, source)
+  assert.equal(evidence.length, 1, 'new knowledge remains available as independent evidence')
+  assert.match(evidence[0].content[0].text, /new knowledge from vision_describe/)
+})
+
+
+test('issue #865: memory-only late descriptions append on text continuation, once committed', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const events = [{ type: 'user/message', data: original }]
+  let scans = 0
+  const session = { snapshotEvents() { scans++; return events } }
+  const memory = new Map()
+  const continuation = [{ id: 'current-text-inbox', role: 'user', content: [{ type: 'text', text: 'continue' }] }]
+  assert.deepEqual(planner.plan(session, [original], [original], memory, source), [])
+  memory.set(id, 'OCR arrived asynchronously after the image inbox was committed')
+  const newEvidence = planner.plan(session, continuation, continuation, memory, source)
+  assert.equal(newEvidence.length, 1, 'late evidence must not depend on re-claiming the original image')
+  assert.match(newEvidence[0].content[0].text, /asynchronously/)
+  // Planning a user/message is not a commit. An aborted Host admission must
+  // retry instead of silently dropping that version of evidence.
+  assert.deepEqual(planner.plan(session, continuation, continuation, memory, source), newEvidence)
+  const committed = { type: 'user/message', data: newEvidence[0] }
+  events.push(committed)
+  planner.onSessionEvent(session, committed)
+  assert.deepEqual(planner.plan(session, continuation, continuation, memory, source), [])
+  assert.equal(scans, 1, 'the durable log must only be inspected once per Session')
+  const oldPrefix = JSON.stringify(rewriteHistoryImages([original], memory, { stable: true }).messages)
+  memory.set(id, 'Newer OCR result on a later turn')
+  const later = planner.plan(session, continuation, continuation, memory, source)
+  assert.equal(later.length, 1)
+  assert.notEqual(later[0].id, newEvidence[0].id)
+  assert.equal(JSON.stringify(rewriteHistoryImages([original], memory, { stable: true }).messages), oldPrefix)
+  assert.equal(original.content[0].type, 'image')
+})
+
+test('issue #865: cold resume reads committed image identity and evidence once', () => {
+  const original = history()[0]
+  const memory = new Map([[id, 'already persisted']])
+  const first = planAppendOnlyImageEvidence([original], [original], memory, source)[0]
+  const events = [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: first },
+  ]
+  let scans = 0
+  const session = { snapshotEvents() { scans++; return events } }
+  const planner = createSessionImageEvidencePlanner()
+  const text = [{ id: 'continued-after-restart', role: 'user', content: [{ type: 'text', text: 'hello' }] }]
+  assert.deepEqual(planner.plan(session, text, text, memory, source), [],
+    'restart must not duplicate an already persisted evidence ID')
+  memory.set(id, 'new memory-only content after cold resume')
+  const evidence = planner.plan(session, text, text, memory, source)
+  assert.equal(evidence.length, 1)
+  assert.notEqual(evidence[0].id, first.id)
+  assert.equal(scans, 1)
+})
+
+test('issue #865: late memory may not escape the owning Session or image provenance bound', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const ownSession = { snapshotEvents() { return [{ type: 'user/message', data: original }] } }
+  const foreignSession = { snapshotEvents() { return [] } }
+  const memory = new Map([[id, 'PRIVATE_SESSION_A_CONTENT']])
+  const text = [{ id: 'text-only', role: 'user', content: [{ type: 'text', text: 'test' }] }]
+  assert.deepEqual(planner.plan(foreignSession, text, text, memory, source), [],
+    'same attachment ID in a foreign memory does not confer authorization')
+  assert.equal(planner.plan(ownSession, text, text, memory, source).length, 1)
+  const forged = new Map([['sha256:unseen-other', 'unrelated secret']])
+  assert.deepEqual(planner.plan(ownSession, text, text, forged, source), [])
+  // A bounded tracker must evict old occurrences instead of accumulating an
+  // unlimited list of historical attachments or scanning all messages/turn.
+  const many = Array.from({ length: 70 }, (_, i) => ({
+    id: 'mass-image-' + i, role: 'user',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:mass-' + i } }],
+  }))
+  const limitedSession = { snapshotEvents() { return [] } }
+  planner.plan(limitedSession, many, many, new Map(), source)
+  assert.deepEqual(planner.plan(limitedSession, text, text,
+    new Map([['sha256:mass-0', 'evicted result']]), source), [])
+  const newest = planner.plan(limitedSession, text, text,
+    new Map([['sha256:mass-69', 'most recent result']]), source)
+  assert.equal(newest.length, 1)
+})
+
+
+test('issue #865: legacy Session V3 source and V4 source both dedupe persisted evidence', () => {
+  const original = history()[0]
+  const memory = new Map([[id, 'persisted V3 image evidence']])
+  const evidence = planAppendOnlyImageEvidence([original], [original], memory, source)[0]
+  const legacy = { ...evidence, source: { kind: 'plugin', plugin: 'dsh-vision-router' } }
+  const text = [{ id: 'later', role: 'user', content: [{ type: 'text', text: 'resume' }] }]
+  const v3 = { snapshotEvents() { return [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: legacy },
+  ] } }
+  assert.deepEqual(createSessionImageEvidencePlanner().plan(
+    v3, text, text, memory, legacy.source,
+  ), [], 'legacy Session V3 evidence must not be appended again')
+  const v4 = { snapshotEvents() { return [
+    { type: 'user/message', data: original },
+    { type: 'user/message', data: evidence },
+  ] } }
+  assert.deepEqual(createSessionImageEvidencePlanner().plan(
+    v4, text, text, memory, source,
+  ), [], 'current Session V4 evidence must not be appended again')
+})
+
+
+test('issue #865: fifth image does not starve after four evidence messages commit', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const session = { snapshotEvents() { return [] } }
+  const images = Array.from({ length: 5 }, (_, i) => ({
+    id: 'five-original-' + i, role: 'user',
+    content: [{ type: 'image', attachment: { attachmentId: 'sha256:five-' + i } }],
+  }))
+  const descriptions = new Map(images.map((message, i) =>
+    ['sha256:five-' + i, 'OCR-' + i]))
+  const first = planner.plan(session, images, images, descriptions, source)
+  assert.equal(first.length, 4, 'Host step budget limits new evidence to four')
+  for (const message of first) planner.onSessionEvent(session, { type: 'user/message', data: message })
+  const current = [{ id: 'later-text', role: 'user', content: [{ type: 'text', text: 'continue' }] }]
+  const second = planner.plan(session, current, current, descriptions, source)
+  assert.equal(second.length, 1, 'fifth eligible image must be reached after previous four commit')
+  assert.match(second[0].content[0].text, /OCR-0/)
+  assert.equal(new Set([...first, ...second].map(message => message.id)).size, 5)
+  planner.onSessionEvent(session, { type: 'user/message', data: second[0] })
+  assert.deepEqual(planner.plan(session, current, current, descriptions, source), [])
+})
+
+
+test('issue #865: actual DSH tool/result event indexes image after pre-step', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const imageId = 'sha256:host-tool-produced-image'
+  const toolMessage = {
+    id: 'actual-tool-result-message-id', role: 'tool',
+    source: { kind: 'tool', callId: 'call-865' },
+    toolCallId: 'call-865',
+    content: [{ type: 'image', attachment: { attachmentId: imageId } }],
+  }
+  // Exact pinned DSH SessionEventMap: tool/result.data.message.
+  // There is no "tool/message" event in this Host.
+  const toolEvent = { type: 'tool/result', data: {
+    turn: 1, step: 2, message: toolMessage,
+  } }
+  const current = [{ id: 'later-text', role: 'user',
+    content: [{ type: 'text', text: 'please continue' }] }]
+  const memory = new Map([[imageId, 'delayed tool image recognition']])
+  const liveEvents = []
+  const liveSession = { snapshotEvents() { return liveEvents } }
+  assert.deepEqual(planner.plan(liveSession, current, current, memory, source), [])
+  planner.onSessionEvent(liveSession, toolEvent)
+  const emitted = planner.plan(liveSession, current, current, memory, source)
+  assert.equal(emitted.length, 1,
+    'a newly committed tool/result image must become eligible for late evidence')
+  assert.match(emitted[0].content[0].text, /delayed tool image recognition/)
+  planner.onSessionEvent(liveSession, { type: 'user/message', data: emitted[0] })
+  assert.deepEqual(planner.plan(liveSession, current, current, memory, source), [])
+  const coldSession = { snapshotEvents() { return [
+    toolEvent, { type: 'user/message', data: emitted[0] },
+  ] } }
+  const restored = createSessionImageEvidencePlanner()
+  assert.deepEqual(restored.plan(coldSession, current, current, memory, source), [],
+    'cold resume must not re-emit identical tool-image recognition')
+  memory.set(imageId, 'later corrected tool image text')
+  const corrected = restored.plan(coldSession, current, current, memory, source)
+  assert.equal(corrected.length, 1)
+  assert.notEqual(corrected[0].id, emitted[0].id)
+  assert.match(corrected[0].content[0].text, /later corrected/)
+  // Unknown image IDs in unrelated Session memory remain inadmissible.
+  const foreignSession = { snapshotEvents() { return [] } }
+  assert.deepEqual(restored.plan(foreignSession, current, current, memory, source), [])
+})
+
+test('issue #865: nested images in actual tool/result persist with original tool message identity', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const id = 'sha256:nested-tool-created-image'
+  const msg = {
+    id: 'tool-result-865-nested', role: 'tool',
+    source: { kind: 'tool', callId: 'nested-call' }, toolCallId: 'nested-call',
+    content: [{ type: 'tool-result', content: [
+      { type: 'text', text: 'metadata retained by Host' },
+      { type: 'image', attachment: { attachmentId: id } },
+    ] }],
+  }
+  const committed = { type: 'tool/result', data: { turn: 2, step: 0, message: msg } }
+  const session = { snapshotEvents() { return [committed] } }
+  const textOnly = [{ id: 'text-after-tool-image', role: 'user',
+    content: [{ type: 'text', text: 'continue' }] }]
+  const memo = new Map([[id, 'nested image OCR']])
+  const updates = planner.plan(session, textOnly, textOnly, memo, source)
+  assert.equal(updates.length, 1)
+  assert.match(updates[0].content[0].text, /nested image OCR/)
+  assert.equal(msg.content[0].content[0].text, 'metadata retained by Host')
+  const expected = planAppendOnlyImageEvidence([msg], [msg], memo, source)
+  assert.equal(updates[0].id, expected[0].id,
+    'source identity must be the actual tool/result message ID')
+})
+
+test('stage 2: stable image projector keeps the exact existing v1 wire bytes across both entry paths', async () => {
+  const input = history()
+  const memory = new Map([[id, 'a later OCR description must never appear in old history']])
+  const direct = projectStableTextOnlyImages(input, { markerStyle: 'history' })
+  assert.deepEqual(direct, rewriteHistoryImages(input, memory, { stable: true }))
+  assert.equal(direct.messages[0].content[0].text,
+    `[attached image: ${id}] The current model cannot see images. To examine it, call vision_describe with attachmentIds: ["${id}"] and a specific question.`)
+
+  const wrapper = projectStableTextOnlyImages(input, { markerStyle: 'wrapper' })
+  assert.equal(wrapper.messages[0].content[0].text,
+    `[已收到图片「synthetic.png」（附件 id：「${id}」）。我可以借助视觉工具来看图：` +
+    `需要看图时调用 vision_describe 并传入 attachmentIds: ["${id}"] 和具体问题；` +
+    '定位、裁剪、像素对比、取色、OCR、矢量化、抠图等分别使用 vision_ground、' +
+    'vision_crop、vision_pixel_diff、vision_colors、vision_ocr、vision_trace、' +
+    'vision_extract_foreground 工具。' +
+    'vision_ocr 只用于读取图中文字，不是看图失败的通用重试；' +
+    '若视觉工具返回 ok:false（认证失败/限流/超时/后端不可用），不要改问法重复调用，直接继续文本任务。]')
+  assert.equal(input[0].content[0].type, 'image', 'request projection must not alter durable original')
+  assert.throws(() => projectStableTextOnlyImages(input, { markerStyle: 'future' }), /unknown stable image projection/)
+
+  const requests = []
+  const adapter = createWrapperStreamBody({ llm: { async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } } }, {
+    imageMemory: memory, delegateProvider: 'text', preserveImageInput: false, stableImageHistory: true,
+  })
+  for await (const _ of adapter.stream({ provider: 'text-vision', model: 'text', messages: input })) {}
+  assert.deepEqual(requests[0].messages[0].content, wrapper.messages[0].content,
+    'the shipping text wrapper must use the same stable projector without changing v1 bytes')
+  memory.set(id, 'completely changed late OCR')
+  for await (const _ of adapter.stream({ provider: 'text-vision', model: 'text', messages: input })) {}
+  assert.deepEqual(requests[1].messages[0].content, requests[0].messages[0].content)
+})
+
+test('stage 2: committed versions dedupe across OCR whitespace, 512-id eviction, and cold resume', () => {
+  const planner = createSessionImageEvidencePlanner()
+  const original = history()[0]
+  const otherId = 'sha256:independent-865-image'
+  const other = { id: 'another-origin', role: 'user', source: { kind: 'user' },
+    content: [{ type: 'image', attachment: { attachmentId: otherId } }] }
+  const events = [{ type: 'user/message', data: original }, { type: 'user/message', data: other }]
+  let snapshots = 0
+  const session = { snapshotEvents() { snapshots++; return events } }
+  const descriptions = new Map([[id, 'baseline\r\nOCR result'], [otherId, 'revision initial']])
+  const first = planner.plan(session, [original, other], [original, other], descriptions, source)
+  assert.equal(first.length, 2)
+  const commit = message => {
+    const event = { type: 'user/message', data: message }
+    events.push(event)
+    planner.onSessionEvent(session, event)
+  }
+  for (const message of first) commit(message)
+  descriptions.set(id, 'baseline\nOCR result  ')
+  assert.deepEqual(planner.plan(session, [original], [original], descriptions, source), [],
+    'changing only line endings or trailing spaces is not a second visual fact')
+
+  // Keep the first image alive while many later revisions exhaust the bounded
+  // committed-ID cache. An earlier committed version must not be replayed.
+  for (let i = 0; i < 520; i++) {
+    descriptions.set(otherId, 'revision ' + i)
+    const next = planner.plan(session, [other], [other], descriptions, source)
+    assert.equal(next.length, 1, 'a real changed OCR version is append-only')
+    commit(next[0])
+  }
+  assert.deepEqual(planner.plan(session, [{ id: 'continue', content: [] }], [], descriptions, source), [])
+  assert.equal(snapshots, 1)
+  const cold = createSessionImageEvidencePlanner()
+  const resumed = { snapshotEvents() { return events } }
+  assert.deepEqual(cold.plan(resumed, [], [], descriptions, source), [],
+    'recover last committed v1 evidence from durable Session events, even after 512 IDs')
+  descriptions.set(id, 'baseline OCR result corrected')
+  const correction = cold.plan(resumed, [], [], descriptions, source)
+  assert.equal(correction.length, 1, 'substantive new OCR evidence must remain visible')
+  assert.match(correction[0].content[0].text, /corrected/)
+  assert.equal(cold.plan(resumed, [], [], descriptions, source)[0].id, correction[0].id,
+    'an uncommitted plan may be retried')
+})
+
+test('stage 2: a native image-capable route preserves original pixels, metadata and nested tool images', async () => {
+  const original = history()
+  original[0].content[0].attachment.width = 111
+  original[0].content[0].attachment.height = 77
+  const tool = {
+    id: 'tool-image-native', role: 'tool', content: [{
+      type: 'tool-result', toolCallId: 'read-123', content: [
+        { type: 'image', attachment: { attachmentId: 'sha256:native-nested', name: 'diagram.png' } },
+      ],
+    }],
+  }
+  const submitted = [...original, tool]
+  const before = structuredClone(submitted)
+  const requests = []
+  const memory = new Map([[id, 'OCR is not an excuse to remove native image input']])
+  const bridge = createWrapperStreamBody({ llm: {
+    async *stream(options) {
+      requests.push(options)
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    },
+  } }, {
+    imageMemory: memory, delegateProvider: 'native-synthetic',
+    preserveImageInput: async () => true,
+    stableImageHistory: (options) => options.sessionId === 'stable-native-session',
+  })
+  for await (const _ of bridge.stream({
+    provider: 'synthetic-native-vision', model: 'multimodal',
+    sessionId: 'stable-native-session', messages: submitted,
+  })) {}
+  assert.equal(requests.length, 1)
+  assert.deepEqual(requests[0].messages, before,
+    'native model must receive actual original image blocks, never OCR-only placeholders')
+  assert.equal(requests[0].messages[2].content[0].content[0].type, 'image')
+  assert.deepEqual(submitted, before, 'the durable source image and tool-result objects stay untouched')
+})
+
+test('stage 2: format policy is evaluated per Session at the actual wrapper request boundary', async () => {
+  const requests = []
+  const memory = new Map([[id, 'learned OCR after the first request']])
+  const activeSessions = new Map([['new-stable', true], ['old-legacy', false]])
+  const bridge = createWrapperStreamBody({
+    llm: { async *stream(options) {
+      requests.push({ id: options.sessionId, content: options.messages[0].content[0].text })
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
+  }, {
+    imageMemory: memory,
+    delegateProvider: 'synthetic-text',
+    preserveImageInput: false,
+    stableImageHistory: options => activeSessions.get(options.sessionId) === true,
+  })
+  const request = async sessionId => {
+    for await (const _ of bridge.stream({
+      provider: 'synthetic-text-vision', model: 'text', sessionId, messages: history(),
+    })) {}
+  }
+  await request('new-stable')
+  await request('old-legacy')
+  assert.match(requests[0].content, /已收到图片/)
+  assert.match(requests[1].content, /learned OCR/)
+  memory.set(id, 'CORRECTED OCR')
+  await request('new-stable')
+  await request('old-legacy')
+  assert.equal(requests[2].content, requests[0].content,
+    'stable Session history must be independent of late OCR memory')
+  assert.notEqual(requests[3].content, requests[1].content,
+    'existing legacy Sessions retain their old wire behavior until migration is authorized')
+  assert.equal(requests[3].id, 'old-legacy')
+})
+
+test('stage 2: v2 uses the same deterministic marker through standalone rewrite and text twin', async () => {
+  const original = history()
+  const pristine = structuredClone(original)
+  const memory = new Map([[id, 'OCR VERSION A — mutable, never part of a past image marker']])
+  const expected = projectStableTextOnlyImages(original, { markerStyle: 'canonical-v2' }).messages
+  assert.deepEqual(rewriteHistoryImages(original, memory, { stable: 'stable-v2' }).messages, expected)
+  assert.match(expected[0].content[0].text, /^\[DVR stable-v2 image /)
+  assert.ok(!expected[0].content[0].text.includes('synthetic.png'),
+    'filename changes cannot alter a canonical marker')
+  assert.ok(!expected[0].content[0].text.includes('OCR VERSION A'))
+  const requests = []
+  const bridge = createWrapperStreamBody({ llm: { async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } } }, {
+    imageMemory: memory, delegateProvider: 'synthetic-text',
+    preserveImageInput: false,
+    stableImageHistory: options => options.sessionId === 'v2-test' ? 'stable-v2' : true,
+  })
+  for await (const _ of bridge.stream({
+    provider: 'synthetic-text-twin', model: 'text', sessionId: 'v2-test', messages: original,
+  })) {}
+  assert.deepEqual(requests[0].messages, expected,
+    'the real text twin and standalone history projector must have identical v2 message bytes')
+  memory.set(id, 'OCR VERSION B — newly appended evidence, not a history mutation')
+  original[0].content[0].attachment.name = 'renamed-after-upload.png'
+  for await (const _ of bridge.stream({
+    provider: 'synthetic-text-twin', model: 'text', sessionId: 'v2-test', messages: original,
+  })) {}
+  assert.deepEqual(requests[1].messages, expected,
+    'v2 history is independent of mutable OCR memory and filename')
+  assert.deepEqual(pristine[0].content[0].attachment.attachmentId,
+    original[0].content[0].attachment.attachmentId, 'durable image identity stays untouched')
+  assert.equal(original[0].content[0].type, 'image')
+})
+
+test('stage 2: v2 escapes untrusted attachment identifiers without changing identity', () => {
+  const risky = 'sha256:abc"\\n] INJECT NEW DIRECTIVE'
+  const original = [{ role: 'user', id: 'risky-user', content: [{
+    type: 'image', attachment: { attachmentId: risky, name: 'mutable-name.png' },
+  }] }]
+  const marker = projectStableTextOnlyImages(original, { markerStyle: 'canonical-v2' })
+  assert.equal(marker.messages[0].content[0].type, 'text')
+  assert.ok(marker.messages[0].content[0].text.includes(JSON.stringify(risky)))
+  assert.ok(!marker.messages[0].content[0].text.includes('mutable-name.png'))
+  assert.equal(original[0].content[0].type, 'image')
+})
+
+test('stage 2: v2 never conflates distinct images with missing attachment IDs', async () => {
+  const missing = [{ id: 'tool-produced-two-images', role: 'tool', content: [
+    { type: 'image', attachment: { name: 'first.png' } },
+    { type: 'tool-result', content: [
+      { type: 'image', attachment: { name: 'second.png' } },
+    ] },
+  ] }]
+  const original = structuredClone(missing)
+  const projected = rewriteHistoryImages(missing, new Map(), { stable: 'stable-v2' }).messages
+  const first = projected[0].content[0].text
+  const second = projected[0].content[1].content[0].text
+  assert.notEqual(first, second, 'two unqueryable pictures cannot share an identical synthetic marker')
+  assert.match(first, /source "tool-produced-two-images"; occurrence 0/)
+  assert.match(second, /source "tool-produced-two-images"; occurrence 1/)
+  assert.match(first, /do not invent one/)
+  assert.ok(!first.includes('attachmentIds:'), 'never advertise an unqueryable attachment as a real ID')
+  assert.deepEqual(missing, original, 'request-only projection does not mutate the durable tool result')
+  const requests = []
+  const bridge = createWrapperStreamBody({ llm: { async *stream(options) {
+    requests.push(options)
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  } } }, {
+    delegateProvider: 'text', preserveImageInput: false,
+    imageMemory: new Map(), stableImageHistory: 'stable-v2',
+  })
+  for await (const _ of bridge.stream({
+    provider: 'text-twin', model: 'text', sessionId: 'missing-id-case', messages: missing,
+  })) {}
+  assert.deepEqual(requests[0].messages, projected,
+    'canonical fallback is byte-identical through both text-only paths')
+})
+
+
+test('adversarial #865: idless v2 images may not use mutable request indices', () => {
+  const idless = { role: 'user', content: [
+    { type: 'text', text: 'unidentified but legitimate historical image' },
+    { type: 'image', attachment: { name: 'mutable.png' } },
+  ] }
+  const nested = { role: 'tool', id: 'durable-tool-result', content: [{
+    type: 'tool-result', content: [{ type: 'image', attachment: { name: 'nested.png' } }],
+  }] }
+  assert.equal(hasUnstableStableV2ImageIdentity([idless]), true)
+  assert.equal(hasUnstableStableV2ImageIdentity([nested]), false)
+  assert.throws(() => projectStableTextOnlyImages([idless], { markerStyle: 'canonical-v2' }),
+    /without durable attachment or message identity/)
+  const durable = { ...idless, id: 'durable-image-origin' }
+  const first = projectStableTextOnlyImages([durable], { markerStyle: 'canonical-v2' }).messages
+  const afterInsert = projectStableTextOnlyImages([
+    { role: 'user', id: 'prepend', content: [{ type: 'text', text: 'earlier turn' }] },
+    durable,
+  ], { markerStyle: 'canonical-v2' }).messages
+  assert.deepEqual(first[0], afterInsert[1],
+    'message id + image occurrence keeps historical marker stable when positions change')
+  assert.equal(hasUnstableStableV2ImageIdentity([durable]), false)
+})

@@ -11,7 +11,7 @@ import * as dvr from '../../../lib/public-entry.js'
 import type { SessionSurfaceReplacementIntent } from '../../../lib/public-entry.js'
 
 const exactName: 'vision-router' = dvr.name
-const exactRevision: 7 = dvr.SETTINGS_CONTRACT_REVISION
+const exactRevision: 8 = dvr.SETTINGS_CONTRACT_REVISION
 const exactInject: readonly ['tools', 'llm'] = dvr.inject
 
 const config: Record<string, unknown> = dvr.Config({})

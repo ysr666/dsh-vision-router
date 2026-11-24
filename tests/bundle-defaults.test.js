@@ -62,6 +62,17 @@ test('public Config composition preserves the mature Core schema identity', () =
 
 test('public plugin config defaults progressive tools off', () => {
   assert.equal(Config({}).progressiveTools, false)
+  assert.equal(Config({}).stableImageHistory, false)
+  assert.equal(Config({}).stableImageHistoryNewSessions, true)
+  assert.equal(Config({ stableImageHistoryNewSessions: false }).stableImageHistoryNewSessions, false,
+    'an explicit user opt-out stays authoritative')
+})
+
+test('issue #865: legacy Core defaults cannot silently re-enable progressive schema changes', async () => {
+  const source = await readFile(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(source, /progressiveTools: z\.boolean\(\)\.default\(false\)/)
+  assert.match(source, /const progressive = config\.progressiveTools === true/)
+  assert.equal(Config({}).progressiveTools, false)
 })
 
 test('progressive tools remain an explicit opt-in', () => {
@@ -69,7 +80,7 @@ test('progressive tools remain an explicit opt-in', () => {
 })
 
 test('entry contract exposes routing product semantics without enabling auto execution or measurement by default', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   const defaults = Config({})
   assert.equal(defaults.routingMode, 'ordered')
   assert.equal(defaults.routingPreference, 'balanced')
@@ -110,10 +121,10 @@ test('walkthrough step 1 combines the Vision toggle and model selector into one 
 })
 
 test('entry contract always exposes the local remote-settings permission and handshake', () => {
-  assert.equal(SETTINGS_CONTRACT_REVISION, 7)
+  assert.equal(SETTINGS_CONTRACT_REVISION, 8)
   assert.equal(Config({}).allowRemoteSettings, false)
   assert.equal(Config({ allowRemoteSettings: true }).allowRemoteSettings, true)
-  assert.equal(Config({}).settingsContractRevision, 7)
+  assert.equal(Config({}).settingsContractRevision, 8)
 })
 
 test('entry contract exposes the custom depth tier to every settings entry point', () => {
@@ -765,4 +776,14 @@ test('active rc5 Host gates fail closed on PR impact; rc1 uses isolated immutabl
   assert.match(rc1, /66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db/)
   assert.doesNotMatch(rc1, /actions\/cache\/restore@/)
   assert.doesNotMatch(rc1, /actions\/cache\/save@/)
+})
+
+test('issue #865 separates additional native Desktop clicks from frozen legacy toggle diagnostic', async () => {
+  const source = await readFile(new URL('../scripts/dsh-desktop-renderer-e2e.mjs', import.meta.url), 'utf8')
+  assert.equal((source.match(/await toggle\.click\(\)/g) ?? []).length, 2)
+  assert.equal((source.match(/await nativeToggle\.click\(\)/g) ?? []).length, 2)
+  assert.match(source, /nativeClicksAfter - nativeClicksBefore, 2/)
+  assert.match(source, /assert\.deepEqual\(enabled, before,/)
+  assert.match(source, /assert\.deepEqual\(disabled, before,/)
+  assert.match(source, /await waitNative\('false'\)/)
 })
