@@ -197,7 +197,16 @@ function writeHostCoreProbeFixture(directory) {
     `      name: ${name}`,
     '',
   ].join('\n'))
-  writeFileSync(join(directory, 'index.js'), String.raw`const STATES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
+  // This exact block is byte-identical in published 3.2.1, 3.4.0 and this branch.
+  const core = readFileSync(join(dvrRoot, 'src/index.js'), 'utf8')
+  const mountStart = core.indexOf('  let wrapperRouteHandle\n')
+  const mountEnd = core.indexOf('  // #208:', mountStart)
+  if (mountStart < 0 || mountEnd < mountStart) throw Error('DVR routing mount source block not found')
+  writeFileSync(join(directory, 'routing-mount-probe.js'),
+    'export function mountProbe(ctx,wrapperRoute,chainRoute,routingEnabled,wrapperAdapter,chainAdapter) { let wrapperRegistered=false;\n' +
+    core.slice(mountStart, mountEnd) + '\nreturn syncRoutingMounts;\n}')
+  writeFileSync(join(directory, 'index.js'), String.raw`import { mountProbe } from './routing-mount-probe.js'
+const STATES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
 const SERVICE_NAMES = [
   'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
   'workspaceController', 'sessionController', 'sessions', 'sessionQuery',
@@ -272,6 +281,35 @@ function collectDvrMessages(value, out = []) {
   }
   for (const nested of Object.values(value)) collectDvrMessages(nested, out)
   return out
+}
+
+// Real Cordis + real LLM service with the exact DVR reconciliation body.
+ // This deliberately introduces a synthetic foreign listener that disposes the
+ // caller on publication of its first adapter. It is NOT a reporter reproduction.
+async function routingControl(scope, invalidate) {
+  const suffix = invalidate ? 'fault' : 'normal'
+  const wrapper = 'dvr-877-probe-wrapper-' + suffix
+  const chain = 'dvr-877-probe-chain-' + suffix
+  const adapter = { providerInfo(id) { return { id, name: id } }, providerRetryPolicy() {} }
+  let sync, disposal, triggered = false, stateAtTrigger = null, error = null
+  const child = await scope.root.plugin({
+    name: 'dvr-877-routing-probe-' + suffix,
+    inject: ['llm'],
+    apply(inner) {
+      sync = mountProbe(inner, () => wrapper, () => chain, () => true, adapter, adapter)
+      inner.on('llm/adapters-updated', () => {
+        if (!invalidate || triggered || !inner.llm.listProviders().some(p => p.id === wrapper)) return
+        triggered = true
+        disposal = inner.fiber.dispose()
+        stateAtTrigger = STATES[inner.fiber.state] ?? String(inner.fiber.state)
+      })
+    },
+  })
+  try { sync() } catch (reason) { error = { code: reason?.code, stack: String(reason?.stack || reason).slice(0, 8000) } }
+  const live = scope.root.get('llm').listProviders().filter(p => [wrapper, chain].includes(p.id)).map(p => p.id)
+  await (disposal ?? child.dispose())
+  const remaining = scope.root.get('llm').listProviders().filter(p => [wrapper, chain].includes(p.id)).map(p => p.id)
+  return { invalidate, triggered, stateAtTrigger, error, live, remaining }
 }
 
 export function apply(ctx) {
@@ -351,13 +389,21 @@ export function apply(ctx) {
           }
           try {
             const command = new URL(req.url, 'http://localhost').searchParams.get('command')
+            if (command === 'routing-control') {
+              const normal = await routingControl(scope, false)
+              const fault = await routingControl(scope, true)
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ normal, fault }))
+              return
+            }
             if (command === 'arm') {
               evidence.timeline.length = 0
               evidence.firstFailure = null
               evidence.firstEffect = null
               evidence.armed = true
             }
-            const entries = Array.from(scope.loader.entries()).filter(entry =>
+            const loader = scope.get('loader') ?? scope.root.get('loader')
+            const entries = Array.from(loader.entries()).filter(entry =>
               /vision-router|dshmarket|dsh-market/i.test(String(entry.id) + ' ' + String(entry.options?.name ?? '')))
               .map(entry => ({ id: entry.id, name: entry.options?.name, disabled: entry.disabled,
                 uid: entry.fiber?.uid, state: STATES[entry.fiber?.state] ?? String(entry.fiber?.state),
@@ -745,6 +791,7 @@ const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
 })
 let desktopOutputBuffer = ''
 let lastCoreProbe
+let marketEvidence
 let runtimePackageEvidence
 let exactNativeOcr
 let exactNativeOcrModule
@@ -1178,6 +1225,11 @@ try {
       try { return readJson(join(paths.profile, 'node_modules', name, 'package.json')).version }
       catch { return null }
     }
+    // Separate causal control from natural marketplace evidence.
+    let routingControlEvidence
+    try { routingControlEvidence = await readProbe('routing-control') }
+    catch (error) { routingControlEvidence = { fixtureError: String(error) } }
+    console.log('ISSUE_877_ROUTING_CONTROL=' + JSON.stringify(routingControlEvidence))
     const before = await readProbe('arm')
     if (!before.armed || installed('dshmarket') !== process.env.DVR_MARKET_VERSION ||
         installed('dsh-vision-router') !== '3.2.1' ||
@@ -1219,7 +1271,8 @@ try {
     const final = { installed: installed('dsh-vision-router'), marketVersion: installed('dshmarket'),
       profileSpec: persisted.dependencies?.['dsh-vision-router'] ?? null,
       bundleSelected: persisted.dsh?.profile?.bundles?.includes('dsh-vision-router') ?? false,
-      marketResult, before, after, lastProbeError, marketLog }
+      marketResult, before, after, lastProbeError, marketLog, routingControl: routingControlEvidence }
+    marketEvidence = final
     console.log('ISSUE_877_REAL_MARKET=' + JSON.stringify(final))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
     if (final.installed !== '3.4.0' || !final.bundleSelected ||
@@ -1668,6 +1721,7 @@ try {
   if (diagnosticPath) {
     const fileFailure = {
       ok: false,
+      ...(marketEvidence ? { marketEvidence } : {}),
       failureKind: lastCoreProbe !== undefined
         && (lastCoreProbe?.services?.workspaceController?.active !== true
           || lastCoreProbe?.services?.sessionController?.active !== true)
