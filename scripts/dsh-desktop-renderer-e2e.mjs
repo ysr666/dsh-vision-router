@@ -351,6 +351,25 @@ function installModelAdmissionAudit(scope) {
       return rows
     })
     wrap(llm, 'listModels', original => observeModels(original, 'host'))
+    // selectModel also validates exact model metadata/reasoning before
+    // committing. Its catch maps those failures to the same remote code.
+    if (typeof llm.resolveCallConfig === 'function') {
+      wrap(llm, 'resolveCallConfig', original => function(config, ...args) {
+        const provider = config?.provider
+        if (provider !== source && provider !== twin) return Reflect.apply(original, this, [config, ...args])
+        const call = sequence + 1
+        record({ kind: 'resolve-start', provider, call, exactModel: config?.model === model,
+          explicitEffort: config?.reasoningEffort !== undefined })
+        let value
+        try { value = Reflect.apply(original, this, [config, ...args]) }
+        catch (error) { record({ kind: 'resolve-error', provider, call, code: safeCode(error) }); throw error }
+        const success = () => record({ kind: 'resolve-end', provider, call })
+        const failed = error => record({ kind: 'resolve-error', provider, call, code: safeCode(error) })
+        if (value && typeof value.then === 'function') void Promise.resolve(value).then(success, failed).catch(() => {})
+        else success()
+        return value
+      })
+    }
     snapshotTopology('initial-topology')
     scope.on('llm/adapters-updated', () => snapshotTopology('topology-change'), { global: true })
     scope.effect(() => () => {
