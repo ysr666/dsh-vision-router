@@ -198,7 +198,7 @@ function writeHostCoreProbeFixture(directory) {
     '',
   ].join('\n'))
   // This exact block is byte-identical in published 3.2.1, 3.4.0 and this branch.
-  const core = readFileSync(join(dvrRoot, 'src/index.js'), 'utf8')
+  const core = readFileSync(join(dvrRoot, 'src/index.js'), 'utf8').replace(/\r\n/g, '\n')
   const mountStart = core.indexOf('  let wrapperRouteHandle\n')
   const mountEnd = core.indexOf('  // #208:', mountStart)
   if (mountStart < 0 || mountEnd < mountStart) throw Error('DVR routing mount source block not found')
