@@ -231,8 +231,8 @@ try {
   }
   // Text-only toggle uses the existing public model selection, not the native
   // policy command. Assert actual upstream identity and request shape even if
-  // a public alias changes. This is a characterization until the observed
-  // result is qualified; do not hide a wrapper incompatibility.
+  // a public alias changes. Exact current Host acceptance qualified this
+  // path on 3e831216; retain it as a hard regression gate.
   assert.ok(ctx.llm.listProviders().some(row => row.id === 'native-proof-vision'),
     'real public plugin must mount configured text-model twin')
   const textHandle = await ctx.agents.create({
@@ -262,6 +262,12 @@ try {
     const current = record(request)
     assert.deepEqual(current.wire.tools.map(t => t.name), ['run_code'])
     const diff = priorText ? compareFinalWireRequests(priorText, current) : null
+    if (priorText) {
+      assert.equal(diff.localSerializedPrefixPreserved, true,
+        'qualified stock PTC text twin path must preserve prefix: ' + JSON.stringify(diff.changedDimensions))
+      assert.equal(JSON.stringify(current.wire.messages.slice(0, priorText.wire.messages.length)),
+        JSON.stringify(priorText.wire.messages), 'text twin PTC historical message bytes changed')
+    }
     textRows.push({ enabled, currentSdkHasVision: sdk.includes('vision_describe'),
       prefixPreserved: diff?.localSerializedPrefixPreserved ?? null,
       changedDimensions: diff?.changedDimensions ?? [] })
