@@ -400,6 +400,54 @@ try {
   assert.ok(!offeredNames.includes(ocr.name) && !offeredNames.includes(describe.name),
     'OFF must never retain an executable DVR tool declaration')
 
+  // Experimental control: separate fixed transport declarations from a
+  // durable appended policy snapshot. No production visibility is changed.
+  // This exercises actual pinned LlmRuntime and DeepSeek serialization, NOT
+  // the real provider's cache or permission enforcement. In particular the
+  // fixed native candidate exposes definitions while OFF and is not eligible
+  // for the existing strict visibility contract.
+  async function probeFixedSurface(label, tools) {
+    const history = { tools, updates: [] }
+    const messages = [createSystemMessage('fixed synthetic capability instructions')]
+    const transitions = []
+    let previous
+    for (const [index, enabled] of [false, true, false, true].entries()) {
+      if (index > 0) messages.push(assistant('synthetic prior response ' + index))
+      messages.push(user('synthetic input ' + index))
+      // Model-visible snapshots use user-role context, matching the Host
+      // PromptContext transport. Place the context before an assistant, not
+      // after an already serialized user turn in a separate request.
+      messages.push(user('synthetic runtime vision policy: ' + (enabled ? 'ON' : 'OFF')))
+      const current = await request(sourceRoute, [...messages], { tools, toolHistory: history })
+      if (previous) {
+        const difference = forensic(previous, current)
+        assert.equal(difference.localSerializedPrefixPreserved, true, label + ': ' + JSON.stringify(difference.changedDimensions))
+        assert.equal(difference.changes.upstream, false)
+        checkPrefix(previous, current, label)
+        assert.equal(JSON.stringify(current.wire.messages.slice(0, previous.wire.messages.length)),
+          JSON.stringify(previous.wire.messages), label + ': exact serialized historical bytes')
+      }
+      transitions.push({ enabled, prefix: previous ? true : null, ownedDeclarations: (current.wire.tools ?? [])
+        .filter(tool => tool.name.startsWith('vision_')).length })
+      previous = current
+    }
+    return transitions
+  }
+  const fixedNative = await probeFixedSurface('fixed native declarations', [foreign, ocr, describe])
+  assert.ok(fixedNative.every(row => row.ownedDeclarations === 2),
+    'negative control: fixed native declarations violate OFF invisibility')
+  const deferredNative = await probeFixedSurface('fixed deferred declarations',
+    [foreign, { ...ocr, deferLoading: true }, { ...describe, deferLoading: true }])
+  assert.ok(deferredNative.every(row => row.ownedDeclarations === 2),
+    'deferred declarations are still physically sent, not hidden')
+  // Generic transport control, not a real PTC executor test. A subsequent
+  // PTC integration must prove SDK/context projection and nested denial.
+  const genericTransport = await probeFixedSurface('fixed generic transport', [schema('run_code')])
+  assert.ok(genericTransport.every(row => row.ownedDeclarations === 0))
+  console.log(JSON.stringify({ scenario: 'issue-865 fixed surface wire feasibility',
+    fixedNative, deferredNative, genericTransport,
+    limitations: ['synthetic policy context', 'no actual PTC executor', 'no provider cache claim'] }))
+
   // V2: both text-only entries converge on the actual native DeepSeek
   // Messages serializer, not merely an approximate JSON representation.
   // The image is a realistic DSH UserMessage but is NEVER serialized as
