@@ -131,14 +131,38 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
   let snapshot
   let generation = 0
   let resumeRetry
+  const legacyWaiters = new Set()
+  // Compare only a previously authorized legacy decision, not arbitrary
+  // unavailable/native observations or object identity across Remote frames.
+  const legacyKey = state => {
+    if (!state || state.writing) return null
+    if (state.kind === 'legacy') return JSON.stringify(['legacy', state.reason])
+    if (state.kind !== 'value') return null
+    const view = state.view
+    if (view.kind === 'legacy') return JSON.stringify([view.kind, view.reason, view.selection.provider, view.selection.model])
+    if (view.kind === 'unavailable' && view.reason === 'host-control-unsupported') return view.reason
+    return null
+  }
+  const isLegacyCurrent = previous => {
+    const key = legacyKey(previous)
+    return active && key !== null && key === legacyKey(snapshot)
+  }
+  const notifyLegacyWaiters = () => { for (const inspect of [...legacyWaiters]) inspect() }
   const stop = () => {
     if (!active) return
     active = false
     ctl.abort()
     resumeRetry?.()
     try { stream?.dispose() } catch {}
+    notifyLegacyWaiters()
   }
-  const update = state => { if (active) { snapshot = state; publish(state) } }
+  const update = state => {
+    if (active) {
+      snapshot = state
+      publish(state)
+      notifyLegacyWaiters()
+    }
+  }
   update({ kind: 'waiting' })
   const pause = ms => new Promise(resolve => {
     const timer = setTimeout(finish, ms)
@@ -211,6 +235,36 @@ export function startNativeVisionClientObservation(api, sessionId, publish, { re
   return {
     stop,
     isCurrent(state) { return active && snapshot === state },
+    isLegacyCurrent,
+    // Preserve one explicit legacy click during a same-observer read gap.
+    // Never convert a denied/unknown/native decision into permission. Only
+    // wait through a bounded transport read retry or adapter withdrawal,
+    // and require the original exact legacy decision to be observed again.
+    waitForLegacy(previous, timeoutMs = 5000) {
+      if (!active || legacyKey(previous) === null) return Promise.resolve(false)
+      if (isLegacyCurrent(previous)) return Promise.resolve(true)
+      return new Promise(resolve => {
+        let done = false
+        let timer
+        const finish = result => {
+          if (done) return
+          done = true
+          legacyWaiters.delete(inspect)
+          clearTimeout(timer)
+          resolve(result)
+        }
+        const inspect = () => {
+          if (!active) return finish(false)
+          if (isLegacyCurrent(previous)) return finish(true)
+          const temporarilyUnavailable = snapshot?.kind === 'waiting' ||
+            (snapshot?.kind === 'value' && snapshot.view.kind === 'unavailable' && snapshot.view.reason === 'no-registration')
+          if (!temporarilyUnavailable) finish(false)
+        }
+        legacyWaiters.add(inspect)
+        timer = setTimeout(() => finish(false), timeoutMs)
+        inspect()
+      })
+    },
     async set(view, expected) {
       if (!active || writing || latest !== view || view?.kind !== 'native' ||
           !nativeVisionSameRoute(view.selection, expected) || !view.canEnable) return false
