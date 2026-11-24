@@ -478,3 +478,60 @@ test('HMR restoration respects pending durable model selections instead of initi
   assert.ok(initiallyOff.ctx.tools.get('vision_describe'), 'OFF->ON selection stays accessible after remount')
   assert.deepEqual(harness.restrictCalls, [['vision_describe']])
 })
+
+test('#860/#877: HMR registry can enumerate a disposed scope; skip it and still mask live OFF Agents', () => {
+  const h = makeHarness()
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const stale = h.makeAgent('deepseek-official', 'stale')
+  stale.ctx.fiber = { uid: null, state: 4 }
+  let attempts = 0
+  stale.ctx.tools.restrict = () => { attempts++; throw Object.assign(new Error('cannot create effect on inactive context'), { code: 'INACTIVE_EFFECT' }) }
+  const live = h.makeAgent('deepseek-official', 'live')
+  live.ctx.fiber = { uid: 12, state: 2 }
+  h.mode.reconcileExistingAgents()
+  assert.equal(attempts, 0)
+  assert.equal(h.warnings.length, 0)
+  assert.equal(live.ctx.tools.get('vision_describe'), undefined)
+  assert.deepEqual(h.restrictCalls, [['vision_describe']])
+})
+
+test('#877: do not retry a retired scope for each registered tool after reentrant unload', () => {
+  const h = makeHarness()
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  h.mode.ctx.tools.register({ name: 'vision_crop', async execute() {} })
+  const agent = h.makeAgent()
+  agent.ctx.fiber = { uid: 7, state: 2 }
+  let attempts = 0
+  agent.ctx.tools.restrict = () => {
+    attempts++
+    agent.ctx.fiber.state = 5
+    throw Object.assign(new Error('cannot create effect on inactive context'), { code: 'INACTIVE_EFFECT' })
+  }
+  h.mode.reconcileExistingAgents()
+  h.mode.reconcileExistingAgents()
+  assert.equal(attempts, 1)
+  assert.equal(h.warnings.length, 0)
+})
+
+test('#877: late captured hook cannot recreate a mask after boundary teardown', () => {
+  const h = makeHarness()
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = h.makeAgent()
+  const late = h.handlers.get('agent/created')
+  h.disposeBoundaryEffects()
+  late({ agent })
+  h.mode.reconcileExistingAgents()
+  assert.deepEqual(h.restrictCalls, [])
+})
+
+test('#877: scope identity changes require a new mask for the same Agent object', () => {
+  const h = makeHarness()
+  h.mode.ctx.tools.register({ name: 'vision_describe', async execute() {} })
+  const agent = h.makeAgent()
+  agent.ctx.fiber = { uid: 7, state: 2 }
+  h.mode.reconcileExistingAgents()
+  agent.ctx.fiber = { uid: 8, state: 2 }
+  h.mode.reconcileExistingAgents()
+  assert.deepEqual(h.restrictCalls, [['vision_describe'], ['vision_describe']])
+  assert.equal(agent.ctx.tools.get('vision_describe'), undefined)
+})
