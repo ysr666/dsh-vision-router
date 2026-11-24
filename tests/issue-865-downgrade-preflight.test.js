@@ -118,37 +118,32 @@ test('#865: file length limit rejects huge Session without parsing private text'
   } finally { f.close() }
 })
 
-test('#865: public Doctor explicitly rejects v2->v1 downgrade and never leaks Session data', () => {
+test('#865: public downgrade preflight explicitly rejects v2->v1 and never leaks or changes Session data', () => {
   const f = fixture()
   try {
-    const profile = join(f.dir, 'profiles', 'web')
-    mkdirSync(profile, { recursive: true })
-    writeFileSync(join(profile, 'package.json'), JSON.stringify({
-      dependencies: { 'dsh-vision-router': '^1.7.4' },
-      dsh: { profile: { bundles: ['dsh-vision-router'] } },
-    }))
-    const plugin = join(profile, 'node_modules', 'dsh-vision-router')
-    mkdirSync(plugin, { recursive: true })
-    writeFileSync(join(plugin, 'package.json'), JSON.stringify({
-      name: 'dsh-vision-router', version: '1.7.4', main: 'entry.js',
-      dsh: { bundle: { patch: './cordis.patch.yml' } },
-    }))
-    writeFileSync(join(plugin, 'entry.js'), 'export default {}\n')
-    writeFileSync(join(plugin, 'cordis.patch.yml'), '- insert: []\n')
-    f.add('sensitive', 'stable-v2', true)
-    const doctor = fileURLToPath(new URL('../lib/doctor-cli.js', import.meta.url))
-    const invoke = args => spawnSync(process.execPath, [doctor, 'doctor', '--no-runtime', ...args], {
+    const file = f.add('sensitive', 'stable-v2', true)
+    const original = readFileSync(file)
+    const cli = fileURLToPath(new URL('../lib/repair-cli.js', import.meta.url))
+    const invoke = args => spawnSync(process.execPath, [cli, ...args], {
       encoding: 'utf8', env: { ...process.env, DSH_HOME: f.dir },
     })
-    const blocked = invoke(['--downgrade-preflight=stable-v1', '--json'])
+    const blocked = invoke(['downgrade-preflight', 'stable-v1', '--json'])
     assert.equal(blocked.status, 1, blocked.stderr)
     const parsed = JSON.parse(blocked.stdout)
+    assert.equal(parsed.ok, false)
     assert.equal(parsed.downgradePreflight.decision, 'block')
     assert.equal(parsed.downgradePreflight.blocked, 1)
-    assert.doesNotMatch(blocked.stdout, /PRIVATE_SESSION_sensitive|sensitive|session\.jsonl|cache-proof/)
-    const refusedWrite = invoke(['--downgrade-preflight', 'stable-v1', '--fix'])
+    assert.doesNotMatch(blocked.stdout + blocked.stderr, /PRIVATE_SESSION_sensitive|sensitive|session\.jsonl|cache-proof/)
+    const allowed = invoke(['downgrade-preflight', 'stable-v2', '--json'])
+    assert.equal(allowed.status, 0, allowed.stderr)
+    assert.equal(JSON.parse(allowed.stdout).downgradePreflight.decision, 'allow')
+    const refusedWrite = invoke(['downgrade-preflight', 'stable-v1', '--fix'])
     assert.equal(refusedWrite.status, 2, 'read-only downgrade preflight must not accept mutation')
-    const missingCapability = invoke(['--downgrade-preflight', 'undefined-old-version'])
+    const missingCapability = invoke(['downgrade-preflight', 'undefined-old-version'])
     assert.equal(missingCapability.status, 2, 'do not guess capabilities from a release label')
+    const retired = invoke(['doctor', '--downgrade-preflight=stable-v1', '--json'])
+    assert.equal(retired.status, 2, 'old Doctor entry is retired, not an alias')
+    assert.match(retired.stderr, /doctor has been retired/)
+    assert.deepEqual(readFileSync(file), original)
   } finally { f.close() }
 })

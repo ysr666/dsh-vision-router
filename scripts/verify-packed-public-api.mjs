@@ -82,6 +82,40 @@ try {
 
   await symlink(path.join(ROOT, 'node_modules'), path.join(packageRoot, 'node_modules'), 'junction')
 
+  // Exercise the actual package bin, not merely an imported source helper.
+  if (manifest.bin?.['dsh-vision-router'] !== './lib/repair-cli.js') {
+    throw new Error('packed recovery binary drifted')
+  }
+  for (const retired of ['doctor-cli.js', 'doctor-cli-p0.js']) {
+    try {
+      await access(path.join(packageRoot, 'lib', retired))
+      throw new Error('retired CLI shipped: ' + retired)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+  const recoveryHome = path.join(temporary, 'recovery-home')
+  await mkdir(recoveryHome)
+  const cliPath = path.resolve(packageRoot, manifest.bin['dsh-vision-router'])
+  const cli = args => spawnSync(process.execPath, [cliPath, ...args], {
+    cwd: temporary, encoding: 'utf8',
+    env: { ...process.env, DSH_HOME: recoveryHome },
+    timeout: 10000,
+  })
+  const help = cli(['--help'])
+  if (help.status !== 0 || !/repair-sessions/.test(help.stdout) || !/downgrade-preflight/.test(help.stdout)) {
+    throw new Error('packed recovery help unavailable')
+  }
+  for (const args of [[], ['doctor'], ['doctor', '--fix']]) {
+    const retired = cli(args)
+    if (retired.status !== 2) throw new Error('packed legacy/default CLI did not refuse invocation')
+  }
+  const unknown = cli(['downgrade-preflight', 'stable-v2', '--json'])
+  if (unknown.status !== 1 || JSON.parse(unknown.stdout).downgradePreflight.decision !== 'unknown') {
+    throw new Error('packed downgrade preflight did not fail closed for absent history')
+  }
+  console.log('packed recovery CLI smoke passed (old entries absent; retired commands refuse; downgrade unknown blocks)')
+
   const runtime = await import(pathToFileURL(path.join(packageRoot, 'lib', 'public-entry.js')).href)
   const runtimeNames = Object.keys(runtime).sort()
   if (JSON.stringify(runtimeNames) !== JSON.stringify(expectedNames)) {

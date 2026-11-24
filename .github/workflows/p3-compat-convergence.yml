@@ -8,14 +8,14 @@ on:
       - 'README.md'
       - 'README.zh.md'
       - 'src/lib/dsh-support-window.js'
-      - 'src/lib/doctor-cli-p0.js'
+      - 'src/lib/repair-cli.js'
       - 'src/lib/web/**'
       - 'src/lib/runtime-composition.js'
       - 'docs/architecture/dsh-support-window.md'
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'
       - 'tests/dsh-support-window.test.js'
-      - 'tests/doctor-host-capabilities.test.js'
+      - 'tests/repair-cli.test.js'
       - 'tests/p3-*.test.js'
       - '.github/workflows/p3-compat-convergence.yml'
   push:
@@ -25,14 +25,14 @@ on:
       - 'README.md'
       - 'README.zh.md'
       - 'src/lib/dsh-support-window.js'
-      - 'src/lib/doctor-cli-p0.js'
+      - 'src/lib/repair-cli.js'
       - 'src/lib/web/**'
       - 'src/lib/runtime-composition.js'
       - 'docs/architecture/dsh-support-window.md'
       - 'docs/architecture/p3-*.md'
       - 'docs/releases/**'
       - 'tests/dsh-support-window.test.js'
-      - 'tests/doctor-host-capabilities.test.js'
+      - 'tests/repair-cli.test.js'
       - 'tests/p3-*.test.js'
       - '.github/workflows/p3-compat-convergence.yml'
 
@@ -60,10 +60,10 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Support-window, Doctor, Web and final composition boundaries
+      - name: Support-window, recovery, Web and final composition boundaries
         run: >-
           node --test
           tests/dsh-support-window.test.js
-          tests/doctor-host-capabilities.test.js
+          tests/repair-cli.test.js
           tests/p3-web-modularization.test.js
           tests/p3-entry-composition.test.js

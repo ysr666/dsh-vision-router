@@ -267,6 +267,18 @@ const CLIENT_PRELUDE = String.raw`(function(){
   var selectionGenerations = new WeakMap();
   var inFlight = null;
   var refreshedAt = 0;
+  var refreshTimer;
+  // A Host topology update can finish after the last directory/settings
+  // publication. Keep the read-only ownership view convergent while a client
+  // actually observes it; stop the timer when the last observer leaves.
+  function scheduleObservedRefresh(){
+    if (!listeners.size || refreshTimer !== undefined || typeof window.setTimeout !== 'function') return;
+    refreshTimer = window.setTimeout(function(){
+      refreshTimer = undefined;
+      if (!listeners.size) return;
+      void refresh(true).finally(scheduleObservedRefresh);
+    }, 1000);
+  }
   function emit(){ listeners.forEach(function(fn){ try { fn(); } catch (_) {} }); }
   function refresh(force){
     var now = Date.now();
@@ -284,8 +296,12 @@ const CLIENT_PRELUDE = String.raw`(function(){
         });
         var revision = Number.isFinite(value && value.revision) ? value.revision : 0;
         var changed = revision !== snapshot.revision || JSON.stringify(Array.from(routes)) !== JSON.stringify(Array.from(snapshot.routes));
-        snapshot = { revision: revision, routes: routes };
-        if (changed) emit();
+        // React useSyncExternalStore requires referentially stable snapshots
+        // when the external value has not changed.
+        if (changed) {
+          snapshot = { revision: revision, routes: routes };
+          emit();
+        }
         return snapshot;
       }, function(){ return snapshot; })
       .finally(function(){ inFlight = null; });
@@ -463,7 +479,18 @@ const CLIENT_PRELUDE = String.raw`(function(){
   var api = {
     sourceFor: function(provider){ void refresh(false); return snapshot.routes.get(provider); },
     getSnapshot: function(){ return snapshot; },
-    subscribe: function(fn){ listeners.add(fn); void refresh(true); return function(){ listeners.delete(fn); }; },
+    subscribe: function(fn){
+      listeners.add(fn);
+      void refresh(true);
+      scheduleObservedRefresh();
+      return function(){
+        listeners.delete(fn);
+        if (!listeners.size && refreshTimer !== undefined) {
+          window.clearTimeout(refreshTimer);
+          refreshTimer = undefined;
+        }
+      };
+    },
     refresh: refresh,
     recoveryFor: recoveryFor,
     select: select
@@ -524,10 +551,12 @@ export function hardenVisionClientSource(source) {
     `function visionModeOwnedWrapper(groups, wrapperRoute, modelId) {\n  var ownership = window.__dshVisionRouterRootHardening;\n  if (!ownership || ownership.sourceFor(wrapperRoute) !== VISION_MODE_WRAPPER_SOURCE) return false;\n  if (typeof wrapperRoute !== 'string' || wrapperRoute === '') return false`,
   )
 
+  // #888 renamed pair to livePair and moved it after the native observation.
+  // Match the live seam, not the retired adjacent settings/pair block.
   next = replaceAll(
     next,
-    `        var visionConfig = settingsState && settingsState.value && typeof settingsState.value === 'object'\n          ? settingsState.value\n          : {};\n        var pair = resolveVisionModePair(state.groups, state.current, visionConfig);`,
-    `        var visionConfig = settingsState && settingsState.value && typeof settingsState.value === 'object'\n          ? settingsState.value\n          : {};\n        var rootHardening = window.__dshVisionRouterRootHardening;\n        if (rootHardening) React.useSyncExternalStore(rootHardening.subscribe, rootHardening.getSnapshot);\n        var recovery = rootHardening ? rootHardening.recoveryFor(directory) : undefined;\n        var recoveryError = recovery ? React.useSyncExternalStore(recovery.subscribe, recovery.getSnapshot) : null;\n        var pair = resolveVisionModePair(state.groups, state.current, visionConfig);`,
+    `        var livePair = resolveVisionModePair(state.groups, state.current, visionConfig);`,
+    `        var rootHardening = window.__dshVisionRouterRootHardening;\n        React.useSyncExternalStore(\n          rootHardening ? rootHardening.subscribe : function(){ return function(){}; },\n          rootHardening ? rootHardening.getSnapshot : function(){ return null; }\n        );\n        var livePair = resolveVisionModePair(state.groups, state.current, visionConfig);`,
   )
 
   next = replaceAll(
