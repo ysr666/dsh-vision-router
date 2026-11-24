@@ -114,6 +114,7 @@ async function awaitVisionBackendAttempt(signal, operation) {
 
 export * from './lib/vision-resilience.js'
 
+import { installReactiveRoutingMounts } from './lib/reactive-routing-mounts.js'
 import z from '@deepseek-ai/schemastery'
 
 import path from 'node:path'
@@ -2397,68 +2398,11 @@ export function apply(ctx, config = {}, runtime = {}) {
   // the agent/request hook now reconcile against the resolved settings
   // document: the settings seam below runs one initial sync and re-syncs on
   // every document change, so toggles take effect immediately.
-  let wrapperRouteHandle
-  let wrapperRouteMounted
-  let chainRouteHandle
-  let chainRouteMounted
-  const syncRoutingMounts = () => {
-    const wantWrapper = wrapperRoute()
-    if (wantWrapper !== wrapperRouteMounted) {
-      if (wrapperRouteHandle) {
-        wrapperRouteHandle()
-        wrapperRouteHandle = undefined
-        wrapperRouteMounted = undefined
-      }
-      wrapperRegistered = false
-      if (wantWrapper !== undefined) {
-        try {
-          wrapperRouteHandle = ctx.llm.registerAdapter([wantWrapper], wrapperAdapter)
-          wrapperRouteMounted = wantWrapper
-          wrapperRegistered = true
-        } catch (error) {
-          if (error && error.code === 'DUPLICATE_ADAPTER') {
-            // Another layer already serves this name: adopt it and keep the
-            // flow functional instead of failing the apply.
-            wrapperRouteMounted = wantWrapper
-            wrapperRegistered = true
-          } else {
-            throw error
-          }
-        }
-      }
-    }
-    const wantChain = routingEnabled() ? chainRoute() : undefined
-    if (wantChain !== chainRouteMounted) {
-      if (chainRouteHandle) {
-        chainRouteHandle()
-        chainRouteHandle = undefined
-        chainRouteMounted = undefined
-      }
-      if (wantChain !== undefined) {
-        try {
-          chainRouteHandle = ctx.llm.registerAdapter([wantChain], chainAdapter)
-          chainRouteMounted = wantChain
-        } catch (error) {
-          if (error && error.code === 'DUPLICATE_ADAPTER') {
-            chainRouteMounted = wantChain
-          } else {
-            throw error
-          }
-        }
-      }
-    }
-  }
-  ctx.effect(
-    () => () => {
-      if (wrapperRouteHandle) wrapperRouteHandle()
-      if (chainRouteHandle) chainRouteHandle()
-      wrapperRouteHandle = undefined
-      chainRouteHandle = undefined
-      wrapperRouteMounted = undefined
-      chainRouteMounted = undefined
-    },
-    'vision-router: reactive routing mounts',
-  )
+  const syncRoutingMounts = installReactiveRoutingMounts(ctx, {
+    wrapperRoute, chainRoute, routingEnabled, wrapperAdapter, chainAdapter,
+    setWrapperRegistered: (registered) => { wrapperRegistered = registered },
+  })
+
   // #208: attachment refs and description memory are owned by the same
   // bounded SessionVisionStateStore above. Historical ref recovery stays
   // target-only inside SessionVisionIndex rather than maintaining a log cursor.
