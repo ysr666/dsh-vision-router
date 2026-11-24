@@ -291,7 +291,7 @@ export function apply(ctx) {
             res.writeHead(403); res.end('owner POST required'); return
           }
           try {
-            const shop = await scope.pluginManager.installBundle('dsh-plugin-shop@0.9.4', { enabled: true })
+            const shop = await scope.pluginManager.installBundle('dshmarket@' + process.env.DVR_MARKET_VERSION, { enabled: true })
             if (shop?.application !== 'applied') throw Error('Shop seed refused: ' + JSON.stringify(shop))
             const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
             if (baseline?.application !== 'applied') throw Error('DVR seed refused: ' + JSON.stringify(baseline))
@@ -307,15 +307,35 @@ export function apply(ctx) {
     })
   }
   if (process.env.DVR_ISSUE_877_ELECTRON_UPGRADE === '1') {
-    const timeline = []
-    let firstFailure = null
+    // Test-only, process-owned collector survives diagnostic fixture HMR.
+    // Intercept exactly the real Cordis throw boundary, then rethrow unchanged.
+    const key = Symbol.for('dvr.issue877.effect-probe')
+    const evidence = globalThis[key] ??= { timeline: [], firstFailure: null, firstEffect: null, armed: false }
+    const timeline = evidence.timeline
+    const proto = Object.getPrototypeOf(ctx.fiber)
+    if (!evidence.hooked) {
+      const original = proto.effect
+      if (typeof original !== 'function') throw Error('Cordis Fiber.effect unavailable')
+      proto.effect = function (...args) {
+        try { return Reflect.apply(original, this, args) }
+        catch (error) {
+          if (evidence.armed && !evidence.firstEffect &&
+              (error?.code === 'INACTIVE_EFFECT' || /cannot create effect on inactive context/.test(String(error)))) {
+            evidence.firstEffect = { uid: this.uid, state: this.state, name: this.name,
+              label: String(args[1] ?? ''), stack: String(error.stack || error).slice(0, 10000) }
+          }
+          throw error
+        }
+      }
+      evidence.hooked = true
+    }
     ctx.on('internal/status', (fiber, previous) => {
       const id = String(fiber?.entry?.options?.id ?? '')
-      if (id !== 'vision-router') return
+      if (!evidence.armed || !/vision-router|dshmarket|dsh-market/i.test(id + ' ' + String(fiber?.name ?? ''))) return
       const error = fiber?._error
-      const entry = { from: previous, to: fiber.state, uid: fiber.uid,
+      const entry = { id, name: String(fiber.name ?? ''), from: previous, to: fiber.state, uid: fiber.uid,
         error: error ? String(error.stack || error).slice(0, 6000) : null }
-      if (entry.error && firstFailure === null) firstFailure = entry
+      if (entry.error && evidence.firstFailure === null) evidence.firstFailure = entry
       timeline.push(entry)
       if (timeline.length > 100) timeline.splice(0, timeline.length - 100)
     }, { global: true })
@@ -330,29 +350,25 @@ export function apply(ctx) {
             res.writeHead(403); res.end('owner POST required'); return
           }
           try {
-            // Both published packages were already loaded at Desktop launch:
-            // this is specifically the existing-profile update path in #877.
-            const shop = { application: 'preexisting' }
-            const baseline = { application: 'preexisting' }
-            const update = await scope.pluginManager.updateBundle('dsh-vision-router', '3.4.0',
-              { requestId: 'issue-877-electron-supervisor' })
+            const command = new URL(req.url, 'http://localhost').searchParams.get('command')
+            if (command === 'arm') {
+              evidence.timeline.length = 0
+              evidence.firstFailure = null
+              evidence.firstEffect = null
+              evidence.armed = true
+            }
+            const entries = Array.from(scope.loader.entries()).filter(entry =>
+              /vision-router|dshmarket|dsh-market/i.test(String(entry.id) + ' ' + String(entry.options?.name ?? '')))
+              .map(entry => ({ id: entry.id, name: entry.options?.name, disabled: entry.disabled,
+                uid: entry.fiber?.uid, state: STATES[entry.fiber?.state] ?? String(entry.fiber?.state),
+                error: fiberError(entry.fiber) }))
             res.writeHead(200, { 'content-type': 'application/json' })
-            res.end(JSON.stringify({ shop: { application: shop?.application, version: shop?.version },
-              baseline: { application: baseline?.application, version: baseline?.version },
-              update: { from: update?.from, to: update?.to, step: update?.step,
-                application: update?.result?.application, version: update?.result?.version,
-                error: update?.result?.error, restored: !!update?.restore,
-                // Only sanitized package-expectation diagnostics; never report
-                // request contents, credentials, user paths, or full pnpm logs.
-                expectedPackageWarnings: String(update?.result?.packageResult?.output ?? '')
-                  .split(/\r?\n/).filter(line => /installation rejected|installed where|is not installed|declares no bundle/.test(line))
-                  .map(line => line.replace(/(?:[A-Z]:\\|\/)[^\s]+/g, '<path>').slice(0, 250)).slice(0, 8),
-                unmet: update?.result?.packageResult?.unmet },
-              timeline, firstFailure }))
+            res.end(JSON.stringify({ armed: evidence.armed, entries, timeline,
+              firstFailure: evidence.firstFailure, firstEffect: evidence.firstEffect }))
           } catch (error) {
             res.writeHead(500, { 'content-type': 'application/json' })
             res.end(JSON.stringify({ error: String(error), stack: String(error?.stack || '').slice(0, 6000),
-              timeline, firstFailure }))
+              timeline, firstFailure: evidence.firstFailure, firstEffect: evidence.firstEffect }))
           }
         },
       }), 'issue-877 Electron supervisor upgrade probe')
@@ -1021,10 +1037,10 @@ try {
     }
     const persisted = readJson(manifestPath)
     if (String(persisted.dependencies?.['dsh-vision-router']) !== '3.2.1' ||
-        String(persisted.dependencies?.['dsh-plugin-shop']) !== '0.9.4') {
+        String(persisted.dependencies?.['dshmarket']) !== process.env.DVR_MARKET_VERSION) {
       throw Error('Preboot Host did not persist both exact npm baseline dependencies')
     }
-    if (!['dsh-vision-router', 'dsh-plugin-shop'].every(name =>
+    if (!['dsh-vision-router', 'dshmarket'].every(name =>
       persisted.dsh?.profile?.bundles?.includes(name))) {
       throw Error('Preboot Host did not select both bundles in the persisted profile')
     }
@@ -1143,38 +1159,78 @@ try {
     new Promise((_, reject) => setTimeout(() => reject(new Error('Desktop Host URL was not reported')), 30_000)),
   ])
   if (issue877ElectronUpgrade) {
-    // The GUI and its actual Electron supervisor have started, and their
-    // authenticated Host launch URL came from the genuine Desktop main log.
+    // Real dshmarket HTTP operation: do NOT call PluginManager.updateBundle.
+    // Never retry a mutation whose response may have been lost during HMR.
     const cookie = await exchangeHostCookie(authenticatedHostUrl)
     const target = new URL(authenticatedHostUrl)
-    target.pathname = '/__dvr_issue_877_electron_upgrade'
     target.search = ''
-    let response
-    const deadline = Date.now() + 40_000
-    do {
-      response = await fetchHostProbe(target, { method: 'POST', headers: { cookie } }, 240_000)
-      if (response.status !== 404) break
-      await response.body?.cancel()
-      await new Promise(resolve => setTimeout(resolve, 500))
-    } while (Date.now() < deadline)
-    const raw = await response.text()
-    let result
-    try { result = JSON.parse(raw) }
-    catch { throw Error('Electron update probe returned HTTP ' + response.status + ': ' + raw.slice(0, 400)) }
-    console.log('ISSUE_877_ELECTRON_SUPERVISOR=' + JSON.stringify({
-      os: process.platform, electronNode, dsh: dshVersion,
-      http: response.status, ...result,
-    }))
-    if (response.status !== 200 || result.update?.application !== 'applied'
-      || result.update?.version !== '3.4.0' || result.update?.restored
-      || result.firstFailure) {
-      throw new Error('Full Electron Desktop update or activation failed; see bounded probe above')
+    const headers = { cookie, origin: target.origin, 'content-type': 'application/json' }
+    const probe = new URL(target)
+    probe.pathname = '/__dvr_issue_877_electron_upgrade'
+    const readProbe = async (command) => {
+      const url = new URL(probe)
+      if (command) url.searchParams.set('command', command)
+      const response = await fetchHostProbe(url, { method: 'POST', headers }, 5000)
+      if (response.status !== 200) throw Error('Probe HTTP ' + response.status)
+      return await response.json()
     }
-    if (child?.exitCode !== null) throw new Error('Electron supervisor exited during DVR upgrade')
-    // Check real Electron renderer remained available after Host HMR.
-    await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15_000 })
-    console.log(JSON.stringify({ ok: true, scope: 'electron-supervised-preexisting-profile-upgrade',
-      dsh: dshVersion, electronNode, installed: '3.4.0', rendererAlive: true }))
+    const installed = (name) => {
+      try { return readJson(join(paths.profile, 'node_modules', name, 'package.json')).version }
+      catch { return null }
+    }
+    const before = await readProbe('arm')
+    if (!before.armed || installed('dshmarket') !== process.env.DVR_MARKET_VERSION ||
+        installed('dsh-vision-router') !== '3.2.1' ||
+        !before.entries.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE')) {
+      throw Error('Market/DVR baseline not established: ' + JSON.stringify(before))
+    }
+    target.pathname = '/dsh-market/status'
+    const marketStatus = await fetchHostProbe(target, { headers }, 15000)
+    const marketStatusCode = marketStatus.status
+    await marketStatus.body?.cancel()
+    if (marketStatusCode !== 200) throw Error('Real market status unavailable: ' + marketStatusCode)
+    target.pathname = '/dsh-market/update'
+    let marketResult
+    try {
+      const response = await fetchHostProbe(target, {
+        method: 'POST', headers,
+        body: JSON.stringify({ name: 'dsh-vision-router', compatVersion: '3.4.0', confirmAgentsRunning: true }),
+      }, 240000)
+      marketResult = { status: response.status, body: (await response.text()).slice(0, 6000) }
+    } catch (error) { marketResult = { transportError: String(error) } }
+    // A lost response is not proof of a failed transaction. Poll read-only
+    // observations for a bounded interval; record the disk and loader separately.
+    let after, lastProbeError
+    const settleDeadline = Date.now() + 60000
+    do {
+      try { after = await readProbe() } catch (error) { lastProbeError = String(error) }
+      if (after?.firstEffect || after?.firstFailure ||
+          (installed('dsh-vision-router') === '3.4.0' &&
+           after?.entries?.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE'))) break
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    } while (Date.now() < settleDeadline)
+    let marketLog = []
+    try {
+      marketLog = readFileSync(join(paths.profile, '.dsh-market', 'log.ndjson'), 'utf8')
+        .split(/\r?\n/).filter(line => /dsh-vision-router|update-repair|MARKET_UNLOADED/.test(line))
+        .slice(-30).map(line => line.slice(0, 1500))
+    } catch {}
+    const persisted = readJson(manifestPath)
+    const final = { installed: installed('dsh-vision-router'), marketVersion: installed('dshmarket'),
+      profileSpec: persisted.dependencies?.['dsh-vision-router'] ?? null,
+      bundleSelected: persisted.dsh?.profile?.bundles?.includes('dsh-vision-router') ?? false,
+      marketResult, before, after, lastProbeError, marketLog }
+    console.log('ISSUE_877_REAL_MARKET=' + JSON.stringify(final))
+    if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
+    if (final.installed !== '3.4.0' || !final.bundleSelected ||
+        !after?.entries?.some(entry => entry.id === 'vision-router' && entry.state === 'ACTIVE') ||
+        after.firstEffect || after.firstFailure) {
+      throw Error('Real market update did not converge cleanly; inspect first-effect and transaction evidence')
+    }
+    if (child?.exitCode !== null) throw Error('Electron supervisor exited during DVR upgrade')
+    await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15000 })
+    console.log(JSON.stringify({ ok: true, scope: 'real-dshmarket-upgrade',
+      dsh: dshVersion, electronNode, marketVersion: final.marketVersion, installed: final.installed }))
   } else {
   const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
     .map((row) => (row.text.match(/data-vision-router-[a-z0-9-]+(?::structured)?/i) || [])[0])
