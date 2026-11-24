@@ -379,12 +379,24 @@ const CLIENT_PRELUDE = String.raw`(function(){
         return false;
       }
       var fresh;
+      var timer;
+      var controller = typeof window.AbortController === 'function' ? new window.AbortController() : null;
       try {
-        var response = await window.fetch('/_dsh/vision-router/route-ownership', {
-          credentials: 'same-origin', cache: 'no-store'
+        var read = Promise.resolve().then(function(){
+          return window.fetch('/_dsh/vision-router/route-ownership', {
+            credentials: 'same-origin', cache: 'no-store',
+            ...(controller ? { signal: controller.signal } : {})
+          });
+        }).then(function(response){ return response && response.ok ? response.json() : undefined; });
+        var timeout = new Promise(function(resolve){
+          timer = window.setTimeout(function(){
+            if (controller) controller.abort();
+            resolve(undefined);
+          }, Math.max(1, Math.min(1000, deadline - Date.now())));
         });
-        if (response && response.ok) fresh = await response.json();
+        fresh = await Promise.race([read, timeout]);
       } catch (_) {}
+      finally { if (timer !== undefined) window.clearTimeout(timer); }
       if (!current()) return false;
       state = directory.store && directory.store.getSnapshot();
       selected = state && state.current;
