@@ -1361,3 +1361,86 @@ test('post-#888 shipping chip wakes on ownership-only restoration with unchanged
   assert.equal(currentButton.props.disabled, true, 'withdrawal also invalidates the UI')
   assert.equal(harness.selections.length, 0)
 })
+
+test('real legacy chip preserves a delivered click through an observation-only adapter gap', async () => {
+  const streams = []
+  const selection = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const legacy = { kind: 'legacy', reason: 'text-only', selection }
+  const nativeApi = {
+    observe() {
+      let next
+      const stream = { send(value) { next?.({ done: false, value }) } }
+      streams.push(stream)
+      return {
+        [Symbol.asyncIterator]() { return this },
+        next() { return new Promise(resolve => { next = resolve }) },
+        dispose() { next?.({ done: true }) },
+      }
+    },
+    set() { throw Error('must never write native policy') },
+  }
+  const turn = () => new Promise(setImmediate)
+  const h = createBrowserHarness({ nativeApi })
+  await turn()
+  h.render()
+  streams[0].send(legacy)
+  await turn()
+  const enabled = buttonOf(h.render())
+  assert.equal(enabled.props.disabled, false)
+  // The Remote frame changes before React commits the disabled rendering.
+  // This is the real onClick closure, not a reimplemented selection handler.
+  streams[0].send({ kind: 'unavailable', reason: 'no-registration' })
+  await turn()
+  enabled.props.onClick()
+  enabled.props.onClick()
+  await turn()
+  assert.equal(h.selections.length, 0, 'no selection during missing registration')
+  assert.equal(buttonOf(h.render()).props.disabled, true)
+  streams[0].send({ ...legacy, selection: { ...selection } })
+  await turn()
+  assert.equal(h.selections.length, 1, 'one explicit click intent is admitted after fresh matching observation')
+  assert.equal(h.selections[0].provider, 'opencode-go-vision')
+  h.render({ available: false })
+})
+
+test('real legacy click is never replayed after denied/native observation, route change or session retirement', async () => {
+  const turn = () => new Promise(setImmediate)
+  const selection = { provider: 'opencode-go', model: 'qwen3.6-plus' }
+  const legacy = { kind: 'legacy', reason: 'text-only', selection }
+  for (const outcome of ['denied', 'native', 'route-change', 'session-retired', 'connection-reset']) {
+    const streams = []
+    const nativeApi = {
+      observe() {
+        let next
+        const stream = { send(value) { next?.({ done: false, value }) } }
+        streams.push(stream)
+        return {
+          [Symbol.asyncIterator]() { return this },
+          next() { return new Promise(resolve => { next = resolve }) },
+          dispose() { next?.({ done: true }) },
+        }
+      },
+      set() { throw Error('must never write native policy') },
+    }
+    const h = createBrowserHarness({ nativeApi })
+    await turn()
+    h.render()
+    streams[0].send(legacy)
+    await turn()
+    const enabled = buttonOf(h.render())
+    streams[0].send({ kind: 'unavailable', reason: 'no-registration' })
+    await turn()
+    enabled.props.onClick()
+    if (outcome === 'denied') streams[0].send({ kind: 'unavailable', reason: 'metadata-unavailable' })
+    if (outcome === 'native') streams[0].send({ kind: 'native', selection, enabled: false, requestedEnabled: false, canEnable: true, durable: true })
+    if (outcome === 'route-change') {
+      h.setSnapshot({ ...h.getSnapshot(), current: { ...h.getSnapshot().current, reasoningEffort: 'low' } })
+      streams[0].send(legacy)
+    }
+    if (outcome === 'session-retired') h.render({ available: false })
+    if (outcome === 'connection-reset') { h.resetNative(); h.render() }
+    await turn()
+    assert.equal(h.selections.length, 0, outcome)
+    h.render({ available: false })
+  }
+})

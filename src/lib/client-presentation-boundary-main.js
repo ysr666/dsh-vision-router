@@ -1169,6 +1169,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
         var nativeView = nativeState[0];
         var setNativeView = nativeState[1];
         var nativeObservation = React.useRef(null);
+        var composerScope = React.useRef(null);
+        composerScope.current = { directory: directory, sessionId: props.sessionId, available: props.available === true && !(props.session && props.session.removed) };
         // A new selected route can replace the Host Agent even if the Session
         // ID and client namespace stay the same. Re-resolve through Gateway.
         var nativeProvider = state.current && state.current.provider;
@@ -1304,8 +1306,9 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
           onClick: function() {
             if (disabled || nativeBridge.getSnapshot() !== nativeMount) return;
             if (nativeMount.kind === 'ready' && (!observationCurrent ||
-                nativeObservation.current !== nativeView.ticket || !nativeObservation.current.controller.isCurrent(read))) return;
+                nativeObservation.current !== nativeView.ticket)) return;
             if (nativeControl) {
+              if (!nativeObservation.current.controller.isCurrent(read)) return;
               var owner = nativeObservation.current;
               if (!owner || !observationCurrent || owner !== nativeView.ticket) return;
               var current;
@@ -1320,6 +1323,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             if (!nativeLegacy || !pair.target || typeof props.select !== 'function' ||
               (selectionTransaction.current && selectionTransaction.current.directory === directory)) return;
             var target = pair.target;
+            var legacyOwner = nativeMount.kind === 'ready' ? nativeObservation.current : null;
+            var sourceAtClick = { provider: state.current.provider, model: state.current.model, reasoningEffort: state.current.reasoningEffort };
             var ticket = { directory: directory, target: target };
             selectionTransaction.current = ticket;
             refreshSelection(function(revision){ return revision + 1; });
@@ -1329,14 +1334,39 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
               seenSelecting: false
             };
             setToast(null);
-            var pending;
-            try { pending = props.select(target); }
-            catch (error) { pending = Promise.reject(error); }
+            function dispatchLegacy() {
+              var scopeNow = composerScope.current;
+              if (selectionTransaction.current !== ticket || nativeBridge.getSnapshot() !== nativeMount ||
+                  !scopeNow || !scopeNow.available || scopeNow.directory !== directory || scopeNow.sessionId !== props.sessionId) return false;
+              if (legacyOwner && (nativeObservation.current !== legacyOwner ||
+                  !legacyOwner.controller.isLegacyCurrent(read))) return false;
+              var latest;
+              try { latest = store && store.getSnapshot(); } catch (_) { return false; }
+              var selected = latest && latest.current;
+              if (!nativeVisionSameRoute(sourceAtClick, selected) ||
+                  (sourceAtClick.reasoningEffort || null) !== (selected.reasoningEffort || null) ||
+                  latest.status === 'selecting' || (latest.status === 'error' && state.status !== 'error') ||
+                  latest.routable === false || latest.pending != null) return false;
+              var pending;
+              try { pending = props.select(target); }
+              catch (error) { pending = Promise.reject(error); }
+              return pending;
+            }
+            // A strict read can be invalidated between the rendered enabled
+            // button and its real click (for example during adapter remount).
+            // Hold only this explicit intent, never a native write or a guess.
+            var pending = legacyOwner && !legacyOwner.controller.isLegacyCurrent(read)
+              ? legacyOwner.controller.waitForLegacy(read).then(function(confirmed){
+                  return confirmed ? dispatchLegacy() : false;
+                })
+              : dispatchLegacy();
             void Promise.resolve(pending).then(function(accepted){
               if (selectionTransaction.current !== ticket) return;
               if (!accepted) {
                 toggleTransition.current = null;
-                announceRejectedSelection();
+                var scopeNow = composerScope.current;
+                if (scopeNow && scopeNow.available && scopeNow.directory === directory &&
+                    scopeNow.sessionId === props.sessionId && nativeBridge.getSnapshot() === nativeMount) announceRejectedSelection();
                 return;
               }
               var latest;
