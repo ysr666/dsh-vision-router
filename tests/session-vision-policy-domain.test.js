@@ -452,3 +452,92 @@ test('issue #865 B2: durability degradation invalidates all active views without
   assert.equal(store.get('a')?.enabled, true)
   offA(); offB()
 })
+
+function delayedPolicyMutationHarness() {
+  const rows = new Map([['s', userSessionVisionPolicy(true)]])
+  const writes = []
+  const domain = {
+    table() {
+      return {
+        get(key) { return rows.get(key) },
+        put(key, value) {
+          return new Promise((resolve, reject) => writes.push({
+            finish() { rows.set(key, value); resolve() },
+            fail() { reject(Error('storage offline')) },
+          }))
+        },
+        delete(key) {
+          return new Promise(resolve => writes.push({
+            finish() { rows.delete(key); resolve() },
+          }))
+        },
+      }
+    },
+    async close() {},
+  }
+  const facility = { async open() { return domain } }
+  const ctx = {
+    get(name) { return name === 'storageDomain' ? facility : undefined },
+    effect(setup) { this.cleanup = setup() },
+  }
+  return { rows, writes, ctx, store: createSessionVisionPolicyRuntimeStore(ctx) }
+}
+
+test('release during a pending OFF write cannot restore old ON authority', async () => {
+  const h = delayedPolicyMutationHarness()
+  await h.store.hydrate('s')
+  const off = h.store.set('s', userSessionVisionPolicy(false))
+  while (!h.writes.length) await new Promise(resolve => setImmediate(resolve))
+  h.store.release('s')
+  assert.equal(h.rows.get('s')?.enabled, true, 'old disk row is still ON')
+  assert.equal((await h.store.hydrate('s'))?.enabled, false)
+  h.writes[0].finish()
+  await off
+  assert.equal(h.rows.get('s')?.enabled, false)
+  assert.equal(h.store.get('s')?.enabled, false, 'deferred eviction cannot retire the resumed Agent')
+  h.store.release('s')
+  assert.equal(h.store.get('s'), undefined)
+  assert.equal((await h.store.hydrate('s'))?.enabled, false)
+  await h.ctx.cleanup()
+})
+
+test('deferred release evicts a successfully flushed inactive Session but not a failed write', async () => {
+  for (const fail of [false, true]) {
+    const h = delayedPolicyMutationHarness()
+    await h.store.hydrate('s')
+    const off = h.store.set('s', userSessionVisionPolicy(false))
+    while (!h.writes.length) await new Promise(resolve => setImmediate(resolve))
+    h.store.release('s')
+    assert.equal(h.store.get('s')?.enabled, false)
+    if (fail) h.writes[0].fail()
+    else h.writes[0].finish()
+    await off
+    assert.equal(h.store.durable, !fail)
+    assert.equal(h.store.get('s')?.enabled, fail ? false : undefined)
+    await h.ctx.cleanup()
+  }
+})
+
+test('pending policy deletion is not resurrected by Agent hydration', async () => {
+  const h = delayedPolicyMutationHarness()
+  await h.store.hydrate('s')
+  const deletion = h.store.delete('s')
+  while (!h.writes.length) await new Promise(resolve => setImmediate(resolve))
+  h.store.release('s')
+  assert.equal(await h.store.hydrate('s'), undefined)
+  h.writes[0].finish()
+  await deletion
+  assert.equal(h.rows.has('s'), false)
+  assert.equal(await h.store.hydrate('s'), undefined)
+  await h.ctx.cleanup()
+})
+
+test('concurrent cold hydration shares one read and returns identical OFF authority', async () => {
+  const h = durableHarness([['s', userSessionVisionPolicy(false)]])
+  const store = createSessionVisionPolicyRuntimeStore(h.ctx)
+  const [a, b] = await Promise.all([store.hydrate('s'), store.hydrate('s')])
+  assert.equal(a?.enabled, false)
+  assert.equal(a, b)
+  assert.equal(store.get('s'), a)
+  await h.ctx.cleanup()
+})

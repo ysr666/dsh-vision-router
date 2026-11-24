@@ -116,7 +116,8 @@ export function createSessionVisionPolicyRuntimeStore(
   let transition: Promise<void> = Promise.resolve()
   const mutationTails = new Map<string, Promise<void>>()
   const activeMutations = new Set<Promise<void>>()
-  const hydrationTokens = new Map<string, object>()
+  const hydrationTokens = new Map<string, { promise?: Promise<Readonly<SessionVisionPolicy> | undefined> }>()
+  const pendingReleases = new Map<string, object>()
   let durableDisabled = false
   let lifecycleClosed = false
   let lifecycleBound = false
@@ -195,6 +196,7 @@ export function createSessionVisionPolicyRuntimeStore(
           return async () => {
             lifecycleClosed = true
             subscribers.clear()
+            pendingReleases.clear()
             // No new durable mutation is admitted after lifecycleClosed flips.
             // Wait every mutation that was already admitted before closing the
             // shared domain underneath it.
@@ -326,41 +328,70 @@ export function createSessionVisionPolicyRuntimeStore(
 
     async hydrate(sessionId) {
       const key = normalizedSessionId(sessionId)
+      // A new Agent lifetime cancels a deferred eviction from the old one.
+      pendingReleases.delete(key)
       const existing = cache.get(key)
       if (existing !== undefined) return existing
-      const token = {}
+      // A queued delete already removed the live authority. Until it settles,
+      // the old disk row is not an admissible source of policy.
+      if (mutationTails.has(key)) return undefined
+      const pending = hydrationTokens.get(key)?.promise
+      if (pending !== undefined) return pending
+      const token: { promise?: Promise<Readonly<SessionVisionPolicy> | undefined> } = {}
       hydrationTokens.set(key, token)
-      try {
-        const handle = await table()
-        if (hydrationTokens.get(key) !== token) return cache.get(key)
-        if (handle === undefined) return undefined
-        const policy = parseSessionVisionPolicy(handle.get(key))
-        if (hydrationTokens.get(key) !== token) return cache.get(key)
-        if (policy !== undefined) {
-          cache.set(key, policy)
-          notify(key)
+      token.promise = (async () => {
+        try {
+          const handle = await table()
+          if (hydrationTokens.get(key) !== token) return cache.get(key)
+          if (handle === undefined) return undefined
+          const policy = parseSessionVisionPolicy(handle.get(key))
+          if (hydrationTokens.get(key) !== token) return cache.get(key)
+          if (policy !== undefined) {
+            cache.set(key, policy)
+            notify(key)
+          }
+          return cache.get(key)
+        } catch (error) {
+          await failDurabilityAndRetire(error)
+          return cache.get(key)
+        } finally {
+          if (hydrationTokens.get(key) === token) hydrationTokens.delete(key)
         }
-        return cache.get(key)
-      } catch (error) {
-        await failDurabilityAndRetire(error)
-        return undefined
-      } finally {
-        if (hydrationTokens.get(key) === token) hydrationTokens.delete(key)
-      }
+      })()
+      return token.promise
     },
 
     release(sessionId) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
-      // A durable row can be rehydrated on the next Agent creation. Keep the
-      // process-local copy when durability is unavailable so volatile support
-      // does not lose the only Session-scoped truth it has.
-      if (this.durable && cache.delete(key)) notify(key)
+      pendingReleases.delete(key)
+      // The in-process intent is authoritative even while its durable write
+      // is queued. Evict only after that write settles, if no replacement
+      // Agent or newer mutation reclaimed the record and durability survives.
+      if (!this.durable) return
+      const evict = () => {
+        if (this.durable && cache.delete(key)) notify(key)
+      }
+      const tail = mutationTails.get(key)
+      if (tail === undefined) {
+        evict()
+        return
+      }
+      const token = {}
+      pendingReleases.set(key, token)
+      void tail.then(() => {
+        if (pendingReleases.get(key) !== token) return
+        pendingReleases.delete(key)
+        evict()
+      }, () => {
+        if (pendingReleases.get(key) === token) pendingReleases.delete(key)
+      })
     },
 
     async set(sessionId, policy) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
+      pendingReleases.delete(key)
       const normalized = parseSessionVisionPolicy(policy)
       if (normalized === undefined) throw new TypeError('invalid session vision policy')
 
@@ -389,6 +420,7 @@ export function createSessionVisionPolicyRuntimeStore(
     async delete(sessionId) {
       const key = normalizedSessionId(sessionId)
       hydrationTokens.delete(key)
+      pendingReleases.delete(key)
       const changed = cache.delete(key)
       const pending = enqueueMutation(key, async () => {
         try {
