@@ -1,6 +1,6 @@
 // #865 experimental: actual PTC executor and DVR permission/Agent assembly.
 // Offline model and program runtime; actual Host SDK renderer and tool registry.
-// No production changes, credentials, external API, or generated program execution.
+// No production changes, credentials, external API, or arbitrary generated program execution.
 import assert from 'node:assert/strict'
 import { compareFinalWireRequests } from './issue-865-final-wire-diff.mjs'
 import { createRequire } from 'node:module'
@@ -44,6 +44,17 @@ class NativeImageModel extends llm.LlmAdapter {
   }
   async *stream(options) {
     requests.push(options)
+    if (pendingExecution?.issueCall) {
+      pendingExecution.issueCall = false
+      const id = 'dvr-ptc-probe-' + pendingExecution.serial
+      const name = 'run_code'
+      const args = JSON.stringify({ code: 'fixture-only', description: 'Verify admitted local vision capability' })
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: args } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: 'synthetic answer' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: 'synthetic answer' } }
@@ -51,10 +62,11 @@ class NativeImageModel extends llm.LlmAdapter {
   }
 }
 
-const [{ PtcExecutor }, { PtcRuntime }, { serialize }] = await Promise.all([
+const [{ PtcExecutor }, { PtcRuntime }, { serialize }, { provideWorkingDirectoryFixture }] = await Promise.all([
   host('packages/core/tool-executor-ptc/src/index.ts'),
   host('packages/ptc-runtime/ptc-runtime/src/index.ts'),
   host('packages/llm/llm-deepseek/src/serialize.ts'),
+  host('packages/test-support/agent-loop-testkit/src/working-directory-fixture.ts'),
 ])
 class OfflinePtcRuntime extends PtcRuntime {
   language = 'typescript'
@@ -62,12 +74,36 @@ class OfflinePtcRuntime extends PtcRuntime {
   resolve(request) {
     return { ...request, cwd: request.cwd ?? process.cwd(), timeoutMs: request.timeoutMs ?? 120000 }
   }
-  async run() {
-    throw new Error('This presentation-only probe must never execute a program')
+  async run(request) {
+    const probe = pendingExecution
+    assert.ok(probe && !probe.issueCall, 'only the explicitly scripted probe may execute')
+    const functions = request.bindings[0].functions
+    const callable = functions.vision_colors
+    probe.runtimeEntered = true
+    probe.bindingNames = Object.keys(functions)
+    if (!probe.enabled) {
+      assert.equal(callable, undefined, 'OFF does not admit vision_colors even if its previous SDK is in history')
+      // A captured ON binding may not execute outside its completed run.
+      if (previousBinding) {
+        await assert.rejects(previousBinding({ image: probe.attachmentId, top: 1 }))
+        probe.staleDenied = true
+      }
+      return { logs: [], value: 'VISION_DENIED_BY_HOST_BINDINGS' }
+    }
+    assert.equal(typeof callable, 'function', 'ON must admit the same real local tool')
+    previousBinding = callable
+    const value = await callable({ image: probe.attachmentId, top: 1 })
+    assert.equal(typeof value, 'string')
+    const colors = JSON.parse(value)
+    assert.ok(Array.isArray(colors) && colors.length > 0, 'actual DVR color extraction must return colors')
+    probe.result = colors
+    return { logs: [], value: 'VISION_LOCAL_EXECUTION_SUCCEEDED' }
   }
 }
 const requests = []
+let pendingExecution, previousBinding
 const ctx = new Context()
+provideWorkingDirectoryFixture(ctx)
 await ctx.plugin(TypertRegistry)
 await ctx.plugin(RemoteAccess)
 await ctx.plugin(llm.default)
@@ -171,6 +207,48 @@ try {
       variant: id === candidateId ? 'tail-context-sdk' : 'native-sdk-section', rows,
       limitations: ['offline program runtime', 'no nested execution or provider cache proof', 'historical SDK remains in prior messages'] }))
   }
+  // Independent actual-tool execution tier. It deliberately does not reuse
+  // the prefix-recording request with image serialization; no real provider
+  // is involved. Feed a generated solid-color PNG through the real attachment
+  // ownership and local vision_colors tool, using the actual Host PTC
+  // pipeline and a deterministic program-runtime binding driver.
+  const handle = await ctx.agents.create({
+    sessionId: 'dvr-865-ptc-execution', agentOptions: { provider: 'native-proof', model: 'test-mm' },
+  })
+  handles.push(handle)
+  const agent = handle.agent
+  const requireDvr = createRequire(join(process.cwd(), '../dvr/package.json'))
+  const sharp = requireDvr('sharp')
+  const png = await sharp({ create: { width: 8, height: 8, channels: 4,
+    background: { r: 240, g: 32, b: 16, alpha: 1 } } }).png().toBuffer()
+  const attachment = await ctx.attachments.saveImage({
+    data: new Uint8Array(png), mediaType: 'image/png', name: 'ptc-local-colors.png',
+  })
+  const executionRows = []
+  for (const [index, enabled] of [false, true, false, true].entries()) {
+    if (index > 0) {
+      const call = await ctx.commands.execute(agent, '/vision-router ' + (enabled ? 'on' : 'off'), [], AbortSignal.timeout(8000))
+      assert.equal(call?.result?.kind, 'success')
+    }
+    const offset = requests.length
+    pendingExecution = { issueCall: true, serial: index, enabled,
+      attachmentId: attachment.attachmentId, runtimeEntered: false }
+    agent.followup(llm.createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Local PTC execution probe ' + index },
+        ...(index === 0 ? [{ type: 'image', attachment }] : [])],
+    }))
+    await agent.whenIdle()
+    assert.equal(pendingExecution.runtimeEntered, true, 'Host must actually enter the PTC runtime')
+    assert.equal(requests.length, offset + 2, 'one requested tool step and one final model continuation only')
+    assert.equal(Boolean(pendingExecution.result), enabled)
+    assert.equal(pendingExecution.bindingNames.includes('vision_colors'), enabled)
+    if (index === 2) assert.equal(pendingExecution.staleDenied, true)
+    executionRows.push({ enabled, actualLocalToolSucceeded: Boolean(pendingExecution.result),
+      staleBindingDenied: pendingExecution.staleDenied ?? null, requests: requests.length - offset })
+    pendingExecution = undefined
+  }
+  console.log(JSON.stringify({ scenario: 'actual DVR local color tool via Host PTC nested execution',
+    executionRows, providerNetworkCalls: 0, offlineProgramDriver: true }))
 } finally {
   for (const handle of handles.reverse()) await handle.dispose()
   adapter?.dispose?.()
