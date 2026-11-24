@@ -1,0 +1,1775 @@
+import assert from 'node:assert/strict'
+import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from './dsh-desktop-toggle-stability.mjs'
+import { resolveCiElectronBinary } from './ci-electron-download-retry.mjs'
+import { spawn, spawnSync, execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { createServer as createHttpServer } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+
+const here = fileURLToPath(new URL('.', import.meta.url))
+const dvrRoot = resolve(process.env.DVR_SOURCE_ROOT || join(here, '..'))
+const dshRoot = resolve(process.env.DSH_SOURCE_ROOT || '')
+if (!process.env.DSH_SOURCE_ROOT) throw new Error('DSH_SOURCE_ROOT is required')
+
+const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'))
+const dshVersion = readJson(join(dshRoot, 'apps/desktop/package.json')).version
+const expectedVersion = process.env.DSH_EXPECTED_VERSION
+if (expectedVersion && dshVersion !== expectedVersion) {
+  throw new Error(`expected DSH ${expectedVersion}, found ${dshVersion}`)
+}
+
+const importDsh = (path) => import(pathToFileURL(join(dshRoot, path)).href)
+const { prepareDevelopmentProject } = await importDsh('apps/desktop/scripts/development-project.ts')
+const { prepareDevelopmentApp } = await importDsh('apps/desktop/scripts/development-app.ts')
+const { DesktopProjectManager } = await importDsh('apps/desktop/src/project-manager.ts')
+const { resolveDesktopPaths } = await importDsh('apps/desktop/src/paths.ts')
+const { DESKTOP_HOST_PROTOCOL_VERSION } = await importDsh('apps/desktop/src/host-protocol.ts')
+const { DesktopHostProcess } = await importDsh('apps/desktop/src/host-process.ts')
+
+const desktopRequire = createRequire(join(dshRoot, 'apps/desktop/package.json'))
+const webRequire = createRequire(join(dshRoot, 'apps/web/package.json'))
+const electron = await resolveCiElectronBinary(desktopRequire)
+const { chromium } = webRequire('playwright')
+
+function inspectRuntimePackage(projectRoot, packageName) {
+  const runtimeRequire = createRequire(join(projectRoot, 'package.json'))
+  const packageJsonPath = join(projectRoot, 'node_modules', ...packageName.split('/'), 'package.json')
+  let manifest
+  let resolved
+  let resolveError
+  try { manifest = readJson(packageJsonPath) } catch (error) { resolveError = String(error?.stack || error) }
+  try { resolved = runtimeRequire.resolve(packageName) } catch (error) { resolveError = String(error?.stack || error) }
+  const main = typeof manifest?.main === 'string' ? manifest.main : 'index.js'
+  const mainPath = join(projectRoot, 'node_modules', ...packageName.split('/'), main)
+  return {
+    packageName,
+    packageJsonPath,
+    packageJsonExists: existsSync(packageJsonPath),
+    version: manifest?.version ?? null,
+    main,
+    mainPath,
+    mainExists: existsSync(mainPath),
+    resolved: resolved ?? null,
+    resolveError: resolveError ?? null,
+  }
+}
+
+const CORE_PROBE_SERVICE_NAMES = [
+  'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
+  'workspaceController', 'sessionController', 'sessions', 'sessionQuery',
+  'agents', 'llm', 'typert', 'webServer',
+]
+
+function fixedServiceState(value) {
+  if (value?.active === true) return 'active'
+  if (value?.present === true) return 'present-inactive'
+  return 'missing'
+}
+
+function fixedFiberState(value) {
+  for (const state of ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']) {
+    if (value === state) return state
+  }
+  return 'UNKNOWN'
+}
+
+function fileSafeCoreProbe(probe) {
+  const services = Object.fromEntries(CORE_PROBE_SERVICE_NAMES.map((name) => [
+    name, fixedServiceState(probe?.services?.[name]),
+  ]))
+  const fiberStates = Object.fromEntries(
+    ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING', 'UNKNOWN'].map((state) => [state, 0]),
+  )
+  if (Array.isArray(probe?.fibers)) {
+    for (const fiber of probe.fibers) fiberStates[fixedFiberState(fiber?.state)] += 1
+  }
+  return {
+    available: probe !== undefined && probe !== null && probe?.probeError === undefined,
+    services,
+    fiberStates,
+  }
+}
+
+function fileSafeRuntimePackageEvidence(evidence) {
+  const summarize = (value) => ({
+    packageJsonExists: value?.packageJsonExists === true,
+    mainExists: value?.mainExists === true,
+    resolved: typeof value?.resolved === 'string',
+    resolveFailed: typeof value?.resolveError === 'string',
+  })
+  return { source: summarize(evidence?.source), developmentProject: summarize(evidence?.developmentProject) }
+}
+
+function fileSafeFailureState(state) {
+  if (!state) return { captured: false }
+  const body = typeof state.bodyText === 'string' ? state.bodyText : ''
+  const buttons = Array.isArray(state.composerButtons) ? state.composerButtons : []
+  return {
+    captured: true,
+    desktopOrigin: typeof state.url === 'string' && state.url.startsWith('dsh-app://app/'),
+    workspacePrompt: /Choose (?:a )?workspace|选择(?:一个)?工作区/i.test(body),
+    composerButtonCount: buttons.length,
+    enabledComposerAction: buttons.some((button) => button?.disabled === false && button?.hidden !== true),
+  }
+}
+
+function fileSafeTurnEvidence(textEvidence, visionEvidence) {
+  return {
+    text: {
+      requests: Number.isSafeInteger(textEvidence?.requests) ? textEvidence.requests : 0,
+      toolCalls: Number.isSafeInteger(textEvidence?.toolCalls) ? textEvidence.toolCalls : 0,
+      attachmentResolved: typeof textEvidence?.attachmentId === 'string',
+      sawVisionResult: textEvidence?.sawVisionResult === true,
+    },
+    vision: {
+      requests: Number.isSafeInteger(visionEvidence?.requests) ? visionEvidence.requests : 0,
+      sawImage: visionEvidence?.sawImage === true,
+    },
+  }
+}
+
+const target = process.platform === 'win32'
+  ? 'win-x64'
+  : process.platform === 'darwin' && process.arch === 'arm64' ? 'mac-arm64' : 'mac-x64'
+
+async function freePort() {
+  return await new Promise((accept, reject) => {
+    const server = createNetServer()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      const port = typeof address === 'object' && address ? address.port : undefined
+      server.close((error) => error ? reject(error) : accept(port))
+    })
+  })
+}
+
+
+function sendSse(res, events) {
+  res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' })
+  for (const event of events) res.write(`data: ${JSON.stringify(event)}\n\n`)
+  res.end('data: [DONE]\n\n')
+}
+
+async function readJsonBody(req) {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function listenHttp(handler) {
+  const server = createHttpServer((req, res) => { Promise.resolve(handler(req, res)).catch((error) => {
+    res.writeHead(500, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ error: String(error?.stack || error) }))
+  }) })
+  await new Promise((resolveListen, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolveListen)
+  })
+  const address = server.address()
+  if (!address || typeof address !== 'object') throw new Error('mock HTTP server has no TCP address')
+  return { server, url: `http://127.0.0.1:${address.port}` }
+}
+
+async function closeServer(server) {
+  if (!server) return
+  await new Promise((resolveClose) => server.close(() => resolveClose()))
+}
+
+function writeHostCoreProbeFixture(directory) {
+  const name = 'dvr-desktop-core-probe'
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(join(directory, 'package.json'), `${JSON.stringify({
+    name,
+    version: '1.0.0',
+    type: 'module',
+    main: './index.js',
+    dsh: { bundle: { patch: './cordis.patch.yml' } },
+  }, undefined, 2)}\n`)
+  writeFileSync(join(directory, 'cordis.patch.yml'), [
+    '- insert:',
+    `    - id: ${name}`,
+    `      name: ${name}`,
+    '',
+  ].join('\n'))
+  // Copy the candidate's actual production routing owner into this isolated fixture.
+  cpSync(join(dvrRoot, 'src/lib/reactive-routing-mounts.js'), join(directory, 'routing-mount-probe.js'))
+  writeFileSync(join(directory, 'index.js'), String.raw`import { installReactiveRoutingMounts } from './routing-mount-probe.js'
+const STATES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
+const SERVICE_NAMES = [
+  'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
+  'workspaceController', 'sessionController', 'sessions', 'sessionQuery',
+  'agents', 'llm', 'typert', 'webServer',
+]
+
+function serviceState(ctx, name) {
+  let active
+  let present
+  try { active = ctx.get(name) } catch {}
+  try { present = ctx.get(name, false) } catch {}
+  return {
+    active: active !== undefined,
+    present: present !== undefined,
+    constructor: (active ?? present)?.constructor?.name ?? null,
+  }
+}
+
+function fiberError(fiber) {
+  const error = fiber?._error
+  if (error === undefined || error === null) return null
+  return String(error?.stack || error).slice(0, 12000)
+}
+
+function modelSelectionSummary(value) {
+  if (!value || typeof value !== 'object') return null
+  return {
+    provider: typeof value.provider === 'string' ? value.provider.slice(0, 120) : null,
+    model: typeof value.model === 'string' ? value.model.slice(0, 120) : null,
+    reasoningEffort: typeof value.reasoningEffort === 'string'
+      ? value.reasoningEffort.slice(0, 80) : null,
+  }
+}
+
+function collectDvrSources(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDvrSources(item, out)
+    return out
+  }
+  if (value === null || typeof value !== 'object') return out
+  const source = value.source
+  if (
+    source !== null &&
+    typeof source === 'object' &&
+    (source.kind === 'plugin:dsh-vision-router' || source.plugin === 'dsh-vision-router')
+  ) {
+    out.push(source)
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (key !== 'source') collectDvrSources(nested, out)
+  }
+  return out
+}
+
+function collectDvrMessages(value, out = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDvrMessages(item, out)
+    return out
+  }
+  if (value === null || typeof value !== 'object') return out
+  if (
+    typeof value.id === 'string' &&
+    value.id.startsWith('vision-router-') &&
+    typeof value.role === 'string' &&
+    Array.isArray(value.content)
+  ) {
+    out.push({
+      id: value.id,
+      role: value.role,
+      source: value.source ?? null,
+    })
+  }
+  for (const nested of Object.values(value)) collectDvrMessages(nested, out)
+  return out
+}
+
+// Real Cordis + real LLM service with the exact DVR reconciliation body.
+ // This deliberately introduces a synthetic foreign listener that disposes the
+ // caller on publication of its first adapter. It is NOT a reporter reproduction.
+async function routingControl(scope, invalidate) {
+  const suffix = invalidate ? 'fault' : 'normal'
+  const wrapper = 'dvr-877-probe-wrapper-' + suffix
+  const chain = 'dvr-877-probe-chain-' + suffix
+  const adapter = { providerInfo(id) { return { id, name: id } }, providerRetryPolicy() {} }
+  let sync, disposal, triggered = false, stateAtTrigger = null, error = null
+  const child = await scope.root.plugin({
+    name: 'dvr-877-routing-probe-' + suffix,
+    inject: ['llm'],
+    apply(inner) {
+      sync = installReactiveRoutingMounts(inner, {
+        wrapperRoute: () => wrapper, chainRoute: () => chain, routingEnabled: () => true,
+        wrapperAdapter: adapter, chainAdapter: adapter, setWrapperRegistered() {},
+      })
+      inner.on('llm/adapters-updated', () => {
+        if (!invalidate || triggered || !inner.llm.listProviders().some(p => p.id === wrapper)) return
+        triggered = true
+        disposal = inner.fiber.dispose()
+        stateAtTrigger = STATES[inner.fiber.state] ?? String(inner.fiber.state)
+      })
+    },
+  })
+  try { sync() } catch (reason) { error = { code: reason?.code, stack: String(reason?.stack || reason).slice(0, 8000) } }
+  const live = scope.root.get('llm').listProviders().filter(p => [wrapper, chain].includes(p.id)).map(p => p.id)
+  await (disposal ?? child.dispose())
+  const remaining = scope.root.get('llm').listProviders().filter(p => [wrapper, chain].includes(p.id)).map(p => p.id)
+  return { invalidate, triggered, stateAtTrigger, error, live, remaining }
+}
+
+export function apply(ctx) {
+  // Seed a genuine Desktop profile through the Host-owned package manager,
+  // then terminate this seed Host BEFORE launching the real Electron Desktop.
+  // This reproduces an already-installed 3.2.1 at the next process boot,
+  // rather than a manually edited profile or an in-process fresh install.
+  if (process.env.DVR_ISSUE_877_PREBOOT_SEED === '1') {
+    ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {
+      scope.effect(() => scope.webServer.register({
+        kind: 'exact', path: '/__dvr_issue_877_preboot_seed', auth: 'required',
+        async handler(req, res, peer) {
+          const owner = peer?.principal?.kind === 'owner' ||
+            (typeof scope.connection?.admit === 'function' &&
+              scope.connection.admit(req)?.peer?.principal?.kind === 'owner')
+          if (!owner || req.method !== 'POST') {
+            res.writeHead(403); res.end('owner POST required'); return
+          }
+          try {
+            const shop = await scope.pluginManager.installBundle('dshmarket@' + process.env.DVR_MARKET_VERSION, { enabled: true })
+            if (shop?.application !== 'applied') throw Error('Shop seed refused: ' + JSON.stringify(shop))
+            const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
+            if (baseline?.application !== 'applied') throw Error('DVR seed refused: ' + JSON.stringify(baseline))
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ shop: { application: shop.application, version: shop.version },
+              baseline: { application: baseline.application, version: baseline.version } }))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ error: String(error), stack: String(error?.stack || '').slice(0, 4000) }))
+          }
+        },
+      }), 'issue-877 preboot Host-managed profile seed')
+    })
+  }
+  if (process.env.DVR_ISSUE_877_ELECTRON_UPGRADE === '1') {
+    // Test-only, process-owned collector survives diagnostic fixture HMR.
+    // Intercept exactly the real Cordis throw boundary, then rethrow unchanged.
+    const key = Symbol.for('dvr.issue877.effect-probe')
+    const evidence = globalThis[key] ??= { timeline: [], firstFailure: null, firstEffect: null, armed: false }
+    const timeline = evidence.timeline
+    const proto = Object.getPrototypeOf(ctx.fiber)
+    if (!evidence.hooked) {
+      const original = proto.effect
+      if (typeof original !== 'function') throw Error('Cordis Fiber.effect unavailable')
+      proto.effect = function (...args) {
+        try { return Reflect.apply(original, this, args) }
+        catch (error) {
+          if (evidence.armed && !evidence.firstEffect &&
+              (error?.code === 'INACTIVE_EFFECT' || /cannot create effect on inactive context/.test(String(error)))) {
+            evidence.firstEffect = { uid: this.uid, state: this.state, name: this.name,
+              label: String(args[1] ?? ''), stack: String(error.stack || error).slice(0, 10000) }
+          }
+          throw error
+        }
+      }
+      evidence.hooked = true
+    }
+    ctx.on('internal/status', (fiber, previous) => {
+      const id = String(fiber?.entry?.options?.id ?? '')
+      if (!evidence.armed || !/vision-router|dshmarket|dsh-market/i.test(id + ' ' + String(fiber?.name ?? ''))) return
+      const error = fiber?._error
+      const entry = { id, name: String(fiber.name ?? ''), from: previous, to: fiber.state, uid: fiber.uid,
+        error: error ? String(error.stack || error).slice(0, 6000) : null }
+      if (entry.error && evidence.firstFailure === null) evidence.firstFailure = entry
+      timeline.push(entry)
+      if (timeline.length > 100) timeline.splice(0, timeline.length - 100)
+    }, { global: true })
+    ctx.inject(['webServer', 'pluginManager', 'connection'], (scope) => {
+      scope.effect(() => scope.webServer.register({
+        kind: 'exact', path: '/__dvr_issue_877_electron_upgrade', auth: 'required',
+        async handler(req, res, peer) {
+          const admitted = peer?.principal?.kind === 'owner'
+            ? true : typeof scope.connection?.admit === 'function'
+              && scope.connection.admit(req)?.peer?.principal?.kind === 'owner'
+          if (!admitted || req.method !== 'POST') {
+            res.writeHead(403); res.end('owner POST required'); return
+          }
+          try {
+            const command = new URL(req.url, 'http://localhost').searchParams.get('command')
+            if (command === 'routing-control') {
+              const normal = await routingControl(scope, false)
+              const fault = await routingControl(scope, true)
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ normal, fault }))
+              return
+            }
+            if (command === 'candidate-remove' || command === 'candidate-install') {
+              const manager = scope.root.get('pluginManager')
+              if (!manager) throw Error('Host PluginManager unavailable')
+              const result = command === 'candidate-remove'
+                ? await manager.removeBundle('dsh-vision-router')
+                : await manager.installBundle(process.env.DVR_CANDIDATE_SPEC, { enabled: true })
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ application: result.application, stage: result.stage, error: result.error, changed: result.changed }))
+              return
+            }
+            if (command === 'arm') {
+              evidence.timeline.length = 0
+              evidence.firstFailure = null
+              evidence.firstEffect = null
+              evidence.armed = true
+            }
+            const loader = scope.get('loader') ?? scope.root.get('loader')
+            const entries = Array.from(loader.entries()).filter(entry =>
+              /vision-router|dshmarket|dsh-market/i.test(String(entry.id) + ' ' + String(entry.options?.name ?? '')))
+              .map(entry => ({ id: entry.id, name: entry.options?.name, disabled: entry.disabled,
+                uid: entry.fiber?.uid, state: STATES[entry.fiber?.state] ?? String(entry.fiber?.state),
+                error: fiberError(entry.fiber) }))
+            res.writeHead(200, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ armed: evidence.armed, entries, timeline,
+              firstFailure: evidence.firstFailure, firstEffect: evidence.firstEffect }))
+          } catch (error) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ error: String(error), stack: String(error?.stack || '').slice(0, 6000),
+              timeline, firstFailure: evidence.firstFailure, firstEffect: evidence.firstEffect }))
+          }
+        },
+      }), 'issue-877 Electron supervisor upgrade probe')
+    })
+  }
+  ctx.inject(['webServer'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-core-status',
+      async handler(_request, response) {
+        const services = Object.fromEntries(SERVICE_NAMES.map((name) => [name, serviceState(scope, name)]))
+        const fibers = []
+        for (const runtime of scope.registry.values()) {
+          for (const fiber of runtime.fibers) {
+            const state = STATES[fiber.state] ?? String(fiber.state)
+            const name = runtime.name ?? fiber.runtime?.name ?? fiber.runtime?.callback?.name ?? '<anonymous>'
+            if (state === 'ACTIVE' && !/storage|session|workspace/i.test(name)) continue
+            fibers.push({
+              name,
+              uid: fiber.uid,
+              state,
+              inject: Object.keys(fiber.inject ?? {}),
+              store: Object.keys(fiber.store ?? {}),
+              error: fiberError(fiber),
+            })
+          }
+        }
+        const loaderEntries = []
+        try {
+          for (const entry of scope.loader.entries()) {
+            if (!/session-persistence|workspace-controller|session-controller|(?:^|:)workspace$/i.test(entry.id)
+              && !/session-persistence|workspace-controller|session-controller|dsh-workspace$/i.test(entry.options?.name ?? '')) continue
+            loaderEntries.push({
+              id: entry.id,
+              name: entry.options?.name ?? null,
+              disabled: entry.disabled,
+              hasFiber: Boolean(entry.fiber),
+              fiberState: entry.fiber ? (STATES[entry.fiber.state] ?? String(entry.fiber.state)) : null,
+              initializing: Boolean(entry._initTask),
+            })
+          }
+        } catch (error) {
+          loaderEntries.push({ inspectError: String(error?.stack || error).slice(0, 12000) })
+        }
+        let persistenceImport
+        try {
+          const imported = await scope.loader.import('@deepseek-ai/dsh-session-persistence-jsonl')
+          persistenceImport = {
+            ok: true,
+            keys: Object.keys(imported ?? {}).slice(0, 40),
+          }
+        } catch (error) {
+          persistenceImport = { ok: false, error: String(error?.stack || error).slice(0, 12000) }
+        }
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ services, fibers, loaderEntries, persistenceImport }))
+      },
+    }), 'desktop-e2e: core service diagnostics')
+  })
+  ctx.inject(['webServer', 'sessions'], (scope) => {
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-session-sources',
+      handler(_request, response) {
+        const payload = scope.sessions.list().map((session) => {
+          const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
+          return {
+            id: session.header?.id ?? null,
+            version: session.header?.version ?? null,
+            sources: collectDvrSources(events),
+            messages: collectDvrMessages(events),
+          }
+        })
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ sessions: payload }))
+      },
+    }), 'desktop-e2e: Session source diagnostics')
+    // Separate test-only Host event probe: snapshots the accepted model
+    // selection events without session IDs, prompts, tokens or credentials.
+    scope.effect(() => scope.webServer.register({
+      kind: 'exact',
+      path: '/dvr-e2e-model-selections',
+      handler(_request, response) {
+        let projections
+        let defaultSelection
+        try { projections = scope.get('sessionProjections') } catch {}
+        try { defaultSelection = modelSelectionSummary(scope.get('agentDefaultModel')?.currentSelection()) } catch {}
+        // Keep even the Host response bounded before transferring it to the browser.
+        const sessions = scope.sessions.list().slice(-8).map((session) => {
+          const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
+          const selections = events.filter((event) => event?.type === 'model/selection')
+            .map((event) => modelSelectionSummary(event.data))
+          let projected
+          try {
+            const state = projections?.stateOf(session, 'modelSelection')
+            if (state) projected = {
+              // This is the authoritative selection consumed by ModelDirectory.syncInputs().
+              next: modelSelectionSummary(state.pending ?? state.lastUsed),
+              pending: modelSelectionSummary(state.pending),
+              lastUsed: modelSelectionSummary(state.lastUsed),
+            }
+          } catch {}
+          return { count: selections.length, latest: selections.slice(-8), projected: projected ?? null }
+        }).filter((session) => session.count > 0)
+        response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+        response.end(JSON.stringify({ sessions, defaultSelection: defaultSelection ?? null }))
+      },
+    }), 'desktop-e2e: accepted model selection evidence')
+  })
+}
+`)
+  return { name, directory }
+}
+
+async function waitForCdp(port, deadlineMs = 30_000) {
+  const deadline = Date.now() + deadlineMs
+  let lastError
+  while (Date.now() < deadline) {
+    try { return await chromium.connectOverCDP(`http://127.0.0.1:${port}`) }
+    catch (error) { lastError = error; await new Promise((accept) => setTimeout(accept, 250)) }
+  }
+  throw lastError ?? new Error(`Desktop CDP did not start on port ${port}`)
+}
+
+async function waitForAppPage(browser, deadlineMs = 30_000) {
+  const deadline = Date.now() + deadlineMs
+  while (Date.now() < deadline) {
+    const page = browser.contexts().flatMap((context) => context.pages())
+      .find((candidate) => candidate.url().startsWith('dsh-app://app/'))
+    if (page) return page
+    await new Promise((accept) => setTimeout(accept, 250))
+  }
+  throw new Error('Desktop never opened dsh-app://app/')
+}
+
+async function exerciseVisionOnboardingSettingsPath(page) {
+  const onboarding = page.locator('.vr-onboarding-backdrop')
+  await onboarding.waitFor({ state: 'visible', timeout: 15_000 })
+  await onboarding.locator('.vr-onboarding-primary').click()
+  await onboarding.waitFor({ state: 'hidden', timeout: 10_000 })
+
+  const prompt = page.locator('.vr-guide-prompt')
+  await prompt.waitFor({ state: 'visible', timeout: 10_000 })
+  await page.waitForFunction(() => document.querySelector('.vr-guide-prompt')?.dataset.vrStep === 'step1')
+  await prompt.locator('.vr-btn-save').click()
+  await page.waitForFunction(() => {
+    const guide = document.querySelector('.vr-guide-prompt')
+    return guide?.dataset.vrStep === 'step2' && guide?.dataset.vrPhase === 'launcher'
+  })
+
+  // Desktop replaces the direct Settings gear with the account-owned launcher
+  // (avatar/More menu). Drive the guide itself so this E2E fails if its “Next”
+  // action cannot traverse launcher -> Settings menu -> Settings panel.
+  await prompt.locator('.vr-btn-save').click()
+  await page.waitForFunction(() => {
+    const phase = document.querySelector('.vr-guide-prompt')?.dataset.vrPhase
+    return phase === 'menu' || phase === 'nav'
+  })
+  let phase = await prompt.getAttribute('data-vr-phase')
+  if (phase === 'menu') {
+    await page.getByRole('menuitem', { name: /设置|Settings/i }).first().waitFor({ state: 'visible', timeout: 10_000 })
+    await prompt.locator('.vr-btn-save').click()
+    await page.waitForFunction(() => document.querySelector('.vr-guide-prompt')?.dataset.vrPhase === 'nav')
+    phase = 'nav'
+  }
+  if (phase !== 'nav') throw new Error(`Vision onboarding did not reach Settings navigation (phase=${phase})`)
+
+  await page.getByText('Vision Router', { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 })
+  await prompt.locator('.vr-btn-save').click()
+  await page.locator('[data-vr-guide-target="vision-backend"]').waitFor({ state: 'visible', timeout: 10_000 })
+  const done = page.locator('.vr-guide-callout .vr-btn-save')
+  await done.waitFor({ state: 'visible', timeout: 10_000 })
+  await done.click()
+  await page.locator('.vr-guide-callout').waitFor({ state: 'hidden', timeout: 10_000 })
+  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
+}
+
+const fetchHostProbe = (url, init = {}, timeoutMs = 8_000) =>
+  fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+
+async function exchangeHostCookie(authenticatedUrl) {
+  const response = await fetchHostProbe(authenticatedUrl, { redirect: 'manual' })
+  const setCookie = response.headers.get('set-cookie')
+  await response.body?.cancel()
+  if (response.status !== 303 || !setCookie) {
+    throw new Error(`Desktop Host authentication exchange failed (${response.status})`)
+  }
+  return setCookie.split(';', 1)[0]
+}
+
+async function readHostCoreProbe(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-core-status'
+  target.search = ''
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
+  const body = await response.json()
+  if (!response.ok) throw new Error(`Desktop Host core probe failed (${response.status}): ${JSON.stringify(body)}`)
+  return body
+}
+
+async function readHostSessionSources(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-session-sources'
+  target.search = ''
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
+  const text = await response.text()
+  if (!response.ok || text.length === 0) {
+    throw new Error(`Desktop Host Session source probe failed (${response.status}): ${text || '<empty body>'}`)
+  }
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new Error(
+      `Desktop Host Session source probe returned invalid JSON (${response.status}): ${text.slice(0, 4000)}`,
+      { cause: error },
+    )
+  }
+}
+
+async function readHostModelSelections(authenticatedUrl) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = '/dvr-e2e-model-selections'
+  target.search = ''
+  const response = await fetchHostProbe(target, { headers: { cookie }, redirect: 'manual' })
+  if (!response.ok) throw new Error(`model selection probe returned HTTP ${response.status}`)
+  const payload = await response.json()
+  if (!Array.isArray(payload?.sessions)) throw new Error('model selection probe returned an invalid shape')
+  return {
+    sessions: payload.sessions.slice(0, 8),
+    defaultSelection: payload.defaultSelection ?? null,
+  }
+}
+
+// Test-only, read-only snapshot of the directory attached to this React toggle.
+// The React DOM fiber is not a Host API. If unavailable, report an explicit
+// diagnostic gap; never make a model selection or infer success from this probe.
+async function readClientModelDirectory(page) {
+  return await page.evaluate(() => {
+    const button = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    if (!button) return { available: false, reason: 'toggle-missing' }
+    const fiberKey = Object.getOwnPropertyNames(button).find((key) => key.startsWith('__reactFiber$'))
+    if (!fiberKey) return { available: false, reason: 'react-fiber-unavailable' }
+    const selection = (value) => !value || typeof value !== 'object' ? null : {
+      provider: typeof value.provider === 'string' ? value.provider.slice(0, 120) : null,
+      model: typeof value.model === 'string' ? value.model.slice(0, 120) : null,
+      reasoningEffort: typeof value.reasoningEffort === 'string' ? value.reasoningEffort.slice(0, 80) : null,
+    }
+    let fiber = button[fiberKey]
+    for (let depth = 0; fiber && depth < 64; depth++, fiber = fiber.return) {
+      const directory = fiber.memoizedProps?.directory
+      if (typeof directory?.store?.getSnapshot !== 'function') continue
+      const state = directory.store.getSnapshot()
+      return {
+        available: true,
+        status: ['idle', 'loading', 'ready', 'selecting', 'error'].includes(state?.status)
+          ? state.status : 'unknown',
+        current: selection(state?.current),
+        pending: selection(state?.pending),
+        routable: typeof state?.routable === 'boolean' ? state.routable : null,
+        groupCount: Array.isArray(state?.groups) ? Math.min(state.groups.length, 256) : null,
+        hasError: typeof state?.error === 'string' && state.error.length > 0,
+      }
+    }
+    return { available: false, reason: 'directory-fiber-unavailable' }
+  })
+}
+
+async function callHostRemote(authenticatedUrl, method, args = {}, deadlineMs = 20_000) {
+  const target = new URL(authenticatedUrl)
+  const cookie = await exchangeHostCookie(authenticatedUrl)
+  target.pathname = `/api/${method}`
+  target.search = ''
+  const deadline = Date.now() + deadlineMs
+  let lastFailure
+  while (Date.now() < deadline) {
+    const rpcId = `desktop-e2e-${randomUUID()}`
+    try {
+      const response = await fetchHostProbe(target, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({ type: 'client-request', rpcId, method, payload: { args } }),
+      }, Math.max(1, Math.min(8_000, deadline - Date.now())))
+      const body = await response.json()
+      if (response.ok && body?.type === 'server-response' && body?.rpcId === rpcId && body?.result?.ok === true) {
+        return body.result.value
+      }
+      lastFailure = new Error(`Host Remote ${method} rejected: HTTP ${response.status} ${JSON.stringify(body)}`)
+    } catch (error) {
+      lastFailure = error
+    }
+    await new Promise((accept) => setTimeout(accept, 250))
+  }
+  throw lastFailure ?? new Error(`Host Remote ${method} did not become available`)
+}
+
+async function waitForVisionToggle(page, authenticatedUrl) {
+  const toggle = page.locator('[data-vision-router-mode-toggle="true"]')
+  try {
+    await toggle.waitFor({ state: 'visible', timeout: 15_000 })
+    return toggle
+  } catch (error) {
+    const bodyText = await page.locator('body').innerText().catch(() => '')
+    const workspaceTriggerVisible = await page.getByRole('button', { name: /Choose workspace|选择工作区/i })
+      .first().isVisible().catch(() => false)
+    const defaultWorkspaceFailed = workspaceTriggerVisible
+      || /Choose a workspace to start|选择(?:一个)?工作区.*开始/i.test(bodyText)
+    if (!defaultWorkspaceFailed) throw error
+
+    lastCoreProbe = await readHostCoreProbe(authenticatedUrl).catch((probeError) => ({
+      probeError: String(probeError?.stack || probeError),
+    }))
+    if (lastCoreProbe?.services?.workspaceController?.active !== true
+      || lastCoreProbe?.services?.sessionController?.active !== true) {
+      console.error(`[desktop-e2e] Host core probe: ${JSON.stringify(lastCoreProbe)}`)
+      throw new Error('Desktop Host core control plane is unavailable')
+    }
+
+    // DSH deliberately does not retry a failed first-use initializeDefault() in
+    // the same navigation. Once the Host control plane is healthy, recover through
+    // DSH's authenticated public Workspace Remote instead of automating the
+    // OS-native directory picker (which is an upstream Desktop surface, not a DVR one).
+    await callHostRemote(authenticatedUrl, 'workspace/initializeDefault')
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.evaluate(async () => await window.dshDesktopBoot.ready())
+    await toggle.waitFor({ state: 'visible', timeout: 30_000 })
+    return toggle
+  }
+}
+
+async function stopProcess(child) {
+  if (!child || child.exitCode !== null) return
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' })
+    return
+  }
+  try { child.kill('SIGTERM') } catch {}
+  await new Promise((accept) => setTimeout(accept, 500))
+  if (child.exitCode === null) try { child.kill('SIGKILL') } catch {}
+}
+
+const root = mkdtempSync(join(tmpdir(), 'dvr-017-desktop-renderer-'))
+const home = join(root, 'home')
+const project = join(root, 'project')
+const documentsDirectory = join(root, 'documents')
+const workspace = join(documentsDirectory, 'deepseek-harness', 'default-workspace')
+const userData = join(root, 'user-data')
+const runtimeRoot = join(root, 'runtime')
+const primaryRuntime = join(runtimeRoot, 'primary-runtime')
+const diagnosticPath = process.env.SMOKE_DIAGNOSTIC_PATH
+const progressPath = process.env.DVR_DESKTOP_E2E_PROGRESS_PATH
+const reportPhase = (phase) => {
+  // Fixed, allowlisted phase names only; no Host URL, auth cookie, model reply
+  // or user/session path is copied to CI diagnostics.
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(phase)) throw new Error('invalid desktop E2E phase')
+  console.log(`[desktop-e2e] phase=${phase}`)
+  if (progressPath) {
+    try { writeFileSync(progressPath, JSON.stringify({ phase }) + '\n') } catch {}
+  }
+}
+const screenshotPath = process.env.SMOKE_SCREENSHOT_PATH
+let child
+let browser
+let page
+let textServer
+let visionServer
+let resolveAuthenticatedHostUrl
+let rejectAuthenticatedHostUrl
+const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
+  resolveAuthenticatedHostUrl = resolve
+  rejectAuthenticatedHostUrl = reject
+})
+let desktopOutputBuffer = ''
+let lastCoreProbe
+let marketEvidence
+let runtimePackageEvidence
+let exactNativeOcr
+let exactNativeOcrModule
+let exactNativeRecognition
+let exactNativeToolPhase = false
+let exactNativeToolCalls = 0
+let exactNativeToolResult
+let exactNativeToolError
+const checkWholeTurnRouting = process.env.DVR_DESKTOP_CHECK_WHOLE_TURN_ROUTING === '1'
+// Diagnostics-only copy: exercise the actual Electron Desktop supervisor and
+// live PluginManager update, unlike the direct DesktopHostProcess controls.
+const issue877ElectronUpgrade = true
+const textEvidence = { requests: 0, toolCalls: 0, attachmentId: undefined, sawVisionResult: false }
+const visionEvidence = { requests: 0, sawImage: false }
+const rendererErrors = []
+
+try {
+  reportPhase('initialize-fixture')
+  mkdirSync(home)
+  mkdirSync(userData)
+  if (process.env.DVR_NATIVE_OCR_STAGE) {
+    exactNativeOcrModule = await import('../quality/native-ocr-desktop-acceptance.mjs')
+    assert.ok(process.env.DVR_NATIVE_OCR_DESKTOP_REPORT, 'exact OCR report path required')
+    assert.equal(checkWholeTurnRouting, false, 'exact native OCR requires tool-only routing')
+    exactNativeOcr = exactNativeOcrModule.prepareExactDesktopOcr({
+      source: dvrRoot, root, home,
+      stage: process.env.DVR_NATIVE_OCR_STAGE,
+      bmp: process.env.DVR_NATIVE_OCR_BMP,
+      expected: process.env.DVR_NATIVE_OCR_EXPECTED,
+    })
+  }
+
+  textServer = await listenHttp(async (req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      res.writeHead(404); res.end(); return
+    }
+    const body = await readJsonBody(req)
+    textEvidence.requests += 1
+    const serialized = JSON.stringify(body)
+    if (exactNativeToolPhase) {
+      const { OCR_TOOL_CALL_ID, OCR_PROMPT_MARKER, OCR_RENDERED_MARKER, readNativeOcrToolResult } = exactNativeOcrModule
+      try {
+        assert.ok(Array.isArray(body.messages), 'missing real Agent message history')
+        const previous = readNativeOcrToolResult(body.messages, exactNativeOcr.expected)
+        if (previous) {
+          assert.equal(exactNativeToolCalls, 1, 'duplicate or unsolicited native OCR result')
+          exactNativeToolResult = previous
+          sendSse(res, [
+            { choices: [{ delta: { content: OCR_RENDERED_MARKER } }] },
+            { choices: [{ finish_reason: 'stop', delta: {} }] },
+          ])
+          return
+        }
+        assert.equal(exactNativeToolCalls, 0, 'expected actual tool response after OCR call')
+        const promptRows = body.messages.filter(row => row?.role === 'user'
+          && JSON.stringify(row).includes(OCR_PROMPT_MARKER))
+        assert.equal(promptRows.length, 1, 'unique OCR user message required')
+        const userText = JSON.stringify(promptRows[0])
+        const attachment = /\[attached image:\s*([^\]]+)\]/i.exec(userText)?.[1]
+          ?? /\bsha256:[a-f0-9]{64}\b/i.exec(userText)?.[0]
+        assert.ok(attachment && attachment !== textEvidence.attachmentId, 'new actual image attachment required')
+        assert.ok(body.tools?.some(row => row?.function?.name === 'vision_ocr'), 'Host did not admit vision_ocr')
+        exactNativeToolCalls++
+        const args = JSON.stringify({ image: attachment })
+        sendSse(res, [
+          { choices: [{ delta: { tool_calls: [{ index: 0, id: OCR_TOOL_CALL_ID, type: 'function', function: { name: 'vision_ocr' } }] } }] },
+          { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] },
+          { choices: [{ finish_reason: 'tool_calls', delta: {} }] },
+        ])
+        return
+      } catch (error) {
+        exactNativeToolError = String(error?.message ?? error)
+        sendSse(res, [
+          { choices: [{ delta: { content: 'DESKTOP_NATIVE_OCR_E2E_FAILED' } }] },
+          { choices: [{ finish_reason: 'stop', delta: {} }] },
+        ])
+        return
+      }
+    }
+    if (checkWholeTurnRouting && serialized.includes('TEXT_FOLLOWUP_AFTER_IMAGE')) {
+      sendSse(res, [
+        { choices: [{ delta: { content: 'DESKTOP_TEXT_REVERSE_E2E_OK' } }] },
+        { choices: [{ finish_reason: 'stop', delta: {} }] },
+      ])
+      return
+    }
+    if (serialized.includes('DESKTOP_VISUAL_E2E_OK')) {
+      textEvidence.sawVisionResult = true
+      sendSse(res, [
+        { choices: [{ delta: { content: 'DESKTOP_VISION_E2E_OK' } }] },
+        { choices: [{ finish_reason: 'stop', delta: {} }] },
+      ])
+      return
+    }
+    const attachment =
+      /\[attached image:\s*([^\]]+)\]/i.exec(serialized)?.[1]
+      ?? /\bsha256:[a-f0-9]{64}\b/i.exec(serialized)?.[0]
+    const toolNames = Array.isArray(body.tools) ? body.tools.map((tool) => tool?.function?.name).filter(Boolean) : []
+    if (!attachment || !toolNames.includes('vision_describe')) {
+      sendSse(res, [
+        { choices: [{ delta: { content: `DESKTOP_E2E_MISSING_VISION_TOOL:${toolNames.join(',')}` } }] },
+        { choices: [{ finish_reason: 'stop', delta: {} }] },
+      ])
+      return
+    }
+    textEvidence.toolCalls += 1
+    textEvidence.attachmentId = attachment
+    const args = JSON.stringify({ attachmentIds: [attachment], question: 'Describe this test image and report the visible content.' })
+    sendSse(res, [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'desktop-e2e-vision-call', type: 'function', function: { name: 'vision_describe' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] },
+      { choices: [{ finish_reason: 'tool_calls', delta: {} }] },
+    ])
+  })
+
+  visionServer = await listenHttp(async (req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      res.writeHead(404); res.end(); return
+    }
+    const body = await readJsonBody(req)
+    visionEvidence.requests += 1
+    const serialized = JSON.stringify(body)
+    visionEvidence.sawImage = /data:image\//i.test(serialized) || /image_url/i.test(serialized)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ choices: [{ message: { content: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK' : 'DESKTOP_VISUAL_E2E_OK' } }] }))
+  })
+
+  reportPhase('mock-providers-ready')
+  const pnpmVersion = readJson(join(dshRoot, 'apps/desktop/node_modules/pnpm/package.json')).version
+  const electronNode = execFileSync(electron, ['-p', 'process.versions.node'], {
+    encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  }).trim()
+
+  prepareDevelopmentProject({
+    projectDir: project,
+    cliDir: join(dshRoot, 'apps/cli'),
+    hostDir: join(dshRoot, 'apps/desktop-host'),
+    dependencyDir: join(dshRoot, 'node_modules/.pnpm/node_modules'),
+    release: {
+      schemaVersion: 1,
+      version: dshVersion,
+      pnpmVersion,
+      nodeVersion: electronNode,
+      hostProtocolVersion: DESKTOP_HOST_PROTOCOL_VERSION,
+    },
+    target,
+  })
+
+  const persistencePackage = '@deepseek-ai/dsh-session-persistence-jsonl'
+  runtimePackageEvidence = {
+    source: inspectRuntimePackage(dshRoot, persistencePackage),
+    developmentProject: inspectRuntimePackage(project, persistencePackage),
+  }
+  if (!runtimePackageEvidence.developmentProject.packageJsonExists
+    || !runtimePackageEvidence.developmentProject.mainExists
+    || !runtimePackageEvidence.developmentProject.resolved) {
+    throw new Error(`Desktop development runtime is missing ${persistencePackage}: ${JSON.stringify(runtimePackageEvidence)}`)
+  }
+
+  cpSync(join(dshRoot, 'packages/skill/skill-office/assets'), join(runtimeRoot, 'office-skills'), { recursive: true })
+  const nodeDir = join(primaryRuntime, 'dependencies/node/bin')
+  mkdirSync(nodeDir, { recursive: true })
+  cpSync(process.execPath, join(nodeDir, process.platform === 'win32' ? 'node.exe' : 'node'))
+
+  const paths = resolveDesktopPaths(home)
+  const manager = new DesktopProjectManager(paths, { dsh: project })
+  await manager.applyRelease()
+
+  const coreProbeFixture = writeHostCoreProbeFixture(join(root, 'core-probe-fixture'))
+  const manifestPath = join(paths.profile, 'package.json')
+  const manifest = readJson(manifestPath)
+  if (!issue877ElectronUpgrade) manifest.dependencies['dsh-vision-router'] = `file:${exactNativeOcr?.copied ?? dvrRoot}`
+  manifest.dependencies[coreProbeFixture.name] = issue877ElectronUpgrade ? `link:${coreProbeFixture.directory}` : `file:${coreProbeFixture.directory}`
+  if (issue877ElectronUpgrade) {
+    // Seed operation will append both published bundles via the real
+    // PluginManager, and Electron will load them on its own cold start.
+    manifest.dsh.profile.bundles.push(coreProbeFixture.name)
+  } else {
+    if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
+    manifest.dsh.profile.bundles.push(coreProbeFixture.name)
+  }
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
+  // Exercise the exact public configuration surfaces: a local OpenAI-compatible
+  // text route drives the real Agent loop, while DVR's vision-http route drives
+  // the real image tool. Neither side can accidentally pass by reaching the network.
+  writeFileSync(join(paths.profile, 'cordis.patch.yml'), [
+    '- id: webserver',
+    '  config:',
+    '    host: 127.0.0.1',
+    '    port: 0',
+    '- id: workspace-controller',
+    '  config:',
+    `    documentsDirectory: ${JSON.stringify(documentsDirectory)}`,
+    '- id: llm-pi-ai',
+    '  config:',
+    '    providers:',
+    '      desktop-e2e:',
+    '        displayName: Desktop E2E',
+    '        api: openai-completions',
+    '        apiKeyEnv: DVR_DESKTOP_E2E_API_KEY',
+    `        baseURL: ${textServer.url}/v1`,
+    '        models:',
+    '          - id: desktop-text',
+    '            input: [text]',
+    // RC1 default model-switch compaction reserves 65,536 headroom tokens.
+    // This synthetic dynamic-routing fixture must declare enough capacity.
+    // Real small-window deployments should use the Host's per-model policy,
+    // never a fabricated context-window size in their adapter manifest.
+    checkWholeTurnRouting ? '            contextWindow: 131072' : '            contextWindow: 32768',
+    '            maxTokens: 2048',
+    '- id: agent-default-model',
+    '  config:',
+    '    provider: desktop-e2e',
+    '    model: desktop-text',
+    '- id: vision-router',
+    '  config:',
+    ...(exactNativeOcr ? ['    progressiveTools: false', '    ocrEngine: auto', '    freeFallback: false'] : []),
+    ...checkWholeTurnRouting
+      ? [
+          '    routing: true',
+          '    reverseRouting: true',
+          '    providers:',
+          '      - provider: vision-http',
+          '        model: desktop-e2e/desktop-vision',
+          '        fallbacks: []',
+        ]
+      : [],
+    '    provider: vision-http',
+    '    model: desktop-vision',
+    '    httpProviders:',
+    '      - name: desktop-e2e',
+    `        baseURL: ${visionServer.url}/v1`,
+    '        model: desktop-vision',
+    '',
+  ].join('\n'))
+
+  const pnpmEntry = join(dshRoot, 'apps/desktop/node_modules/pnpm/bin/pnpm.mjs')
+  const install = spawnSync(process.execPath, [pnpmEntry, 'install', '--dir', paths.profile, '--ignore-scripts'], {
+    env: process.env, encoding: 'utf8', stdio: 'pipe',
+  })
+  if (install.status !== 0) {
+    throw new Error(`Desktop profile install failed (${String(install.status)})\n${install.stdout}\n${install.stderr}`)
+  }
+
+  if (issue877ElectronUpgrade) {
+    reportPhase('desktop-profile-installed')
+    // Use an actual *previous* Host process to create the prior install.
+    // The real Electron supervisor starts only after that Host has stopped.
+    const variables = ['DSH_HOME', 'DSH_TELEMETRY_MODE', 'DSH_CLIENT_VERSION',
+      'DEEPSEEK_API_KEY', 'DVR_ISSUE_877_PREBOOT_SEED']
+    const originals = new Map(variables.map(key => [key, process.env[key]]))
+    let seedHost
+    try {
+      process.env.DSH_HOME = home
+      process.env.DSH_TELEMETRY_MODE = 'DISABLED'
+      process.env.DSH_CLIENT_VERSION = dshVersion
+      process.env.DEEPSEEK_API_KEY = 'dvr-diagnostic-no-call'
+      process.env.DVR_ISSUE_877_PREBOOT_SEED = '1'
+      seedHost = new DesktopHostProcess(process.execPath, project, paths.profile)
+      const ready = await seedHost.start()
+      let cookie = ready.authenticationCookie
+      if (!cookie) {
+        const login = await fetch(ready.url, { redirect: 'manual',
+          signal: AbortSignal.timeout(10000) })
+        if (login.status !== 303) throw Error('Preboot Desktop cookie exchange rejected: ' + login.status)
+        cookie = login.headers.get('set-cookie')?.split(';', 1)[0]
+        await login.body?.cancel()
+      }
+      if (!cookie) throw Error('Preboot Desktop owner cookie unavailable')
+      const target = new URL(ready.url)
+      target.pathname = '/__dvr_issue_877_preboot_seed'
+      target.search = ''
+      const response = await fetch(target, { method: 'POST', headers: { cookie },
+        signal: AbortSignal.timeout(240000) })
+      const raw = await response.text()
+      const result = JSON.parse(raw)
+      if (response.status !== 200 ||
+        result.shop?.application !== 'applied' ||
+        result.baseline?.application !== 'applied') {
+        throw Error('Preboot Host-owned profile setup failed: ' + JSON.stringify(result).slice(0, 3000))
+      }
+      console.log('ISSUE_877_PREBOOT_PROFILE=' + JSON.stringify({
+        shop: result.shop, baseline: result.baseline, complete: true }))
+    } finally {
+      if (seedHost) await seedHost.stop()
+      for (const [key, value] of originals) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+    const persisted = readJson(manifestPath)
+    if (String(persisted.dependencies?.['dsh-vision-router']) !== '3.2.1' ||
+        String(persisted.dependencies?.['dshmarket']) !== process.env.DVR_MARKET_VERSION) {
+      throw Error('Preboot Host did not persist both exact npm baseline dependencies')
+    }
+    if (!['dsh-vision-router', 'dshmarket'].every(name =>
+      persisted.dsh?.profile?.bundles?.includes(name))) {
+      throw Error('Preboot Host did not select both bundles in the persisted profile')
+    }
+  }
+  reportPhase('desktop-profile-installed')
+  const rendererPort = await freePort()
+  const mainPort = await freePort()
+  const hostPort = await freePort()
+  const environment = {
+    ...process.env,
+    ...exactNativeOcr?.isolatedEnv,
+    ...(exactNativeOcr ? { DVR_NCNN_OCR_CANARY: '', DVR_NCNN_OCR_EXECUTABLE: '', DVR_NCNN_OCR_MODELS: '' } : {}),
+    DSH_HOME: home,
+    DSH_DESKTOP_DEV_APP: '1',
+    DSH_DESKTOP_DSH_DIR: project,
+    DSH_DESKTOP_PNPM_ENTRY: pnpmEntry,
+    DSH_DESKTOP_PRIMARY_RUNTIME_DIR: primaryRuntime,
+    DSH_DESKTOP_HOST_INSPECT_PORT: String(hostPort),
+    DSH_DESKTOP_OPEN_DEVTOOLS: '0',
+    DSH_TELEMETRY_MODE: 'DISABLED',
+    // The public pi-ai custom-provider contract requires a credential. Generate
+    // an ephemeral per-run value instead of storing any test secret in source.
+    DVR_DESKTOP_E2E_API_KEY: randomUUID(),
+    ELECTRON_ENABLE_LOGGING: '1',
+  }
+
+  let executable = electron
+  let args = [`--inspect=127.0.0.1:${mainPort}`, `--remote-debugging-port=${rendererPort}`,
+    `--user-data-dir=${userData}`, join(dshRoot, 'apps/desktop')]
+  if (process.platform === 'darwin') {
+    executable = prepareDevelopmentApp({
+      electron,
+      appRoot: join(dshRoot, 'apps/desktop'),
+      directory: join(root, 'development-app'),
+      home,
+      userData,
+      mainPort,
+      rendererPort,
+      hostPort,
+      openDevtools: '0',
+    })
+    args = []
+  }
+
+  child = spawn(executable, args, {
+    cwd: join(dshRoot, 'apps/desktop'), env: environment, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const observeDesktopOutput = (chunk, target) => {
+    const text = String(chunk)
+    target.write(`[desktop] ${text}`)
+    desktopOutputBuffer = (desktopOutputBuffer + text).slice(-16_384)
+    const match = /dsh web:\s*(https?:\/\/[^\s]+)/i.exec(desktopOutputBuffer)
+    if (match) resolveAuthenticatedHostUrl(match[1])
+  }
+  child.stdout?.on('data', (chunk) => observeDesktopOutput(chunk, process.stdout))
+  child.stderr?.on('data', (chunk) => observeDesktopOutput(chunk, process.stderr))
+  child.once('exit', (code, signal) => {
+    rejectAuthenticatedHostUrl(new Error(`Desktop exited before Host URL became available (${String(code ?? signal)})`))
+  })
+
+  reportPhase('electron-started')
+  browser = await waitForCdp(rendererPort)
+  page = await waitForAppPage(browser)
+  reportPhase('desktop-cdp-ready')
+  page.on('pageerror', (error) => rendererErrors.push(String(error?.stack || error)))
+  // Issue #792: a reporter's Windows Desktop showed the Host's boot JS and
+  // CSS *as visible page text*. A boot payload or zero renderer exceptions
+  // alone cannot prove the Document parser actually treated index as HTML.
+  // Probe both the initial shell and the settled UI; keep forensic output
+  // bounded and never log the page URL, Host cookie or message contents.
+  const assertDesktopHtmlRendering = async (phase) => {
+    const state = await page.evaluate(() => {
+      // A broken CSS reset can make <head>/<script>/<style> visible while
+      // body.innerText stays clean. The reporter's screenshot began with a
+      // head bootstrap script, so inspect the rendered document root too.
+      const visible = document.documentElement?.innerText ?? ''
+      return {
+        contentType: document.contentType,
+        scripts: document.querySelectorAll('script').length,
+        styles: document.querySelectorAll('style').length,
+        headVisible: !!document.head && getComputedStyle(document.head).display !== 'none',
+        rawBoot: visible.includes('globalThis.__DSH_BOOT_READY__'),
+        rawLoader: visible.includes('client-modules: HTML did not preload'),
+        rawCss: /:root\s*\{\s*color-scheme\s*:/i.test(visible),
+      }
+    })
+    assert.equal(state.contentType, 'text/html',
+      `Desktop ${phase}: document MIME was not parsed as HTML: ${JSON.stringify(state)}`)
+    // The first Desktop frame is intentionally a shell with only its two
+    // bootstrap scripts; Host-provided <style> rows arrive later. Assert the
+    // real style nodes only after the application has actually settled.
+    assert.ok(state.scripts > 0,
+      `Desktop ${phase}: missing document script nodes: ${JSON.stringify(state)}`)
+    if (phase !== 'boot') {
+      assert.ok(state.styles > 0,
+        `Desktop ${phase}: missing settled style injection nodes: ${JSON.stringify(state)}`)
+    }
+    assert.equal(state.rawBoot || state.rawLoader || state.rawCss || state.headVisible, false,
+      `Desktop ${phase}: boot JS/CSS leaked into visible text: ${JSON.stringify(state)}`)
+  }
+  await assertDesktopHtmlRendering('boot')
+  const boot = await page.evaluate(async () => await window.dshDesktopBoot.ready())
+  for (const [index, row] of boot.injections.entries()) {
+    if (row?.kind === 'script' && typeof row.text === 'string') {
+      assert.doesNotMatch(row.text, /<\/script/i,
+        `Desktop structured script row ${index} illegally closes its element`)
+    }
+    if (row?.kind === 'style' && typeof row.text === 'string') {
+      assert.doesNotMatch(row.text, /<\/style/i,
+        `Desktop structured style row ${index} illegally closes its element`)
+    }
+  }
+  reportPhase('desktop-boot-ready')
+  const authenticatedHostUrl = await Promise.race([
+    authenticatedHostUrlPromise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Desktop Host URL was not reported')), 30_000)),
+  ])
+  if (issue877ElectronUpgrade) {
+    // Real dshmarket HTTP operation: do NOT call PluginManager.updateBundle.
+    // Never retry a mutation whose response may have been lost during HMR.
+    const cookie = await exchangeHostCookie(authenticatedHostUrl)
+    const target = new URL(authenticatedHostUrl)
+    target.search = ''
+    const headers = { cookie, origin: target.origin, 'content-type': 'application/json' }
+    const probe = new URL(target)
+    probe.pathname = '/__dvr_issue_877_electron_upgrade'
+    const readProbe = async (command, timeout = 5000) => {
+      const url = new URL(probe)
+      if (command) url.searchParams.set('command', command)
+      const response = await fetchHostProbe(url, { method: 'POST', headers }, timeout)
+      if (response.status !== 200) throw Error('Probe HTTP ' + response.status)
+      return await response.json()
+    }
+    const installed = (name) => {
+      try { return readJson(join(paths.profile, 'node_modules', name, 'package.json')).version }
+      catch { return null }
+    }
+    // Separate causal control from natural marketplace evidence.
+    let routingControlEvidence
+    try { routingControlEvidence = await readProbe('routing-control') }
+    catch (error) { routingControlEvidence = { fixtureError: String(error) } }
+    console.log('ISSUE_877_ROUTING_CONTROL=' + JSON.stringify(routingControlEvidence))
+    assert.equal(routingControlEvidence.normal?.error, null)
+    assert.equal(routingControlEvidence.normal?.live?.length, 2)
+    assert.deepEqual(routingControlEvidence.normal?.remaining, [])
+    assert.equal(routingControlEvidence.fault?.triggered, true)
+    assert.equal(routingControlEvidence.fault?.error, null, 'candidate must not register chain after retirement')
+    assert.deepEqual(routingControlEvidence.fault?.remaining, [])
+    marketEvidence = { routingControl: routingControlEvidence }
+    const before = await readProbe('arm')
+    if (!before.armed || installed('dshmarket') !== process.env.DVR_MARKET_VERSION ||
+        installed('dsh-vision-router') !== '3.2.1' ||
+        !before.entries.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE')) {
+      throw Error('Market/DVR baseline not established: ' + JSON.stringify(before))
+    }
+    marketEvidence.before = before
+    marketEvidence.baselineInstalled = installed('dsh-vision-router')
+    marketEvidence.baselineMarket = installed('dshmarket')
+    target.pathname = '/dsh-market/status'
+    const marketStatus = await fetchHostProbe(target, { headers }, 15000)
+    const marketStatusCode = marketStatus.status
+    await marketStatus.body?.cancel()
+    if (marketStatusCode !== 200) throw Error('Real market status unavailable: ' + marketStatusCode)
+    let marketResult
+    try {
+      const removal = await readProbe('candidate-remove', 180000)
+      marketEvidence.removal = removal
+      assert.equal(removal.application, 'applied', JSON.stringify(removal))
+      assert.equal(installed('dsh-vision-router'), null, 'published baseline must be removed')
+      const installation = await readProbe('candidate-install', 180000)
+      marketResult = { removal, installation }
+      assert.equal(installation.application, 'applied', JSON.stringify(installation))
+    } catch (error) { marketResult = { ...marketEvidence, transportError: String(error) } }
+    const expectedVersion = readJson(join(dvrRoot, 'package.json')).version
+    // A lost response is not proof of a failed transaction. Poll read-only
+    // observations for a bounded interval; record the disk and loader separately.
+    marketEvidence.marketResult = marketResult
+    let after, lastProbeError
+    const settleDeadline = Date.now() + 60000
+    do {
+      try { after = await readProbe() } catch (error) { lastProbeError = String(error) }
+      if (after?.firstEffect || after?.firstFailure ||
+          (installed('dsh-vision-router') === expectedVersion &&
+           after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE'))) break
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    } while (Date.now() < settleDeadline)
+    let marketLog = []
+    try {
+      marketLog = readFileSync(join(paths.profile, '.dsh-market', 'log.ndjson'), 'utf8')
+        .split(/\r?\n/).filter(line => /dsh-vision-router|update-repair|MARKET_UNLOADED/.test(line))
+        .slice(-30).map(line => line.slice(0, 1500))
+    } catch {}
+    const persisted = readJson(manifestPath)
+    const final = { installed: installed('dsh-vision-router'), marketVersion: installed('dshmarket'),
+      profileSpec: persisted.dependencies?.['dsh-vision-router'] ?? null,
+      bundleSelected: persisted.dsh?.profile?.bundles?.includes('dsh-vision-router') ?? false,
+      marketResult, before, after, lastProbeError, marketLog, routingControl: routingControlEvidence,
+      baselineUid: before.entries.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid,
+      finalUid: after?.entries?.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid }
+    final.candidateFilesMatch = ['session-vision-mode-boundary.js', 'reactive-routing-mounts.js'].every(name => {
+      try { return readFileSync(join(paths.profile, 'node_modules', 'dsh-vision-router', 'lib', name)).equals(readFileSync(join(dvrRoot, 'lib', name))) }
+      catch { return false }
+    })
+    marketEvidence = final
+    console.log('ISSUE_877_FIXED_CANDIDATE=' + JSON.stringify(final))
+    if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
+    if (final.installed !== expectedVersion || !final.bundleSelected || !final.candidateFilesMatch ||
+        marketResult.installation?.application !== 'applied' || final.baselineUid === final.finalUid ||
+        !after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE') ||
+        after.firstEffect || after.firstFailure) {
+      throw Error('Real market update did not converge cleanly; inspect first-effect and transaction evidence')
+    }
+    if (child?.exitCode !== null) throw Error('Electron supervisor exited during DVR upgrade')
+    await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15000 })
+    console.log(JSON.stringify({ ok: true, scope: 'real-host-local-candidate-upgrade',
+      dsh: dshVersion, electronNode, marketVersion: final.marketVersion, installed: final.installed }))
+  } else {
+  const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
+    .map((row) => (row.text.match(/data-vision-router-[a-z0-9-]+(?::structured)?/i) || [])[0])
+    .filter(Boolean)
+  for (const required of [
+    'data-vision-router-settings-017-compat:structured',
+    'data-vision-router-presentation-boundary',
+    'data-vision-router-settings-factory-lifecycle',
+  ]) {
+    if (!markers.includes(required)) throw new Error(`Desktop boot is missing ${required}`)
+  }
+
+  // Pin the Host-owned default workspace inside this test's temporary world.
+  // Desktop prefers the native OS directory picker over the browser fallback,
+  // so driving a DOM dialog here would test the wrong surface on fresh profiles.
+  // The workspace-controller owns first-use creation; wait for the Session slot
+  // below to prove that initialization completed before exercising Vision mode.
+  const toggle = await waitForVisionToggle(page, authenticatedHostUrl)
+  if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
+  reportPhase('vision-toggle-ready')
+  await exerciseVisionOnboardingSettingsPath(page)
+  reportPhase('onboarding-complete')
+
+  const initialPressed = await toggle.getAttribute('aria-pressed')
+  if (initialPressed !== 'true' && initialPressed !== 'false') {
+    throw new Error(`Vision toggle began without an authoritative pressed state: ${String(initialPressed)}`)
+  }
+  const toggledPressed = initialPressed === 'true' ? 'false' : 'true'
+  const inspectToggleState = async () => await page.evaluate(() => {
+    const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+    if (!node) return { present: false }
+    return {
+      present: true,
+      pressed: node.getAttribute('aria-pressed'),
+      busy: node.getAttribute('aria-busy'),
+      disabled: node.disabled === true,
+      label: node.getAttribute('aria-label'),
+      title: node.title,
+    }
+  })
+  // Observe every relevant mutation, not only the state at two timestamps.
+  await page.evaluate(installDesktopVisionToggleAudit)
+  const waitForSettledVisionState = async (expected, direction) => {
+    const deadline = Date.now() + 30_000
+    try {
+      // A real continuous UI-ready window: MutationObserver invalidates any
+      // interval interrupted by busy/loading, disabling or node replacement.
+      // Preserve the one original 30s deadline and exactly two user clicks.
+      await page.waitForFunction((target) =>
+        window.__dvrDesktopToggleAudit?.stableFor(target, 300) === true,
+        expected,
+        { timeout: Math.max(1, deadline - Date.now()) })
+    } catch (error) {
+      const observed = await inspectToggleState().catch(() => ({ unavailable: true }))
+      const buttonHistory = await page.evaluate(() =>
+        window.__dvrDesktopToggleAudit?.history?.slice(-48) ?? [],
+      ).catch(() => [])
+      const interactionEvidence = await page.evaluate(() => ({
+        domClicks: window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [],
+        // Capture-phase pointer target continuity distinguishes missing DOM
+        // dispatch from a press/release retargeted outside a replaced button.
+        pointerHistory: window.__dvrDesktopToggleAudit?.pointerHistory?.slice(-32) ?? [],
+        alertEvents: window.__dvrDesktopToggleAudit?.alertHistory?.slice(-32) ?? [],
+      })).catch(() => ({ unavailable: true }))
+      const stability = await page.evaluate(() =>
+        window.__dvrDesktopToggleAudit?.stabilitySummary() ?? null,
+      ).catch(() => null)
+      // A missing second model/selection event means that the OFF click was
+      // not accepted by the Host. Two accepted events with the UI still ON
+      // point to a client projection or later Host reset instead. Keep the
+      // probe read-only and protect the original timeout as the root error.
+      const hostSelections = await readHostModelSelections(authenticatedHostUrl)
+        .catch((failure) => ({ unavailable: String(failure?.message ?? failure).slice(0, 200) }))
+      const clientDirectory = await readClientModelDirectory(page)
+        .catch(() => ({ available: false, reason: 'browser-evaluate-failed' }))
+      const clientTransitions = await page.evaluate(() => ({
+        available: window.__dvrDesktopModelTrace?.available === true,
+        changed: window.__dvrDesktopModelTrace?.directoryChanged?.() ?? null,
+        history: window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [],
+      })).catch(() => ({ available: false, history: [] }))
+      throw new Error(
+        `Desktop Vision toggle did not settle (${direction}, expected=${expected}, observed=${JSON.stringify(observed)}, buttonHistory=${JSON.stringify(buttonHistory)}, interactionEvidence=${JSON.stringify(interactionEvidence)}, stability=${JSON.stringify(stability)}, hostSelections=${JSON.stringify(hostSelections)}, clientDirectory=${JSON.stringify(clientDirectory)}, clientTransitions=${JSON.stringify(clientTransitions)})`,
+        { cause: error },
+      )
+    }
+  }
+  // Do not start an adversarial double-toggle during the Host's initial
+  // model-catalog hydration. The initial state must be stably actionable too.
+  await waitForSettledVisionState(initialPressed, 'initial ready baseline')
+  await page.evaluate(installDesktopModelSelectionTrace)
+  const traceReady = await page.evaluate(() => window.__dvrDesktopModelTrace?.available === true)
+  assert.equal(traceReady, true, 'Desktop selection transition trace was not attached to Host ModelDirectory')
+  await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
+  await toggle.click()
+  await waitForSettledVisionState(toggledPressed, 'first transition')
+  await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
+  await toggle.click()
+  await waitForSettledVisionState(initialPressed, 'return transition')
+  const domClickEvidence = await page.evaluate(() =>
+    window.__dvrDesktopToggleAudit?.domClicks?.slice(-8) ?? [])
+  assert.equal(domClickEvidence.length, 2,
+    'Real Desktop positive control must receive exactly two Vision DOM clicks')
+  // Positive control for the diagnostic itself: this real Desktop session
+  // must have committed both opposite selections to the Host event log.
+  // Otherwise the timeout-only forensic probe could silently report no events
+  // even when the UI transitions, making a later failure uninterpretable.
+  const selectionProbe = await readHostModelSelections(authenticatedHostUrl)
+  const expectedProviders = initialPressed === 'true'
+    ? ['desktop-e2e', 'desktop-e2e-vision']
+    : ['desktop-e2e-vision', 'desktop-e2e']
+  const committedSession = selectionProbe.sessions.find((session) => {
+    const latest = session.latest
+    if (!Array.isArray(latest) || latest.length < 2) return false
+    const lastTwo = latest.slice(-2)
+    return lastTwo.every((event, index) =>
+      event?.provider === expectedProviders[index] && event.model === 'desktop-text')
+  })
+  assert.ok(committedSession,
+    `Desktop Host selection forensic probe missed the accepted two-way toggle: ${JSON.stringify(selectionProbe)}`)
+  // alpha.2 exposes the raw state (pending/lastUsed) here, not the wire's
+  // computed next. Positive-control our derived next against the settled mode.
+  if (dshVersion === '0.2.1-alpha.2') {
+    assert.equal(committedSession.projected?.next?.provider,
+      initialPressed === 'true' ? 'desktop-e2e-vision' : 'desktop-e2e',
+      `Host model-selection projection next disagrees with settled toggle: ${JSON.stringify(committedSession.projected)}`)
+    assert.equal(committedSession.projected?.next?.model, 'desktop-text')
+  }
+  // Verify that the optional browser probe actually resolves a successful
+  // authoritative directory; a fiber-shaped but wrong component is not proof.
+  const clientDirectory = await readClientModelDirectory(page)
+  assert.equal(clientDirectory.available, true,
+    `Desktop browser directory probe unavailable: ${JSON.stringify(clientDirectory)}`)
+  assert.equal(clientDirectory.current?.provider, initialPressed === 'true'
+    ? 'desktop-e2e-vision' : 'desktop-e2e')
+  assert.equal(clientDirectory.current?.model, 'desktop-text')
+  // Positive-control the trace against the real two-way Desktop transition.
+  const clientTransitions = await page.evaluate(() =>
+    window.__dvrDesktopModelTrace?.history?.slice(-64) ?? [])
+  assert.ok(expectedProviders.every((provider) => clientTransitions.some((row) =>
+    row.current?.provider === provider && row.current.model === 'desktop-text')),
+    `Desktop selection transition trace did not observe both models: ${JSON.stringify(clientTransitions)}`)
+
+  reportPhase('two-way-toggle-passed')
+  const accountMenu = page.getByRole('button', { name: /账号菜单|Account menu/i })
+  await accountMenu.click()
+  await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
+  await page.getByText('Vision Router', { exact: true }).last().click()
+  await page.waitForTimeout(250)
+  let settingsText = await page.locator('body').innerText()
+  if (/远程设置未启用|Remote settings (?:are )?disabled/i.test(settingsText)) {
+    throw new Error('official dsh-app://app entered the remote-settings permission gate')
+  }
+
+  const strategyCard = page.locator('.vr-ia-plugin-card').filter({ hasText: /识图策略|Vision strategy/i })
+  await strategyCard.locator('.vr-ia-plugin-card-header').click()
+  const depthToggle = strategyCard.locator('[data-vr-depth-cap-toggle="1"]')
+  await depthToggle.waitFor({ state: 'visible', timeout: 5000 })
+  const originalChecked = await depthToggle.isChecked()
+  await depthToggle.click()
+  const expectedChecked = !originalChecked
+  const save = strategyCard.locator('.vr-ia-save')
+  await save.click()
+  await strategyCard.locator('.vr-ia-plugin-card-header').waitFor({ state: 'visible' })
+  await page.waitForFunction(() => {
+    const card = [...document.querySelectorAll('.vr-ia-plugin-card')]
+      .find((node) => /识图策略|Vision strategy/i.test(node.textContent || ''))
+    return card?.querySelector('.vr-ia-plugin-card-header')?.getAttribute('aria-expanded') === 'false'
+  })
+
+  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
+  await accountMenu.click()
+  await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
+  await page.getByText('Vision Router', { exact: true }).last().click()
+  await page.waitForTimeout(250)
+  settingsText = await page.locator('body').innerText()
+  if (/远程设置未启用|Remote settings (?:are )?disabled/i.test(settingsText)) {
+    throw new Error('Desktop Settings regressed to remote permission warning after reopen')
+  }
+  const reopenedCard = page.locator('.vr-ia-plugin-card').filter({ hasText: /识图策略|Vision strategy/i })
+  await reopenedCard.locator('.vr-ia-plugin-card-header').click()
+  const reopenedToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
+  await reopenedToggle.waitFor({ state: 'visible', timeout: 5000 })
+  if (await reopenedToggle.isChecked() !== expectedChecked) throw new Error('Desktop Settings save did not survive reopen')
+
+  // Restore the fixture's original value and require the same durable save path.
+  await reopenedToggle.click()
+  await reopenedCard.locator('.vr-ia-save').click()
+  await page.waitForFunction(() => {
+    const card = [...document.querySelectorAll('.vr-ia-plugin-card')]
+      .find((node) => /识图策略|Vision strategy/i.test(node.textContent || ''))
+    return card?.querySelector('.vr-ia-plugin-card-header')?.getAttribute('aria-expanded') === 'false'
+  })
+  // Re-open once more to verify the restoration survived the same save path.
+  await reopenedCard.locator('.vr-ia-plugin-card-header').click()
+  const restoredToggle = reopenedCard.locator('[data-vr-depth-cap-toggle="1"]')
+  await restoredToggle.waitFor({ state: 'visible', timeout: 5000 })
+  if (await restoredToggle.isChecked() !== originalChecked) throw new Error('Desktop Settings restore did not survive save readback')
+  if (exactNativeOcr) {
+    exactNativeRecognition = await exactNativeOcrModule.exerciseExactDesktopOcr(page, exactNativeOcr)
+    reportPhase('exact-native-ocr-gui-installed')
+  }
+  await page.getByRole('button', { name: /关闭|Close/i }).first().click()
+
+  reportPhase('settings-roundtrip-passed')
+  // A true product smoke ends at the rendered answer, not at an injected DOM node.
+  // Reuse the exact live Session whose composer and Vision slot were exercised
+  // above. Do not couple the smoke to a version-specific “new session” chrome.
+  const composer = page.locator('[data-composer-input][contenteditable="true"]').first()
+  await composer.waitFor({ state: 'visible', timeout: 30_000 })
+  const fileInput = page.locator('[data-composer-card] input[type="file"]').first()
+  await fileInput.setInputFiles({
+    name: 'desktop-e2e.png', mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  })
+  await page.locator('img[alt="desktop-e2e.png"]').waitFor({ state: 'visible', timeout: 30_000 })
+  await composer.fill('Inspect the attached image with the vision tool, then answer with the observed result.')
+  const functionalToggle = page.locator('[data-vision-router-mode-toggle="true"]')
+  await functionalToggle.waitFor({ state: 'visible', timeout: 30_000 })
+  if (await functionalToggle.getAttribute('aria-pressed') !== 'true') await functionalToggle.click()
+  await page.waitForFunction(() => document.querySelector('[data-vision-router-mode-toggle="true"]')?.getAttribute('aria-pressed') === 'true')
+  // The earlier two-way toggle probe precedes the functional Vision-ON
+  // action above. Read the accepted Host selection AFTER Vision is ON, not
+  // the now-obsolete pre-toggle text route. Correlate this live Session with
+  // the accepted two-way toggle trace; never use the first arbitrary Session.
+  const beforeDynamicImage = checkWholeTurnRouting
+    ? await readHostModelSelections(authenticatedHostUrl) : undefined
+  const originals = (beforeDynamicImage?.sessions ?? []).filter((session) =>
+    session.projected?.next?.provider === 'desktop-e2e-vision'
+    && session.projected?.next?.model === 'desktop-text'
+    && session.latest?.some((event) => event.provider === 'desktop-e2e'
+      && event.model === 'desktop-text'))
+  if (checkWholeTurnRouting && originals.length !== 1) {
+    throw new Error('RC1 pre-image Host selection must reflect settled Vision ON in one Session: '
+      + JSON.stringify(beforeDynamicImage))
+  }
+  const originalModelSelection = originals[0]?.projected?.next
+  // The primary action changes its accessible name when a running turn can be
+  // queued or steered. Waiting for actionability also waits out attachment upload.
+  const send = page.getByRole('button', {
+    name: /^(?:Send message|Queue message|Steer message|发送消息|排队发送|插话发送)$/i,
+  }).last()
+  await send.waitFor({ state: 'visible', timeout: 30_000 })
+  await send.click({ timeout: 30_000 })
+  if (checkWholeTurnRouting) {
+    // RC1 route authority must be decided before the step's tools/prompt.
+    // The first image goes directly through DVR's chain adapter, and a later
+    // text-only turn returns to the original text model. A fake Settings
+    // mount cannot satisfy either real HTTP backend or rendered response.
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_DYNAMIC_IMAGE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error('RC1 dynamic route did not deliver canonical image to the vision adapter: ' + JSON.stringify(visionEvidence))
+    }
+    const imageModels = await readHostModelSelections(authenticatedHostUrl)
+    // The Host may route through the configured chain or directly to the
+    // first vision-http adapter when chain registration is unavailable. Both
+    // are real visual providers; the test proves the accepted route and image
+    // bytes, not a hard-coded internal implementation detail.
+    const visualSelection = imageModels.sessions
+      .flatMap((session) => session.latest ?? [])
+      .findLast((item) => (item?.provider === 'vision-http'
+        && item.model === 'desktop-e2e/desktop-vision')
+        || (item?.provider === 'vision-chain'
+          && item.model === 'vision-http/desktop-e2e/desktop-vision'))
+    if (!visualSelection || (visualSelection.provider === originalModelSelection.provider
+        && visualSelection.model === originalModelSelection.model)) {
+      throw new Error('RC1 image turn did not commit an independent visual adapter route: '
+        + JSON.stringify({ originalModelSelection, imageModels }))
+    }
+
+    await composer.fill('TEXT_FOLLOWUP_AFTER_IMAGE')
+    await send.waitFor({ state: 'visible', timeout: 30_000 })
+    await send.click({ timeout: 30_000 })
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_TEXT_REVERSE_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 30_000 })
+    if (textEvidence.requests < 1) {
+      throw new Error('RC1 text followup never reached the original text adapter')
+    }
+    const textModels = await readHostModelSelections(authenticatedHostUrl)
+    if (!textModels.sessions.some((session) => session.latest?.some((item) => item.provider === visualSelection.provider
+        && item.model === visualSelection.model)
+      && session.projected?.lastUsed?.provider === originalModelSelection.provider
+      && session.projected?.lastUsed?.model === originalModelSelection.model)) {
+      throw new Error('RC1 text followup did not restore its original Session route: '
+        + JSON.stringify({originalModelSelection, textModels}))
+    }
+  } else {
+    await page.getByRole('paragraph').filter({ hasText: /^DESKTOP_VISION_E2E_OK$/ })
+      .last().waitFor({ state: 'visible', timeout: 15_000 })
+    if (textEvidence.toolCalls < 1 || !textEvidence.attachmentId || !textEvidence.sawVisionResult) {
+      throw new Error(`Desktop text model did not complete the real vision tool loop: ${JSON.stringify(textEvidence)}`)
+    }
+    if (visionEvidence.requests < 1 || !visionEvidence.sawImage) {
+      throw new Error(`Desktop vision backend did not receive canonical image content: ${JSON.stringify(visionEvidence)}`)
+    }
+  }
+
+  reportPhase('vision-answer-rendered')
+  if (exactNativeOcr) {
+    const { OCR_PROMPT_MARKER, OCR_RENDERED_MARKER } = exactNativeOcrModule
+    const sharpModule = createRequire(join(dvrRoot, 'package.json'))('sharp')
+    const sharp = sharpModule.default ?? sharpModule
+    const { decodeBmp } = await import('../quality/native-ocr-staged-acceptance.mjs')
+    const { rgb, width, height } = decodeBmp(readFileSync(exactNativeOcr.bmp))
+    const png = await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer()
+    const beforeVisionRequests = visionEvidence.requests
+    exactNativeToolPhase = true
+    await fileInput.setInputFiles({ name: 'native-ocr-e2e.png', mimeType: 'image/png', buffer: png })
+    await page.locator('img[alt="native-ocr-e2e.png"]').waitFor({ state: 'visible', timeout: 30000 })
+    await composer.fill(OCR_PROMPT_MARKER + ': transcribe the attached image exactly using vision_ocr.')
+    await send.click({ timeout: 30000 })
+    try {
+      await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^(?:' + OCR_RENDERED_MARKER + '|DESKTOP_NATIVE_OCR_E2E_FAILED)$') })
+        .last().waitFor({ state: 'visible', timeout: 90000 })
+      assert.ok(exactNativeToolResult, exactNativeToolError ?? 'actual native OCR result did not arrive')
+      assert.equal(visionEvidence.requests - beforeVisionRequests, 0, 'native OCR unexpectedly called visual model')
+      assert.equal(exactNativeToolCalls, 1)
+      assert.equal(await page.getByRole('paragraph')
+        .filter({ hasText: new RegExp('^' + OCR_RENDERED_MARKER + '$') }).last().isVisible(), true)
+    } finally {
+      exactNativeToolPhase = false
+    }
+    await accountMenu.click()
+    await page.getByRole('menuitem', { name: /设置|Settings/i }).click()
+    await page.getByText('Vision Router', { exact: true }).last().click()
+    await exactNativeOcrModule.finishExactDesktopOcr(page, exactNativeOcr, exactNativeRecognition, {
+      ...exactNativeToolResult,
+      toolCalls: exactNativeToolCalls,
+      visionRequestsDuringOcr: visionEvidence.requests - beforeVisionRequests,
+      dshVersion,
+    })
+    await page.getByRole('button', { name: /关闭|Close/i }).first().click()
+    reportPhase('exact-native-ocr-agent-and-gui-passed')
+  }
+  const sessionSourceProbe = await readHostSessionSources(authenticatedHostUrl)
+  const v4Sessions = (sessionSourceProbe.sessions ?? []).filter((session) => session.version === 4)
+  assert.ok(v4Sessions.length > 0, 'Desktop E2E must exercise at least one Session format v4 conversation')
+  const dvrSources = v4Sessions.flatMap((session) => session.sources ?? [])
+  // Tool-driven vision produces DVR-authored notices/tool evidence. In the
+  // optional whole-turn route, the vision adapter handles the image directly
+  // and does not need to author a synthetic DVR message. Both paths already
+  // proved their real model requests above; require producer attribution only
+  // when DVR actually authored a durable Session message.
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrSources.some((source) => source?.kind === 'plugin:dsh-vision-router'),
+      `real tool-only Session v4 log must contain a producer-owned DVR source: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
+  assert.equal(
+    dvrSources.some((source) => source?.kind === 'plugin' && source?.plugin === 'dsh-vision-router'),
+    false,
+    `real Session v4 log must never persist DVR's legacy shared plugin source: ${JSON.stringify(sessionSourceProbe)}`,
+  )
+  const dvrMessages = v4Sessions.flatMap((session) => session.messages ?? [])
+  if (!checkWholeTurnRouting) {
+    assert.ok(
+      dvrMessages.length > 0,
+      `real tool-only Session v4 log must expose a DVR-authored durable message: ${JSON.stringify(sessionSourceProbe)}`,
+    )
+  }
+  for (const message of dvrMessages) {
+    assert.equal(
+      message.source?.kind,
+      'plugin:dsh-vision-router',
+      `every DVR-authored Session v4 message must carry the producer-owned source: ${JSON.stringify(message)}`,
+    )
+    assert.equal(
+      message.source?.plugin,
+      undefined,
+      `DVR-authored Session v4 messages must not retain the legacy plugin field: ${JSON.stringify(message)}`,
+    )
+  }
+
+  reportPhase('session-source-verified')
+  await assertDesktopHtmlRendering('after vision turn')
+  if (rendererErrors.length > 0) throw new Error(`Desktop renderer errors:\n${rendererErrors.join('\n---\n')}`)
+  const result = {
+    ok: true,
+    dsh: dshVersion,
+    platform: process.platform,
+    arch: process.arch,
+    electronNode,
+    structuredMarkers: markers.length,
+    toggle: { initial: initialPressed, exercised: true, restored: true },
+    onboarding: { settingsPath: true },
+    settings: { remoteWarning: false, saved: expectedChecked, reloadReadback: expectedChecked, restored: originalChecked },
+    functionalVisionTurn: {
+      mode: checkWholeTurnRouting ? 'whole-turn' : 'tool-only',
+      textEvidence, visionEvidence,
+      rendered: checkWholeTurnRouting ? 'DESKTOP_DYNAMIC_IMAGE_E2E_OK + DESKTOP_TEXT_REVERSE_E2E_OK' : 'DESKTOP_VISION_E2E_OK',
+      durableDvrMessages: dvrMessages.length,
+    },
+  }
+  reportPhase('all-assertions-passed')
+  console.log(JSON.stringify(result))
+  if (diagnosticPath) {
+    const fileResult = {
+      ok: true,
+      dsh: dshVersion,
+      platform: process.platform,
+      arch: process.arch,
+      structuredMarkers: markers.length,
+      toggle: result.toggle,
+      settings: result.settings,
+      functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
+    }
+    writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
+  }
+  }
+} catch (error) {
+  if (page && screenshotPath) {
+    try { await page.screenshot({ path: screenshotPath, fullPage: true }) } catch {}
+  }
+  const failureState = page ? await page.evaluate(() => ({
+    bodyText: (document.body?.innerText || '').slice(-12000),
+    composer: document.querySelector('[data-composer-card]')?.textContent || '',
+    composerButtons: [...document.querySelectorAll('[data-composer-card] button')].map((button) => ({
+      label: button.getAttribute('aria-label') || '', disabled: Boolean(button.disabled), hidden: Boolean(button.hidden),
+    })),
+    url: location.href,
+  })).catch(() => undefined) : undefined
+  const failure = {
+    ok: false,
+    error: String(error?.stack || error),
+    rendererErrors,
+    textEvidence,
+    visionEvidence,
+    coreProbe: lastCoreProbe,
+    runtimePackageEvidence,
+    failureState,
+  }
+  console.error(JSON.stringify(failure, undefined, 2))
+  if (diagnosticPath) {
+    const fileFailure = {
+      ok: false,
+      ...(marketEvidence ? { marketEvidence } : {}),
+      failureKind: lastCoreProbe !== undefined
+        && (lastCoreProbe?.services?.workspaceController?.active !== true
+          || lastCoreProbe?.services?.sessionController?.active !== true)
+        ? 'host-control-plane-unavailable'
+        : 'desktop-e2e-failed',
+      rendererErrorCount: rendererErrors.length,
+      functionalVisionTurn: fileSafeTurnEvidence(textEvidence, visionEvidence),
+      coreProbe: fileSafeCoreProbe(lastCoreProbe),
+      runtimePackageEvidence: fileSafeRuntimePackageEvidence(runtimePackageEvidence),
+      failureState: fileSafeFailureState(failureState),
+    }
+    try { writeFileSync(diagnosticPath, `${JSON.stringify(fileFailure, undefined, 2)}\n`) } catch {}
+  }
+  throw error
+} finally {
+  try { await browser?.close() } catch {}
+  await stopProcess(child)
+  await closeServer(textServer?.server)
+  await closeServer(visionServer?.server)
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try { rmSync(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); break }
+    catch { await new Promise((accept) => setTimeout(accept, 250)) }
+  }
+}
