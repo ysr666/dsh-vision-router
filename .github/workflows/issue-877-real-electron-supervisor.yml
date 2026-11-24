@@ -1,0 +1,82 @@
+name: Issue 860-877 repaired local candidate on real Windows Electron
+on:
+  push:
+    branches: [diagnostics/issue-860-877-fixed-host-candidate]
+    paths:
+      - scripts/issue-877-electron-supervisor-upgrade.mjs
+      - .github/workflows/issue-877-real-electron-supervisor.yml
+permissions:
+  contents: read
+jobs:
+  electron-supervisor:
+    name: "Windows Electron / dshmarket ${{ matrix.market }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        market: ["1.80.1"]
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb
+          path: dsh-host
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.21.0
+      - name: Validate diagnostic script syntax
+        working-directory: dvr
+        run: node --check scripts/issue-877-electron-supervisor-upgrade.mjs
+      - name: Install build dependencies and verify DVR artifacts
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+      - name: Pack local candidate without publishing
+        working-directory: dvr
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "dvr-877-candidate"
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          pnpm pack --pack-destination $dest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archives = @(Get-ChildItem $dest -Filter "*.tgz")
+          if ($archives.Count -ne 1) { throw "Expected exactly one candidate archive" }
+          "DVR_CANDIDATE_SPEC=$($archives[0].FullName)" >> $env:GITHUB_ENV
+      - name: Build immutable real Electron DSH Desktop
+        working-directory: dsh-host
+        env:
+          CI: "true"
+          LEFTHOOK: "0"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Replace published baseline with locally packed repaired DVR
+        working-directory: dsh-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-host
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.2-rc.5
+          DVR_ISSUE_877_ELECTRON_UPGRADE: "1"
+          DVR_MARKET_VERSION: ${{ matrix.market }}
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/issue-877-electron-diagnostic.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/issue-877-electron-desktop.png
+        run: node --import tsx ../dvr/scripts/issue-877-electron-supervisor-upgrade.mjs
+      - name: Upload bounded diagnostics on failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue-877-fixed-candidate-${{ matrix.market }}-debug
+          path: |
+            ${{ runner.temp }}/issue-877-electron-diagnostic.json
+            ${{ runner.temp }}/issue-877-electron-desktop.png
+          if-no-files-found: ignore
