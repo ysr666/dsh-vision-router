@@ -38,9 +38,9 @@ const [
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
-  async listModels(provider) { return [await this.resolveModel(provider, 'test-mm')] }
+  async listModels(provider) { return Promise.all(['test-mm', 'test-text'].map(model => this.resolveModel(provider, model))) }
   async resolveModel(provider, model) {
-    return { provider, id: model, name: model, inputModalities: ['text', 'image'], reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }, toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
+    return { provider, id: model, name: model, inputModalities: model === 'test-text' ? ['text'] : ['text', 'image'], reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }, toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
     requests.push(options)
@@ -96,6 +96,8 @@ class OfflinePtcRuntime extends PtcRuntime {
     assert.equal(typeof value, 'string')
     const colors = JSON.parse(value)
     assert.ok(Array.isArray(colors) && colors.length > 0, 'actual DVR color extraction must return colors')
+    assert.equal(colors[0].hex, '#f02010', 'positive control must extract the expected fixture color')
+    assert.equal(colors[0].share, 1)
     probe.result = colors
     return { logs: [], value: 'VISION_LOCAL_EXECUTION_SUCCEEDED' }
   }
@@ -124,12 +126,12 @@ try {
   await ctx.plugin({ inject: dvr.inject, apply(scope) {
     return dvr.apply(scope, dvr.Config({
       tool: true, routing: false, progressiveTools: false,
-      autoWrapProviders: false, wrappedProviders: [],
+      autoWrapProviders: false, wrappedProviders: [{ provider: 'native-proof', models: ['test-text'] }],
       providers: [], freeFallback: false, downscale: false, cache: false,
     }))
   } })
   const connection = {
-    models: [{ id: 'test-mm', systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' }],
+    models: ['test-mm', 'test-text'].map(id => ({ id, systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' })),
     defaults: { reasoningEffort: 'low' }, maxTokens: 1024,
   }
   const observations = new Map()
@@ -194,6 +196,12 @@ try {
       const current = record(request)
       assert.deepEqual(current.wire.tools.map(t => t.name), ['run_code'])
       const diff = previous ? compareFinalWireRequests(previous, current) : null
+      if (previous && id !== candidateId) {
+        assert.equal(diff.localSerializedPrefixPreserved, true,
+          'qualified stock PTC native path must preserve prefix: ' + JSON.stringify(diff.changedDimensions))
+        assert.equal(JSON.stringify(current.wire.messages.slice(0, previous.wire.messages.length)),
+          JSON.stringify(previous.wire.messages), 'native PTC historical message bytes changed')
+      }
       rows.push({ enabled, currentSdkHasVision: sdk.includes('vision_describe'),
         headerTools: current.wire.tools.map(t => t.name),
         prefixPreserved: diff?.localSerializedPrefixPreserved ?? null,
@@ -207,6 +215,47 @@ try {
       variant: id === candidateId ? 'tail-context-sdk' : 'native-sdk-section', rows,
       limitations: ['offline program runtime', 'no nested execution or provider cache proof', 'historical SDK remains in prior messages'] }))
   }
+  // Text-only toggle uses the existing public model selection, not the native
+  // policy command. Assert actual upstream identity and request shape even if
+  // a public alias changes. This is a characterization until the observed
+  // result is qualified; do not hide a wrapper incompatibility.
+  assert.ok(ctx.llm.listProviders().some(row => row.id === 'native-proof-vision'),
+    'real public plugin must mount configured text-model twin')
+  const textHandle = await ctx.agents.create({
+    sessionId: 'dvr-865-ptc-text-twin',
+    agentOptions: { provider: 'native-proof', model: 'test-text' },
+  })
+  handles.push(textHandle)
+  const textAgent = textHandle.agent
+  let priorText
+  const textRows = []
+  for (const [index, enabled] of [false, true, false, true].entries()) {
+    const route = enabled ? 'native-proof-vision' : 'native-proof'
+    if (index > 0) textAgent.model.select({ ...textAgent.model.current(), provider: route, model: 'test-text' })
+    const before = requests.length
+    textAgent.followup(llm.createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: 'Text-only route toggle ' + index }],
+    }))
+    await textAgent.whenIdle()
+    assert.equal(requests.length, before + 1, 'one actual upstream source dispatch on each text-only turn')
+    const request = requests.at(-1)
+    assert.equal(request.provider, 'native-proof')
+    assert.equal(request.model, 'test-text')
+    assert.equal(textAgent.model.current().provider, route)
+    const sdk = observations.get(textAgent.session.id)
+    assert.ok(sdk)
+    assert.equal(sdk.includes('vision_describe'), enabled)
+    const current = record(request)
+    assert.deepEqual(current.wire.tools.map(t => t.name), ['run_code'])
+    const diff = priorText ? compareFinalWireRequests(priorText, current) : null
+    textRows.push({ enabled, currentSdkHasVision: sdk.includes('vision_describe'),
+      prefixPreserved: diff?.localSerializedPrefixPreserved ?? null,
+      changedDimensions: diff?.changedDimensions ?? [] })
+    priorText = current
+  }
+  console.log(JSON.stringify({ scenario: 'actual text-only DVR twin + stock Host PTC wire',
+    textRows, upstreamIdentityUnchanged: true, sourceCallsPerTurn: 1 }))
+
   // Independent actual-tool execution tier. It deliberately does not reuse
   // the prefix-recording request with image serialization; no real provider
   // is involved. Feed a generated solid-color PNG through the real attachment
