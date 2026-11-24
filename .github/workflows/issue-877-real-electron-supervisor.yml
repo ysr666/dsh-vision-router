@@ -1,7 +1,7 @@
-name: Issue 860-877 real dshmarket lifecycle matrix
+name: Issue 877 upstream market post-update Loader repair
 on:
   push:
-    branches: [diagnostics/issue-860-877-market-lifecycle-matrix]
+    branches: [diagnostics/issue-877-market-loader-readback-fix]
     paths:
       - scripts/issue-877-electron-supervisor-upgrade.mjs
       - .github/workflows/issue-877-real-electron-supervisor.yml
@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        market: ["1.73.15", "1.73.23", "1.80.1"]
+        market: ["1.80.1"]
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
@@ -26,6 +26,12 @@ jobs:
           repository: deepseek-ai/deepseek-harness
           ref: 9c2670d3bce5275e0d1610272958121af87787bb
           path: dsh-host
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: dsh-market/dsh-market
+          ref: ed2acb5caf10f1acd598b2faee263a1393a8d9ae
+          path: market
           persist-credentials: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
@@ -41,6 +47,23 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
+      - name: Build and pack isolated upstream candidate
+        working-directory: market
+        shell: pwsh
+        run: |
+          node ../dvr/scripts/issue-877-market-loader-repair.mjs .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dest = Join-Path $env:RUNNER_TEMP "market-877-candidate"
+          New-Item -ItemType Directory -Path $dest | Out-Null
+          npm pack --ignore-scripts --pack-destination $dest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archives = @(Get-ChildItem $dest -Filter "*.tgz")
+          if ($archives.Count -ne 1) { throw "Expected exactly one market candidate archive" }
+          "DVR_MARKET_CANDIDATE_SPEC=$($archives[0].FullName)" >> $env:GITHUB_ENV
       - name: Build immutable real Electron DSH Desktop
         working-directory: dsh-host
         env:
@@ -64,7 +87,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: issue-877-market-${{ matrix.market }}-debug
+          name: issue-877-patched-market-${{ matrix.market }}-debug
           path: |
             ${{ runner.temp }}/issue-877-electron-diagnostic.json
             ${{ runner.temp }}/issue-877-electron-desktop.png

@@ -329,7 +329,7 @@ export function apply(ctx) {
             res.writeHead(403); res.end('owner POST required'); return
           }
           try {
-            const shop = await scope.pluginManager.installBundle('dshmarket@' + process.env.DVR_MARKET_VERSION, { enabled: true })
+            const shop = await scope.pluginManager.installBundle(process.env.DVR_MARKET_CANDIDATE_SPEC, { enabled: true })
             if (shop?.application !== 'applied') throw Error('Shop seed refused: ' + JSON.stringify(shop))
             const baseline = await scope.pluginManager.installBundle('dsh-vision-router@3.2.1', { enabled: true })
             if (baseline?.application !== 'applied') throw Error('DVR seed refused: ' + JSON.stringify(baseline))
@@ -1279,17 +1279,24 @@ try {
       marketResult, before, after, lastProbeError, marketLog, routingControl: routingControlEvidence,
       baselineUid: before.entries.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid,
       finalUid: after?.entries?.find(entry => /^(?:include:)?vision-router$/.test(entry.id))?.uid }
+    final.marketCandidateInstalled = readFileSync(join(paths.profile, 'node_modules', 'dshmarket', 'lib', 'routes.js'), 'utf8').includes('readPostUpdateLoaderEntries')
     marketEvidence = final
-    console.log('ISSUE_877_REAL_MARKET=' + JSON.stringify(final))
+    console.log('ISSUE_877_PATCHED_MARKET=' + JSON.stringify(final))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
-    if (final.installed !== '3.4.0' || !final.bundleSelected ||
+    // DVR is deliberately the published unfixed package in this upstream-only A/B.
+    // Its already-characterized, caught tools.restrict() exception is recorded,
+    // not confused with a failure of the marketplace's HTTP transaction.
+    let resultBody
+    try { resultBody = JSON.parse(marketResult.body) } catch {}
+    if (final.installed !== '3.4.0' || !final.bundleSelected || !final.marketCandidateInstalled ||
+        final.baselineUid === final.finalUid || marketResult.status !== 200 || resultBody?.ok !== true ||
         !after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE') ||
-        after.firstEffect || after.firstFailure) {
+        after.firstFailure) {
       throw Error('Real market update did not converge cleanly; inspect first-effect and transaction evidence')
     }
     if (child?.exitCode !== null) throw Error('Electron supervisor exited during DVR upgrade')
     await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15000 })
-    console.log(JSON.stringify({ ok: true, scope: 'real-dshmarket-upgrade',
+    console.log(JSON.stringify({ ok: true, scope: 'real-patched-dshmarket-upgrade',
       dsh: dshVersion, electronNode, marketVersion: final.marketVersion, installed: final.installed }))
   } else {
   const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
