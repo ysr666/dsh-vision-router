@@ -5,6 +5,8 @@ import assert from 'node:assert/strict'
 import { compareFinalWireRequests } from './issue-865-final-wire-diff.mjs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 const root = process.env.DSH_SOURCE_ROOT
@@ -104,6 +106,13 @@ class OfflinePtcRuntime extends PtcRuntime {
 }
 const requests = []
 let pendingExecution, previousBinding
+const fixtureRoot = await mkdtemp(join(tmpdir(), 'dvr-865-ptc-'))
+const [{ default: Storage }, StorageJson, StorageDomain, JsonlPersistence] = await Promise.all([
+  host('packages/storage/storage/src/index.ts'),
+  host('packages/storage/storage-json/src/index.ts'),
+  host('packages/storage/storage-domain/src/index.ts'),
+  host('packages/session/session-persistence-jsonl/src/index.ts'),
+])
 const ctx = new Context()
 provideWorkingDirectoryFixture(ctx)
 await ctx.plugin(TypertRegistry)
@@ -111,25 +120,30 @@ await ctx.plugin(RemoteAccess)
 await ctx.plugin(llm.default)
 await ctx.plugin(Sessions)
 await ctx.plugin(Projection)
-await ctx.plugin(AttachmentLocal, { dshHome: '/tmp/dvr-865-ptc-prefix-fixture' })
+await ctx.plugin(AttachmentLocal, { dshHome: fixtureRoot })
+await ctx.plugin(Storage)
+await ctx.plugin(StorageJson, { root: join(fixtureRoot, 'storage') })
+await ctx.plugin(StorageDomain, { backend: 'json' })
 await ctx.plugin(SystemPrompt)
 await ctx.plugin(Tools)
 await ctx.plugin(OfflinePtcRuntime)
 ctx.tools.setExecutor(new PtcExecutor(ctx))
 await ctx.plugin(AgentRegistry)
+await ctx.plugin(JsonlPersistence, { root: join(fixtureRoot, 'sessions'), compression: 'zstd' })
 await ctx.plugin(AgentLoop, { agents: [] })
 await ctx.plugin(Commands)
 await ctx.plugin(Gateway)
 const adapter = ctx.llm.registerAdapter(['native-proof'], new NativeImageModel())
 const handles = []
-try {
-  await ctx.plugin({ inject: dvr.inject, apply(scope) {
+const mountDvr = () => ctx.plugin({ inject: dvr.inject, apply(scope) {
     return dvr.apply(scope, dvr.Config({
       tool: true, routing: false, progressiveTools: false,
       autoWrapProviders: false, wrappedProviders: [{ provider: 'native-proof', models: ['test-text'] }],
       providers: [], freeFallback: false, downscale: false, cache: false,
     }))
   } })
+try {
+  let dvrFiber = await mountDvr()
   const connection = {
     models: ['test-mm', 'test-text'].map(id => ({ id, systemPromptUpdate: 'in-history', toolUpdate: 'addition-only' })),
     defaults: { reasoningEffort: 'low' }, maxTokens: 1024,
@@ -298,8 +312,73 @@ try {
   }
   console.log(JSON.stringify({ scenario: 'actual DVR local color tool via Host PTC nested execution',
     executionRows, providerNetworkCalls: 0, offlineProgramDriver: true }))
+
+  // Dedicated lifecycle Session has no image blocks: compare full native
+  // DeepSeek wire across a real plugin-generation replacement, then a fresh
+  // Agent object reconstructed from the production JSONL store. The policy
+  // sidecar is the real Host storageDomain JSON backend, not an in-memory map.
+  const lifeId = 'dvr-865-ptc-lifecycle'
+  const life = await ctx.agents.create({
+    sessionId: lifeId, agentOptions: { provider: 'native-proof', model: 'test-mm' },
+  })
+  handles.push(life)
+  async function lifeTurn(target, label, enabled, prior) {
+    const before = requests.length
+    target.followup(llm.createUserMessage({
+      source: { kind: 'user' }, content: [{ type: 'text', text: label }],
+    }))
+    await target.whenIdle()
+    assert.equal(requests.length, before + 1, label + ': exactly one source request')
+    const sdk = observations.get(target.session.id)
+    assert.ok(sdk)
+    assert.equal(sdk.includes('vision_describe'), enabled, label + ': current SDK follows policy')
+    const current = record(requests.at(-1))
+    if (prior) {
+      const diff = compareFinalWireRequests(prior, current)
+      assert.equal(diff.localSerializedPrefixPreserved, true, label + ': ' + JSON.stringify(diff.changedDimensions))
+    }
+    assert.deepEqual(current.wire.tools.map(tool => tool.name), ['run_code'])
+    return current
+  }
+  const lifeOff = await lifeTurn(life.agent, 'Lifecycle initial OFF', false)
+  const onResult = await ctx.commands.execute(life.agent, '/vision-router on', [], AbortSignal.timeout(8000))
+  assert.equal(onResult?.result?.kind, 'success')
+  assert.doesNotMatch(onResult.result.text, /may reset after restart/, 'must use the actual durable sidecar')
+  const lifeOn = await lifeTurn(life.agent, 'Lifecycle ON', true, lifeOff)
+  const seed = life.agent.session.snapshotEvents()
+  const fork = await ctx.agents.create({
+    sessionId: 'dvr-865-ptc-lifecycle-fork', seed,
+    inheritedEventCount: life.agent.session.seq, meta: { isSeeded: true },
+    agentOptions: { provider: 'native-proof', model: 'test-mm' },
+  })
+  handles.push(fork)
+  // Forking the message log is not authorization to copy the parent sidecar.
+  // Historical ON SDK text can be present; the new Session's actual SDK must
+  // still be OFF until it has its own explicit authorization.
+  await lifeTurn(fork.agent, 'Fork has its own OFF authority', false)
+  assert.ok(ctx.tools.get('vision_describe', life.agent))
+  assert.equal(ctx.tools.get('vision_describe', fork.agent), undefined)
+  await dvrFiber.dispose()
+  dvrFiber = await mountDvr()
+  const remounted = await lifeTurn(life.agent, 'After DVR fiber replacement', true, lifeOn)
+  await ctx.sessions.flush(life.agent.session)
+  await life.dispose()
+  handles.splice(handles.indexOf(life), 1)
+  const resumed = await ctx.agents.resume({
+    resumeSessionId: lifeId, agentOptions: { provider: 'native-proof', model: 'test-mm' },
+  })
+  handles.push(resumed)
+  assert.notEqual(resumed.agent, life.agent)
+  const afterResume = await lifeTurn(resumed.agent, 'After actual JSONL Agent resume', true, remounted)
+  const offResult = await ctx.commands.execute(resumed.agent, '/vision-router off', [], AbortSignal.timeout(8000))
+  assert.equal(offResult?.result?.kind, 'success')
+  await lifeTurn(resumed.agent, 'Resumed Session returns OFF', false, afterResume)
+  console.log(JSON.stringify({ scenario: 'stock PTC prefix through DVR HMR, fork isolation and JSONL resume',
+    durablePolicy: true, hmrPrefixPreserved: true, resumedPrefixPreserved: true,
+    resumedOffPrefixPreserved: true, forkIndependentAuthority: true,
+    sameProcessFreshAgent: true, crossProcessNotClaimed: true }))
 } finally {
   for (const handle of handles.reverse()) await handle.dispose()
   adapter?.dispose?.()
-  await ctx.fiber.dispose()
+  try { await ctx.fiber.dispose() } finally { await rm(fixtureRoot, { recursive: true, force: true }) }
 }
