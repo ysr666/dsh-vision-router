@@ -299,10 +299,10 @@ function transportForProvider(ctx, provider, rawProfile, options = {}) {
   return { baseURL, api, apiKeyEnv }
 }
 
-export function providerTransportFor(ctx, provider, options = {}) {
+function transportFromProfiles(ctx, provider, profiles, options = {}) {
   const id = nonEmpty(provider)
   if (id === undefined) return undefined
-  const raw = rawPiProfiles(ctx)[id]
+  const raw = profiles[id]
   if (!raw || typeof raw !== 'object') return undefined
   const transport = transportForProvider(ctx, id, raw, options)
   if (transport.baseURL === undefined) return undefined
@@ -314,9 +314,17 @@ export function providerTransportFor(ctx, provider, options = {}) {
   }
 }
 
+export function providerTransportFor(ctx, provider, options = {}) {
+  if (nonEmpty(provider) === undefined) return undefined
+  return transportFromProfiles(ctx, provider, rawPiProfiles(ctx), options)
+}
+
 export function configuredProviderTransports(ctx, options = {}) {
-  return Object.keys(rawPiProfiles(ctx))
-    .map((provider) => providerTransportFor(ctx, provider, options))
+  // A single synchronous enumeration uses a single profile observation.
+  // Never retain this map across independent callers or async boundaries.
+  const profiles = rawPiProfiles(ctx)
+  return Object.keys(profiles)
+    .map((provider) => transportFromProfiles(ctx, provider, profiles, options))
     .filter(Boolean)
 }
 
@@ -374,8 +382,8 @@ async function resolveCredential(ctx, ref) {
   }
 }
 
-async function providerPlan(ctx, provider) {
-  const transport = providerTransportFor(ctx, provider)
+async function providerPlan(ctx, provider, profiles) {
+  const transport = transportFromProfiles(ctx, provider, profiles)
   if (transport === undefined) return { ok: false, reason: 'missing-base-url' }
   if (!SUPPORTED_DISCOVERY_PROTOCOLS.has(transport.api)) {
     return { ok: false, reason: 'unsupported-protocol' }
@@ -553,8 +561,8 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     }
   }
 
-  const discover = async (provider, authorityAtStart) => {
-    const plan = await providerPlan(ctx, provider)
+  const discover = async (provider, authorityAtStart, profiles) => {
+    const plan = await providerPlan(ctx, provider, profiles)
     if (!plan.ok || disposed || !discoveryStillCurrent(provider, authorityAtStart)) return
     const generationAtStart = authorityAtStart.evidenceGeneration
     const previous = providers.get(provider)
@@ -627,8 +635,12 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     }
   }
 
-  const pump = () => {
+  const pump = (profiles, profilesGeneration = evidenceGeneration) => {
     if (disposed) return
+    // Reuse only within this synchronous dispatch burst. A subsequent pump
+    // (including an async completion) reads fresh profiles. Invalidation can
+    // reenter synchronously, so never carry a pre-invalidation snapshot into
+    // a new evidence generation.
     while (active < concurrency && queued.size > 0) {
       let picked
       for (const candidate of queued.values()) {
@@ -639,8 +651,12 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
       if (!picked) return
       queued.delete(picked.provider)
       active += 1
+      if (profiles === undefined || profilesGeneration !== evidenceGeneration) {
+        profilesGeneration = evidenceGeneration
+        profiles = rawPiProfiles(ctx)
+      }
       const authorityAtStart = currentDiscoveryAuthority(picked.provider)
-      const task = discover(picked.provider, authorityAtStart)
+      const task = discover(picked.provider, authorityAtStart, profiles)
         .catch(() => {})
         .finally(() => {
           active = Math.max(0, active - 1)
@@ -654,22 +670,28 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
   }
 
   let order = 0
-  const queue = (provider, priority = 10) => {
-    if (disposed || nonEmpty(provider) === undefined || provider === 'vision-http') return
+  const enqueue = (provider, priority = 10) => {
+    if (disposed || nonEmpty(provider) === undefined || provider === 'vision-http') return false
     const existing = queued.get(provider)
     const next = { provider, priority: Number(priority) || 0, order: order++ }
     if (!existing || next.priority < existing.priority) queued.set(provider, next)
-    pump()
+    return true
+  }
+  const queue = (provider, priority = 10) => {
+    if (enqueue(provider, priority)) pump()
   }
 
   function queueConfigured() {
+    if (disposed) return
+    const profilesGeneration = evidenceGeneration
     const raw = reconcileConfiguredProviders()
     const preferred = visionProviderPriority(ctx, fallbackConfig)
     for (const provider of Object.keys(raw)) {
       const activeAuthority = inflightAuthority.get(provider)
       if (activeAuthority && sameDiscoveryAuthority(activeAuthority, currentDiscoveryAuthority(provider))) continue
-      queue(provider, preferred.has(provider) ? 0 : 10)
+      enqueue(provider, preferred.has(provider) ? 0 : 10)
     }
+    pump(raw, profilesGeneration)
   }
 
   const hasModel = (provider, model) => {
