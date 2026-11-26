@@ -651,11 +651,13 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
       if (!picked) return
       queued.delete(picked.provider)
       active += 1
+      const authorityAtStart = currentDiscoveryAuthority(picked.provider)
       if (profiles === undefined || profilesGeneration !== evidenceGeneration) {
         profilesGeneration = evidenceGeneration
         profiles = rawPiProfiles(ctx)
       }
-      const authorityAtStart = currentDiscoveryAuthority(picked.provider)
+      // Capture authority before the Host read: if it synchronously invalidates,
+      // discover() must reject the old plan rather than certify it as current.
       const task = discover(picked.provider, authorityAtStart, profiles)
         .catch(() => {})
         .finally(() => {
