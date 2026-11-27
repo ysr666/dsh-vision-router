@@ -47,5 +47,6 @@ jobs:
           DSH_EXPECTED_VERSION: 0.2.2-rc.5
         run: node --import tsx ../dvr/scripts/issue-893-host-overhead.mjs
       - name: Verify restored source and artifact
+        if: always()
         working-directory: dvr
         run: pnpm build:check
