@@ -452,6 +452,9 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
   let providerGenerationSequence = 0
   let active = 0
   let disposed = false
+  let invalidationTimer
+  let deferredInvalidation = false
+  let completionPumpQueued = false
   let saveTail = Promise.resolve()
   const inflight = new Map()
   const inflightAuthority = new Map()
@@ -556,7 +559,7 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     return {
       ok: true,
       version,
-      refreshing: active > 0 || queued.size > 0,
+      refreshing: deferredInvalidation || active > 0 || queued.size > 0,
       providers: [...providers.values()].map((entry) => visibleEntry(entry, at)).filter(Boolean),
     }
   }
@@ -636,12 +639,12 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
   }
 
   const pump = (profiles, profilesGeneration = evidenceGeneration) => {
-    if (disposed) return
+    if (disposed || deferredInvalidation) return
     // Reuse only within this synchronous dispatch burst. A subsequent pump
     // (including an async completion) reads fresh profiles. Invalidation can
     // reenter synchronously, so never carry a pre-invalidation snapshot into
     // a new evidence generation.
-    while (active < concurrency && queued.size > 0) {
+    while (!disposed && !deferredInvalidation && active < concurrency && queued.size > 0) {
       let picked
       for (const candidate of queued.values()) {
         if (inflight.has(candidate.provider)) continue
@@ -664,11 +667,22 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
           active = Math.max(0, active - 1)
           inflight.delete(picked.provider)
           inflightAuthority.delete(picked.provider)
-          pump()
+          // Completion bursts share a fresh read in the next microtask;
+          // no profile snapshot survives an independent async dispatch.
+          scheduleCompletionPump()
         })
       inflight.set(picked.provider, task)
       inflightAuthority.set(picked.provider, authorityAtStart)
     }
+  }
+
+  const scheduleCompletionPump = () => {
+    if (disposed || completionPumpQueued) return
+    completionPumpQueued = true
+    Promise.resolve().then(() => {
+      completionPumpQueued = false
+      pump()
+    })
   }
 
   let order = 0
@@ -684,7 +698,7 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
   }
 
   function queueConfigured() {
-    if (disposed) return
+    if (disposed || deferredInvalidation) return
     const profilesGeneration = evidenceGeneration
     const raw = reconcileConfiguredProviders()
     const preferred = visionProviderPriority(ctx, fallbackConfig)
@@ -707,11 +721,31 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     return entry.models.some((candidate) => candidate.id === model)
   }
 
-  const invalidate = () => {
+  const clearDeferredInvalidation = () => {
+    if (invalidationTimer !== undefined) clearTimeout(invalidationTimer)
+    invalidationTimer = undefined
+    deferredInvalidation = false
+  }
+
+  const invalidate = ({ defer = false } = {}) => {
+    if (disposed) return
+    // Revocation remains synchronous, including credential rotation. During
+    // the bounded event burst neither old completions nor new dispatches
+    // may certify evidence. Only the expensive re-read is deferred.
+    if (defer && deferredInvalidation) return
+    clearDeferredInvalidation()
     evidenceGeneration += 1
     version += 1
     backoffUntil.clear()
-    queueConfigured()
+    if (!defer) {
+      queueConfigured()
+      return
+    }
+    deferredInvalidation = true
+    invalidationTimer = setTimeout(() => {
+      clearDeferredInvalidation()
+      queueConfigured()
+    }, 25)
   }
 
   return {
@@ -723,6 +757,7 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     invalidate,
     async dispose() {
       disposed = true
+      clearDeferredInvalidation()
       queued.clear()
       for (const controller of activeControllers.values()) {
         try { controller.abort() } catch {}
@@ -747,16 +782,9 @@ export function installLiveModelDiscovery(ctx, options = {}) {
   }
   scheduleStartup()
 
-  let credentialInvalidationQueued = false
   let lifecycleDisposed = false
   const onInvalidate = () => {
-    if (!lifecycleDisposed) manager.invalidate()
-  }
-  const onCredentialInvalidate = () => {
-    if (lifecycleDisposed || credentialInvalidationQueued) return
-    credentialInvalidationQueued = true
-    manager.invalidate()
-    Promise.resolve().then(() => { credentialInvalidationQueued = false })
+    if (!lifecycleDisposed) manager.invalidate({ defer: true })
   }
   const disposers = []
   try {
@@ -765,7 +793,7 @@ export function installLiveModelDiscovery(ctx, options = {}) {
       if (typeof dispose === 'function') disposers.push(dispose)
     }
     for (const event of ['credentials/reference-updated', 'credentials/updated']) {
-      const dispose = ctx?.on?.(event, onCredentialInvalidate)
+      const dispose = ctx?.on?.(event, onInvalidate)
       if (typeof dispose === 'function') disposers.push(dispose)
     }
   } catch {
