@@ -1,0 +1,64 @@
+name: Issue 864 model identity and session policy architecture proof
+on:
+  push:
+    branches: [diagnostics/issue-864-model-identity-policy]
+permissions:
+  contents: read
+jobs:
+  original-provider:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: 9c2670d3bce5275e0d1610272958121af87787bb
+            node: 24.21.0
+          - host: 4b399c39a6d1479cd84ca591b4d7c88e24d38a96
+            node: 24.22.3
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ matrix.host }}
+          path: dsh-host
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Diagnostic only - admit verified text-capable source to existing Session policy
+        working-directory: dvr
+        run: |
+          node --input-type=module - <<'JS'
+          import { readFileSync, writeFileSync } from 'node:fs'
+          const p = 'src/lib/native-vision-control-state.js'
+          const original = readFileSync(p, 'utf8')
+          const anchor = "  if (!info.inputModalities.includes('image')) {\n    return { kind: 'legacy', reason: 'text-only', selection }\n  }"
+          if (original.split(anchor).length !== 2) throw Error('unexpected exact source')
+          writeFileSync(p, original.replace(anchor, "  if (!info.inputModalities.includes('image') && !info.inputModalities.includes('text')) {\n    return { kind: 'legacy', reason: 'text-only', selection }\n  }"))
+          JS
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+      - name: Build original unmodified Host
+        working-directory: dsh-host
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Exercise real DVR public apply and real Agent with ordinary source model
+        working-directory: dsh-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-host
+        run: |
+          git diff --exit-code
+          pnpm exec tsx ../dvr/scripts/issue-864-model-identity-policy.mjs
+          git diff --exit-code

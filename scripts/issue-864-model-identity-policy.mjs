@@ -1,0 +1,164 @@
+// #864 architecture experiment: preserve real model identity, no wrapper routes.
+// Synthetic model transport only; no credentials, external API or native addon.
+import assert from 'node:assert/strict'
+import { preserveClaimedMessagesOnBlockedStep } from '../lib/session-image-projection-mode.js'
+import { createRequire } from 'node:module'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const root = process.env.DSH_SOURCE_ROOT
+assert.ok(root, 'DSH_SOURCE_ROOT required')
+const host = p => import(pathToFileURL(join(resolve(root), p)).href)
+const requireHost = createRequire(join(resolve(root), 'packages/llm/llm/package.json'))
+const [
+  { Context }, llm, { default: Sessions }, { default: Projection },
+  { default: SystemPrompt }, { default: Tools },
+  { default: AgentRegistry }, { default: AgentLoop }, { default: Commands },
+  { default: AttachmentLocal }, dvr,
+  { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
+] = await Promise.all([
+  import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
+  host('packages/llm/llm/src/index.ts'),
+  host('packages/core/session/src/index.ts'),
+  host('packages/session/session-projection/src/index.ts'),
+  host('packages/core/system-prompt/src/index.ts'),
+  host('packages/core/tools/src/index.ts'),
+  host('packages/core/agent/src/index.ts'),
+  host('packages/core/agent-loop/src/index.ts'),
+  host('packages/interaction/commands/src/index.ts'),
+  host('packages/attachment/attachment-local/src/index.ts'),
+  // The published npm root is lib/public-entry.js, not the legacy Core
+  // implementation index.js. Testing Core directly bypasses runtime
+  // composition and would produce a false missing-command diagnosis.
+  import(pathToFileURL(join(process.cwd(), '../dvr/lib/public-entry.js')).href),
+  host('packages/typert/registry/src/index.ts'),
+  host('packages/api/remote-access/src/index.ts'),
+  host('packages/api/gateway/src/index.ts'),
+])
+class NativeImageModel extends llm.LlmAdapter {
+  providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
+  async listModels(provider) { return [await this.resolveModel(provider, 'test-mm')] }
+  async resolveModel(provider, model) {
+    return { provider, id: model, name: model, inputModalities: model === 'test-text' ? ['text'] : ['text', 'image'], reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }, toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
+  }
+  async *stream(options) {
+    requests.push(options)
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'text-delta', index: 0, text: 'synthetic answer' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: 'synthetic answer' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+const requests = []
+const ctx = new Context()
+await ctx.plugin(TypertRegistry)
+await ctx.plugin(RemoteAccess)
+await ctx.plugin(llm.default)
+await ctx.plugin(Sessions)
+await ctx.plugin(Projection)
+await ctx.plugin(AttachmentLocal, { dshHome: '/tmp/dvr-865-native-command-fixture' })
+await ctx.plugin(SystemPrompt)
+await ctx.plugin(Tools)
+// Only the executor's schema projection is synthetic; the real Host agent
+// resolves registered tools, applies restrictions and assembles the request.
+ctx.tools.setExecutor({
+  describe(definitions) {
+    return { schemas: definitions.map(({ name, description, parameters, deferLoading }) => ({
+      name, description, parameters: structuredClone(parameters),
+      ...(deferLoading === true ? { deferLoading } : {}),
+    })) }
+  },
+  async execute() { throw new Error('Synthetic transport never calls a tool') },
+})
+await ctx.plugin(AgentRegistry)
+await ctx.plugin(AgentLoop, { agents: [] })
+await ctx.plugin(Commands)
+await ctx.plugin(Gateway)
+const adapter = ctx.llm.registerAdapter(['source-proof'], new NativeImageModel())
+let handle, observer
+const carrier = new AbortController()
+try {
+  await ctx.plugin({ inject: dvr.inject, apply(scope) {
+    return dvr.apply(scope, dvr.Config({
+      tool: true, routing: false, progressiveTools: false,
+      wrapperRoute: '', chainRoute: '', autoWrapProviders: false, wrappedProviders: [],
+      rewriteImages: false, autoActivateOnImage: false, instantDescribe: false,
+      providers: [], freeFallback: false, downscale: false, cache: false,
+    }))
+  } })
+  handle = await ctx.agents.create({
+    sessionId: 'dvr-864-source-identity-proof',
+    agentOptions: { provider: 'source-proof', model: 'test-text' },
+  })
+  const agent = handle.agent
+  const owner = { id: 'dvr-864-owner', ctx, principal: { kind: 'owner' },
+    interactions: 'answer', signal: carrier.signal, dispose: async () => carrier.abort() }
+  const stream = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
+    method: 'observe', args: { agentId: agent.id }, signal: AbortSignal.timeout(30000) })
+  observer = stream[Symbol.asyncIterator]()
+  const first = (await observer.next()).value
+  assert.equal(first.kind, 'native', JSON.stringify(first)) // diagnostic reuses existing wire tag; not the proposed final type
+  assert.equal(first.enabled, false)
+  const selectionEvents = () => agent.session.snapshotEvents().filter(e => e.type === 'model/selection').length
+  const before = selectionEvents()
+  const providers = () => ctx.llm.listProviders().map(p => p.id)
+  assert.ok(providers().includes('source-proof'))
+  assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
+  const set = async enabled => {
+    const next = observer.next()
+    const r = await ctx.typertGateway.invoke({
+      peer: owner, namespace: 'dvrNativeVision', method: 'set',
+      args: { agentId: agent.id, request: { enabled, selection: { provider: 'source-proof', model: 'test-text' } } },
+      signal: AbortSignal.timeout(8000),
+    })
+    assert.equal(r.kind, 'success', JSON.stringify(r))
+    assert.equal((await next).value.enabled, enabled)
+    assert.equal(selectionEvents(), before)
+  }
+  const attachment = await ctx.attachments.saveImage({
+    data: new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')),
+    mediaType: 'image/png', name: 'identity-proof.png',
+  })
+  const turn = async (enabled, withImage) => {
+    const offset = requests.length
+    const content = [{ type: 'text', text: enabled ? 'Vision on' : 'Vision off' }]
+    if (withImage) content.push({ type: 'image', attachment })
+    const msg = llm.createUserMessage({ source: { kind: 'user' }, content })
+    agent.followup(msg)
+    await agent.whenIdle()
+    assert.equal(requests.length, offset + 1, JSON.stringify(agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')?.data))
+    const request = requests.at(-1)
+    assert.equal(request.provider, 'source-proof')
+    assert.equal(request.model, 'test-text')
+    assert.ok(!request.messages.some(m => m.content?.some(b => b.type === 'image')))
+    const tools = agent.session.requestHeader()?.tools ?? []
+    assert.equal(tools.some(t => t.name === 'vision_describe'), enabled)
+    assert.equal(selectionEvents(), before)
+    if (withImage) {
+      const original = agent.session.deriveMessages().find(m => m.id === msg.id)
+      assert.equal(original?.content.find(b => b.type === 'image')?.attachment?.attachmentId, attachment.attachmentId,
+        'Host durable history must retain the original attachment, not a replacement marker')
+      const projected = request.messages.find(m => m.id === msg.id)
+      const digest = String(attachment.attachmentId).slice(7, 15)
+      assert.ok(projected?.content.some(b => b.type === 'text' && b.text.includes('attachment sha256:' + digest)),
+        'Host native text projection must retain deterministic attachment reference')
+    }
+    return { enabled, withImage, ownedTool: tools.some(t => t.name === 'vision_describe') }
+  }
+  const results = [await turn(false, true)]
+  await set(true)
+  results.push(await turn(true, true))
+  await set(false)
+  results.push(await turn(false, false))
+  assert.equal(agent.model.current().provider, 'source-proof')
+  assert.equal(agent.model.current().model, 'test-text')
+  assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), transport: 'synthetic text model; no tool execution' }))
+} finally {
+  carrier.abort()
+  await observer?.return?.().catch(() => {})
+  if (handle) await handle.dispose()
+  adapter?.dispose?.()
+  await ctx.fiber.dispose()
+}
