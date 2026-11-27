@@ -1238,7 +1238,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     }).stream
     wrapperAdapter = {
       providerInfo(provider) {
-        return { id: provider, name: 'DeepSeek + 自动识图' }
+        return { id: provider, name: 'DeepSeek + 自动识图', presentationAliasOf: wrapperDelegateRoute() }
       },
       providerRetryPolicy() {
         try {
@@ -1444,7 +1444,7 @@ export function apply(ctx, config = {}, runtime = {}) {
     // later steps that arrive without one.
     return {
       providerInfo() {
-        return { id: twinRoute, name: `${state.sourceName} + 自动识图` }
+        return { id: twinRoute, name: `${state.sourceName} + 自动识图`, presentationAliasOf: provider }
       },
       providerRetryPolicy() {
         const original = originalAdapter()

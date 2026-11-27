@@ -8,7 +8,7 @@ import { CLIENT_HOST_COMPAT_PRELUDE } from '../lib/client-host-compat-prelude.js
 // Execute the shipping preludes/loader/slot callback. The Host stand-in models
 // Cordis service tracing: a service's `ctx` is rebound to its caller, not its
 // constructor owner. A plain { directoryFor() {} } mock misses this failure.
-function createHarness({ legacy = false, delayed = false, warmed = false } = {}) {
+function createHarness({ legacy = false, delayed = false, warmed = false, shared = false } = {}) {
   const directories = new Map()
   const reads = []
   const injections = []
@@ -59,6 +59,11 @@ function createHarness({ legacy = false, delayed = false, warmed = false } = {})
       directories.set(id, directory)
       return directory
     },
+  }
+
+  if (shared) resolver.rawDirectoryFor = function(id) {
+    const raw = this.directoryFor(id)
+    return { raw, select: raw.select }
   }
 
   function context(declared, label) {
@@ -183,4 +188,13 @@ test('namespace detection waits for the model service rather than sampling plugi
   assert.equal(props.available, true)
   assert.ok(harness.reads.some((read) => read.name === 'remote.session' && read.label === 'toggle scope' && read.allowed))
   assert.deepEqual(harness.warnings, [])
+})
+
+
+test('shared presentation Host provides explicit raw route authority to the Vision toggle', async () => {
+  const h = createHarness({ shared: true })
+  const props = h.registration.inject('cold-session')
+  assert.equal(props.directory.raw, h.nativeDirectory('cold-session'))
+  assert.equal(await props.select({ provider: 'test-vision', model: 'test' }), true)
+  assert.equal(h.selections[0].provider, 'test-vision')
 })
