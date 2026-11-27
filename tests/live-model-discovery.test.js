@@ -1313,3 +1313,64 @@ test('explicit directory demand arriving during automatic invalidation is not lo
     await manager.dispose()
   }
 })
+
+
+test('client full settings demand survives passive in-flight, transient 404, and client generation replacement (#893)', async () => {
+  let captured
+  const requests = []
+  const timers = new Map()
+  let nextTimer = 0
+  let releasePassive
+  const passiveGate = new Promise(resolve => { releasePassive = resolve })
+  let first = true
+  let failFull = true
+  const loader = { load(spec) { captured = spec } }
+  const sandbox = {
+    window: { __ModuleLoader__: loader },
+    fetch: async url => {
+      requests.push(String(url))
+      if (first) {
+        first = false
+        await passiveGate
+        return new Response(JSON.stringify({ ok: true, version: 1, refreshing: false, fullDiscoveryRequested: false, refreshAllowed: true, providers: [] }))
+      }
+      if (failFull) { failFull = false; return new Response('{}', { status: 404 }) }
+      return new Response(JSON.stringify({ ok: true, version: 2, refreshing: false, fullDiscoveryRequested: true, refreshAllowed: true, providers: [] }))
+    },
+    Response, AbortController,
+    setTimeout(fn, delay) { const id = ++nextTimer; timers.set(id, { fn, delay }); return id },
+    clearTimeout(id) { timers.delete(id) },
+    console,
+  }
+  vm.runInNewContext(LIVE_MODEL_CLIENT_PRELUDE, sandbox)
+  loader.load({ id: 'dsh-vision-router', factory() { return { apply(ctx) { return ctx } } } })
+  const exported = captured.factory(() => {})
+  function makeContext() {
+    return {
+      get(name) { return name === 'connection' ? { api: { llm: { async models() { return { groups: [], failures: [] } } } } } : undefined },
+      remote: { $on() { return () => {} } },
+      effect(factory) { this.cleanup = factory() },
+    }
+  }
+  const tick = () => new Promise(resolve => setImmediate(resolve))
+  const firstCtx = makeContext()
+  const wrapped = exported.apply(firstCtx)
+  assert.deepEqual(requests.map(url => url.slice(-1)), ['0'])
+  await wrapped.get('connection').api.llm.models({})
+  releasePassive()
+  await tick()
+  assert.deepEqual(requests.map(url => url.slice(-1)), ['0', '1'], 'passive read cannot consume full demand')
+  const retry = [...timers.entries()].find(([, timer]) => timer.delay === 400)
+  assert.ok(retry, 'transient route failure schedules an owned retry')
+  timers.delete(retry[0])
+  retry[1].fn()
+  await tick()
+  assert.deepEqual(requests.map(url => url.slice(-1)), ['0', '1', '1'])
+  firstCtx.cleanup()
+  const secondCtx = makeContext()
+  exported.apply(secondCtx)
+  await tick()
+  assert.deepEqual(requests.map(url => url.slice(-1)), ['0', '1', '1', '1'], 'same page remembers only the full-catalog intent')
+  secondCtx.cleanup()
+  assert.equal(timers.size, 0, 'generation disposal owns all retries')
+})

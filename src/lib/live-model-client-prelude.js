@@ -21,6 +21,8 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
   var manualModels = new Map();
   var manualNotifiers = new Set();
   var manualPickerInstalled = false;
+  // Page-local intent only: never reuse credentials, models or authority across generations.
+  var fullCatalogDemanded = false;
 
   function stableIdHash(value) {
     var text = String(value || '');
@@ -241,9 +243,13 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
     var listeners = new Set();
     var snapshot;
     var inFlight;
+    var inFlightFull = false;
+    var pendingFull = false;
     var pollTimer;
+    var pollFull = false;
     var disposed = false;
-    var pollBudget = 0;
+    var pollBudget = 30;
+    var refreshAllowed = true;
     // Endpoint discovery updates refreshing on every queue/poll transition.
     // Treat those as transport progress, not catalog invalidations. Otherwise
     // the settings card receives a synthetic llm/adapters-updated event every
@@ -273,26 +279,42 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
       return true;
     }
 
-    function schedulePoll() {
-      if (disposed || pollTimer !== undefined) return;
-      if (pollBudget <= 0) pollBudget = 30;
-      if (pollBudget-- <= 0) return;
+    function schedulePoll(full) {
+      if (disposed || pollBudget <= 0 || (full && !refreshAllowed)) return;
+      if (full) pollFull = true;
+      if (pollTimer !== undefined) return;
+      pollBudget -= 1;
       pollTimer = setTimeout(function() {
         pollTimer = undefined;
-        void refresh(false);
+        var requestFull = pollFull;
+        pollFull = false;
+        void refresh(requestFull, true);
       }, 400);
     }
 
-    async function refresh(requestRefresh) {
+    function resumeDemand() {
+      if (disposed || !fullCatalogDemanded || !refreshAllowed) return;
+      if (pollBudget <= 0) pollBudget = 30;
+      schedulePoll(true);
+    }
+
+    async function refresh(requestRefresh, fromPoll) {
       if (disposed || typeof fetch !== 'function') return snapshot;
-      if (inFlight) return inFlight;
+      var full = requestRefresh !== false && refreshAllowed;
+      if (full && !fromPoll) pollBudget = 30;
+      if (inFlight) {
+        // A passive mount/poll must never swallow a user-triggered refresh.
+        if (full && !inFlightFull) pendingFull = true;
+        return inFlight;
+      }
+      inFlightFull = full;
       inFlight = (async function() {
         try {
           var controller = typeof AbortController === 'function' ? new AbortController() : undefined;
           var timer = controller ? setTimeout(function(){ controller.abort(); }, 1200) : undefined;
           var response;
           try {
-            response = await fetch(ENDPOINT + '?refresh=' + (requestRefresh === false ? '0' : '1'), {
+            response = await fetch(ENDPOINT + '?refresh=' + (full ? '1' : '0'), {
               method: 'GET',
               headers: { accept: 'application/json' },
               signal: controller && controller.signal
@@ -300,16 +322,28 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
           } finally {
             if (timer !== undefined) clearTimeout(timer);
           }
-          if (!response || !response.ok) return snapshot;
+          if (!response || !response.ok) {
+            if (fullCatalogDemanded) schedulePoll(true);
+            return snapshot;
+          }
           var next = await response.json();
-          if (!next || next.ok !== true) return snapshot;
+          if (!next || next.ok !== true) {
+            if (fullCatalogDemanded) schedulePoll(true);
+            return snapshot;
+          }
+          if (disposed) return snapshot;
+          refreshAllowed = next.refreshAllowed !== false;
           var changed = !sameSnapshot(snapshot, next);
           snapshot = next;
           if (changed) pendingEmit = true;
-          if (next.refreshing) {
-            schedulePoll();
+          // During a real Host recompose, a new manager may answer before it
+          // has received the earlier settings demand. Reassert only the intent.
+          if (fullCatalogDemanded && refreshAllowed && next.fullDiscoveryRequested === false) {
+            schedulePoll(true);
+          } else if (next.refreshing) {
+            schedulePoll(false);
           } else {
-            pollBudget = 0;
+            if (!pendingFull && pollTimer === undefined) pollBudget = 0;
             if (pendingEmit) {
               pendingEmit = false;
               emit();
@@ -317,9 +351,15 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
           }
           return snapshot;
         } catch (_) {
+          if (fullCatalogDemanded) schedulePoll(true);
           return snapshot;
         } finally {
           inFlight = undefined;
+          inFlightFull = false;
+          if (pendingFull) {
+            pendingFull = false;
+            if (!disposed) void refresh(true, true);
+          }
         }
       })();
       return inFlight;
@@ -327,10 +367,12 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
 
     return {
       augment: function(body, providerDirectoryBody) {
+        fullCatalogDemanded = true;
         void refresh(true);
         return mergeCatalog(body, snapshot, providerDirectoryBody);
       },
       refresh: refresh,
+      resumeDemand: resumeDemand,
       subscribe: function(listener) {
         if (typeof listener !== 'function') return function(){};
         listeners.add(listener);
@@ -340,6 +382,7 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
         disposed = true;
         manualNotifiers.delete(emit);
         pendingEmit = false;
+        pendingFull = false;
         if (pollTimer !== undefined) clearTimeout(pollTimer);
         pollTimer = undefined;
         listeners.clear();
@@ -503,14 +546,25 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
       }
     });
     if (contexts) contexts.set(ctx, wrapped);
+    var demandStops = [];
     var disposeLifecycle = function() {
       live.dispose();
+      demandStops.splice(0).forEach(function(stop){ try { if (typeof stop === 'function') stop(); } catch (_) {} });
       if (contexts && contexts.get(ctx) === wrapped) contexts.delete(ctx);
     };
     var lifecycleOwned = false;
     try {
       if (typeof ctx.effect === 'function') {
-        ctx.effect(function(){ return disposeLifecycle; }, 'vision-router: live model catalog client');
+        ctx.effect(function(){
+          try {
+            if (ctx.remote && typeof ctx.remote.$on === 'function') {
+              demandStops.push(ctx.remote.$on('settings/document-updated', live.resumeDemand));
+              demandStops.push(ctx.remote.$on('llm/adapters-updated', live.resumeDemand));
+            }
+          } catch (_) {}
+          try { if (typeof ctx.on === 'function') demandStops.push(ctx.on('connection/reset', live.resumeDemand)); } catch (_) {}
+          return disposeLifecycle;
+        }, 'vision-router: live model catalog client');
         lifecycleOwned = true;
       }
     } catch (_) {}
@@ -518,7 +572,7 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
     // Initial mount observes cached/priority evidence without probing the
     // entire provider directory. The actual settings model reader calls
     // augment(), which still requests a complete refresh on demand.
-    if (lifecycleOwned) void live.refresh(false);
+    if (lifecycleOwned) void live.refresh(fullCatalogDemanded);
     return wrapped;
   }
 

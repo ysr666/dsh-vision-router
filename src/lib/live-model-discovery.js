@@ -569,6 +569,7 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
       ok: true,
       version,
       refreshing: deferredInvalidation || active > 0 || queued.size > 0,
+      fullDiscoveryRequested,
       providers: [...providers.values()].map((entry) => visibleEntry(entry, at)).filter(Boolean),
     }
   }
@@ -861,8 +862,9 @@ export function installLiveModelDiscovery(ctx, options = {}) {
             // but refresh drives Host-side provider I/O and may resolve stored
             // credentials. Preserve local ?refresh=1 behavior while making every
             // remote GET a passive read of already-owned discovery state.
-            const schedule = isLocalUiRequest(req) && url.searchParams.get('refresh') !== '0'
-            sendJson(res, 200, await manager.snapshot({ schedule }))
+            const refreshAllowed = isLocalUiRequest(req)
+            const schedule = refreshAllowed && url.searchParams.get('refresh') !== '0'
+            sendJson(res, 200, { ...await manager.snapshot({ schedule }), refreshAllowed })
           } catch (error) {
             sendJson(res, 500, { ok: false, error: boundedError(error) })
           }
