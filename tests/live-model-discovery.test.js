@@ -1144,3 +1144,103 @@ test('discovery shares one synchronous profile read, but deferred dispatch reads
     await manager.dispose()
   }
 })
+
+
+test('Host event bursts revoke evidence synchronously but share one deferred configuration refresh (#893)', async () => {
+  let reads = 0
+  let baseURL = 'https://old.example/v1'
+  let key = 'old-key'
+  const ctx = configEditorContext(() => {
+    reads++
+    return [{ entry: { options: { id: 'llm-pi-ai' } }, inherited: { providers: {
+      zai: { baseURL, apiKeyEnv: 'TEST_KEY' },
+    } } }]
+  })
+  const get = ctx.get
+  ctx.get = name => name === 'credentials' ? { async resolve() { return { value: key } } } : get(name)
+  const listeners = new Map()
+  let cleanup
+  ctx.on = (event, handler) => { listeners.set(event, handler); return () => listeners.delete(event) }
+  ctx.effect = factory => { cleanup = factory(); return cleanup }
+  ctx.inject = () => {}
+  const mem = memoryCacheFs()
+  const calls = []
+  const manager = installLiveModelDiscovery(ctx, {
+    cacheFile: '/virtual/live-models-burst.json',
+    fsOps: mem.ops,
+    fetchImpl: async (url, options) => {
+      calls.push([String(url), options.headers.authorization])
+      return new Response(JSON.stringify({ data: [{ id: 'model' }] }), { status: 200 })
+    },
+  })
+  try {
+    await manager.ready()
+    manager.queueConfigured()
+    await waitForSettled(manager)
+    assert.equal(manager.hasModel('zai', 'model'), true)
+    const before = reads
+    baseURL = 'https://intermediate.example/v1'
+    listeners.get('llm/adapters-updated')()
+    assert.equal(manager.hasModel('zai', 'model'), false)
+    for (let i = 0; i < 50; i++) {
+      listeners.get('llm/adapters-updated')()
+      listeners.get('settings/document-updated')()
+      manager.queueConfigured()
+    }
+    await Promise.resolve()
+    baseURL = 'https://new.example/v1'
+    key = 'new-key'
+    listeners.get('credentials/reference-updated')('TEST_KEY')
+    listeners.get('credentials/updated')('TEST_KEY')
+    assert.equal(reads, before, 'event burst does not rescan configuration synchronously')
+    assert.equal((await manager.snapshot()).refreshing, true)
+    assert.equal(manager.hasModel('zai', 'model'), false)
+    await waitForSettled(manager)
+    assert.equal(reads, before + 1)
+    assert.deepEqual(calls, [['https://old.example/v1/models', 'Bearer old-key'], ['https://new.example/v1/models', 'Bearer new-key']])
+    assert.equal(manager.hasModel('zai', 'model'), true)
+    listeners.get('llm/adapters-updated')()
+    const beforeDispose = reads
+    await cleanup()
+    await new Promise(resolve => setTimeout(resolve, 40))
+    assert.equal(reads, beforeDispose, 'disposed generation must not refresh')
+  } finally {
+    await cleanup?.()
+    await manager.dispose()
+  }
+})
+
+test('deferred invalidation never admits an old in-flight completion (#893)', async () => {
+  let baseURL = 'https://old.example/v1'
+  const ctx = configEditorContext(() => [{ entry: { options: { id: 'llm-pi-ai' } },
+    inherited: { providers: { zai: { baseURL } } } }])
+  const mem = memoryCacheFs()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const calls = []
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile: '/virtual/live-models-burst-inflight.json', fsOps: mem.ops,
+    fetchImpl: async url => {
+      calls.push(String(url))
+      if (calls.length === 1) await gate
+      return new Response(JSON.stringify({ data: [{ id: calls.length === 1 ? 'old' : 'new' }] }), { status: 200 })
+    },
+  })
+  try {
+    await manager.ready()
+    manager.queueConfigured()
+    await Promise.resolve()
+    await Promise.resolve()
+    assert.equal(calls.length, 1)
+    baseURL = 'https://new.example/v1'
+    manager.invalidate({ defer: true })
+    release()
+    await waitForSettled(manager)
+    assert.deepEqual(calls, ['https://old.example/v1/models', 'https://new.example/v1/models'])
+    assert.equal(manager.hasModel('zai', 'old'), false)
+    assert.equal(manager.hasModel('zai', 'new'), true)
+  } finally {
+    release()
+    await manager.dispose()
+  }
+})
