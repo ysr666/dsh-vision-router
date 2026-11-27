@@ -11,7 +11,7 @@ test('live discovery progress does not masquerade as repeated adapter invalidati
   )
   assert.equal(LIVE_MODEL_CLIENT_PRELUDE.includes('var pendingEmit = false;'), true)
   assert.equal(LIVE_MODEL_CLIENT_PRELUDE.includes('if (changed) pendingEmit = true;'), true)
-  assert.equal(LIVE_MODEL_CLIENT_PRELUDE.includes('if (next.refreshing) {\n            schedulePoll();'), true)
+  assert.equal(LIVE_MODEL_CLIENT_PRELUDE.includes('if (next.refreshing) {\n            schedulePoll(false);'), true)
   assert.equal(
     LIVE_MODEL_CLIENT_PRELUDE.includes('if (pendingEmit) {\n              pendingEmit = false;\n              emit();'),
     true,
