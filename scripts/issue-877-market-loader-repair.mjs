@@ -29,13 +29,11 @@ edit('src/index.ts', [
     '        const loaderRoot = hostCtx.root\n        const resolved: MarketConfig = {\n          readPostUpdateLoaderEntries: () => {\n            const loader = loaderRoot.get(\'loader\') as MarketHost[\'loader\'] | undefined\n            if (loader === undefined) throw new Error(\'Host loader unavailable after update\')\n            return [...loader.entries()]\n          },\n          profile: profileName,',
   ],
 ])
-// Test-only source substitution: preserve the real HTTP update transaction,
-// compatibility checks, version verification and rollback; replace only the
-// resolved npm artifact with the local tarball of exactly the same version.
-edit('src/routes.ts', [
+// Test-only registry override. Keep official manager's valid registry spec.
+edit('src/official-desktop.ts', [
   [
-    '                  : await acceleratedTarget(gitSpec!, region)\n            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
-    '                  : await acceleratedTarget(gitSpec!, region)\n            if (name === \'dsh-vision-router\' && target === \'dsh-vision-router@3.4.0\' && process.env.DVR_CANDIDATE_SPEC) {\n              target = process.env.DVR_CANDIDATE_SPEC\n            }\n            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
+    '      const registry = routesFor(activeRegion()).npmRegistry',
+    '      const registry = target === \'dsh-vision-router@3.4.0\' && process.env.DVR_CANDIDATE_REGISTRY ? process.env.DVR_CANDIDATE_REGISTRY : routesFor(activeRegion()).npmRegistry',
   ],
 ])
-console.log('Applied disposable market Loader repair and local candidate substitution')
+console.log('Applied disposable market Loader repair and isolated registry override')

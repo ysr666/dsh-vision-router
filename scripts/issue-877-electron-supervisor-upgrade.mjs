@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { installDesktopVisionToggleAudit, installDesktopModelSelectionTrace } from './dsh-desktop-toggle-stability.mjs'
 import { resolveCiElectronBinary } from './ci-electron-download-retry.mjs'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer as createHttpServer } from 'node:http'
@@ -780,6 +780,8 @@ let browser
 let page
 let textServer
 let visionServer
+let candidateRegistry
+const candidateRegistryRequests = []
 let resolveAuthenticatedHostUrl
 let rejectAuthenticatedHostUrl
 const authenticatedHostUrlPromise = new Promise((resolve, reject) => {
@@ -1097,8 +1099,43 @@ try {
   const rendererPort = await freePort()
   const mainPort = await freePort()
   const hostPort = await freePort()
+  // Serve only the candidate on loopback; no registry publication.
+  const candidateArchive = readFileSync(process.env.DVR_CANDIDATE_SPEC)
+  const published = await fetch('https://registry.npmjs.org/dsh-vision-router', { headers: { accept: 'application/json' } })
+  assert.equal(published.status, 200)
+  const packument = await published.json()
+  const candidateManifest = readJson(join(dvrRoot, 'package.json'))
+  assert.equal(candidateManifest.version, '3.4.0')
+  const originalVersion = packument.versions[candidateManifest.version]
+  assert.ok(originalVersion)
+  candidateRegistry = await listenHttp((req, res) => {
+    const pathname = new URL(req.url, 'http://localhost').pathname
+    if (pathname === '/dsh-vision-router/-/candidate-3.4.0.tgz') {
+      candidateRegistryRequests.push('tarball')
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': candidateArchive.length })
+      res.end(req.method === 'HEAD' ? undefined : candidateArchive)
+      return
+    }
+    if (pathname === '/dsh-vision-router' || pathname === '/dsh-vision-router/3.4.0') {
+      candidateRegistryRequests.push('metadata')
+      const version = { ...originalVersion, ...candidateManifest, dist: {
+        tarball: candidateRegistry.url + '/dsh-vision-router/-/candidate-3.4.0.tgz',
+        integrity: 'sha512-' + createHash('sha512').update(candidateArchive).digest('base64'),
+        shasum: createHash('sha1').update(candidateArchive).digest('hex'),
+      } }
+      const body = JSON.stringify(pathname.endsWith('/3.4.0') ? version : {
+        ...packument, versions: { ...packument.versions, '3.4.0': version },
+      })
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(req.method === 'HEAD' ? undefined : body)
+      return
+    }
+    res.writeHead(302, { location: 'https://registry.npmjs.org' + pathname })
+    res.end()
+  })
   const environment = {
     ...process.env,
+    DVR_CANDIDATE_REGISTRY: candidateRegistry.url,
     ...exactNativeOcr?.isolatedEnv,
     ...(exactNativeOcr ? { DVR_NCNN_OCR_CANARY: '', DVR_NCNN_OCR_EXECUTABLE: '', DVR_NCNN_OCR_MODELS: '' } : {}),
     DSH_HOME: home,
@@ -1285,12 +1322,13 @@ try {
       try { return readFileSync(join(paths.profile, 'node_modules', 'dsh-vision-router', 'lib', name)).equals(readFileSync(join(dvrRoot, 'lib', name))) }
       catch { return false }
     })
+    final.candidateRegistryRequests = candidateRegistryRequests.slice()
     marketEvidence = final
     console.log('ISSUE_877_COMBINED_MARKET=' + JSON.stringify(final))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
     let resultBody
     try { resultBody = JSON.parse(marketResult.body) } catch {}
-    if (final.installed !== '3.4.0' || !final.bundleSelected || !final.marketCandidateInstalled || !final.candidateFilesMatch ||
+    if (final.installed !== '3.4.0' || !final.bundleSelected || !final.marketCandidateInstalled || !final.candidateFilesMatch || !final.candidateRegistryRequests.includes('tarball') ||
         final.baselineUid === final.finalUid || marketResult.status !== 200 || resultBody?.ok !== true ||
         !after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE') ||
         after.firstEffect || after.firstFailure) {
@@ -1757,6 +1795,7 @@ try {
   await stopProcess(child)
   await closeServer(textServer?.server)
   await closeServer(visionServer?.server)
+  await closeServer(candidateRegistry?.server)
   for (let attempt = 0; attempt < 6; attempt += 1) {
     try { rmSync(root, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 }); break }
     catch { await new Promise((accept) => setTimeout(accept, 250)) }
