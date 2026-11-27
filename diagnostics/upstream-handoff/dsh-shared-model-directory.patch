@@ -1,0 +1,343 @@
+diff --git a/packages/llm/llm/src/types.ts b/packages/llm/llm/src/types.ts
+--- a/packages/llm/llm/src/types.ts
++++ b/packages/llm/llm/src/types.ts
+@@ -228,6 +228,8 @@
+ 
+ /** Display metadata for one registered provider route. */
+ export interface LlmProviderInfo {
++  /** Explicit adapter-owned presentation alias; real route identity is unchanged. */
++  presentationAliasOf?: string
+   /** Provider route key used by {@link GenerateOptions.provider}. */
+   id: string
+   /** Human-readable provider name for selectors and diagnostics. */
+diff --git a/packages/llm/llm/src/index.ts b/packages/llm/llm/src/index.ts
+--- a/packages/llm/llm/src/index.ts
++++ b/packages/llm/llm/src/index.ts
+@@ -433,7 +433,9 @@
+         ?? resolveRetryPolicy(undefined, `llm: provider "${provider}" retryPolicy`)
+       registrations.push({
+         adapter,
+-        provider: { id: info.id, name: info.name },
++        provider: { id: info.id, name: info.name,
++          ...(typeof info.presentationAliasOf === 'string' && info.presentationAliasOf.length > 0 && info.presentationAliasOf !== info.id ? { presentationAliasOf: info.presentationAliasOf } : {}),
++        },
+         retryPolicy,
+       })
+     }
+diff --git a/packages/api/session-controller/src/catalog.ts b/packages/api/session-controller/src/catalog.ts
+--- a/packages/api/session-controller/src/catalog.ts
++++ b/packages/api/session-controller/src/catalog.ts
+@@ -49,7 +49,9 @@
+       }))
+       return {
+         kind: 'group' as const,
+-        group: { id: provider.id, name: provider.name, models: entries },
++        group: { id: provider.id, name: provider.name, models: entries,
++          ...(provider.presentationAliasOf === undefined ? {} : { presentationAliasOf: provider.presentationAliasOf }),
++        },
+       }
+     } catch (error) {
+       return {
+diff --git a/packages/api/session-controller/src/types.ts b/packages/api/session-controller/src/types.ts
+--- a/packages/api/session-controller/src/types.ts
++++ b/packages/api/session-controller/src/types.ts
+@@ -111,6 +111,7 @@
+ 
+ /** One provider and its successfully loaded model catalog. */
+ export interface ModelProviderGroup {
++  readonly presentationAliasOf?: string
+   readonly id: string
+   readonly name: string
+   readonly models: readonly ModelCatalogModel[]
+diff --git a/packages/client/ui-model-selection/src/client/service.ts b/packages/client/ui-model-selection/src/client/service.ts
+--- a/packages/client/ui-model-selection/src/client/service.ts
++++ b/packages/client/ui-model-selection/src/client/service.ts
+@@ -64,6 +64,11 @@
+    * @param sessionId - the owning session.
+    * @returns the resident directory both entries share.
+    */
++  /** Exact route authority for routing controls, not ordinary selectors. */
++  rawDirectoryFor(sessionId: SessionId): ModelDirectory['rawView'] {
++    return this.directoryFor(sessionId).rawView
++  }
++
+   directoryFor(sessionId: SessionId): ModelDirectory {
+     const { live } = this
+     const sessions = this.ctx.sessions
+diff --git a/packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts b/packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts
+--- a/packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts
++++ b/packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts
+@@ -588,3 +588,61 @@
+     expect(b.track).not.toHaveBeenCalled()
+   } finally { await scope.fiber.dispose(); await b.ctx.fiber.dispose() }
+ })
++
++
++describe('explicit route presentation aliases (DVR #864 prototype)', () => {
++  it('stock and independent consumers share the presentation, while raw controls retain route identity', async () => {
++    const b = await bench()
++    try {
++      const source = GROUPS[0]!
++      const alias = { ...source, id: 'arbitrary-wrapper', name: 'Internal route', presentationAliasOf: source.id }
++      const foreign = { ...source, id: 'foreign-vision', name: 'Foreign vision' }
++      b.setGroups([source, alias, foreign, GROUPS[1]!])
++      b.remote.emit('llm/adapters-updated', [])
++      b.mint('alias')
++      const id = sid('alias')
++      const raw = b.ctx.modelDirectories.rawDirectoryFor(id)
++      const shared = b.ctx.get('modelDirectories')!.directoryFor(id)
++      const official = b.seat().inject!(id)
++      await shared.load()
++      expect(shared.store).toBe(official.directory)
++      expect(b.ctx.modelDirectories.rawDirectoryFor(id)).toBe(raw)
++      expect(shared.store.getSnapshot().groups.map(g => g.id)).toEqual([source.id, foreign.id, 'external'])
++      expect(raw.store.getSnapshot().groups.map(g => g.id)).toContain(alias.id)
++      await raw.select({ provider: alias.id, model: source.models[0]!.id, reasoningEffort: 'high' })
++      expect(raw.store.getSnapshot().current?.provider).toBe(alias.id)
++      expect(shared.store.getSnapshot().current?.provider).toBe(source.id)
++      expect((await b.popup().options(projection('alias'), new AbortController().signal)).map(o => o.group?.name)).not.toContain(alias.id)
++      const pending = shared.select({ provider: source.id, model: source.models[1]!.id, reasoningEffort: 'max' })
++      expect(shared.store.getSnapshot().pending?.provider).toBe(source.id)
++      expect(raw.store.getSnapshot().pending?.provider).toBe(alias.id)
++      await pending
++      expect(b.hostCurrent()).toEqual({ provider: alias.id, model: source.models[1]!.id, reasoningEffort: 'max' })
++      await shared.select({ provider: foreign.id, model: source.models[0]!.id })
++      expect(b.hostCurrent().provider).toBe(foreign.id)
++      b.mint('other')
++      expect(b.ctx.modelDirectories.directoryFor(sid('other')).store).not.toBe(shared.store)
++      b.setGroups([source, foreign, GROUPS[1]!])
++      b.remote.emit('llm/adapters-updated', [])
++      await vi.waitFor(() => expect(raw.store.getSnapshot().groups.some(g => g.id === alias.id)).toBe(false))
++    } finally { await b.ctx.fiber.dispose() }
++  })
++
++  it('fails open for unmirrored, chained or different-effort alias declarations', async () => {
++    const b = await bench()
++    try {
++      const source = GROUPS[0]!
++      const bad = { ...source, id: 'unmirrored', presentationAliasOf: source.id,
++        models: [{ ...source.models[0]!, id: 'exclusive' }] }
++      const different = { ...source, id: 'different-effort', presentationAliasOf: source.id,
++        models: [{ ...source.models[0]!, reasoning: { efforts: [{ id: 'other', name: 'Other' }], defaultEffort: 'other' } }] }
++      const chained = { ...source, id: 'chained', presentationAliasOf: bad.id }
++      b.setGroups([source, bad, different, chained])
++      b.remote.emit('llm/adapters-updated', [])
++      b.mint('fail-open')
++      const shared = b.ctx.modelDirectories.directoryFor(sid('fail-open'))
++      await shared.load()
++      expect(shared.store.getSnapshot().groups.map(g => g.id)).toEqual([source.id, bad.id, different.id, chained.id])
++    } finally { await b.ctx.fiber.dispose() }
++  })
++})
+diff --git a/packages/api/session-controller/tests/session-models.host.spec.ts b/packages/api/session-controller/tests/session-models.host.spec.ts
+--- a/packages/api/session-controller/tests/session-models.host.spec.ts
++++ b/packages/api/session-controller/tests/session-models.host.spec.ts
+@@ -933,3 +933,32 @@
+       .rejects.toMatchObject({ code: 'session/model-unavailable', message: 'catalog disconnected' })
+   } finally { read.mockRestore(); await ctx.fiber.dispose() }
+ })
++
++
++it('carries an adapter-declared presentation alias through the raw Host catalog without changing admission (DVR #864)', async () => {
++  const { ctx, agent, sessionId } = await harness()
++  try {
++    const registered = ctx.llm.registerAdapter(['test-internal-wrapper'], new class extends CatalogAdapter {
++      override providerInfo(provider: string): LlmProviderInfo {
++        return { id: provider, name: 'Internal wrapper', presentationAliasOf: 'deepseek-official' }
++      }
++    }('Internal wrapper', [
++      { provider: 'test-internal-wrapper', id: 'deepseek-chat', name: 'DeepSeek Chat' },
++    ], REASONING))
++    ctx.llm.registerAdapter(['unrelated-vision'], new CatalogAdapter('Unrelated Vision', [
++      { provider: 'unrelated-vision', id: 'deepseek-chat', name: 'Independent' },
++    ], REASONING))
++    const remote = await createSessionTestRemote(ctx, {
++      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }), cwd: '/tmp',
++    })
++    expect(ctx.llm.listProviders().find(p => p.id === 'test-internal-wrapper')).toMatchObject({ presentationAliasOf: 'deepseek-official' })
++    const catalog = await buildModelCatalog(ctx)
++    expect(catalog.groups.find(g => g.id === 'test-internal-wrapper')).toMatchObject({ presentationAliasOf: 'deepseek-official' })
++    expect(catalog.groups.find(g => g.id === 'unrelated-vision')).not.toHaveProperty('presentationAliasOf')
++    expect(catalog.routableProviders).toContain('test-internal-wrapper')
++    expect((await remote.selectModel({ sessionId, provider: 'test-internal-wrapper', model: 'deepseek-chat', reasoningEffort: 'max' })).ok).toBe(true)
++    expect(agent.model.current()).toEqual({ provider: 'test-internal-wrapper', model: 'deepseek-chat', reasoningEffort: 'max' })
++    registered()
++    expect((await buildModelCatalog(ctx)).routableProviders).not.toContain('test-internal-wrapper')
++  } finally { await ctx.fiber.dispose() }
++})
+diff --git a/packages/client/ui-model-selection/src/client/directory.ts b/packages/client/ui-model-selection/src/client/directory.ts
+--- a/packages/client/ui-model-selection/src/client/directory.ts
++++ b/packages/client/ui-model-selection/src/client/directory.ts
+@@ -35,13 +35,57 @@
+   error: string | null
+ }
+ 
++/** Only explicitly declared direct aliases with equivalent model/effort metadata
++ * can disappear from presentation. The real catalog and admission stay intact. */
++function presentationAliases(state: ModelDirectoryState): Map<string, string> {
++  const aliases = new Map<string, string>()
++  for (const alias of state.groups) {
++    const source = state.groups.find(g => g.id === alias.presentationAliasOf)
++    if (!source || source.id === alias.id || source.presentationAliasOf !== undefined || alias.models.length === 0) continue
++    const equivalent = (model: ModelProviderGroup['models'][number]) => {
++      const match = source.models.find(m => m.id === model.id)
++      if (!match) return false
++      const effortKey = (m: typeof model) => JSON.stringify([m.reasoning?.defaultEffort ?? null, (m.reasoning?.efforts ?? []).map(e => e.id).sort()])
++      return effortKey(model) === effortKey(match)
++    }
++    if (!alias.models.every(equivalent)) continue
++    if ([state.current, state.pending].some(s => s?.provider === alias.id && !alias.models.some(m => m.id === s.model))) continue
++    aliases.set(alias.id, source.id)
++  }
++  return aliases
++}
++
++function presentationState(state: ModelDirectoryState): ModelDirectoryState {
++  const aliases = presentationAliases(state)
++  if (aliases.size === 0) return state
++  const visible = (s: ModelSelection | null): ModelSelection | null => s && aliases.has(s.provider) ? { ...s, provider: aliases.get(s.provider)! } : s
++  return { ...state, groups: state.groups.filter(g => !aliases.has(g.id)), current: visible(state.current), pending: visible(state.pending) }
++}
++
++function rawSelection(state: ModelDirectoryState, selection: ModelSelection): ModelSelection {
++  const current = state.current
++  if (!current || presentationAliases(state).get(current.provider) !== selection.provider) return selection
++  const group = state.groups.find(g => g.id === current.provider)
++  if (!group?.models.some(m => m.id === selection.model)) return selection
++  return { ...selection, provider: current.provider }
++}
++
+ /** One session's shared directory controller; disposed with the session scope. */
+ export class ModelDirectory {
+   /** The shared snapshot both entries render from (uSES-safe store). */
+-  readonly store: SnapshotStore<ModelDirectoryState> = createSnapshotStore<ModelDirectoryState>({
++  private readonly rawStore: SnapshotStore<ModelDirectoryState> = createSnapshotStore<ModelDirectoryState>({
+     current: null, routable: null, groups: [], failures: [], status: 'idle', pending: null, error: null,
+   })
+ 
++  /** Shared selector view, derived synchronously from the same raw directory. */
++  readonly store = createSnapshotStore<ModelDirectoryState>(this.rawStore.getSnapshot())
++  readonly rawView = {
++    store: this.rawStore,
++    load: () => this.loadRaw(),
++    select: (selection: ModelSelection) => this.selectRaw(selection),
++  }
++  private readonly unsubscribeRaw = this.rawStore.subscribe(() => this.store.set(presentationState(this.rawStore.getSnapshot())))
++
+   /** Latest selection operation wins; an older response never overwrites a newer one. */
+   private generation = 0
+   private disposed = false
+@@ -76,12 +120,17 @@
+    * @returns the fresh directory value.
+    */
+   async load(): Promise<ModelDirectoryState> {
+-    this.assertAvailable()
+-    await this.catalog.load()
+-    this.syncInputs()
++    await this.loadRaw()
+     return this.store.getSnapshot()
+   }
+ 
++  private async loadRaw(): Promise<ModelDirectoryState> {
++    this.assertAvailable()
++    await this.catalog.load()
++    this.syncInputs()
++    return this.rawStore.getSnapshot()
++  }
++
+   /**
+    * Select the complete provider/model/reasoning selection. The durable
+    * projection frame updates the shared current; failures surface on the store
+@@ -90,12 +139,16 @@
+    * @returns the selection outcome, including the original Remote failure.
+    */
+   async select(selection: ModelSelection): Promise<RemoteResult<void>> {
+-    this.assertAvailable()
+-    const previous = this.store.getSnapshot().current
++    return this.selectRaw(rawSelection(this.rawStore.getSnapshot(), selection))
++  }
++
++  private async selectRaw(selection: ModelSelection): Promise<RemoteResult<void>> {
++    this.assertAvailable()
++    const previous = this.rawStore.getSnapshot().current
+     const previousEffort = previous?.reasoningEffort ?? (previous === null ? undefined : this.catalog.reasoningFor(previous)?.defaultEffort)
+     const nextEffort = selection.reasoningEffort ?? this.catalog.reasoningFor(selection)?.defaultEffort
+     const generation = ++this.generation
+-    this.store.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
++    this.rawStore.update((s) => { s.status = 'selecting'; s.pending = selection; s.error = null })
+     const result = await this.sessions.selectModel({
+       sessionId: this.sessionId,
+       provider: selection.provider,
+@@ -108,7 +161,7 @@
+       return result.ok ? { ok: true, value: undefined } : result
+     }
+     if (!result.ok) {
+-      this.store.update((s) => {
++      this.rawStore.update((s) => {
+         s.status = 'error'
+         s.pending = null
+         s.error = `${result.error.code}: ${result.error.message}`
+@@ -123,7 +176,7 @@
+         ...this.isBlank() ? {} : { session_id: this.sessionId }, model_name: to, switch_from: previousEffort ?? 'default', switch_to: nextEffort ?? 'default',
+       })
+     }
+-    this.store.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
++    this.rawStore.update((s) => { s.status = 'ready'; s.pending = null; s.error = null })
+     this.syncInputs()
+     return { ok: true, value: undefined }
+   }
+@@ -134,7 +187,7 @@
+   resetConnected(): void {
+     if (this.disposed) return
+     ++this.generation
+-    this.store.update((state) => {
++    this.rawStore.update((state) => {
+       if (state.status === 'selecting') state.status = 'idle'
+       state.pending = null
+       state.error = null
+@@ -147,6 +200,7 @@
+     this.disposed = true
+     this.unsubscribeSelection()
+     this.unsubscribeCatalog()
++    this.unsubscribeRaw()
+   }
+ 
+   private assertAvailable(): void {
+@@ -165,14 +219,14 @@
+     const retainedEffort = effort === undefined ? undefined
+       : reasoning?.efforts.find(level => level.id === effort)?.name ?? effort
+     if (catalog.status !== 'ready' || catalog.value === null || projected === undefined) {
+-      this.store.set({
+-        current: catalog.value === null ? null : this.store.getSnapshot().current,
++      this.rawStore.set({
++        current: catalog.value === null ? null : this.rawStore.getSnapshot().current,
+         ...retainedEffort === undefined ? {} : { retainedEffort },
+         routable: null,
+         groups: catalog.value?.groups ?? [],
+         failures: catalog.value?.failures ?? [],
+         status: catalog.status === 'error' ? 'error' : 'loading',
+-        pending: this.store.getSnapshot().pending,
++        pending: this.rawStore.getSnapshot().pending,
+         error: catalog.error,
+       })
+       return
+@@ -180,16 +234,16 @@
+     const selection = projected.next ?? catalog.value.default
+     const routable = catalog.value.groups.some(group => group.id === selection.provider
+       && group.models.some(model => model.id === selection.model))
+-    this.store.set({
++    this.rawStore.set({
+       current: selection,
+       ...retainedEffort === undefined ? {} : { retainedEffort },
+       routable,
+       groups: catalog.value.groups,
+       failures: catalog.value.failures,
+-      status: this.store.getSnapshot().status === 'selecting'
++      status: this.rawStore.getSnapshot().status === 'selecting'
+         ? 'selecting'
+         : 'ready',
+-      pending: this.store.getSnapshot().pending,
++      pending: this.rawStore.getSnapshot().pending,
+       error: null,
+     })
+   }

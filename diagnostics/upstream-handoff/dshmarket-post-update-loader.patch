@@ -1,0 +1,54 @@
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -404,7 +404,13 @@
+             },
+           },
+         )
+-        const resolved: MarketConfig = {
++        const loaderRoot = hostCtx.root
++        const resolved: MarketConfig = {
++          readPostUpdateLoaderEntries: () => {
++            const loader = loaderRoot.get('loader') as MarketHost['loader'] | undefined
++            if (loader === undefined) throw new Error('Host loader unavailable after update')
++            return [...loader.entries()]
++          },
+           profile: profileName,
+           ...(profileDirectory === undefined ? {} : { profileDirectory }),
+           origin: {
+diff --git a/src/routes.ts b/src/routes.ts
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -211,6 +211,8 @@
+ }
+ 
+ export interface MarketConfig {
++  /** Fresh read-only inventory after a Host-owned Desktop update may retire the request owner. */
++  readPostUpdateLoaderEntries?: () => Iterable<LoaderEntry>
+   /** Profile the market installs into; matches the profile serving this UI. */
+   profile: string
+   /** Read the official Desktop profile's startup repair results. */
+@@ -1833,9 +1835,11 @@
+    * the source of truth for verifyActivation's `live` state — without the
+    * loader side, every boot-loaded bundle plugin would read as "restart".
+    */
+-  function liveNames(): Set<string> {
+-    const live = new Set(listLiveHotMounts())
+-    for (const entry of host.loader.entries()) {
++  function liveNames(postUpdate = false): Set<string> {
++    const live = new Set(listLiveHotMounts())
++    const entries = postUpdate && config.readPostUpdateLoaderEntries !== undefined
++      ? config.readPostUpdateLoaderEntries() : host.loader.entries()
++    for (const entry of entries) {
+       if (entry.fiber === undefined) continue
+       if (entry.options.name !== undefined) {
+         live.add(entry.options.name)
+@@ -7832,7 +7836,7 @@
+               else replacedWhileLive.delete(name)
+               activation = {
+                 [name]: activationAfterReplace(
+-                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
++                  verifyActivation(config.profile, name, liveNames(true), activeProfileDir, disabled.has(name)),
+                   staleModule,
+                 ),
+               }
