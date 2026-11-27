@@ -36,3 +36,9 @@ jobs:
       - name: Run real Cordis browser model-selection tests and Host catalog tests
         working-directory: dsh-host
         run: pnpm exec vitest run packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts packages/api/session-controller/tests/session-models.host.spec.ts
+      - name: Build patched upstream Host and client including generated contracts
+        working-directory: dsh-host
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm run build
