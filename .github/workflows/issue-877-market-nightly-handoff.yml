@@ -37,6 +37,11 @@ jobs:
         shell: bash
         run: |
           patch=../dvr/diagnostics/upstream-handoff/dshmarket-nightly1014-post-update-loader.patch
+          # Git for Windows may have checked out CRLF source files. Normalize
+          # only these tracked files from the immutable checkout before applying
+          # the LF-format contribution patch; never relax hunk matching.
+          git config --local core.autocrlf false
+          git checkout-index --force -- src/index.ts src/routes.ts tests/index-desktop.spec.ts
           git apply --check "$patch"
           git apply --include=tests/index-desktop.spec.ts "$patch"
           set +e
