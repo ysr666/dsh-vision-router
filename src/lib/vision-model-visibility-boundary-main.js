@@ -34,13 +34,23 @@ function visionPresentationTwinIntended(config, sourceProvider, modelId) {
   return config.autoWrapProviders !== false
 }
 
+function visionPresentationEquivalentModel(source, model) {
+  const other = source?.models?.find(candidate => candidate && candidate.id === model.id)
+  if (!other) return false
+  const key = value => JSON.stringify([
+    value.reasoning?.defaultEffort ?? null,
+    (value.reasoning?.efforts ?? []).map(effort => effort.id).sort(),
+  ])
+  return key(other) === key(model)
+}
+
 function visionPresentationAllModelsMirrored(source, target, allowModel) {
   if (!source || !target || !Array.isArray(target.models) || target.models.length === 0) return false
   return target.models.every((model) =>
     model &&
     typeof model.id === 'string' &&
     model.id !== '' &&
-    visionPresentationHasModel(source, model.id) &&
+    visionPresentationEquivalentModel(source, model) &&
     (!allowModel || allowModel(model.id)),
   )
 }
@@ -115,6 +125,11 @@ export function projectVisionModeDirectoryState(state, config) {
 
   const sourceByHiddenProvider = visionPresentationHiddenSources(state, config)
   if (sourceByHiddenProvider.size === 0) return state
+  // Never hide a route whose active/pending model is absent from the source.
+  for (const selection of [state.current, state.pending]) {
+    if (selection && sourceByHiddenProvider.has(selection.provider) && !visionPresentationHasModel(visionPresentationGroup(state.groups, sourceByHiddenProvider.get(selection.provider)), selection.model)) sourceByHiddenProvider.delete(selection.provider)
+  }
+  if (sourceByHiddenProvider.size === 0) return state
   const visibleGroups = state.groups.filter((group) => !sourceByHiddenProvider.has(group.id))
 
   const current = state.current
@@ -137,6 +152,10 @@ export function projectVisionModeDirectoryState(state, config) {
     ...state,
     groups: visibleGroups,
     current: visibleCurrent,
+    ...(Object.prototype.hasOwnProperty.call(state, 'pending') ? {
+      pending: state.pending && sourceByHiddenProvider.has(state.pending.provider)
+        ? { ...state.pending, provider: sourceByHiddenProvider.get(state.pending.provider) } : state.pending,
+    } : {}),
   }
 }
 
@@ -157,6 +176,8 @@ export function mapVisionPresentationSelection(state, selection, config) {
   const currentGroup = visionPresentationGroup(state.groups, current.provider)
   const sourceProvider = visionPresentationSourceForGroup(state.groups, currentGroup, config)
   if (!sourceProvider) return selection
+  // The selection mapping must follow the very same visible projection.
+  if (projectVisionModeDirectoryState(state, config).groups.some(group => group.id === current.provider)) return selection
   if (selection.provider !== sourceProvider) return selection
   if (!visionPresentationHasModel(currentGroup, selection.model)) return selection
   return {
@@ -171,6 +192,7 @@ const VISIBILITY_HELPER_SOURCE = [
   visionPresentationSourceName,
   visionPresentationHasOwn,
   visionPresentationTwinIntended,
+  visionPresentationEquivalentModel,
   visionPresentationAllModelsMirrored,
   visionPresentationGeneratedTwinSource,
   visionPresentationConfiguredWrapperSource,
@@ -234,14 +256,18 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
     if (!store || typeof store !== 'object') return store;
     var lastRaw;
     var lastConfigKey;
+    var lastOwnership;
     var lastProjected;
     function getSnapshot() {
       var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;
       var config = currentVisionConfig(settings);
       var key = configKey(config);
-      if (raw === lastRaw && key === lastConfigKey && lastProjected !== undefined) return lastProjected;
+      var authority = typeof window === 'undefined' ? undefined : window.__dshVisionRouterRootHardening;
+      var ownership = authority && typeof authority.getSnapshot === 'function' ? authority.getSnapshot() : undefined;
+      if (raw === lastRaw && key === lastConfigKey && ownership === lastOwnership && lastProjected !== undefined) return lastProjected;
       lastRaw = raw;
       lastConfigKey = key;
+      lastOwnership = ownership;
       lastProjected = projectVisionModeDirectoryState(raw, config);
       return lastProjected;
     }
@@ -379,23 +405,62 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
     });
   }
 
+  // Modern Host exports its resolver class. At the existing stock factory
+  // compatibility boundary, substitute only the exact class it registers.
+  // The original constructor, dependencies, catalog, scope ownership and
+  // disposal remain inherited; no other consumer or service is decorated.
+  function sharedResolverContext(ctx, Resolver) {
+    if (!ctx || typeof ctx.plugin !== 'function' || typeof Resolver !== 'function' ||
+        !Resolver.prototype || typeof Resolver.prototype.directoryFor !== 'function') return undefined;
+    var settings = bindVisionSettings(ctx);
+    class DvrPresentationResolver extends Resolver {
+      constructor(...args) {
+        super(...args);
+        this.dvrPresentationCache = new WeakMap();
+      }
+      rawDirectoryFor(sessionId) { return super.directoryFor(sessionId); }
+      directoryFor(sessionId) {
+        var raw = super.directoryFor(sessionId);
+        if (!raw || typeof raw !== 'object') return raw;
+        var cache = this.dvrPresentationCache;
+        if (!cache.has(raw)) cache.set(raw, wrapDirectory(raw, settings));
+        return cache.get(raw);
+      }
+    }
+    return new Proxy(ctx, {
+      get: function(target, property) {
+        if (property === 'plugin') {
+          var register = Reflect.get(target, property, target);
+          return function(plugin) {
+            var args = Array.prototype.slice.call(arguments);
+            if (plugin === Resolver) args[0] = DvrPresentationResolver;
+            return register.apply(target, args);
+          };
+        }
+        var value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+    });
+  }
+
   function decorate(plugin) {
     if (!plugin || typeof plugin !== 'object' || typeof plugin.apply !== 'function') return plugin;
     if (plugin.apply.__visionRouterModelVisibility) return plugin;
+    var Resolver = plugin.ModelDirectoryResolver;
+    var shared = typeof Resolver === 'function' && Resolver.prototype && typeof Resolver.prototype.directoryFor === 'function';
     try {
-      if (Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {
+      if (!shared && Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {
         plugin.inject = plugin.inject.concat('settingsScope');
       }
     } catch (_) {}
     var originalApply = plugin.apply;
     function apply(ctx) {
       var args = Array.prototype.slice.call(arguments);
-      args[0] = contextWithModelVisibility(ctx);
+      args[0] = shared ? sharedResolverContext(ctx, Resolver) || contextWithModelVisibility(ctx) : contextWithModelVisibility(ctx);
       return originalApply.apply(this, args);
     }
     try { Object.defineProperty(apply, '__visionRouterModelVisibility', { value: true }); } catch (_) {}
-    plugin.apply = apply;
-    return plugin;
+    return Object.assign({}, plugin, { apply: apply });
   }
 
   function patchLoader(loader) {

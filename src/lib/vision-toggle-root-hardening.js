@@ -303,7 +303,15 @@ const CLIENT_PRELUDE = String.raw`(function(){
           emit();
         }
         return snapshot;
-      }, function(){ return snapshot; })
+      }, function(){
+        // A retired plugin or a replaced route must never remain hidden on
+        // stale evidence. Failure is not proof of ownership; fail open.
+        if (snapshot.routes.size) {
+          snapshot = { revision: 0, routes: new Map() };
+          emit();
+        }
+        return snapshot;
+      })
       .finally(function(){ inFlight = null; });
     return inFlight;
   }
@@ -530,6 +538,16 @@ export function hardenVisionClientSource(source) {
   next = replaceAll(
     next,
     `    try {\n      if (Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {\n        plugin.inject = plugin.inject.concat('settingsScope');\n      }\n    } catch (_) {}\n`,
+    '',
+  )
+
+  next = replaceAll(
+    next,
+    `    try {
+      if (!shared && Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {
+        plugin.inject = plugin.inject.concat('settingsScope');
+      }
+    } catch (_) {}\n`,
     '',
   )
 

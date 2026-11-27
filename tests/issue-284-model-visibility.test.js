@@ -538,3 +538,29 @@ test('issue #284 real DSH model-selection dependency contract exposes settingsSc
   assert.ok(plugin.inject.includes('settingsScope'))
   assert.equal(plugin.inject.filter((name) => name === 'settingsScope').length, 1)
 })
+
+
+test('issue #864 keeps routes with distinct reasoning capabilities visible and does not remap their selections', async () => {
+  const input = state({
+    current: { provider: 'vendor-vision', model: 'm', reasoningEffort: 'high' },
+    groups: [
+      { id: 'vendor', name: 'Vendor', models: [{ id: 'm', name: 'm', reasoning: { efforts: [{id:'low'}], defaultEffort:'low' } }] },
+      { id: 'vendor-vision', name: 'Vendor + 自动识图', models: [{ id: 'm', name: 'm', reasoning: { efforts: [{id:'high'}], defaultEffort:'high' } }] },
+    ],
+  })
+  const { visibleDirectory, selected } = visibilityPluginHarness(input, { autoWrapProviders: true })
+  assert.deepEqual(ids(visibleDirectory.store.getSnapshot().groups), ['vendor','vendor-vision'])
+  await visibleDirectory.select({ provider:'vendor',model:'m',reasoningEffort:'low' })
+  assert.deepEqual(selected, [{provider:'vendor',model:'m',reasoningEffort:'low'}])
+})
+
+test('issue #864 projects pending route consistently and retains active unmirrored model', () => {
+  const input = { ...state({
+    current: {provider:'vendor-vision',model:'m'},
+    groups: [group('vendor','Vendor',['m']),group('vendor-vision','Vendor + 自动识图',['m'])],
+  }), pending:{provider:'vendor-vision',model:'m',reasoningEffort:'high'} }
+  const result = projectVisionModeDirectoryState(input,{autoWrapProviders:true})
+  assert.deepEqual(result.pending,{provider:'vendor',model:'m',reasoningEffort:'high'})
+  const missing = {...input,current:{provider:'vendor-vision',model:'missing'}}
+  assert.equal(projectVisionModeDirectoryState(missing,{autoWrapProviders:true}),missing)
+})
