@@ -1087,8 +1087,8 @@ try {
         !marketSpec.startsWith('file:') ||
         resolve(paths.profile, marketSpec.slice(5)).toLowerCase() !== resolve(process.env.DVR_MARKET_CANDIDATE_SPEC).toLowerCase() ||
         readJson(join(paths.profile, 'node_modules', 'dshmarket', 'package.json')).version !== process.env.DVR_MARKET_VERSION ||
-        !readFileSync(join(paths.profile, 'node_modules', 'dshmarket', 'lib', 'routes.js'), 'utf8').includes('readPostUpdateLoaderEntries')) {
-      throw Error('Preboot Host did not persist the exact local market candidate and npm DVR baseline: ' + marketSpec)
+        readFileSync(join(paths.profile, 'node_modules', 'dshmarket', 'lib', 'routes.js'), 'utf8').includes('readPostUpdateLoaderEntries')) {
+      throw Error('Preboot Host did not persist the unmodified-loader market fixture and npm DVR baseline: ' + marketSpec)
     }
     if (!['dsh-vision-router', 'dshmarket'].every(name =>
       persisted.dsh?.profile?.bundles?.includes(name))) {
@@ -1401,6 +1401,8 @@ try {
       assert.ok(restarted.entries.some(entry => (entry.id === id || entry.id === 'include:' + id) && entry.state === 'ACTIVE' && !entry.error), id + ' not active after restart')
     }
     assert.equal(installed('dsh-vision-router'), '3.4.0')
+    assert.equal(installed('dshmarket'), process.env.DVR_MARKET_VERSION)
+    assert.equal(readFileSync(join(paths.profile, 'node_modules', 'dshmarket', 'lib', 'routes.js'), 'utf8').includes('readPostUpdateLoaderEntries'), false, 'market loader repair must remain absent after restart')
     assert.ok(['session-vision-mode-boundary.js', 'reactive-routing-mounts.js'].every(name =>
       readFileSync(join(paths.profile, 'node_modules', 'dsh-vision-router', 'lib', name)).equals(readFileSync(join(dvrRoot, 'lib', name)))))
     const restartedToggle = await waitForVisionToggle(page, restartHostUrl)
@@ -1418,7 +1420,7 @@ try {
       visionToggleReady: true, candidateFilesMatch: true, probe: restarted }
     console.log('ISSUE_877_RESTART_ACCEPTANCE=' + JSON.stringify(final.restart))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
-    console.log(JSON.stringify({ ok: true, scope: 'real-combined-market-and-dvr-upgrade',
+    console.log(JSON.stringify({ ok: true, scope: 'real-dvr-only-market-upgrade',
       dsh: dshVersion, electronNode, marketVersion: final.marketVersion, installed: final.installed }))
   } else {
   const markers = boot.injections.filter((row) => row?.kind === 'script' && typeof row.text === 'string')
