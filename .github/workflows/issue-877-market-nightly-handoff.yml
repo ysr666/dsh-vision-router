@@ -1,0 +1,63 @@
+name: Issue 877 market nightly contribution checks
+on:
+  push:
+    branches: [diagnostics/issue-877-market-nightly-handoff]
+permissions:
+  contents: read
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dsh-market/dsh-market
+          ref: b6af7524fcab3d1e6ab78ab66f032768d9af9cb7
+          path: market
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 10
+      - name: Install immutable market dependencies
+        working-directory: market
+        run: npm ci
+      - name: Verify regression fails on original production source
+        working-directory: market
+        shell: bash
+        run: |
+          patch=../dvr/diagnostics/upstream-handoff/dshmarket-nightly1014-post-update-loader.patch
+          git apply --check "$patch"
+          git apply --include=tests/index-desktop.spec.ts "$patch"
+          set +e
+          npm exec -- vitest run tests/index-desktop.spec.ts -t 'reads the current root loader after the official desktop request context retires' > red.log 2>&1
+          result=$?
+          set -e
+          cat red.log
+          test "$result" -ne 0
+          grep -F 'reads the current root loader after the official desktop request context retires' red.log
+          grep -E "expected .undefined. to be .function." red.log
+          echo EXPECTED_REGRESSION_RED
+      - name: Apply only the production part and verify green
+        working-directory: market
+        shell: bash
+        run: |
+          git apply --exclude=tests/index-desktop.spec.ts ../dvr/diagnostics/upstream-handoff/dshmarket-nightly1014-post-update-loader.patch
+          git diff --check
+          npm exec -- vitest run tests/index-desktop.spec.ts
+      - name: Upstream requested checks
+        working-directory: market
+        run: |
+          npm run check
+          npm test
+          git diff --exit-code client/
