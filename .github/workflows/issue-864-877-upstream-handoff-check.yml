@@ -37,3 +37,60 @@ jobs:
           test -z "$(git -C host status --porcelain)"
           test -z "$(git -C market status --porcelain)"
           echo 'Both isolated upstream patches pass git apply --check; upstream trees unchanged.'
+
+  host-standalone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ysr666/deepseek-harness
+          ref: 530d89cf4bde095a3c053132eea5c8a24578332a
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.22.3
+      - name: Install and build standalone Host candidate
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Run native Host and browser directory regressions
+        run: pnpm exec vitest run packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts packages/api/session-controller/tests/session-models.host.spec.ts
+
+  market-standalone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dsh-market/dsh-market
+          ref: 18004a19b1c5bca1cd3ea405e2171a5fb3c089ce
+          path: market
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.21.0
+      - name: Apply exact production-only patch to disposable checkout
+        run: |
+          git -C market apply --check ../dvr/diagnostics/upstream-handoff/dshmarket-post-update-loader.patch
+          git -C market apply ../dvr/diagnostics/upstream-handoff/dshmarket-post-update-loader.patch
+          test "$(git -C market diff --name-only | sort | tr '\n' ' ')" = 'src/index.ts src/routes.ts '
+      - name: Install and run upstream typecheck and build
+        working-directory: market
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm run build
+      - name: Run upstream native regression suite
+        working-directory: market
+        run: npm test
