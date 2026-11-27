@@ -2,9 +2,9 @@ name: Issue 893 cold Desktop A-B
 on:
   pull_request:
     branches: [fix/893-batch-config-profile-reads]
-    paths:
-      - 'scripts/issue-893-desktop-profile-ab.mjs'
-      - '.github/workflows/issue-893-desktop-profile-ab.yml'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
