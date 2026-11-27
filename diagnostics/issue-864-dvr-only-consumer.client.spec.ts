@@ -20,8 +20,6 @@ import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client
 import { RemoteError, TestRemote } from '@deepseek-ai/dsh-client-test-runtime'
 import type { ModelSelection } from '@deepseek-ai/dsh-agent/types'
 import type { ModelSelectionProjection } from '@deepseek-ai/dsh-agent/types'
-import { brandString } from '@deepseek-ai/dsh-brand'
-import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm/types'
 import type { CommandContribution, PopupSelectSpec, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 import type { ModelSelectInjected } from '../src/client/slots.ts'
 import { apply, inject, ModelDirectoryResolver } from '../src/client/index.ts'
@@ -104,7 +102,7 @@ async function bench(locale: 'zh' | 'en' = 'zh', decorate?: (plugin: any) => any
         model: payload.model,
         ...payload.reasoningEffort === undefined
           ? {}
-          : { reasoningEffort: brandString<ReasoningEffortId>(payload.reasoningEffort) },
+          : { reasoningEffort: payload.reasoningEffort as NonNullable<ModelSelection['reasoningEffort']> },
       }
       projections.get(payload.sessionId)?.set({ lastUsed: null, next: selected })
       return Promise.resolve({ ok: true as const, value: { selected } })
