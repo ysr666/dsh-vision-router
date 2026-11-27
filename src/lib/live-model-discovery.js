@@ -258,6 +258,8 @@ function liveProxyConfig(ctx, fallbackConfig = {}) {
 function visionProviderPriority(ctx, fallbackConfig = {}) {
   const preferred = new Set()
   const collect = (value) => {
+    // Legacy single-backend configuration also needs startup evidence.
+    if (nonEmpty(value?.provider) !== undefined && value.provider !== 'vision-http') preferred.add(value.provider)
     for (const pair of Array.isArray(value?.providers) ? value.providers : []) {
       if (pair && nonEmpty(pair.provider) !== undefined && pair.provider !== 'vision-http') preferred.add(pair.provider)
     }
@@ -455,6 +457,10 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
   let invalidationTimer
   let deferredInvalidation = false
   let completionPumpQueued = false
+  // Full directory discovery is demand-driven. Explicit settings refreshes
+  // preserve the existing full-catalog behavior for this manager lifetime.
+  let fullDiscoveryRequested = false
+  const requestedProviders = new Set()
   let saveTail = Promise.resolve()
   const inflight = new Map()
   const inflightAuthority = new Map()
@@ -476,6 +482,9 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
       if (configuredProviders.has(provider)) continue
       providers.delete(provider)
       providerCacheChanged = true
+    }
+    for (const provider of requestedProviders) {
+      if (!configuredProviders.has(provider)) requestedProviders.delete(provider)
     }
     for (const provider of [...queued.keys()]) {
       if (!configuredProviders.has(provider)) queued.delete(provider)
@@ -694,15 +703,21 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     return true
   }
   const queue = (provider, priority = 10) => {
-    if (enqueue(provider, priority)) pump()
+    if (enqueue(provider, priority)) {
+      requestedProviders.add(provider)
+      pump()
+    }
   }
 
-  function queueConfigured() {
-    if (disposed || deferredInvalidation) return
+  function queueConfigured({ automatic = false } = {}) {
+    if (disposed) return
+    if (!automatic) fullDiscoveryRequested = true
+    if (deferredInvalidation) return
     const profilesGeneration = evidenceGeneration
     const raw = reconcileConfiguredProviders()
     const preferred = visionProviderPriority(ctx, fallbackConfig)
     for (const provider of Object.keys(raw)) {
+      if (!fullDiscoveryRequested && !preferred.has(provider) && !requestedProviders.has(provider)) continue
       const activeAuthority = inflightAuthority.get(provider)
       if (activeAuthority && sameDiscoveryAuthority(activeAuthority, currentDiscoveryAuthority(provider))) continue
       enqueue(provider, preferred.has(provider) ? 0 : 10)
@@ -727,8 +742,9 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     deferredInvalidation = false
   }
 
-  const invalidate = ({ defer = false } = {}) => {
+  const invalidate = ({ defer = false, automatic = false } = {}) => {
     if (disposed) return
+    if (!automatic) fullDiscoveryRequested = true
     // Revocation remains synchronous, including credential rotation. During
     // the bounded event burst neither old completions nor new dispatches
     // may certify evidence. Only the expensive re-read is deferred.
@@ -738,13 +754,13 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
     version += 1
     backoffUntil.clear()
     if (!defer) {
-      queueConfigured()
+      queueConfigured({ automatic: true })
       return
     }
     deferredInvalidation = true
     invalidationTimer = setTimeout(() => {
       clearDeferredInvalidation()
-      queueConfigured()
+      queueConfigured({ automatic: true })
     }, 25)
   }
 
@@ -759,6 +775,7 @@ export function createLiveModelDiscoveryManager(ctx, options = {}) {
       disposed = true
       clearDeferredInvalidation()
       queued.clear()
+      requestedProviders.clear()
       for (const controller of activeControllers.values()) {
         try { controller.abort() } catch {}
       }
@@ -776,7 +793,7 @@ export function installLiveModelDiscovery(ctx, options = {}) {
     if (startupTimer !== undefined || typeof setTimeout !== 'function') return
     startupTimer = setTimeout(() => {
       startupTimer = undefined
-      manager.queueConfigured()
+      manager.queueConfigured({ automatic: true })
     }, 750)
     startupTimer.unref?.()
   }
@@ -784,7 +801,7 @@ export function installLiveModelDiscovery(ctx, options = {}) {
 
   let lifecycleDisposed = false
   const onInvalidate = () => {
-    if (!lifecycleDisposed) manager.invalidate({ defer: true })
+    if (!lifecycleDisposed) manager.invalidate({ defer: true, automatic: true })
   }
   const disposers = []
   try {

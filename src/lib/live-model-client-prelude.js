@@ -515,8 +515,10 @@ export const LIVE_MODEL_CLIENT_PRELUDE = String.raw`(function(){
       }
     } catch (_) {}
     if (!lifecycleOwned) disposeLifecycle();
-    // Warm the Host cache only after Cordis owns this client generation.
-    if (lifecycleOwned) void live.refresh(true);
+    // Initial mount observes cached/priority evidence without probing the
+    // entire provider directory. The actual settings model reader calls
+    // augment(), which still requests a complete refresh on demand.
+    if (lifecycleOwned) void live.refresh(false);
     return wrapped;
   }
 

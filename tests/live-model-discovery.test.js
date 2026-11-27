@@ -1244,3 +1244,72 @@ test('deferred invalidation never admits an old in-flight completion (#893)', as
     await manager.dispose()
   }
 })
+
+
+test('automatic startup discovery probes only configured vision routes until full directory demand (#893)', async () => {
+  const calls = []
+  let visionConfig = { provider: 'vision-http', providers: [{ provider: 'vision-http', model: 'vision' }] }
+  const ctx = configEditorContext([
+    { entry: { options: { id: 'llm-pi-ai' } }, inherited: { providers: {
+      text: { baseURL: 'https://text.example/v1' },
+      vision: { baseURL: 'https://vision.example/v1' },
+      extra: { baseURL: 'https://extra.example/v1' },
+    } } },
+  ])
+  const get = ctx.get
+  ctx.get = name => name === 'settings' ? { get: ns => ns === 'vision-router' ? visionConfig : undefined } : get(name)
+  const mem = memoryCacheFs()
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile: '/virtual/live-models-demand.json', fsOps: mem.ops,
+    fetchImpl: async url => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ data: [{ id: 'model' }] }), { status: 200 })
+    },
+  })
+  try {
+    await manager.ready()
+    manager.queueConfigured({ automatic: true })
+    await waitForSettled(manager)
+    assert.deepEqual(calls, [], 'vision-http does not require probing unrelated pi providers')
+    visionConfig = { provider: 'vision', model: 'model' }
+    manager.invalidate({ defer: true, automatic: true })
+    await waitForSettled(manager)
+    assert.deepEqual(calls, ['https://vision.example/v1/models'], 'legacy configured backend is prioritized')
+    assert.equal(manager.hasModel('vision', 'model'), true)
+    await manager.snapshot({ schedule: true })
+    await waitForSettled(manager)
+    assert.deepEqual(new Set(calls), new Set(['https://vision.example/v1/models', 'https://text.example/v1/models', 'https://extra.example/v1/models']))
+    assert.equal(calls.length, 3, 'explicit directory demand does not re-probe a fresh route')
+    manager.invalidate({ defer: true, automatic: true })
+    assert.equal(manager.hasModel('vision', 'model'), false)
+    await waitForSettled(manager)
+    assert.equal(calls.length, 6, 'after directory demand, existing refresh behavior is preserved')
+  } finally {
+    await manager.dispose()
+  }
+})
+
+test('explicit directory demand arriving during automatic invalidation is not lost (#893)', async () => {
+  const ctx = configEditorContext([{ entry: { options: { id: 'llm-pi-ai' } }, inherited: {
+    providers: { text: { baseURL: 'https://text.example/v1' } },
+  } }])
+  const mem = memoryCacheFs()
+  const calls = []
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile: '/virtual/live-models-demand-pending.json', fsOps: mem.ops,
+    fetchImpl: async url => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ data: [{ id: 'model' }] }), { status: 200 })
+    },
+  })
+  try {
+    await manager.ready()
+    manager.invalidate({ defer: true, automatic: true })
+    await manager.snapshot({ schedule: true })
+    await waitForSettled(manager)
+    assert.deepEqual(calls, ['https://text.example/v1/models'])
+    assert.equal(manager.hasModel('text', 'model'), true)
+  } finally {
+    await manager.dispose()
+  }
+})
