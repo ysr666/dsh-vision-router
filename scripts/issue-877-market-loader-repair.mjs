@@ -34,8 +34,8 @@ edit('src/index.ts', [
 // resolved npm artifact with the local tarball of exactly the same version.
 edit('src/routes.ts', [
   [
-    '            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
-    '            if (name === \'dsh-vision-router\' && target === \'dsh-vision-router@3.4.0\' && process.env.DVR_CANDIDATE_SPEC) {\n              target = process.env.DVR_CANDIDATE_SPEC\n            }\n            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
+    '                  : await acceleratedTarget(gitSpec!, region)\n            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
+    '                  : await acceleratedTarget(gitSpec!, region)\n            if (name === \'dsh-vision-router\' && target === \'dsh-vision-router@3.4.0\' && process.env.DVR_CANDIDATE_SPEC) {\n              target = process.env.DVR_CANDIDATE_SPEC\n            }\n            if (drainCall !== undefined && (drainCall.role === \'probe\' || drainCall.expected !== null)) {\n              target = await pinDrainGithubTarget(target, region)',
   ],
 ])
 console.log('Applied disposable market Loader repair and local candidate substitution')
