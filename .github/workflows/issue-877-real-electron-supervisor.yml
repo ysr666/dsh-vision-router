@@ -22,6 +22,12 @@ jobs:
         with:
           path: dvr
           persist-credentials: false
+      - name: Checkout exact current main production candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f7306817118576099f98423840266363ada4f894
+          path: dvr-source
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: deepseek-ai/deepseek-harness
@@ -43,13 +49,18 @@ jobs:
       - name: Validate diagnostic script syntax
         working-directory: dvr
         run: node --check scripts/issue-877-electron-supervisor-upgrade.mjs
-      - name: Install build dependencies and verify DVR artifacts
-        working-directory: dvr
+      - name: Install and build exact main DVR artifacts
+        working-directory: dvr-source
+        shell: pwsh
         run: |
+          if ((git rev-parse HEAD).Trim() -ne 'f7306817118576099f98423840266363ada4f894') { throw "Unexpected DVR source HEAD" }
           pnpm install --frozen-lockfile --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm build
-      - name: Pack repaired DVR locally (never publish)
-        working-directory: dvr
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code
+      - name: Pack exact main DVR locally (never publish)
+        working-directory: dvr-source
         shell: pwsh
         run: |
           $dest = Join-Path $env:RUNNER_TEMP "dvr-877-candidate"
@@ -88,7 +99,7 @@ jobs:
         working-directory: dsh-host
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-host
-          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr-source
           DSH_EXPECTED_VERSION: 0.2.2-rc.5
           DVR_ISSUE_877_ELECTRON_UPGRADE: "1"
           DVR_MARKET_VERSION: ${{ matrix.market }}
