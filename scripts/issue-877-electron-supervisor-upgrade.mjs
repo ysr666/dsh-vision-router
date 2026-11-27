@@ -197,15 +197,9 @@ function writeHostCoreProbeFixture(directory) {
     `      name: ${name}`,
     '',
   ].join('\n'))
-  // This exact block is byte-identical in published 3.2.1, 3.4.0 and this branch.
-  const core = readFileSync(join(dvrRoot, 'src/index.js'), 'utf8').replace(/\r\n/g, '\n')
-  const mountStart = core.indexOf('  let wrapperRouteHandle\n')
-  const mountEnd = core.indexOf('  // #208:', mountStart)
-  if (mountStart < 0 || mountEnd < mountStart) throw Error('DVR routing mount source block not found')
-  writeFileSync(join(directory, 'routing-mount-probe.js'),
-    'export function mountProbe(ctx,wrapperRoute,chainRoute,routingEnabled,wrapperAdapter,chainAdapter) { let wrapperRegistered=false;\n' +
-    core.slice(mountStart, mountEnd) + '\nreturn syncRoutingMounts;\n}')
-  writeFileSync(join(directory, 'index.js'), String.raw`import { mountProbe } from './routing-mount-probe.js'
+  // Copy the candidate's actual production routing owner into this isolated fixture.
+  cpSync(join(dvrRoot, 'src/lib/reactive-routing-mounts.js'), join(directory, 'routing-mount-probe.js'))
+  writeFileSync(join(directory, 'index.js'), String.raw`import { installReactiveRoutingMounts } from './routing-mount-probe.js'
 const STATES = ['PENDING', 'LOADING', 'ACTIVE', 'FAILED', 'DISPOSED', 'UNLOADING']
 const SERVICE_NAMES = [
   'storage', 'storageDomain', 'sessionPersistence', 'workspaceRegistry',
@@ -296,7 +290,10 @@ async function routingControl(scope, invalidate) {
     name: 'dvr-877-routing-probe-' + suffix,
     inject: ['llm'],
     apply(inner) {
-      sync = mountProbe(inner, () => wrapper, () => chain, () => true, adapter, adapter)
+      sync = installReactiveRoutingMounts(inner, {
+        wrapperRoute: () => wrapper, chainRoute: () => chain, routingEnabled: () => true,
+        wrapperAdapter: adapter, chainAdapter: adapter, setWrapperRegistered() {},
+      })
       inner.on('llm/adapters-updated', () => {
         if (!invalidate || triggered || !inner.llm.listProviders().some(p => p.id === wrapper)) return
         triggered = true
