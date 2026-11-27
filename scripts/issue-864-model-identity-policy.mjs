@@ -154,6 +154,42 @@ try {
   // admission, not the product's normal browser upload. Test the actual
   // SessionCommandController separately: metadata remains truthfully text-only.
   const controller = new SessionCommandController(ctx, new ApiSessionAgentController(ctx), workspace)
+  // Separate counterexample: making an owned route invisible by returning an
+  // empty listModels() must not be confused with a supported presentation alias.
+  // Exercise both immutable Hosts' actual catalog and official selection gate.
+  const { buildModelCatalog, modelAvailable } = await host('packages/api/session-controller/src/catalog.ts')
+  let advertiseFixture = true
+  class CatalogVisibilityFixture extends NativeImageModel {
+    async listModels(provider) { return advertiseFixture ? super.listModels(provider) : [] }
+  }
+  const hiddenSelection = { provider: 'catalog-visibility-proof', model: 'test-mm' }
+  const hiddenRegistration = ctx.llm.registerAdapter([hiddenSelection.provider], new CatalogVisibilityFixture())
+  try {
+    const defaultSelection = { provider: 'source-proof', model: 'test-text' }
+    const visible = await buildModelCatalog(ctx, defaultSelection)
+    assert.ok(visible.groups.some(g => g.id === hiddenSelection.provider))
+    assert.equal(await modelAvailable(ctx, hiddenSelection), true)
+    advertiseFixture = false
+    const hidden = await buildModelCatalog(ctx, defaultSelection)
+    assert.ok(!hidden.groups.some(g => g.id === hiddenSelection.provider))
+    assert.ok(!hidden.routableProviders.includes(hiddenSelection.provider))
+    assert.equal(await modelAvailable(ctx, hiddenSelection), false)
+    const info = await ctx.llm.resolveModelInfo(hiddenSelection.provider, hiddenSelection.model)
+    assert.equal(info.id, hiddenSelection.model, 'core route still resolves without catalog membership')
+    assert.ok(info.inputModalities.includes('image'))
+    const prior = JSON.stringify(agent.session.snapshotEvents())
+    await assert.rejects(() => controller.selectModel({ sessionId: agent.id, ...hiddenSelection }),
+      { code: 'session/model-unavailable' })
+    assert.equal(JSON.stringify(agent.session.snapshotEvents()), prior, 'failed GUI selection must not change history')
+    assert.equal(agent.model.current().provider, defaultSelection.provider)
+    assert.equal(agent.model.current().model, defaultSelection.model)
+    console.log('ISSUE_864_CATALOG_HIDING_NEGATIVE=' + JSON.stringify({
+      hiddenFromSharedCatalog: true, coreResolves: true, guiAvailable: false,
+      officialSelectionRejected: true, noSessionMutation: true,
+    }))
+  } finally {
+    hiddenRegistration.dispose()
+  }
   const assertHostAdmissionBlocked = async enabled => {
     const eventCount = agent.session.snapshotEvents().length
     const requestCount = requests.length
