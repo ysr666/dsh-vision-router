@@ -137,6 +137,7 @@ export function projectVisionModeDirectoryState(state, config) {
     ...state,
     groups: visibleGroups,
     current: visibleCurrent,
+    ...(Object.prototype.hasOwnProperty.call(state, 'pending') ? { pending: state.pending && sourceByHiddenProvider.has(state.pending.provider) && visionPresentationHasModel(visionPresentationGroup(state.groups, sourceByHiddenProvider.get(state.pending.provider)), state.pending.model) ? { ...state.pending, provider: sourceByHiddenProvider.get(state.pending.provider) } : state.pending } : {}),
   }
 }
 
@@ -322,9 +323,46 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
     });
   }
 
-  function contextWithModelVisibility(ctx) {
-    if (!ctx || typeof ctx !== 'object' || typeof Proxy !== 'function') return ctx;
+  // Diagnostic-only consumer compatibility facade. The Host service and its
+  // real catalog remain untouched. Settings are borrowed from the existing
+  // stock-selector compatibility scope; unrelated modules add no dependency.
+  var sharedSettings;
+  var settingsGeneration;
+  var settingsListeners = new Set();
+  var stopSettings;
+  function publishSettings() {
+    settingsListeners.forEach(function(notify){ try { notify(); } catch (_) {} });
+  }
+  var settingsFace = {
+    getSnapshot: function(){ return sharedSettings && sharedSettings.getSnapshot(); },
+    subscribe: function(notify) {
+      settingsListeners.add(notify);
+      return function(){ settingsListeners.delete(notify); };
+    }
+  };
+  function ownSettings(ctx) {
     var settings = bindVisionSettings(ctx);
+    if (!settings) return;
+    var generation = {};
+    if (stopSettings) stopSettings();
+    settingsGeneration = generation;
+    sharedSettings = settings;
+    stopSettings = typeof settings.subscribe === 'function' ? settings.subscribe(publishSettings) : undefined;
+    publishSettings();
+    if (typeof ctx.effect === 'function') ctx.effect(function(){ return function(){
+      if (settingsGeneration !== generation) return;
+      if (stopSettings) stopSettings();
+      stopSettings = undefined;
+      sharedSettings = undefined;
+      settingsGeneration = undefined;
+      publishSettings();
+    }; }, 'DVR diagnostic: presentation settings generation');
+  }
+
+  function contextWithModelVisibility(ctx, stock) {
+    if (!ctx || typeof ctx !== 'object' || typeof Proxy !== 'function') return ctx;
+    if (stock) ownSettings(ctx);
+    var settings = settingsFace;
     var modelCache = typeof WeakMap === 'function' ? new WeakMap() : undefined;
     function modelsView(models) {
       if (!models || (typeof models !== 'object' && typeof models !== 'function')) return models;
@@ -333,69 +371,60 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
       if (modelCache) modelCache.set(models, wrapped);
       return wrapped;
     }
+    var scopeCache = new WeakMap();
     function scopeView(scope) {
       if (!scope || typeof scope !== 'object') return scope;
-      return new Proxy(scope, {
+      if (scopeCache.has(scope)) return scopeCache.get(scope);
+      var view = new Proxy(scope, {
         get: function(target, property) {
           if (property === 'modelDirectories') return modelsView(Reflect.get(target, property, target));
           if (property === 'get') {
             var get = Reflect.get(target, property, target);
             if (typeof get !== 'function') return get;
             return function(name) {
-              var args = Array.prototype.slice.call(arguments, 1);
-              var value = get.apply(target, [name].concat(args));
+              var value = get.apply(target, arguments);
               return name === 'modelDirectories' ? modelsView(value) : value;
+            };
+          }
+          if (property === 'inject') {
+            var inject = Reflect.get(target, property, target);
+            if (typeof inject !== 'function') return inject;
+            return function(dependencies, callback) {
+              var args = Array.prototype.slice.call(arguments);
+              if (typeof callback === 'function') args[1] = function(child) {
+                var forwarded = Array.prototype.slice.call(arguments);
+                forwarded[0] = scopeView(child);
+                return callback.apply(this, forwarded);
+              };
+              return inject.apply(target, args);
             };
           }
           var value = Reflect.get(target, property, target);
           return typeof value === 'function' ? value.bind(target) : value;
         }
       });
+      scopeCache.set(scope, view);
+      return view;
     }
-    return new Proxy(ctx, {
-      get: function(target, property) {
-        if (property === 'modelDirectories') return modelsView(Reflect.get(target, property, target));
-        if (property === 'get') {
-          var get = Reflect.get(target, property, target);
-          if (typeof get !== 'function') return get;
-          return function(name) {
-            var args = Array.prototype.slice.call(arguments, 1);
-            var value = get.apply(target, [name].concat(args));
-            return name === 'modelDirectories' ? modelsView(value) : value;
-          };
-        }
-        if (property === 'inject') {
-          var inject = Reflect.get(target, property, target);
-          if (typeof inject !== 'function') return inject;
-          return function(dependencies, callback) {
-            var rest = Array.prototype.slice.call(arguments, 2);
-            if (typeof callback !== 'function') return inject.apply(target, [dependencies, callback].concat(rest));
-            return inject.apply(target, [dependencies, function(scope){ return callback(scopeView(scope)); }].concat(rest));
-          };
-        }
-        var value = Reflect.get(target, property, target);
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-    });
+    return scopeView(ctx);
   }
 
-  function decorate(plugin) {
+  function decorate(plugin, stock) {
     if (!plugin || typeof plugin !== 'object' || typeof plugin.apply !== 'function') return plugin;
     if (plugin.apply.__visionRouterModelVisibility) return plugin;
     try {
-      if (Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {
-        plugin.inject = plugin.inject.concat('settingsScope');
+      if (stock && Array.isArray(plugin.inject) && !plugin.inject.includes('settingsScope')) {
+        plugin = Object.assign({}, plugin, { inject: plugin.inject.concat('settingsScope') });
       }
     } catch (_) {}
     var originalApply = plugin.apply;
     function apply(ctx) {
       var args = Array.prototype.slice.call(arguments);
-      args[0] = contextWithModelVisibility(ctx);
+      args[0] = contextWithModelVisibility(ctx, stock);
       return originalApply.apply(this, args);
     }
     try { Object.defineProperty(apply, '__visionRouterModelVisibility', { value: true }); } catch (_) {}
-    plugin.apply = apply;
-    return plugin;
+    return Object.assign({}, plugin, { apply: apply });
   }
 
   function patchLoader(loader) {
@@ -403,10 +432,10 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
     if (typeof loader.load === 'function' && !loader.load.__visionRouterModelVisibility) {
       var original = loader.load;
       function load(spec) {
-        if (spec && spec.id === TARGET && typeof spec.factory === 'function') {
+        if (spec && spec.id !== 'dsh-vision-router' && spec.chunk === undefined && typeof spec.factory === 'function') {
           var factory = spec.factory;
           spec = Object.assign({}, spec, {
-            factory: function(require) { return decorate(factory(require)); }
+            factory: function(require) { return decorate(factory(require), spec.id === TARGET); }
           });
         }
         return original.call(this, spec);
