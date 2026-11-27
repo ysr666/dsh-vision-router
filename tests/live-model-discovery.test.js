@@ -1072,3 +1072,75 @@ test('a throwing config editor never breaks the discovery path', () => {
   const ctx = configEditorContext(() => { throw new Error('editor unavailable') })
   assert.deepEqual(configuredProviderTransports(ctx), [])
 })
+
+
+test('profile transport enumeration reads the editor once and independent reads stay fresh (#893)', () => {
+  let reads = 0
+  let baseURL = 'https://first.example/v1'
+  const ctx = configEditorContext(() => {
+    reads += 1
+    return [{
+      entry: { options: { id: 'llm-pi-ai' } },
+      inherited: { providers: {
+        first: { baseURL },
+        second: { baseURL: 'https://second.example/v1' },
+        third: { baseURL: 'https://third.example/v1' },
+      } },
+    }]
+  })
+  assert.equal(configuredProviderTransports(ctx).length, 3)
+  assert.equal(reads, 1)
+  baseURL = 'https://updated.example/v1'
+  assert.equal(providerTransportFor(ctx, 'first').baseURL, baseURL)
+  assert.equal(reads, 2, 'no TTL or cross-call stale transport')
+})
+
+test('discovery shares one synchronous profile read, but deferred dispatch reads again (#893)', async () => {
+  let reads = 0
+  let thirdURL = 'https://third.example/v1'
+  const ctx = configEditorContext(() => {
+    reads += 1
+    return [{
+      entry: { options: { id: 'llm-pi-ai' } },
+      inherited: { providers: {
+        first: { baseURL: 'https://first.example/v1' },
+        second: { baseURL: 'https://second.example/v1' },
+        third: { baseURL: thirdURL },
+      } },
+    }]
+  })
+  const mem = memoryCacheFs()
+  const calls = []
+  let release
+  const firstGate = new Promise(resolve => { release = resolve })
+  const manager = createLiveModelDiscoveryManager(ctx, {
+    cacheFile: '/virtual/live-models-batch-893.json',
+    fsOps: mem.ops,
+    concurrency: 2,
+    fetchImpl: async url => {
+      calls.push(String(url))
+      await firstGate
+      return new Response(JSON.stringify({ data: [{ id: 'model' }] }), { status: 200 })
+    },
+  })
+  try {
+    await manager.ready()
+    assert.equal(reads, 1)
+    manager.queueConfigured()
+    assert.equal(reads, 2, 'reconciliation and immediately dispatched plans share one read')
+    // The third plan cannot start until a concurrency slot opens.
+    // Changing the configuration before that async boundary must not reuse
+    // the initial snapshot, even if no Host invalidation event is forwarded.
+    const beforeDeferred = reads
+    thirdURL = 'https://updated.example/v1'
+    release()
+    await waitForSettled(manager)
+    assert.equal(reads, beforeDeferred + 1, 'a deferred dispatch reads fresh profiles')
+    assert.equal(calls.length, 3)
+    assert.ok(calls.includes('https://updated.example/v1/models'))
+    assert.ok(!calls.includes('https://third.example/v1/models'))
+  } finally {
+    release()
+    await manager.dispose()
+  }
+})
