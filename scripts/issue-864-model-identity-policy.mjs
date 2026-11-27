@@ -99,14 +99,16 @@ await ctx.plugin(AgentLoop, { agents: [] })
 await ctx.plugin(Commands)
 await ctx.plugin(Gateway)
 const adapter = ctx.llm.registerAdapter(['source-proof'], new NativeImageModel())
-let handle, observer
+let handle, observer, legacyHandle, legacyObserver, legacyAdapter, diagnosticCommand
 const workspace = mkdtempSync(join(tmpdir(), 'dvr-864-identity-'))
 const carrier = new AbortController()
 try {
   await ctx.plugin({ inject: dvr.inject, apply(scope) {
     return dvr.apply(scope, dvr.Config({
       tool: true, routing: false, progressiveTools: false,
-      wrapperRoute: '', chainRoute: '', autoWrapProviders: false, wrappedProviders: [],
+      wrapperRoute: '', chainRoute: '', autoWrapProviders: false,
+      // Dormant until the separate explicit legacy-migration fixture registers its source.
+      wrappedProviders: [{ provider: 'legacy-source', models: ['test-text'] }],
       rewriteImages: false, autoActivateOnImage: false, instantDescribe: false,
       providers: [{ provider: 'source-proof', model: 'test-mm', fallbacks: [] }],
       structuredVisionBootstrap: false, freeFallback: false, downscale: false, cache: false,
@@ -210,7 +212,7 @@ try {
     assert.equal(ctx.tools.get('vision_materialize', agent), undefined, 'OFF must hide the actual scoped tool')
     await assert.rejects(() => retained.execute(args, exec()), { code: 'VISION_MODE_DISABLED' })
   }
-  const dispatch = async (id, enabled, name = 'vision_materialize') => {
+  const dispatch = async (id, enabled, name = 'vision_materialize', submit) => {
     const offset = requests.length
     const visualOffset = visualRequests.length
     assert.ok(modelVisibleHandle)
@@ -219,7 +221,8 @@ try {
       ? { attachmentIds: [modelVisibleHandle], question: 'Describe this fixture image.' }
       : { image: modelVisibleHandle }
     pendingCall = { id, name, args: callArgs }
-    agent.followup(llm.createUserMessage({ source: { kind: 'user' },
+    if (submit) await submit()
+    else agent.followup(llm.createUserMessage({ source: { kind: 'user' },
       content: [{ type: 'text', text: 'Exercise local image tool ' + id }] }))
     await agent.whenIdle()
     assert.equal(pendingCall, undefined, 'model call must consume the scripted response')
@@ -266,6 +269,33 @@ try {
   assert.equal(materialized.bytes, originalBytes.length)
   assert.deepEqual(readFileSync(materialized.path), originalBytes, 'actual image tool must recover original attachment bytes')
   const nativeResults = [await dispatch('dvr864-on', true), await dispatch('dvr864-describe', true, 'vision_describe')]
+  // Separate positive control for an explicit, user-invoked image command.
+  // The Host Commands service has its own documented attachment admission.
+  // This is a diagnostic-only alternative interaction, NOT an intercept of
+  // ordinary composer submissions or a proposal to silently rewrite them.
+  diagnosticCommand = ctx.commands.register({
+    name: 'dvr864-diagnostic-image', description: 'Explicit diagnostic image submission',
+    input: { hint: 'question', attachments: true }, recordInput: false,
+    handler: async ({ agent: receiver, rawInput, attachments, signal }) => {
+      assert.equal(receiver, agent)
+      signal.throwIfAborted()
+      assert.equal(attachments.length, 1)
+      assert.equal(attachments[0].type, 'image')
+      assert.equal(attachments[0].attachment.attachmentId, attachment.attachmentId)
+      receiver.followup(llm.createUserMessage({ source: { kind: 'user' },
+        content: [{ type: 'text', text: rawInput.trim() }, ...attachments] }))
+      return { kind: 'success' }
+    },
+  })
+  const explicitCommandResult = await dispatch('dvr864-explicit-command', true, 'vision_describe', async () => {
+    const execution = await ctx.commands.execute(agent, '/dvr864-diagnostic-image Inspect this image',
+      [{ type: 'image', data: originalBytes.toString('base64'), mediaType: 'image/png', name: 'command.png' }],
+      AbortSignal.timeout(10000))
+    assert.equal(execution?.result?.kind, 'success', JSON.stringify(execution))
+  })
+  assert.equal(explicitCommandResult.visualSubcalls, 1)
+  console.log('ISSUE_864_EXPLICIT_COMMAND_PROOF=' + JSON.stringify({ ...explicitCommandResult,
+    ordinaryPromptStillBlocked: true, publicCommandAttachmentAdmission: true, modelIdentityUnchanged: true }))
   await set(false)
   results.push(await turn(false, false))
   await expectDenied()
@@ -274,10 +304,71 @@ try {
   assert.equal(agent.model.current().provider, 'source-proof')
   assert.equal(agent.model.current().model, 'test-text')
   assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
-  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ hostUploadGate, results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, modelVisibleHandle, visualSubcalls: visualRequests.length, transport: 'synthetic main and vision model streams; official NativeToolExecutor and real DVR tool/backend dispatch' }))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ hostUploadGate, explicitCommandResult, results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, modelVisibleHandle, visualSubcalls: visualRequests.length, transport: 'synthetic main and vision model streams; official NativeToolExecutor and real DVR tool/backend dispatch' }))
+
+  // Separate explicit legacy-session migration. The source registration is
+  // added only now, so the first proof had no generated twin at all.
+  legacyAdapter = ctx.llm.registerAdapter(['legacy-source'], new NativeImageModel())
+  assert.ok(providers().includes('legacy-source-vision'), 'DVR must create its real owned twin')
+  legacyHandle = await ctx.agents.create({
+    sessionId: 'dvr-864-legacy-migration', meta: { cwd: workspace },
+    agentOptions: { provider: 'legacy-source-vision', model: 'test-text', reasoningEffort: 'high' },
+  })
+  const oldAgent = legacyHandle.agent
+  const original = llm.createUserMessage({ source: { kind: 'user' },
+    content: [{ type: 'text', text: 'Historical image in legacy session' }, { type: 'image', attachment }] })
+  oldAgent.followup(original)
+  await oldAgent.whenIdle()
+  assert.equal(oldAgent.model.current().provider, 'legacy-source-vision')
+  assert.equal(oldAgent.model.current().reasoningEffort, 'high')
+  assert.ok(oldAgent.session.requestHeader()?.tools?.some(t => t.name === 'vision_describe'), 'legacy tools ON')
+  const prefix = oldAgent.session.snapshotEvents()
+  const prefixJson = JSON.stringify(prefix)
+  const oldSelectionEvents = prefix.filter(e => e.type === 'model/selection').length
+  // A deliberate explicit source-model selection is an ordinary Host event.
+  // It is NOT an automatic or silent migration. Preserve the chosen effort.
+  oldAgent.model.select({ ...oldAgent.model.current(), provider: 'legacy-source' })
+  const observeLegacy = await ctx.typertGateway.stream({ peer: owner, namespace: 'dvrNativeVision',
+    method: 'observe', args: { agentId: oldAgent.id }, signal: AbortSignal.timeout(30000) })
+  legacyObserver = observeLegacy[Symbol.asyncIterator]()
+  const migrated = (await legacyObserver.next()).value
+  assert.equal(migrated.kind, 'native', JSON.stringify(migrated))
+  assert.equal(migrated.enabled, false, 'route change resets legacy ON; do not silently preserve it')
+  const next = legacyObserver.next()
+  const receipt = await ctx.typertGateway.invoke({ peer: owner, namespace: 'dvrNativeVision', method: 'set',
+    args: { agentId: oldAgent.id, request: { enabled: true, selection: { provider: 'legacy-source', model: 'test-text' } } },
+    signal: AbortSignal.timeout(8000) })
+  assert.equal(receipt.kind, 'success', JSON.stringify(receipt))
+  assert.equal((await next).value.enabled, true)
+  const beforeDispatch = requests.length
+  oldAgent.followup(llm.createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Continue on the source model' }] }))
+  await oldAgent.whenIdle()
+  assert.equal(requests.length, beforeDispatch + 1)
+  const continued = requests.at(-1)
+  assert.equal(continued.provider, 'legacy-source')
+  assert.equal(continued.model, 'test-text')
+  assert.equal(continued.reasoningEffort, 'high')
+  assert.ok(oldAgent.session.requestHeader()?.tools?.some(t => t.name === 'vision_describe'))
+  const after = oldAgent.session.snapshotEvents()
+  assert.equal(JSON.stringify(after.slice(0, prefix.length)), prefixJson, 'migration must not rewrite prior durable history')
+  assert.equal(after.filter(e => e.type === 'model/selection').length, oldSelectionEvents + 1)
+  const restored = oldAgent.session.deriveMessages().find(m => m.id === original.id)
+  assert.equal(restored?.content.find(b => b.type === 'image')?.attachment?.attachmentId, attachment.attachmentId)
+  const stored = await ctx.attachments.readImage(attachment)
+  assert.deepEqual(Buffer.from(stored.data), originalBytes)
+  console.log('ISSUE_864_EXPLICIT_LEGACY_MIGRATION=' + JSON.stringify({
+    explicitSelectionEvents: 1, explicitPolicyEnable: true, legacyRoute: 'legacy-source-vision',
+    originalProvider: continued.provider, reasoningEffort: continued.reasoningEffort,
+    unchangedDurablePrefix: true, historicalImageBytesPreserved: true, automaticMigration: false,
+    wrapperRetirementProven: false, coldResumeProven: false,
+  }))
 } finally {
   carrier.abort()
   await observer?.return?.().catch(() => {})
+  await legacyObserver?.return?.().catch(() => {})
+  if (legacyHandle) await legacyHandle.dispose()
+  diagnosticCommand?.()
+  legacyAdapter?.dispose?.()
   if (handle) await handle.dispose()
   adapter?.dispose?.()
   await ctx.fiber.dispose()
