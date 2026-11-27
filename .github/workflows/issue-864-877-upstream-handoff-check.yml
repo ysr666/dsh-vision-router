@@ -1,0 +1,39 @@
+name: Check isolated upstream handoff patches
+on:
+  push:
+    branches: [diagnostics/upstream-handoff-864-877]
+    paths:
+      - 'diagnostics/upstream-handoff/**'
+      - '.github/workflows/issue-864-877-upstream-handoff-check.yml'
+permissions:
+  contents: read
+jobs:
+  patch-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 4b399c39a6d1479cd84ca591b4d7c88e24d38a96
+          path: host
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: dsh-market/dsh-market
+          ref: 18004a19b1c5bca1cd3ea405e2171a5fb3c089ce
+          path: market
+          persist-credentials: false
+      - name: Check exact Host and market patch applicability without changing files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C host apply --check ../dvr/diagnostics/upstream-handoff/dsh-shared-model-directory.patch
+          git -C market apply --check ../dvr/diagnostics/upstream-handoff/dshmarket-post-update-loader.patch
+          test -z "$(git -C host status --porcelain)"
+          test -z "$(git -C market status --porcelain)"
+          echo 'Both isolated upstream patches pass git apply --check; upstream trees unchanged.'
