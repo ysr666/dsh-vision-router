@@ -64,11 +64,25 @@ test('issue #865: native model vision permission changes never select a new adap
   assert.equal(f.selectCount(), 0, 'policy-only control must not call Agent.model.select')
 })
 
-test('issue #865: reject text-only model, disabled tools, malformed invocations and attachments', async () => {
+test('issue #864: verified text source uses the same independent Session policy', async () => {
   const textOnly = fixture({ inputModalities: ['text'] })
-  assert.equal((await textOnly.call('on')).kind, 'error')
-  assert.equal((await textOnly.call('off')).kind, 'error')
-  assert.equal(textOnly.policies.size, 0)
+  assert.equal((await textOnly.call('on')).kind, 'success')
+  assert.equal(textOnly.policies.get(textOnly.agent.id).enabled, true)
+  const off = await textOnly.call('off')
+  assert.equal(off.kind, 'success')
+  assert.match(off.text, /selected text model is unchanged/)
+  assert.doesNotMatch(off.text, /Native image input remains available/)
+  assert.equal(textOnly.policies.get(textOnly.agent.id).enabled, false)
+  assert.equal(textOnly.selectCount(), 0)
+  for (const inputModalities of [[], ['audio'], null]) {
+    const unsupported = fixture({ inputModalities })
+    assert.equal((await unsupported.call('on')).kind, 'error')
+    assert.equal(unsupported.policies.size, 0)
+    assert.equal(unsupported.selectCount(), 0)
+  }
+})
+
+test('issue #865: reject disabled tools, malformed invocations and attachments', async () => {
   const disabled = fixture({ enabled: false })
   assert.equal((await disabled.call('on')).kind, 'error')
   assert.equal(disabled.policies.size, 0)
@@ -301,7 +315,12 @@ test('issue #865 B2: unsupported and stale control views are not interpreted as 
   const f = fixture()
   const store = { get() { return undefined }, async set() { throw Error('no writes') } }
   const text = fixture({ inputModalities: ['text'] })
-  assert.equal((await readNativeVisionControlState(text.ctx, store, text.agent)).kind, 'legacy')
+  const textView = await readNativeVisionControlState(text.ctx, store, text.agent)
+  assert.equal(textView.kind, 'native')
+  assert.equal(textView.enabled, false)
+  assert.equal(textView.canEnable, true)
+  const unsupported = fixture({ inputModalities: ['audio'] })
+  assert.equal((await readNativeVisionControlState(unsupported.ctx, store, unsupported.agent)).kind, 'unavailable')
   const malformed = { ...f.agent, id: 'not-the-authorized-session' }
   assert.equal((await readNativeVisionControlState(f.ctx, store, malformed)).kind, 'unavailable')
   let done

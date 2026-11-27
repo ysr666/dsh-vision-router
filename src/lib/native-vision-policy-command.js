@@ -60,8 +60,8 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
     const resolved = await resolveNativeControlTarget(ctx, agent, signal)
     if (resolved.kind !== 'native') {
       return result('error', resolved.kind === 'legacy'
-        ? 'The selected route is not a verified native image-capable source adapter. Keep the existing DVR vision wrapper for this provider.'
-        : 'Cannot validate the current native model for this Vision-mode command.')
+        ? 'The selected route is a legacy DVR wrapper. Keep its existing route control until the Session is migrated.'
+        : 'Cannot validate the current source model for this Vision-mode command.')
     }
     const { target } = resolved
     if (!routeStillCurrent() || !isSameSelection(selection, target.selection)) {
@@ -99,7 +99,9 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
     return result('success',
       (enabled
         ? 'DVR precision tools enabled for this Session. The selected model is unchanged.'
-        : 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.') + durabilityNote)
+        : target.nativeImageInput
+          ? 'DVR precision tools disabled for this Session. Native image input remains available; the selected model is unchanged.'
+          : 'DVR vision tools disabled for this Session. The selected text model is unchanged.') + durabilityNote)
   }
   // Only the owning Session lifecycle boundary may advance the route fence.
   // A->B->A is not the original intent even if the final route strings match.
@@ -118,12 +120,12 @@ export function createNativeVisionPolicyMutator(ctx, store, { toolEnabled = () =
 /**
  * The official DSH command plane is Session-authorized by the Host, unlike a
  * private unauthenticated HTTP endpoint. This is the Host half of a future
- * composer control that can toggle native-multimodal visual *enhancement*
- * without selecting a different model. It deliberately does NOT replace the
- * legacy text-model image-admission wrapper.
+ * composer control that toggles DVR-owned vision tools for verified source
+ * models without selecting another model. Existing wrappers still use their
+ * legacy route control pending migration.
  *
- * Native pixels remain available to the native model when enhancement is OFF.
- * Only DVR-owned precision tools and instructions follow this policy.
+ * Native pixels remain available when a native model's enhancement is OFF;
+ * text models use Host attachment projection and DVR's authorized image tools.
  */
 export function installNativeVisionPolicyCommand(ctx, store, options = {}) {
   if (typeof ctx?.inject !== 'function' || typeof store?.get !== 'function' ||
@@ -132,7 +134,7 @@ export function installNativeVisionPolicyCommand(ctx, store, options = {}) {
   ctx.inject(['commands'], scope => {
     scope.commands.register({
       name: NAME,
-      description: 'Control DVR precision vision tools on an image-capable model without changing the selected model',
+      description: 'Control DVR vision tools on the current source model without changing its identity',
       input: { hint: 'on|off|status' },
       handler: async ({ agent, rawInput, attachments, signal }) => {
         if (signal?.aborted) return result('error', 'Vision-mode command was cancelled.')

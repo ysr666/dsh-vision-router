@@ -33,19 +33,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: ${{ matrix.node }}
-      - name: Diagnostic only - admit verified text-capable source to existing Session policy
+      - name: Build actual DVR candidate and run control regression tests
         working-directory: dvr
         run: |
-          node --input-type=module - <<'JS'
-          import { readFileSync, writeFileSync } from 'node:fs'
-          const p = 'src/lib/native-vision-control-state.js'
-          const original = readFileSync(p, 'utf8')
-          const anchor = "  if (!info.inputModalities.includes('image')) {\n    return { kind: 'legacy', reason: 'text-only', selection }\n  }"
-          if (original.split(anchor).length !== 2) throw Error('unexpected exact source')
-          writeFileSync(p, original.replace(anchor, "  if (!info.inputModalities.includes('image') && !info.inputModalities.includes('text')) {\n    return { kind: 'legacy', reason: 'text-only', selection }\n  }"))
-          JS
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
+          node --test tests/issue-865-native-vision-policy-command.test.js
+          git diff --exit-code
       - name: Build original unmodified Host
         working-directory: dsh-host
         env:

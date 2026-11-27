@@ -68,10 +68,16 @@ export async function resolveNativeControlTarget(ctx, agent, signal) {
       (info.id !== undefined && info.id !== selection.model)) {
     return { kind: 'unavailable', reason: 'metadata-unavailable' }
   }
-  if (!info.inputModalities.includes('image')) {
-    return { kind: 'legacy', reason: 'text-only', selection }
+  // The Host owns text-model attachment projection. DVR consumes its
+  // authorized attachment handles through the same Session tool policy;
+  // no synthetic provider selection is needed for either modality.
+  const nativeImageInput = info.inputModalities.includes('image')
+  if (!nativeImageInput && !info.inputModalities.includes('text')) {
+    return { kind: 'unavailable', reason: 'metadata-unavailable' }
   }
-  return { kind: 'native', target }
+  // "native" is the existing wire control kind, not a capability claim.
+  // Keep the modality private to this validated target.
+  return { kind: 'native', target: { ...target, nativeImageInput } }
 }
 
 /**
