@@ -214,7 +214,6 @@ const projection = (id: string) => ({ sessionId: sid(id) })
 describe('DVR-only narrow shared resolver over original Host directory', () => {
   it('stock picker and actual independent Claude catalog agree while raw route authority and original registry remain intact', async () => {
     const mod = await import(pathToFileURL(process.env.DVR_864_PRELUDE!).href)
-    const { createModelCatalog } = await import('./dvr-claude-catalog.mjs')
     const evidence = JSON.parse(readFileSync(process.env.DVR_864_CATALOG!, 'utf8'))
     let spec: any
     const loader = { load(input: any) { spec = input; return input } }
@@ -234,7 +233,14 @@ describe('DVR-only narrow shared resolver over original Host directory', () => {
       return spec.factory(() => ({}))
     }
     const b = await bench('zh', plugin => decorate('@deepseek-ai/dsh-client-ui-model-selection', plugin))
+    const { JSDOM } = await import('jsdom')
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', { url:'http://localhost/', pretendToBeVisual:true })
     try {
+      for (const key of ['window','document','navigator','MutationObserver','HTMLElement','Element','Node','DOMParser','localStorage','requestAnimationFrame','cancelAnimationFrame']) {
+        const value = key === 'window' ? dom.window : dom.window[key as keyof typeof dom.window]
+        vi.stubGlobal(key, typeof value === 'function' && (key === 'requestAnimationFrame' || key === 'cancelAnimationFrame') ? value.bind(dom.window) : value)
+      }
+      const { createModelCatalog } = await import('./dvr-claude-catalog.mjs')
       const { groups, source, twin, foreign } = evidence
       b.setGroups(groups)
       b.setHostCurrent({provider: source, model:'m1'})
@@ -289,6 +295,10 @@ describe('DVR-only narrow shared resolver over original Host directory', () => {
       expect(decorate('dsh-vision-router',own)).toBe(own)
       claude.reset()
       await cf.dispose()
-    } finally { await b.ctx.fiber.dispose() }
+    } finally {
+      await b.ctx.fiber.dispose()
+      dom.window.close()
+      vi.unstubAllGlobals()
+    }
   })
 })
