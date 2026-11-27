@@ -18,7 +18,7 @@ const [
   { default: AgentRegistry }, { default: AgentLoop }, { default: Commands },
   { default: AttachmentLocal }, dvr,
   { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
-  NativeExecutor, { toolCallResponse },
+  NativeExecutor, { toolCallResponse }, { SessionCommandController }, { ApiSessionAgentController },
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -39,6 +39,8 @@ const [
   host('packages/api/gateway/src/index.ts'),
   host('packages/core/tool-executor-native/src/index.ts'),
   host('packages/core/agent-loop/tests/mock-adapter.ts'),
+  host('packages/api/session-controller/src/commands.ts'),
+  host('packages/api/session-controller/src/agent.ts'),
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
@@ -146,6 +148,28 @@ try {
     mediaType: 'image/png', name: 'identity-proof.png',
   })
   fixtureAttachmentId = attachment.attachmentId
+  // Direct agent.followup deliberately proves execution *after* attachment
+  // admission, not the product's normal browser upload. Test the actual
+  // SessionCommandController separately: metadata remains truthfully text-only.
+  const controller = new SessionCommandController(ctx, new ApiSessionAgentController(ctx), workspace)
+  const assertHostAdmissionBlocked = async enabled => {
+    const eventCount = agent.session.snapshotEvents().length
+    const requestCount = requests.length
+    const result = await controller.prompt({
+      sessionId: agent.id, requestId: 'dvr864-host-admission-' + enabled,
+      mode: 'queue', content: [{ type: 'text', text: 'Check native Host upload' },
+        { type: 'image', data: originalBytes.toString('base64'), mediaType: 'image/png', name: 'admission.png' }],
+    }, { kind: 'user', rpcId: 'dvr864-host-admission-' + enabled }).then(
+      value => ({ value }), error => ({ code: error.code, reason: error.details?.reason, message: error.message }),
+    )
+    assert.equal(result.code, 'session/attachment-invalid', JSON.stringify(result))
+    assert.equal(result.reason, 'MODEL_DOES_NOT_SUPPORT_IMAGES', JSON.stringify(result))
+    assert.equal(agent.session.snapshotEvents().length, eventCount, 'rejected prompt cannot append a user message')
+    assert.equal(requests.length, requestCount, 'rejected prompt cannot dispatch a model request')
+    console.log('ISSUE_864_HOST_UPLOAD_GATE=' + JSON.stringify({ enabled, ...result, modelIdentityUnchanged: true }))
+    return { enabled, ...result }
+  }
+  const hostUploadGate = [await assertHostAdmissionBlocked(false)]
   const turn = async (enabled, withImage) => {
     const offset = requests.length
     const content = [{ type: 'text', text: enabled ? 'Vision on' : 'Vision off' }]
@@ -232,6 +256,7 @@ try {
   }
   await expectDenied()
   await set(true)
+  hostUploadGate.push(await assertHostAdmissionBlocked(true))
   results.push(await turn(true, true))
   const admitted = ctx.tools.get('vision_materialize', agent)
   assert.equal(typeof admitted?.execute, 'function')
@@ -249,7 +274,7 @@ try {
   assert.equal(agent.model.current().provider, 'source-proof')
   assert.equal(agent.model.current().model, 'test-text')
   assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
-  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, modelVisibleHandle, visualSubcalls: visualRequests.length, transport: 'synthetic main and vision model streams; official NativeToolExecutor and real DVR tool/backend dispatch' }))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ hostUploadGate, results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, modelVisibleHandle, visualSubcalls: visualRequests.length, transport: 'synthetic main and vision model streams; official NativeToolExecutor and real DVR tool/backend dispatch' }))
 } finally {
   carrier.abort()
   await observer?.return?.().catch(() => {})
