@@ -231,7 +231,19 @@ if (expectCurrent) {
   const tools = await import(pathToFileURL(toolsEntry).href)
   const systemPrompt = await import(pathToFileURL(systemPromptEntry).href)
   const toolsCtx = new Context()
+  // The published alpha SystemPrompt now requires the Host-owned projection
+  // registry. Without it Cordis leaves SystemPrompt, Tools and the executor
+  // pending: a missing fixture dependency is not a tool API regression.
+  // Discover the declared injection rather than guessing from the version.
+  if (Array.isArray(systemPrompt.default.inject) && systemPrompt.default.inject.includes('sessionProjections')) {
+    const projectionEntry = createRequire(systemPromptEntry).resolve('@deepseek-ai/dsh-session-projection')
+    const projection = await import(pathToFileURL(projectionEntry).href)
+    assert.equal(typeof projection.default, 'function', 'Host projection registry must be exported')
+    await toolsCtx.plugin(projection.default)
+    assert.equal(typeof toolsCtx.get('sessionProjections')?.register, 'function', 'Host projection registry must be active')
+  }
   await toolsCtx.plugin(systemPrompt.default)
+  assert.ok(toolsCtx.get('systemPrompt'), 'Host system prompt service must be active')
   await toolsCtx.plugin(tools.default)
   // The alpha.2 Host separates tool registration from the Agent-scoped
   // executor. Mount the official native executor in this isolated Host fixture;
@@ -243,8 +255,8 @@ if (expectCurrent) {
     await toolsCtx.plugin(nativeExecutor)
   }
   const toolCapabilities = inspectDshHostCapabilities(toolsCtx)
-  assert.equal(toolCapabilities.toolRegistration, true, 'Doctor must recognize current DSH tool registration')
-  assert.equal(toolCapabilities.toolExecution, true, 'Doctor must recognize current DSH tool execution')
+  assert.equal(toolCapabilities.toolRegistration, true, 'Host capability probe must recognize current DSH tool registration')
+  assert.equal(toolCapabilities.toolExecution, true, 'Host capability probe must recognize current DSH tool execution')
   const probeTool = tools.defineTool({
     name: 'vision_router_p0_echo',
     description: 'P0 Host contract probe',
