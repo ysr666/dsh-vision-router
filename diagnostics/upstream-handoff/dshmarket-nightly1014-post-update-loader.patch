@@ -1,0 +1,124 @@
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -404,8 +404,17 @@
+             },
+           },
+         )
+-        const resolved: MarketConfig = {
+-          profile: profileName,
++        // The Host can retire this request's injected context during updateBundle.
++        // Read the current loader from the stable root only when building the
++        // successful update's activation response; never retain a loader face.
++        const loaderRoot = hostCtx.root
++        const resolved: MarketConfig = {
++          readPostUpdateLoaderEntries: () => {
++            const loader = loaderRoot.get('loader') as MarketHost['loader'] | undefined
++            if (loader === undefined) throw new Error('Host loader unavailable after update')
++            return [...loader.entries()]
++          },
++          profile: profileName,
+           ...(profileDirectory === undefined ? {} : { profileDirectory }),
+           origin: {
+             profileSource: configured !== undefined ? 'configured (cordis.yml), official desktop branch' : 'launcher profileContext, official desktop branch',
+diff --git a/src/routes.ts b/src/routes.ts
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -212,8 +212,10 @@
+   activate(): Promise<{ ok: true } | { ok: false; error: string }>
+ }
+ 
+-export interface MarketConfig {
+-  /** Profile the market installs into; matches the profile serving this UI. */
++export interface MarketConfig {
++  /** Fresh read-only inventory after a Host-owned Desktop update may retire the request owner. */
++  readPostUpdateLoaderEntries?: () => Iterable<LoaderEntry>
++  /** Profile the market installs into; matches the profile serving this UI. */
+   profile: string
+   /** Read the official Desktop profile's startup repair results. */
+   startupRepair?: () => StartupRepairSnapshot
+@@ -1844,9 +1846,11 @@
+    * the source of truth for verifyActivation's `live` state — without the
+    * loader side, every boot-loaded bundle plugin would read as "restart".
+    */
+-  function liveNames(): Set<string> {
+-    const live = new Set(listLiveHotMounts())
+-    for (const entry of host.loader.entries()) {
++  function liveNames(postUpdate = false): Set<string> {
++    const live = new Set(listLiveHotMounts())
++    const entries = postUpdate && config.readPostUpdateLoaderEntries !== undefined
++      ? config.readPostUpdateLoaderEntries() : host.loader.entries()
++    for (const entry of entries) {
+       if (entry.fiber === undefined) continue
+       if (entry.options.name !== undefined) {
+         live.add(entry.options.name)
+@@ -7924,12 +7928,12 @@
+               // no old module running, so there is nothing stale to remember
+               // or to ask a restart for — and the remembered flag would keep
+               // saying "restart" on every later page load.
+-              const staleModule = wasLive && result.liveSwap !== true
+-              if (staleModule) replacedWhileLive.add(name)
+-              else replacedWhileLive.delete(name)
+-              activation = {
+-                [name]: activationAfterReplace(
+-                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),
++              const staleModule = wasLive && result.liveSwap !== true
++              if (staleModule) replacedWhileLive.add(name)
++              else replacedWhileLive.delete(name)
++              activation = {
++                [name]: activationAfterReplace(
++                  verifyActivation(config.profile, name, liveNames(true), activeProfileDir, disabled.has(name)),
+                   staleModule,
+                 ),
+               }
+diff --git a/tests/index-desktop.spec.ts b/tests/index-desktop.spec.ts
+--- a/tests/index-desktop.spec.ts
++++ b/tests/index-desktop.spec.ts
+@@ -55,9 +55,12 @@
+   readonly injectCalls: string[][] = []
+   readonly effects: { label: string; dispose: () => void | Promise<void> }[] = []
+ 
+-  constructor(private readonly services: Record<string, unknown>) {
+-    Object.assign(this, services)
+-  }
++  readonly root: { get(name: string): unknown }
++
++  constructor(private readonly services: Record<string, unknown>, root?: { get(name: string): unknown }) {
++    this.root = root ?? this
++    Object.assign(this, services)
++  }
+ 
+   get(name: string): unknown {
+     return this.services[name]
+@@ -160,7 +163,30 @@
+     expect(state.mounts[0].config).toMatchObject({ profile: 'desktop', desktopHost: true, allowRestart: false })
+   })
+ 
+-  it('matches the name case-insensitively, as the CLI does', () => {
++  it('reads the current root loader after the official desktop request context retires', () => {
++    const oldEntries = vi.fn(() => [{ options: { name: 'old' } }])
++    const newEntries = vi.fn(() => [{ options: { name: 'new' } }])
++    let loader: unknown = { entries: oldEntries }
++    const root = { get: vi.fn((name: string) => name === 'loader' ? loader : undefined) }
++    const ctx = new FakeContext({ webServer: {}, loader, profileContext: launcher }, root)
++    apply(ctx as never)
++
++    const read = state.mounts[0].config.readPostUpdateLoaderEntries as () => unknown
++    expect(typeof read).toBe('function')
++    expect(root.get).not.toHaveBeenCalled()
++    // The request context is retired, and even the root's loader face has
++    // changed. The callback must look up the latter afresh, not capture it.
++    loader = { entries: newEntries }
++    vi.spyOn(ctx, 'get').mockImplementation(() => { throw new Error('inactive context') })
++    expect(read()).toEqual([{ options: { name: 'new' } }])
++    expect(root.get).toHaveBeenCalledWith('loader')
++    expect(oldEntries).not.toHaveBeenCalled()
++    expect(newEntries).toHaveBeenCalledTimes(1)
++    loader = undefined
++    expect(read).toThrow('Host loader unavailable after update')
++  })
++
++  it('matches the name case-insensitively, as the CLI does', () => {
+     const ctx = new FakeContext({ webServer: {}, loader: {}, profileContext: { name: 'Desktop', dir: '/home/u/.dsh/profiles/Desktop' } })
+ 
+     apply(ctx as never)
