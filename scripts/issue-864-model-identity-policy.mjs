@@ -305,6 +305,58 @@ try {
   assert.equal(materialized.bytes, originalBytes.length)
   assert.deepEqual(readFileSync(materialized.path), originalBytes, 'actual image tool must recover original attachment bytes')
   const nativeResults = [await dispatch('dvr864-on', true), await dispatch('dvr864-describe', true, 'vision_describe')]
+  // Proposed Host seam only: actual scoped DVR tool admission is the authority.
+  // The real FileUploads service owns the receipt; only the HTTP route registration
+  // is a test stub, as in the upstream session-controller upload test harness.
+  const { FileUploads } = await host('packages/client/file-upload/src/index.ts')
+  ctx.provide('connection', { fetch: { register: () => () => {} } })
+  const uploads = new FileUploads(ctx)
+  const disposeAdmission = ctx.on('session/allow-projected-image', (receiver, selection) =>
+    receiver === agent && selection.provider === 'source-proof' && selection.model === 'test-text'
+      && ctx.tools.get('vision_describe', receiver) !== undefined ? true : undefined)
+  try {
+    const info = await ctx.llm.resolveModelInfo('source-proof','test-text')
+    assert.deepEqual(info.inputModalities, ['text'])
+    const staged = await uploads.uploadImageStream({
+      sessionId: agent.id, data: (async function* () { yield new Uint8Array(originalBytes) })(),
+      mediaType: 'image/png', name: 'ordinary-upload.png',
+    })
+    assert.equal(staged.image.attachmentId, attachment.attachmentId)
+    const requestId = 'dvr864-projected-ordinary'
+    const request = { sessionId: agent.id, requestId, mode: 'queue',
+      content: [{ type: 'text', text: 'Inspect ordinary uploaded image' }, { type: 'file', receiptId: staged.receiptId }] }
+    const source = { kind: 'user', rpcId: requestId }
+    const proof = await dispatch('dvr864-projected-ordinary-tool', true, 'vision_describe', async () => {
+      assert.deepEqual(await controller.prompt(request, source), { accepted: true })
+    })
+    assert.equal(proof.visualSubcalls, 1)
+    const storedMessage = agent.session.deriveMessages().find(m => m.source?.rpcId === requestId)
+    assert.ok(storedMessage, 'ordinary prompt accepted and persisted')
+    assert.equal(storedMessage.content.find(b => b.type === 'image')?.attachment?.attachmentId, staged.image.attachmentId)
+    assert.equal(uploads.resolve(agent, staged.receiptId), undefined, 'receipt retired by durable message')
+    const requestCount = requests.length
+    assert.deepEqual(await controller.prompt(request, source), { accepted: true })
+    assert.equal(requests.length, requestCount, 'retry must not dispatch again')
+    await set(false)
+    const second = await uploads.uploadImageStream({
+      sessionId: agent.id, data: (async function* () { yield new Uint8Array(originalBytes) })(),
+      mediaType: 'image/png', name: 'off-upload.png',
+    })
+    const offId = 'dvr864-projected-off'
+    const beforeOff = JSON.stringify(agent.session.snapshotEvents())
+    await assert.rejects(() => controller.prompt({ sessionId: agent.id, requestId: offId, mode: 'queue',
+      content: [{ type: 'file', receiptId: second.receiptId }] }, { kind: 'user', rpcId: offId }),
+      { code: 'session/attachment-invalid' })
+    assert.equal(JSON.stringify(agent.session.snapshotEvents()), beforeOff)
+    assert.ok(uploads.resolve(agent, second.receiptId), 'refused receipt remains available for retry')
+    assert.equal(requests.length, requestCount)
+    assert.equal(selectionEvents(), before)
+    console.log('ISSUE_864_PROJECTED_ORDINARY_UPLOAD=' + JSON.stringify({
+      ...proof, nativeMetadata: info.inputModalities, realStagedReceipt: true, durableImage: true,
+      idempotentRetry: true, offRejected: true, modelSelectionEvents: 0, patchedHost: true,
+    }))
+    await set(true)
+  } finally { disposeAdmission() }
   // Separate positive control for an explicit, user-invoked image command.
   // The Host Commands service has its own documented attachment admission.
   // This is a diagnostic-only alternative interaction, NOT an intercept of
