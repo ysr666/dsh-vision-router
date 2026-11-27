@@ -188,7 +188,10 @@ function writeHostCoreProbeFixture(directory) {
     version: '1.0.0',
     type: 'module',
     main: './index.js',
-    dsh: { bundle: { patch: './cordis.patch.yml' } },
+    ...(process.env.DVR_864_SHARED_DIRECTORY_PROOF === '1' ? {
+      exports: { '.': './index.js', './client': './client.js', './package.json': './package.json' },
+      dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', inject: ['@deepseek-ai/dsh-client-ui-model-selection'] } },
+    } : { dsh: { bundle: { patch: './cordis.patch.yml' } } }),
   }, undefined, 2)}\n`)
   writeFileSync(join(directory, 'cordis.patch.yml'), [
     '- insert:',
@@ -501,6 +504,38 @@ export function apply(ctx) {
   })
 }
 `)
+  if (process.env.DVR_864_SHARED_DIRECTORY_PROOF === '1') {
+    // Test-only ordinary consumer using only the real shared service.
+    writeFileSync(join(directory, 'client.js'), String.raw`window.__ModuleLoader__.load({
+      id: 'dvr-desktop-core-probe',
+      factory() {
+        return {
+          inject: ['uiSession', 'modelDirectories'],
+          apply(ctx) {
+            ctx.effect(() => {
+              const read = () => {
+                try {
+                  const id = ctx.get('uiSession')?.current?.value?.key;
+                  const dirs = ctx.get('modelDirectories');
+                  if (typeof id !== 'string' || !dirs) return null;
+                  const view = dirs.directoryFor(id);
+                  const raw = typeof dirs.rawDirectoryFor === 'function' ? dirs.rawDirectoryFor(id) : null;
+                  const v = view.store.getSnapshot();
+                  const a = raw?.store.getSnapshot();
+                  const relevant = state => (state?.groups ?? []).filter(g => ['desktop-e2e','desktop-e2e-vision'].includes(g.id)).map(g=>g.id);
+                  const selection = state => state?.current?.model === 'desktop-text' ? state.current.provider : null;
+                  return { visible: relevant(v), raw: relevant(a), visibleCurrent: selection(v), rawCurrent: selection(a),
+                    sameDirectory: view === dirs.directoryFor(id), distinctRaw: raw !== null && raw !== view, status: v.status };
+                } catch (_) { return null; }
+              };
+              window.__dvr864IndependentDirectory = read;
+              return () => { if (window.__dvr864IndependentDirectory === read) delete window.__dvr864IndependentDirectory; };
+            }, 'DVR 864 independent shared-directory observer');
+          }
+        };
+      }
+    });`);
+  }
   return { name, directory }
 }
 
@@ -1235,16 +1270,36 @@ try {
   }
   // Do not start an adversarial double-toggle during the Host's initial
   // model-catalog hydration. The initial state must be stably actionable too.
+  const proveSharedDirectory = async (pressed, phase) => {
+    if (process.env.DVR_864_SHARED_DIRECTORY_PROOF !== '1') return
+    const expected = pressed === 'true' ? 'desktop-e2e-vision' : 'desktop-e2e'
+    try {
+      await page.waitForFunction(expected => {
+        const state = window.__dvr864IndependentDirectory?.();
+        return state?.sameDirectory === true && state.distinctRaw === true && state.status === 'ready'
+          && state.visible.length === 1 && state.visible[0] === 'desktop-e2e'
+          && state.raw.includes('desktop-e2e') && state.raw.includes('desktop-e2e-vision')
+          && state.visibleCurrent === 'desktop-e2e' && state.rawCurrent === expected;
+      }, expected, { timeout: 20_000 })
+    } catch (error) {
+      const snapshot = await page.evaluate(() => window.__dvr864IndependentDirectory?.() ?? null)
+      throw new Error('DVR #864 independent directory mismatch: ' + phase + ' ' + JSON.stringify(snapshot), { cause: error })
+    }
+    console.log('ISSUE_864_DESKTOP_SHARED_DIRECTORY=' + JSON.stringify({ phase, pressed, ...await page.evaluate(() => window.__dvr864IndependentDirectory()) }))
+  }
   await waitForSettledVisionState(initialPressed, 'initial ready baseline')
+  await proveSharedDirectory(initialPressed, 'initial')
   await page.evaluate(installDesktopModelSelectionTrace)
   const traceReady = await page.evaluate(() => window.__dvrDesktopModelTrace?.available === true)
   assert.equal(traceReady, true, 'Desktop selection transition trace was not attached to Host ModelDirectory')
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('first click'))
   await toggle.click()
   await waitForSettledVisionState(toggledPressed, 'first transition')
+  await proveSharedDirectory(toggledPressed, 'first-transition')
   await page.evaluate(() => window.__dvrDesktopToggleAudit?.record('return click'))
   await toggle.click()
   await waitForSettledVisionState(initialPressed, 'return transition')
+  await proveSharedDirectory(initialPressed, 'return-transition')
   const admissionTrace = await readHostModelAdmission(authenticatedHostUrl)
   assert.ok(admissionTrace.some(row => row.kind === 'models-end' && row.layer === 'host'
     && row.provider === 'desktop-e2e-vision' && row.hasModel === true),
@@ -1540,6 +1595,12 @@ try {
     const modelTrigger = page.getByRole('button', { name: /^(?:Select model|选择模型)/i }).last()
     await modelTrigger.click()
     await page.getByRole('menuitem', { name: /^(?:Model|模型)/i }).first().click()
+    if (process.env.DVR_864_SHARED_DIRECTORY_PROOF === '1') {
+      await page.locator('[data-provider-id="desktop-e2e"][data-model-id="desktop-text"]:visible').first().waitFor({state:'visible',timeout:15000})
+      assert.equal(await page.locator('[data-provider-id="desktop-e2e-vision"][data-model-id="desktop-text"]:visible').count(),0,
+        'stock model picker must expose source, not duplicate owned twin')
+      console.log('ISSUE_864_DESKTOP_STOCK_PICKER=' + JSON.stringify({sourceVisible:true,twinVisible:false}))
+    }
     await page.locator('button[role="menuitemradio"]').filter({
       has: page.locator('[data-provider-id="desktop-native-e2e"][data-model-id="desktop-native"]'),
     }).click()
