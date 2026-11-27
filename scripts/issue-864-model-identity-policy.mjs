@@ -18,6 +18,7 @@ const [
   { default: AgentRegistry }, { default: AgentLoop }, { default: Commands },
   { default: AttachmentLocal }, dvr,
   { default: TypertRegistry }, { default: RemoteAccess }, { default: Gateway },
+  NativeExecutor, { toolCallResponse },
 ] = await Promise.all([
   import(pathToFileURL(requireHost.resolve('@deepseek-ai/cordis')).href),
   host('packages/llm/llm/src/index.ts'),
@@ -36,6 +37,8 @@ const [
   host('packages/typert/registry/src/index.ts'),
   host('packages/api/remote-access/src/index.ts'),
   host('packages/api/gateway/src/index.ts'),
+  host('packages/core/tool-executor-native/src/index.ts'),
+  host('packages/core/agent-loop/tests/mock-adapter.ts'),
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
@@ -45,6 +48,12 @@ class NativeImageModel extends llm.LlmAdapter {
   }
   async *stream(options) {
     requests.push(options)
+    if (pendingCall) {
+      const call = pendingCall
+      pendingCall = undefined
+      yield* toolCallResponse(call.id, 'vision_materialize', call.args)
+      return
+    }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: 'synthetic answer' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: 'synthetic answer' } }
@@ -53,6 +62,7 @@ class NativeImageModel extends llm.LlmAdapter {
 }
 
 const requests = []
+let pendingCall
 const ctx = new Context()
 await ctx.plugin(TypertRegistry)
 await ctx.plugin(RemoteAccess)
@@ -62,17 +72,9 @@ await ctx.plugin(Projection)
 await ctx.plugin(AttachmentLocal, { dshHome: '/tmp/dvr-865-native-command-fixture' })
 await ctx.plugin(SystemPrompt)
 await ctx.plugin(Tools)
-// Only the executor's schema projection is synthetic; the real Host agent
-// resolves registered tools, applies restrictions and assembles the request.
-ctx.tools.setExecutor({
-  describe(definitions) {
-    return { schemas: definitions.map(({ name, description, parameters, deferLoading }) => ({
-      name, description, parameters: structuredClone(parameters),
-      ...(deferLoading === true ? { deferLoading } : {}),
-    })) }
-  },
-  async execute() { throw new Error('Synthetic transport never calls a tool') },
-})
+// Use the same native executor plugin as the official Host tests; only the
+// model stream is synthetic. Tool admission, dispatch and result are real.
+await ctx.plugin(NativeExecutor)
 await ctx.plugin(AgentRegistry)
 await ctx.plugin(AgentLoop, { agents: [] })
 await ctx.plugin(Commands)
@@ -152,9 +154,7 @@ try {
     return { enabled, withImage, ownedTool: tools.some(t => t.name === 'vision_describe') }
   }
   const results = [await turn(false, true)]
-  // Exercise the actual registered DVR local-image tool, not a mock. The
-  // synthetic Agent transport still does not emit a model tool call; scoped
-  // registry admission and the real tool body are tested independently.
+  // Test both direct stale-definition protection and the official Agent batch.
   const retained = ctx.tools.get('vision_materialize')
   assert.equal(typeof retained?.execute, 'function')
   const args = { image: attachment.attachmentId }
@@ -162,6 +162,35 @@ try {
   const expectDenied = async () => {
     assert.equal(ctx.tools.get('vision_materialize', agent), undefined, 'OFF must hide the actual scoped tool')
     await assert.rejects(() => retained.execute(args, exec()), { code: 'VISION_MODE_DISABLED' })
+  }
+  const dispatch = async (id, enabled) => {
+    const offset = requests.length
+    assert.equal(pendingCall, undefined)
+    pendingCall = { id, args }
+    agent.followup(llm.createUserMessage({ source: { kind: 'user' },
+      content: [{ type: 'text', text: 'Exercise local image tool ' + id }] }))
+    await agent.whenIdle()
+    assert.equal(pendingCall, undefined, 'model call must consume the scripted response')
+    assert.equal(requests.length, offset + 2, JSON.stringify(agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')?.data))
+    const event = agent.session.snapshotEvents().find(e => e.type === 'tool/result' && e.data.message.source.callId === id)
+    assert.ok(event, 'official NativeToolExecutor must settle ' + id)
+    const message = event.data.message
+    assert.equal(message.isError, !enabled, JSON.stringify(event.data))
+    for (const request of requests.slice(offset)) {
+      assert.equal(request.provider, 'source-proof')
+      assert.equal(request.model, 'test-text')
+      assert.ok(!request.messages.some(m => m.content?.some(b => b.type === 'image')))
+    }
+    if (enabled) {
+      const value = JSON.parse(message.content.find(b => b.type === 'text').text)
+      assert.equal(value.safeWorkspaceCopy, true)
+      assert.equal(value.source, attachment.attachmentId)
+      assert.deepEqual(readFileSync(value.path), originalBytes)
+    } else {
+      assert.equal(event.data.error?.code, 'UNKNOWN_TOOL', JSON.stringify(event.data))
+    }
+    assert.equal(selectionEvents(), before)
+    return { enabled, nativeDispatch: true, isError: message.isError }
   }
   await expectDenied()
   await set(true)
@@ -173,13 +202,15 @@ try {
   assert.equal(materialized.source, attachment.attachmentId)
   assert.equal(materialized.bytes, originalBytes.length)
   assert.deepEqual(readFileSync(materialized.path), originalBytes, 'actual image tool must recover original attachment bytes')
+  const nativeResults = [await dispatch('dvr864-on', true)]
   await set(false)
   results.push(await turn(false, false))
   await expectDenied()
+  nativeResults.push(await dispatch('dvr864-off', false))
   assert.equal(agent.model.current().provider, 'source-proof')
   assert.equal(agent.model.current().model, 'test-text')
   assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
-  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, transport: 'synthetic text model; direct scoped registry tool execution, not Agent tool batch' }))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, transport: 'synthetic text model; official NativeToolExecutor and real DVR tool body' }))
 } finally {
   carrier.abort()
   await observer?.return?.().catch(() => {})
