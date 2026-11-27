@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { preserveClaimedMessagesOnBlockedStep } from '../lib/session-image-projection-mode.js'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 const root = process.env.DSH_SOURCE_ROOT
@@ -77,6 +79,7 @@ await ctx.plugin(Commands)
 await ctx.plugin(Gateway)
 const adapter = ctx.llm.registerAdapter(['source-proof'], new NativeImageModel())
 let handle, observer
+const workspace = mkdtempSync(join(tmpdir(), 'dvr-864-identity-'))
 const carrier = new AbortController()
 try {
   await ctx.plugin({ inject: dvr.inject, apply(scope) {
@@ -89,6 +92,7 @@ try {
   } })
   handle = await ctx.agents.create({
     sessionId: 'dvr-864-source-identity-proof',
+    meta: { cwd: workspace },
     agentOptions: { provider: 'source-proof', model: 'test-text' },
   })
   const agent = handle.agent
@@ -116,8 +120,9 @@ try {
     assert.equal((await next).value.enabled, enabled)
     assert.equal(selectionEvents(), before)
   }
+  const originalBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
   const attachment = await ctx.attachments.saveImage({
-    data: new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')),
+    data: new Uint8Array(originalBytes),
     mediaType: 'image/png', name: 'identity-proof.png',
   })
   const turn = async (enabled, withImage) => {
@@ -147,18 +152,39 @@ try {
     return { enabled, withImage, ownedTool: tools.some(t => t.name === 'vision_describe') }
   }
   const results = [await turn(false, true)]
+  // Exercise the actual registered DVR local-image tool, not a mock. The
+  // synthetic Agent transport still does not emit a model tool call; scoped
+  // registry admission and the real tool body are tested independently.
+  const retained = ctx.tools.get('vision_materialize')
+  assert.equal(typeof retained?.execute, 'function')
+  const args = { image: attachment.attachmentId }
+  const exec = () => ({ agent, signal: AbortSignal.timeout(10000) })
+  const expectDenied = async () => {
+    assert.equal(ctx.tools.get('vision_materialize', agent), undefined, 'OFF must hide the actual scoped tool')
+    await assert.rejects(() => retained.execute(args, exec()), { code: 'VISION_MODE_DISABLED' })
+  }
+  await expectDenied()
   await set(true)
   results.push(await turn(true, true))
+  const admitted = ctx.tools.get('vision_materialize', agent)
+  assert.equal(typeof admitted?.execute, 'function')
+  const materialized = JSON.parse(await admitted.execute(args, exec()))
+  assert.equal(materialized.safeWorkspaceCopy, true)
+  assert.equal(materialized.source, attachment.attachmentId)
+  assert.equal(materialized.bytes, originalBytes.length)
+  assert.deepEqual(readFileSync(materialized.path), originalBytes, 'actual image tool must recover original attachment bytes')
   await set(false)
   results.push(await turn(false, false))
+  await expectDenied()
   assert.equal(agent.model.current().provider, 'source-proof')
   assert.equal(agent.model.current().model, 'test-text')
   assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
-  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), transport: 'synthetic text model; no tool execution' }))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, transport: 'synthetic text model; direct scoped registry tool execution, not Agent tool batch' }))
 } finally {
   carrier.abort()
   await observer?.return?.().catch(() => {})
   if (handle) await handle.dispose()
   adapter?.dispose?.()
   await ctx.fiber.dispose()
+  rmSync(workspace, { recursive: true, force: true })
 }
