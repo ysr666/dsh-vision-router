@@ -1424,7 +1424,8 @@ export const CLIENT_PRESENTATION_PRELUDE = String.raw`(function(){
             order: 40,
             locale: VISION_MODE_NS,
             inject: function(sessionId) {
-              var directory = models.directoryFor(sessionId);
+              var directory = typeof models.rawDirectoryFor === 'function'
+                ? models.rawDirectoryFor(sessionId) : models.directoryFor(sessionId);
               var available = true;
               try {
                 available = !scope.sessions || typeof scope.sessions.subagentAddress !== 'function'

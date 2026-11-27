@@ -19,6 +19,12 @@ jobs:
           ref: 4b399c39a6d1479cd84ca591b4d7c88e24d38a96
           path: dsh-host
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Nwflower/dsh-claude-style
+          ref: 93e51bd044d20233a85e2bab8057054d6db97d61
+          path: claude-style
+          persist-credentials: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
           version: 11.28.5
@@ -33,6 +39,17 @@ jobs:
           CI: 'true'
           LEFTHOOK: '0'
         run: pnpm install --frozen-lockfile
+      - name: Bundle unmodified Claude Style catalog consumer
+        working-directory: claude-style
+        run: |
+          npm ci --ignore-scripts
+          npx --no-install esbuild packages/client/src/features/model/catalog.ts --bundle --platform=node --format=esm --outfile=../dsh-host/packages/client/ui-model-selection/tests/dvr-claude-catalog.mjs
+      - name: Verify actual DVR client compatibility paths
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          node --test tests/vision-mode-toggle-injection.test.js tests/issue-284-model-visibility.test.js
       - name: Run real Cordis browser model-selection tests and Host catalog tests
         working-directory: dsh-host
         run: pnpm exec vitest run packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts packages/api/session-controller/tests/session-models.host.spec.ts

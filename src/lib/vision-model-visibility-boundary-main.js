@@ -301,6 +301,8 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
 
   function wrapModelDirectories(models, settings) {
     if (!models || (typeof models !== 'object' && typeof models !== 'function') || typeof Proxy !== 'function') return models;
+    // A Host with the shared presentation contract owns filtering and mapping.
+    if (typeof models.rawDirectoryFor === 'function') return models;
     var cache = typeof WeakMap === 'function' ? new WeakMap() : undefined;
     return new Proxy(models, {
       get: function(target, property) {
