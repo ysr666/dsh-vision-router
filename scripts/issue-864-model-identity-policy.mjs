@@ -188,7 +188,7 @@ try {
       officialSelectionRejected: true, noSessionMutation: true,
     }))
   } finally {
-    hiddenRegistration.dispose()
+    hiddenRegistration()
   }
   const assertHostAdmissionBlocked = async enabled => {
     const eventCount = agent.session.snapshotEvents().length
