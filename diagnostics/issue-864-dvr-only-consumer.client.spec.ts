@@ -24,7 +24,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm/types'
 import type { CommandContribution, PopupSelectSpec, SelectOption } from '@deepseek-ai/dsh-client-ui-commands/client'
 import type { ModelSelectInjected } from '../src/client/slots.ts'
-import { apply, inject } from '../src/client/index.ts'
+import { apply, inject, ModelDirectoryResolver } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
 
 const sid = (k: string): SessionId => k as SessionId
@@ -162,7 +162,7 @@ async function bench(locale: 'zh' | 'en' = 'zh', decorate?: (plugin: any) => any
   const track = vi.fn()
   ctx.provide('productAnalytics', { enabled: true, track } as never)
   ctx.provide('settingsScope', { bind: () => ({ getSnapshot: () => ({ value: { autoWrapProviders: false, wrappedProviders: [{provider:'dvr-real-source',models:['m1','m2']}] } }), subscribe: () => () => {} }) } as never)
-  const fiber = ctx.plugin(decorate ? decorate({ inject: [...inject], apply }) : { inject: [...inject], apply })
+  const fiber = ctx.plugin(decorate ? decorate({ inject: [...inject], apply, ModelDirectoryResolver }) : { inject: [...inject], apply })
   await fiber.await()
   await ctx.plugin(function probe() {}).await()
   const mint = (key: string, blank = false) => {
@@ -211,14 +211,24 @@ async function bench(locale: 'zh' | 'en' = 'zh', decorate?: (plugin: any) => any
 const projection = (id: string) => ({ sessionId: sid(id) })
 
 
-describe('DVR-only consumer facade over original Host directory', () => {
+describe('DVR-only narrow shared resolver over original Host directory', () => {
   it('stock picker and actual independent Claude catalog agree while raw route authority and original registry remain intact', async () => {
     const mod = await import(pathToFileURL(process.env.DVR_864_PRELUDE!).href)
     const { createModelCatalog } = await import('./dvr-claude-catalog.mjs')
     const evidence = JSON.parse(readFileSync(process.env.DVR_864_CATALOG!, 'utf8'))
     let spec: any
     const loader = { load(input: any) { spec = input; return input } }
-    runInNewContext(mod.VISION_MODEL_VISIBILITY_PRELUDE, { window: { __ModuleLoader__: loader }, Object, Reflect, Proxy, Promise, Array, String, Map, Set, WeakMap, JSON })
+    const hardening = await import(pathToFileURL(process.env.DVR_864_HARDENING!).href)
+    let ownership = { revision: 1, routes: new Map([[evidence.twin, evidence.source]]) }
+    const listeners = new Set<() => void>()
+    const authority = {
+      sourceFor: (route:string) => ownership.routes.get(route),
+      getSnapshot: () => ownership,
+      subscribe: (fn:()=>void) => { listeners.add(fn); return () => listeners.delete(fn) },
+      recoveryFor: () => undefined,
+    }
+    const window = { __ModuleLoader__: loader, __dshVisionRouterRootHardening: authority }
+    runInNewContext(hardening.hardenVisionClientSource(mod.VISION_MODEL_VISIBILITY_PRELUDE), { window, Object, Reflect, Proxy, Promise, Array, String, Map, Set, WeakMap, JSON })
     const decorate = (id: string, plugin: any) => {
       loader.load({id, factory: () => plugin})
       return spec.factory(() => ({}))
@@ -232,16 +242,19 @@ describe('DVR-only consumer facade over original Host directory', () => {
       b.mint('alias')
       const id = sid('alias')
       b.ctx.provide('uiSession', { current: { value: { key:id } } } as never)
-      const raw = b.ctx.modelDirectories.directoryFor(id)
+      const shared = b.ctx.modelDirectories as any
+      const raw = shared.rawDirectoryFor(id)
+      const projected = shared.directoryFor(id)
       await raw.load()
       await raw.select({provider:twin,model:'m1',reasoningEffort:'high'})
       const official = b.seat().inject!(id)
       let claude: any
       let independent: any
-      const consumer = decorate('arbitrary-independent-consumer', { inject: ['uiSession','modelDirectories'], apply(ctx: any) {
+      const consumer = { inject: ['uiSession','modelDirectories'], apply(ctx: any) {
         claude = createModelCatalog({ctx})
         independent = ctx.get('modelDirectories').directoryFor(id)
-      }})
+      }}
+      expect(decorate('arbitrary-independent-consumer', consumer)).toBe(consumer)
       const cf = b.ctx.plugin(consumer)
       await cf.await()
       expect(cf.state).not.toBeUndefined()
@@ -253,6 +266,20 @@ describe('DVR-only consumer facade over original Host directory', () => {
       expect(claude.current(claude.snapshot()).group.id).toBe(source)
       expect(claude.effort(claude.snapshot()).effective).toBe('high')
       expect(independent.store.getSnapshot().current.provider).toBe(source)
+      expect(independent).toBe(projected)
+      expect(official.directory).toBe(projected.store)
+      expect(projected.store.getSnapshot()).toBe(projected.store.getSnapshot())
+      const notify = vi.fn()
+      const stop = projected.store.subscribe(notify)
+      ownership = { revision: 2, routes: new Map() }
+      listeners.forEach(fn=>fn())
+      expect(notify).toHaveBeenCalled()
+      expect(projected.store.getSnapshot().groups.map((g:any)=>g.id)).toContain(twin)
+      expect(projected.store.getSnapshot().current.provider).toBe(twin)
+      ownership = { revision: 3, routes: new Map([[twin, source]]) }
+      listeners.forEach(fn=>fn())
+      expect(projected.store.getSnapshot().groups.map((g:any)=>g.id)).not.toContain(twin)
+      stop()
       await independent.select({provider:source,model:'m2',reasoningEffort:'max'})
       expect(b.hostCurrent()).toEqual({provider:twin,model:'m2',reasoningEffort:'max'})
       await independent.select({provider:foreign,model:'m1'})

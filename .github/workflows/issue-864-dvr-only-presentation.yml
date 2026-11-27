@@ -67,6 +67,7 @@ jobs:
         env:
           DVR_864_CATALOG: ${{ runner.temp }}/dvr-864-catalog.json
           DVR_864_PRELUDE: ${{ github.workspace }}/dvr/lib/vision-model-visibility-boundary.js
+          DVR_864_HARDENING: ${{ github.workspace }}/dvr/lib/vision-toggle-root-hardening.js
         run: |
           git diff --exit-code
           pnpm exec vitest run packages/client/ui-model-selection/tests/browser-plugin.client.spec.ts packages/api/session-controller/tests/session-models.host.spec.ts packages/client/ui-model-selection/tests/dvr-only-consumer.client.spec.ts
