@@ -5,7 +5,29 @@ Bilingual (Chinese + English) release notes for every version — the GitHub Rel
 
 ## Unreleased
 
-- Retire the general-purpose Doctor CLI and its network health probes/reports. Keep explicit offline `repair`, `repair-sessions`, read-only `--check`, `upgrade-preflight`, and `downgrade-preflight`; retired Doctor invocations fail without mutation. / 退役旧综合 Doctor 入口，保留独立修复、只读检查及升级/降级预检；旧命令明确报错，不改动用户数据。
+## v3.5.0
+
+### Optional local OCR / 按需本地 OCR
+
+- **#858 / #862:** PP-OCRv6/ncnn can now be downloaded and installed on demand from the Settings page on macOS ARM64 and Windows x64. The pinned platform-specific npm resources (1.0.0) are independently verified; offline import and safe uninstall remain available. No automatic download, no Python, and no modification to system OCR installations. / 两平台设置页可主动一键下载、安装、识别与卸载；固定资源包校验，保留离线导入，不强制安装，不修改系统组件。
+- Harden native archive parsing, provenance, reproducibility, file ownership and damaged-install recovery. / 加强原生归档解析、来源校验、可复现构建及损坏安装清理。
+
+### Session continuity and routing / 会话连续性与路由
+
+- **#888 (#865):** Stable-v2 image projection by default only for verified fresh Sessions; retain historical/fork formats, original attachments and append-only evidence. Preserve Session reasoning/Vision authority, exact replay identity and avoid duplicate DVR dispatch. / 符合条件的新会话采用 stable-v2，保留旧会话与分叉格式、原图和追加式证据，修复会话权限、推理强度及重复调用问题。
+- Preserve serialized prefixes on the qualified stock PTC path without weakening Vision OFF; no automatic conversion of Native Sessions and no universal cache-hit or billing claim. / 已验收的原生 PTC 路径保持历史前缀，不降低 OFF 权限、不自动转换 Native 会话、不保证实际计费节省。
+- **#882 / #883 / #887 / #889 / #899:** Preserve official DeepSeek native image capability, authenticated Alpha Settings, safe reactive teardown, Vision click intent and unified model-directory presentation for stock and third-party consumers. / 修复官方 DeepSeek 原生图片、Alpha 设置鉴权、热重载、识图开关及第三方模型目录展示（含 Claude Style）。
+
+### Startup and recovery / 启动与修复
+
+- **#894 / #896 / #897:** Batch configuration reads, coalesce invalidation and defer unrelated provider discovery until Settings demand. / 批处理配置读取、合并失效事件、按需发现供应商。
+- **#879:** Retire the general-purpose Doctor CLI and network health probes/reports. Keep explicit offline `repair`, `repair-sessions`, read-only `--check`, `upgrade-preflight`, and `downgrade-preflight`; retired Doctor invocations fail without mutation. / 退役旧综合 Doctor，保留独立修复、只读检查与升级/降级预检，旧命令不改动用户数据。
+- **#887 (#877):** DVR activation repair is independent of the dshmarket post-update HTTP 500 defect. A market error may be a false failure after successful installation; check the actual version and restart. / DVR 激活故障已修复，市场更新后的误报仍需市场修复；核对实际安装版本并重启。
+
+### Boundaries / 边界
+
+- DSH >=0.2.1-rc.5 <0.3.0-0 and Node >=24.9.0 remain unchanged. Back up before upgrading; downgrade requires a compatible Session reader. Real provider-cache hits/billing, minimum-OS native execution and reporter-specific environments are not established. / 兼容下限不变；升级前备份，降级须核对会话读取能力。真实供应商缓存命中/计费、最低系统实机及原报告者环境不作保证。
+- Cloud vision egress policy unchanged. Local OCR is opt-in, not a guarantee that an entire conversation is offline. / 云端传图规则不变，按需本地 OCR 不代表全链路离线。
 
 ## v3.4.0
 
