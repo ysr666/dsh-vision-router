@@ -47,7 +47,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build
-          node --test tests/vision-mode-toggle-injection.test.js tests/issue-284-model-visibility.test.js
+          node --test tests/vision-mode-toggle-injection.test.js tests/issue-284-model-visibility.test.js tests/vision-toggle-root-hardening.test.js
       - name: Build immutable original upstream Host and client including generated contracts
         working-directory: dsh-host
         env:

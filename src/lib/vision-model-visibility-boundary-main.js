@@ -34,13 +34,23 @@ function visionPresentationTwinIntended(config, sourceProvider, modelId) {
   return config.autoWrapProviders !== false
 }
 
+function visionPresentationEquivalentModel(source, model) {
+  const other = source?.models?.find(candidate => candidate && candidate.id === model.id)
+  if (!other) return false
+  const key = value => JSON.stringify([
+    value.reasoning?.defaultEffort ?? null,
+    (value.reasoning?.efforts ?? []).map(effort => effort.id).sort(),
+  ])
+  return key(other) === key(model)
+}
+
 function visionPresentationAllModelsMirrored(source, target, allowModel) {
   if (!source || !target || !Array.isArray(target.models) || target.models.length === 0) return false
   return target.models.every((model) =>
     model &&
     typeof model.id === 'string' &&
     model.id !== '' &&
-    visionPresentationHasModel(source, model.id) &&
+    visionPresentationEquivalentModel(source, model) &&
     (!allowModel || allowModel(model.id)),
   )
 }
@@ -166,6 +176,8 @@ export function mapVisionPresentationSelection(state, selection, config) {
   const currentGroup = visionPresentationGroup(state.groups, current.provider)
   const sourceProvider = visionPresentationSourceForGroup(state.groups, currentGroup, config)
   if (!sourceProvider) return selection
+  // The selection mapping must follow the very same visible projection.
+  if (projectVisionModeDirectoryState(state, config).groups.some(group => group.id === current.provider)) return selection
   if (selection.provider !== sourceProvider) return selection
   if (!visionPresentationHasModel(currentGroup, selection.model)) return selection
   return {
@@ -180,6 +192,7 @@ const VISIBILITY_HELPER_SOURCE = [
   visionPresentationSourceName,
   visionPresentationHasOwn,
   visionPresentationTwinIntended,
+  visionPresentationEquivalentModel,
   visionPresentationAllModelsMirrored,
   visionPresentationGeneratedTwinSource,
   visionPresentationConfiguredWrapperSource,
@@ -249,7 +262,7 @@ export const VISION_MODEL_VISIBILITY_PRELUDE = String.raw`(function(){
       var raw = typeof store.getSnapshot === 'function' ? store.getSnapshot() : undefined;
       var config = currentVisionConfig(settings);
       var key = configKey(config);
-      var authority = window.__dshVisionRouterRootHardening;
+      var authority = typeof window === 'undefined' ? undefined : window.__dshVisionRouterRootHardening;
       var ownership = authority && typeof authority.getSnapshot === 'function' ? authority.getSnapshot() : undefined;
       if (raw === lastRaw && key === lastConfigKey && ownership === lastOwnership && lastProjected !== undefined) return lastProjected;
       lastRaw = raw;
