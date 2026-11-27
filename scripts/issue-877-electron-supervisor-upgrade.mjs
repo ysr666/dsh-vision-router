@@ -345,7 +345,7 @@ export function apply(ctx) {
     // Test-only, process-owned collector survives diagnostic fixture HMR.
     // Intercept exactly the real Cordis throw boundary, then rethrow unchanged.
     const key = Symbol.for('dvr.issue877.effect-probe')
-    const evidence = globalThis[key] ??= { timeline: [], firstFailure: null, firstEffect: null, armed: false }
+    const evidence = globalThis[key] ??= { timeline: [], firstFailure: null, firstEffect: null, armed: process.env.DVR_ISSUE_877_RESTART === '1' }
     const timeline = evidence.timeline
     const proto = Object.getPrototypeOf(ctx.fiber)
     if (!evidence.hooked) {
@@ -1336,6 +1336,87 @@ try {
     }
     if (child?.exitCode !== null) throw Error('Electron supervisor exited during DVR upgrade')
     await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15000 })
+    // The market explicitly reports restart-required. Verify the persisted
+    // repair on a separate full Electron process, not another update request.
+    assert.equal(process.platform, 'win32', 'restart diagnostic is Windows-only')
+    const oldPid = child.pid
+    await stopProcess(child)
+    try { await browser.close() } catch {}
+    browser = undefined
+    page = undefined
+    const stoppedDeadline = Date.now() + 10000
+    while (child.exitCode === null && child.signalCode === null && Date.now() < stoppedDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.ok(child.exitCode !== null || child.signalCode !== null, 'old Electron process did not exit')
+    const restartRendererPort = await freePort()
+    const restartMainPort = await freePort()
+    const restartHostPort = await freePort()
+    let restartHostUrl
+    let restartOutput = ''
+    let restartSpawnError
+    child = spawn(executable, [
+      '--inspect=127.0.0.1:' + restartMainPort,
+      '--remote-debugging-port=' + restartRendererPort,
+      '--user-data-dir=' + userData,
+      join(dshRoot, 'apps/desktop'),
+    ], {
+      cwd: join(dshRoot, 'apps/desktop'),
+      env: { ...environment, DSH_DESKTOP_HOST_INSPECT_PORT: String(restartHostPort), DVR_ISSUE_877_RESTART: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    child.once('error', error => { restartSpawnError = error })
+    const observeRestart = chunk => {
+      restartOutput = (restartOutput + String(chunk)).slice(-16384)
+      const match = /dsh web:\s*(https?:\/\/[^\s]+)/i.exec(restartOutput)
+      if (match) restartHostUrl = match[1]
+    }
+    child.stdout?.on('data', observeRestart)
+    child.stderr?.on('data', observeRestart)
+    assert.notEqual(child.pid, oldPid, 'restart must create a new Electron process')
+    reportPhase('issue-877-electron-restarted')
+    browser = await waitForCdp(restartRendererPort)
+    page = await waitForAppPage(browser)
+    const restartRendererErrors = []
+    page.on('pageerror', error => restartRendererErrors.push(String(error?.stack || error)))
+    await page.evaluate(async () => await window.dshDesktopBoot.ready())
+    const urlDeadline = Date.now() + 30000
+    while (!restartHostUrl && !restartSpawnError && child.exitCode === null && Date.now() < urlDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert.ok(restartHostUrl, 'restarted Electron did not report its new Host URL')
+    const restartCookie = await exchangeHostCookie(restartHostUrl)
+    const restartTarget = new URL(restartHostUrl)
+    restartTarget.search = ''
+    const restartHeaders = { cookie: restartCookie, origin: restartTarget.origin, 'content-type': 'application/json' }
+    restartTarget.pathname = '/__dvr_issue_877_electron_upgrade'
+    const restartedResponse = await fetchHostProbe(restartTarget, { method: 'POST', headers: restartHeaders }, 15000)
+    assert.equal(restartedResponse.status, 200)
+    const restarted = await restartedResponse.json()
+    assert.equal(restarted.armed, true, 'restart lifecycle collector must be armed at fixture activation')
+    assert.equal(restarted.firstFailure, null)
+    assert.equal(restarted.firstEffect, null)
+    for (const id of ['vision-router', 'dsh-market']) {
+      assert.ok(restarted.entries.some(entry => (entry.id === id || entry.id === 'include:' + id) && entry.state === 'ACTIVE' && !entry.error), id + ' not active after restart')
+    }
+    assert.equal(installed('dsh-vision-router'), '3.4.0')
+    assert.ok(['session-vision-mode-boundary.js', 'reactive-routing-mounts.js'].every(name =>
+      readFileSync(join(paths.profile, 'node_modules', 'dsh-vision-router', 'lib', name)).equals(readFileSync(join(dvrRoot, 'lib', name)))))
+    const restartedToggle = await waitForVisionToggle(page, restartHostUrl)
+    await page.waitForFunction(() => {
+      const node = document.querySelector('[data-vision-router-mode-toggle="true"]')
+      return node && !node.disabled && node.getAttribute('aria-busy') !== 'true'
+    }, { timeout: 30000 })
+    assert.equal(await restartedToggle.isVisible(), true)
+    restartTarget.pathname = '/dsh-market/status'
+    const restartedMarket = await fetchHostProbe(restartTarget, { headers: restartHeaders }, 15000)
+    assert.equal(restartedMarket.status, 200)
+    await restartedMarket.body?.cancel()
+    assert.equal(restartRendererErrors.length, 0)
+    final.restart = { newProcess: true, installed: installed('dsh-vision-router'), marketStatus: restartedMarket.status,
+      visionToggleReady: true, candidateFilesMatch: true, probe: restarted }
+    console.log('ISSUE_877_RESTART_ACCEPTANCE=' + JSON.stringify(final.restart))
+    if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
     console.log(JSON.stringify({ ok: true, scope: 'real-combined-market-and-dvr-upgrade',
       dsh: dshVersion, electronNode, marketVersion: final.marketVersion, installed: final.installed }))
   } else {
