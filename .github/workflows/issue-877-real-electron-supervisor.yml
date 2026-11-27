@@ -1,7 +1,7 @@
-name: Issue 877 combined repaired market and DVR
+name: Issue 877 current market 1.82.0 combined and restart
 on:
   push:
-    branches: [diagnostics/issue-877-combined-market-dvr]
+    branches: [diagnostics/issue-877-market-current]
     paths:
       - scripts/issue-877-electron-supervisor-upgrade.mjs
       - scripts/issue-877-market-loader-repair.mjs
@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        market: ["1.80.1"]
+        market: ["1.82.0"]
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: dsh-market/dsh-market
-          ref: ed2acb5caf10f1acd598b2faee263a1393a8d9ae
+          ref: 18004a19b1c5bca1cd3ea405e2171a5fb3c089ce
           path: market
           persist-credentials: false
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
