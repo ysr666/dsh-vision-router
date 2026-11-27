@@ -42,16 +42,30 @@ const [
 ])
 class NativeImageModel extends llm.LlmAdapter {
   providerInfo(id) { return { id, name: 'Exact offline native image provider' } }
-  async listModels(provider) { return [await this.resolveModel(provider, 'test-mm')] }
+  async listModels(provider) { return Promise.all(['test-text', 'test-mm'].map(model => this.resolveModel(provider, model))) }
   async resolveModel(provider, model) {
     return { provider, id: model, name: model, inputModalities: model === 'test-text' ? ['text'] : ['text', 'image'], reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }, toolUpdate: 'addition-only', systemPromptUpdate: 'in-history' }
   }
   async *stream(options) {
+    if (options.model === 'test-mm') {
+      visualRequests.push(options)
+      const pixels = options.messages.flatMap(m => m.content ?? []).filter(b => b.type === 'image')
+      assert.equal(pixels.length, 1, 'vision subcall receives the actual image, not a text marker')
+      assert.equal(pixels[0].attachment.attachmentId, fixtureAttachmentId)
+      const text = 'DVR864_VISUAL_BACKEND_OK'
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+      yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 5 } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    assert.equal(options.model, 'test-text')
     requests.push(options)
     if (pendingCall) {
       const call = pendingCall
       pendingCall = undefined
-      yield* toolCallResponse(call.id, 'vision_materialize', call.args)
+      yield* toolCallResponse(call.id, call.name, call.args)
       return
     }
     yield { type: 'block-start', index: 0, blockType: 'text' }
@@ -62,6 +76,9 @@ class NativeImageModel extends llm.LlmAdapter {
 }
 
 const requests = []
+const visualRequests = []
+let fixtureAttachmentId
+let modelVisibleHandle
 let pendingCall
 const ctx = new Context()
 await ctx.plugin(TypertRegistry)
@@ -89,7 +106,8 @@ try {
       tool: true, routing: false, progressiveTools: false,
       wrapperRoute: '', chainRoute: '', autoWrapProviders: false, wrappedProviders: [],
       rewriteImages: false, autoActivateOnImage: false, instantDescribe: false,
-      providers: [], freeFallback: false, downscale: false, cache: false,
+      providers: [{ provider: 'source-proof', model: 'test-mm', fallbacks: [] }],
+      structuredVisionBootstrap: false, freeFallback: false, downscale: false, cache: false,
     }))
   } })
   handle = await ctx.agents.create({
@@ -127,6 +145,7 @@ try {
     data: new Uint8Array(originalBytes),
     mediaType: 'image/png', name: 'identity-proof.png',
   })
+  fixtureAttachmentId = attachment.attachmentId
   const turn = async (enabled, withImage) => {
     const offset = requests.length
     const content = [{ type: 'text', text: enabled ? 'Vision on' : 'Vision off' }]
@@ -148,8 +167,12 @@ try {
         'Host durable history must retain the original attachment, not a replacement marker')
       const projected = request.messages.find(m => m.id === msg.id)
       const digest = String(attachment.attachmentId).slice(7, 15)
-      assert.ok(projected?.content.some(b => b.type === 'text' && b.text.includes('attachment sha256:' + digest)),
-        'Host native text projection must retain deterministic attachment reference')
+      const marker = projected?.content.find(b => b.type === 'text' && b.text.includes('attachment sha256:' + digest))
+      assert.ok(marker, 'Host native text projection must retain deterministic attachment reference')
+      const handle = marker.text.match(/attachment (sha256:[0-9a-f]{8,63})\b/i)?.[1]
+      assert.ok(handle && String(attachment.attachmentId).startsWith(handle), 'the model must see a resolvable short handle')
+      if (modelVisibleHandle) assert.equal(handle, modelVisibleHandle)
+      modelVisibleHandle = handle
     }
     return { enabled, withImage, ownedTool: tools.some(t => t.name === 'vision_describe') }
   }
@@ -163,10 +186,15 @@ try {
     assert.equal(ctx.tools.get('vision_materialize', agent), undefined, 'OFF must hide the actual scoped tool')
     await assert.rejects(() => retained.execute(args, exec()), { code: 'VISION_MODE_DISABLED' })
   }
-  const dispatch = async (id, enabled) => {
+  const dispatch = async (id, enabled, name = 'vision_materialize') => {
     const offset = requests.length
+    const visualOffset = visualRequests.length
+    assert.ok(modelVisibleHandle)
     assert.equal(pendingCall, undefined)
-    pendingCall = { id, args }
+    const callArgs = name === 'vision_describe'
+      ? { attachmentIds: [modelVisibleHandle], question: 'Describe this fixture image.' }
+      : { image: modelVisibleHandle }
+    pendingCall = { id, name, args: callArgs }
     agent.followup(llm.createUserMessage({ source: { kind: 'user' },
       content: [{ type: 'text', text: 'Exercise local image tool ' + id }] }))
     await agent.whenIdle()
@@ -181,16 +209,26 @@ try {
       assert.equal(request.model, 'test-text')
       assert.ok(!request.messages.some(m => m.content?.some(b => b.type === 'image')))
     }
-    if (enabled) {
+    if (enabled && name === 'vision_describe') {
+      assert.ok(message.content.some(b => b.type === 'text' && b.text.includes('DVR864_VISUAL_BACKEND_OK')), JSON.stringify(event.data))
+      assert.equal(visualRequests.length, visualOffset + 1, 'one and only one vision backend subcall')
+      assert.equal(visualRequests.at(-1).provider, 'source-proof')
+      assert.equal(visualRequests.at(-1).model, 'test-mm')
+      const delivered = visualRequests.at(-1).messages.flatMap(m => m.content ?? []).find(b => b.type === 'image')
+      const stored = await ctx.attachments.readImage(delivered.attachment)
+      assert.deepEqual(Buffer.from(stored.data), originalBytes)
+    } else if (enabled) {
       const value = JSON.parse(message.content.find(b => b.type === 'text').text)
       assert.equal(value.safeWorkspaceCopy, true)
       assert.equal(value.source, attachment.attachmentId)
       assert.deepEqual(readFileSync(value.path), originalBytes)
+      assert.equal(visualRequests.length, visualOffset, 'local tool must not call a vision backend')
     } else {
       assert.equal(event.data.error?.code, 'UNKNOWN_TOOL', JSON.stringify(event.data))
+      assert.equal(visualRequests.length, visualOffset, 'denied tool must not call a vision backend')
     }
     assert.equal(selectionEvents(), before)
-    return { enabled, nativeDispatch: true, isError: message.isError }
+    return { enabled, name, nativeDispatch: true, isError: message.isError, visualSubcalls: visualRequests.length - visualOffset }
   }
   await expectDenied()
   await set(true)
@@ -202,15 +240,16 @@ try {
   assert.equal(materialized.source, attachment.attachmentId)
   assert.equal(materialized.bytes, originalBytes.length)
   assert.deepEqual(readFileSync(materialized.path), originalBytes, 'actual image tool must recover original attachment bytes')
-  const nativeResults = [await dispatch('dvr864-on', true)]
+  const nativeResults = [await dispatch('dvr864-on', true), await dispatch('dvr864-describe', true, 'vision_describe')]
   await set(false)
   results.push(await turn(false, false))
   await expectDenied()
   nativeResults.push(await dispatch('dvr864-off', false))
+  nativeResults.push(await dispatch('dvr864-describe-off', false, 'vision_describe'))
   assert.equal(agent.model.current().provider, 'source-proof')
   assert.equal(agent.model.current().model, 'test-text')
   assert.ok(!providers().includes('source-proof-vision') && !providers().includes('deepseek-vision'))
-  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, transport: 'synthetic text model; official NativeToolExecutor and real DVR tool body' }))
+  console.log('ISSUE_864_IDENTITY_PROOF=' + JSON.stringify({ results, modelIdentityUnchanged: true, addedModelSelectionEvents: selectionEvents() - before, providers: providers(), localTool: 'vision_materialize', originalBytesVerified: true, offExecutionDenied: true, nativeResults, modelVisibleHandle, visualSubcalls: visualRequests.length, transport: 'synthetic main and vision model streams; official NativeToolExecutor and real DVR tool/backend dispatch' }))
 } finally {
   carrier.abort()
   await observer?.return?.().catch(() => {})
