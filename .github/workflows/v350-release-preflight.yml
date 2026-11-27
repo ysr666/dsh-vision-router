@@ -1,0 +1,252 @@
+name: v3.5.0 read-only release preflight
+on:
+  push:
+    branches: [diagnostics/v3.5.0-release-preflight]
+permissions:
+  contents: read
+jobs:
+  verify:
+    name: Exact candidate pre-tag verification (no publication)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RELEASE_TAG: v3.5.0
+      RELEASE_SHA: b9d2f5aaa7bd893668e5170d98358ff306ad3145
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.21.0'
+          registry-url: 'https://registry.npmjs.org/'
+          cache: pnpm
+
+      - name: Verify requested release identity and package metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          EXPECTED_TAG="v$VERSION"
+
+          [ "$RELEASE_TAG" = "$EXPECTED_TAG" ] || {
+            echo "::error::requested tag $RELEASE_TAG does not match package.json version $VERSION"
+            exit 1
+          }
+          [ "$(git rev-parse HEAD)" = "$RELEASE_SHA" ] || {
+            echo "::error::checkout HEAD does not match requested release SHA"
+            exit 1
+          }
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          CURRENT_MAIN_SHA="$(git rev-parse origin/main)"
+          REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | awk 'NR==1 {print $1}')"
+          [ -z "$REMOTE_TAG_SHA" ] || {
+            echo "::error::$RELEASE_TAG already exists at $REMOTE_TAG_SHA. A released version is immutable; pick the next version instead of re-releasing $RELEASE_TAG."
+            exit 1
+          }
+          # The dispatch ref decides the OIDC SourceRepositoryDigest that
+          # actions/attest records and that `gh attestation verify
+          # --source-digest` enforces. Dispatching from a branch that is not the
+          # release commit therefore mints provenance for the wrong commit, so
+          # the only safe release target is the exact current origin/main HEAD.
+          # Read-only candidate preflight: main has not authorized this candidate yet.
+          echo "main=$CURRENT_MAIN_SHA candidate=$RELEASE_SHA (no publication)"
+
+          # Release identity and artifact verification are hard gates, and the
+          # release-documentation contract is part of the release: both README
+          # announcement bars must carry the version being released, and either
+          # a curated docs/releases/<tag>.md file or a matching CHANGELOG.md
+          # section must exist. AGENTS.md rule 9 owns this contract.
+          for f in README.md README.zh.md; do
+            BAR="$(awk '
+              /^>[[:space:]]*\[!WARNING\]/ { inbar = 1; next }
+              inbar && /^>/ { print; next }
+              inbar { exit }
+            ' "$f")"
+            if ! printf '%s\n' "$BAR" | grep -Eq "(${EXPECTED_TAG}|${VERSION})"; then
+              echo "::error::$f is missing a top [!WARNING] announcement bar mentioning ${EXPECTED_TAG}; update the bar before releasing"
+              exit 1
+            fi
+          done
+          CURATED_NOTES="docs/releases/$EXPECTED_TAG.md"
+          if [ ! -s "$CURATED_NOTES" ] && ! awk -v v="$EXPECTED_TAG" '$0 == "## " v { found=1 } END { exit found ? 0 : 1 }' CHANGELOG.md; then
+            echo "::error::no curated release notes ($CURATED_NOTES) and no CHANGELOG.md section for $EXPECTED_TAG"
+            exit 1
+          fi
+
+          node <<'NODE'
+          const pkg = require('./package.json')
+          const scripts = pkg.scripts || {}
+          const requiredBuildLifecycle = {
+            prepare: 'pnpm build',
+            // #829 added an independently audited license gate to VTracer's
+            // pack lifecycle. Release verification must not accidentally roll
+            // that gate back to the old plain build command.
+            prepack: 'pnpm license:check && pnpm build',
+            'license:check': 'node scripts/verify-runtime-licenses.mjs && node scripts/verify-native-ocr-licenses.mjs',
+          }
+          for (const [name, expected] of Object.entries(requiredBuildLifecycle)) {
+            if (scripts[name] !== expected) {
+              console.error(`${name} must remain exactly ${JSON.stringify(expected)} for canonical source builds`)
+              process.exit(1)
+            }
+          }
+          const forbidden = [
+            'preinstall', 'install', 'postinstall', 'postpack',
+            'prepublish', 'prepublishOnly', 'publish', 'postpublish',
+          ]
+          const found = forbidden.filter(name => Object.prototype.hasOwnProperty.call(scripts, name))
+          if (found.length) {
+            console.error(`Forbidden release/install lifecycle scripts present: ${found.join(', ')}`)
+            process.exit(1)
+          }
+          NODE
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release distribution channel before irreversible tag
+        id: channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          DIST_TAG="$(node scripts/release-channel.mjs "$VERSION")"
+          echo "dist_tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
+
+      # npm pack intentionally ignores lifecycle scripts, so the declared
+      # prepack license gate must also run explicitly before the release build.
+      - name: Verify runtime dependency licenses before packaging
+        run: pnpm license:check
+
+      - name: Build canonical package artifacts
+        run: pnpm build
+
+      - name: Verify generated package artifacts
+        run: pnpm build:check
+
+      - name: Lint canonical source ownership
+        run: pnpm lint
+
+      - name: Verify source-to-artifact evidence
+        run: pnpm source:artifact:check
+
+      - name: Verify reproducible clean build
+        run: pnpm build:reproducible
+
+      - name: Typecheck Host and Client contracts
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Verify generated browser source
+        run: pnpm client:check
+
+      - name: Verify release Host support policy
+        run: node --test tests/dsh-support-window.test.js
+
+      - name: Pin npm pack client by verified tarball
+        shell: bash
+        env:
+          NPM_CLI_VERSION: '11.18.0'
+          NPM_CLI_SHA256: '73f6155215ebabf4ed96dca1f567c2372cc713c33af2e5b9b62fde4e92373e2e'
+        run: |
+          set -euo pipefail
+          NPM_ROOT="$RUNNER_TEMP/npm-cli-$NPM_CLI_VERSION"
+          NPM_TARBALL="$RUNNER_TEMP/npm-$NPM_CLI_VERSION.tgz"
+          curl --fail --silent --show-error --location \
+            "https://registry.npmjs.org/npm/-/npm-$NPM_CLI_VERSION.tgz" \
+            --output "$NPM_TARBALL"
+          printf '%s  %s\n' "$NPM_CLI_SHA256" "$NPM_TARBALL" | sha256sum --check --strict
+          rm -rf "$NPM_ROOT"
+          mkdir -p "$NPM_ROOT" "$RUNNER_TEMP/npm-cli-bin"
+          tar -xzf "$NPM_TARBALL" -C "$NPM_ROOT" --strip-components=1
+          ln -sfn "$NPM_ROOT/bin/npm-cli.js" "$RUNNER_TEMP/npm-cli-bin/npm"
+          echo "$RUNNER_TEMP/npm-cli-bin" >> "$GITHUB_PATH"
+
+      - name: Preflight exact packed contract before irreversible tag
+        id: prepack
+        shell: bash
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: 'true'
+          RELEASE_REGISTRY_PROBE_ATTEMPTS: '3'
+          RELEASE_REGISTRY_DELAY_MS: '2000'
+        run: |
+          set -euo pipefail
+          rm -f pretag-pack.json
+          npm pack --json > pretag-pack.json
+          TARBALL="$(node -e "const p=require('./pretag-pack.json'); if(!Array.isArray(p)||p.length!==1||!p[0].filename) process.exit(1); process.stdout.write(p[0].filename)")"
+          FILE_COUNT="$(node -e "const p=require('./pretag-pack.json'); process.stdout.write(String(p[0].files?.length ?? ''))")"
+          VERSION="$(node -p "require('./package.json').version")"
+          node scripts/verify-packed-public-api.mjs "$TARBALL"
+
+          # A version on npm without this exact SHA-1 means someone published
+          # outside this workflow, or a previous release of the same version
+          # already happened. Both are unrecoverable here: the immutable tag and
+          # npm version are single-use, so refuse before creating anything.
+          INSPECT_OUTPUT="$RUNNER_TEMP/release-registry-inspect.out"
+          : > "$INSPECT_OUTPUT"
+          GITHUB_OUTPUT="$INSPECT_OUTPUT" node scripts/release-registry-identity.mjs inspect "$VERSION"
+          ALREADY_PUBLISHED="$(awk -F= '$1=="already_published" {print $2}' "$INSPECT_OUTPUT" | tail -n1)"
+          [ "$ALREADY_PUBLISHED" != "true" ] || {
+            echo "::error::npm already exposes dsh-vision-router@$VERSION; refusing to adopt or republish a pre-existing registry version"
+            exit 1
+          }
+
+          LOCAL_SHA1="$(sha1sum "$TARBALL" | awk '{print $1}')"
+          LOCAL_SHA256="$(sha256sum "$TARBALL" | awk '{print $1}')"
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+          echo "file_count=$FILE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "sha1=$LOCAL_SHA1" >> "$GITHUB_OUTPUT"
+          echo "sha256=$LOCAL_SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Re-read actual npm public OCR resources and main package channel
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { createHash } from 'node:crypto'
+          import { APPROVED_NATIVE_OCR_ARCHIVES, downloadVerifiedNativeArchive } from './src/lib/native-ocr-download.js'
+          import { lookupRegistryIdentity } from './scripts/release-registry-identity.mjs'
+          const registry = await lookupRegistryIdentity({packageName:'dsh-vision-router',version:'3.5.0'})
+          assert.equal(registry.state, 'missing', 'candidate version must be unused')
+          const latest = await fetch('https://registry.npmjs.org/dsh-vision-router/latest', { cache:'no-store', signal:AbortSignal.timeout(30000) })
+          assert.ok(latest.ok)
+          const metadata = await latest.json()
+          console.log('DVR_RELEASE_REGISTRY=' + JSON.stringify({candidate:registry.state,latest:metadata.version}))
+          assert.equal(Object.keys(APPROVED_NATIVE_OCR_ARCHIVES).sort().join(','), 'darwin-arm64,win32-x64')
+          for (const [platform, entry] of Object.entries(APPROVED_NATIVE_OCR_ARCHIVES)) {
+            const archive = await downloadVerifiedNativeArchive(entry)
+            assert.equal(archive.length, entry.bytes)
+            assert.equal(createHash('sha256').update(archive).digest('hex'), entry.sha256)
+            console.log('DVR_PUBLIC_OCR_READBACK=' + JSON.stringify({platform,bytes:archive.length,sha256:entry.sha256,npmSha256:entry.npmSha256}))
+          }
+          NODE
+      - name: Audit package payload and print preflight identity
+        shell: bash
+        env:
+          TARBALL: ${{ steps.prepack.outputs.tarball }}
+          SHA256: ${{ steps.prepack.outputs.sha256 }}
+          COUNT: ${{ steps.prepack.outputs.file_count }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const p=JSON.parse(readFileSync('pretag-pack.json','utf8'))[0]
+          assert.equal(p.version,'3.5.0')
+          assert.equal(p.name,'dsh-vision-router')
+          assert.ok(p.files.some(f=>f.path==='lib/repair-cli.js'))
+          assert.ok(p.files.some(f=>f.path==='docs/releases/v3.5.0.md'))
+          assert.ok(!p.files.some(f=>/\.(exe|dll|so|dylib|onnx|param|bin|traineddata|tgz|tar\.gz)$/i.test(f.path)), 'unexpected native payload')
+          console.log('DVR_V350_PRETAG=' + JSON.stringify({sha:process.env.RELEASE_SHA,version:p.version,tarball:process.env.TARBALL,sha256:process.env.SHA256,files:Number(process.env.COUNT),size:p.size,unpackedSize:p.unpackedSize,publication:false}))
+          NODE
