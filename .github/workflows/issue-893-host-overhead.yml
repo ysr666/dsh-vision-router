@@ -1,0 +1,51 @@
+name: Issue 893 Host-only overhead and callsite profile
+on:
+  push:
+    branches: [diagnostics/issue-893-host-overhead]
+permissions:
+  contents: read
+jobs:
+  windows-profile-ab:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          path: dvr
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb
+          persist-credentials: false
+          path: dsh-current-host
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.21.0
+      - name: Materialize candidate package
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+      - name: Build immutable Host
+        working-directory: dsh-current-host
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Compare Host-only and DVR cold Desktop (ABBA)
+        working-directory: dsh-current-host
+        env:
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DSH_EXPECTED_VERSION: 0.2.2-rc.5
+        run: node --import tsx ../dvr/scripts/issue-893-host-overhead.mjs
+      - name: Verify restored source and artifact
+        working-directory: dvr
+        run: pnpm build:check
