@@ -987,6 +987,12 @@ try {
   manifest.dependencies[coreProbeFixture.name] = `file:${coreProbeFixture.directory}`
   if (!manifest.dsh.profile.bundles.includes('dsh-vision-router')) manifest.dsh.profile.bundles.push('dsh-vision-router')
   manifest.dsh.profile.bundles.push(coreProbeFixture.name)
+  const claudePackage = process.env.DVR_864_CLAUDE_PACKAGE
+  if (claudePackage) {
+    assert.ok(existsSync(claudePackage), 'pinned Claude package must be built locally')
+    manifest.dependencies['dsh-claude-style'] = `file:${claudePackage}`
+    manifest.dsh.profile.bundles.push('dsh-claude-style')
+  }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, undefined, 2)}\n`)
   // Exercise the exact public configuration surfaces: a local OpenAI-compatible
   // text route drives the real Agent loop, while DVR's vision-http route drives
@@ -1198,6 +1204,74 @@ try {
   const toggle = await waitForVisionToggle(page, authenticatedHostUrl)
   if (!existsSync(workspace)) throw new Error(`Desktop did not initialize the pinned default workspace: ${workspace}`)
   reportPhase('vision-toggle-ready')
+  if (claudePackage) {
+    // The full theme is installed through the ordinary profile mechanism.
+    // This separate experiment checks its actual picker, not its extracted
+    // catalog helper; original stock acceptance remains the other branch.
+    const onboarding = page.locator('.vr-onboarding-backdrop')
+    try { await onboarding.waitFor({state:'visible',timeout:5000}) } catch {}
+    if (await onboarding.isVisible()) {
+      await onboarding.locator('.vr-onboarding-secondary').click()
+      await onboarding.waitFor({state:'hidden',timeout:15000})
+    }
+    await page.locator('body[data-dsh-claude-style]').waitFor({state:'attached',timeout:30000})
+    const skin = page.locator('.dsh-claude-model-btn:visible').first()
+    await skin.waitFor({state:'visible',timeout:30000})
+    const proof = async (pressed, phase) => {
+      const expected = pressed === 'true' ? 'desktop-e2e-vision' : 'desktop-e2e'
+      await page.waitForFunction(({pressed,expected}) => {
+        const toggle = document.querySelector('[data-vision-router-mode-toggle="true"]')
+        const state = window.__dvr864IndependentDirectory?.()
+        return toggle?.getAttribute('aria-pressed') === pressed && toggle.getAttribute('aria-busy') !== 'true' && !toggle.disabled
+          && state?.status === 'ready' && state.rawCurrent === expected && state.visibleCurrent === 'desktop-e2e'
+          && state.visible.length === 1 && state.visible[0] === 'desktop-e2e' && state.raw.includes('desktop-e2e-vision')
+      }, {pressed,expected}, {timeout:30000})
+      const trigger = await skin.getAttribute('aria-label')
+      assert.match(trigger || '', /desktop.text/i)
+      await skin.click()
+      const main = page.locator('.dsh-claude-model-popover:not(.dsh-claude-model-popover-sub)[data-open="true"]:visible').first()
+      await main.waitFor({state:'visible',timeout:15000})
+      const current = main.locator('.dsh-claude-model-option[aria-checked="true"]:visible')
+      await current.first().waitFor({state:'visible',timeout:15000})
+      const currentName = await current.first().getAttribute('aria-label')
+      assert.match(currentName || '',/desktop.text/i)
+      const labels = await main.locator('.dsh-claude-model-rule-name').allInnerTexts()
+      const more = main.getByRole('menuitem',{name:/More models|更多模型/i})
+      if (await more.isVisible()) {
+        await more.click()
+        const sub = page.locator('.dsh-claude-model-popover-sub[data-open="true"]:visible').first()
+        await sub.waitFor({state:'visible',timeout:15000})
+        labels.push(...await sub.locator('.dsh-claude-model-rule-name').allInnerTexts())
+        assert.ok(labels.some(label => /Desktop E2E/i.test(label)), 'positive control: original provider listed in full theme')
+      } else {
+        assert.ok(labels.some(label => /Desktop E2E/i.test(label)), 'positive control: original provider listed in full theme')
+      }
+      assert.ok(!labels.some(label => /自动识图|desktop-e2e-vision/i.test(label)), 'full theme shows duplicate owned wrapper group: '+JSON.stringify(labels))
+      await page.keyboard.press('Escape')
+      if (await main.isVisible()) await page.keyboard.press('Escape')
+      await main.waitFor({state:'hidden',timeout:10000})
+      console.log('ISSUE_864_CLAUDE_DESKTOP='+JSON.stringify({phase,pressed,trigger,currentName,labels,raw:await page.evaluate(()=>window.__dvr864IndependentDirectory())}))
+    }
+    const start = await toggle.getAttribute('aria-pressed')
+    assert.equal(start,'false')
+    await proof('false','initial')
+    await toggle.click()
+    await proof('true','on')
+    await toggle.click()
+    await proof('false','off')
+    const hostSelections = await readHostModelSelections(authenticatedHostUrl)
+    assert.ok(hostSelections.sessions.some(session => {
+      const last = session.latest.slice(-2)
+      return last.length === 2 && last[0].provider === 'desktop-e2e-vision' && last[1].provider === 'desktop-e2e'
+        && last.every(row => row.model === 'desktop-text')
+    }), 'actual Host accepted both transitions')
+    await assertDesktopHtmlRendering('after full theme transitions')
+    if (rendererErrors.length) throw Error('Full theme renderer errors: '+rendererErrors.join('\n'))
+    reportPhase('all-assertions-passed')
+    const result = {ok:true,fullClaudeStyle:true,actualElectron:true,actualTwoWayToggle:true,originalHost:true,dsh:dshVersion}
+    console.log(JSON.stringify(result))
+    if (diagnosticPath) writeFileSync(diagnosticPath,JSON.stringify(result))
+  } else {
   await exerciseVisionOnboardingSettingsPath(page)
   reportPhase('onboarding-complete')
 
@@ -1689,6 +1763,7 @@ try {
       functionalVisionTurn: { ...fileSafeTurnEvidence(textEvidence, visionEvidence), rendered: 'DESKTOP_VISION_E2E_OK' },
     }
     writeFileSync(diagnosticPath, `${JSON.stringify(fileResult, undefined, 2)}\n`)
+  }
   }
 } catch (error) {
   if (page && screenshotPath) {

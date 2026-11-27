@@ -1,0 +1,79 @@
+name: Issue 864 actual Claude Style on Windows Desktop
+on:
+  push:
+    branches: [diagnostics/issue-864-claude-desktop]
+permissions:
+  contents: read
+jobs:
+  desktop-shared-directory:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: dvr
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 9c2670d3bce5275e0d1610272958121af87787bb
+          path: dsh-current-host
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: Nwflower/dsh-claude-style
+          ref: 93e51bd044d20233a85e2bab8057054d6db97d61
+          path: claude-style
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 11.28.5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.9.0
+      - name: Materialize exact DVR candidate
+        working-directory: dvr
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm build
+          pnpm build:check
+          node --check scripts/dsh-desktop-renderer-e2e.mjs
+      - name: Install immutable original Host dependencies
+        working-directory: dsh-current-host
+        env:
+          CI: 'true'
+          LEFTHOOK: '0'
+        run: pnpm install --frozen-lockfile
+      - name: Build original Host
+        working-directory: dsh-current-host
+        run: pnpm run build
+      - name: Build unmodified pinned full Claude Style and pack for local installation only
+        working-directory: claude-style
+        shell: bash
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          git diff --exit-code
+      - name: Real Desktop full theme picker and two-way Vision toggle
+        working-directory: dsh-current-host
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-current-host
+          DVR_SOURCE_ROOT: ${{ github.workspace }}/dvr
+          DSH_EXPECTED_VERSION: 0.2.2-rc.5
+          DVR_864_SHARED_DIRECTORY_PROOF: '1'
+          DVR_864_CLAUDE_PACKAGE: ${{ runner.temp }}/dsh-claude-style-0.22.4.tgz
+          DVR_DESKTOP_BASE_PORT: '19510'
+          SMOKE_DIAGNOSTIC_PATH: ${{ runner.temp }}/issue-864-desktop.json
+          SMOKE_SCREENSHOT_PATH: ${{ runner.temp }}/issue-864-desktop.png
+        run: |
+          git diff --exit-code
+          node --import tsx ../dvr/scripts/dsh-desktop-renderer-e2e.mjs
+          git diff --exit-code
+      - name: Upload only ephemeral fixture diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: issue-864-desktop-diagnostics
+          path: ${{ runner.temp }}/issue-864-desktop.*
+          if-no-files-found: ignore
