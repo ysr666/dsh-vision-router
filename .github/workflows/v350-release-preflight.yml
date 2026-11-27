@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 25
     env:
       RELEASE_TAG: v3.5.0
-      RELEASE_SHA: b9d2f5aaa7bd893668e5170d98358ff306ad3145
+      RELEASE_SHA: 5bab1e6586175ede093c9d9ea0054ab386d693c3
     steps:
       - name: Checkout exact release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
