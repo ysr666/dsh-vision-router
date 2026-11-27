@@ -41,7 +41,7 @@ function instrument(source, variant) {
     '    }',
   ].join('\n'))
 }
-let harness = readFileSync(join(root, 'scripts/dsh-desktop-renderer-e2e.mjs'), 'utf8')
+let harness = readFileSync(join(root, 'scripts/dsh-desktop-renderer-e2e.mjs'), 'utf8').replace(/\r\n/g, '\n')
 const routeAnchor = "  ctx.inject(['webServer'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact',\n      path: '/dvr-e2e-core-status',"
 harness = replaceOnce(harness, routeAnchor,
   "  ctx.inject(['webServer'], (scope) => {\n    scope.effect(() => scope.webServer.register({\n      kind: 'exact',\n      path: '/dvr-e2e-893-profile-metrics',\n      handler(_request, response) {\n        response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })\n        response.end(JSON.stringify(globalThis[Symbol.for(" + symbol + ")] ?? null))\n      },\n    }), 'desktop-e2e: diagnostic-only config profile counters')\n" + routeAnchor.slice(routeAnchor.indexOf('\n') + 1))
