@@ -1324,16 +1324,17 @@ try {
     })
     final.candidateRegistryRequests = candidateRegistryRequests.slice()
     marketEvidence = final
-    console.log('ISSUE_877_COMBINED_MARKET=' + JSON.stringify(final))
+    console.log('ISSUE_877_DVR_ONLY_MARKET=' + JSON.stringify(final))
     if (diagnosticPath) writeFileSync(diagnosticPath, JSON.stringify(final, null, 2))
     let resultBody
     try { resultBody = JSON.parse(marketResult.body) } catch {}
-    if (final.installed !== '3.4.0' || !final.bundleSelected || !final.marketCandidateInstalled || !final.candidateFilesMatch || !final.candidateRegistryRequests.includes('tarball') ||
-        final.baselineUid === final.finalUid || marketResult.status !== 200 || resultBody?.ok !== true ||
+    if (final.installed !== '3.4.0' || !final.bundleSelected || final.marketCandidateInstalled || !final.candidateFilesMatch || !final.candidateRegistryRequests.includes('tarball') ||
+        final.baselineUid === final.finalUid ||
         !after?.entries?.some(entry => (entry.id === 'vision-router' || entry.id === 'include:vision-router') && entry.state === 'ACTIVE') ||
         after.firstEffect || after.firstFailure) {
       throw Error('Real market update did not converge cleanly; inspect first-effect and transaction evidence')
     }
+    console.log('ISSUE_877_DVR_ONLY_OUTCOME=' + JSON.stringify({ dvrActivation: true, marketHttp: marketResult.status ?? null, marketOk: resultBody?.ok === true, marketProductionRepair: final.marketCandidateInstalled }))
     if (child?.exitCode !== null) throw Error('Electron supervisor exited during DVR upgrade')
     await page.waitForFunction(() => document.querySelector('body') !== null, { timeout: 15000 })
     // The market explicitly reports restart-required. Verify the persisted

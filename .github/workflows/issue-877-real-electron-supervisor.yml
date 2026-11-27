@@ -1,7 +1,7 @@
-name: Issue 877 current market 1.82.0 combined and restart
+name: Issue 877 DVR-only repair with market production code unchanged
 on:
   push:
-    branches: [diagnostics/issue-877-market-current]
+    branches: [diagnostics/issue-877-dvr-only-market]
     paths:
       - scripts/issue-877-electron-supervisor-upgrade.mjs
       - scripts/issue-877-market-loader-repair.mjs
@@ -99,7 +99,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: issue-877-combined-market-${{ matrix.market }}-debug
+          name: issue-877-dvr-only-market-${{ matrix.market }}-debug
           path: |
             ${{ runner.temp }}/issue-877-electron-diagnostic.json
             ${{ runner.temp }}/issue-877-electron-desktop.png

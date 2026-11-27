@@ -12,23 +12,6 @@ function edit(path, replacements) {
   }
   writeFileSync(file, source)
 }
-edit('src/routes.ts', [
-  ['export interface MarketConfig {', 'export interface MarketConfig {\n  /** Fresh read-only inventory after a Host-owned Desktop update may retire the request owner. */\n  readPostUpdateLoaderEntries?: () => Iterable<LoaderEntry>'],
-  [
-    '  function liveNames(): Set<string> {\n    const live = new Set(listLiveHotMounts())\n    for (const entry of host.loader.entries()) {',
-    '  function liveNames(postUpdate = false): Set<string> {\n    const live = new Set(listLiveHotMounts())\n    const entries = postUpdate && config.readPostUpdateLoaderEntries !== undefined\n      ? config.readPostUpdateLoaderEntries() : host.loader.entries()\n    for (const entry of entries) {',
-  ],
-  [
-    '              activation = {\n                [name]: activationAfterReplace(\n                  verifyActivation(config.profile, name, liveNames(), activeProfileDir, disabled.has(name)),',
-    '              activation = {\n                [name]: activationAfterReplace(\n                  verifyActivation(config.profile, name, liveNames(true), activeProfileDir, disabled.has(name)),',
-  ],
-])
-edit('src/index.ts', [
-  [
-    '        const resolved: MarketConfig = {\n          profile: profileName,',
-    '        const loaderRoot = hostCtx.root\n        const resolved: MarketConfig = {\n          readPostUpdateLoaderEntries: () => {\n            const loader = loaderRoot.get(\'loader\') as MarketHost[\'loader\'] | undefined\n            if (loader === undefined) throw new Error(\'Host loader unavailable after update\')\n            return [...loader.entries()]\n          },\n          profile: profileName,',
-  ],
-])
 // Test-only registry override. Keep official manager's valid registry spec.
 edit('src/official-desktop.ts', [
   [
@@ -36,4 +19,4 @@ edit('src/official-desktop.ts', [
     '      const registry = target === \'dsh-vision-router@3.4.0\' && process.env.DVR_CANDIDATE_REGISTRY ? process.env.DVR_CANDIDATE_REGISTRY : routesFor(activeRegion()).npmRegistry',
   ],
 ])
-console.log('Applied disposable market Loader repair and isolated registry override')
+console.log('Applied ONLY disposable isolated registry override; market production loader untouched')
